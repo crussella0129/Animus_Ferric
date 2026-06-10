@@ -10,4 +10,10 @@
 - **Description:** Define shared vocabulary types Message, Role, ToolCall, FerricError in ferric-core.
 - **Completed:** 2026-06-10T16:12:00Z
 - **Files modified:** crates/ferric-core/src/lib.rs, crates/ferric-core/src/message.rs, crates/ferric-core/src/error.rs
-- **Commit:** (see git log for T-002)
+- **Commit:** 724475e
+
+## T-003 (sprint 0)
+- **Description:** Implement the deterministic scale function (ModelProfile, Tier, RunPolicy, Protocol, tier table, pure policy_for) with bidirectional measured-level override and fleet snapshot test.
+- **Completed:** 2026-06-10T16:25:00Z
+- **Files modified:** crates/ferric-core/src/scale.rs, crates/ferric-core/src/lib.rs, crates/ferric-core/tests/tier_table_snapshot.rs
+- **Commit:** (see git log for T-003)

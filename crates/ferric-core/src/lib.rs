@@ -2,6 +2,8 @@
 
 mod error;
 mod message;
+mod scale;
 
 pub use error::FerricError;
 pub use message::{Message, Role, ToolCall};
+pub use scale::{ModelProfile, Protocol, RunPolicy, Tier, policy_for};
