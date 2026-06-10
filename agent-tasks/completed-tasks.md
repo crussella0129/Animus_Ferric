@@ -58,4 +58,10 @@
 - **Description:** Build the ferric CLI stub: --version and trace cat derived view (unknown events labeled, never crash).
 - **Completed:** 2026-06-10T17:55:00Z
 - **Files modified:** crates/ferric-cli/src/main.rs, crates/ferric-cli/tests/cli.rs
-- **Commit:** (see git log for T-010)
+- **Commit:** 17a80ca
+
+## T-011 (sprint 0)
+- **Description:** Add GitHub Actions CI: fmt/clippy/test on windows+ubuntu plus aarch64-unknown-linux-gnu check gate. Full gate (incl. aarch64 cross-check) verified locally first.
+- **Completed:** 2026-06-10T18:05:00Z
+- **Files modified:** .github/workflows/ci.yml
+- **Commit:** (see git log for T-011)

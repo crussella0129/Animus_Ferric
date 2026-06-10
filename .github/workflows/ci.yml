@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: fmt + clippy + test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: tests
+        run: cargo test --workspace
+
+  # Portability gate: Ferric must keep type-checking for Raspberry Pi /
+  # Orange Pi / Jetson class aarch64 Linux targets (ADR-004).
+  aarch64-check:
+    name: aarch64-unknown-linux-gnu check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: add target
+        run: rustup target add aarch64-unknown-linux-gnu
+      - name: check
+        run: cargo check --workspace --target aarch64-unknown-linux-gnu
