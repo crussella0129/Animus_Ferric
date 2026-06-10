@@ -22,4 +22,10 @@
 - **Description:** Build ferric-trace: versioned TraceEvent, flush-per-event JsonlSink, unknown-event-tolerant TraceReader.
 - **Completed:** 2026-06-10T16:40:00Z
 - **Files modified:** crates/ferric-trace/src/lib.rs, crates/ferric-trace/src/event.rs, crates/ferric-trace/src/sink.rs, crates/ferric-trace/src/reader.rs
-- **Commit:** (see git log for T-004)
+- **Commit:** d16de53
+
+## T-005 (sprint 0)
+- **Description:** Define the async dyn-compatible Provider trait with Constraint plumbing (JsonSchema/Regex/Lark) and a deterministic scripted MockProvider that records requests.
+- **Completed:** 2026-06-10T16:55:00Z
+- **Files modified:** crates/ferric-provider/src/lib.rs, crates/ferric-provider/src/traits.rs, crates/ferric-provider/src/types.rs, crates/ferric-provider/src/mock.rs
+- **Commit:** (see git log for T-005)
