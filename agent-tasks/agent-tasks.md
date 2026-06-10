@@ -1,3 +1,10 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-013 (sprint 0): Create the public GitHub repo crussella0129/Animus_Ferric and push main with green CI — touches: git remote config only
+## Deferred lineage fixes (from sprint 0 Lineage-Fix Ledger — must not evaporate)
+- [ ] (s1) Hash-ALL-calls repetition guard in the agent loop (Prion #5)
+- [ ] (s1) Structured terminator (task_complete) wired into constraint grammar (Animus)
+- [ ] (s1) Exponential backoff on retryable provider errors (Prion #6)
+- [ ] (s1) Bounded reads on HTTP responses (Prion #3)
+- [ ] (s1) Stale-config detection/migration in the config crate (Animus H20)
+- [ ] (s1/s2) Circuit-breaker compaction in the context manager (Fev)
+- [ ] (s1) First real Provider backend + L0 smoke E2E (one real-GGUF run → valid trace + correct file edit)

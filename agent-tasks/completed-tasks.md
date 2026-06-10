@@ -70,4 +70,10 @@
 - **Description:** Record ADRs 001–009 (dated) in decisions.md.
 - **Completed:** 2026-06-10T18:15:00Z
 - **Files modified:** decisions.md
-- **Commit:** (see git log for T-012)
+- **Commit:** 93a4659
+
+## T-013 (sprint 0)
+- **Description:** Create the public GitHub repo crussella0129/Animus_Ferric and push main; CI run 27301488990 conclusion=success on head 93a4659 (verified via gh run list).
+- **Completed:** 2026-06-10T19:50:00Z
+- **Files modified:** git remote config only
+- **Commit:** (ledger close-out commit)
