@@ -52,4 +52,10 @@
 - **Description:** Implement builtin file tools read_file, write_file, list_dir resolving through the workspace boundary, with registry-driven tests.
 - **Completed:** 2026-06-10T17:45:00Z
 - **Files modified:** crates/ferric-tools/src/builtin/{mod.rs,read_file.rs,write_file.rs,list_dir.rs}, crates/ferric-tools/src/lib.rs, crates/ferric-tools/tests/builtin_file_tools.rs
-- **Commit:** (see git log for T-009)
+- **Commit:** 6250637
+
+## T-010 (sprint 0)
+- **Description:** Build the ferric CLI stub: --version and trace cat derived view (unknown events labeled, never crash).
+- **Completed:** 2026-06-10T17:55:00Z
+- **Files modified:** crates/ferric-cli/src/main.rs, crates/ferric-cli/tests/cli.rs
+- **Commit:** (see git log for T-010)
