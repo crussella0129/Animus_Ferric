@@ -40,4 +40,10 @@
 - **Description:** Add the hardcoded permission checker (Read/Write/Execute, machine-readable deny reasons) and compile-time deny lists.
 - **Completed:** 2026-06-10T17:15:00Z
 - **Files modified:** crates/ferric-guard/src/checker.rs, crates/ferric-guard/src/denylist.rs, crates/ferric-guard/src/lib.rs
-- **Commit:** (see git log for T-007)
+- **Commit:** 382ff6b
+
+## T-008 (sprint 0)
+- **Description:** Build the Tool trait, ToolSpec, and registry with a single execute chokepoint (pre-handler guard check, timing, full/truncated output split, sorted+capped tools_for_policy).
+- **Completed:** 2026-06-10T17:30:00Z
+- **Files modified:** crates/ferric-tools/src/lib.rs, crates/ferric-tools/src/spec.rs, crates/ferric-tools/src/registry.rs
+- **Commit:** (see git log for T-008)
