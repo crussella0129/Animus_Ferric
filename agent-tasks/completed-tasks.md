@@ -46,4 +46,10 @@
 - **Description:** Build the Tool trait, ToolSpec, and registry with a single execute chokepoint (pre-handler guard check, timing, full/truncated output split, sorted+capped tools_for_policy).
 - **Completed:** 2026-06-10T17:30:00Z
 - **Files modified:** crates/ferric-tools/src/lib.rs, crates/ferric-tools/src/spec.rs, crates/ferric-tools/src/registry.rs
-- **Commit:** (see git log for T-008)
+- **Commit:** 7542e2d
+
+## T-009 (sprint 0)
+- **Description:** Implement builtin file tools read_file, write_file, list_dir resolving through the workspace boundary, with registry-driven tests.
+- **Completed:** 2026-06-10T17:45:00Z
+- **Files modified:** crates/ferric-tools/src/builtin/{mod.rs,read_file.rs,write_file.rs,list_dir.rs}, crates/ferric-tools/src/lib.rs, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** (see git log for T-009)
