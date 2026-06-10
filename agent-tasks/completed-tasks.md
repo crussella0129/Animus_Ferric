@@ -34,4 +34,10 @@
 - **Description:** Implement the symlink-safe, prefix-collision-proof workspace boundary in ferric-guard (component-wise canonical containment).
 - **Completed:** 2026-06-10T17:05:00Z
 - **Files modified:** crates/ferric-guard/src/lib.rs, crates/ferric-guard/src/workspace.rs
-- **Commit:** (see git log for T-006)
+- **Commit:** 0c1b6fd
+
+## T-007 (sprint 0)
+- **Description:** Add the hardcoded permission checker (Read/Write/Execute, machine-readable deny reasons) and compile-time deny lists.
+- **Completed:** 2026-06-10T17:15:00Z
+- **Files modified:** crates/ferric-guard/src/checker.rs, crates/ferric-guard/src/denylist.rs, crates/ferric-guard/src/lib.rs
+- **Commit:** (see git log for T-007)
