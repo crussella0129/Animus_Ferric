@@ -64,4 +64,10 @@
 - **Description:** Add GitHub Actions CI: fmt/clippy/test on windows+ubuntu plus aarch64-unknown-linux-gnu check gate. Full gate (incl. aarch64 cross-check) verified locally first.
 - **Completed:** 2026-06-10T18:05:00Z
 - **Files modified:** .github/workflows/ci.yml
-- **Commit:** (see git log for T-011)
+- **Commit:** 4386cad
+
+## T-012 (sprint 0)
+- **Description:** Record ADRs 001–009 (dated) in decisions.md.
+- **Completed:** 2026-06-10T18:15:00Z
+- **Files modified:** decisions.md
+- **Commit:** (see git log for T-012)
