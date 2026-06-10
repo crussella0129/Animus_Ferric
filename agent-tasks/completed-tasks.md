@@ -28,4 +28,10 @@
 - **Description:** Define the async dyn-compatible Provider trait with Constraint plumbing (JsonSchema/Regex/Lark) and a deterministic scripted MockProvider that records requests.
 - **Completed:** 2026-06-10T16:55:00Z
 - **Files modified:** crates/ferric-provider/src/lib.rs, crates/ferric-provider/src/traits.rs, crates/ferric-provider/src/types.rs, crates/ferric-provider/src/mock.rs
-- **Commit:** (see git log for T-005)
+- **Commit:** 40dced1
+
+## T-006 (sprint 0)
+- **Description:** Implement the symlink-safe, prefix-collision-proof workspace boundary in ferric-guard (component-wise canonical containment).
+- **Completed:** 2026-06-10T17:05:00Z
+- **Files modified:** crates/ferric-guard/src/lib.rs, crates/ferric-guard/src/workspace.rs
+- **Commit:** (see git log for T-006)
