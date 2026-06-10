@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-004 (sprint 0): Build ferric-trace: versioned TraceEvent, flush-per-event JsonlSink, unknown-event-tolerant TraceReader — touches: crates/ferric-trace/src/{lib.rs,event.rs,sink.rs,reader.rs}
 - [ ] T-005 (sprint 0): Define the async dyn-compatible Provider trait with Constraint plumbing and a deterministic scripted MockProvider — touches: crates/ferric-provider/src/{lib.rs,traits.rs,types.rs,mock.rs}
 - [ ] T-006 (sprint 0): Implement the symlink-safe, prefix-collision-proof workspace boundary in ferric-guard — touches: crates/ferric-guard/src/{lib.rs,workspace.rs}
 - [ ] T-007 (sprint 0): Add the hardcoded permission checker and compile-time deny lists — touches: crates/ferric-guard/src/{checker.rs,denylist.rs}
