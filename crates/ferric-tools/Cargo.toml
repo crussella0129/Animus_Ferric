@@ -1,0 +1,18 @@
+[package]
+name = "ferric-tools"
+description = "Tool trait, registry chokepoint, and builtin file tools for Animus Ferric"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ferric-core = { workspace = true }
+ferric-guard = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+ferric-trace = { workspace = true }
+tempfile = { workspace = true }

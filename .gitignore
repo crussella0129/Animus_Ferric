@@ -5,3 +5,7 @@
 sprints/
 *.tmp
 # <<< sprint-loops <<<
+
+# Rust
+target/
+

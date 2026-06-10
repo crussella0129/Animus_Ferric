@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/ferric-core",
+    "crates/ferric-trace",
+    "crates/ferric-provider",
+    "crates/ferric-guard",
+    "crates/ferric-tools",
+    "crates/ferric-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/crussella0129/Animus_Ferric"
+
+# s0 dependency allowlist (ADR-004): serde, serde_json, thiserror, async-trait,
+# plus tempfile/futures-executor as dev-dependencies only. Nothing else lands
+# until the sprint that needs it; everything must cross-compile to aarch64.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+tempfile = "3"
+futures-executor = "0.3"
+
+ferric-core = { path = "crates/ferric-core" }
+ferric-trace = { path = "crates/ferric-trace" }
+ferric-provider = { path = "crates/ferric-provider" }
+ferric-guard = { path = "crates/ferric-guard" }
+ferric-tools = { path = "crates/ferric-tools" }

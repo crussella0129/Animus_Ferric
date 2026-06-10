@@ -1,0 +1,16 @@
+[package]
+name = "ferric-trace"
+description = "Versioned JSONL trajectory tracing: the source of truth for every Ferric session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ferric-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,17 @@
+[package]
+name = "ferric-cli"
+description = "The ferric binary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "ferric"
+path = "src/main.rs"
+
+[dependencies]
+ferric-trace = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
