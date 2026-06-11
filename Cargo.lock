@@ -81,6 +81,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferric-loop"
+version = "0.1.0"
+dependencies = [
+ "ferric-core",
+ "ferric-guard",
+ "ferric-provider",
+ "ferric-tools",
+ "ferric-trace",
+ "futures-executor",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "ferric-provider"
 version = "0.1.0"
 dependencies = [

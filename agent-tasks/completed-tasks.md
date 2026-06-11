@@ -94,4 +94,10 @@
 - **Description:** CompletionRequest::validate() (ADR-010 constraint×tools exclusivity) + ProviderError::RetryableBackend variant + is_retryable().
 - **Completed:** 2026-06-11T02:55:00Z
 - **Files modified:** crates/ferric-provider/src/types.rs
-- **Commit:** (see git log for T-103)
+- **Commit:** 26dc9c5
+
+## T-104 (sprint 1)
+- **Description:** ferric-loop crate: core turn loop productionizing mock_loop_skeleton (policy budgets, traced stages, denial feedback, empty-completion nudge, best-effort text on MaxTurns). Includes the module scaffolds for T-105..T-107 (terminator/repetition/backoff) which run.rs integrates; their dedicated EARS tests land with their own tasks.
+- **Completed:** 2026-06-11T03:30:00Z
+- **Files modified:** Cargo.toml, crates/ferric-loop/* (Cargo.toml, src/{lib,run,outcome,terminator,repetition,backoff}.rs, tests/{common/mod.rs,loop_core.rs})
+- **Commit:** (see git log for T-104)

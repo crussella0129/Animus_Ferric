@@ -1,0 +1,20 @@
+[package]
+name = "ferric-loop"
+description = "The production agent loop for Animus Ferric: policy-budgeted turns, structured termination, repetition guard, backoff — fully traced"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ferric-core = { workspace = true }
+ferric-provider = { workspace = true }
+ferric-guard = { workspace = true }
+ferric-tools = { workspace = true }
+ferric-trace = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+futures-executor = { workspace = true }
+tempfile = { workspace = true }

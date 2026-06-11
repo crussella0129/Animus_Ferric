@@ -6,6 +6,7 @@ members = [
     "crates/ferric-provider",
     "crates/ferric-guard",
     "crates/ferric-tools",
+    "crates/ferric-loop",
     "crates/ferric-cli",
 ]
 
@@ -31,3 +32,4 @@ ferric-trace = { path = "crates/ferric-trace" }
 ferric-provider = { path = "crates/ferric-provider" }
 ferric-guard = { path = "crates/ferric-guard" }
 ferric-tools = { path = "crates/ferric-tools" }
+ferric-loop = { path = "crates/ferric-loop" }
