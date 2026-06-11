@@ -1,4 +1,8 @@
 //! Shared helpers for ferric-loop integration tests.
+//!
+//! Compiled once per test binary; each binary uses a different subset of
+//! helpers, so dead-code lints are suppressed module-wide.
+#![allow(dead_code)]
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -92,8 +96,6 @@ impl Sleeper for RecordingSleeper {
 pub struct RunResult {
     pub outcome: LoopOutcome,
     pub records: Vec<TraceRecord>,
-    // Used by the backoff test binary; tests/common compiles per binary.
-    #[allow(dead_code)]
     pub sleeper_delays_ms: Vec<u64>,
 }
 
