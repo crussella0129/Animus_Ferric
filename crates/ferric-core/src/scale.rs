@@ -182,6 +182,8 @@ mod tests {
         assert_eq!(policy.protocol, Protocol::ConstrainedJson);
         assert!(policy.uses_planner);
         assert!(policy.max_tools <= 6);
+        assert_eq!(policy.prompt_budget_tokens, 2_800);
+        assert!(!policy.allows_subagents);
     }
 
     #[test]
