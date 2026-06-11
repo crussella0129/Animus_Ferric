@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-102 (sprint 1): Registry surfaces CheckRecords; deny writes under .ferric — touches: crates/ferric-tools/src/registry.rs, crates/ferric-guard/src/denylist.rs
 - [ ] T-103 (sprint 1): CompletionRequest::validate() + ProviderError::RetryableBackend + is_retryable() — touches: crates/ferric-provider/src/types.rs
 - [ ] T-104 (sprint 1): ferric-loop crate core turn loop — touches: Cargo.toml, crates/ferric-loop/*
 - [ ] T-105 (sprint 1): task_complete structured terminator — touches: crates/ferric-loop/src/{terminator.rs,run.rs}

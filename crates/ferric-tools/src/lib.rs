@@ -8,5 +8,5 @@ mod registry;
 mod spec;
 
 pub use builtin::register_builtin_tools;
-pub use registry::{DEFAULT_TRUNCATION_LIMIT, ExecuteOutcome, Registry, ToolOutput};
+pub use registry::{CheckRecord, DEFAULT_TRUNCATION_LIMIT, ExecuteOutcome, Registry, ToolOutput};
 pub use spec::{Tool, ToolCtx, ToolSpec};

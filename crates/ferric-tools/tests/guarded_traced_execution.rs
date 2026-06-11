@@ -45,6 +45,7 @@ fn guarded_traced_execution() {
             ExecuteOutcome::Completed {
                 output,
                 duration_ms,
+                ..
             } => {
                 sink.write_event(Event::ToolResult {
                     id,
@@ -68,7 +69,7 @@ fn guarded_traced_execution() {
     })
     .unwrap();
     match registry.execute(&workspace, "write_file", &denied_args) {
-        ExecuteOutcome::Denied { reason } => {
+        ExecuteOutcome::Denied { reason, .. } => {
             sink.write_event(Event::ToolResult {
                 id: "tc-deny".to_string(),
                 name: "write_file".to_string(),

@@ -3,8 +3,10 @@
 //! never consulted.
 
 /// Path segments that are never writable, at any permission level.
-/// `.git` covers config/hooks injection; the rest are credential stores.
-pub const DENIED_WRITE_SEGMENTS: &[&str] = &[".git", ".ssh", ".gnupg", ".aws", ".kube", ".gpg"];
+/// `.git` covers config/hooks injection; `.ferric` protects the trace from
+/// the model that is being traced; the rest are credential stores.
+pub const DENIED_WRITE_SEGMENTS: &[&str] =
+    &[".git", ".ferric", ".ssh", ".gnupg", ".aws", ".kube", ".gpg"];
 
 /// File names that are never writable, wherever they live.
 pub const DENIED_WRITE_FILES: &[&str] = &[

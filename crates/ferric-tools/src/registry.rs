@@ -19,16 +19,50 @@ pub struct ToolOutput {
     pub is_error: bool,
 }
 
+/// One guard decision made at the chokepoint, kept so the loop can trace
+/// exactly what was checked and why. `rule`/`matched` are set on denials.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckRecord {
+    pub path: std::path::PathBuf,
+    /// "allow" | "deny"
+    pub decision: String,
+    pub rule: Option<String>,
+    pub matched: Option<String>,
+}
+
+impl CheckRecord {
+    fn allow(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            decision: "allow".to_string(),
+            rule: None,
+            matched: None,
+        }
+    }
+
+    fn deny(path: std::path::PathBuf, rule: &str, matched: impl Into<String>) -> Self {
+        Self {
+            path,
+            decision: "deny".to_string(),
+            rule: Some(rule.to_string()),
+            matched: Some(matched.into()),
+        }
+    }
+}
+
 /// The outcome of `Registry::execute`. A `Denied` outcome means the tool
-/// handler never ran.
+/// handler never ran. Both terminal variants carry the guard's per-target
+/// `CheckRecord`s for tracing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecuteOutcome {
     Completed {
         output: ToolOutput,
         duration_ms: u64,
+        checks: Vec<CheckRecord>,
     },
     Denied {
         reason: String,
+        checks: Vec<CheckRecord>,
     },
     UnknownTool {
         name: String,
@@ -87,20 +121,27 @@ impl Registry {
         };
         let spec = tool.spec();
 
+        let mut checks = Vec::new();
         for target in tool.target_paths(args) {
             let resolved = match workspace.resolve(&target) {
                 Ok(path) => path,
                 Err(e) => {
+                    checks.push(CheckRecord::deny(target.into(), "boundary", e.to_string()));
                     return ExecuteOutcome::Denied {
                         reason: format!("boundary: {e}"),
+                        checks,
                     };
                 }
             };
             if let Decision::Deny(reason) = check(spec.permission, &resolved) {
+                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
+                checks.push(CheckRecord::deny(resolved, reason.rule, reason.matched));
                 return ExecuteOutcome::Denied {
-                    reason: format!("permission: {} matched {}", reason.rule, reason.matched),
+                    reason: detail,
+                    checks,
                 };
             }
+            checks.push(CheckRecord::allow(resolved));
         }
 
         let ctx = ToolCtx { workspace };
@@ -120,6 +161,7 @@ impl Registry {
                 is_error,
             },
             duration_ms,
+            checks,
         }
     }
 }
@@ -203,10 +245,64 @@ mod tests {
 
         let outcome = registry.execute(&ws, "writer", &json!({"path": ".git/config"}));
         assert!(
-            matches!(outcome, ExecuteOutcome::Denied { ref reason } if reason.contains(".git")),
+            matches!(outcome, ExecuteOutcome::Denied { ref reason, .. } if reason.contains(".git")),
             "expected Denied, got {outcome:?}"
         );
         assert!(!ran.load(Ordering::SeqCst), "handler must not run on deny");
+    }
+
+    #[test]
+    fn check_records_on_allow() {
+        let (_dir, ws) = temp_workspace();
+        let (tool, _) = dummy("writer", PermissionLevel::Write, 4);
+        let mut registry = Registry::new();
+        registry.register(Box::new(tool));
+
+        match registry.execute(&ws, "writer", &json!({"path": "notes.md"})) {
+            ExecuteOutcome::Completed { checks, .. } => {
+                assert_eq!(checks.len(), 1);
+                assert_eq!(checks[0].decision, "allow");
+                assert!(checks[0].rule.is_none());
+                assert!(checks[0].path.ends_with("notes.md"));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_records_on_deny() {
+        let (_dir, ws) = temp_workspace();
+        let (tool, _) = dummy("writer", PermissionLevel::Write, 4);
+        let mut registry = Registry::new();
+        registry.register(Box::new(tool));
+
+        match registry.execute(&ws, "writer", &json!({"path": ".git/config"})) {
+            ExecuteOutcome::Denied { checks, .. } => {
+                assert_eq!(checks.len(), 1);
+                assert_eq!(checks[0].decision, "deny");
+                assert_eq!(checks[0].rule.as_deref(), Some("denied_write_segment"));
+                assert_eq!(checks[0].matched.as_deref(), Some(".git"));
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ferric_dir_write_denied() {
+        let (_dir, ws) = temp_workspace();
+        let (tool, ran) = dummy("writer", PermissionLevel::Write, 4);
+        let mut registry = Registry::new();
+        registry.register(Box::new(tool));
+
+        let outcome = registry.execute(&ws, "writer", &json!({"path": ".ferric/trace/x.jsonl"}));
+        match outcome {
+            ExecuteOutcome::Denied { checks, .. } => {
+                assert_eq!(checks[0].rule.as_deref(), Some("denied_write_segment"));
+                assert_eq!(checks[0].matched.as_deref(), Some(".ferric"));
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
+        assert!(!ran.load(Ordering::SeqCst));
     }
 
     #[test]

@@ -110,6 +110,7 @@ fn mock_loop_skeleton() {
                 ExecuteOutcome::Completed {
                     output,
                     duration_ms,
+                    ..
                 } => {
                     sink.write_event(Event::ToolResult {
                         id: call.id.clone(),

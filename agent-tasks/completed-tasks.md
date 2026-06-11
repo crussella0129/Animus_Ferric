@@ -82,4 +82,10 @@
 - **Description:** Extend trace vocabulary with TurnStart, TurnEnd (completion text + token counts), PromptAssembled, ConstraintApplied, RepetitionGuard, PermissionCheck; trace cat render arms; s0-format compatibility test.
 - **Completed:** 2026-06-11T02:30:00Z
 - **Files modified:** crates/ferric-trace/src/event.rs, crates/ferric-trace/src/lib.rs, crates/ferric-cli/src/main.rs
-- **Commit:** (see git log for T-101)
+- **Commit:** 4ab0a0f
+
+## T-102 (sprint 1)
+- **Description:** Registry chokepoint surfaces per-target CheckRecords on Completed/Denied; `.ferric` added to denied write segments (trace self-protection).
+- **Completed:** 2026-06-11T02:45:00Z
+- **Files modified:** crates/ferric-tools/src/registry.rs, crates/ferric-tools/src/lib.rs, crates/ferric-guard/src/denylist.rs, crates/ferric-tools/tests/guarded_traced_execution.rs, crates/ferric-provider/tests/mock_loop_skeleton.rs
+- **Commit:** (see git log for T-102)
