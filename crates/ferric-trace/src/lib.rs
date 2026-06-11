@@ -22,6 +22,32 @@ mod tests {
             Event::SessionStart {
                 workspace: "/tmp/ws".to_string(),
             },
+            Event::TurnStart { turn: 0 },
+            Event::PromptAssembled {
+                turn: 0,
+                message_count: 2,
+                chars: 512,
+                offered_tools: vec!["read_file".to_string(), "task_complete".to_string()],
+            },
+            Event::ConstraintApplied {
+                kind: "json_schema".to_string(),
+            },
+            Event::TurnEnd {
+                turn: 0,
+                text: Some("reading".to_string()),
+                tool_call_count: 1,
+                input_tokens: Some(50),
+                output_tokens: Some(12),
+            },
+            Event::RepetitionGuard {
+                action: "warned".to_string(),
+            },
+            Event::PermissionCheck {
+                path: "src/main.rs".to_string(),
+                decision: "allow".to_string(),
+                rule: None,
+                matched: None,
+            },
             Event::ToolCall {
                 id: "tc-1".to_string(),
                 name: "read_file".to_string(),
@@ -113,6 +139,48 @@ mod tests {
             .map(|r| r.unwrap().seq)
             .collect();
         assert_eq!(seqs, (0..100).collect::<Vec<u64>>());
+    }
+
+    #[test]
+    fn s0_trace_still_parses() {
+        // A fixture in the exact s0 wire format (pre-s1 event set only) must
+        // keep parsing as Known events forever.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s0.jsonl");
+        let s0_lines = [
+            r#"{"v":1,"ts_ms":1,"session":"s0","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#,
+            r#"{"v":1,"ts_ms":2,"session":"s0","seq":1,"event":{"type":"tool_call","id":"tc-1","name":"read_file","args":{"path":"a.txt"}}}"#,
+            r#"{"v":1,"ts_ms":3,"session":"s0","seq":2,"event":{"type":"tool_result","id":"tc-1","name":"read_file","output":"x","is_error":false,"duration_ms":1}}"#,
+            r#"{"v":1,"ts_ms":4,"session":"s0","seq":3,"event":{"type":"note","text":"n"}}"#,
+            r#"{"v":1,"ts_ms":5,"session":"s0","seq":4,"event":{"type":"session_end","reason":"done"}}"#,
+        ];
+        std::fs::write(&path, s0_lines.join("\n")).unwrap();
+        let records: Vec<_> = TraceReader::open(&path)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(records.len(), 5);
+        assert!(
+            records
+                .iter()
+                .all(|r| matches!(r.event, ParsedEvent::Known(_))),
+            "every s0 event must still parse as Known"
+        );
+    }
+
+    #[test]
+    fn turn_end_carries_completion() {
+        let event = Event::TurnEnd {
+            turn: 3,
+            text: Some("the answer".to_string()),
+            tool_call_count: 0,
+            input_tokens: Some(120),
+            output_tokens: Some(8),
+        };
+        let encoded = serde_json::to_string(&event).unwrap();
+        let decoded: Event = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(event, decoded);
+        assert!(encoded.contains("the answer"));
     }
 
     #[test]

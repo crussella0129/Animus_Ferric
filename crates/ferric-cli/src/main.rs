@@ -77,6 +77,56 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             };
             format!("tool result {name} [{id}] {status} {duration_ms}ms: {preview}{ellipsis}")
         }
+        ParsedEvent::Known(Event::TurnStart { turn }) => format!("turn {turn} start"),
+        ParsedEvent::Known(Event::TurnEnd {
+            turn,
+            text,
+            tool_call_count,
+            input_tokens,
+            output_tokens,
+        }) => {
+            let preview = match text {
+                Some(t) => {
+                    let p: String = t.chars().take(80).collect();
+                    let ellipsis = if t.chars().count() > 80 { "…" } else { "" };
+                    format!(" text: {p}{ellipsis}")
+                }
+                None => String::new(),
+            };
+            format!(
+                "turn {turn} end ({tool_call_count} tool calls, tokens in/out {}/{}){preview}",
+                input_tokens.map_or("?".to_string(), |t| t.to_string()),
+                output_tokens.map_or("?".to_string(), |t| t.to_string()),
+            )
+        }
+        ParsedEvent::Known(Event::PromptAssembled {
+            turn,
+            message_count,
+            chars,
+            offered_tools,
+        }) => format!(
+            "turn {turn} prompt assembled: {message_count} messages, {chars} chars, tools [{}]",
+            offered_tools.join(", ")
+        ),
+        ParsedEvent::Known(Event::ConstraintApplied { kind }) => {
+            format!("constraint applied: {kind}")
+        }
+        ParsedEvent::Known(Event::RepetitionGuard { action }) => {
+            format!("repetition guard: {action}")
+        }
+        ParsedEvent::Known(Event::PermissionCheck {
+            path,
+            decision,
+            rule,
+            matched,
+        }) => {
+            let detail = match (rule, matched) {
+                (Some(rule), Some(matched)) => format!(" ({rule}: {matched})"),
+                (Some(rule), None) => format!(" ({rule})"),
+                _ => String::new(),
+            };
+            format!("permission {decision}: {path}{detail}")
+        }
         ParsedEvent::Known(Event::Note { text }) => format!("note: {text}"),
         ParsedEvent::Unknown(raw) => {
             let kind = raw

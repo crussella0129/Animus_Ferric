@@ -16,9 +16,9 @@ pub struct TraceEvent {
     pub event: Event,
 }
 
-/// The s0 event vocabulary — deliberately minimal. Prompt-assembly and
-/// grammar-state events are *reserved names* to be defined in s1 when real
-/// content exists; readers already tolerate them via `ParsedEvent::Unknown`.
+/// The trace event vocabulary. s0 shipped the session/tool events; s1 added
+/// the turn-level loop events. Readers tolerate unknown variants via
+/// `ParsedEvent::Unknown`, so this enum grows additively (ADR-002).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -27,6 +27,43 @@ pub enum Event {
     },
     SessionEnd {
         reason: String,
+    },
+    TurnStart {
+        turn: u32,
+    },
+    /// Closes the s0 gap where assistant text was never traced: every turn's
+    /// completion is recorded, including the text of non-final turns.
+    TurnEnd {
+        turn: u32,
+        text: Option<String>,
+        tool_call_count: u32,
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+    },
+    /// What was about to be sent to the provider: size, shape, and which
+    /// tools were on offer.
+    PromptAssembled {
+        turn: u32,
+        message_count: u32,
+        chars: u64,
+        offered_tools: Vec<String>,
+    },
+    /// A decoding constraint was attached to the request (`kind` names the
+    /// Constraint variant, e.g. "json_schema").
+    ConstraintApplied {
+        kind: String,
+    },
+    /// The repetition guard fired. `action` is "warned" or "stopped".
+    RepetitionGuard {
+        action: String,
+    },
+    /// A guard decision made at the tool-dispatch chokepoint. `rule` and
+    /// `matched` are present on denials.
+    PermissionCheck {
+        path: String,
+        decision: String,
+        rule: Option<String>,
+        matched: Option<String>,
     },
     ToolCall {
         id: String,

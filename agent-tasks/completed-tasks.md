@@ -76,4 +76,10 @@
 - **Description:** Create the public GitHub repo crussella0129/Animus_Ferric and push main; CI run 27301488990 conclusion=success on head 93a4659 (verified via gh run list).
 - **Completed:** 2026-06-10T19:50:00Z
 - **Files modified:** git remote config only
-- **Commit:** (ledger close-out commit)
+- **Commit:** 2a55547
+
+## T-101 (sprint 1)
+- **Description:** Extend trace vocabulary with TurnStart, TurnEnd (completion text + token counts), PromptAssembled, ConstraintApplied, RepetitionGuard, PermissionCheck; trace cat render arms; s0-format compatibility test.
+- **Completed:** 2026-06-11T02:30:00Z
+- **Files modified:** crates/ferric-trace/src/event.rs, crates/ferric-trace/src/lib.rs, crates/ferric-cli/src/main.rs
+- **Commit:** (see git log for T-101)

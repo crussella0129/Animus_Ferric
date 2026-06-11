@@ -1,5 +1,18 @@
 # Agent Tasks (Persistent Backlog)
 
+- [ ] T-102 (sprint 1): Registry surfaces CheckRecords; deny writes under .ferric — touches: crates/ferric-tools/src/registry.rs, crates/ferric-guard/src/denylist.rs
+- [ ] T-103 (sprint 1): CompletionRequest::validate() + ProviderError::RetryableBackend + is_retryable() — touches: crates/ferric-provider/src/types.rs
+- [ ] T-104 (sprint 1): ferric-loop crate core turn loop — touches: Cargo.toml, crates/ferric-loop/*
+- [ ] T-105 (sprint 1): task_complete structured terminator — touches: crates/ferric-loop/src/{terminator.rs,run.rs}
+- [ ] T-106 (sprint 1): hash-ALL-calls repetition guard — touches: crates/ferric-loop/src/{repetition.rs,run.rs}
+- [ ] T-107 (sprint 1): exponential backoff on retryable errors — touches: crates/ferric-loop/src/{backoff.rs,run.rs}
+- [ ] T-108 (sprint 1): workspace deps + backend-mistralrs feature + CI backend-check job — touches: Cargo.toml, crates/ferric-{provider,cli}/Cargo.toml, .github/workflows/ci.yml
+- [ ] T-109 (sprint 1): MistralRsProvider (feature-gated) — touches: crates/ferric-provider/src/mistralrs.rs, lib.rs
+- [ ] T-110 (sprint 1): CLI graduates to clap (trace cat byte-identical) — touches: crates/ferric-cli/src/*
+- [ ] T-111 (sprint 1): ferric query subcommand (--mock + real path) — touches: crates/ferric-cli/src/{main.rs,query.rs}
+- [ ] T-112 (sprint 1): L0 smoke E2E (#[ignore], feature-gated, env-driven) — touches: crates/ferric-cli/tests/l0_smoke.rs
+- [ ] T-113 (sprint 1): ADR-010..014 + backlog roadmap rewrite — touches: decisions.md, agent-tasks/
+
 ## Deferred lineage fixes (from sprint 0 Lineage-Fix Ledger — must not evaporate)
 - [ ] (s1) Hash-ALL-calls repetition guard in the agent loop (Prion #5)
 - [ ] (s1) Structured terminator (task_complete) wired into constraint grammar (Animus)
