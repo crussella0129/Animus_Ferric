@@ -1,0 +1,116 @@
+//! `ferric trace cat` — the DERIVED human view of a JSONL trace. The JSONL
+//! file is canonical (ADR-002); rendering must never fail on unknown events.
+
+use std::path::Path;
+use std::process::ExitCode;
+
+use ferric_trace::{Event, ParsedEvent, TraceReader};
+
+pub fn trace_cat(path: &Path) -> ExitCode {
+    let reader = match TraceReader::open(path) {
+        Ok(reader) => reader,
+        Err(e) => {
+            eprintln!("cannot open {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    for record in reader {
+        match record {
+            Ok(record) => println!("{}", render(&record.session, record.seq, &record.event)),
+            Err(e) => {
+                eprintln!("bad trace line: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
+    let body = match event {
+        ParsedEvent::Known(Event::SessionStart { workspace }) => {
+            format!("session start (workspace: {workspace})")
+        }
+        ParsedEvent::Known(Event::SessionEnd { reason }) => {
+            format!("session end ({reason})")
+        }
+        ParsedEvent::Known(Event::ToolCall { id, name, args }) => {
+            format!("tool call {name} [{id}] args={args}")
+        }
+        ParsedEvent::Known(Event::ToolResult {
+            id,
+            name,
+            output,
+            is_error,
+            duration_ms,
+        }) => {
+            let status = if *is_error { "ERROR" } else { "ok" };
+            let preview: String = output.chars().take(120).collect();
+            let ellipsis = if output.chars().count() > 120 {
+                "…"
+            } else {
+                ""
+            };
+            format!("tool result {name} [{id}] {status} {duration_ms}ms: {preview}{ellipsis}")
+        }
+        ParsedEvent::Known(Event::TurnStart { turn }) => format!("turn {turn} start"),
+        ParsedEvent::Known(Event::TurnEnd {
+            turn,
+            text,
+            tool_call_count,
+            input_tokens,
+            output_tokens,
+        }) => {
+            let preview = match text {
+                Some(t) => {
+                    let p: String = t.chars().take(80).collect();
+                    let ellipsis = if t.chars().count() > 80 { "…" } else { "" };
+                    format!(" text: {p}{ellipsis}")
+                }
+                None => String::new(),
+            };
+            format!(
+                "turn {turn} end ({tool_call_count} tool calls, tokens in/out {}/{}){preview}",
+                input_tokens.map_or("?".to_string(), |t| t.to_string()),
+                output_tokens.map_or("?".to_string(), |t| t.to_string()),
+            )
+        }
+        ParsedEvent::Known(Event::PromptAssembled {
+            turn,
+            message_count,
+            chars,
+            offered_tools,
+        }) => format!(
+            "turn {turn} prompt assembled: {message_count} messages, {chars} chars, tools [{}]",
+            offered_tools.join(", ")
+        ),
+        ParsedEvent::Known(Event::ConstraintApplied { kind }) => {
+            format!("constraint applied: {kind}")
+        }
+        ParsedEvent::Known(Event::RepetitionGuard { action }) => {
+            format!("repetition guard: {action}")
+        }
+        ParsedEvent::Known(Event::PermissionCheck {
+            path,
+            decision,
+            rule,
+            matched,
+        }) => {
+            let detail = match (rule, matched) {
+                (Some(rule), Some(matched)) => format!(" ({rule}: {matched})"),
+                (Some(rule), None) => format!(" ({rule})"),
+                _ => String::new(),
+            };
+            format!("permission {decision}: {path}{detail}")
+        }
+        ParsedEvent::Known(Event::Note { text }) => format!("note: {text}"),
+        ParsedEvent::Unknown(raw) => {
+            let kind = raw
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("<untyped>");
+            format!("[unknown event: {kind}]")
+        }
+    };
+    format!("{session}#{seq:<4} {body}")
+}

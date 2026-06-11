@@ -39,5 +39,13 @@ fn no_args_fails_with_usage() {
     let out = ferric().output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stderr.contains("usage:"));
+    assert!(stderr.to_lowercase().contains("usage:"));
+}
+
+#[test]
+fn unknown_args_fail_with_usage() {
+    let out = ferric().arg("frobnicate").output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.to_lowercase().contains("usage") || stderr.contains("unrecognized"));
 }

@@ -118,4 +118,16 @@
 - **Description:** Backoff EARS tests via a FlakyProvider (schedule 250/500/1000, exhaustion → provider_error, non-retryable aborts with zero sleeps). Implementation landed in T-104's scaffold (backoff.rs).
 - **Completed:** 2026-06-11T04:10:00Z
 - **Files modified:** crates/ferric-loop/tests/backoff_tests.rs, crates/ferric-loop/Cargo.toml
-- **Commit:** (see git log for T-107)
+- **Commit:** 52fd398
+
+## T-108 (sprint 1)
+- **Description:** Workspace deps (mistralrs =0.8.1 feature-gated, tokio feature-gated, clap unconditional) + backend-mistralrs features in provider/cli + CI backend-check job. Verified: default graph contains zero mistralrs/tokio, aarch64 check green, feature-gated clippy compiled mistralrs clean on Windows (exit 0).
+- **Completed:** 2026-06-11T04:40:00Z
+- **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-provider/{Cargo.toml,src/lib.rs,src/mistralrs.rs}, crates/ferric-cli/Cargo.toml, .github/workflows/ci.yml
+- **Commit:** 0672f43
+
+## T-110 (sprint 1)
+- **Description:** CLI graduated to clap derive (query flags defined, handler stubbed to T-111; trace cat rendering preserved; usage errors exit non-zero).
+- **Completed:** 2026-06-11T04:45:00Z
+- **Files modified:** crates/ferric-cli/src/{main.rs,query.rs,trace_cmd.rs}, crates/ferric-cli/tests/cli.rs
+- **Commit:** (see git log for T-110)

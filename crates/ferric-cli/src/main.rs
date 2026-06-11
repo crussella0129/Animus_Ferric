@@ -1,140 +1,51 @@
-//! The `ferric` binary. s0 surface: `--version` and `trace cat <file.jsonl>`.
-//!
-//! The trace rendering here is a DERIVED view; the JSONL file is canonical
-//! (ADR-002). Arg parsing is std-only — clap arrives when the CLI grows.
+//! The `ferric` binary. Surfaces (ADR-011 — no chat catch-all):
+//! - `ferric query "<prompt>"` — one-shot, workspace-scoped, policy-scaled,
+//!   fully traced (T-111).
+//! - `ferric trace cat <file>` — derived view of a JSONL trace.
+//! - `ferric dev` — reserved for the Development Engine (s4–s7).
 
+mod query;
+mod trace_cmd;
+
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use ferric_trace::{Event, ParsedEvent, TraceReader};
+use clap::{Parser, Subcommand};
 
-const USAGE: &str = "usage:
-  ferric --version
-  ferric trace cat <file.jsonl>";
+#[derive(Parser)]
+#[command(
+    name = "ferric",
+    version,
+    about = "Animus Ferric: a local-first agentic coding harness for small models"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run a one-shot, workspace-scoped query against a local model
+    Query(query::QueryArgs),
+    /// Inspect session traces
+    Trace {
+        #[command(subcommand)]
+        command: TraceCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum TraceCommand {
+    /// Render a JSONL trace as a human-readable log
+    Cat { file: PathBuf },
+}
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-        ["--version" | "-V"] => {
-            println!("ferric {}", env!("CARGO_PKG_VERSION"));
-            ExitCode::SUCCESS
-        }
-        ["trace", "cat", path] => trace_cat(path),
-        [] => {
-            eprintln!("{USAGE}");
-            ExitCode::FAILURE
-        }
-        _ => {
-            eprintln!("unrecognized arguments: {}\n{USAGE}", args.join(" "));
-            ExitCode::FAILURE
-        }
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Query(args) => query::run_query(args),
+        Command::Trace {
+            command: TraceCommand::Cat { file },
+        } => trace_cmd::trace_cat(&file),
     }
-}
-
-fn trace_cat(path: &str) -> ExitCode {
-    let reader = match TraceReader::open(path) {
-        Ok(reader) => reader,
-        Err(e) => {
-            eprintln!("cannot open {path}: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    for record in reader {
-        match record {
-            Ok(record) => println!("{}", render(&record.session, record.seq, &record.event)),
-            Err(e) => {
-                eprintln!("bad trace line: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-    }
-    ExitCode::SUCCESS
-}
-
-fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
-    let body = match event {
-        ParsedEvent::Known(Event::SessionStart { workspace }) => {
-            format!("session start (workspace: {workspace})")
-        }
-        ParsedEvent::Known(Event::SessionEnd { reason }) => {
-            format!("session end ({reason})")
-        }
-        ParsedEvent::Known(Event::ToolCall { id, name, args }) => {
-            format!("tool call {name} [{id}] args={args}")
-        }
-        ParsedEvent::Known(Event::ToolResult {
-            id,
-            name,
-            output,
-            is_error,
-            duration_ms,
-        }) => {
-            let status = if *is_error { "ERROR" } else { "ok" };
-            let preview: String = output.chars().take(120).collect();
-            let ellipsis = if output.chars().count() > 120 {
-                "…"
-            } else {
-                ""
-            };
-            format!("tool result {name} [{id}] {status} {duration_ms}ms: {preview}{ellipsis}")
-        }
-        ParsedEvent::Known(Event::TurnStart { turn }) => format!("turn {turn} start"),
-        ParsedEvent::Known(Event::TurnEnd {
-            turn,
-            text,
-            tool_call_count,
-            input_tokens,
-            output_tokens,
-        }) => {
-            let preview = match text {
-                Some(t) => {
-                    let p: String = t.chars().take(80).collect();
-                    let ellipsis = if t.chars().count() > 80 { "…" } else { "" };
-                    format!(" text: {p}{ellipsis}")
-                }
-                None => String::new(),
-            };
-            format!(
-                "turn {turn} end ({tool_call_count} tool calls, tokens in/out {}/{}){preview}",
-                input_tokens.map_or("?".to_string(), |t| t.to_string()),
-                output_tokens.map_or("?".to_string(), |t| t.to_string()),
-            )
-        }
-        ParsedEvent::Known(Event::PromptAssembled {
-            turn,
-            message_count,
-            chars,
-            offered_tools,
-        }) => format!(
-            "turn {turn} prompt assembled: {message_count} messages, {chars} chars, tools [{}]",
-            offered_tools.join(", ")
-        ),
-        ParsedEvent::Known(Event::ConstraintApplied { kind }) => {
-            format!("constraint applied: {kind}")
-        }
-        ParsedEvent::Known(Event::RepetitionGuard { action }) => {
-            format!("repetition guard: {action}")
-        }
-        ParsedEvent::Known(Event::PermissionCheck {
-            path,
-            decision,
-            rule,
-            matched,
-        }) => {
-            let detail = match (rule, matched) {
-                (Some(rule), Some(matched)) => format!(" ({rule}: {matched})"),
-                (Some(rule), None) => format!(" ({rule})"),
-                _ => String::new(),
-            };
-            format!("permission {decision}: {path}{detail}")
-        }
-        ParsedEvent::Known(Event::Note { text }) => format!("note: {text}"),
-        ParsedEvent::Unknown(raw) => {
-            let kind = raw
-                .get("type")
-                .and_then(|t| t.as_str())
-                .unwrap_or("<untyped>");
-            format!("[unknown event: {kind}]")
-        }
-    };
-    format!("{session}#{seq:<4} {body}")
 }
