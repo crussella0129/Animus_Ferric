@@ -16,14 +16,17 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/crussella0129/Animus_Ferric"
 
-# s0 dependency allowlist (ADR-004): serde, serde_json, thiserror, async-trait,
-# plus tempfile/futures-executor as dev-dependencies only. Nothing else lands
-# until the sprint that needs it; everything must cross-compile to aarch64.
+# Dependency allowlist (ADR-004, amended s1): the s0 set plus — clap (the CLI
+# surface is real now), and feature-gated mistralrs + tokio (default OFF: the
+# default workspace build and the aarch64 check gate never compile them).
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 async-trait = "0.1"
+clap = { version = "4", features = ["derive"] }
+mistralrs = "=0.8.1"
+tokio = { version = "1", features = ["rt-multi-thread"] }
 tempfile = "3"
 futures-executor = "0.3"
 

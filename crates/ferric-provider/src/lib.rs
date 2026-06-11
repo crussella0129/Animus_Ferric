@@ -5,6 +5,8 @@
 //! real-GGUF validation policy (ADR-009), any change touching this crate from
 //! s1 onward requires a real-model run before merge.
 
+#[cfg(feature = "backend-mistralrs")]
+pub mod mistralrs;
 mod mock;
 mod traits;
 mod types;
