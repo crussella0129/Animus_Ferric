@@ -84,6 +84,7 @@ dependencies = [
 name = "ferric-loop"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "ferric-core",
  "ferric-guard",
  "ferric-provider",

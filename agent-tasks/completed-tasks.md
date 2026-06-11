@@ -112,4 +112,10 @@
 - **Description:** Repetition guard EARS tests (warn → nudge visible to model → stop on third identical set; reset on any change; order change is not a repeat). Implementation landed in T-104's scaffold (repetition.rs).
 - **Completed:** 2026-06-11T04:00:00Z
 - **Files modified:** crates/ferric-loop/tests/repetition_tests.rs
-- **Commit:** (see git log for T-106)
+- **Commit:** 0954168
+
+## T-107 (sprint 1)
+- **Description:** Backoff EARS tests via a FlakyProvider (schedule 250/500/1000, exhaustion → provider_error, non-retryable aborts with zero sleeps). Implementation landed in T-104's scaffold (backoff.rs).
+- **Completed:** 2026-06-11T04:10:00Z
+- **Files modified:** crates/ferric-loop/tests/backoff_tests.rs, crates/ferric-loop/Cargo.toml
+- **Commit:** (see git log for T-107)

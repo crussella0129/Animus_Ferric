@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-107 (sprint 1): exponential backoff on retryable errors — touches: crates/ferric-loop/src/{backoff.rs,run.rs}
 - [ ] T-108 (sprint 1): workspace deps + backend-mistralrs feature + CI backend-check job — touches: Cargo.toml, crates/ferric-{provider,cli}/Cargo.toml, .github/workflows/ci.yml
 - [ ] T-109 (sprint 1): MistralRsProvider (feature-gated) — touches: crates/ferric-provider/src/mistralrs.rs, lib.rs
 - [ ] T-110 (sprint 1): CLI graduates to clap (trace cat byte-identical) — touches: crates/ferric-cli/src/*
