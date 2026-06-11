@@ -130,4 +130,10 @@
 - **Description:** CLI graduated to clap derive (query flags defined, handler stubbed to T-111; trace cat rendering preserved; usage errors exit non-zero).
 - **Completed:** 2026-06-11T04:45:00Z
 - **Files modified:** crates/ferric-cli/src/{main.rs,query.rs,trace_cmd.rs}, crates/ferric-cli/tests/cli.rs
-- **Commit:** (see git log for T-110)
+- **Commit:** f5a5ad0
+
+## T-109 (sprint 1)
+- **Description:** MistralRsProvider (feature-gated): GgufModelBuilder local-dir loading (TokenSource::None, force_cpu, max_num_seqs=2), 1:1 Constraint mapping, native tool calling (ToolChoice::Auto; 0.8.1 has no strict field — drift noted in module docs), usage→token counts, transient/permanent error classification, all mapping in model-free-tested free functions.
+- **Completed:** 2026-06-11T05:20:00Z
+- **Files modified:** crates/ferric-provider/src/mistralrs.rs
+- **Commit:** (see git log for T-109)
