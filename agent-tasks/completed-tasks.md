@@ -136,4 +136,10 @@
 - **Description:** MistralRsProvider (feature-gated): GgufModelBuilder local-dir loading (TokenSource::None, force_cpu, max_num_seqs=2), 1:1 Constraint mapping, native tool calling (ToolChoice::Auto; 0.8.1 has no strict field — drift noted in module docs), usage→token counts, transient/permanent error classification, all mapping in model-free-tested free functions.
 - **Completed:** 2026-06-11T05:20:00Z
 - **Files modified:** crates/ferric-provider/src/mistralrs.rs
-- **Commit:** (see git log for T-109)
+- **Commit:** 68a997f
+
+## T-111 (sprint 1)
+- **Description:** ferric query: ModelProfile from flags → policy → loop → stdout + .ferric/trace/<session>.jsonl; --mock path on futures-executor (write_file + task_complete script through the real guard/registry); real path on tokio runtime with MistralRsProvider + HF_HUB_OFFLINE; missing-feature build errors cleanly.
+- **Completed:** 2026-06-11T05:50:00Z
+- **Files modified:** crates/ferric-cli/src/query.rs, crates/ferric-cli/tests/cli.rs
+- **Commit:** (see git log for T-111)

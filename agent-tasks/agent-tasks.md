@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-111 (sprint 1): ferric query subcommand (--mock + real path) — touches: crates/ferric-cli/src/{main.rs,query.rs}
 - [ ] T-112 (sprint 1): L0 smoke E2E (#[ignore], feature-gated, env-driven) — touches: crates/ferric-cli/tests/l0_smoke.rs
 - [ ] T-113 (sprint 1): ADR-010..014 + backlog roadmap rewrite — touches: decisions.md, agent-tasks/
 
