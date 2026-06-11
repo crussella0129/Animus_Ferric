@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-103 (sprint 1): CompletionRequest::validate() + ProviderError::RetryableBackend + is_retryable() — touches: crates/ferric-provider/src/types.rs
 - [ ] T-104 (sprint 1): ferric-loop crate core turn loop — touches: Cargo.toml, crates/ferric-loop/*
 - [ ] T-105 (sprint 1): task_complete structured terminator — touches: crates/ferric-loop/src/{terminator.rs,run.rs}
 - [ ] T-106 (sprint 1): hash-ALL-calls repetition guard — touches: crates/ferric-loop/src/{repetition.rs,run.rs}

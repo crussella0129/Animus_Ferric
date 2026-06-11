@@ -88,4 +88,10 @@
 - **Description:** Registry chokepoint surfaces per-target CheckRecords on Completed/Denied; `.ferric` added to denied write segments (trace self-protection).
 - **Completed:** 2026-06-11T02:45:00Z
 - **Files modified:** crates/ferric-tools/src/registry.rs, crates/ferric-tools/src/lib.rs, crates/ferric-guard/src/denylist.rs, crates/ferric-tools/tests/guarded_traced_execution.rs, crates/ferric-provider/tests/mock_loop_skeleton.rs
-- **Commit:** (see git log for T-102)
+- **Commit:** 78aa53b
+
+## T-103 (sprint 1)
+- **Description:** CompletionRequest::validate() (ADR-010 constraint×tools exclusivity) + ProviderError::RetryableBackend variant + is_retryable().
+- **Completed:** 2026-06-11T02:55:00Z
+- **Files modified:** crates/ferric-provider/src/types.rs
+- **Commit:** (see git log for T-103)
