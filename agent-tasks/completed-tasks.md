@@ -106,4 +106,10 @@
 - **Description:** task_complete structured terminator EARS tests (terminates without dispatch, mixed-turn ordering, always offered beyond max_tools, malformed summary still terminates, loop ends after terminator). Implementation landed in T-104's scaffold (terminator.rs).
 - **Completed:** 2026-06-11T03:50:00Z
 - **Files modified:** crates/ferric-loop/tests/terminator_tests.rs, crates/ferric-loop/tests/common/mod.rs
-- **Commit:** (see git log for T-105)
+- **Commit:** 0b33b14
+
+## T-106 (sprint 1)
+- **Description:** Repetition guard EARS tests (warn → nudge visible to model → stop on third identical set; reset on any change; order change is not a repeat). Implementation landed in T-104's scaffold (repetition.rs).
+- **Completed:** 2026-06-11T04:00:00Z
+- **Files modified:** crates/ferric-loop/tests/repetition_tests.rs
+- **Commit:** (see git log for T-106)

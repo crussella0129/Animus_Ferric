@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-106 (sprint 1): hash-ALL-calls repetition guard — touches: crates/ferric-loop/src/{repetition.rs,run.rs}
 - [ ] T-107 (sprint 1): exponential backoff on retryable errors — touches: crates/ferric-loop/src/{backoff.rs,run.rs}
 - [ ] T-108 (sprint 1): workspace deps + backend-mistralrs feature + CI backend-check job — touches: Cargo.toml, crates/ferric-{provider,cli}/Cargo.toml, .github/workflows/ci.yml
 - [ ] T-109 (sprint 1): MistralRsProvider (feature-gated) — touches: crates/ferric-provider/src/mistralrs.rs, lib.rs
