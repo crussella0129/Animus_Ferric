@@ -19,11 +19,11 @@ use std::time::Instant;
 #[test]
 #[ignore = "requires a local GGUF; run with FERRIC_SMOKE_MODEL_DIR/FILE set"]
 fn l0_smoke() {
-    let model_dir = std::env::var("FERRIC_SMOKE_MODEL_DIR").expect(
-        "FERRIC_SMOKE_MODEL_DIR must point at the GGUF directory (e.g. ~/.animus/models)",
+    let model_dir = std::env::var("FERRIC_SMOKE_MODEL_DIR")
+        .expect("FERRIC_SMOKE_MODEL_DIR must point at the GGUF directory (e.g. ~/.animus/models)");
+    let model_file = std::env::var("FERRIC_SMOKE_MODEL_FILE").expect(
+        "FERRIC_SMOKE_MODEL_FILE must name the GGUF (e.g. Llama-3.2-1B-Instruct-Q4_K_M.gguf)",
     );
-    let model_file = std::env::var("FERRIC_SMOKE_MODEL_FILE")
-        .expect("FERRIC_SMOKE_MODEL_FILE must name the GGUF (e.g. Llama-3.2-1B-Instruct-Q4_K_M.gguf)");
 
     let ws = tempfile::tempdir().unwrap();
     let prompt = "Use write_file to create hello.txt containing exactly: hello ferric. \
@@ -47,7 +47,10 @@ fn l0_smoke() {
     println!("--- L0 smoke: wall={wall:?}\nstdout: {stdout}\nstderr: {stderr}");
 
     // 1. exits 0
-    assert!(out.status.success(), "process must exit 0; stderr: {stderr}");
+    assert!(
+        out.status.success(),
+        "process must exit 0; stderr: {stderr}"
+    );
 
     // 2. correct file edit (trailing-newline tolerant)
     let hello = std::fs::read_to_string(ws.path().join("hello.txt"))
@@ -112,8 +115,9 @@ fn l0_smoke() {
         "successful write_file result traced"
     );
     assert!(
-        lines.iter().any(|l| l["event"]["type"] == "permission_check"
-            && l["event"]["decision"] == "allow"),
+        lines
+            .iter()
+            .any(|l| l["event"]["type"] == "permission_check" && l["event"]["decision"] == "allow"),
         "allow permission_check traced"
     );
 
@@ -121,13 +125,10 @@ fn l0_smoke() {
     assert!(
         lines.iter().any(|l| {
             l["event"]["type"] == "prompt_assembled"
-                && l["event"]["offered_tools"]
-                    .as_array()
-                    .is_some_and(|tools| {
-                        let names: Vec<&str> =
-                            tools.iter().filter_map(|t| t.as_str()).collect();
-                        names.contains(&"write_file") && names.contains(&"task_complete")
-                    })
+                && l["event"]["offered_tools"].as_array().is_some_and(|tools| {
+                    let names: Vec<&str> = tools.iter().filter_map(|t| t.as_str()).collect();
+                    names.contains(&"write_file") && names.contains(&"task_complete")
+                })
         }),
         "prompt_assembled must list write_file and task_complete"
     );
