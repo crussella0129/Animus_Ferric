@@ -142,4 +142,16 @@
 - **Description:** ferric query: ModelProfile from flags → policy → loop → stdout + .ferric/trace/<session>.jsonl; --mock path on futures-executor (write_file + task_complete script through the real guard/registry); real path on tokio runtime with MistralRsProvider + HF_HUB_OFFLINE; missing-feature build errors cleanly.
 - **Completed:** 2026-06-11T05:50:00Z
 - **Files modified:** crates/ferric-cli/src/query.rs, crates/ferric-cli/tests/cli.rs
-- **Commit:** (see git log for T-111)
+- **Commit:** 457e493
+
+## T-112 (sprint 1)
+- **Description:** L0 smoke E2E — PASSED against real Llama-3.2-1B Q4_K_M (release profile): exit 0, hello.txt exact content, valid monotonic trace, clean final_text termination, write_file call/result/allow-check traced, tools offered, 3 turns / 223 output tokens / 116.9s wall incl. load. Finding: debug-profile inference is ~1 tok/s (37+ min single turn) — --release mandated in the test docs. Observed 1B behavior: described task_complete in prose instead of calling it (lineage failure mode, anticipated by the gate design).
+- **Completed:** 2026-06-11T20:20:00Z (local)
+- **Files modified:** crates/ferric-cli/tests/l0_smoke.rs
+- **Commit:** (see git log for T-112)
+
+## T-113 (sprint 1)
+- **Description:** ADR-010..014 recorded (constraint×tools exclusivity; no chat catch-all; MCP-stdio-first; named ownership boundaries + attestation follow-on; pinned capability roadmap + ADR-004 allowlist amendment); backlog rewritten with the s2/s3/s4–s7/s3+ roadmap, user-flagged research leads (tree-sitter rustification re-exam, ownership-graph attestation), updated lineage-fix ledger, and the s2 per-turn output-token budget finding.
+- **Completed:** 2026-06-11T20:25:00Z (local)
+- **Files modified:** decisions.md, agent-tasks/agent-tasks.md
+- **Commit:** (see git log for T-113)
