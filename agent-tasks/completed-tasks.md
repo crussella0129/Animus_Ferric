@@ -155,3 +155,15 @@
 - **Completed:** 2026-06-11T20:25:00Z (local)
 - **Files modified:** decisions.md, agent-tasks/agent-tasks.md
 - **Commit:** (see git log for T-113)
+
+## T-201 (sprint 2)
+- **Description:** Workspace members ferric-prompt + ferric-bench (stubs); oovra rev-pinned git dep; toml/regex added; serde_json preserve_order (load-bearing for grammar property order) with pinning test. Default graph verified mistralrs/tokio-free; aarch64 green.
+- **Completed:** 2026-06-12 (build phase)
+- **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-prompt/*, crates/ferric-bench/*
+- **Commit:** c79701a
+
+## T-202 (sprint 2)
+- **Description:** ActionProtocol enum (native_tools/unified_grammar) in ferric-core + RunPolicy.max_output_tokens per-tier seeds (512/768/1024/1536/2048/2048), snapshot-pinned.
+- **Completed:** 2026-06-12 (build phase)
+- **Files modified:** crates/ferric-core/src/{scale.rs,lib.rs}, crates/ferric-core/tests/tier_table_snapshot.rs
+- **Commit:** (see git log for T-202)

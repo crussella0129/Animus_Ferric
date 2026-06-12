@@ -15,6 +15,7 @@ struct Expected {
     max_turns: u8,
     max_tools: u8,
     prompt_budget_tokens: u32,
+    max_output_tokens: u32,
 }
 
 fn fleet_profile(family: &str, params_b: f32, ctx: u32) -> ModelProfile {
@@ -30,16 +31,18 @@ fn fleet_profile(family: &str, params_b: f32, ctx: u32) -> ModelProfile {
 #[rustfmt::skip]
 fn fleet_expectations() -> Vec<Expected> {
     let row = |family, params_b, ctx, tier, uses_planner, max_plan_steps,
-               max_turns_per_step, max_turns, max_tools, prompt_budget_tokens| Expected {
+               max_turns_per_step, max_turns, max_tools, prompt_budget_tokens,
+               max_output_tokens| Expected {
         family, params_b, ctx, tier, uses_planner, max_plan_steps,
         max_turns_per_step, max_turns, max_tools, prompt_budget_tokens,
+        max_output_tokens,
     };
     vec![
-        row("llama-3.2",     1.0, 4096, Tier::Nano,   true,  3, 5,  15, 6,  2_800),
-        row("qwen2.5-coder", 7.0, 4096, Tier::Small,  true,  5, 4,  20, 10, 2_867),
-        row("command-r7b",   7.0, 4096, Tier::Small,  true,  5, 4,  20, 10, 2_867),
-        row("qwen3-vl",      8.0, 4096, Tier::Small,  true,  5, 4,  20, 10, 2_867),
-        row("qwen2.5-coder", 14.0, 4096, Tier::Medium, false, 1, 25, 25, 16, 2_867),
+        row("llama-3.2",     1.0, 4096, Tier::Nano,   true,  3, 5,  15, 6,  2_800, 512),
+        row("qwen2.5-coder", 7.0, 4096, Tier::Small,  true,  5, 4,  20, 10, 2_867, 768),
+        row("command-r7b",   7.0, 4096, Tier::Small,  true,  5, 4,  20, 10, 2_867, 768),
+        row("qwen3-vl",      8.0, 4096, Tier::Small,  true,  5, 4,  20, 10, 2_867, 768),
+        row("qwen2.5-coder", 14.0, 4096, Tier::Medium, false, 1, 25, 25, 16, 2_867, 1_024),
     ]
 }
 
@@ -68,6 +71,10 @@ fn tier_table_snapshot() {
         assert_eq!(
             policy.prompt_budget_tokens, e.prompt_budget_tokens,
             "{label} prompt budget"
+        );
+        assert_eq!(
+            policy.max_output_tokens, e.max_output_tokens,
+            "{label} output budget"
         );
         assert!(
             !policy.allows_subagents,

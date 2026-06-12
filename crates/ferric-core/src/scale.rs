@@ -57,6 +57,19 @@ pub enum Protocol {
     EditFormat,
 }
 
+/// How the loop talks to the backend about actions (ADR-015).
+///
+/// `NativeTools`: tools + tool_choice set, no constraint — the backend's
+/// template-native tool format. `UnifiedGrammar`: ONE JSON-Schema constraint
+/// over the whole action space, tools empty — malformed actions become
+/// unrepresentable. The two are mutually exclusive by construction (ADR-010).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionProtocol {
+    NativeTools,
+    UnifiedGrammar,
+}
+
 /// Everything the agent loop needs to know about how to run a given model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunPolicy {
@@ -68,6 +81,9 @@ pub struct RunPolicy {
     pub max_turns: u8,
     pub max_tools: u8,
     pub prompt_budget_tokens: u32,
+    /// Per-turn generation cap (ADR-018). Caps worst-case turn wall-time and
+    /// leaves headroom over the largest expected single action (~450 tokens).
+    pub max_output_tokens: u32,
     pub allows_subagents: bool,
 }
 
@@ -103,15 +119,16 @@ fn tier_for_level(level: u8) -> Tier {
 }
 
 /// Per-tier seed row: (uses_planner, max_plan_steps, max_turns_per_step,
-/// max_turns, max_tools, prompt_budget_cap, allows_subagents).
-fn tier_row(tier: Tier) -> (bool, u8, u8, u8, u8, u32, bool) {
+/// max_turns, max_tools, prompt_budget_cap, max_output_tokens, allows_subagents).
+#[allow(clippy::type_complexity)]
+fn tier_row(tier: Tier) -> (bool, u8, u8, u8, u8, u32, u32, bool) {
     match tier {
-        Tier::Nano => (true, 3, 5, 15, 6, 2_800, false),
-        Tier::Small => (true, 5, 4, 20, 10, 5_600, false),
-        Tier::Medium => (false, 1, 25, 25, 16, 11_200, false),
-        Tier::Large => (false, 1, 40, 40, 24, 22_400, true),
-        Tier::Xl => (false, 1, 60, 60, 32, 44_800, true),
-        Tier::Ultra => (false, 1, 80, 80, 48, 89_600, true),
+        Tier::Nano => (true, 3, 5, 15, 6, 2_800, 512, false),
+        Tier::Small => (true, 5, 4, 20, 10, 5_600, 768, false),
+        Tier::Medium => (false, 1, 25, 25, 16, 11_200, 1_024, false),
+        Tier::Large => (false, 1, 40, 40, 24, 22_400, 1_536, true),
+        Tier::Xl => (false, 1, 60, 60, 32, 44_800, 2_048, true),
+        Tier::Ultra => (false, 1, 80, 80, 48, 89_600, 2_048, true),
     }
 }
 
@@ -129,6 +146,7 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
         max_turns,
         max_tools,
         budget_cap,
+        max_output_tokens,
         subagents,
     ) = tier_row(tier);
     // 70% of the context window is available as prompt budget (the rest is
@@ -143,6 +161,7 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
         max_turns,
         max_tools,
         prompt_budget_tokens,
+        max_output_tokens,
         allows_subagents: subagents,
     }
 }
@@ -198,6 +217,27 @@ mod tests {
         // Upgrade: a 1B that measurably completes L4 earns SMALL-grade agency.
         let policy = policy_for(&profile(1.0, Some(4)));
         assert_eq!(policy.tier, Tier::Small);
+    }
+
+    #[test]
+    fn action_protocol_serde() {
+        assert_eq!(
+            serde_json::to_string(&ActionProtocol::NativeTools).unwrap(),
+            r#""native_tools""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ActionProtocol::UnifiedGrammar).unwrap(),
+            r#""unified_grammar""#
+        );
+        let back: ActionProtocol = serde_json::from_str(r#""unified_grammar""#).unwrap();
+        assert_eq!(back, ActionProtocol::UnifiedGrammar);
+    }
+
+    #[test]
+    fn max_output_tokens_per_tier() {
+        assert_eq!(policy_for(&profile(1.0, None)).max_output_tokens, 512);
+        assert_eq!(policy_for(&profile(7.0, None)).max_output_tokens, 768);
+        assert_eq!(policy_for(&profile(14.0, None)).max_output_tokens, 1_024);
     }
 
     #[test]
