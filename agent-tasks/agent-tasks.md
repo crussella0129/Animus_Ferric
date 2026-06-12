@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-203 (sprint 2): PolicySelected + PromptComposed trace events — touches: crates/ferric-trace/src/event.rs, crates/ferric-cli/src/trace_cmd.rs
 - [ ] T-204 (sprint 2): Completion.truncated from finish_reason — touches: crates/ferric-provider/src/{types,mistralrs,mock}.rs
 - [ ] T-205 (sprint 2): move_path + make_dir tools — touches: crates/ferric-tools/src/builtin/
 - [ ] T-206 (sprint 2): grammar module (action_schema + parse_action) — touches: crates/ferric-loop/src/grammar.rs

@@ -150,6 +150,8 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
         .map(|r| match &r.event {
             ParsedEvent::Known(Event::SessionStart { .. }) => "session_start",
             ParsedEvent::Known(Event::SessionEnd { .. }) => "session_end",
+            ParsedEvent::Known(Event::PolicySelected { .. }) => "policy_selected",
+            ParsedEvent::Known(Event::PromptComposed { .. }) => "prompt_composed",
             ParsedEvent::Known(Event::TurnStart { .. }) => "turn_start",
             ParsedEvent::Known(Event::TurnEnd { .. }) => "turn_end",
             ParsedEvent::Known(Event::PromptAssembled { .. }) => "prompt_assembled",

@@ -53,6 +53,28 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             };
             format!("tool result {name} [{id}] {status} {duration_ms}ms: {preview}{ellipsis}")
         }
+        ParsedEvent::Known(Event::PolicySelected {
+            tier,
+            protocol,
+            max_turns,
+            max_tools,
+            prompt_budget_tokens,
+            max_output_tokens,
+        }) => format!(
+            "policy selected: {tier:?}/{protocol:?} (turns {max_turns}, tools {max_tools}, prompt budget {prompt_budget_tokens}, output budget {max_output_tokens})"
+        ),
+        ParsedEvent::Known(Event::PromptComposed {
+            output_id,
+            output_version,
+            composed_of,
+        }) => format!(
+            "prompt composed: {output_id} v{output_version} from [{}]",
+            composed_of
+                .iter()
+                .map(|(id, v)| format!("{id}@{v}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         ParsedEvent::Known(Event::TurnStart { turn }) => format!("turn {turn} start"),
         ParsedEvent::Known(Event::TurnEnd {
             turn,

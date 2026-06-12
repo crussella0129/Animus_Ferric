@@ -28,6 +28,23 @@ pub enum Event {
     SessionEnd {
         reason: String,
     },
+    /// The run policy chosen for this session (benchmark parity: tier and
+    /// protocol are otherwise invisible to trace consumers).
+    PolicySelected {
+        tier: ferric_core::Tier,
+        protocol: ferric_core::ActionProtocol,
+        max_turns: u32,
+        max_tools: u32,
+        prompt_budget_tokens: u32,
+        max_output_tokens: u32,
+    },
+    /// Prompt-composition genealogy (oovra lineage): which versioned elements
+    /// built the system prompt.
+    PromptComposed {
+        output_id: String,
+        output_version: String,
+        composed_of: Vec<(String, String)>,
+    },
     TurnStart {
         turn: u32,
     },

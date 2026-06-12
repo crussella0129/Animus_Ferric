@@ -22,6 +22,22 @@ mod tests {
             Event::SessionStart {
                 workspace: "/tmp/ws".to_string(),
             },
+            Event::PolicySelected {
+                tier: ferric_core::Tier::Nano,
+                protocol: ferric_core::ActionProtocol::UnifiedGrammar,
+                max_turns: 15,
+                max_tools: 6,
+                prompt_budget_tokens: 2_800,
+                max_output_tokens: 512,
+            },
+            Event::PromptComposed {
+                output_id: "system-prompt-nano-unified".to_string(),
+                output_version: "1.0.0".to_string(),
+                composed_of: vec![
+                    ("role-declaration".to_string(), "1.0.0".to_string()),
+                    ("terminator-teaching".to_string(), "1.0.0".to_string()),
+                ],
+            },
             Event::TurnStart { turn: 0 },
             Event::PromptAssembled {
                 turn: 0,

@@ -166,4 +166,10 @@
 - **Description:** ActionProtocol enum (native_tools/unified_grammar) in ferric-core + RunPolicy.max_output_tokens per-tier seeds (512/768/1024/1536/2048/2048), snapshot-pinned.
 - **Completed:** 2026-06-12 (build phase)
 - **Files modified:** crates/ferric-core/src/{scale.rs,lib.rs}, crates/ferric-core/tests/tier_table_snapshot.rs
-- **Commit:** (see git log for T-202)
+- **Commit:** 6f7ba23
+
+## T-203 (sprint 2)
+- **Description:** PolicySelected (typed Tier/ActionProtocol + budgets) and PromptComposed (oovra lineage) trace events, round-trip-tested, rendered in trace cat; schema version stays 1.
+- **Completed:** 2026-06-12 (build phase)
+- **Files modified:** crates/ferric-trace/src/{event.rs,lib.rs}, crates/ferric-cli/src/trace_cmd.rs, crates/ferric-loop/tests/common/mod.rs
+- **Commit:** (see git log for T-203)
