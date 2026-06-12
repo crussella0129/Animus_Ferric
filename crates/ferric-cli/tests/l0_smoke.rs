@@ -108,17 +108,29 @@ fn l0_smoke() {
                 .is_some_and(|p| p.contains("hello.txt"))
     });
     assert!(wrote, "write_file(hello.txt) must be traced");
+    // Causal correlation (critique C-001): the allow check must be FOR the
+    // hello.txt write and must precede its successful result in the trace.
+    let check_idx = lines
+        .iter()
+        .position(|l| {
+            l["event"]["type"] == "permission_check"
+                && l["event"]["decision"] == "allow"
+                && l["event"]["path"]
+                    .as_str()
+                    .is_some_and(|p| p.contains("hello.txt"))
+        })
+        .expect("allow permission_check for hello.txt traced");
+    let result_idx = lines
+        .iter()
+        .position(|l| {
+            l["event"]["type"] == "tool_result"
+                && l["event"]["name"] == "write_file"
+                && l["event"]["is_error"] == false
+        })
+        .expect("successful write_file result traced");
     assert!(
-        lines.iter().any(|l| l["event"]["type"] == "tool_result"
-            && l["event"]["name"] == "write_file"
-            && l["event"]["is_error"] == false),
-        "successful write_file result traced"
-    );
-    assert!(
-        lines
-            .iter()
-            .any(|l| l["event"]["type"] == "permission_check" && l["event"]["decision"] == "allow"),
-        "allow permission_check traced"
+        check_idx < result_idx,
+        "permission check must precede the tool result (guard-before-handler)"
     );
 
     // 7. offered tools include write_file and task_complete

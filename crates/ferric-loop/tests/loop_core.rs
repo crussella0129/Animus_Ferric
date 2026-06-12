@@ -134,6 +134,35 @@ fn empty_completion_nudges_then_stops() {
 }
 
 #[test]
+fn unknown_tool_feeds_back() {
+    // Critique C-003: a hallucinated tool name must not kill the loop — the
+    // error is fed back and the model gets another chance.
+    let result = run_scripted(
+        vec![
+            tool_completion(vec![("tc-0", "frobnicate", json!({"x": 1}))]),
+            text_completion("recovered"),
+        ],
+        &nano_policy(),
+        |provider| {
+            let second = &provider.requests()[1];
+            let fed = second
+                .messages
+                .iter()
+                .find(|m| m.role == Role::Tool)
+                .expect("error tool result fed back");
+            assert!(
+                fed.text
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("unknown tool: frobnicate")
+            );
+        },
+    );
+    assert_eq!(result.outcome.stop, StopReason::FinalText);
+    assert_eq!(result.outcome.final_text.as_deref(), Some("recovered"));
+}
+
+#[test]
 fn adr010_request_shape() {
     let result = run_scripted(
         vec![
