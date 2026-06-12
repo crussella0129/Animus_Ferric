@@ -1,5 +1,21 @@
 # Agent Tasks (Persistent Backlog)
 
+- [ ] T-202 (sprint 2): ActionProtocol + RunPolicy.max_output_tokens — touches: crates/ferric-core/src/scale.rs
+- [ ] T-203 (sprint 2): PolicySelected + PromptComposed trace events — touches: crates/ferric-trace/src/event.rs, crates/ferric-cli/src/trace_cmd.rs
+- [ ] T-204 (sprint 2): Completion.truncated from finish_reason — touches: crates/ferric-provider/src/{types,mistralrs,mock}.rs
+- [ ] T-205 (sprint 2): move_path + make_dir tools — touches: crates/ferric-tools/src/builtin/
+- [ ] T-206 (sprint 2): grammar module (action_schema + parse_action) — touches: crates/ferric-loop/src/grammar.rs
+- [ ] T-207 (sprint 2): loop ActionProtocol integration — touches: crates/ferric-loop/src/run.rs
+- [ ] T-208 (sprint 2): truncated/malformed action handling (StopReason::TruncatedAction) — touches: crates/ferric-loop/src/{run,outcome}.rs
+- [ ] T-209 (sprint 2): ferric-prompt + element library + compose_system_prompt — touches: crates/ferric-prompt/, prompts/
+- [ ] T-210 (sprint 2): query wiring (--protocol, --prompts-dir, policy max_tokens) — touches: crates/ferric-cli/src/query.rs
+- [ ] T-211 (sprint 2): bench spec model + embedded TOML L0–L6 — touches: crates/ferric-bench/src/spec.rs, specs/
+- [ ] T-212 (sprint 2): bench runner (spawn-self, timeout) — touches: crates/ferric-bench/src/runner.rs
+- [ ] T-213 (sprint 2): trace verification + results row — touches: crates/ferric-bench/src/{verify,results}.rs
+- [ ] T-214 (sprint 2): calibration (results.jsonl + model_profiles.json) — touches: crates/ferric-bench/src/calibrate.rs
+- [ ] T-215 (sprint 2): ferric bench subcommand — touches: crates/ferric-cli/src/bench_cmd.rs
+- [ ] T-216 (sprint 2): real-model gates ×2 protocols + calibration sweep + ADR-015..019 — touches: l0_smoke.rs, decisions.md
+
 ## Capability roadmap (ADR-014 — pinned, not aspiration)
 
 ### s2 — prompt assembly, action grammar, calibration

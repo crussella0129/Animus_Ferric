@@ -1,0 +1,15 @@
+[package]
+name = "ferric-prompt"
+description = "Per-tier, per-protocol system-prompt composition for Animus Ferric, built on oovra's versioned prompt elements"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ferric-core = { workspace = true }
+oovra = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

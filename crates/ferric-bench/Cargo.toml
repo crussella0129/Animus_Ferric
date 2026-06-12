@@ -1,0 +1,17 @@
+[package]
+name = "ferric-bench"
+description = "The L0-L6 capability ladder for Animus Ferric: spec-driven benchmark runs, trace-derived verification, and measured_level calibration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ferric-core = { workspace = true }
+ferric-trace = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+regex = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }

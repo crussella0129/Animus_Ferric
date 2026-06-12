@@ -7,6 +7,8 @@ members = [
     "crates/ferric-guard",
     "crates/ferric-tools",
     "crates/ferric-loop",
+    "crates/ferric-prompt",
+    "crates/ferric-bench",
     "crates/ferric-cli",
 ]
 
@@ -21,12 +23,21 @@ repository = "https://github.com/crussella0129/Animus_Ferric"
 # default workspace build and the aarch64 check gate never compile them).
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order is LOAD-BEARING (ADR-016): llguidance emits JSON-schema
+# properties in document order, and the action grammar requires "tool" before
+# "args" for early branch commitment. Default BTreeMap ordering would emit
+# "args" first.
+serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 mistralrs = "=0.8.1"
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# Prompt composition (ADR-016): rev-pinned to oovra main; immutable until a
+# deliberate, reviewed bump. Swap to crates.io at oovra v0.3.
+oovra = { git = "https://github.com/crussella0129/oovra", rev = "378abea6552f74ee7a8e4d9ce74418d6457ad002" }
+toml = "0.8"
+regex = "1"
 tempfile = "3"
 futures-executor = "0.3"
 
@@ -36,3 +47,5 @@ ferric-provider = { path = "crates/ferric-provider" }
 ferric-guard = { path = "crates/ferric-guard" }
 ferric-tools = { path = "crates/ferric-tools" }
 ferric-loop = { path = "crates/ferric-loop" }
+ferric-prompt = { path = "crates/ferric-prompt" }
+ferric-bench = { path = "crates/ferric-bench" }

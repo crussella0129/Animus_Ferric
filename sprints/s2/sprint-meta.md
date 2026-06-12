@@ -6,4 +6,4 @@
 - **Model:** claude-fable-5
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** (one-line description of sprint goal, filled after Plan Phase)
+- **Summary:** Versioned oovra prompt composition (ferric-prompt), unified llguidance action grammar (ActionProtocol; malformed actions unrepresentable), L0–L6 benchmark port (ferric-bench) with measured_level calibration, move_path/make_dir tools, per-tier output-token budgets; HTTP valve deferred to s3 (ADR-017).
