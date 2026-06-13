@@ -26,7 +26,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run a one-shot, workspace-scoped query against a local model
-    Query(query::QueryArgs),
+    Query(Box<query::QueryArgs>),
     /// Inspect session traces
     Trace {
         #[command(subcommand)]
@@ -43,7 +43,7 @@ enum TraceCommand {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
-        Command::Query(args) => query::run_query(args),
+        Command::Query(args) => query::run_query(*args),
         Command::Trace {
             command: TraceCommand::Cat { file },
         } => trace_cmd::trace_cat(&file),

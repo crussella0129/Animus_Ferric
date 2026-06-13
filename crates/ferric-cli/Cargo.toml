@@ -18,6 +18,7 @@ backend-mistralrs = ["ferric-provider/backend-mistralrs", "dep:tokio"]
 ferric-core = { workspace = true }
 ferric-guard = { workspace = true }
 ferric-loop = { workspace = true }
+ferric-prompt = { workspace = true }
 ferric-provider = { workspace = true }
 ferric-tools = { workspace = true }
 ferric-trace = { workspace = true }

@@ -208,4 +208,10 @@
 - **Description:** ferric-prompt crate: 5 prompt atoms in prompts/ (role, workspace-rules, protocol-native-tools, protocol-unified-grammar, terminator-teaching); recipe_for(tier, protocol) with protocol-exclusive teaching; compose_system_prompt via oovra render_text + genealogy (id+version lineage); typed PromptError (Load/Missing/VersionMismatch/Render). 4 tests incl. all-pairs + protocol-exclusivity.
 - **Completed:** 2026-06-13 (build phase)
 - **Files modified:** crates/ferric-prompt/src/lib.rs, prompts/*.md
-- **Commit:** (see git log for T-209)
+- **Commit:** 4819cd2
+
+## T-210 (sprint 2)
+- **Description:** query wiring: --protocol native|grammar override (select_protocol with constraint-capable caps), --prompts-dir/FERRIC_PROMPTS_DIR (compose_system_prompt → system_prompt + PromptComposed lineage; Note + DEFAULT fallback on failure), SamplingParams.max_tokens = policy.max_output_tokens, protocol-aware built-in mock script (native vs grammar shape). Query variant boxed (clippy large_enum_variant). Feature-gated drive_real compiles.
+- **Completed:** 2026-06-13 (build phase)
+- **Files modified:** crates/ferric-cli/src/{query.rs,main.rs}, crates/ferric-cli/Cargo.toml, Cargo.toml
+- **Commit:** (see git log for T-210)

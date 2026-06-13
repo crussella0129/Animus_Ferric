@@ -1350,6 +1350,7 @@ dependencies = [
  "ferric-core",
  "ferric-guard",
  "ferric-loop",
+ "ferric-prompt",
  "ferric-provider",
  "ferric-tools",
  "ferric-trace",
