@@ -1,7 +1,12 @@
 //! The L0–L6 capability ladder (ADR-019).
 //!
-//! Stub in T-201; spec model, runner, verification, and calibration land in
-//! T-211..T-214.
+//! Spec model (T-211), runner (T-212), verification + results (T-213), and
+//! calibration (T-214). Drives the `ferric` binary as a subprocess against
+//! TOML level specs and derives metrics from the JSONL trace.
+
+pub mod spec;
+
+pub use spec::{BenchSpec, ExpectKind, Expectation, embedded_specs};
 
 #[cfg(test)]
 mod tests {

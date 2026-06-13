@@ -214,4 +214,10 @@
 - **Description:** query wiring: --protocol native|grammar override (select_protocol with constraint-capable caps), --prompts-dir/FERRIC_PROMPTS_DIR (compose_system_prompt → system_prompt + PromptComposed lineage; Note + DEFAULT fallback on failure), SamplingParams.max_tokens = policy.max_output_tokens, protocol-aware built-in mock script (native vs grammar shape). Query variant boxed (clippy large_enum_variant). Feature-gated drive_real compiles.
 - **Completed:** 2026-06-13 (build phase)
 - **Files modified:** crates/ferric-cli/src/{query.rs,main.rs}, crates/ferric-cli/Cargo.toml, Cargo.toml
-- **Commit:** (see git log for T-210)
+- **Commit:** 7531057
+
+## T-211 (sprint 2)
+- **Description:** BenchSpec model (deny_unknown_fields; expectations file/dir/missing + content_regex; expected/any_of/forbidden tools; max_turns/timeout) + 7 embedded TOML specs L0–L6 ported to Ferric tool names (L0 forbids write/move/make_dir; L1 move_path; L2 make_dir). 5 parse tests.
+- **Completed:** 2026-06-13 (build phase)
+- **Files modified:** crates/ferric-bench/src/{spec.rs,lib.rs}, crates/ferric-bench/specs/l0..l6.toml
+- **Commit:** (see git log for T-211)

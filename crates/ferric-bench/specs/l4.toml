@@ -1,0 +1,23 @@
+level = 4
+name = "multi-file-with-test"
+prompt = "Create a Python module greet.py with a function hello() that returns 'world'. Then create tests/test_greet.py that imports greet and asserts greet.hello() == 'world'. Then call task_complete."
+max_turns = 12
+timeout_s = 300
+expected_tools = ["task_complete", "write_file"]
+any_of_tools = ["make_dir", "write_file"]
+forbidden_tools = []
+
+[[expectations]]
+path = "greet.py"
+type = "file"
+content_regex = "def\\s+hello"
+
+[[expectations]]
+path = "tests/test_greet.py"
+type = "file"
+content_regex = "assert"
+
+[[expectations]]
+path = "tests/test_greet.py"
+type = "file"
+content_regex = "hello\\s*\\("

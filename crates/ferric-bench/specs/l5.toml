@@ -1,0 +1,22 @@
+level = 5
+name = "mini-cli"
+prompt = "Create a Python CLI in cli.py that uses argparse to accept a --name argument and prints 'Hello, <name>!' to stdout. Then create tests/test_cli.py. Then call task_complete."
+max_turns = 18
+timeout_s = 600
+expected_tools = ["task_complete", "write_file"]
+any_of_tools = []
+forbidden_tools = []
+
+[[expectations]]
+path = "cli.py"
+type = "file"
+content_regex = "argparse"
+
+[[expectations]]
+path = "cli.py"
+type = "file"
+content_regex = "Hello"
+
+[[expectations]]
+path = "tests/test_cli.py"
+type = "file"

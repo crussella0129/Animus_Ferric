@@ -1,0 +1,18 @@
+level = 3
+name = "single-file-construction"
+prompt = "Create a Python file greet.py containing a single function hello() that returns the string 'world'. Then call task_complete."
+max_turns = 8
+timeout_s = 180
+expected_tools = ["task_complete", "write_file"]
+any_of_tools = []
+forbidden_tools = []
+
+[[expectations]]
+path = "greet.py"
+type = "file"
+content_regex = "def\\s+hello\\s*\\([^)]*\\)\\s*:"
+
+[[expectations]]
+path = "greet.py"
+type = "file"
+content_regex = "['\"]world['\"]"

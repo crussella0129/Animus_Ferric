@@ -1,0 +1,20 @@
+level = 0
+name = "single-readonly-tool"
+prompt = "List the files in the current workspace directory, then call task_complete."
+max_turns = 5
+timeout_s = 60
+expected_tools = ["task_complete"]
+any_of_tools = ["list_dir"]
+forbidden_tools = ["write_file", "move_path", "make_dir"]
+
+[setup_files]
+"hello.txt" = "world"
+"notes.md" = "# Notes\n\nTwo files for L0 to enumerate."
+
+[[expectations]]
+path = "hello.txt"
+type = "file"
+
+[[expectations]]
+path = "notes.md"
+type = "file"

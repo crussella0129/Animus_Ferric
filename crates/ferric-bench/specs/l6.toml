@@ -1,0 +1,22 @@
+level = 6
+name = "full-todo-app"
+prompt = "Build a TODO CLI in todo.py with three subcommands: add <text>, list, done <id>. Persist todos to ./todos.json. Use argparse. Then create tests/test_todo.py. Then call task_complete."
+max_turns = 25
+timeout_s = 900
+expected_tools = ["task_complete", "write_file"]
+any_of_tools = []
+forbidden_tools = []
+
+[[expectations]]
+path = "todo.py"
+type = "file"
+content_regex = "argparse"
+
+[[expectations]]
+path = "todo.py"
+type = "file"
+content_regex = "todos\\.json"
+
+[[expectations]]
+path = "tests/test_todo.py"
+type = "file"

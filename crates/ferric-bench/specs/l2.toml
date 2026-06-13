@@ -1,0 +1,27 @@
+level = 2
+name = "multi-step-ops"
+prompt = "Rename old.py to greet.py, then create a directory called tests, then create a directory called docs. Then call task_complete."
+max_turns = 12
+timeout_s = 180
+expected_tools = ["task_complete"]
+any_of_tools = ["make_dir"]
+forbidden_tools = []
+
+[setup_files]
+"old.py" = "x = 1\n"
+
+[[expectations]]
+path = "greet.py"
+type = "file"
+
+[[expectations]]
+path = "old.py"
+type = "missing"
+
+[[expectations]]
+path = "tests"
+type = "dir"
+
+[[expectations]]
+path = "docs"
+type = "dir"

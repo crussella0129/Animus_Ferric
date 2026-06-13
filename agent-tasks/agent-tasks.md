@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-211 (sprint 2): bench spec model + embedded TOML L0–L6 — touches: crates/ferric-bench/src/spec.rs, specs/
 - [ ] T-212 (sprint 2): bench runner (spawn-self, timeout) — touches: crates/ferric-bench/src/runner.rs
 - [ ] T-213 (sprint 2): trace verification + results row — touches: crates/ferric-bench/src/{verify,results}.rs
 - [ ] T-214 (sprint 2): calibration (results.jsonl + model_profiles.json) — touches: crates/ferric-bench/src/calibrate.rs

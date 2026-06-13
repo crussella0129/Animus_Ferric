@@ -1,0 +1,19 @@
+level = 1
+name = "single-file-rename"
+prompt = "Rename the file hello.py to greet.py, then call task_complete."
+max_turns = 6
+timeout_s = 90
+expected_tools = ["task_complete"]
+any_of_tools = ["move_path"]
+forbidden_tools = []
+
+[setup_files]
+"hello.py" = "print('hi')\n"
+
+[[expectations]]
+path = "greet.py"
+type = "file"
+
+[[expectations]]
+path = "hello.py"
+type = "missing"
