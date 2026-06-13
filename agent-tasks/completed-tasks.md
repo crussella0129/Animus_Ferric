@@ -202,4 +202,10 @@
 - **Description:** StopReason::TruncatedAction; grammar truncation handled as an early branch (don't parse cut-off action; nudge once with "cut off" message, partial NOT added to history; second truncation → truncated_action). Parse-failure stays empty_completion — the two failure modes stay distinguishable. 3 tests.
 - **Completed:** 2026-06-13 (build phase)
 - **Files modified:** crates/ferric-loop/src/{outcome.rs,run.rs}, crates/ferric-loop/tests/truncation_tests.rs
-- **Commit:** (see git log for T-208)
+- **Commit:** c0eebd8
+
+## T-209 (sprint 2)
+- **Description:** ferric-prompt crate: 5 prompt atoms in prompts/ (role, workspace-rules, protocol-native-tools, protocol-unified-grammar, terminator-teaching); recipe_for(tier, protocol) with protocol-exclusive teaching; compose_system_prompt via oovra render_text + genealogy (id+version lineage); typed PromptError (Load/Missing/VersionMismatch/Render). 4 tests incl. all-pairs + protocol-exclusivity.
+- **Completed:** 2026-06-13 (build phase)
+- **Files modified:** crates/ferric-prompt/src/lib.rs, prompts/*.md
+- **Commit:** (see git log for T-209)
