@@ -81,6 +81,7 @@ mod tests {
             message: Message::assistant(text),
             input_tokens: Some(10),
             output_tokens: Some(5),
+            truncated: false,
         }
     }
 

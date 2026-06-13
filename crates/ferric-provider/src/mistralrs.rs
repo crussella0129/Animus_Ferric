@@ -119,6 +119,7 @@ impl Provider for MistralRsProvider {
             .into_iter()
             .next()
             .ok_or_else(|| ProviderError::Backend("response carried no choices".to_string()))?;
+        let finish_reason = choice.finish_reason.clone();
 
         Ok(Completion {
             message: Message {
@@ -139,8 +140,16 @@ impl Provider for MistralRsProvider {
             },
             input_tokens: Some(response.usage.prompt_tokens as u32),
             output_tokens: Some(response.usage.completion_tokens as u32),
+            truncated: is_truncated(&finish_reason),
         })
     }
+}
+
+/// `finish_reason` values per mistralrs-core 0.8.1 sequence.rs Display impl:
+/// "stop" | "length" | "canceled" | "tool_calls" | ... Only "length" means
+/// the output was cut by the token budget.
+pub(crate) fn is_truncated(finish_reason: &str) -> bool {
+    finish_reason == "length"
 }
 
 // ---- mapping layer: free functions so they unit-test without a model ----
@@ -334,6 +343,14 @@ mod tests {
     fn args_parse_with_string_fallback() {
         assert_eq!(parse_args(r#"{"path": "a.txt"}"#), json!({"path": "a.txt"}));
         assert_eq!(parse_args("not json"), json!("not json"));
+    }
+
+    #[test]
+    fn finish_reason_maps_truncated() {
+        assert!(is_truncated("length"));
+        assert!(!is_truncated("stop"));
+        assert!(!is_truncated("tool_calls"));
+        assert!(!is_truncated("canceled"));
     }
 
     #[test]

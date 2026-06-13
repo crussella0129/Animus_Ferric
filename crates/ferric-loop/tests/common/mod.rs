@@ -29,6 +29,19 @@ pub fn text_completion(text: &str) -> Completion {
         message: Message::assistant(text),
         input_tokens: Some(50),
         output_tokens: Some(10),
+        truncated: false,
+    }
+}
+
+/// A completion that hit the token budget (`finish_reason == "length"`).
+pub fn truncated_completion() -> Completion {
+    Completion {
+        message: Message::assistant(
+            "{\"tool\":\"write_file\",\"args\":{\"path\":\"a.txt\",\"content\":\"this got cut o",
+        ),
+        input_tokens: Some(50),
+        output_tokens: Some(512),
+        truncated: true,
     }
 }
 
@@ -42,6 +55,7 @@ pub fn empty_completion() -> Completion {
         },
         input_tokens: Some(50),
         output_tokens: Some(0),
+        truncated: false,
     }
 }
 
@@ -62,6 +76,18 @@ pub fn tool_completion(calls: Vec<(&str, &str, serde_json::Value)>) -> Completio
         },
         input_tokens: Some(60),
         output_tokens: Some(15),
+        truncated: false,
+    }
+}
+
+/// A grammar-mode completion: the whole assistant text IS the action JSON,
+/// tool_calls empty. Used by the UnifiedGrammar loop tests (T-207).
+pub fn grammar_completion(action_json: serde_json::Value) -> Completion {
+    Completion {
+        message: Message::assistant(action_json.to_string()),
+        input_tokens: Some(60),
+        output_tokens: Some(20),
+        truncated: false,
     }
 }
 

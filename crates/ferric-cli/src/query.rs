@@ -179,6 +179,7 @@ fn mock_provider() -> MockProvider {
             },
             input_tokens: Some(40),
             output_tokens: Some(12),
+            truncated: false,
         },
         Completion {
             message: Message {
@@ -193,6 +194,7 @@ fn mock_provider() -> MockProvider {
             },
             input_tokens: Some(60),
             output_tokens: Some(10),
+            truncated: false,
         },
     ])
 }

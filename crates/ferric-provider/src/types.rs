@@ -80,6 +80,10 @@ pub struct Completion {
     pub message: Message,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
+    /// True when generation hit the token limit (`finish_reason == "length"`).
+    /// Under a grammar this is the one malformed-action case the constraint
+    /// cannot prevent (ADR-015): the loop must not parse a truncated action.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Error)]

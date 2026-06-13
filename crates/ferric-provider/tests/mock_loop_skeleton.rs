@@ -31,6 +31,7 @@ fn tool_call_completion() -> Completion {
         },
         input_tokens: Some(50),
         output_tokens: Some(12),
+        truncated: false,
     }
 }
 
@@ -39,6 +40,7 @@ fn final_completion() -> Completion {
         message: Message::assistant("The file says: hello ferric"),
         input_tokens: Some(70),
         output_tokens: Some(8),
+        truncated: false,
     }
 }
 

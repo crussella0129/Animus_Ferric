@@ -172,4 +172,10 @@
 - **Description:** PolicySelected (typed Tier/ActionProtocol + budgets) and PromptComposed (oovra lineage) trace events, round-trip-tested, rendered in trace cat; schema version stays 1.
 - **Completed:** 2026-06-12 (build phase)
 - **Files modified:** crates/ferric-trace/src/{event.rs,lib.rs}, crates/ferric-cli/src/trace_cmd.rs, crates/ferric-loop/tests/common/mod.rs
-- **Commit:** (see git log for T-203)
+- **Commit:** f1a6eda
+
+## T-204 (sprint 2)
+- **Description:** Completion.truncated plumbed from mistralrs finish_reason=="length" (is_truncated free-function tested); all Completion literals updated; grammar_completion + truncated_completion test helpers added for T-207/T-208.
+- **Completed:** 2026-06-12 (build phase)
+- **Files modified:** crates/ferric-provider/src/{types.rs,mistralrs.rs,mock.rs}, crates/ferric-cli/src/query.rs, crates/ferric-provider/tests/mock_loop_skeleton.rs, crates/ferric-loop/tests/common/mod.rs
+- **Commit:** (see git log for T-204)
