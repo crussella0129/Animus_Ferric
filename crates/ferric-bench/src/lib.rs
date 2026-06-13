@@ -4,8 +4,10 @@
 //! calibration (T-214). Drives the `ferric` binary as a subprocess against
 //! TOML level specs and derives metrics from the JSONL trace.
 
+pub mod runner;
 pub mod spec;
 
+pub use runner::{Invocation, ModelArgs, RunRecord, WorkspaceHandle, run_spec};
 pub use spec::{BenchSpec, ExpectKind, Expectation, embedded_specs};
 
 #[cfg(test)]

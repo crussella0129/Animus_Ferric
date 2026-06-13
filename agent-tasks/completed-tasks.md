@@ -220,4 +220,10 @@
 - **Description:** BenchSpec model (deny_unknown_fields; expectations file/dir/missing + content_regex; expected/any_of/forbidden tools; max_turns/timeout) + 7 embedded TOML specs L0–L6 ported to Ferric tool names (L0 forbids write/move/make_dir; L1 move_path; L2 make_dir). 5 parse tests.
 - **Completed:** 2026-06-13 (build phase)
 - **Files modified:** crates/ferric-bench/src/{spec.rs,lib.rs}, crates/ferric-bench/specs/l0..l6.toml
-- **Commit:** (see git log for T-211)
+- **Commit:** 872b03d
+
+## T-212 (sprint 2)
+- **Description:** Bench runner: materialize workspace from setup_files, spawn-self `ferric query` (current_exe default; child always query → recursion impossible), std try_wait timeout-poll + kill, --keep-workspace (TempDir vs Kept), locate the single q-*.jsonl trace. Behavior exercised end-to-end by T-215's bench_mock test.
+- **Completed:** 2026-06-13 (build phase)
+- **Files modified:** crates/ferric-bench/src/{runner.rs,lib.rs}
+- **Commit:** (see git log for T-212)
