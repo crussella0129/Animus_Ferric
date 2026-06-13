@@ -184,4 +184,10 @@
 - **Description:** move_path (both endpoints boundary-checked via target_paths; missing-source is_error; cross-boundary + .ferric denied with source intact) and make_dir (parents + idempotent) NANO tools; 6 registry-driven tests.
 - **Completed:** 2026-06-12 (build phase)
 - **Files modified:** crates/ferric-tools/src/builtin/{move_path.rs,make_dir.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
-- **Commit:** (see git log for T-205)
+- **Commit:** 5949ff3
+
+## T-206 (sprint 2)
+- **Description:** Grammar module: action_schema (anyOf/const-discriminator/x-guidance/additionalProperties:false, tool-before-args insertion order, terminator-last, oneOf-absent — golden-tested) + parse_action (completion text → synthesized ToolCall g-<turn>-0, typed errors for non-JSON/non-object/missing fields/non-action). #[allow(dead_code)] until T-207 wires it.
+- **Completed:** 2026-06-12 (build phase)
+- **Files modified:** crates/ferric-loop/src/{grammar.rs,lib.rs}
+- **Commit:** (see git log for T-206)

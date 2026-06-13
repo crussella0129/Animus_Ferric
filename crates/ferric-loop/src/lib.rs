@@ -11,6 +11,9 @@
 //! runtime for mistral.rs).
 
 mod backoff;
+// Consumed by the loop in T-207; tests exercise it now.
+#[allow(dead_code)]
+mod grammar;
 mod outcome;
 mod repetition;
 mod run;
