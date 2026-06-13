@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use ferric_core::{FerricError, Message, RunPolicy};
+use ferric_core::{ActionProtocol, FerricError, Message, RunPolicy, ToolCall};
 use ferric_guard::Workspace;
-use ferric_provider::{CompletionRequest, Provider, SamplingParams, ToolDescriptor};
+use ferric_provider::{CompletionRequest, Constraint, Provider, SamplingParams, ToolDescriptor};
 use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
 use ferric_trace::{Event, JsonlSink};
 
@@ -24,12 +24,17 @@ impl Sleeper for ThreadSleeper {
     }
 }
 
-/// The default system prompt. Deliberately tiny — small contexts are the
-/// silent killer (s1 research); per-tier prompt assembly via oovra is s2.
+/// The default system prompt (fallback when no composed prompt is supplied).
+/// Deliberately tiny — small contexts are the silent killer (s1 research);
+/// per-tier/per-protocol composition via oovra lands in ferric-prompt (s2).
 pub const DEFAULT_SYSTEM_PROMPT: &str = "You are Ferric, a coding agent. \
 Use the available tools to act on the workspace. \
 When the task is done, call task_complete with a one-sentence summary. \
 Never describe a tool call in prose - actually call the tool.";
+
+/// Prompt-composition genealogy (oovra lineage) for the trace. Plain id+version
+/// tuples so ferric-loop needs no ferric-prompt dependency.
+pub type PromptLineage = (String, String, Vec<(String, String)>);
 
 /// Everything `run` needs. Borrowed so callers own lifecycle and the loop
 /// stays executor-agnostic.
@@ -38,10 +43,14 @@ pub struct RunArgs<'a> {
     pub registry: &'a Registry,
     pub workspace: &'a Workspace,
     pub policy: &'a RunPolicy,
+    pub protocol: ActionProtocol,
     pub sampling: SamplingParams,
     pub sleeper: &'a dyn Sleeper,
     /// Override the built-in system prompt (None = DEFAULT_SYSTEM_PROMPT).
     pub system_prompt: Option<&'a str>,
+    /// Composition lineage (output_id, output_version, [(element_id, version)])
+    /// — traced as `PromptComposed` when present.
+    pub prompt_lineage: Option<PromptLineage>,
 }
 
 /// Run the agent loop for one user prompt. Trace I/O errors abort with `Err`;
@@ -54,16 +63,41 @@ pub async fn run(
     sink.write_event(Event::SessionStart {
         workspace: args.workspace.root().display().to_string(),
     })?;
+    sink.write_event(Event::PolicySelected {
+        tier: args.policy.tier,
+        protocol: args.protocol,
+        max_turns: u32::from(args.policy.max_turns),
+        max_tools: u32::from(args.policy.max_tools),
+        prompt_budget_tokens: args.policy.prompt_budget_tokens,
+        max_output_tokens: args.policy.max_output_tokens,
+    })?;
+    if let Some((output_id, output_version, composed_of)) = &args.prompt_lineage {
+        sink.write_event(Event::PromptComposed {
+            output_id: output_id.clone(),
+            output_version: output_version.clone(),
+            composed_of: composed_of.clone(),
+        })?;
+    }
 
     let system = args.system_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
     let mut messages = vec![Message::system(system), Message::user(prompt)];
 
-    let tools = offered_tools(args.registry, args.policy);
-    let offered_names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
+    // Registry tools (no terminator) drive both the native tools list and the
+    // grammar schema; the terminator is appended where each mode needs it.
+    let registry_tools = registry_tools(args.registry, args.policy);
+    let mut offered_names: Vec<String> = registry_tools.iter().map(|t| t.name.clone()).collect();
+    offered_names.push(crate::terminator::TASK_COMPLETE.to_string());
+
+    let native_tools: Vec<ToolDescriptor> = {
+        let mut v = registry_tools.clone();
+        v.push(crate::terminator::descriptor());
+        v
+    };
+    let action_schema = crate::grammar::action_schema(&registry_tools);
 
     let mut repetition = crate::repetition::RepetitionGuard::new();
     let mut last_text: Option<String> = None;
-    let mut nudged_for_empty = false;
+    let mut nudged_for_no_action = false;
     let mut turns = 0u32;
 
     let stop = 'outer: loop {
@@ -74,13 +108,22 @@ pub async fn run(
         turns += 1;
         sink.write_event(Event::TurnStart { turn })?;
 
+        // Build the request per protocol (ADR-010/ADR-015: constraint and
+        // tools are mutually exclusive by construction — the invalid state is
+        // unrepresentable here).
+        let (tools, constraint) = match args.protocol {
+            ActionProtocol::NativeTools => (native_tools.clone(), None),
+            ActionProtocol::UnifiedGrammar => (
+                Vec::new(),
+                Some(Constraint::JsonSchema(action_schema.clone())),
+            ),
+        };
         let request = CompletionRequest {
             messages: messages.clone(),
             sampling: args.sampling.clone(),
-            tools: tools.clone(),
-            constraint: None,
+            tools,
+            constraint,
         };
-        // ADR-010 primary enforcement: the loop never sends an invalid shape.
         if let Err(e) = request.validate() {
             sink.write_event(Event::Note {
                 text: format!("invalid request constructed by loop: {e}"),
@@ -96,6 +139,11 @@ pub async fn run(
                 .sum(),
             offered_tools: offered_names.clone(),
         })?;
+        if args.protocol == ActionProtocol::UnifiedGrammar {
+            sink.write_event(Event::ConstraintApplied {
+                kind: "json_schema".to_string(),
+            })?;
+        }
 
         let completion =
             match crate::backoff::complete_with_backoff(args.provider, request, args.sleeper).await
@@ -117,30 +165,55 @@ pub async fn run(
             output_tokens: completion.output_tokens,
         })?;
 
-        if let Some(text) = completion.message.text.clone().filter(|t| !t.is_empty()) {
+        // Best-effort final text is native-mode only: in grammar mode the
+        // assistant text IS the action JSON, never a final answer.
+        if args.protocol == ActionProtocol::NativeTools
+            && let Some(text) = completion.message.text.clone().filter(|t| !t.is_empty())
+        {
             last_text = Some(text);
         }
         messages.push(completion.message.clone());
 
-        if completion.message.tool_calls.is_empty() {
-            match &completion.message.text {
-                Some(text) if !text.trim().is_empty() => break StopReason::FinalText,
-                _ => {
-                    // Empty completion: nudge once, then stop.
-                    if nudged_for_empty {
-                        break StopReason::EmptyCompletion;
-                    }
-                    nudged_for_empty = true;
-                    messages.push(Message::user(
-                        "Respond with a tool call, or your final answer as text.",
-                    ));
-                    continue;
+        // Normalize the completion into actions per protocol.
+        let actions: Vec<ToolCall> = match args.protocol {
+            ActionProtocol::NativeTools => completion.message.tool_calls.clone(),
+            ActionProtocol::UnifiedGrammar => {
+                // T-207: parse the whole completion text into one action;
+                // parse failure → no action (nudge path). T-208 refines
+                // truncation into its own reason.
+                match crate::grammar::parse_action(
+                    turn,
+                    completion.message.text.as_deref().unwrap_or_default(),
+                ) {
+                    Ok(call) => vec![call],
+                    Err(_) => Vec::new(),
                 }
             }
+        };
+
+        if actions.is_empty() {
+            // No actionable output. Native mode: a text-only completion is a
+            // final answer; otherwise nudge once then stop. Grammar mode: a
+            // parse failure (never a final answer — grammar has no text path).
+            let is_native_final = args.protocol == ActionProtocol::NativeTools
+                && completion
+                    .message
+                    .text
+                    .as_deref()
+                    .is_some_and(|t| !t.trim().is_empty());
+            if is_native_final {
+                break StopReason::FinalText;
+            }
+            if nudged_for_no_action {
+                break StopReason::EmptyCompletion;
+            }
+            nudged_for_no_action = true;
+            messages.push(Message::user(no_action_nudge(args.protocol)));
+            continue;
         }
 
-        // Repetition guard (hash ALL calls in the turn).
-        match repetition.observe(&completion.message.tool_calls) {
+        // Repetition guard (hash ALL actions in the turn).
+        match repetition.observe(&actions) {
             crate::repetition::Verdict::Proceed => {}
             crate::repetition::Verdict::Warn => {
                 sink.write_event(Event::RepetitionGuard {
@@ -159,9 +232,9 @@ pub async fn run(
             }
         }
 
-        // Dispatch tool calls in order; intercept the terminator.
+        // Dispatch actions in order; intercept the terminator.
         let mut terminate_with: Option<String> = None;
-        for call in &completion.message.tool_calls {
+        for call in &actions {
             if crate::terminator::is_task_complete(&call.name) {
                 terminate_with = Some(crate::terminator::summary_of(&call.args));
                 continue; // other calls in this turn still execute first
@@ -183,7 +256,12 @@ pub async fn run(
                 is_error,
                 duration_ms,
             })?;
-            messages.push(Message::tool_result(&call.id, &result_text.for_model));
+            messages.push(result_message(
+                args.protocol,
+                &call.id,
+                &call.name,
+                &result_text.for_model,
+            ));
         }
         if let Some(summary) = terminate_with {
             last_text = Some(summary);
@@ -202,10 +280,31 @@ pub async fn run(
     })
 }
 
-/// The tools offered to the model: the policy-filtered registry set plus the
-/// always-offered `task_complete` terminator (exempt from `max_tools`).
-fn offered_tools(registry: &Registry, policy: &RunPolicy) -> Vec<ToolDescriptor> {
-    let mut tools: Vec<ToolDescriptor> = registry
+/// The nudge for a turn that produced no dispatchable action.
+fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
+    match protocol {
+        ActionProtocol::NativeTools => "Respond with a tool call, or your final answer as text.",
+        ActionProtocol::UnifiedGrammar => {
+            "Respond with a single JSON action object: {\"tool\": <name>, \"args\": {...}}."
+        }
+    }
+}
+
+/// Feed a tool result back to the model. Native mode uses the template's tool
+/// role; grammar mode frames it as a user message (the template's tool role
+/// may misbehave without `tools` in context — ADR-015).
+fn result_message(protocol: ActionProtocol, call_id: &str, name: &str, output: &str) -> Message {
+    match protocol {
+        ActionProtocol::NativeTools => Message::tool_result(call_id, output),
+        ActionProtocol::UnifiedGrammar => {
+            Message::user(format!("[tool_result for {name}] {output}"))
+        }
+    }
+}
+
+/// The policy-filtered registry tool descriptors (terminator NOT included).
+fn registry_tools(registry: &Registry, policy: &RunPolicy) -> Vec<ToolDescriptor> {
+    registry
         .tools_for_policy(policy)
         .into_iter()
         .map(|spec| ToolDescriptor {
@@ -213,9 +312,7 @@ fn offered_tools(registry: &Registry, policy: &RunPolicy) -> Vec<ToolDescriptor>
             description: spec.description,
             input_schema: spec.input_schema,
         })
-        .collect();
-    tools.push(crate::terminator::descriptor());
-    tools
+        .collect()
 }
 
 struct DispatchText {

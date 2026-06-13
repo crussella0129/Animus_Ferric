@@ -23,6 +23,7 @@ fn happy_path_golden_trace_order() {
         kinds(&result.records),
         vec![
             "session_start",
+            "policy_selected",
             "turn_start",
             "prompt_assembled",
             "turn_end",

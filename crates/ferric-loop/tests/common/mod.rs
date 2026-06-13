@@ -7,7 +7,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use ferric_core::{Message, ModelProfile, Role, RunPolicy, ToolCall, policy_for};
+use ferric_core::{ActionProtocol, Message, ModelProfile, Role, RunPolicy, ToolCall, policy_for};
 use ferric_guard::Workspace;
 use ferric_loop::{LoopOutcome, RunArgs, Sleeper, run};
 use ferric_provider::{Completion, MockProvider, SamplingParams};
@@ -133,6 +133,15 @@ pub fn run_scripted(
     policy: &RunPolicy,
     inspect: impl FnOnce(&MockProvider),
 ) -> RunResult {
+    run_scripted_protocol(script, policy, ActionProtocol::NativeTools, inspect)
+}
+
+pub fn run_scripted_protocol(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    protocol: ActionProtocol,
+    inspect: impl FnOnce(&MockProvider),
+) -> RunResult {
     let dir = tempfile::tempdir().unwrap();
     let workspace = Workspace::new(dir.path()).unwrap();
     let mut registry = Registry::new();
@@ -148,9 +157,11 @@ pub fn run_scripted(
             registry: &registry,
             workspace: &workspace,
             policy,
+            protocol,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
+            prompt_lineage: None,
         },
         &mut sink,
         "do the task",

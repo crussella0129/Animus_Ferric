@@ -190,4 +190,10 @@
 - **Description:** Grammar module: action_schema (anyOf/const-discriminator/x-guidance/additionalProperties:false, tool-before-args insertion order, terminator-last, oneOf-absent — golden-tested) + parse_action (completion text → synthesized ToolCall g-<turn>-0, typed errors for non-JSON/non-object/missing fields/non-action). #[allow(dead_code)] until T-207 wires it.
 - **Completed:** 2026-06-12 (build phase)
 - **Files modified:** crates/ferric-loop/src/{grammar.rs,lib.rs}
-- **Commit:** (see git log for T-206)
+- **Commit:** 1d41f6e
+
+## T-207 (sprint 2)
+- **Description:** Loop ActionProtocol integration: PolicySelected/PromptComposed emitted; per-protocol request build (grammar = constraint-only, tools empty — ADR-010 unrepresentable); completion normalized to actions (native tool_calls vs grammar text→parse_action); same dispatch path (terminator/repetition/permission identical); grammar results framed as user-role [tool_result for X]; select_protocol helper. 5 grammar integration tests + native regression intact.
+- **Completed:** 2026-06-12 (build phase)
+- **Files modified:** crates/ferric-loop/src/{run.rs,lib.rs,protocol.rs}, crates/ferric-loop/tests/{grammar_loop.rs,loop_core.rs,backoff_tests.rs,common/mod.rs}, crates/ferric-cli/src/query.rs
+- **Commit:** (see git log for T-207)
