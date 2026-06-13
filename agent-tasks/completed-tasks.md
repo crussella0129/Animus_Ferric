@@ -178,4 +178,10 @@
 - **Description:** Completion.truncated plumbed from mistralrs finish_reason=="length" (is_truncated free-function tested); all Completion literals updated; grammar_completion + truncated_completion test helpers added for T-207/T-208.
 - **Completed:** 2026-06-12 (build phase)
 - **Files modified:** crates/ferric-provider/src/{types.rs,mistralrs.rs,mock.rs}, crates/ferric-cli/src/query.rs, crates/ferric-provider/tests/mock_loop_skeleton.rs, crates/ferric-loop/tests/common/mod.rs
-- **Commit:** (see git log for T-204)
+- **Commit:** 8b8c03c
+
+## T-205 (sprint 2)
+- **Description:** move_path (both endpoints boundary-checked via target_paths; missing-source is_error; cross-boundary + .ferric denied with source intact) and make_dir (parents + idempotent) NANO tools; 6 registry-driven tests.
+- **Completed:** 2026-06-12 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/{move_path.rs,make_dir.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** (see git log for T-205)

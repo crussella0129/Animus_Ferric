@@ -2,20 +2,26 @@
 //! get 100% right are exactly the ones every tier needs available.
 
 mod list_dir;
+mod make_dir;
+mod move_path;
 mod read_file;
 mod write_file;
 
 pub use list_dir::ListDir;
+pub use make_dir::MakeDir;
+pub use move_path::MovePath;
 pub use read_file::ReadFile;
 pub use write_file::WriteFile;
 
 use crate::registry::Registry;
 
-/// Register the s0 builtin tool set.
+/// Register the builtin tool set.
 pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(ReadFile));
     registry.register(Box::new(WriteFile));
     registry.register(Box::new(ListDir));
+    registry.register(Box::new(MovePath));
+    registry.register(Box::new(MakeDir));
 }
 
 /// Shared helper: the required string `path` argument.

@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-205 (sprint 2): move_path + make_dir tools — touches: crates/ferric-tools/src/builtin/
 - [ ] T-206 (sprint 2): grammar module (action_schema + parse_action) — touches: crates/ferric-loop/src/grammar.rs
 - [ ] T-207 (sprint 2): loop ActionProtocol integration — touches: crates/ferric-loop/src/run.rs
 - [ ] T-208 (sprint 2): truncated/malformed action handling (StopReason::TruncatedAction) — touches: crates/ferric-loop/src/{run,outcome}.rs

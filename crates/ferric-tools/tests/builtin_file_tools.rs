@@ -90,3 +90,92 @@ fn read_missing_file_is_error_not_panic() {
     assert!(is_error);
     assert!(output.contains("nope.txt"));
 }
+
+#[test]
+fn move_path_renames_file() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("old.py"), "x = 1").unwrap();
+    let (out, err) = expect_completed(registry.execute(
+        &ws,
+        "move_path",
+        &json!({"from": "old.py", "to": "greet.py"}),
+    ));
+    assert!(!err, "{out}");
+    assert!(!dir.path().join("old.py").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("greet.py")).unwrap(),
+        "x = 1"
+    );
+}
+
+#[test]
+fn move_path_renames_dir() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir(dir.path().join("a")).unwrap();
+    std::fs::write(dir.path().join("a").join("f"), "y").unwrap();
+    let (_out, err) =
+        expect_completed(registry.execute(&ws, "move_path", &json!({"from": "a", "to": "b"})));
+    assert!(!err);
+    assert!(dir.path().join("b").join("f").exists());
+    assert!(!dir.path().join("a").exists());
+}
+
+#[test]
+fn move_path_missing_source_is_error() {
+    let (_dir, ws, registry) = setup();
+    let (output, is_error) = expect_completed(registry.execute(
+        &ws,
+        "move_path",
+        &json!({"from": "ghost.txt", "to": "x.txt"}),
+    ));
+    assert!(is_error);
+    assert!(output.contains("ghost.txt"));
+}
+
+#[test]
+fn move_path_outside_to_denied() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("secret.txt"), "data").unwrap();
+    // `to` escapes the workspace — must be denied, source left intact.
+    let outcome = registry.execute(
+        &ws,
+        "move_path",
+        &json!({"from": "secret.txt", "to": "../escaped.txt"}),
+    );
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "cross-boundary move must be denied, got {outcome:?}"
+    );
+    assert!(
+        dir.path().join("secret.txt").exists(),
+        "source untouched on deny"
+    );
+    assert!(!dir.path().parent().unwrap().join("escaped.txt").exists());
+}
+
+#[test]
+fn make_dir_creates_parents_and_is_idempotent() {
+    let (dir, ws, registry) = setup();
+    let (_o, err) = expect_completed(registry.execute(&ws, "make_dir", &json!({"path": "a/b/c"})));
+    assert!(!err);
+    assert!(dir.path().join("a").join("b").join("c").is_dir());
+    // Idempotent: a second call on the existing dir succeeds.
+    let (_o2, err2) =
+        expect_completed(registry.execute(&ws, "make_dir", &json!({"path": "a/b/c"})));
+    assert!(!err2, "make_dir must be idempotent");
+}
+
+#[test]
+fn move_path_into_ferric_denied() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("x.txt"), "data").unwrap();
+    let outcome = registry.execute(
+        &ws,
+        "move_path",
+        &json!({"from": "x.txt", "to": ".ferric/stash.txt"}),
+    );
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "move into .ferric must be denied, got {outcome:?}"
+    );
+}
