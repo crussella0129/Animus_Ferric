@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-208 (sprint 2): truncated/malformed action handling (StopReason::TruncatedAction) — touches: crates/ferric-loop/src/{run,outcome}.rs
 - [ ] T-209 (sprint 2): ferric-prompt + element library + compose_system_prompt — touches: crates/ferric-prompt/, prompts/
 - [ ] T-210 (sprint 2): query wiring (--protocol, --prompts-dir, policy max_tokens) — touches: crates/ferric-cli/src/query.rs
 - [ ] T-211 (sprint 2): bench spec model + embedded TOML L0–L6 — touches: crates/ferric-bench/src/spec.rs, specs/

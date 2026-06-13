@@ -12,8 +12,13 @@ pub enum StopReason {
     RepetitionGuard,
     /// The provider failed permanently (or retries were exhausted).
     ProviderError,
-    /// Two consecutive completions carried neither text nor tool calls.
+    /// Two consecutive completions carried neither text nor tool calls
+    /// (native) or failed to parse into an action (grammar).
     EmptyCompletion,
+    /// Two consecutive grammar completions were cut off by the token budget
+    /// (`finish_reason == "length"`) — the one malformed-action case the
+    /// constraint cannot prevent (ADR-015).
+    TruncatedAction,
 }
 
 impl StopReason {
@@ -25,6 +30,7 @@ impl StopReason {
             StopReason::RepetitionGuard => "repetition_guard",
             StopReason::ProviderError => "provider_error",
             StopReason::EmptyCompletion => "empty_completion",
+            StopReason::TruncatedAction => "truncated_action",
         }
     }
 }

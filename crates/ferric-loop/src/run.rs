@@ -98,6 +98,7 @@ pub async fn run(
     let mut repetition = crate::repetition::RepetitionGuard::new();
     let mut last_text: Option<String> = None;
     let mut nudged_for_no_action = false;
+    let mut truncated_once = false;
     let mut turns = 0u32;
 
     let stop = 'outer: loop {
@@ -164,6 +165,21 @@ pub async fn run(
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
         })?;
+
+        // Grammar truncation (ADR-015): a completion cut off by the token
+        // budget cannot be a valid action — do not parse it. Nudge once to
+        // re-issue concisely; a second truncation stops the loop. (The
+        // partial JSON is NOT added to history; it is recorded in TurnEnd.)
+        if args.protocol == ActionProtocol::UnifiedGrammar && completion.truncated {
+            if truncated_once {
+                break StopReason::TruncatedAction;
+            }
+            truncated_once = true;
+            messages.push(Message::user(
+                "Your last action was cut off by the token limit. Re-issue it more concisely.",
+            ));
+            continue;
+        }
 
         // Best-effort final text is native-mode only: in grammar mode the
         // assistant text IS the action JSON, never a final answer.

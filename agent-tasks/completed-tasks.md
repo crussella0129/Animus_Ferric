@@ -196,4 +196,10 @@
 - **Description:** Loop ActionProtocol integration: PolicySelected/PromptComposed emitted; per-protocol request build (grammar = constraint-only, tools empty — ADR-010 unrepresentable); completion normalized to actions (native tool_calls vs grammar text→parse_action); same dispatch path (terminator/repetition/permission identical); grammar results framed as user-role [tool_result for X]; select_protocol helper. 5 grammar integration tests + native regression intact.
 - **Completed:** 2026-06-12 (build phase)
 - **Files modified:** crates/ferric-loop/src/{run.rs,lib.rs,protocol.rs}, crates/ferric-loop/tests/{grammar_loop.rs,loop_core.rs,backoff_tests.rs,common/mod.rs}, crates/ferric-cli/src/query.rs
-- **Commit:** (see git log for T-207)
+- **Commit:** e8707d5
+
+## T-208 (sprint 2)
+- **Description:** StopReason::TruncatedAction; grammar truncation handled as an early branch (don't parse cut-off action; nudge once with "cut off" message, partial NOT added to history; second truncation → truncated_action). Parse-failure stays empty_completion — the two failure modes stay distinguishable. 3 tests.
+- **Completed:** 2026-06-13 (build phase)
+- **Files modified:** crates/ferric-loop/src/{outcome.rs,run.rs}, crates/ferric-loop/tests/truncation_tests.rs
+- **Commit:** (see git log for T-208)
