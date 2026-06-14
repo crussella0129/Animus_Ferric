@@ -4,6 +4,7 @@
 //! - `ferric trace cat <file>` — derived view of a JSONL trace.
 //! - `ferric dev` — reserved for the Development Engine (s4–s7).
 
+mod bench_cmd;
 mod query;
 mod trace_cmd;
 
@@ -27,6 +28,8 @@ struct Cli {
 enum Command {
     /// Run a one-shot, workspace-scoped query against a local model
     Query(Box<query::QueryArgs>),
+    /// Run the L0–L6 capability benchmark and calibrate measured_level
+    Bench(Box<bench_cmd::BenchArgs>),
     /// Inspect session traces
     Trace {
         #[command(subcommand)]
@@ -44,6 +47,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Query(args) => query::run_query(*args),
+        Command::Bench(args) => bench_cmd::run_bench(*args),
         Command::Trace {
             command: TraceCommand::Cat { file },
         } => trace_cmd::trace_cat(&file),

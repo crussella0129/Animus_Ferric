@@ -238,4 +238,10 @@
 - **Description:** calibrate.rs: highest_completed_level → measured_level → ModelProfileRecord (tier_from_params vs tier_from_measured) → model_profiles.json (replace-same-key, keep-others). Exposed tier_for_params/tier_for_level from ferric-core. 4 tests incl. the 1B-completes-L4→Small override demonstration.
 - **Completed:** 2026-06-13 (build phase)
 - **Files modified:** crates/ferric-bench/src/{calibrate.rs,lib.rs}, crates/ferric-core/src/{scale.rs,lib.rs}
-- **Commit:** (see git log for T-214)
+- **Commit:** dedfaf0
+
+## T-215 (sprint 2)
+- **Description:** `ferric bench` subcommand: --level/--protocol/--variant/--model-*/--params-b/--ctx/--prompts-dir/--results-dir/--keep-workspace/--ferric-bin/--mock; runs selected levels, appends results.jsonl, calibrates model_profiles.json; warns on debug-binary real sweeps. 3 model-free bench_mock integration tests (results written, per-level rows, keep-workspace).
+- **Completed:** 2026-06-13 (build phase)
+- **Files modified:** crates/ferric-cli/src/{bench_cmd.rs,main.rs}, crates/ferric-cli/Cargo.toml, crates/ferric-cli/tests/bench_mock.rs
+- **Commit:** (see git log for T-215)

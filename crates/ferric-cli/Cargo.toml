@@ -15,6 +15,7 @@ default = []
 backend-mistralrs = ["ferric-provider/backend-mistralrs", "dep:tokio"]
 
 [dependencies]
+ferric-bench = { workspace = true }
 ferric-core = { workspace = true }
 ferric-guard = { workspace = true }
 ferric-loop = { workspace = true }
