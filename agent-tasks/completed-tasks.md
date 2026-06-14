@@ -232,4 +232,10 @@
 - **Description:** verify.rs (parse_trace → TraceMetrics incl. tier/protocol/terminator/tokens/tools/summary, plan_steps null; verify_expectations file/dir/missing+regex; verify_tools required∧any_of∧¬forbidden; completed verdict; failure_admission phrases) + results.rs (ResultRow serde, append_row not-truncate, read_rows). 9 tests incl. verdict matrix + append-not-truncate.
 - **Completed:** 2026-06-13 (build phase)
 - **Files modified:** crates/ferric-bench/src/{verify.rs,results.rs,lib.rs}
-- **Commit:** (see git log for T-213)
+- **Commit:** c165b40
+
+## T-214 (sprint 2)
+- **Description:** calibrate.rs: highest_completed_level → measured_level → ModelProfileRecord (tier_from_params vs tier_from_measured) → model_profiles.json (replace-same-key, keep-others). Exposed tier_for_params/tier_for_level from ferric-core. 4 tests incl. the 1B-completes-L4→Small override demonstration.
+- **Completed:** 2026-06-13 (build phase)
+- **Files modified:** crates/ferric-bench/src/{calibrate.rs,lib.rs}, crates/ferric-core/src/{scale.rs,lib.rs}
+- **Commit:** (see git log for T-214)

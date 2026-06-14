@@ -89,7 +89,7 @@ pub struct RunPolicy {
 
 /// Tier from parameter count. Boundaries follow Animus `tiers.py`:
 /// NANO < 4B ≤ SMALL < 13B ≤ MEDIUM < 30B ≤ LARGE < 70B ≤ XL < 200B ≤ ULTRA.
-fn tier_for_params(params_b: f32) -> Tier {
+pub fn tier_for_params(params_b: f32) -> Tier {
     if params_b < 4.0 {
         Tier::Nano
     } else if params_b < 13.0 {
@@ -109,7 +109,7 @@ fn tier_for_params(params_b: f32) -> Tier {
 /// breaks at L2 (measured L1) is NANO-grade regardless of size; one that
 /// completes multi-file construction (L4) earns SMALL-grade agency; L5/L6
 /// earn MEDIUM/LARGE. Levels above 6 are clamped to 6.
-fn tier_for_level(level: u8) -> Tier {
+pub fn tier_for_level(level: u8) -> Tier {
     match level.min(6) {
         0 | 1 => Tier::Nano,
         2..=4 => Tier::Small,

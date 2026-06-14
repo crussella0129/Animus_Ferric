@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-214 (sprint 2): calibration (results.jsonl + model_profiles.json) — touches: crates/ferric-bench/src/calibrate.rs
 - [ ] T-215 (sprint 2): ferric bench subcommand — touches: crates/ferric-cli/src/bench_cmd.rs
 - [ ] T-216 (sprint 2): real-model gates ×2 protocols + calibration sweep + ADR-015..019 — touches: l0_smoke.rs, decisions.md
 

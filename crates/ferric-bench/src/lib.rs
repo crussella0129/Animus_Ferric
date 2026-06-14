@@ -4,10 +4,13 @@
 //! calibration (T-214). Drives the `ferric` binary as a subprocess against
 //! TOML level specs and derives metrics from the JSONL trace.
 
+pub mod calibrate;
 pub mod results;
 pub mod runner;
 pub mod spec;
 pub mod verify;
+
+pub use calibrate::{ModelProfileRecord, calibrate, highest_completed_level, write_profile};
 
 pub use results::{ResultRow, append_row, read_rows};
 pub use runner::{Invocation, ModelArgs, RunRecord, WorkspaceHandle, run_spec};
