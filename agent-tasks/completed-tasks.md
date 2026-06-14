@@ -226,4 +226,10 @@
 - **Description:** Bench runner: materialize workspace from setup_files, spawn-self `ferric query` (current_exe default; child always query → recursion impossible), std try_wait timeout-poll + kill, --keep-workspace (TempDir vs Kept), locate the single q-*.jsonl trace. Behavior exercised end-to-end by T-215's bench_mock test.
 - **Completed:** 2026-06-13 (build phase)
 - **Files modified:** crates/ferric-bench/src/{runner.rs,lib.rs}
-- **Commit:** (see git log for T-212)
+- **Commit:** 55cc242
+
+## T-213 (sprint 2)
+- **Description:** verify.rs (parse_trace → TraceMetrics incl. tier/protocol/terminator/tokens/tools/summary, plan_steps null; verify_expectations file/dir/missing+regex; verify_tools required∧any_of∧¬forbidden; completed verdict; failure_admission phrases) + results.rs (ResultRow serde, append_row not-truncate, read_rows). 9 tests incl. verdict matrix + append-not-truncate.
+- **Completed:** 2026-06-13 (build phase)
+- **Files modified:** crates/ferric-bench/src/{verify.rs,results.rs,lib.rs}
+- **Commit:** (see git log for T-213)
