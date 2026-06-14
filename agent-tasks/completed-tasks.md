@@ -244,4 +244,10 @@
 - **Description:** `ferric bench` subcommand: --level/--protocol/--variant/--model-*/--params-b/--ctx/--prompts-dir/--results-dir/--keep-workspace/--ferric-bin/--mock; runs selected levels, appends results.jsonl, calibrates model_profiles.json; warns on debug-binary real sweeps. 3 model-free bench_mock integration tests (results written, per-level rows, keep-workspace).
 - **Completed:** 2026-06-13 (build phase)
 - **Files modified:** crates/ferric-cli/src/{bench_cmd.rs,main.rs}, crates/ferric-cli/Cargo.toml, crates/ferric-cli/tests/bench_mock.rs
-- **Commit:** (see git log for T-215)
+- **Commit:** c729860
+
+## T-216 (sprint 2)
+- **Description:** Smoke refactored into run_smoke(protocol) + l0_smoke_native/l0_smoke_grammar #[ignore] variants (terminator ∈ {task_complete, final_text} both, C-010). ADR-015..019 recorded. Real-model execution (both smoke variants + L0–L4 calibration sweep ×2 protocols) runs in the Test phase per ADR-009.
+- **Completed:** 2026-06-13 (build phase; real-model runs in Test phase)
+- **Files modified:** crates/ferric-cli/tests/l0_smoke.rs, decisions.md
+- **Commit:** (see git log for T-216)

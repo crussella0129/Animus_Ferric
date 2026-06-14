@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-216 (sprint 2): real-model gates ×2 protocols + calibration sweep + ADR-015..019 — touches: l0_smoke.rs, decisions.md
 
 ## Capability roadmap (ADR-014 — pinned, not aspiration)
 

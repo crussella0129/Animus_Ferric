@@ -18,7 +18,21 @@ use std::time::Instant;
 
 #[test]
 #[ignore = "requires a local GGUF; run with FERRIC_SMOKE_MODEL_DIR/FILE set"]
-fn l0_smoke() {
+fn l0_smoke_native() {
+    run_smoke("native");
+}
+
+#[test]
+#[ignore = "requires a local GGUF; run with FERRIC_SMOKE_MODEL_DIR/FILE set"]
+fn l0_smoke_grammar() {
+    run_smoke("grammar");
+}
+
+/// The eight L0 assertions, parameterized by action protocol. Terminator
+/// reason ∈ {task_complete, final_text} for BOTH (C-010: the grammar's effect
+/// on terminator behavior is MEASURED by the calibration sweep, not
+/// pre-asserted by this gate).
+fn run_smoke(protocol: &str) {
     let model_dir = std::env::var("FERRIC_SMOKE_MODEL_DIR")
         .expect("FERRIC_SMOKE_MODEL_DIR must point at the GGUF directory (e.g. ~/.animus/models)");
     let model_file = std::env::var("FERRIC_SMOKE_MODEL_FILE").expect(
@@ -38,6 +52,7 @@ fn l0_smoke() {
         .args(["--model-file", &model_file])
         .args(["--params-b", "1.2", "--ctx", "4096", "--temperature", "0"])
         .args(["--family", "llama-3.2"])
+        .args(["--protocol", protocol])
         .output()
         .unwrap();
     let wall = started.elapsed();
@@ -153,6 +168,6 @@ fn l0_smoke() {
         .map(|t| t["event"]["output_tokens"].as_u64().unwrap_or(0))
         .sum();
     println!(
-        "--- L0 smoke PASS: {turns} turn(s), {total_output} output tokens, wall {wall:?}, reason {reason}"
+        "--- L0 smoke [{protocol}] PASS: {turns} turn(s), {total_output} output tokens, wall {wall:?}, reason {reason}"
     );
 }
