@@ -24,3 +24,7 @@ ferric-tools = { workspace = true }
 ferric-trace = { workspace = true }
 futures-executor = { workspace = true }
 tempfile = { workspace = true }
+# Test-only: the grammar_probe diagnostic needs an ambient runtime to drive
+# the mistralrs client (matches query.rs). Dev-dep only — not in the default
+# library graph or the aarch64 check gate.
+tokio = { workspace = true }
