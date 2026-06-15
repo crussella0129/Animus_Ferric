@@ -1,26 +1,34 @@
 //! Action-protocol selection (ADR-015).
 
-use ferric_core::{ActionProtocol, Protocol, RunPolicy};
+use ferric_core::{ActionProtocol, RunPolicy};
 use ferric_provider::Capabilities;
 
 /// Decide how the loop talks to the backend about actions.
 ///
-/// An explicit `override_` wins. Otherwise: a policy that wants constrained
-/// JSON gets `UnifiedGrammar` *if the backend can enforce a constraint*,
-/// falling back to `NativeTools` when it can't. Non-constrained policies use
+/// An explicit `override_` always wins. Absent an override the default is
 /// `NativeTools`.
+///
+/// NOTE (ADR-020, s2 finding): UnifiedGrammar is NOT the auto-default even
+/// though the policy wants constrained JSON and the backend reports
+/// constraint support. The s2 real-GGUF gate found that
+/// `mistralrs::send_chat_request` with a `Constraint::JsonSchema` HANGS on the
+/// 1B (engine-level llguidance pathology — our model-free grammar tests all
+/// pass, so the loop is correct; the hang is downstream). Until that is
+/// root-caused, grammar mode is opt-in via `--protocol grammar`; the auto
+/// path stays on the proven NativeTools backend so `ferric query` never hangs
+/// by default. The `_caps` argument is retained for the eventual re-enable.
 pub fn select_protocol(
     policy: &RunPolicy,
-    caps: &Capabilities,
+    _caps: &Capabilities,
     override_: Option<ActionProtocol>,
 ) -> ActionProtocol {
     if let Some(p) = override_ {
         return p;
     }
-    match policy.protocol {
-        Protocol::ConstrainedJson if caps.supports_constraint => ActionProtocol::UnifiedGrammar,
-        _ => ActionProtocol::NativeTools,
-    }
+    // Auto-default: NativeTools (see note above). `policy.protocol` is read so
+    // the signature stays stable when grammar is re-enabled as the default.
+    let _ = policy.protocol;
+    ActionProtocol::NativeTools
 }
 
 #[cfg(test)]
@@ -48,15 +56,13 @@ mod tests {
     }
 
     #[test]
-    fn constrained_capable_selects_grammar() {
+    fn auto_default_is_native_pending_grammar_root_cause() {
+        // ADR-020: grammar is NOT auto-selected even when capable — it hangs
+        // the real engine. Default must be NativeTools so query never hangs.
         assert_eq!(
             select_protocol(&nano(), &caps(true), None),
-            ActionProtocol::UnifiedGrammar
+            ActionProtocol::NativeTools
         );
-    }
-
-    #[test]
-    fn constrained_incapable_falls_back_to_native() {
         assert_eq!(
             select_protocol(&nano(), &caps(false), None),
             ActionProtocol::NativeTools
@@ -64,7 +70,16 @@ mod tests {
     }
 
     #[test]
-    fn override_wins() {
+    fn override_to_grammar_wins() {
+        // Grammar is opt-in via explicit override (`--protocol grammar`).
+        assert_eq!(
+            select_protocol(&nano(), &caps(true), Some(ActionProtocol::UnifiedGrammar)),
+            ActionProtocol::UnifiedGrammar
+        );
+    }
+
+    #[test]
+    fn override_to_native_wins() {
         assert_eq!(
             select_protocol(&nano(), &caps(true), Some(ActionProtocol::NativeTools)),
             ActionProtocol::NativeTools

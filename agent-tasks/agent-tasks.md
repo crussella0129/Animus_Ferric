@@ -12,6 +12,11 @@
 - [ ] (s2) Port the L0–L6 benchmark harness from Animus; measure the fleet; calibrate the tier table (feeds measured_level)
 - [ ] (s2) Per-turn output-token budget in RunPolicy: the policy caps turns but not generation length (SamplingParams default max_tokens=2048 made a single debug-profile turn run 37+ min in s1); tier table should scale max_tokens like it scales turns
 
+### s3 — grammar hang root-cause (ADR-020, blocks re-enabling UnifiedGrammar default)
+- [ ] (s3) Root-cause the `Constraint::JsonSchema` hang in mistralrs 0.8.1 on the 1B: minimal repro (schema-only, no loop); bisect schema features (anyOf breadth, unbounded string args → add maxLength caps, x-guidance whitespace_flexible, toktrie build cost); test against a newer mistralrs/llguidance if available.
+- [ ] (s3) Add a hard per-request inference timeout to the mistralrs Provider AND a wall-clock kill to standalone `ferric query` (the s2 hang ran 4h unbounded because only `ferric bench` had a timeout).
+- [ ] (s3) Once fixed: re-run l0_smoke_grammar + the L0–L4 calibration sweep ×2 protocols; if grammar is sound, restore it as the constrained-capable auto-default (revert ADR-020).
+
 ### s3 — integration surfaces + sandbox substrate
 - [ ] (s3) GECK absorption: `ferric init-project --profile X` (Rust-native templates; GECK profiles as oovra-compatible elements)
 - [ ] (s3) `ferric mcp` stdio server (typed tools: query/status/trace) + minimal SKILL.md companion (ADR-012)
