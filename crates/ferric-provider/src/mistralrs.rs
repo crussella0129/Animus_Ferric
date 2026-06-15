@@ -38,6 +38,15 @@ pub struct MistralRsConfig {
     pub max_num_seqs: usize,
     /// Force CPU even in a CUDA-featured build (default true: CPU-first, ADR-004).
     pub force_cpu: bool,
+    /// Path to the model's real `tokenizer.json`. REQUIRED FOR GRAMMAR
+    /// (ADR-020 root cause): without it, mistral.rs synthesizes a tokenizer
+    /// from GGUF metadata whose byte-level vocab yields a malformed llguidance
+    /// toktrie, hanging any `Constraint::JsonSchema`. Supplying the authentic
+    /// tokenizer.json takes the loader's real-tokenizer branch and fixes it.
+    pub tokenizer_json: Option<PathBuf>,
+    /// Alternatively, an HF model id to source tokenizer.json from (used only
+    /// when `tokenizer_json` is None). Requires network unless cached.
+    pub tok_model_id: Option<String>,
 }
 
 impl MistralRsConfig {
@@ -48,6 +57,8 @@ impl MistralRsConfig {
             chat_template: None,
             max_num_seqs: 2,
             force_cpu: true,
+            tokenizer_json: None,
+            tok_model_id: None,
         }
     }
 }
@@ -71,6 +82,13 @@ impl MistralRsProvider {
         }
         if let Some(template) = &config.chat_template {
             builder = builder.with_chat_template(template);
+        }
+        // Grammar fix (ADR-020): feed the real tokenizer so llguidance's
+        // toktrie is byte-correct. tokenizer_json wins; else tok_model_id.
+        if let Some(tok_json) = &config.tokenizer_json {
+            builder = builder.with_tokenizer_json(tok_json.display().to_string());
+        } else if let Some(tok_id) = &config.tok_model_id {
+            builder = builder.with_tok_model_id(tok_id.clone());
         }
         let model = builder
             .build()

@@ -74,6 +74,16 @@ pub struct QueryArgs {
     #[arg(long)]
     pub chat_template: Option<PathBuf>,
 
+    /// Path to the model's real tokenizer.json. REQUIRED for `--protocol
+    /// grammar` on GGUF models (mistral.rs's synthesized tokenizer breaks the
+    /// llguidance toktrie — ADR-020). Also read from FERRIC_TOKENIZER_JSON.
+    #[arg(long)]
+    pub tokenizer_json: Option<PathBuf>,
+
+    /// Alternatively, an HF model id to source tokenizer.json from.
+    #[arg(long)]
+    pub tok_model_id: Option<String>,
+
     /// Sampling temperature (0.0 selects the deterministic sampler)
     #[arg(long, default_value_t = 0.0)]
     pub temperature: f32,
@@ -346,16 +356,26 @@ fn drive_real(
         .as_ref()
         .ok_or("--model-file is required without --mock")?;
 
+    let tokenizer_json = args
+        .tokenizer_json
+        .clone()
+        .or_else(|| std::env::var_os("FERRIC_TOKENIZER_JSON").map(std::path::PathBuf::from));
+
     // Belt-and-braces offline enforcement (local paths already skip the HF
-    // API). Edition 2024: set_var is unsafe; we are pre-runtime, pre-thread.
-    unsafe {
-        std::env::set_var("HF_HUB_OFFLINE", "1");
+    // API). Only when NOT sourcing a tokenizer by HF model id (that needs the
+    // network). Edition 2024: set_var is unsafe; we are pre-runtime/thread.
+    if args.tok_model_id.is_none() {
+        unsafe {
+            std::env::set_var("HF_HUB_OFFLINE", "1");
+        }
     }
 
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async {
         let mut config = MistralRsConfig::new(model_dir, model_file);
         config.chat_template = args.chat_template.as_ref().map(|p| p.display().to_string());
+        config.tokenizer_json = tokenizer_json;
+        config.tok_model_id = args.tok_model_id.clone();
         let provider = MistralRsProvider::load(config)
             .await
             .map_err(|e| format!("backend: {e}"))?;

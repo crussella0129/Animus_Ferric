@@ -71,10 +71,16 @@ fn grammar_probe() {
 
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
     runtime.block_on(async {
+        let mut config = MistralRsConfig::new(dir, file);
+        // The fix under test: feed the real tokenizer.json (ADR-020 root cause).
+        config.tokenizer_json = std::env::var_os("FERRIC_TOKENIZER_JSON").map(Into::into);
+        config.tok_model_id = std::env::var("FERRIC_TOK_MODEL_ID").ok();
+        eprintln!(
+            "--- tokenizer_json: {:?}, tok_model_id: {:?}",
+            config.tokenizer_json, config.tok_model_id
+        );
         let load0 = Instant::now();
-        let provider = MistralRsProvider::load(MistralRsConfig::new(dir, file))
-            .await
-            .expect("model load");
+        let provider = MistralRsProvider::load(config).await.expect("model load");
         eprintln!("--- model loaded in {:?}", load0.elapsed());
 
         let request = CompletionRequest {
