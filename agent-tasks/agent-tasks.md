@@ -12,10 +12,14 @@
 - [ ] (s2) Port the L0–L6 benchmark harness from Animus; measure the fleet; calibrate the tier table (feeds measured_level)
 - [ ] (s2) Per-turn output-token budget in RunPolicy: the policy caps turns but not generation length (SamplingParams default max_tokens=2048 made a single debug-profile turn run 37+ min in s1); tier table should scale max_tokens like it scales turns
 
-### s3 — grammar hang root-cause (ADR-020, blocks re-enabling UnifiedGrammar default)
-- [ ] (s3) Root-cause the `Constraint::JsonSchema` hang in mistralrs 0.8.1 on the 1B: minimal repro (schema-only, no loop); bisect schema features (anyOf breadth, unbounded string args → add maxLength caps, x-guidance whitespace_flexible, toktrie build cost); test against a newer mistralrs/llguidance if available.
-- [ ] (s3) Add a hard per-request inference timeout to the mistralrs Provider AND a wall-clock kill to standalone `ferric query` (the s2 hang ran 4h unbounded because only `ferric bench` had a timeout).
-- [ ] (s3) Once fixed: re-run l0_smoke_grammar + the L0–L4 calibration sweep ×2 protocols; if grammar is sound, restore it as the constrained-capable auto-default (revert ADR-020).
+### s3 — grammar-enablement spike (ADR-020; s2 FAILED on this — see sprints/s2/failure-report.md)
+- [x] (s2) Root-caused: mistralrs 0.8.1 GGUF synthesizes a tokenizer whose llguidance toktrie hangs on ANY JsonSchema constraint (even trivial). DONE — see failure-report + [[ferric-mistralrs-gguf-grammar-rootcause]].
+- [x] (s2) tokenizer.json workaround (with_tokenizer_json) — DISPROVEN (still hangs with the real tokenizer loaded). Plumbing kept.
+- [ ] (s3) Remaining in-process attempts (cheap first): `with_tok_model_id` (may rewire the llg factory differently); bump mistralrs to a git rev / newer version.
+- [ ] (s3) If in-process stays dead: build the llama-server HTTP backend (grammar server-side in llama.cpp — known-good, sacrifices ownership purity) OR a Candle+llguidance in-process toktrie (preserves purity, hardest).
+- [ ] (s3) Add a hard per-request inference timeout to the Provider AND a wall-clock kill to standalone `ferric query` (the s2 hang ran 4h unbounded — only `ferric bench` had a timeout). Do this REGARDLESS of the grammar outcome.
+- [ ] (s3) **Capability tier — test Gemma 4 12B** (user lead, 2026-06-15: newly released, reportedly strong with harnesses; well above the sub-7B tool-calling floor that made the 1B loop on write_file). Evaluate as the primary capability-tier model alongside Qwen2.5-Coder-7B; the 1B stays the cheap NANO/CI gate. Native-tools path works today, so this can be tested before grammar is fixed.
+- [ ] (s3) Once grammar works: re-run l0_smoke_grammar + L0–L4 calibration sweep ×2 protocols; if sound, revert ADR-020 (restore grammar auto-default).
 
 ### s3 — integration surfaces + sandbox substrate
 - [ ] (s3) GECK absorption: `ferric init-project --profile X` (Rust-native templates; GECK profiles as oovra-compatible elements)
