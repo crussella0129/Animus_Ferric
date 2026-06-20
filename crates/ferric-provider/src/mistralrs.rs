@@ -13,7 +13,7 @@
 //! Real-GGUF validation policy (ADR-009): any change to this module requires
 //! a traced real-model run (the L0 smoke) before merge.
 
-use std::collections::HashMap;
+
 use std::path::PathBuf;
 
 use async_trait::async_trait;
@@ -22,8 +22,7 @@ use ferric_core::{Message, Role, ToolCall};
 
 use crate::traits::Provider;
 use crate::types::{
-    Capabilities, Completion, CompletionRequest, Constraint, ProviderError, SamplingParams,
-    ToolDescriptor,
+    Capabilities, Completion, CompletionRequest, ProviderError, SamplingParams,
 };
 
 pub struct MistralRsConfig {
@@ -71,29 +70,46 @@ pub struct MistralRsProvider {
 
 impl MistralRsProvider {
     pub async fn load(config: MistralRsConfig) -> Result<Self, ProviderError> {
-        let mut builder = mistralrs::GgufModelBuilder::new(
-            config.model_dir.display().to_string(),
-            vec![config.model_file.clone()],
-        )
-        .with_token_source(mistralrs::TokenSource::None)
-        .with_max_num_seqs(config.max_num_seqs);
-        if config.force_cpu {
-            builder = builder.with_force_cpu();
-        }
-        if let Some(template) = &config.chat_template {
-            builder = builder.with_chat_template(template);
-        }
-        // Grammar fix (ADR-020): feed the real tokenizer so llguidance's
-        // toktrie is byte-correct. tokenizer_json wins; else tok_model_id.
-        if let Some(tok_json) = &config.tokenizer_json {
-            builder = builder.with_tokenizer_json(tok_json.display().to_string());
-        } else if let Some(tok_id) = &config.tok_model_id {
-            builder = builder.with_tok_model_id(tok_id.clone());
-        }
-        let model = builder
-            .build()
-            .await
-            .map_err(|e| ProviderError::Backend(format!("model load: {e:#}")))?;
+        let model = if config.model_file.ends_with(".gguf") {
+            let mut builder = mistralrs::GgufModelBuilder::new(
+                config.model_dir.display().to_string(),
+                vec![config.model_file.clone()],
+            )
+            .with_token_source(mistralrs::TokenSource::None)
+            .with_max_num_seqs(config.max_num_seqs);
+            if config.force_cpu {
+                builder = builder.with_force_cpu();
+            }
+            if let Some(template) = &config.chat_template {
+                builder = builder.with_chat_template(template);
+            }
+            if let Some(tok_json) = &config.tokenizer_json {
+                builder = builder.with_tokenizer_json(tok_json.display().to_string());
+            } else if let Some(tok_id) = &config.tok_model_id {
+                builder = builder.with_tok_model_id(tok_id.clone());
+            }
+            builder
+                .build()
+                .await
+                .map_err(|e| ProviderError::Backend(format!("model load: {e:#}")))?
+        } else {
+            let full_path = config.model_dir.join(&config.model_file);
+            let mut builder = mistralrs::TextModelBuilder::new(
+                full_path.display().to_string()
+            )
+            .with_max_num_seqs(config.max_num_seqs);
+            if config.force_cpu {
+                builder = builder.with_force_cpu();
+            }
+            if let Some(template) = &config.chat_template {
+                builder = builder.with_chat_template(template);
+            }
+
+            builder
+                .build()
+                .await
+                .map_err(|e| ProviderError::Backend(format!("model load: {e:#}")))?
+        };
         Ok(Self { model })
     }
 }
@@ -106,7 +122,6 @@ impl Provider for MistralRsProvider {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            supports_constraint: true,
             supports_native_tool_calls: true,
             exposes_logits: false,
         }
@@ -118,19 +133,18 @@ impl Provider for MistralRsProvider {
 
         let mut builder = map_messages(&request.messages);
         builder = apply_sampling(builder, &request.sampling);
-        if !request.tools.is_empty() {
-            builder = builder
-                .set_tools(map_tools(&request.tools))
-                .set_tool_choice(mistralrs::ToolChoice::Auto);
-        } else if let Some(constraint) = &request.constraint {
-            builder = builder.set_constraint(map_constraint(constraint));
-        }
+        // No engine-level tools or grammar constraints are passed (s3 pivot).
 
-        let response = self
-            .model
-            .send_chat_request(builder)
-            .await
-            .map_err(|e| classify_anyhow(&format!("{e:#}")))?;
+        let response = match tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            self.model.send_chat_request(builder)
+        ).await {
+            Ok(res) => match res {
+                Ok(r) => r,
+                Err(e) => return Err(classify_anyhow(&format!("{e:#}"))),
+            },
+            Err(_) => return Err(ProviderError::Backend("inference timeout: engine hung for >5m".to_string())),
+        };
 
         let choice = response
             .choices
@@ -172,35 +186,6 @@ pub(crate) fn is_truncated(finish_reason: &str) -> bool {
 
 // ---- mapping layer: free functions so they unit-test without a model ----
 
-pub(crate) fn map_constraint(constraint: &Constraint) -> mistralrs::Constraint {
-    match constraint {
-        Constraint::JsonSchema(schema) => mistralrs::Constraint::JsonSchema(schema.clone()),
-        Constraint::Regex(regex) => mistralrs::Constraint::Regex(regex.clone()),
-        Constraint::Lark(grammar) => mistralrs::Constraint::Lark(grammar.clone()),
-    }
-}
-
-pub(crate) fn map_tools(tools: &[ToolDescriptor]) -> Vec<mistralrs::Tool> {
-    tools
-        .iter()
-        .map(|tool| mistralrs::Tool {
-            tp: mistralrs::ToolType::Function,
-            function: mistralrs::Function {
-                name: tool.name.clone(),
-                description: Some(tool.description.clone()),
-                parameters: schema_to_parameters(&tool.input_schema),
-            },
-        })
-        .collect()
-}
-
-/// mistral.rs wants `Option<HashMap<String, Value>>`; our schemas are JSON
-/// objects, so this is a faithful reshape (non-object schemas → None).
-fn schema_to_parameters(schema: &serde_json::Value) -> Option<HashMap<String, serde_json::Value>> {
-    schema
-        .as_object()
-        .map(|map| map.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-}
 
 pub(crate) fn map_messages(messages: &[Message]) -> mistralrs::RequestBuilder {
     let mut builder = mistralrs::RequestBuilder::new();
@@ -304,37 +289,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn constraint_maps_one_to_one() {
-        let schema = json!({"type": "object"});
-        assert!(matches!(
-            map_constraint(&Constraint::JsonSchema(schema.clone())),
-            mistralrs::Constraint::JsonSchema(s) if s == schema
-        ));
-        assert!(matches!(
-            map_constraint(&Constraint::Regex("a+".to_string())),
-            mistralrs::Constraint::Regex(r) if r == "a+"
-        ));
-        assert!(matches!(
-            map_constraint(&Constraint::Lark("start: WORD".to_string())),
-            mistralrs::Constraint::Lark(g) if g == "start: WORD"
-        ));
-    }
-
-    #[test]
-    fn tools_map_with_schema_reshape() {
-        let tools = vec![ToolDescriptor {
-            name: "write_file".to_string(),
-            description: "write".to_string(),
-            input_schema: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
-        }];
-        let mapped = map_tools(&tools);
-        assert_eq!(mapped.len(), 1);
-        assert_eq!(mapped[0].function.name, "write_file");
-        let params = mapped[0].function.parameters.as_ref().unwrap();
-        assert_eq!(params["type"], json!("object"));
-        assert!(params.contains_key("properties"));
-    }
 
     #[test]
     fn sampling_maps_with_deterministic_switch() {

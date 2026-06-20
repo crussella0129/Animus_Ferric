@@ -37,6 +37,13 @@ impl From<ProtocolArg> for ActionProtocol {
     }
 }
 
+/// Backend choice for the CLI
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum BackendArg {
+    Mistral,
+    Openai,
+}
+
 #[derive(Args)]
 pub struct QueryArgs {
     /// The task prompt
@@ -46,13 +53,29 @@ pub struct QueryArgs {
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
-    /// Directory containing the GGUF model
+    /// Which backend to use
+    #[arg(long, value_enum, default_value = "mistral")]
+    pub backend: BackendArg,
+
+    /// Directory containing the GGUF model (required for mistral backend)
     #[arg(long)]
     pub model_dir: Option<PathBuf>,
 
-    /// GGUF file name inside --model-dir
+    /// GGUF file name inside --model-dir (required for mistral backend)
     #[arg(long)]
     pub model_file: Option<String>,
+
+    /// The model string identifier (required for openai backend)
+    #[arg(long)]
+    pub model: Option<String>,
+
+    /// The OpenAI-compatible API base URL (for openai backend)
+    #[arg(long, default_value = "http://localhost:1234/v1")]
+    pub api_base: String,
+
+    /// The API key for the OpenAI-compatible API (for openai backend)
+    #[arg(long)]
+    pub api_key: Option<String>,
 
     /// Context window in tokens (ModelProfile is config-supplied, ADR-006)
     #[arg(long, default_value_t = 4096)]
@@ -135,7 +158,6 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
     let policy = policy_for(&profile);
     // Both backends (mock and mistralrs) enforce constraints.
     let caps = Capabilities {
-        supports_constraint: true,
         supports_native_tool_calls: true,
         exposes_logits: false,
     };
@@ -266,8 +288,8 @@ fn mock_provider(protocol: ActionProtocol) -> MockProvider {
             native_completion("mock-1", ferric_loop::TASK_COMPLETE, done_args),
         ],
         ActionProtocol::UnifiedGrammar => vec![
-            grammar_completion(json!({"tool": "write_file", "args": write_args})),
-            grammar_completion(json!({"tool": ferric_loop::TASK_COMPLETE, "args": done_args})),
+            grammar_completion("write_file", &write_args),
+            grammar_completion(ferric_loop::TASK_COMPLETE, &done_args),
         ],
     };
     MockProvider::new(script)
@@ -292,9 +314,11 @@ fn native_completion(id: &str, name: &str, args: serde_json::Value) -> Completio
     }
 }
 
-fn grammar_completion(action: serde_json::Value) -> Completion {
+fn grammar_completion(name: &str, args: &serde_json::Value) -> Completion {
+    let args_str = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
+    let xml = format!("<tool_call><name>{}</name><args>{}</args></tool_call>", name, args_str);
     Completion {
-        message: Message::assistant(action.to_string()),
+        message: Message::assistant(xml),
         input_tokens: Some(40),
         output_tokens: Some(20),
         truncated: false,
@@ -332,7 +356,7 @@ fn drive_mock(
     .map_err(|e| format!("loop error: {e}"))
 }
 
-#[cfg(feature = "backend-mistralrs")]
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     args: &QueryArgs,
@@ -345,61 +369,106 @@ fn drive_real(
     lineage: Option<PromptLineage>,
     sink: &mut JsonlSink,
 ) -> Result<LoopOutcome, String> {
-    use ferric_provider::mistralrs::{MistralRsConfig, MistralRsProvider};
-
-    let model_dir = args
-        .model_dir
-        .as_ref()
-        .ok_or("--model-dir is required without --mock")?;
-    let model_file = args
-        .model_file
-        .as_ref()
-        .ok_or("--model-file is required without --mock")?;
-
-    let tokenizer_json = args
-        .tokenizer_json
-        .clone()
-        .or_else(|| std::env::var_os("FERRIC_TOKENIZER_JSON").map(std::path::PathBuf::from));
-
-    // Belt-and-braces offline enforcement (local paths already skip the HF
-    // API). Only when NOT sourcing a tokenizer by HF model id (that needs the
-    // network). Edition 2024: set_var is unsafe; we are pre-runtime/thread.
-    if args.tok_model_id.is_none() {
-        unsafe {
-            std::env::set_var("HF_HUB_OFFLINE", "1");
-        }
-    }
-
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async {
-        let mut config = MistralRsConfig::new(model_dir, model_file);
-        config.chat_template = args.chat_template.as_ref().map(|p| p.display().to_string());
-        config.tokenizer_json = tokenizer_json;
-        config.tok_model_id = args.tok_model_id.clone();
-        let provider = MistralRsProvider::load(config)
-            .await
-            .map_err(|e| format!("backend: {e}"))?;
-        run(
-            RunArgs {
-                provider: &provider,
-                registry,
-                workspace,
-                policy,
-                protocol,
-                sampling,
-                sleeper: &ThreadSleeper,
-                system_prompt,
-                prompt_lineage: lineage,
-            },
-            sink,
-            &args.prompt,
-        )
-        .await
-        .map_err(|e| format!("loop error: {e}"))
+        match args.backend {
+            BackendArg::Mistral => {
+                #[cfg(feature = "backend-mistralrs")]
+                {
+                    use ferric_provider::mistralrs::{MistralRsConfig, MistralRsProvider};
+                    
+                    let model_dir = args
+                        .model_dir
+                        .as_ref()
+                        .ok_or("--model-dir is required for mistral backend")?;
+                    let model_file = args
+                        .model_file
+                        .as_ref()
+                        .ok_or("--model-file is required for mistral backend")?;
+
+                    let tokenizer_json = args
+                        .tokenizer_json
+                        .clone()
+                        .or_else(|| std::env::var_os("FERRIC_TOKENIZER_JSON").map(std::path::PathBuf::from));
+
+                    if args.tok_model_id.is_none() {
+                        unsafe {
+                            std::env::set_var("HF_HUB_OFFLINE", "1");
+                        }
+                    }
+
+                    let mut config = MistralRsConfig::new(model_dir, model_file);
+                    config.chat_template = args.chat_template.as_ref().map(|p| p.display().to_string());
+                    config.tokenizer_json = tokenizer_json;
+                    config.tok_model_id = args.tok_model_id.clone();
+                    let provider = MistralRsProvider::load(config)
+                        .await
+                        .map_err(|e| format!("backend: {e}"))?;
+                    
+                    run(
+                        RunArgs {
+                            provider: &provider,
+                            registry,
+                            workspace,
+                            policy,
+                            protocol,
+                            sampling,
+                            sleeper: &ThreadSleeper,
+                            system_prompt,
+                            prompt_lineage: lineage,
+                        },
+                        sink,
+                        &args.prompt,
+                    )
+                    .await
+                    .map_err(|e| format!("loop error: {e}"))
+                }
+                #[cfg(not(feature = "backend-mistralrs"))]
+                {
+                    Err("binary built without mistralrs backend".to_string())
+                }
+            }
+            BackendArg::Openai => {
+                #[cfg(feature = "backend-openai")]
+                {
+                    use ferric_provider::openai::{OpenAiProvider, OpenAiConfig};
+                    let model_id = args.model.clone().ok_or("--model is required for openai backend")?;
+                    let api_key = args.api_key.clone().or_else(|| std::env::var("OPENAI_API_KEY").ok());
+                    let config = OpenAiConfig {
+                        base_url: args.api_base.clone(),
+                        api_key: api_key.unwrap_or_else(|| "ollama".to_string()),
+                        model: model_id,
+                    };
+                    let provider = OpenAiProvider::new(config);
+
+                    run(
+                        RunArgs {
+                            provider: &provider,
+                            registry,
+                            workspace,
+                            policy,
+                            protocol,
+                            sampling,
+                            sleeper: &ThreadSleeper,
+                            system_prompt,
+                            prompt_lineage: lineage,
+                        },
+                        sink,
+                        &args.prompt,
+                    )
+                    .await
+                    .map_err(|e| format!("loop error: {e}"))
+                }
+                #[cfg(not(feature = "backend-openai"))]
+                {
+                    Err("binary built without openai backend".to_string())
+                }
+            }
+        }
     })
 }
 
-#[cfg(not(feature = "backend-mistralrs"))]
+#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     _args: &QueryArgs,
@@ -413,8 +482,8 @@ fn drive_real(
     _sink: &mut JsonlSink,
 ) -> Result<LoopOutcome, String> {
     Err(
-        "this binary was built without the backend-mistralrs feature; \
-         rebuild with `cargo build --features backend-mistralrs`, or use --mock"
+        "this binary was built without backend features; \
+         rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
             .to_string(),
     )
 }

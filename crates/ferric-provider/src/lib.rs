@@ -7,13 +7,17 @@
 
 #[cfg(feature = "backend-mistralrs")]
 pub mod mistralrs;
+#[cfg(feature = "backend-openai")]
+pub mod openai;
 mod mock;
 mod traits;
 mod types;
 
 pub use mock::MockProvider;
+#[cfg(feature = "backend-openai")]
+pub use openai::{OpenAiConfig, OpenAiProvider};
 pub use traits::Provider;
 pub use types::{
-    Capabilities, Completion, CompletionRequest, Constraint, ProviderError, SamplingParams,
+    Capabilities, Completion, CompletionRequest, ProviderError, SamplingParams,
     ToolDescriptor,
 };

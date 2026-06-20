@@ -83,8 +83,11 @@ pub fn tool_completion(calls: Vec<(&str, &str, serde_json::Value)>) -> Completio
 /// A grammar-mode completion: the whole assistant text IS the action JSON,
 /// tool_calls empty. Used by the UnifiedGrammar loop tests (T-207).
 pub fn grammar_completion(action_json: serde_json::Value) -> Completion {
+    let name = action_json["tool"].as_str().unwrap_or("");
+    let args = action_json["args"].to_string();
+    let text = format!("<thought>thinking</thought>\n<tool_call><name>{}</name><args>{}</args></tool_call>", name, args);
     Completion {
-        message: Message::assistant(action_json.to_string()),
+        message: Message::assistant(text),
         input_tokens: Some(60),
         output_tokens: Some(20),
         truncated: false,

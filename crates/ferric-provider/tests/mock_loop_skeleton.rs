@@ -10,7 +10,7 @@
 use ferric_core::{Message, ModelProfile, Role, ToolCall, policy_for};
 use ferric_guard::Workspace;
 use ferric_provider::{
-    Completion, CompletionRequest, Constraint, MockProvider, Provider, SamplingParams,
+    Completion, CompletionRequest, MockProvider, Provider, SamplingParams,
     ToolDescriptor,
 };
 use ferric_tools::{ExecuteOutcome, Registry, register_builtin_tools};
@@ -76,7 +76,6 @@ fn mock_loop_skeleton() {
             input_schema: spec.input_schema,
         })
         .collect();
-    let constraint = Constraint::JsonSchema(json!({"type": "object"}));
 
     // Act: the minimal loop — generate, dispatch tools, feed results back,
     // stop on a text-only completion or the policy's turn budget.
@@ -92,7 +91,6 @@ fn mock_loop_skeleton() {
             messages: messages.clone(),
             sampling: SamplingParams::default(),
             tools: tools.clone(),
-            constraint: Some(constraint.clone()),
         }))
         .unwrap();
         messages.push(completion.message.clone());
@@ -137,11 +135,9 @@ fn mock_loop_skeleton() {
     // Assert: the loop terminated with the scripted answer.
     assert_eq!(final_text.as_deref(), Some("The file says: hello ferric"));
 
-    // The provider saw two requests; the second carried the tool result and
-    // both carried the constraint (end-to-end plumbing).
+    // The provider saw two requests.
     let requests = provider.requests();
     assert_eq!(requests.len(), 2);
-    assert!(requests.iter().all(|r| r.constraint.is_some()));
     let second = &requests[1];
     let fed_back = second
         .messages

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use ferric_core::{ActionProtocol, FerricError, Message, RunPolicy, ToolCall};
 use ferric_guard::Workspace;
-use ferric_provider::{CompletionRequest, Constraint, Provider, SamplingParams, ToolDescriptor};
+use ferric_provider::{CompletionRequest, Provider, SamplingParams, ToolDescriptor};
 use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
 use ferric_trace::{Event, JsonlSink};
 
@@ -93,7 +93,7 @@ pub async fn run(
         v.push(crate::terminator::descriptor());
         v
     };
-    let action_schema = crate::grammar::action_schema(&registry_tools);
+
 
     let mut repetition = crate::repetition::RepetitionGuard::new();
     let mut last_text: Option<String> = None;
@@ -112,18 +112,14 @@ pub async fn run(
         // Build the request per protocol (ADR-010/ADR-015: constraint and
         // tools are mutually exclusive by construction — the invalid state is
         // unrepresentable here).
-        let (tools, constraint) = match args.protocol {
-            ActionProtocol::NativeTools => (native_tools.clone(), None),
-            ActionProtocol::UnifiedGrammar => (
-                Vec::new(),
-                Some(Constraint::JsonSchema(action_schema.clone())),
-            ),
+        let tools = match args.protocol {
+            ActionProtocol::NativeTools => native_tools.clone(),
+            ActionProtocol::UnifiedGrammar => Vec::new(),
         };
         let request = CompletionRequest {
             messages: messages.clone(),
             sampling: args.sampling.clone(),
             tools,
-            constraint,
         };
         if let Err(e) = request.validate() {
             sink.write_event(Event::Note {
@@ -190,27 +186,20 @@ pub async fn run(
         }
         messages.push(completion.message.clone());
 
-        // Normalize the completion into actions per protocol.
-        let actions: Vec<ToolCall> = match args.protocol {
-            ActionProtocol::NativeTools => completion.message.tool_calls.clone(),
+        let (actions, parse_error) = match args.protocol {
+            ActionProtocol::NativeTools => (completion.message.tool_calls.clone(), None),
             ActionProtocol::UnifiedGrammar => {
-                // T-207: parse the whole completion text into one action;
-                // parse failure → no action (nudge path). T-208 refines
-                // truncation into its own reason.
                 match crate::grammar::parse_action(
                     turn,
                     completion.message.text.as_deref().unwrap_or_default(),
                 ) {
-                    Ok(call) => vec![call],
-                    Err(_) => Vec::new(),
+                    Ok(call) => (vec![call], None),
+                    Err(e) => (Vec::new(), Some(e)),
                 }
             }
         };
 
         if actions.is_empty() {
-            // No actionable output. Native mode: a text-only completion is a
-            // final answer; otherwise nudge once then stop. Grammar mode: a
-            // parse failure (never a final answer — grammar has no text path).
             let is_native_final = args.protocol == ActionProtocol::NativeTools
                 && completion
                     .message
@@ -224,7 +213,12 @@ pub async fn run(
                 break StopReason::EmptyCompletion;
             }
             nudged_for_no_action = true;
-            messages.push(Message::user(no_action_nudge(args.protocol)));
+            
+            let nudge_text = match parse_error {
+                Some(e) => format!("XML parse error: {e}. {}", no_action_nudge(args.protocol)),
+                None => no_action_nudge(args.protocol).to_string(),
+            };
+            messages.push(Message::user(nudge_text));
             continue;
         }
 
@@ -296,12 +290,11 @@ pub async fn run(
     })
 }
 
-/// The nudge for a turn that produced no dispatchable action.
 fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
     match protocol {
         ActionProtocol::NativeTools => "Respond with a tool call, or your final answer as text.",
         ActionProtocol::UnifiedGrammar => {
-            "Respond with a single JSON action object: {\"tool\": <name>, \"args\": {...}}."
+            "Respond with an XML tool call: <tool_call><name>tool_name</name><args>{\"arg\": \"value\"}</args></tool_call>"
         }
     }
 }

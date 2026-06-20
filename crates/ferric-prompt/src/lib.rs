@@ -177,9 +177,9 @@ mod tests {
         let native = compose_system_prompt(&lib, Tier::Nano, ActionProtocol::NativeTools)
             .unwrap()
             .text;
-        // Grammar prompt teaches the JSON action object; native does not.
-        assert!(grammar.contains("single JSON object"));
-        assert!(!native.contains("single JSON object"));
+        // Grammar prompt teaches the XML tool_call format; native does not.
+        assert!(grammar.contains("<tool_call>"));
+        assert!(!native.contains("<tool_call>"));
         // Native prompt teaches function-calling; grammar does not.
         assert!(native.contains("function-calling"));
         assert!(!grammar.contains("function-calling"));

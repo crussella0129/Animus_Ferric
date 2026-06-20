@@ -49,7 +49,6 @@ impl Provider for MockProvider {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            supports_constraint: true,
             supports_native_tool_calls: true,
             exposes_logits: false,
         }
@@ -74,7 +73,7 @@ mod tests {
     use ferric_core::Message;
     use serde_json::json;
 
-    use crate::types::{Constraint, SamplingParams};
+    use crate::types::SamplingParams;
 
     fn completion(text: &str) -> Completion {
         Completion {
@@ -85,41 +84,32 @@ mod tests {
         }
     }
 
-    fn request(constraint: Option<Constraint>) -> CompletionRequest {
+    fn request() -> CompletionRequest {
         CompletionRequest {
             messages: vec![Message::user("hi")],
             sampling: SamplingParams::default(),
             tools: Vec::new(),
-            constraint,
         }
     }
 
     #[test]
     fn mock_replays_script_in_order() {
         let mock = MockProvider::new(vec![completion("a"), completion("b")]);
-        let a = futures_executor::block_on(mock.complete(request(None))).unwrap();
-        let b = futures_executor::block_on(mock.complete(request(None))).unwrap();
+        let a = futures_executor::block_on(mock.complete(request())).unwrap();
+        let b = futures_executor::block_on(mock.complete(request())).unwrap();
         assert_eq!(a.message.text.as_deref(), Some("a"));
         assert_eq!(b.message.text.as_deref(), Some("b"));
-        let err = futures_executor::block_on(mock.complete(request(None))).unwrap_err();
+        let err = futures_executor::block_on(mock.complete(request())).unwrap_err();
         assert!(matches!(err, ProviderError::ScriptExhausted(2)));
     }
 
-    #[test]
-    fn constraint_recorded_by_mock() {
-        let mock = MockProvider::new(vec![completion("ok")]);
-        let schema = Constraint::JsonSchema(json!({"type": "object"}));
-        futures_executor::block_on(mock.complete(request(Some(schema.clone())))).unwrap();
-        let recorded = mock.last_request().unwrap();
-        assert_eq!(recorded.constraint, Some(schema));
-    }
+
 
     #[test]
     fn provider_is_dyn_compatible() {
         let boxed: Box<dyn Provider> = Box::new(MockProvider::new(vec![completion("dyn")]));
         assert_eq!(boxed.id(), "mock");
-        assert!(boxed.capabilities().supports_constraint);
-        let done = futures_executor::block_on(boxed.complete(request(None))).unwrap();
+        let done = futures_executor::block_on(boxed.complete(request())).unwrap();
         assert_eq!(done.message.text.as_deref(), Some("dyn"));
     }
 }

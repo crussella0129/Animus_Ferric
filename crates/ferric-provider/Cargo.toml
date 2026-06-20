@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 default = []
 backend-mistralrs = ["dep:mistralrs"]
+backend-openai = ["dep:reqwest"]
 
 [dependencies]
 ferric-core = { workspace = true }
@@ -17,6 +18,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 mistralrs = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true, features = ["json"] }
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 ferric-guard = { workspace = true }

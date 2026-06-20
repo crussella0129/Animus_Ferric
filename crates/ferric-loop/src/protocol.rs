@@ -36,9 +36,8 @@ mod tests {
     use super::*;
     use ferric_core::{ModelProfile, policy_for};
 
-    fn caps(supports_constraint: bool) -> Capabilities {
+    fn caps() -> Capabilities {
         Capabilities {
-            supports_constraint,
             supports_native_tool_calls: true,
             exposes_logits: false,
         }
@@ -60,11 +59,7 @@ mod tests {
         // ADR-020: grammar is NOT auto-selected even when capable — it hangs
         // the real engine. Default must be NativeTools so query never hangs.
         assert_eq!(
-            select_protocol(&nano(), &caps(true), None),
-            ActionProtocol::NativeTools
-        );
-        assert_eq!(
-            select_protocol(&nano(), &caps(false), None),
+            select_protocol(&nano(), &caps(), None),
             ActionProtocol::NativeTools
         );
     }
@@ -73,7 +68,7 @@ mod tests {
     fn override_to_grammar_wins() {
         // Grammar is opt-in via explicit override (`--protocol grammar`).
         assert_eq!(
-            select_protocol(&nano(), &caps(true), Some(ActionProtocol::UnifiedGrammar)),
+            select_protocol(&nano(), &caps(), Some(ActionProtocol::UnifiedGrammar)),
             ActionProtocol::UnifiedGrammar
         );
     }
@@ -81,7 +76,7 @@ mod tests {
     #[test]
     fn override_to_native_wins() {
         assert_eq!(
-            select_protocol(&nano(), &caps(true), Some(ActionProtocol::NativeTools)),
+            select_protocol(&nano(), &caps(), Some(ActionProtocol::NativeTools)),
             ActionProtocol::NativeTools
         );
     }

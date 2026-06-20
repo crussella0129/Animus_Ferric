@@ -31,7 +31,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
-mistralrs = "=0.8.1"
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", branch = "master" }
+reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 # Prompt composition (ADR-016): rev-pinned to oovra main; immutable until a
 # deliberate, reviewed bump. Swap to crates.io at oovra v0.3.

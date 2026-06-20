@@ -163,23 +163,3 @@ fn unknown_tool_feeds_back() {
     assert_eq!(result.outcome.final_text.as_deref(), Some("recovered"));
 }
 
-#[test]
-fn adr010_request_shape() {
-    let result = run_scripted(
-        vec![
-            tool_completion(vec![("tc-0", "list_dir", json!({"path": "."}))]),
-            text_completion("done"),
-        ],
-        &nano_policy(),
-        |provider| {
-            for request in provider.requests() {
-                assert!(!request.tools.is_empty(), "tool turns must offer tools");
-                assert!(
-                    request.constraint.is_none(),
-                    "ADR-010: no constraint alongside tools"
-                );
-            }
-        },
-    );
-    assert_eq!(result.outcome.stop, StopReason::FinalText);
-}

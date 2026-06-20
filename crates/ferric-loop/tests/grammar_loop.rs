@@ -42,9 +42,6 @@ fn grammar_happy_path() {
                 })
                 .expect("grammar tool result framed as user message");
             assert!(fed.text.as_deref().unwrap().contains("wrote"));
-            // Grammar requests carry NO tools (constraint-only).
-            assert!(second.tools.is_empty());
-            assert!(second.constraint.is_some());
         },
     );
     assert_eq!(result.outcome.stop, StopReason::TaskComplete);
@@ -54,7 +51,6 @@ fn grammar_happy_path() {
     let ks = kinds(&result.records);
     assert_eq!(ks[0], "session_start");
     assert_eq!(ks[1], "policy_selected");
-    assert!(ks.contains(&"constraint_applied"));
     assert!(ks.contains(&"tool_call"));
     assert!(ks.contains(&"tool_result"));
     assert!(ks.contains(&"permission_check"));
@@ -74,10 +70,6 @@ fn grammar_request_shape() {
         |provider| {
             for req in provider.requests() {
                 assert!(req.tools.is_empty(), "grammar requests carry no tools");
-                assert!(
-                    req.constraint.is_some(),
-                    "grammar requests carry a constraint"
-                );
             }
         },
     );
@@ -117,7 +109,7 @@ fn grammar_non_action_json_rejected() {
                     && m.text
                         .as_deref()
                         .unwrap_or_default()
-                        .contains("JSON action")),
+                        .contains("XML tool call")),
                 "grammar no-action nudge must reach the model"
             );
         },

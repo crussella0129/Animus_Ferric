@@ -3,23 +3,12 @@ use thiserror::Error;
 
 use ferric_core::Message;
 
-/// A decoding constraint, shaped after llguidance's three grammar kinds so
-/// both the in-process backend (mistral.rs, llguidance merged) and the HTTP
-/// escape valve (llama-server json_schema/GBNF) map onto it without trait
-/// changes (ADR-003).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum Constraint {
-    JsonSchema(serde_json::Value),
-    Regex(String),
-    Lark(String),
-}
+
 
 /// What a backend can actually do. The loop downgrades the action protocol
 /// per these flags (e.g. no constraint support → fenced-code protocol).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capabilities {
-    pub supports_constraint: bool,
     pub supports_native_tool_calls: bool,
     pub exposes_logits: bool,
 }
@@ -56,21 +45,10 @@ pub struct CompletionRequest {
     pub messages: Vec<Message>,
     pub sampling: SamplingParams,
     pub tools: Vec<ToolDescriptor>,
-    pub constraint: Option<Constraint>,
 }
 
 impl CompletionRequest {
-    /// ADR-010: a custom decoding constraint applies to the ENTIRE output and
-    /// fights tool-call syntax, so a request may carry a constraint or tools,
-    /// never both. The loop validates before every provider call; backends
-    /// validate again at their boundary (defense in depth).
     pub fn validate(&self) -> Result<(), ProviderError> {
-        if self.constraint.is_some() && !self.tools.is_empty() {
-            return Err(ProviderError::InvalidRequest(
-                "a request may carry a decoding constraint or tools, not both (ADR-010)"
-                    .to_string(),
-            ));
-        }
         Ok(())
     }
 }
@@ -116,7 +94,7 @@ mod tests {
     use ferric_core::Message;
     use serde_json::json;
 
-    fn request(constraint: Option<Constraint>, with_tool: bool) -> CompletionRequest {
+    fn request(with_tool: bool) -> CompletionRequest {
         CompletionRequest {
             messages: vec![Message::user("hi")],
             sampling: SamplingParams::default(),
@@ -129,18 +107,13 @@ mod tests {
             } else {
                 Vec::new()
             },
-            constraint,
         }
     }
 
     #[test]
     fn validate_matrix() {
-        let schema = Constraint::JsonSchema(json!({"type": "object"}));
-        assert!(request(None, false).validate().is_ok());
-        assert!(request(Some(schema.clone()), false).validate().is_ok());
-        assert!(request(None, true).validate().is_ok());
-        let err = request(Some(schema), true).validate().unwrap_err();
-        assert!(matches!(err, ProviderError::InvalidRequest(ref m) if m.contains("ADR-010")));
+        assert!(request(false).validate().is_ok());
+        assert!(request(true).validate().is_ok());
     }
 
     #[test]
