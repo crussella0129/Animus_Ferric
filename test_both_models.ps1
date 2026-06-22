@@ -15,7 +15,7 @@ Write-Host "Starting Multi-Model E2E Test Suite" -ForegroundColor Magenta
 Write-Host "==========================================================" -ForegroundColor Magenta
 
 # Function to run the test for a given model
-function Run-ModelTest {
+function Invoke-ModelTest {
     param (
         [string]$ModelName,
         [string[]]$BackendArgs
@@ -36,7 +36,7 @@ function Run-ModelTest {
 
     $Command = "cargo"
     $ArgsList = @(
-        "run", "--release", "-p", "ferric-cli", "--features", "backend-mistralrs,backend-openai",
+        "run", "--release", "-p", "ferric-cli", "--features", "backend-mistralrs,backend-openai,backend-python",
         "--", "query", $Prompt, 
         "--workspace", "./$Workspace"
     ) + $BackendArgs
@@ -61,8 +61,8 @@ function Run-ModelTest {
 }
 
 # Run tests
-Run-ModelTest -ModelName "Llama3.2-1B" -BackendArgs @("--backend", "mistral", "--model-dir", $Model1Dir, "--model-file", $Model1File)
-Run-ModelTest -ModelName "Gemma-4-e4b" -BackendArgs @("--backend", "openai", "--model", $Model2Name)
+Invoke-ModelTest -ModelName "Llama3.2-1B" -BackendArgs @("--backend", "mistral", "--model-dir", $Model1Dir, "--model-file", $Model1File)
+Invoke-ModelTest -ModelName "Gemma-4-e4b" -BackendArgs @("--backend", "python", "--model-dir", "C:\Users\charl\Animus_Ferric\models\safetensors\google--gemma-4-e4b")
 
 Write-Host "`n==========================================================" -ForegroundColor Magenta
 Write-Host "Multi-Model Test Suite Completed!" -ForegroundColor Magenta

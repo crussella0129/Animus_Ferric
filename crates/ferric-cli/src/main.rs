@@ -4,8 +4,10 @@
 //! - `ferric trace cat <file>` — derived view of a JSONL trace.
 //! - `ferric dev` — reserved for the Development Engine (s4–s7).
 
+mod backend;
 mod bench_cmd;
 mod query;
+mod toolbench_cmd;
 mod trace_cmd;
 
 use std::path::PathBuf;
@@ -30,6 +32,8 @@ enum Command {
     Query(Box<query::QueryArgs>),
     /// Run the L0–L6 capability benchmark and calibrate measured_level
     Bench(Box<bench_cmd::BenchArgs>),
+    /// Run single-turn tool fire rate tests
+    Toolbench(Box<toolbench_cmd::ToolbenchArgs>),
     /// Inspect session traces
     Trace {
         #[command(subcommand)]
@@ -48,6 +52,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Query(args) => query::run_query(*args),
         Command::Bench(args) => bench_cmd::run_bench(*args),
+        Command::Toolbench(args) => toolbench_cmd::run_toolbench(*args),
         Command::Trace {
             command: TraceCommand::Cat { file },
         } => trace_cmd::trace_cat(&file),

@@ -1,11 +1,5 @@
-- [ ] s3.1: Remove `llguidance` and strict grammar from Inference Engine in `ferric-core`
-- [ ] s3.2: Refactor System Prompt for XML Tool-Calling in `ferric-prompt`
-- [ ] s3.3: Implement XML/Regex Parser in `ferric-loop`
-- [ ] s3.4: Implement Feedback-Retry Loop in `ferric-loop`
-
-- [ ] T-401: Implement OpenAiProvider in ferric-provider/src/openai.rs
-- [ ] T-402: Add backend-openai feature and reqwest dependency
-- [ ] T-403: Bump mistralrs to git master in workspace Cargo.toml
-- [ ] T-404: Add --backend flag and args to ferric-cli/src/query.rs
-- [ ] T-405: Refactor drive_real to branch between Mistral and Openai backends
-- [ ] T-406: Update test_both_models.ps1 to use the dual backends
+- [ ] T-501: Add `pyo3` dependency to `crates/ferric-provider/Cargo.toml` under a new `backend-python` feature.
+- [ ] T-502: Implement `crates/ferric-provider/src/python.rs` containing `PythonProvider` logic to execute a python script via `pyo3`.
+- [ ] T-503: Write `crates/ferric-provider/python/inference.py` to wrap `AutoModelForCausalLM` and handle tool-calls with `transformers`.
+- [ ] T-504: Update `crates/ferric-cli/src/query.rs` to add `BackendArg::Python` and branch in `drive_real`.
+- [ ] T-505: Update `test_both_models.ps1` to test the new Python backend with Gemma-4-e4b.
