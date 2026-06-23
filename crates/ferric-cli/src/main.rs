@@ -7,6 +7,7 @@
 mod backend;
 mod bench_cmd;
 mod query;
+mod server;
 mod toolbench_cmd;
 mod trace_cmd;
 
@@ -34,6 +35,11 @@ enum Command {
     Bench(Box<bench_cmd::BenchArgs>),
     /// Run single-turn tool fire rate tests
     Toolbench(Box<toolbench_cmd::ToolbenchArgs>),
+    /// Launch and manage the OpenAI-compatible inference server (the HTTP valve)
+    Server {
+        #[command(subcommand)]
+        command: server::ServerCommand,
+    },
     /// Inspect session traces
     Trace {
         #[command(subcommand)]
@@ -53,6 +59,10 @@ fn main() -> ExitCode {
         Command::Query(args) => query::run_query(*args),
         Command::Bench(args) => bench_cmd::run_bench(*args),
         Command::Toolbench(args) => toolbench_cmd::run_toolbench(*args),
+        Command::Server { command } => {
+            let workspace = std::env::current_dir().unwrap_or_default();
+            server::run_server(&workspace, command)
+        }
         Command::Trace {
             command: TraceCommand::Cat { file },
         } => trace_cmd::trace_cat(&file),

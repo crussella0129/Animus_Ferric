@@ -26,6 +26,7 @@ ferric-tools = { workspace = true }
 ferric-trace = { workspace = true }
 clap = { workspace = true }
 futures-executor = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, optional = true }
 

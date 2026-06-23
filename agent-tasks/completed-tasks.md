@@ -305,3 +305,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
 - **Commit:** `71e7a46`
+
+## T-803 + T-804 (sprint 8)
+- **Description:** Built the `ferric server` launcher (ADR-023). Landed as ONE commit because the pure `Engine`/`command`/`health_url` (T-803) are dead code until the subcommand that calls them (T-804) exists. New `server.rs`: `Engine { LlamaServer (default), Ollama }` (closed enum — never execs arbitrary input, ADR-005), `command(&ServerConfig)` builds the argv/env (`llama-server -m … --mmproj … -c … --host 127.0.0.1 --port …`; `ollama serve` + `OLLAMA_HOST`), `health_url`, and a `ServerRunfile {engine,pid,port,base_url}` written to `.ferric/server.json`. The `ferric server` subcommand: `up` (spawn child, TCP-connect readiness poll ≤60s, write runfile, leave it running), `status` (reachability + base_url), `down` (kill PID portably — taskkill/kill — + remove runfile), `doctor` (engine-binary + model presence + reachability). All std-only (TCP readiness, no reqwest), so it's in the default build; host pinned to loopback. 8 unit tests (argv/env, mmproj, loopback, health URLs, runfile serde, absent-runfile) in default CI; real spawn is the E2E heartbeat. Smoke-verified: status/down with no server + `up --help`.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/server.rs (new), crates/ferric-cli/src/main.rs, crates/ferric-cli/Cargo.toml (serde dep)
+- **Commit:** `44bb01e`
