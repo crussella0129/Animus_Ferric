@@ -3,13 +3,21 @@ use thiserror::Error;
 
 use ferric_core::Message;
 
-
-
-/// What a backend can actually do. The loop downgrades the action protocol
-/// per these flags (e.g. no constraint support → fenced-code protocol).
+/// What a backend can actually do. The loop selects the action protocol per
+/// these flags: `supports_constraint` → `ConstrainedJson`, else
+/// `supports_native_tool_calls` → `NativeTools`, else `TextXml` (ADR-015/022).
+///
+/// These flags are a STRUCTURAL CONTRACT, not aspiration: a backend may only
+/// advertise a capability its `complete()` actually exercises on the path that
+/// runs. (mistral.rs reporting `supports_native_tool_calls: true` while
+/// stripping tools was the s6 toolbench 0.0% bug — ADR-022.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capabilities {
     pub supports_native_tool_calls: bool,
+    /// The backend enforces a harness-authored `Constraint` server-side
+    /// (e.g. the HTTP valve's `response_format`). When true the loop may run
+    /// `ConstrainedJson` — the founding "harness owns decoding" thesis.
+    pub supports_constraint: bool,
     pub exposes_logits: bool,
 }
 
@@ -40,15 +48,44 @@ pub struct ToolDescriptor {
     pub input_schema: serde_json::Value,
 }
 
+/// A harness-authored decoding constraint (ADR-003, llguidance-shaped). The
+/// loop authors it; a constraint-honoring backend enforces it server-side so a
+/// malformed action is unrepresentable rather than repairable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Constraint {
+    /// A JSON Schema the whole completion must satisfy (the unified action
+    /// grammar). Sent to the HTTP valve as `response_format.json_schema`.
+    JsonSchema(serde_json::Value),
+    /// A regular expression the whole completion must match.
+    Regex(String),
+    /// A Lark/GBNF context-free grammar.
+    Lark(String),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompletionRequest {
     pub messages: Vec<Message>,
     pub sampling: SamplingParams,
     pub tools: Vec<ToolDescriptor>,
+    /// A decoding constraint over the whole output. Mutually exclusive with
+    /// `tools` (ADR-010): a constraint applies to the ENTIRE completion and
+    /// fights tool-call syntax. `validate()` rejects both-set requests.
+    pub constraint: Option<Constraint>,
 }
 
 impl CompletionRequest {
+    /// ADR-010: a constraint and native tool calling are mutually exclusive
+    /// per request. The loop validates before every provider call (primary);
+    /// backends validate again at their boundary (defense in depth).
     pub fn validate(&self) -> Result<(), ProviderError> {
+        if self.constraint.is_some() && !self.tools.is_empty() {
+            return Err(ProviderError::InvalidRequest(
+                "constraint and tools are mutually exclusive (ADR-010): a \
+                 constraint governs the whole output and fights tool-call syntax"
+                    .to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -94,7 +131,7 @@ mod tests {
     use ferric_core::Message;
     use serde_json::json;
 
-    fn request(with_tool: bool) -> CompletionRequest {
+    fn request(with_tool: bool, with_constraint: bool) -> CompletionRequest {
         CompletionRequest {
             messages: vec![Message::user("hi")],
             sampling: SamplingParams::default(),
@@ -107,13 +144,36 @@ mod tests {
             } else {
                 Vec::new()
             },
+            constraint: if with_constraint {
+                Some(Constraint::JsonSchema(json!({"type": "object"})))
+            } else {
+                None
+            },
         }
     }
 
     #[test]
-    fn validate_matrix() {
-        assert!(request(false).validate().is_ok());
-        assert!(request(true).validate().is_ok());
+    fn validate_rejects_constraint_and_tools() {
+        // ADR-010: constraint + tools in the same request is invalid.
+        assert!(matches!(
+            request(true, true).validate(),
+            Err(ProviderError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_lawful_combinations() {
+        assert!(request(false, true).validate().is_ok()); // constraint only
+        assert!(request(true, false).validate().is_ok()); // tools only
+        assert!(request(false, false).validate().is_ok()); // neither
+    }
+
+    #[test]
+    fn constraint_jsonschema_serde_roundtrip() {
+        let c = Constraint::JsonSchema(json!({"type": "object", "required": ["x"]}));
+        let s = serde_json::to_string(&c).unwrap();
+        let back: Constraint = serde_json::from_str(&s).unwrap();
+        assert_eq!(c, back);
     }
 
     #[test]

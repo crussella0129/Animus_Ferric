@@ -251,3 +251,9 @@
 - **Completed:** 2026-06-13 (build phase; real-model runs in Test phase)
 - **Files modified:** crates/ferric-cli/tests/l0_smoke.rs, decisions.md
 - **Commit:** (see git log for T-216)
+
+## T-001 (sprint 7)
+- **Description:** Reinstated the `Constraint` enum (`JsonSchema|Regex|Lark`) and `constraint: Option<Constraint>` on `CompletionRequest`; restored `validate()` to enforce ADR-010 (constraint XOR tools); added `supports_constraint` to `Capabilities` (honest, set false on every existing backend pending its own wiring); re-exported `Constraint`; updated all `Capabilities{}`/`CompletionRequest{}` literals. Also restored the CI gate to green from inherited s6 breakage: fixed the corrupted `.gitignore` (16 GB `models/` + logs were not actually ignored), stripped trailing whitespace + gated feature-only imports in `toolbench_cmd.rs`, removed dead `ToolCall`/`json` imports, and deleted the unreachable no-backend `create_provider` stub.
+- **Completed:** 2026-06-22 (build phase)
+- **Files modified:** .gitignore, crates/ferric-provider/src/{types.rs,lib.rs,mock.rs,mistralrs.rs,openai.rs,python.rs}, crates/ferric-provider/tests/mock_loop_skeleton.rs, crates/ferric-loop/src/{run.rs,protocol.rs}, crates/ferric-loop/tests/backoff_tests.rs, crates/ferric-cli/src/{backend.rs,query.rs,toolbench_cmd.rs}
+- **Commit:** `e4a5684`

@@ -85,7 +85,10 @@ pub fn tool_completion(calls: Vec<(&str, &str, serde_json::Value)>) -> Completio
 pub fn grammar_completion(action_json: serde_json::Value) -> Completion {
     let name = action_json["tool"].as_str().unwrap_or("");
     let args = action_json["args"].to_string();
-    let text = format!("<thought>thinking</thought>\n<tool_call><name>{}</name><args>{}</args></tool_call>", name, args);
+    let text = format!(
+        "<thought>thinking</thought>\n<tool_call><name>{}</name><args>{}</args></tool_call>",
+        name, args
+    );
     Completion {
         message: Message::assistant(text),
         input_tokens: Some(60),

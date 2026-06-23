@@ -10,8 +10,7 @@
 use ferric_core::{Message, ModelProfile, Role, ToolCall, policy_for};
 use ferric_guard::Workspace;
 use ferric_provider::{
-    Completion, CompletionRequest, MockProvider, Provider, SamplingParams,
-    ToolDescriptor,
+    Completion, CompletionRequest, MockProvider, Provider, SamplingParams, ToolDescriptor,
 };
 use ferric_tools::{ExecuteOutcome, Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
@@ -91,6 +90,7 @@ fn mock_loop_skeleton() {
             messages: messages.clone(),
             sampling: SamplingParams::default(),
             tools: tools.clone(),
+            constraint: None,
         }))
         .unwrap();
         messages.push(completion.message.clone());

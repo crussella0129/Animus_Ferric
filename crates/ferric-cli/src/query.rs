@@ -22,7 +22,11 @@ use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink};
 
 use crate::backend::BackendOpts;
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python"))]
+#[cfg(any(
+    feature = "backend-mistralrs",
+    feature = "backend-openai",
+    feature = "backend-python"
+))]
 use crate::backend::create_provider;
 
 /// CLI spelling of `ActionProtocol`.
@@ -118,9 +122,12 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
         measured_level: None,
     };
     let policy = policy_for(&profile);
-    // Both backends (mock and mistralrs) enforce constraints.
+    // Capability seed for protocol selection. Wired to the real provider's
+    // `capabilities()` when the backend is constructed (the constrained path
+    // requires a backend that actually enforces `response_format`).
     let caps = Capabilities {
         supports_native_tool_calls: true,
+        supports_constraint: false,
         exposes_logits: false,
     };
     let protocol = select_protocol(&policy, &caps, args.protocol.map(ActionProtocol::from));
@@ -278,7 +285,10 @@ fn native_completion(id: &str, name: &str, args: serde_json::Value) -> Completio
 
 fn grammar_completion(name: &str, args: &serde_json::Value) -> Completion {
     let args_str = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
-    let xml = format!("<tool_call><name>{}</name><args>{}</args></tool_call>", name, args_str);
+    let xml = format!(
+        "<tool_call><name>{}</name><args>{}</args></tool_call>",
+        name, args_str
+    );
     Completion {
         message: Message::assistant(xml),
         input_tokens: Some(40),
@@ -318,7 +328,11 @@ fn drive_mock(
     .map_err(|e| format!("loop error: {e}"))
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python"))]
+#[cfg(any(
+    feature = "backend-mistralrs",
+    feature = "backend-openai",
+    feature = "backend-python"
+))]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     args: &QueryArgs,
@@ -355,7 +369,11 @@ fn drive_real(
     })
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python")))]
+#[cfg(not(any(
+    feature = "backend-mistralrs",
+    feature = "backend-openai",
+    feature = "backend-python"
+)))]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     _args: &QueryArgs,

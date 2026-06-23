@@ -12,8 +12,10 @@ use std::sync::OnceLock;
 pub fn parse_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseError> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        Regex::new(r"(?s)<tool_call>\s*<name>\s*(.*?)\s*</name>\s*<args>\s*(.*?)\s*</args>\s*</tool_call>")
-            .unwrap()
+        Regex::new(
+            r"(?s)<tool_call>\s*<name>\s*(.*?)\s*</name>\s*<args>\s*(.*?)\s*</args>\s*</tool_call>",
+        )
+        .unwrap()
     });
 
     if let Some(caps) = re.captures(text) {
@@ -27,8 +29,8 @@ pub fn parse_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseError>
             return Err(ActionParseError::MissingArgs);
         }
 
-        let value: Value = serde_json::from_str(args_str)
-            .map_err(|e| ActionParseError::NotJson(e.to_string()))?;
+        let value: Value =
+            serde_json::from_str(args_str).map_err(|e| ActionParseError::NotJson(e.to_string()))?;
 
         if !value.is_object() {
             return Err(ActionParseError::ArgsNotAnObject);
@@ -56,7 +58,9 @@ pub enum ActionParseError {
 impl std::fmt::Display for ActionParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ActionParseError::MalformedXml => write!(f, "action did not match <tool_call> XML format"),
+            ActionParseError::MalformedXml => {
+                write!(f, "action did not match <tool_call> XML format")
+            }
             ActionParseError::NotJson(e) => write!(f, "action arguments were not valid JSON: {e}"),
             ActionParseError::MissingTool => write!(f, "action missing tool name"),
             ActionParseError::MissingArgs => write!(f, "action missing arguments JSON"),
@@ -98,7 +102,10 @@ I will write to a file.
     #[test]
     fn parse_action_rejects_partial_xml() {
         assert!(matches!(
-            parse_action(0, r#"<tool_call><name>write_file</name><args>{"path":"a.txt""#),
+            parse_action(
+                0,
+                r#"<tool_call><name>write_file</name><args>{"path":"a.txt""#
+            ),
             Err(ActionParseError::MalformedXml)
         ));
     }
@@ -110,11 +117,17 @@ I will write to a file.
             Err(ActionParseError::MissingTool)
         ));
         assert!(matches!(
-            parse_action(0, "<tool_call><name>read_file</name><args></args></tool_call>"),
+            parse_action(
+                0,
+                "<tool_call><name>read_file</name><args></args></tool_call>"
+            ),
             Err(ActionParseError::MissingArgs)
         ));
         assert!(matches!(
-            parse_action(0, "<tool_call><name>read_file</name><args>\"oops\"</args></tool_call>"),
+            parse_action(
+                0,
+                "<tool_call><name>read_file</name><args>\"oops\"</args></tool_call>"
+            ),
             Err(ActionParseError::ArgsNotAnObject)
         ));
     }

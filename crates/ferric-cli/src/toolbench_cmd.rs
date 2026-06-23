@@ -1,11 +1,21 @@
-use std::process::ExitCode;
 use clap::Args;
+use std::process::ExitCode;
 
-use ferric_core::{Message, Role, ModelProfile, policy_for};
-use ferric_provider::{CompletionRequest, SamplingParams, ToolDescriptor};
-use ferric_tools::Registry;
+use crate::backend::BackendOpts;
 
-use crate::backend::{BackendOpts, create_provider};
+// These are used only by the feature-gated `run_toolbench`; gating the imports
+// keeps the default (backend-free) build warning-clean under `-D warnings`.
+#[cfg(any(
+    feature = "backend-mistralrs",
+    feature = "backend-openai",
+    feature = "backend-python"
+))]
+use {
+    crate::backend::create_provider,
+    ferric_core::{Message, ModelProfile, Role, policy_for},
+    ferric_provider::{CompletionRequest, SamplingParams, ToolDescriptor},
+    ferric_tools::Registry,
+};
 
 #[derive(Args)]
 pub struct ToolbenchArgs {
@@ -17,7 +27,11 @@ pub struct ToolbenchArgs {
     pub iterations: u32,
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python"))]
+#[cfg(any(
+    feature = "backend-mistralrs",
+    feature = "backend-openai",
+    feature = "backend-python"
+))]
 pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
@@ -33,7 +47,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
 
         let mut registry = Registry::new();
         ferric_tools::register_builtin_tools(&mut registry);
-        
+
         let profile = ModelProfile {
             params_b: 8.0,
             quant: "Q4".to_string(),
@@ -42,7 +56,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             measured_level: None,
         };
         let policy = policy_for(&profile);
-        
+
         let all_tools: Vec<ToolDescriptor> = registry
             .tools_for_policy(&policy)
             .into_iter()
@@ -91,6 +105,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                         max_tokens: 256,
                         ..SamplingParams::default()
                     },
+                    constraint: None,
                 };
 
                 let completion = provider.complete(request).await.map_err(|e| format!("provider error: {e}"))?;
@@ -112,7 +127,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                     overall_successes += 1;
                 }
                 overall_total += 1;
-                
+
                 print!("{}", if pass { "." } else { "F" });
                 use std::io::Write;
                 let _ = std::io::stdout().flush();
@@ -136,7 +151,11 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
     }
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python")))]
+#[cfg(not(any(
+    feature = "backend-mistralrs",
+    feature = "backend-openai",
+    feature = "backend-python"
+)))]
 pub fn run_toolbench(_args: ToolbenchArgs) -> ExitCode {
     eprintln!(
         "this binary was built without backend features; \

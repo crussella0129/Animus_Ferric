@@ -7,11 +7,11 @@
 
 #[cfg(feature = "backend-mistralrs")]
 pub mod mistralrs;
+mod mock;
 #[cfg(feature = "backend-openai")]
 pub mod openai;
 #[cfg(feature = "backend-python")]
 pub mod python;
-mod mock;
 mod traits;
 mod types;
 
@@ -19,9 +19,9 @@ pub use mock::MockProvider;
 #[cfg(feature = "backend-openai")]
 pub use openai::{OpenAiConfig, OpenAiProvider};
 #[cfg(feature = "backend-python")]
-pub use python::{PythonProvider, PythonConfig};
+pub use python::{PythonConfig, PythonProvider};
 pub use traits::Provider;
 pub use types::{
-    Capabilities, Completion, CompletionRequest, ProviderError, SamplingParams,
+    Capabilities, Completion, CompletionRequest, Constraint, ProviderError, SamplingParams,
     ToolDescriptor,
 };

@@ -50,6 +50,7 @@ impl Provider for MockProvider {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             supports_native_tool_calls: true,
+            supports_constraint: false,
             exposes_logits: false,
         }
     }
@@ -71,7 +72,6 @@ impl Provider for MockProvider {
 mod tests {
     use super::*;
     use ferric_core::Message;
-    use serde_json::json;
 
     use crate::types::SamplingParams;
 
@@ -89,6 +89,7 @@ mod tests {
             messages: vec![Message::user("hi")],
             sampling: SamplingParams::default(),
             tools: Vec::new(),
+            constraint: None,
         }
     }
 
@@ -102,8 +103,6 @@ mod tests {
         let err = futures_executor::block_on(mock.complete(request())).unwrap_err();
         assert!(matches!(err, ProviderError::ScriptExhausted(2)));
     }
-
-
 
     #[test]
     fn provider_is_dyn_compatible() {

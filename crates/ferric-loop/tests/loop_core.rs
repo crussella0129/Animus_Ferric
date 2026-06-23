@@ -162,4 +162,3 @@ fn unknown_tool_feeds_back() {
     assert_eq!(result.outcome.stop, StopReason::FinalText);
     assert_eq!(result.outcome.final_text.as_deref(), Some("recovered"));
 }
-

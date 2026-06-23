@@ -1,5 +1,12 @@
-use std::path::PathBuf;
 use clap::{Args, ValueEnum};
+use std::path::PathBuf;
+
+// `Provider` is only named by the feature-gated `create_provider` return type.
+#[cfg(any(
+    feature = "backend-mistralrs",
+    feature = "backend-openai",
+    feature = "backend-python"
+))]
 use ferric_provider::Provider;
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -49,14 +56,20 @@ pub struct BackendOpts {
     pub tok_model_id: Option<String>,
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python"))]
-pub async fn create_provider(opts: &BackendOpts) -> Result<Box<dyn Provider + Send + Sync>, String> {
+#[cfg(any(
+    feature = "backend-mistralrs",
+    feature = "backend-openai",
+    feature = "backend-python"
+))]
+pub async fn create_provider(
+    opts: &BackendOpts,
+) -> Result<Box<dyn Provider + Send + Sync>, String> {
     match opts.backend {
         BackendArg::Mistral => {
             #[cfg(feature = "backend-mistralrs")]
             {
                 use ferric_provider::mistralrs::{MistralRsConfig, MistralRsProvider};
-                
+
                 let model_dir = opts
                     .model_dir
                     .as_ref()
@@ -81,7 +94,7 @@ pub async fn create_provider(opts: &BackendOpts) -> Result<Box<dyn Provider + Se
                 config.chat_template = opts.chat_template.as_ref().map(|p| p.display().to_string());
                 config.tokenizer_json = tokenizer_json;
                 config.tok_model_id = opts.tok_model_id.clone();
-                
+
                 let provider = MistralRsProvider::load(config)
                     .await
                     .map_err(|e| format!("mistral backend: {e}"))?;
@@ -95,9 +108,15 @@ pub async fn create_provider(opts: &BackendOpts) -> Result<Box<dyn Provider + Se
         BackendArg::Openai => {
             #[cfg(feature = "backend-openai")]
             {
-                use ferric_provider::openai::{OpenAiProvider, OpenAiConfig};
-                let model_id = opts.model.clone().ok_or("--model is required for openai backend")?;
-                let api_key = opts.api_key.clone().or_else(|| std::env::var("OPENAI_API_KEY").ok());
+                use ferric_provider::openai::{OpenAiConfig, OpenAiProvider};
+                let model_id = opts
+                    .model
+                    .clone()
+                    .ok_or("--model is required for openai backend")?;
+                let api_key = opts
+                    .api_key
+                    .clone()
+                    .or_else(|| std::env::var("OPENAI_API_KEY").ok());
                 let config = OpenAiConfig {
                     base_url: opts.api_base.clone(),
                     api_key: api_key.unwrap_or_else(|| "ollama".to_string()),
@@ -114,12 +133,12 @@ pub async fn create_provider(opts: &BackendOpts) -> Result<Box<dyn Provider + Se
         BackendArg::Python => {
             #[cfg(feature = "backend-python")]
             {
-                use ferric_provider::python::{PythonProvider, PythonConfig};
+                use ferric_provider::python::{PythonConfig, PythonProvider};
                 let model_dir = opts
                     .model_dir
                     .as_ref()
                     .ok_or("--model-dir is required for python backend")?;
-                
+
                 let config = PythonConfig {
                     model_dir: model_dir.clone(),
                 };
@@ -134,11 +153,7 @@ pub async fn create_provider(opts: &BackendOpts) -> Result<Box<dyn Provider + Se
     }
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python")))]
-pub async fn create_provider(_opts: &BackendOpts) -> Result<Box<dyn Provider + Send + Sync>, String> {
-    Err(
-        "this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai,backend-python`, or use --mock"
-            .to_string(),
-    )
-}
+// No `create_provider` stub for the backend-free build: the only callers
+// (`query::drive_real`, `toolbench`) carry their own `cfg(not(any(...)))`
+// stubs that surface the "built without backends; use --mock" error directly,
+// so a stub here would be unreachable dead code.

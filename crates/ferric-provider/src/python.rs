@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use pyo3::prelude::*;
 use std::path::PathBuf;
 
-use ferric_core::{Message, Role, ToolCall};
 use crate::traits::Provider;
 use crate::types::{
     Capabilities, Completion, CompletionRequest, ProviderError, SamplingParams, ToolDescriptor,
 };
+use ferric_core::{Message, Role, ToolCall};
 
 pub struct PythonConfig {
     pub model_dir: PathBuf,
@@ -32,6 +32,7 @@ impl Provider for PythonProvider {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             supports_native_tool_calls: false,
+            supports_constraint: false,
             exposes_logits: false,
         }
     }
@@ -40,24 +41,28 @@ impl Provider for PythonProvider {
         request.validate()?;
 
         let model_dir_str = self.config.model_dir.display().to_string();
-        
+
         // Serialize the CompletionRequest so Python can easily parse it
         // We will manually serialize tools and messages if `CompletionRequest` doesn't derive Serialize
         // Wait, does CompletionRequest derive Serialize? Let's assume it might not.
         // It's safer to build a generic JSON payload.
-        let messages_json: Vec<_> = request.messages.iter().map(|msg| {
-            let role_str = match msg.role {
-                Role::System => "system",
-                Role::User => "user",
-                Role::Assistant => "assistant",
-                Role::Tool => "tool",
-            };
-            let mut map = serde_json::json!({ "role": role_str });
-            if let Some(text) = &msg.text {
-                map["content"] = serde_json::json!(text);
-            }
-            if !msg.tool_calls.is_empty() {
-                let calls: Vec<_> = msg.tool_calls.iter().map(|tc| {
+        let messages_json: Vec<_> =
+            request
+                .messages
+                .iter()
+                .map(|msg| {
+                    let role_str = match msg.role {
+                        Role::System => "system",
+                        Role::User => "user",
+                        Role::Assistant => "assistant",
+                        Role::Tool => "tool",
+                    };
+                    let mut map = serde_json::json!({ "role": role_str });
+                    if let Some(text) = &msg.text {
+                        map["content"] = serde_json::json!(text);
+                    }
+                    if !msg.tool_calls.is_empty() {
+                        let calls: Vec<_> = msg.tool_calls.iter().map(|tc| {
                     serde_json::json!({
                         "id": tc.id,
                         "type": "function",
@@ -67,24 +72,29 @@ impl Provider for PythonProvider {
                         }
                     })
                 }).collect();
-                map["tool_calls"] = serde_json::json!(calls);
-            }
-            if let Some(tool_call_id) = &msg.tool_call_id {
-                map["tool_call_id"] = serde_json::json!(tool_call_id);
-            }
-            map
-        }).collect();
+                        map["tool_calls"] = serde_json::json!(calls);
+                    }
+                    if let Some(tool_call_id) = &msg.tool_call_id {
+                        map["tool_call_id"] = serde_json::json!(tool_call_id);
+                    }
+                    map
+                })
+                .collect();
 
-        let tools_json: Vec<_> = request.tools.iter().map(|tool| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.input_schema
-                }
+        let tools_json: Vec<_> = request
+            .tools
+            .iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.input_schema
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         let payload = serde_json::json!({
             "messages": messages_json,
@@ -100,7 +110,10 @@ impl Provider for PythonProvider {
             Python::with_gil(|py| -> Result<String, PyErr> {
                 let sys_path = py.import_bound("sys")?.getattr("path")?;
                 let current_dir = std::env::current_dir().unwrap_or_default();
-                let script_dir = current_dir.join("crates").join("ferric-provider").join("python");
+                let script_dir = current_dir
+                    .join("crates")
+                    .join("ferric-provider")
+                    .join("python");
                 sys_path.call_method1("append", (script_dir.display().to_string(),))?;
 
                 let inference_mod = py.import_bound("inference")?;
@@ -110,15 +123,18 @@ impl Provider for PythonProvider {
                     .extract()?;
 
                 Ok(result)
-            }).map_err(|e| Python::with_gil(|py| e.to_string()))
+            })
+            .map_err(|e| Python::with_gil(|py| e.to_string()))
         })
         .await
         .map_err(|e| ProviderError::Backend(format!("Task panic: {}", e)))?;
 
-        let response_str = py_result.map_err(|e| ProviderError::Backend(format!("Python Error: {}", e)))?;
-        
-        let json_res: serde_json::Value = serde_json::from_str(&response_str)
-            .map_err(|e| ProviderError::Backend(format!("Failed to parse Python response JSON: {}", e)))?;
+        let response_str =
+            py_result.map_err(|e| ProviderError::Backend(format!("Python Error: {}", e)))?;
+
+        let json_res: serde_json::Value = serde_json::from_str(&response_str).map_err(|e| {
+            ProviderError::Backend(format!("Failed to parse Python response JSON: {}", e))
+        })?;
 
         let text = json_res["text"].as_str().map(|s| s.to_string());
         let truncated = json_res["truncated"].as_bool().unwrap_or(false);

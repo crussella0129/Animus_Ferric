@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ferric_core::{ActionProtocol, FerricError, Message, RunPolicy, ToolCall};
+use ferric_core::{ActionProtocol, FerricError, Message, RunPolicy};
 use ferric_guard::Workspace;
 use ferric_provider::{CompletionRequest, Provider, SamplingParams, ToolDescriptor};
 use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
@@ -94,7 +94,6 @@ pub async fn run(
         v
     };
 
-
     let mut repetition = crate::repetition::RepetitionGuard::new();
     let mut last_text: Option<String> = None;
     let mut nudged_for_no_action = false;
@@ -120,6 +119,7 @@ pub async fn run(
             messages: messages.clone(),
             sampling: args.sampling.clone(),
             tools,
+            constraint: None,
         };
         if let Err(e) = request.validate() {
             sink.write_event(Event::Note {
@@ -213,7 +213,7 @@ pub async fn run(
                 break StopReason::EmptyCompletion;
             }
             nudged_for_no_action = true;
-            
+
             let nudge_text = match parse_error {
                 Some(e) => format!("XML parse error: {e}. {}", no_action_nudge(args.protocol)),
                 None => no_action_nudge(args.protocol).to_string(),

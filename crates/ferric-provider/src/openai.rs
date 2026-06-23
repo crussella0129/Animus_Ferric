@@ -1,12 +1,12 @@
 use async_trait::async_trait;
-use serde_json::json;
 use reqwest::Client;
+use serde_json::json;
 
-use ferric_core::{Message, Role, ToolCall};
 use crate::traits::Provider;
 use crate::types::{
     Capabilities, Completion, CompletionRequest, ProviderError, SamplingParams, ToolDescriptor,
 };
+use ferric_core::{Message, Role, ToolCall};
 
 pub struct OpenAiConfig {
     pub base_url: String,
@@ -100,6 +100,7 @@ impl Provider for OpenAiProvider {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             supports_native_tool_calls: true,
+            supports_constraint: false,
             exposes_logits: false,
         }
     }
@@ -108,7 +109,7 @@ impl Provider for OpenAiProvider {
         request.validate()?;
 
         let messages: Vec<_> = request.messages.iter().map(Self::map_message).collect();
-        
+
         let mut body = json!({
             "model": self.config.model,
             "messages": messages,
@@ -123,9 +124,13 @@ impl Provider for OpenAiProvider {
             body["tool_choice"] = json!("auto");
         }
 
-        let url = format!("{}/chat/completions", self.config.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/chat/completions",
+            self.config.base_url.trim_end_matches('/')
+        );
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("Content-Type", "application/json")
@@ -135,7 +140,12 @@ impl Provider for OpenAiProvider {
 
         let response = match response {
             Ok(res) => res,
-            Err(e) => return Err(ProviderError::RetryableBackend(format!("Network error: {}", e))),
+            Err(e) => {
+                return Err(ProviderError::RetryableBackend(format!(
+                    "Network error: {}",
+                    e
+                )));
+            }
         };
 
         if !response.status().is_success() {
@@ -156,14 +166,17 @@ impl Provider for OpenAiProvider {
 
         let message = &choice["message"];
         let content = message["content"].as_str().map(|s| s.to_string());
-        
+
         let mut tool_calls = Vec::new();
         if let Some(tcs) = message["tool_calls"].as_array() {
             for tc in tcs {
                 let id = tc["id"].as_str().unwrap_or_default().to_string();
-                let name = tc["function"]["name"].as_str().unwrap_or_default().to_string();
+                let name = tc["function"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 let args_str = tc["function"]["arguments"].as_str().unwrap_or_default();
-                
+
                 let args = serde_json::from_str(args_str)
                     .unwrap_or_else(|_| serde_json::Value::String(args_str.to_string()));
 

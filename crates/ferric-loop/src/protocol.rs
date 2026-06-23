@@ -39,6 +39,7 @@ mod tests {
     fn caps() -> Capabilities {
         Capabilities {
             supports_native_tool_calls: true,
+            supports_constraint: false,
             exposes_logits: false,
         }
     }
