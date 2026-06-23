@@ -5,5 +5,4 @@
 > subprocess HTTP server) are SUPERSEDED and removed — they added the very Python
 > backend this sprint deletes. See `sprints/s7/sprint-plans/build-plan.md`.
 
-- [ ] T-007 (sprint 7): Rebuild the toolbench around the active protocol's parser — touches: crates/ferric-cli/src/toolbench_cmd.rs
 - [ ] T-008 (sprint 7): Record ADR-021 + ADR-022; correct lying docs — touches: decisions.md, crates/ferric-provider/src/lib.rs, README.md

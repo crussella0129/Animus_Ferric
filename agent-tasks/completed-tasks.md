@@ -281,3 +281,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** deleted crates/ferric-provider/src/python.rs + crates/ferric-provider/python/, crates/ferric-provider/{Cargo.toml,src/lib.rs}, crates/ferric-cli/{Cargo.toml,src/{backend.rs,query.rs,toolbench_cmd.rs}}, test_both_models.ps1, run_benchmarks.ps1, Cargo.lock
 - **Commit:** `9bbe21b`
+
+## T-007 (sprint 7)
+- **Description:** Rebuilt the toolbench to measure the ACTIVE protocol's real fire rate instead of a native-only check that always read empty (the s6 0.0% bug). `extract_action(protocol, completion)` parses with the SAME parser the agent loop uses — native `tool_calls`, `parse_json_action` for ConstrainedJson, `parse_action` for TextXml — and a pass is a name match via that path. Added `--protocol` (defaults to the backend's real `capabilities()` via `select_protocol`, so the bench measures what `ferric query` runs). `build_request` sends the action-schema constraint (empty tools) for ConstrainedJson, tools for native, neither for TextXml. `extract_action` is gated `any(feature,test)` so its four dispatch unit tests run in the DEFAULT CI test job while the network-driving `run_toolbench` stays feature-gated. Also fixed a latent cli.rs test (`query_without_backend_errors`) that asserted the literal flag `backend-mistralrs` but the create_provider path says "mistralrs backend" — both name `mistralrs`; surfaced by running `cargo test --features backend-openai`.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs, crates/ferric-cli/tests/cli.rs
+- **Commit:** `a0f7693`
