@@ -43,19 +43,80 @@ pub struct ToolbenchArgs {
     pub iterations: u32,
 }
 
-/// Extract the fired tool call from a completion using the SAME parser the
-/// agent loop uses for `protocol`: native `tool_calls`, constrained
-/// `{tool,args}` JSON, or scraped `<tool_call>` XML. This is what makes the
-/// bench measure the path the agent actually runs. Gated to feature/test builds
-/// so the backend-free `cargo build` stays dead-code-clean.
+/// The classified outcome of one toolbench iteration. This is what turns the
+/// bench from a pass/fail counter into a diagnostic: it says *why* a model
+/// missed, so a user can judge whether a smaller model is still good enough.
 #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
-pub fn extract_action(protocol: ActionProtocol, completion: &Completion) -> Option<ToolCall> {
-    let text = completion.message.text.as_deref().unwrap_or_default();
-    match protocol {
-        ActionProtocol::NativeTools => completion.message.tool_calls.first().cloned(),
-        ActionProtocol::ConstrainedJson => ferric_loop::parse_json_action(0, text).ok(),
-        ActionProtocol::TextXml => ferric_loop::parse_action(0, text).ok(),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// Called the target tool with every schema-required arg present.
+    Success,
+    /// Called a real, but different, tool.
+    WrongTool(String),
+    /// Called the target tool but a schema-required arg is missing.
+    MalformedArgs,
+    /// Produced no parseable action (native: no tool_calls; text: empty).
+    NoAction,
+    /// Produced non-empty action-shaped text that did not parse.
+    ParseError,
+}
+
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+impl Outcome {
+    pub fn is_success(&self) -> bool {
+        matches!(self, Outcome::Success)
     }
+}
+
+/// Classify one completion against the `target` tool (and its `schema`) using
+/// the SAME parser the agent loop uses for `protocol`. Distinguishes "nothing"
+/// (NoAction) from "action-shaped but unparseable" (ParseError), "called a
+/// different tool" (WrongTool), and "right tool, missing a required arg"
+/// (MalformedArgs). The arg check is a lightweight required-keys check against
+/// `schema.required`, not full JSON-Schema validation.
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+pub fn classify(
+    protocol: ActionProtocol,
+    completion: &Completion,
+    target: &str,
+    schema: &serde_json::Value,
+) -> Outcome {
+    let text = completion.message.text.as_deref().unwrap_or_default();
+    let parsed: Result<Option<ToolCall>, ()> = match protocol {
+        ActionProtocol::NativeTools => Ok(completion.message.tool_calls.first().cloned()),
+        ActionProtocol::ConstrainedJson => {
+            if text.trim().is_empty() {
+                Ok(None)
+            } else {
+                ferric_loop::parse_json_action(0, text)
+                    .map(Some)
+                    .map_err(|_| ())
+            }
+        }
+        ActionProtocol::TextXml => {
+            if text.trim().is_empty() {
+                Ok(None)
+            } else {
+                ferric_loop::parse_action(0, text).map(Some).map_err(|_| ())
+            }
+        }
+    };
+    let call = match parsed {
+        Ok(Some(call)) => call,
+        Ok(None) => return Outcome::NoAction,
+        Err(()) => return Outcome::ParseError,
+    };
+    if call.name != target {
+        return Outcome::WrongTool(call.name);
+    }
+    if let Some(required) = schema.get("required").and_then(|r| r.as_array()) {
+        for key in required.iter().filter_map(|k| k.as_str()) {
+            if call.args.get(key).is_none() {
+                return Outcome::MalformedArgs;
+            }
+        }
+    }
+    Outcome::Success
 }
 
 #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
@@ -169,8 +230,8 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                     .await
                     .map_err(|e| format!("provider error: {e}"))?;
 
-                let pass =
-                    extract_action(protocol, &completion).is_some_and(|tc| tc.name == tool.name);
+                let outcome = classify(protocol, &completion, &tool.name, &tool.input_schema);
+                let pass = outcome.is_success();
                 if pass {
                     successes += 1;
                     overall_successes += 1;
@@ -224,7 +285,15 @@ mod tests {
         }
     }
 
-    fn native_completion(name: &str) -> Completion {
+    fn schema() -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": { "path": { "type": "string" } },
+            "required": ["path"]
+        })
+    }
+
+    fn native_completion(name: &str, args: serde_json::Value) -> Completion {
         Completion {
             message: Message {
                 role: Role::Assistant,
@@ -232,7 +301,7 @@ mod tests {
                 tool_calls: vec![ToolCall {
                     id: "t".to_string(),
                     name: name.to_string(),
-                    args: json!({}),
+                    args,
                 }],
                 tool_call_id: None,
             },
@@ -243,43 +312,77 @@ mod tests {
     }
 
     #[test]
-    fn native_path_reads_tool_calls() {
-        let c = native_completion("read_file");
+    fn outcome_is_success() {
+        assert!(Outcome::Success.is_success());
+        assert!(!Outcome::NoAction.is_success());
+        assert!(!Outcome::WrongTool("x".to_string()).is_success());
+    }
+
+    #[test]
+    fn classify_success_native() {
+        let c = native_completion("read_file", json!({"path": "x"}));
         assert_eq!(
-            extract_action(ActionProtocol::NativeTools, &c)
-                .unwrap()
-                .name,
-            "read_file"
+            classify(ActionProtocol::NativeTools, &c, "read_file", &schema()),
+            Outcome::Success
         );
     }
 
     #[test]
-    fn constrained_path_parses_json() {
+    fn classify_success_constrained() {
         let c = text_completion(r#"{"tool":"read_file","args":{"path":"x"}}"#);
         assert_eq!(
-            extract_action(ActionProtocol::ConstrainedJson, &c)
-                .unwrap()
-                .name,
-            "read_file"
+            classify(ActionProtocol::ConstrainedJson, &c, "read_file", &schema()),
+            Outcome::Success
         );
     }
 
     #[test]
-    fn textxml_path_scrapes_xml() {
-        let c = text_completion(
-            "<tool_call><name>read_file</name><args>{\"path\":\"x\"}</args></tool_call>",
-        );
+    fn classify_wrong_tool() {
+        let c = native_completion("write_file", json!({"path": "x"}));
         assert_eq!(
-            extract_action(ActionProtocol::TextXml, &c).unwrap().name,
-            "read_file"
+            classify(ActionProtocol::NativeTools, &c, "read_file", &schema()),
+            Outcome::WrongTool("write_file".to_string())
         );
     }
 
     #[test]
-    fn no_action_is_a_miss() {
+    fn classify_malformed_args() {
+        // Right tool, but the required "path" arg is missing.
+        let c = native_completion("read_file", json!({}));
+        assert_eq!(
+            classify(ActionProtocol::NativeTools, &c, "read_file", &schema()),
+            Outcome::MalformedArgs
+        );
+    }
+
+    #[test]
+    fn classify_no_action() {
+        // Native: tool_calls empty (the model chatted instead of calling).
         let c = text_completion("I cannot help with that.");
-        assert!(extract_action(ActionProtocol::ConstrainedJson, &c).is_none());
-        assert!(extract_action(ActionProtocol::TextXml, &c).is_none());
-        assert!(extract_action(ActionProtocol::NativeTools, &c).is_none());
+        assert_eq!(
+            classify(ActionProtocol::NativeTools, &c, "read_file", &schema()),
+            Outcome::NoAction
+        );
+    }
+
+    #[test]
+    fn classify_parse_error() {
+        // ConstrainedJson: non-empty text that is not a valid action object.
+        let bad_json = text_completion(r#"{"tool": "read_file", "args": {oops"#);
+        assert_eq!(
+            classify(
+                ActionProtocol::ConstrainedJson,
+                &bad_json,
+                "read_file",
+                &schema()
+            ),
+            Outcome::ParseError
+        );
+        // TextXml: prose with no <tool_call> is a parse failure too.
+        let prose = text_completion("just some prose");
+        assert_eq!(
+            classify(ActionProtocol::TextXml, &prose, "read_file", &schema()),
+            Outcome::ParseError
+        );
     }
 }

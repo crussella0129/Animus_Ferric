@@ -1,8 +1,11 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 7 re-framed (user-confirmed): restore harness-owned constrained decoding
-> on the HTTP valve; delete the PyO3 backend. The prior T-501..T-505 (Python →
-> subprocess HTTP server) are SUPERSEDED and removed — they added the very Python
-> backend this sprint deletes. See `sprints/s7/sprint-plans/build-plan.md`.
+> Sprint 8: the self-diagnostic testbench (diagnostic `ferric toolbench` + `ferric server`
+> launcher). See `sprints/s8/sprint-plans/build-plan.md`. Multimodal "any file" input is
+> the planned sprint 9 (design locked in ADR-023).
 
-(Sprint 7 build tasks T-001..T-008 all complete — see completed-tasks.md. Backlog empty.)
+- [ ] T-802 (sprint 8): Per-tool stats + report writer (Markdown + JSONL) + verdict — touches: crates/ferric-cli/src/toolbench_cmd.rs
+- [ ] T-803 (sprint 8): `Engine` abstraction (llama-server default, Ollama) — pure command/URL — touches: crates/ferric-cli/src/server.rs, main.rs
+- [ ] T-804 (sprint 8): `ferric server` subcommand + lifecycle + runfile — touches: crates/ferric-cli/src/{main.rs,server.rs}
+- [ ] T-805 (sprint 8): `query`/`toolbench` auto-discover the server runfile — touches: crates/ferric-cli/src/{backend.rs,query.rs,toolbench_cmd.rs,server.rs}
+- [ ] T-806 (sprint 8): Docs — README first-run/testbench + PS1 drivers wrap the launcher — touches: README.md, docs/testbench.md, run_benchmarks.ps1, test_both_models.ps1

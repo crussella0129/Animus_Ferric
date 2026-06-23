@@ -293,3 +293,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** decisions.md, crates/ferric-provider/src/lib.rs, README.md
 - **Commit:** `d6ad065`
+
+## T-801 (sprint 8)
+- **Description:** Replaced the toolbench's `extract_action -> Option<ToolCall>` with a diagnostic `classify(protocol, completion, target, schema) -> Outcome { Success, WrongTool(name), MalformedArgs, NoAction, ParseError }` — it says *why* a model missed, not just pass/fail. Uses the same per-protocol parser as the loop (native tool_calls / parse_json_action / parse_action), distinguishes empty (NoAction) from non-empty-unparseable (ParseError), wrong-tool, and right-tool-missing-required-arg (lightweight `schema.required` check, not full JSON-Schema). `run_toolbench` now classifies and counts `is_success()`. Seven `cfg(test)` unit tests (one per Outcome + is_success), running in default CI. `label()` deferred to T-802 (the report consumer).
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
+- **Commit:** `c82fe72`
