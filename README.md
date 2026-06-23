@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.jpg" alt="Animus Ferric — agentic AI harness written in Rust" width="720">
+</p>
+
 # Animus Ferric
 
 A local-first agentic coding harness written in Rust, purpose-built for **small local models (1B–14B GGUF)**.
