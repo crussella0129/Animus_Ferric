@@ -311,3 +311,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** crates/ferric-cli/src/server.rs (new), crates/ferric-cli/src/main.rs, crates/ferric-cli/Cargo.toml (serde dep)
 - **Commit:** `44bb01e`
+
+## T-805 (sprint 8)
+- **Description:** `query`/`toolbench` auto-discover the running server. Changed `BackendOpts.api_base` from a defaulted `String` to `Option<String>` and resolve it in `create_provider`'s OpenAI arm via `resolve_base(explicit, runfile)` — precedence **explicit `--api-base` > `.ferric/server.json` base_url > built-in default**. Reads the runfile from the cwd (where `ferric server up` wrote it). Both commands go through `create_provider`, so the one change covers both. `resolve_base` is a pure helper (gated openai+test) with a precedence unit test in default CI.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/backend.rs
+- **Commit:** `020d418`

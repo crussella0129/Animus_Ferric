@@ -32,9 +32,10 @@ pub struct BackendOpts {
     #[arg(long)]
     pub model: Option<String>,
 
-    /// The OpenAI-compatible API base URL (for openai backend)
-    #[arg(long, default_value = "http://localhost:1234/v1")]
-    pub api_base: String,
+    /// OpenAI-compatible API base URL. Defaults to the running `ferric server`
+    /// (`.ferric/server.json` in the cwd), else `http://localhost:1234/v1`.
+    #[arg(long)]
+    pub api_base: Option<String>,
 
     /// The API key for the OpenAI-compatible API (for openai backend)
     #[arg(long)]
@@ -52,6 +53,17 @@ pub struct BackendOpts {
     /// Alternatively, an HF model id to source tokenizer.json from.
     #[arg(long)]
     pub tok_model_id: Option<String>,
+}
+
+/// Resolve the OpenAI base URL (T-805 auto-discovery): an explicit `--api-base`
+/// wins, else the running `ferric server` runfile's `base_url`, else the
+/// built-in default.
+#[cfg(any(feature = "backend-openai", test))]
+fn resolve_base(explicit: Option<&str>, runfile: Option<&str>) -> String {
+    explicit
+        .or(runfile)
+        .map(str::to_string)
+        .unwrap_or_else(|| "http://localhost:1234/v1".to_string())
 }
 
 #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
@@ -111,8 +123,15 @@ pub async fn create_provider(
                     .api_key
                     .clone()
                     .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+                let runfile = std::env::current_dir()
+                    .ok()
+                    .and_then(|d| crate::server::read_runfile(&d));
+                let base_url = resolve_base(
+                    opts.api_base.as_deref(),
+                    runfile.as_ref().map(|r| r.base_url.as_str()),
+                );
                 let config = OpenAiConfig {
-                    base_url: opts.api_base.clone(),
+                    base_url,
                     api_key: api_key.unwrap_or_else(|| "ollama".to_string()),
                     model: model_id,
                 };
@@ -131,3 +150,22 @@ pub async fn create_provider(
 // (`query::drive_real`, `toolbench`) carry their own `cfg(not(any(...)))`
 // stubs that surface the "built without backends; use --mock" error directly,
 // so a stub here would be unreachable dead code.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_base_precedence() {
+        // explicit > runfile > built-in default.
+        assert_eq!(
+            resolve_base(Some("http://explicit/v1"), Some("http://runfile/v1")),
+            "http://explicit/v1"
+        );
+        assert_eq!(
+            resolve_base(None, Some("http://runfile/v1")),
+            "http://runfile/v1"
+        );
+        assert_eq!(resolve_base(None, None), "http://localhost:1234/v1");
+    }
+}
