@@ -82,7 +82,7 @@ mod tests {
             wall_ms: 1200,
             terminator: Some("task_complete".to_string()),
             tier_observed: Some("Nano".to_string()),
-            protocol_observed: Some("UnifiedGrammar".to_string()),
+            protocol_observed: Some("ConstrainedJson".to_string()),
             repetition_guard_fires: 0,
             tools_called: vec!["write_file".to_string(), "task_complete".to_string()],
             task_complete_summary: Some("done".to_string()),

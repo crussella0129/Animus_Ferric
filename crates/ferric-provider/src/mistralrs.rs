@@ -116,8 +116,14 @@ impl Provider for MistralRsProvider {
     }
 
     fn capabilities(&self) -> Capabilities {
+        // Honest (ADR-022): `complete()` passes NEITHER tools NOR a grammar to
+        // the engine — tools are stripped (the s3 pivot) and a JSON-Schema
+        // constraint hangs llguidance on GGUF (ADR-020). So this backend does
+        // not do native tool calls and does not enforce constraints; the loop
+        // routes it to `TextXml` (the model emits `<tool_call>` XML, scraped by
+        // the loop). Reporting `true` here was the s6 toolbench 0.0% bug.
         Capabilities {
-            supports_native_tool_calls: true,
+            supports_native_tool_calls: false,
             supports_constraint: false,
             exposes_logits: false,
         }

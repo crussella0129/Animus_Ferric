@@ -80,9 +80,22 @@ pub fn tool_completion(calls: Vec<(&str, &str, serde_json::Value)>) -> Completio
     }
 }
 
-/// A grammar-mode completion: the whole assistant text IS the action JSON,
-/// tool_calls empty. Used by the UnifiedGrammar loop tests (T-207).
-pub fn grammar_completion(action_json: serde_json::Value) -> Completion {
+/// A `ConstrainedJson` completion: the whole assistant text IS the action JSON
+/// object — exactly what a constraint-honoring backend produces under a
+/// JSON-Schema `response_format`. Pass any value to exercise valid actions and
+/// non-action objects alike.
+pub fn json_completion(value: serde_json::Value) -> Completion {
+    Completion {
+        message: Message::assistant(value.to_string()),
+        input_tokens: Some(60),
+        output_tokens: Some(20),
+        truncated: false,
+    }
+}
+
+/// A `TextXml` completion: the action wrapped in a `<tool_call>` XML block,
+/// what an unconstrained model is prompted to emit and the loop regex-scrapes.
+pub fn xml_completion(action_json: serde_json::Value) -> Completion {
     let name = action_json["tool"].as_str().unwrap_or("");
     let args = action_json["args"].to_string();
     let text = format!(

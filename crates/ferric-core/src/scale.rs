@@ -57,17 +57,30 @@ pub enum Protocol {
     EditFormat,
 }
 
-/// How the loop talks to the backend about actions (ADR-015).
+/// How the loop talks to the backend about actions (ADR-015/022). Selected
+/// from backend `Capabilities` by `select_protocol`:
 ///
-/// `NativeTools`: tools + tool_choice set, no constraint — the backend's
-/// template-native tool format. `UnifiedGrammar`: ONE JSON-Schema constraint
-/// over the whole action space, tools empty — malformed actions become
-/// unrepresentable. The two are mutually exclusive by construction (ADR-010).
+/// - `NativeTools`: tools + tool_choice set, no constraint — the backend's
+///   template-native tool format; the loop reads structured `tool_calls`.
+/// - `ConstrainedJson`: ONE JSON-Schema `Constraint` over the whole action
+///   space, tools empty — a constraint-honoring backend (the HTTP valve)
+///   enforces it server-side so malformed actions are unrepresentable. The
+///   loop parses the completion as `{tool, args}` JSON. This is the founding
+///   "harness owns decoding" thesis. (Formerly `UnifiedGrammar`; serde alias
+///   kept so older traces/bench rows still read.)
+/// - `TextXml`: no constraint, no tools — the honest fallback for backends
+///   that enforce neither; the model is prompted to emit `<tool_call>` XML and
+///   the loop regex-scrapes it. No `ConstraintApplied` is claimed.
+///
+/// `ConstrainedJson`'s constraint and `NativeTools`'s tools are mutually
+/// exclusive by construction (ADR-010).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionProtocol {
     NativeTools,
-    UnifiedGrammar,
+    #[serde(alias = "unified_grammar")]
+    ConstrainedJson,
+    TextXml,
 }
 
 /// Everything the agent loop needs to know about how to run a given model.
@@ -226,11 +239,19 @@ mod tests {
             r#""native_tools""#
         );
         assert_eq!(
-            serde_json::to_string(&ActionProtocol::UnifiedGrammar).unwrap(),
-            r#""unified_grammar""#
+            serde_json::to_string(&ActionProtocol::ConstrainedJson).unwrap(),
+            r#""constrained_json""#
         );
-        let back: ActionProtocol = serde_json::from_str(r#""unified_grammar""#).unwrap();
-        assert_eq!(back, ActionProtocol::UnifiedGrammar);
+        assert_eq!(
+            serde_json::to_string(&ActionProtocol::TextXml).unwrap(),
+            r#""text_xml""#
+        );
+        // New serde spelling round-trips, and the legacy "unified_grammar"
+        // alias still deserializes (old traces/bench rows).
+        let back: ActionProtocol = serde_json::from_str(r#""constrained_json""#).unwrap();
+        assert_eq!(back, ActionProtocol::ConstrainedJson);
+        let legacy: ActionProtocol = serde_json::from_str(r#""unified_grammar""#).unwrap();
+        assert_eq!(legacy, ActionProtocol::ConstrainedJson);
     }
 
     #[test]

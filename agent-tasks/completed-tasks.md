@@ -269,3 +269,9 @@
 - **Completed:** 2026-06-22 (build phase)
 - **Files modified:** crates/ferric-loop/src/{grammar.rs,lib.rs}
 - **Commit:** `fc0d8b2`
+
+## T-004 (sprint 7)
+- **Description:** Replaced the protocol dichotomy with an honest trichotomy `ActionProtocol { NativeTools, ConstrainedJson, TextXml }` (serde alias `unified_grammar` kept for old traces/bench rows). `select_protocol` now reads `Capabilities`: constraint→ConstrainedJson, native→NativeTools, neither→TextXml (override always wins). The loop (run.rs) builds the request per protocol — ConstrainedJson carries `Constraint::JsonSchema(action_schema(tools))` with empty tools and emits a TRUTHFUL `ConstraintApplied`, TextXml carries neither and emits none, NativeTools carries tools — and parses per protocol (tool_calls / parse_json_action / parse_action). Made mistral.rs `capabilities()` honest (neither native nor constraint → TextXml; was the s6 0.0% lie). CLI `--protocol {native,grammar,xml}`; query seeds caps from the chosen backend (OpenAI→constrained, mistral→xml). Added a `protocol-constrained-json` prompt atom and taught ferric-prompt all three (C-002). Cascaded the rename through trace/bench. Tests: protocol.rs trichotomy (4), new constrained_loop.rs (2, incl. real constraint on the request + ConstraintApplied), grammar_loop.rs→TextXml (asserts NO ConstraintApplied), truncation_tests→ConstrainedJson.
+- **Completed:** 2026-06-22 (build phase)
+- **Files modified:** crates/ferric-core/src/scale.rs, crates/ferric-loop/src/{run.rs,protocol.rs,grammar.rs}, crates/ferric-provider/src/mistralrs.rs, crates/ferric-cli/src/query.rs, crates/ferric-prompt/src/lib.rs, prompts/protocol-constrained-json.md, crates/ferric-trace/src/lib.rs, crates/ferric-bench/src/{runner.rs,results.rs}, crates/ferric-cli/tests/bench_mock.rs, crates/ferric-loop/tests/{common/mod.rs,grammar_loop.rs,truncation_tests.rs,constrained_loop.rs}
+- **Commit:** `87ae78d`

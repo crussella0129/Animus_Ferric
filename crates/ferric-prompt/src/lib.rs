@@ -53,7 +53,10 @@ pub fn load_library(dir: &Path) -> Result<Library, PromptError> {
 pub fn recipe_for(_tier: Tier, protocol: ActionProtocol) -> Vec<(String, Option<String>)> {
     let protocol_atom = match protocol {
         ActionProtocol::NativeTools => "protocol-native-tools",
-        ActionProtocol::UnifiedGrammar => "protocol-unified-grammar",
+        ActionProtocol::ConstrainedJson => "protocol-constrained-json",
+        // The legacy "unified-grammar" atom teaches the `<tool_call>` XML
+        // format — exactly the TextXml fallback's wire shape.
+        ActionProtocol::TextXml => "protocol-unified-grammar",
     };
     vec![
         ("role-declaration".to_string(), Some("1.0.0".to_string())),
@@ -117,7 +120,8 @@ fn tier_slug(tier: Tier) -> &'static str {
 fn protocol_slug(protocol: ActionProtocol) -> &'static str {
     match protocol {
         ActionProtocol::NativeTools => "native",
-        ActionProtocol::UnifiedGrammar => "grammar",
+        ActionProtocol::ConstrainedJson => "constrained",
+        ActionProtocol::TextXml => "xml",
     }
 }
 
@@ -149,7 +153,11 @@ mod tests {
     fn compose_all_pairs() {
         let lib = load_library(&prompts_dir()).expect("load prompts library");
         for tier in all_tiers() {
-            for protocol in [ActionProtocol::NativeTools, ActionProtocol::UnifiedGrammar] {
+            for protocol in [
+                ActionProtocol::NativeTools,
+                ActionProtocol::ConstrainedJson,
+                ActionProtocol::TextXml,
+            ] {
                 let composed = compose_system_prompt(&lib, tier, protocol).expect("compose");
                 assert!(!composed.text.is_empty());
                 // Lineage matches the recipe (id + resolved version).
@@ -171,18 +179,26 @@ mod tests {
     #[test]
     fn protocol_teaching_is_exclusive() {
         let lib = load_library(&prompts_dir()).unwrap();
-        let grammar = compose_system_prompt(&lib, Tier::Nano, ActionProtocol::UnifiedGrammar)
+        let constrained = compose_system_prompt(&lib, Tier::Nano, ActionProtocol::ConstrainedJson)
+            .unwrap()
+            .text;
+        let xml = compose_system_prompt(&lib, Tier::Nano, ActionProtocol::TextXml)
             .unwrap()
             .text;
         let native = compose_system_prompt(&lib, Tier::Nano, ActionProtocol::NativeTools)
             .unwrap()
             .text;
-        // Grammar prompt teaches the XML tool_call format; native does not.
-        assert!(grammar.contains("<tool_call>"));
+        // Only TextXml teaches the `<tool_call>` XML format.
+        assert!(xml.contains("<tool_call>"));
+        assert!(!constrained.contains("<tool_call>"));
         assert!(!native.contains("<tool_call>"));
-        // Native prompt teaches function-calling; grammar does not.
+        // ConstrainedJson teaches the single `{"tool", "args"}` JSON object.
+        assert!(constrained.contains("\"tool\""));
+        assert!(constrained.contains("\"args\""));
+        // Only the native prompt teaches function-calling.
         assert!(native.contains("function-calling"));
-        assert!(!grammar.contains("function-calling"));
+        assert!(!xml.contains("function-calling"));
+        assert!(!constrained.contains("function-calling"));
     }
 
     #[test]
