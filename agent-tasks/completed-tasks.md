@@ -257,3 +257,9 @@
 - **Completed:** 2026-06-22 (build phase)
 - **Files modified:** .gitignore, crates/ferric-provider/src/{types.rs,lib.rs,mock.rs,mistralrs.rs,openai.rs,python.rs}, crates/ferric-provider/tests/mock_loop_skeleton.rs, crates/ferric-loop/src/{run.rs,protocol.rs}, crates/ferric-loop/tests/backoff_tests.rs, crates/ferric-cli/src/{backend.rs,query.rs,toolbench_cmd.rs}
 - **Commit:** `e4a5684`
+
+## T-002 (sprint 7)
+- **Description:** `OpenAiProvider` now carries the harness constraint to the server. Extracted a pure `build_body(&CompletionRequest) -> Value`: a `Constraint::JsonSchema` becomes `response_format:{type:json_schema, json_schema:{name,schema,strict:true}}` (server-enforced, ADR-001 valve) with tools omitted; `Lark` maps to llama.cpp's `grammar` field; tools-without-constraint keeps native `tools`/`tool_choice`. `capabilities()` now honestly reports `supports_constraint:true`. Three model-free unit tests on the body shape + capability flags.
+- **Completed:** 2026-06-22 (build phase)
+- **Files modified:** crates/ferric-provider/src/openai.rs
+- **Commit:** `c340ce8`
