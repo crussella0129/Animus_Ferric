@@ -10,7 +10,6 @@ repository.workspace = true
 default = []
 backend-mistralrs = ["dep:mistralrs"]
 backend-openai = ["dep:reqwest"]
-backend-python = ["dep:pyo3"]
 
 [dependencies]
 ferric-core = { workspace = true }
@@ -20,7 +19,6 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 mistralrs = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true, features = ["json"] }
-pyo3 = { version = "0.23", optional = true, features = ["auto-initialize"] }
 tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]

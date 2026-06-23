@@ -275,3 +275,9 @@
 - **Completed:** 2026-06-22 (build phase)
 - **Files modified:** crates/ferric-core/src/scale.rs, crates/ferric-loop/src/{run.rs,protocol.rs,grammar.rs}, crates/ferric-provider/src/mistralrs.rs, crates/ferric-cli/src/query.rs, crates/ferric-prompt/src/lib.rs, prompts/protocol-constrained-json.md, crates/ferric-trace/src/lib.rs, crates/ferric-bench/src/{runner.rs,results.rs}, crates/ferric-cli/tests/bench_mock.rs, crates/ferric-loop/tests/{common/mod.rs,grammar_loop.rs,truncation_tests.rs,constrained_loop.rs}
 - **Commit:** `87ae78d`
+
+## T-005 + T-006 (sprint 7)
+- **Description:** Deleted the PyO3/PyTorch backend end-to-end (ADR-021): the `STATUS_HEAP_CORRUPTION` path that embedded CPython+PyTorch in the agent process, violating ADR-013 and the no-translational-layers rule. Landed as ONE commit because the two planned tasks are atomically coupled — removing `ferric-provider`'s `backend-python` feature breaks `ferric-cli`'s feature forwarding, so the tree can't compile with one without the other. T-005: deleted `crates/ferric-provider/src/python.rs` + the `python/` dir (incl. `inference.py`), dropped the `backend-python` feature and the `pyo3` dep from Cargo.toml, removed the `python` module/exports from lib.rs. T-006: removed `BackendArg::Python` + its match arm, all `feature = "backend-python"` cfgs (would trip `unexpected_cfgs` under -D warnings), the CLI feature declaration, and the python invocations in `test_both_models.ps1`/`run_benchmarks.ps1` (Gemma-4-e4b now reached via `--backend openai` behind Ollama). Verified `cargo tree --all-features` shows 0 pyo3.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** deleted crates/ferric-provider/src/python.rs + crates/ferric-provider/python/, crates/ferric-provider/{Cargo.toml,src/lib.rs}, crates/ferric-cli/{Cargo.toml,src/{backend.rs,query.rs,toolbench_cmd.rs}}, test_both_models.ps1, run_benchmarks.ps1, Cargo.lock
+- **Commit:** `9bbe21b`

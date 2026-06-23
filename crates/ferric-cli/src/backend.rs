@@ -2,18 +2,16 @@ use clap::{Args, ValueEnum};
 use std::path::PathBuf;
 
 // `Provider` is only named by the feature-gated `create_provider` return type.
-#[cfg(any(
-    feature = "backend-mistralrs",
-    feature = "backend-openai",
-    feature = "backend-python"
-))]
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 use ferric_provider::Provider;
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum BackendArg {
+    /// In-process mistral.rs (GGUF). Text-only / `TextXml` — no constraint.
     Mistral,
+    /// OpenAI-compatible HTTP valve (llama.cpp / Ollama). Enforces a
+    /// `response_format` constraint server-side → `ConstrainedJson`.
     Openai,
-    Python,
 }
 
 #[derive(Args, Clone)]
@@ -22,7 +20,7 @@ pub struct BackendOpts {
     #[arg(long, value_enum, default_value = "mistral")]
     pub backend: BackendArg,
 
-    /// Directory containing the model (required for mistral and python backends)
+    /// Directory containing the GGUF model (required for the mistral backend)
     #[arg(long)]
     pub model_dir: Option<PathBuf>,
 
@@ -56,11 +54,7 @@ pub struct BackendOpts {
     pub tok_model_id: Option<String>,
 }
 
-#[cfg(any(
-    feature = "backend-mistralrs",
-    feature = "backend-openai",
-    feature = "backend-python"
-))]
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 pub async fn create_provider(
     opts: &BackendOpts,
 ) -> Result<Box<dyn Provider + Send + Sync>, String> {
@@ -128,26 +122,6 @@ pub async fn create_provider(
             #[cfg(not(feature = "backend-openai"))]
             {
                 Err("binary built without openai backend".to_string())
-            }
-        }
-        BackendArg::Python => {
-            #[cfg(feature = "backend-python")]
-            {
-                use ferric_provider::python::{PythonConfig, PythonProvider};
-                let model_dir = opts
-                    .model_dir
-                    .as_ref()
-                    .ok_or("--model-dir is required for python backend")?;
-
-                let config = PythonConfig {
-                    model_dir: model_dir.clone(),
-                };
-                let provider = PythonProvider::new(config);
-                Ok(Box::new(provider))
-            }
-            #[cfg(not(feature = "backend-python"))]
-            {
-                Err("binary built without python backend".to_string())
             }
         }
     }

@@ -5,11 +5,7 @@ use crate::backend::BackendOpts;
 
 // These are used only by the feature-gated `run_toolbench`; gating the imports
 // keeps the default (backend-free) build warning-clean under `-D warnings`.
-#[cfg(any(
-    feature = "backend-mistralrs",
-    feature = "backend-openai",
-    feature = "backend-python"
-))]
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 use {
     crate::backend::create_provider,
     ferric_core::{Message, ModelProfile, Role, policy_for},
@@ -27,11 +23,7 @@ pub struct ToolbenchArgs {
     pub iterations: u32,
 }
 
-#[cfg(any(
-    feature = "backend-mistralrs",
-    feature = "backend-openai",
-    feature = "backend-python"
-))]
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
@@ -151,15 +143,11 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
     }
 }
 
-#[cfg(not(any(
-    feature = "backend-mistralrs",
-    feature = "backend-openai",
-    feature = "backend-python"
-)))]
+#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
 pub fn run_toolbench(_args: ToolbenchArgs) -> ExitCode {
     eprintln!(
         "this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai,backend-python`"
+         rebuild with `cargo build --features backend-mistralrs,backend-openai`"
     );
     ExitCode::FAILURE
 }

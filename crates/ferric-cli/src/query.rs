@@ -21,11 +21,7 @@ use ferric_provider::{Capabilities, Completion, MockProvider, Provider, Sampling
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink};
 
-#[cfg(any(
-    feature = "backend-mistralrs",
-    feature = "backend-openai",
-    feature = "backend-python"
-))]
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 use crate::backend::create_provider;
 use crate::backend::{BackendArg, BackendOpts};
 
@@ -146,7 +142,7 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
                 supports_constraint: true,
                 exposes_logits: false,
             },
-            BackendArg::Mistral | BackendArg::Python => Capabilities {
+            BackendArg::Mistral => Capabilities {
                 supports_native_tool_calls: false,
                 supports_constraint: false,
                 exposes_logits: false,
@@ -369,11 +365,7 @@ fn drive_mock(
     .map_err(|e| format!("loop error: {e}"))
 }
 
-#[cfg(any(
-    feature = "backend-mistralrs",
-    feature = "backend-openai",
-    feature = "backend-python"
-))]
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     args: &QueryArgs,
@@ -410,11 +402,7 @@ fn drive_real(
     })
 }
 
-#[cfg(not(any(
-    feature = "backend-mistralrs",
-    feature = "backend-openai",
-    feature = "backend-python"
-)))]
+#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     _args: &QueryArgs,
@@ -427,9 +415,7 @@ fn drive_real(
     _lineage: Option<PromptLineage>,
     _sink: &mut JsonlSink,
 ) -> Result<LoopOutcome, String> {
-    Err(
-        "this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai,backend-python`, or use --mock"
-            .to_string(),
-    )
+    Err("this binary was built without backend features; \
+         rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
+        .to_string())
 }

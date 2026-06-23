@@ -36,7 +36,7 @@ function Invoke-ModelTest {
 
     $Command = "cargo"
     $ArgsList = @(
-        "run", "--release", "-p", "ferric-cli", "--features", "backend-mistralrs,backend-openai,backend-python",
+        "run", "--release", "-p", "ferric-cli", "--features", "backend-mistralrs,backend-openai",
         "--", "query", $Prompt, 
         "--workspace", "./$Workspace"
     ) + $BackendArgs
@@ -60,9 +60,13 @@ function Invoke-ModelTest {
     }
 }
 
-# Run tests
+# Run tests.
+# Llama-3.2-1B: in-process mistral.rs, TextXml protocol (no server).
 Invoke-ModelTest -ModelName "Llama3.2-1B" -BackendArgs @("--backend", "mistral", "--model-dir", $Model1Dir, "--model-file", $Model1File)
-Invoke-ModelTest -ModelName "Gemma-4-e4b" -BackendArgs @("--backend", "python", "--model-dir", "C:\Users\charl\Animus_Ferric\models\safetensors\google--gemma-4-e4b")
+# Gemma-4-e4b: via the OpenAI-compatible HTTP valve (ADR-021 replaced the
+# crashing embedded-PyTorch backend). Requires a running server, e.g.
+# `ollama serve` with `ollama pull gemma4:e4b`. Constrained-JSON is the default.
+Invoke-ModelTest -ModelName "Gemma-4-e4b" -BackendArgs @("--backend", "openai", "--model", $Model2Name, "--api-base", "http://localhost:11434/v1")
 
 Write-Host "`n==========================================================" -ForegroundColor Magenta
 Write-Host "Multi-Model Test Suite Completed!" -ForegroundColor Magenta
