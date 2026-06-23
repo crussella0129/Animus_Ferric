@@ -299,3 +299,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
 - **Commit:** `c82fe72`
+
+## T-802 (sprint 8)
+- **Description:** Turned the toolbench into a written diagnostic. Added `BenchSummary`/`ToolStat` (per-tool fires/success/failure-histogram), `verdict(rate)` bands (≥90% solid / ≥70% marginal / else unreliable), pure `render_report(&BenchSummary) -> String` (Markdown table: per-tool rate + verdict + failure taxonomy, plus an overall band) and `summary_rows(&BenchSummary) -> Vec<Value>` (one JSONL row per tool + an `__overall__` row). `run_toolbench` accumulates the histogram via `Outcome::label()` and prints the report; `--report <path>` writes `<path>` (md) + a sibling `.jsonl`. This is the "is this model good enough — dial it down and watch where it breaks" readout the user asked for. Four unit tests (verdict bands, report taxonomy+verdict, JSONL shape, labels) in default CI.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
+- **Commit:** `71e7a46`
