@@ -1,9 +1,16 @@
-//! Async Provider trait with constraint plumbing, plus the deterministic MockProvider.
+//! Async, constraint-carrying `Provider` trait + the deterministic MockProvider.
 //!
-//! Real backends land in s1: mistral.rs in-process (flagship pure-Rust path)
-//! and an OpenAI-compatible HTTP client (escape valve). Per the lineage's
-//! real-GGUF validation policy (ADR-009), any change touching this crate from
-//! s1 onward requires a real-model run before merge.
+//! Two real backends:
+//! - in-process mistral.rs GGUF (feature `backend-mistralrs`) — text-only,
+//!   driven via the loop's `TextXml` protocol; its constrained path hangs
+//!   upstream (ADR-020), so it advertises neither native tools nor constraint.
+//! - the OpenAI-compatible HTTP valve (feature `backend-openai`) — enforces a
+//!   harness-authored JSON-Schema constraint server-side via `response_format`,
+//!   where "the harness owns decoding" is actually true (ADR-022).
+//!
+//! The embedded PyO3/PyTorch backend was removed (ADR-021): external engines are
+//! reached only via the out-of-process valve. Per ADR-009, any change touching
+//! this crate requires a real-model run before merge.
 
 #[cfg(feature = "backend-mistralrs")]
 pub mod mistralrs;

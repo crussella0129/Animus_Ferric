@@ -287,3 +287,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs, crates/ferric-cli/tests/cli.rs
 - **Commit:** `a0f7693`
+
+## T-008 (sprint 7)
+- **Description:** Recorded ADR-021 (PyO3/PyTorch backend removed; external engines reached only via the out-of-process HTTP valve; closes the ADR-013 gap) and ADR-022 (Constraint reinstated, ADR-010 re-enforced, honest capabilities, the NativeTools/ConstrainedJson/TextXml trichotomy; amends ADR-015/ADR-020, fulfils ADR-017) in decisions.md. Corrected the two lying docs: ferric-provider/lib.rs module doc (now describes the two real backends + the PyO3 removal, not "real backends land in s1"), and README Status (was "Sprint 0 — no inference backend yet"; now describes the dual-backend constrained-decoding state). The architecture record now matches the code.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** decisions.md, crates/ferric-provider/src/lib.rs, README.md
+- **Commit:** `d6ad065`
