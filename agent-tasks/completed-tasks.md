@@ -317,3 +317,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** crates/ferric-cli/src/backend.rs
 - **Commit:** `020d418`
+
+## T-806 (sprint 8)
+- **Description:** Documented the testbench. Added a "First run — the testbench" section to the README (the `ferric server up` → `ferric toolbench --report` → read-the-verdict loop, noting auto-discovery + `server doctor`), bumped the Status marker to sprint 8, and wrote `docs/testbench.md` (full walkthrough: launch, the outcome taxonomy table, the verdict bands, and the dial-down workflow). Rewrote `run_benchmarks.ps1` and the Gemma path of `test_both_models.ps1` to wrap `ferric server up`/`down` around the toolbench/query instead of assuming a manually-started server.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** README.md, docs/testbench.md (new), run_benchmarks.ps1, test_both_models.ps1
+- **Commit:** `4c180bd`

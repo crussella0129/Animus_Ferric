@@ -4,4 +4,4 @@
 > launcher). See `sprints/s8/sprint-plans/build-plan.md`. Multimodal "any file" input is
 > the planned sprint 9 (design locked in ADR-023).
 
-- [ ] T-806 (sprint 8): Docs — README first-run/testbench + PS1 drivers wrap the launcher — touches: README.md, docs/testbench.md, run_benchmarks.ps1, test_both_models.ps1
+(Sprint 8 build tasks T-801..T-806 all complete — see completed-tasks.md. Backlog empty. Next: sprint 9 = multimodal "any file" input, per ADR-023.)
