@@ -17,3 +17,9 @@ e2e_workspace*/
 e2e_test_log*.txt
 e2e_log_*.txt
 *.log
+
+# Runtime artifacts: per-session traces + the `ferric server` runfile, and
+# toolbench reports written by --report.
+.ferric/
+/report*.md
+/report*.jsonl
