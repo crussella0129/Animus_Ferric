@@ -263,3 +263,9 @@
 - **Completed:** 2026-06-22 (build phase)
 - **Files modified:** crates/ferric-provider/src/openai.rs
 - **Commit:** `c340ce8`
+
+## T-003 (sprint 7)
+- **Description:** Added the unified action grammar to ferric-loop: `action_schema(tools)` builds an `anyOf` of one const-discriminated `{tool,args}` branch per tool plus a `task_complete` branch (each `additionalProperties:false`), and `parse_json_action(turn,text)` parses the constrained `{"tool","args"}` completion into a `ToolCall` (id `g-<turn>-0`) with typed errors for non-object / missing tool / missing args. The XML `parse_action` is retained for the `TextXml` fallback. Exported all four from the crate root for the toolbench/loop. Six model-free unit tests.
+- **Completed:** 2026-06-22 (build phase)
+- **Files modified:** crates/ferric-loop/src/{grammar.rs,lib.rs}
+- **Commit:** `fc0d8b2`

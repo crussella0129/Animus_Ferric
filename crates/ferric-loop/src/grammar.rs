@@ -1,10 +1,17 @@
-//! The XML Regex parser for the XML tool-calling protocol.
+//! Action grammar + parsers for the loop's protocols.
 //!
-//! Parses `<tool_call><name>...</name><args>...</args></tool_call>` from model completions.
+//! - `action_schema` builds the unified JSON-Schema (ADR-015) sent as a
+//!   `Constraint` on the `ConstrainedJson` path, so a constraint-honoring
+//!   backend can only emit a well-formed action.
+//! - `parse_json_action` parses the constrained `{"tool","args"}` completion.
+//! - `parse_action` is the fallback XML parser
+//!   (`<tool_call><name>…</name><args>…</args></tool_call>`) for the `TextXml`
+//!   protocol — unconstrained backends that scrape tool calls from prose.
 
 use ferric_core::ToolCall;
+use ferric_provider::ToolDescriptor;
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::sync::OnceLock;
 
 /// Parse a completion's text into a `ToolCall`. A valid XML structure yields a synthesized call
@@ -46,6 +53,52 @@ pub fn parse_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseError>
     }
 }
 
+/// Build the unified action JSON-Schema (ADR-015): an `anyOf` of one
+/// const-discriminated `{tool, args}` branch per offered tool, plus the
+/// `task_complete` terminator branch. Sent as `Constraint::JsonSchema` on the
+/// `ConstrainedJson` path; a constraint-honoring backend enforces it so the
+/// completion can only be a well-formed action.
+pub fn action_schema(tools: &[ToolDescriptor]) -> Value {
+    let mut branches: Vec<Value> = tools.iter().map(branch_for).collect();
+    branches.push(branch_for(&crate::terminator::descriptor()));
+    json!({ "type": "object", "anyOf": branches })
+}
+
+fn branch_for(tool: &ToolDescriptor) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "tool": { "const": tool.name },
+            "args": tool.input_schema,
+        },
+        "required": ["tool", "args"],
+        "additionalProperties": false,
+    })
+}
+
+/// Parse a constrained completion (`{"tool": "...", "args": {...}}`) into a
+/// `ToolCall` (id `g-<turn>-0`). Used by the `ConstrainedJson` protocol: the
+/// backend has already guaranteed the shape, so this is total over conforming
+/// input and returns a typed error otherwise (defense in depth).
+pub fn parse_json_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseError> {
+    let value: Value =
+        serde_json::from_str(text.trim()).map_err(|e| ActionParseError::NotJson(e.to_string()))?;
+    let name = match value.get("tool").and_then(Value::as_str) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => return Err(ActionParseError::MissingTool),
+    };
+    let args = match value.get("args") {
+        Some(a) if a.is_object() => a.clone(),
+        Some(_) => return Err(ActionParseError::ArgsNotAnObject),
+        None => return Err(ActionParseError::MissingArgs),
+    };
+    Ok(ToolCall {
+        id: format!("g-{turn}-0"),
+        name,
+        args,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionParseError {
     MalformedXml,
@@ -72,7 +125,72 @@ impl std::fmt::Display for ActionParseError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
+    fn tool(name: &str) -> ToolDescriptor {
+        ToolDescriptor {
+            name: name.to_string(),
+            description: "d".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"]
+            }),
+        }
+    }
+
+    #[test]
+    fn action_schema_branch_count() {
+        // N tools → N+1 branches (each tool + task_complete), each a
+        // const-discriminated {tool,args} object with additionalProperties:false.
+        let schema = action_schema(&[tool("read_file"), tool("write_file")]);
+        let branches = schema["anyOf"].as_array().unwrap();
+        assert_eq!(branches.len(), 3);
+        for b in branches {
+            assert!(b["properties"]["tool"]["const"].is_string());
+            assert_eq!(b["additionalProperties"], json!(false));
+            assert_eq!(b["required"], json!(["tool", "args"]));
+        }
+    }
+
+    #[test]
+    fn action_schema_includes_task_complete() {
+        let schema = action_schema(&[tool("read_file")]);
+        let branches = schema["anyOf"].as_array().unwrap();
+        assert!(
+            branches
+                .iter()
+                .any(|b| b["properties"]["tool"]["const"] == json!("task_complete"))
+        );
+    }
+
+    #[test]
+    fn parse_json_action_happy() {
+        let call = parse_json_action(2, r#"{"tool":"read_file","args":{"path":"x"}}"#).unwrap();
+        assert_eq!(call.name, "read_file");
+        assert_eq!(call.id, "g-2-0");
+        assert_eq!(call.args["path"], json!("x"));
+    }
+
+    #[test]
+    fn parse_json_action_rejects_non_object() {
+        assert!(parse_json_action(0, "\"oops\"").is_err());
+    }
+
+    #[test]
+    fn parse_json_action_rejects_missing_tool() {
+        assert!(matches!(
+            parse_json_action(0, r#"{"args":{}}"#),
+            Err(ActionParseError::MissingTool)
+        ));
+    }
+
+    #[test]
+    fn parse_json_action_rejects_missing_args() {
+        assert!(matches!(
+            parse_json_action(0, r#"{"tool":"read_file"}"#),
+            Err(ActionParseError::MissingArgs)
+        ));
+    }
 
     #[test]
     fn parse_action_roundtrip() {
