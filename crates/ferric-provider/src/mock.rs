@@ -52,6 +52,7 @@ impl Provider for MockProvider {
             supports_native_tool_calls: true,
             supports_constraint: false,
             exposes_logits: false,
+            supports_media: false,
         }
     }
 

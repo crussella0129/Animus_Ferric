@@ -347,3 +347,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** crates/ferric-core/src/{media.rs (new),message.rs,lib.rs}, crates/ferric-provider/src/{openai.rs,mistralrs.rs}, crates/ferric-provider/tests/mock_loop_skeleton.rs, crates/ferric-loop/tests/common/mod.rs, crates/ferric-cli/src/{query.rs,toolbench_cmd.rs}
 - **Commit:** `e60d6d5`
+
+## T-1002 (sprint 10)
+- **Description:** OpenAI multimodal content mapping + honest media capability (ADR-023/022). `map_message` now emits the OpenAI **content-parts array** when a `Message` has media (a `text` part plus a `media_part_json` per item — `image_url` with a `data:<mime>;base64,…` URL for image/video, `input_audio` with base64+format for audio), and stays a plain string otherwise (unchanged). Added `Capabilities.supports_media` — `true` for the OpenAI valve (forwards parts), `false` for mistral.rs/mock/test backends — threaded through all 8 `Capabilities{}` sites. 3 new unit tests (string vs parts array, supports_media). Green across default + backend-openai + backend-mistralrs.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-provider/src/{types.rs,openai.rs,mistralrs.rs,mock.rs}, crates/ferric-loop/src/protocol.rs, crates/ferric-loop/tests/backoff_tests.rs, crates/ferric-cli/src/query.rs
+- **Commit:** `4ab6944`

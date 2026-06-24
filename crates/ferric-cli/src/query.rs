@@ -134,6 +134,7 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
             supports_native_tool_calls: true,
             supports_constraint: false,
             exposes_logits: false,
+            supports_media: false,
         }
     } else {
         match args.backend_opts.backend {
@@ -141,11 +142,13 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
                 supports_native_tool_calls: true,
                 supports_constraint: true,
                 exposes_logits: false,
+                supports_media: true,
             },
             BackendArg::Mistral => Capabilities {
                 supports_native_tool_calls: false,
                 supports_constraint: false,
                 exposes_logits: false,
+                supports_media: false,
             },
         }
     };

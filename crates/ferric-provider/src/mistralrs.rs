@@ -126,6 +126,7 @@ impl Provider for MistralRsProvider {
             supports_native_tool_calls: false,
             supports_constraint: false,
             exposes_logits: false,
+            supports_media: false,
         }
     }
 
