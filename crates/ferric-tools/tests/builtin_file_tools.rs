@@ -262,6 +262,147 @@ fn search_files_deterministic() {
 }
 
 #[test]
+fn edit_file_replaces_first_occurrence() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.rs"), "let x = 1;\nlet x = 2;\n").unwrap();
+    let (out, err) = expect_completed(registry.execute(
+        &ws,
+        "edit_file",
+        &json!({"path": "f.rs", "old_string": "let x = 1;", "new_string": "let y = 9;"}),
+    ));
+    assert!(!err, "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.rs")).unwrap(),
+        "let y = 9;\nlet x = 2;\n",
+        "only the first occurrence is replaced"
+    );
+}
+
+#[test]
+fn edit_file_absent_old_string_is_error_and_no_write() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "original").unwrap();
+    let (output, is_error) = expect_completed(registry.execute(
+        &ws,
+        "edit_file",
+        &json!({"path": "f.txt", "old_string": "absent", "new_string": "x"}),
+    ));
+    assert!(is_error);
+    assert!(output.contains("f.txt"));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        "original",
+        "file untouched when old_string is absent"
+    );
+}
+
+#[test]
+fn edit_file_empty_old_string_is_error() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+    let (_o, is_error) = expect_completed(registry.execute(
+        &ws,
+        "edit_file",
+        &json!({"path": "f.txt", "old_string": "", "new_string": "y"}),
+    ));
+    assert!(is_error, "empty old_string must error");
+}
+
+#[test]
+fn edit_file_outside_workspace_denied() {
+    let (_dir, ws, registry) = setup();
+    let outcome = registry.execute(
+        &ws,
+        "edit_file",
+        &json!({"path": "../escape.txt", "old_string": "a", "new_string": "b"}),
+    );
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "edit outside the workspace must be denied, got {outcome:?}"
+    );
+}
+
+#[test]
+fn delete_path_removes_file() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("gone.txt"), "x").unwrap();
+    let (out, err) =
+        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "gone.txt"})));
+    assert!(!err, "{out}");
+    assert!(!dir.path().join("gone.txt").exists());
+}
+
+#[test]
+fn delete_path_removes_empty_dir() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir(dir.path().join("empty")).unwrap();
+    let (_o, err) =
+        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "empty"})));
+    assert!(!err);
+    assert!(!dir.path().join("empty").exists());
+}
+
+#[test]
+fn delete_path_nonempty_dir_needs_recursive() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir(dir.path().join("d")).unwrap();
+    std::fs::write(dir.path().join("d").join("f"), "x").unwrap();
+    // Without recursive → error, tree intact.
+    let (output, is_error) =
+        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "d"})));
+    assert!(is_error);
+    assert!(output.contains("recursive"));
+    assert!(
+        dir.path().join("d").join("f").exists(),
+        "tree intact without recursive"
+    );
+    // With recursive → gone.
+    let (_o, err) = expect_completed(registry.execute(
+        &ws,
+        "delete_path",
+        &json!({"path": "d", "recursive": true}),
+    ));
+    assert!(!err);
+    assert!(!dir.path().join("d").exists());
+}
+
+#[test]
+fn delete_path_missing_is_error() {
+    let (_dir, ws, registry) = setup();
+    let (output, is_error) =
+        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "ghost.txt"})));
+    assert!(is_error);
+    assert!(output.contains("ghost.txt"));
+}
+
+#[test]
+fn delete_path_outside_workspace_denied() {
+    let (dir, ws, registry) = setup();
+    let outside = dir.path().parent().unwrap().join("victim.txt");
+    std::fs::write(&outside, "data").unwrap();
+    let outcome = registry.execute(&ws, "delete_path", &json!({"path": "../victim.txt"}));
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "delete outside the workspace must be denied, got {outcome:?}"
+    );
+    assert!(outside.exists(), "denied delete must remove nothing");
+    let _ = std::fs::remove_file(&outside);
+}
+
+#[test]
+fn delete_path_into_ferric_denied() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir_all(dir.path().join(".ferric")).unwrap();
+    std::fs::write(dir.path().join(".ferric").join("server.json"), "{}").unwrap();
+    let outcome = registry.execute(&ws, "delete_path", &json!({"path": ".ferric/server.json"}));
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "deleting under .ferric must be denied, got {outcome:?}"
+    );
+    assert!(dir.path().join(".ferric").join("server.json").exists());
+}
+
+#[test]
 fn move_path_into_ferric_denied() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("x.txt"), "data").unwrap();

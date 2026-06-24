@@ -389,3 +389,21 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** README.md
 - **Commit:** `d2bea8b`
+
+## T-1301 (sprint 13)
+- **Description:** `edit_file` builtin — surgical replace of the first occurrence of `old_string` with `new_string` (`{path, old_string, new_string}`), the targeted edit small models do far more reliably than a full-file `write_file` rewrite. Resolves through `Workspace` (`permission: Write`); reads, `replacen(.., 1)`, writes back. Errors (no write) when `old_string` is empty, absent, or the file is unreadable. Mirrors `write_file.rs`. First-occurrence (not require-unique) maximizes small-model fire rate. 4 integration tests (replace-first, absent→error+unchanged, empty→error, outside-workspace→Denied). Completes Ring 0 of the tool-rings north star ([[ferric-tool-rings]]). (Built alongside T-1302 during a classifier outage; shared `builtin/mod.rs` + test file → one commit.)
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/edit_file.rs (new), crates/ferric-tools/src/builtin/mod.rs, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 05e3b57
+
+## T-1302 (sprint 13)
+- **Description:** `delete_path` builtin — delete a file or directory (`{path, recursive?}`). Resolves through `Workspace` (`permission: Write`, so the guard denylist auto-denies `.ferric`/git/ssh exactly like `write_file`/`move_path`); removes a file or **empty** dir, and a **non-empty** dir only with `recursive: true` (else a clear error — a small model can't accidentally nuke a tree). Uses `symlink_metadata` so a symlink is removed as a link, never followed. Missing path → clear error. Mirrors `move_path.rs`. 6 integration tests (file, empty-dir, non-empty needs-recursive + with-recursive, missing→error, outside-workspace→Denied, `.ferric`→Denied).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/delete_path.rs (new), crates/ferric-tools/src/builtin/mod.rs, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 05e3b57
+
+## T-1303 (sprint 13)
+- **Description:** Docs — reframed the README builtin-tools list around **Ring 0** (the always-on `read_file/list_dir/write_file/make_dir/edit_file/delete_path` core) with `search_files` beyond it, and a one-line statement of the rings model (vocabularies widen with proven reliability; active rings = the grammar). Bumped Status to sprint 13; appended the Sprint 13 timeline entry with a Sprint 14 "Next" pointer (formalize the rings + fix the alphabetical `max_tools` cap).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** README.md
+- **Commit:** 05e3b57
