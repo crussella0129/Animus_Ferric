@@ -341,3 +341,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** docs/testbench.md, README.md, run_benchmarks.ps1
 - **Commit:** `f913d78`
+
+## T-1001 (sprint 10)
+- **Description:** Multimodal core data model + routing logic (ADR-023). New `ferric-core::media` module: `Modality{Image,Audio,Video}`, `MediaPart{mime, data(base64)}`, and the pure routing functions `classify_path(path)->FileKind` (Text/Media/Unknown by extension) + `decide_attachment(kind, declared, backend_supports_media)->Attachment` (AppendText/Media/Skip-with-reason — media attaches only when the modality is declared AND the backend carries media) + `parse_modalities`. Added an **additive** `media: Vec<MediaPart>` field to `Message` (`#[serde(default, skip_serializing_if="Vec::is_empty")]`) so media-free messages serialize byte-identically (asserted) — plus `Message::user_with_media`. Threaded `media: Vec::new()` through every `Message{}` struct-literal site (openai, mistralrs, query mock, toolbench, loop test helpers). 7 new unit tests; green across default + backend-openai + backend-mistralrs.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-core/src/{media.rs (new),message.rs,lib.rs}, crates/ferric-provider/src/{openai.rs,mistralrs.rs}, crates/ferric-provider/tests/mock_loop_skeleton.rs, crates/ferric-loop/tests/common/mod.rs, crates/ferric-cli/src/{query.rs,toolbench_cmd.rs}
+- **Commit:** `e60d6d5`

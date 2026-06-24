@@ -52,6 +52,7 @@ pub fn empty_completion() -> Completion {
             text: None,
             tool_calls: Vec::new(),
             tool_call_id: None,
+            media: Vec::new(),
         },
         input_tokens: Some(50),
         output_tokens: Some(0),
@@ -73,6 +74,7 @@ pub fn tool_completion(calls: Vec<(&str, &str, serde_json::Value)>) -> Completio
                 })
                 .collect(),
             tool_call_id: None,
+            media: Vec::new(),
         },
         input_tokens: Some(60),
         output_tokens: Some(15),

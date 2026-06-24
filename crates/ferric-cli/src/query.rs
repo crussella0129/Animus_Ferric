@@ -299,6 +299,7 @@ fn native_completion(id: &str, name: &str, args: serde_json::Value) -> Completio
                 args,
             }],
             tool_call_id: None,
+            media: Vec::new(),
         },
         input_tokens: Some(40),
         output_tokens: Some(12),

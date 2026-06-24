@@ -1,10 +1,14 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 9: fleet calibration (cash in the testbench → capability table) + the
-> ADR-024 native-`content` fallback. mistral.rs 0.8.15 viability is a test-phase
-> experiment. Multimodal "any file" → sprint 10 (ADR-023). Plan: `sprints/s9/sprint-plans/build-plan.md`.
+> Sprint 10: multimodal "any file" input — text/code as text (any model),
+> image/audio/video as capability-gated media parts on the OpenAI valve
+> (ADR-023/025). Pipeline is pure + unit-tested; live-media E2E deferred to a
+> heartbeat (no multimodal server on the machine). Plan: `sprints/s10/sprint-plans/build-plan.md`.
 
-Sprint 9 build tasks T-901 (fleet sweep), T-902 (native-`content` fallback),
-T-903 (docs + driver) are complete — see `agent-tasks/completed-tasks.md`.
-The remaining sprint-9 work is the Test phase: the real fleet-calibration run
-(the headline artifact) + the mistral.rs 0.8.15 viability probe.
+- [ ] T-1001 (sprint 10): `Message` media parts + `classify_path`/`decide_attachment` (pure) — touches: crates/ferric-core/src/message.rs, lib.rs
+- [ ] T-1002 (sprint 10): OpenAI multimodal content mapping + `Capabilities.supports_media` — touches: crates/ferric-provider/src/{openai.rs,types.rs,mistralrs.rs}
+- [ ] T-1003 (sprint 10): `ferric query --file/--modality` wiring + gating — touches: crates/ferric-cli/src/query.rs
+- [ ] T-1004 (sprint 10): Docs + README timeline — touches: README.md, docs/multimodal.md
+
+Deferred (heartbeat): live-media E2E — Gemma 3n reads an image/clip via a
+multimodal server (route TBD: llama-server+mmproj vs ollama vision pull).

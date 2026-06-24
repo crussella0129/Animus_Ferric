@@ -249,6 +249,7 @@ impl Provider for OpenAiProvider {
                 text: content,
                 tool_calls,
                 tool_call_id: None,
+                media: Vec::new(),
             },
             input_tokens,
             output_tokens,

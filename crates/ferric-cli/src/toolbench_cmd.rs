@@ -607,6 +607,7 @@ mod tests {
                     args,
                 }],
                 tool_call_id: None,
+                media: Vec::new(),
             },
             input_tokens: None,
             output_tokens: None,

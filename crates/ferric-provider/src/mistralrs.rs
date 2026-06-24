@@ -177,6 +177,7 @@ impl Provider for MistralRsProvider {
                     })
                     .collect(),
                 tool_call_id: None,
+                media: Vec::new(),
             },
             input_tokens: Some(response.usage.prompt_tokens as u32),
             output_tokens: Some(response.usage.completion_tokens as u32),
@@ -352,6 +353,7 @@ mod tests {
                     args: json!({"path": "x"}),
                 }],
                 tool_call_id: None,
+                media: Vec::new(),
             },
             Message::tool_result("tc-1", "contents"),
             Message::assistant("done"),
