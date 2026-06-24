@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ferric_core::{ActionProtocol, FerricError, Message, RunPolicy};
+use ferric_core::{ActionProtocol, FerricError, MediaPart, Message, RunPolicy};
 use ferric_guard::Workspace;
 use ferric_provider::{CompletionRequest, Constraint, Provider, SamplingParams, ToolDescriptor};
 use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
@@ -51,6 +51,9 @@ pub struct RunArgs<'a> {
     /// Composition lineage (output_id, output_version, [(element_id, version)])
     /// — traced as `PromptComposed` when present.
     pub prompt_lineage: Option<PromptLineage>,
+    /// Multimodal parts to attach to the first user message (ADR-023). Empty ⇒
+    /// the message is text-only, identical to before.
+    pub media: Vec<MediaPart>,
 }
 
 /// Run the agent loop for one user prompt. Trace I/O errors abort with `Err`;
@@ -80,7 +83,10 @@ pub async fn run(
     }
 
     let system = args.system_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
-    let mut messages = vec![Message::system(system), Message::user(prompt)];
+    let mut messages = vec![
+        Message::system(system),
+        Message::user_with_media(prompt, args.media.clone()),
+    ];
 
     // Registry tools (no terminator) drive both the native tools list and the
     // grammar schema; the terminator is appended where each mode needs it.

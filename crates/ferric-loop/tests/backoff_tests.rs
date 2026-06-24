@@ -38,6 +38,7 @@ impl Provider for FlakyProvider {
             supports_native_tool_calls: true,
             supports_constraint: false,
             exposes_logits: false,
+            supports_media: false,
         }
     }
 
@@ -81,6 +82,7 @@ fn run_flaky(script: Vec<Result<Completion, ProviderError>>) -> FlakyRun {
             sleeper: &sleeper,
             system_prompt: None,
             prompt_lineage: None,
+            media: Vec::new(),
         },
         &mut sink,
         "do the task",

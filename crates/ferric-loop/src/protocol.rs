@@ -45,6 +45,7 @@ mod tests {
             supports_native_tool_calls: native,
             supports_constraint: constraint,
             exposes_logits: false,
+            supports_media: false,
         }
     }
 

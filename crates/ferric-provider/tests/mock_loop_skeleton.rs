@@ -27,6 +27,7 @@ fn tool_call_completion() -> Completion {
                 args: json!({"path": "hello.txt"}),
             }],
             tool_call_id: None,
+            media: Vec::new(),
         },
         input_tokens: Some(50),
         output_tokens: Some(12),

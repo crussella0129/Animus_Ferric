@@ -104,6 +104,75 @@ fn query_without_backend_errors() {
 }
 
 #[test]
+fn query_file_text_folds_into_prompt() {
+    // A text/code --file is read and folded into the prompt (any model). It
+    // shows up in the assembled prompt's char count.
+    let dir = tempfile::tempdir().unwrap();
+    let notes = dir.path().join("notes.md");
+    let body = "MARKER ".repeat(100); // ~700 distinctive chars
+    std::fs::write(&notes, &body).unwrap();
+    let out = ferric()
+        .args(["query", "--mock", "summarize the notes"])
+        .arg("--workspace")
+        .arg(dir.path())
+        .arg("--file")
+        .arg(&notes)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let trace_dir = dir.path().join(".ferric").join("trace");
+    let trace = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("a q-*.jsonl trace");
+    let content = std::fs::read_to_string(trace.path()).unwrap();
+    let max_chars = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["event"]["type"] == "prompt_assembled")
+        .filter_map(|v| v["event"]["chars"].as_u64())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_chars >= body.len() as u64,
+        "assembled prompt ({max_chars} chars) should include the {}-char file",
+        body.len()
+    );
+}
+
+#[test]
+fn query_file_media_skipped_with_reason() {
+    // A media --file with no multimodal-capable backend is skipped, non-fatally,
+    // with the reason surfaced on stderr (never silent).
+    let dir = tempfile::tempdir().unwrap();
+    let photo = dir.path().join("photo.png");
+    std::fs::write(&photo, [0u8; 16]).unwrap();
+    let out = ferric()
+        .args(["query", "--mock", "describe the photo"])
+        .arg("--workspace")
+        .arg(dir.path())
+        .arg("--file")
+        .arg(&photo)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "skip is non-fatal; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("skip") && stderr.contains("photo.png"),
+        "expected a surfaced skip reason; stderr: {stderr}"
+    );
+}
+
+#[test]
 fn unknown_args_fail_with_usage() {
     let out = ferric().arg("frobnicate").output().unwrap();
     assert!(!out.status.success());

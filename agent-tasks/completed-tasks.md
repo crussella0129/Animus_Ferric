@@ -341,3 +341,21 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** docs/testbench.md, README.md, run_benchmarks.ps1
 - **Commit:** `f913d78`
+
+## T-1001 (sprint 10)
+- **Description:** Multimodal core data model + routing logic (ADR-023). New `ferric-core::media` module: `Modality{Image,Audio,Video}`, `MediaPart{mime, data(base64)}`, and the pure routing functions `classify_path(path)->FileKind` (Text/Media/Unknown by extension) + `decide_attachment(kind, declared, backend_supports_media)->Attachment` (AppendText/Media/Skip-with-reason — media attaches only when the modality is declared AND the backend carries media) + `parse_modalities`. Added an **additive** `media: Vec<MediaPart>` field to `Message` (`#[serde(default, skip_serializing_if="Vec::is_empty")]`) so media-free messages serialize byte-identically (asserted) — plus `Message::user_with_media`. Threaded `media: Vec::new()` through every `Message{}` struct-literal site (openai, mistralrs, query mock, toolbench, loop test helpers). 7 new unit tests; green across default + backend-openai + backend-mistralrs.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-core/src/{media.rs (new),message.rs,lib.rs}, crates/ferric-provider/src/{openai.rs,mistralrs.rs}, crates/ferric-provider/tests/mock_loop_skeleton.rs, crates/ferric-loop/tests/common/mod.rs, crates/ferric-cli/src/{query.rs,toolbench_cmd.rs}
+- **Commit:** `e60d6d5`
+
+## T-1002 (sprint 10)
+- **Description:** OpenAI multimodal content mapping + honest media capability (ADR-023/022). `map_message` now emits the OpenAI **content-parts array** when a `Message` has media (a `text` part plus a `media_part_json` per item — `image_url` with a `data:<mime>;base64,…` URL for image/video, `input_audio` with base64+format for audio), and stays a plain string otherwise (unchanged). Added `Capabilities.supports_media` — `true` for the OpenAI valve (forwards parts), `false` for mistral.rs/mock/test backends — threaded through all 8 `Capabilities{}` sites. 3 new unit tests (string vs parts array, supports_media). Green across default + backend-openai + backend-mistralrs.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-provider/src/{types.rs,openai.rs,mistralrs.rs,mock.rs}, crates/ferric-loop/src/protocol.rs, crates/ferric-loop/tests/backoff_tests.rs, crates/ferric-cli/src/query.rs
+- **Commit:** `4ab6944`
+
+## T-1003 (sprint 10)
+- **Description:** `ferric query --file/--modality` "any file" input wiring (ADR-023). Added repeatable `--file <path>` + `--modality <image,audio,video>` to `QueryArgs`. In `run_query`, each file is routed via the pure `ferric_core` logic (`classify_path` + `decide_attachment` against the declared modalities + `caps.supports_media`): text/code → read and folded into the prompt (works on any model); media → base64'd into a gated `MediaPart` (new dependency-free `base64_encode` in `ferric-core::media`, RFC-4648 tested); Skip → surfaced on stderr, non-fatal. Threaded media into the loop: added `RunArgs.media` (`run.rs`) and the initial user message is now `Message::user_with_media(prompt, args.media.clone())` (empty ⇒ identical to before); updated all 4 `RunArgs{}` sites + both `drive_mock`/`drive_real` signatures (incl. the no-backend stub). 2 CLI integration tests (text file grows the assembled-prompt char count; a media file with no multimodal backend is skipped with a surfaced reason) + the base64 vectors. Green across default + backend-openai + backend-mistralrs; clippy `--all-targets -D warnings` clean.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-core/src/{media.rs,lib.rs}, crates/ferric-loop/src/run.rs, crates/ferric-loop/tests/{backoff_tests.rs,common/mod.rs}, crates/ferric-cli/src/query.rs, crates/ferric-cli/tests/cli.rs
+- **Commit:** `d8b2a1d`

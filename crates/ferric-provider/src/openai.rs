@@ -6,7 +6,7 @@ use crate::traits::Provider;
 use crate::types::{
     Capabilities, Completion, CompletionRequest, Constraint, ProviderError, ToolDescriptor,
 };
-use ferric_core::{Message, Role, ToolCall};
+use ferric_core::{MediaPart, Message, Role, ToolCall};
 
 pub struct OpenAiConfig {
     pub base_url: String,
@@ -47,7 +47,17 @@ impl OpenAiProvider {
 
         let mut out = json!({ "role": role_str });
 
-        if let Some(text) = &msg.text {
+        if !msg.media.is_empty() {
+            // Multimodal (ADR-023): an OpenAI content-parts array — the text (if
+            // any) as a `text` part, then one part per media item. llama-server /
+            // Ollama accept this shape over `/chat/completions`.
+            let mut parts: Vec<serde_json::Value> = Vec::new();
+            if let Some(text) = &msg.text {
+                parts.push(json!({ "type": "text", "text": text }));
+            }
+            parts.extend(msg.media.iter().map(media_part_json));
+            out["content"] = json!(parts);
+        } else if let Some(text) = &msg.text {
             out["content"] = json!(text);
         } else if msg.role == Role::Assistant && !msg.tool_calls.is_empty() {
             // OpenAI requires an explicit empty string or null for content if only making tool calls
@@ -157,6 +167,7 @@ impl Provider for OpenAiProvider {
             supports_native_tool_calls: true,
             supports_constraint: true,
             exposes_logits: false,
+            supports_media: true,
         }
     }
 
@@ -249,10 +260,33 @@ impl Provider for OpenAiProvider {
                 text: content,
                 tool_calls,
                 tool_call_id: None,
+                media: Vec::new(),
             },
             input_tokens,
             output_tokens,
             truncated,
+        })
+    }
+}
+
+/// Map one `MediaPart` to an OpenAI content-part (ADR-023). Audio →
+/// `input_audio` (base64 + format); image/video → `image_url` with a `data:`
+/// URL (llama.cpp vision accepts data URLs; video support is server-dependent,
+/// best-effort).
+fn media_part_json(part: &MediaPart) -> serde_json::Value {
+    if let Some(subtype) = part.mime.strip_prefix("audio/") {
+        let format = match subtype {
+            "mpeg" => "mp3",
+            other => other,
+        };
+        json!({
+            "type": "input_audio",
+            "input_audio": { "data": part.data, "format": format }
+        })
+    } else {
+        json!({
+            "type": "image_url",
+            "image_url": { "url": format!("data:{};base64,{}", part.mime, part.data) }
         })
     }
 }
@@ -348,6 +382,45 @@ mod tests {
         // Has a name but no args → not a call (guards against misreading prose).
         assert!(toolcall_from_content(r#"{"name": "Bob"}"#).is_none());
         assert!(toolcall_from_content(r#"{"summary": "done"}"#).is_none());
+    }
+
+    #[test]
+    fn map_message_text_only_is_string() {
+        // WHEN no media THEN content stays a plain string (unchanged shape).
+        let mapped = OpenAiProvider::map_message(&Message::user("hello"));
+        assert_eq!(mapped["content"], json!("hello"));
+    }
+
+    #[test]
+    fn map_message_media_is_parts_array() {
+        // WHEN media present THEN content is the OpenAI parts array.
+        let msg = Message::user_with_media(
+            "describe",
+            vec![
+                MediaPart {
+                    mime: "image/png".to_string(),
+                    data: "AAAA".to_string(),
+                },
+                MediaPart {
+                    mime: "audio/wav".to_string(),
+                    data: "BBBB".to_string(),
+                },
+            ],
+        );
+        let mapped = OpenAiProvider::map_message(&msg);
+        let parts = mapped["content"].as_array().expect("content is an array");
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "describe");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AAAA");
+        assert_eq!(parts[2]["type"], "input_audio");
+        assert_eq!(parts[2]["input_audio"]["data"], "BBBB");
+        assert_eq!(parts[2]["input_audio"]["format"], "wav");
+    }
+
+    #[test]
+    fn capabilities_supports_media() {
+        assert!(provider().capabilities().supports_media);
     }
 
     #[test]
