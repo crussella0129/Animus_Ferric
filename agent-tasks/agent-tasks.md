@@ -1,11 +1,13 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 14: formalize the tool **rings** ([[ferric-tool-rings]]). A `ring` per tool,
-> capability-gated by `ring_for_tier`, and `tools_for_policy` **trims from the outer
-> ring first** (fixing the alphabetical `max_tools` cap). Plan: `sprints/s14/sprint-plans/build-plan.md`.
+> Sprint 14 (formalize the tool **rings**, [[ferric-tool-rings]]) is **done** — `ring`
+> field + `ring_for_tier` + trim-from-outer `tools_for_policy` (alphabetical-cap bug
+> fixed); Nano now gets exactly the 6-tool core, Small gets all 8; re-bench still 100%
+> on both models. T-1401/1402 committed (ADR-028).
 
-- [ ] T-1401 (sprint 14): `ring` field on `ToolSpec` (replaces `min_tier`) + `ring_for_tier` + ring-aware trim-from-outer `tools_for_policy` + ring assignments + tests — touches: crates/ferric-tools/src/{spec.rs,registry.rs,builtin/*.rs}, crates/ferric-core/src/scale.rs
-- [ ] T-1402 (sprint 14): ADR (ring architecture) + README/docs + re-bench — touches: decisions.md, README.md, docs/
-
-Later: a `--max-ring` CLI override + explicit measured-promotion-from-toolbench
-wiring; MCP-stdio (ADR-012); live-media heartbeat (human-gated).
+Open candidates (sprint 15+):
+- **`--max-ring` CLI override** — pin a model to "exactly these rings" independent of tier (the user's "control exactly what rings").
+- **Wire per-ring toolbench fire-rate → measured ring promotion** (the s13 100% is the `solid` bar).
+- More Ring-1/2 tools (the find/organize + plan/diff rings).
+- **MCP-stdio** (ADR-012) — needs the ADR-005 external-exec security call (user's).
+- **Live-media heartbeat** — human-gated on a multimodal server.
