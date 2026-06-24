@@ -359,3 +359,9 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** crates/ferric-core/src/{media.rs,lib.rs}, crates/ferric-loop/src/run.rs, crates/ferric-loop/tests/{backoff_tests.rs,common/mod.rs}, crates/ferric-cli/src/query.rs, crates/ferric-cli/tests/cli.rs
 - **Commit:** `d8b2a1d`
+
+## T-1004 (sprint 10)
+- **Description:** Multimodal docs + README timeline. New `docs/multimodal.md` (the `--file`/`--modality` walkthrough: file-routing table, the ADR-006/022 gating rules, and how to run media E2E via `llama-server --mmproj`). Added a `--file` "any file" note to the README's Using-Ferric section, bumped Status to sprint 10, and appended the **Sprint 10** entry to the development timeline (with a Sprint 11 "Next" pointer).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** docs/multimodal.md (new), README.md
+- **Commit:** `50b6d84`
