@@ -329,3 +329,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
 - **Commit:** `515bc11`
+
+## T-902 (sprint 9)
+- **Description:** Native-`content` fallback (ADR-024). The OpenAI backend's `complete()` now, when `tool_calls` is empty and `content` is itself a tool-call object, recovers the call via `toolcall_from_content()` — handling both the ollama shape (`{name, arguments}`) and the harness shape (`{tool, args}`), with `arguments` as a JSON object or a JSON-encoded string. Requires both a name and an args object so ordinary prose (or a stray JSON object) is never misread as a call. This closes the ADR-024 native-on-ollama 0% (ollama returns the call as text with `tool_calls` null). Collapsed into an edition-2024 let-chain. Four unit tests cover both shapes, string-encoded args, and prose→None.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-provider/src/openai.rs
+- **Commit:** `c3482e6`

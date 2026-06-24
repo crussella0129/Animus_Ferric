@@ -225,6 +225,17 @@ impl Provider for OpenAiProvider {
             }
         }
 
+        // ADR-024 fallback: ollama's OpenAI-compatible endpoint returns a tool
+        // call as plain text in `content` with `tool_calls` null. If nothing
+        // parsed natively but the content is itself a tool-call object, recover
+        // it so the native path sees the call instead of `no_action`.
+        if tool_calls.is_empty()
+            && let Some(text) = &content
+            && let Some(tc) = toolcall_from_content(text)
+        {
+            tool_calls.push(tc);
+        }
+
         let finish_reason = choice["finish_reason"].as_str().unwrap_or("");
         let truncated = finish_reason == "length";
 
@@ -244,6 +255,40 @@ impl Provider for OpenAiProvider {
             truncated,
         })
     }
+}
+
+/// ADR-024: ollama's OpenAI-compatible endpoint emits a tool call as plain text
+/// in `content` (`{"name": ..., "arguments": {...}}`) with `tool_calls` null.
+/// Recover a `ToolCall` from such content. Accepts the ollama shape
+/// (`{name, arguments}`) and the harness shape (`{tool, args}`); `arguments`
+/// may be a JSON object or a JSON-encoded string. Both a name and an
+/// arguments object must be present, so ordinary assistant prose (or a stray
+/// JSON object without them) is never misread as a call.
+fn toolcall_from_content(content: &str) -> Option<ToolCall> {
+    let trimmed = content.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+    let name = v
+        .get("name")
+        .or_else(|| v.get("tool"))?
+        .as_str()?
+        .to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let raw_args = v.get("arguments").or_else(|| v.get("args"))?;
+    let args = match raw_args {
+        // ollama sometimes JSON-encodes the args as a string.
+        serde_json::Value::String(s) => serde_json::from_str(s).ok()?,
+        other => other.clone(),
+    };
+    Some(ToolCall {
+        id: String::new(),
+        name,
+        args,
+    })
 }
 
 #[cfg(test)]
@@ -270,6 +315,39 @@ mod tests {
             description: "read a file".to_string(),
             input_schema: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
         }
+    }
+
+    #[test]
+    fn toolcall_from_content_ollama_shape() {
+        // ADR-024: ollama returns the call as text in `content`.
+        let tc = toolcall_from_content(r#"{"name": "read_file", "arguments": {"path": "a.txt"}}"#)
+            .expect("ollama-shaped content is a tool call");
+        assert_eq!(tc.name, "read_file");
+        assert_eq!(tc.args["path"], "a.txt");
+    }
+
+    #[test]
+    fn toolcall_from_content_harness_shape() {
+        let tc = toolcall_from_content(r#"{"tool": "read_file", "args": {"path": "a.txt"}}"#)
+            .expect("harness-shaped content is a tool call");
+        assert_eq!(tc.name, "read_file");
+        assert_eq!(tc.args["path"], "a.txt");
+    }
+
+    #[test]
+    fn toolcall_from_content_args_as_json_string() {
+        let tc =
+            toolcall_from_content(r#"{"name": "read_file", "arguments": "{\"path\": \"a.txt\"}"}"#)
+                .expect("string-encoded args parse");
+        assert_eq!(tc.args["path"], "a.txt");
+    }
+
+    #[test]
+    fn toolcall_from_content_prose_is_none() {
+        assert!(toolcall_from_content("Sure, I'll read the file for you.").is_none());
+        // Has a name but no args → not a call (guards against misreading prose).
+        assert!(toolcall_from_content(r#"{"name": "Bob"}"#).is_none());
+        assert!(toolcall_from_content(r#"{"summary": "done"}"#).is_none());
     }
 
     #[test]
