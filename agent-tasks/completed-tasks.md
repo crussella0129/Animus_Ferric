@@ -407,3 +407,9 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** README.md
 - **Commit:** 05e3b57
+
+## T-1401 (sprint 14)
+- **Description:** Formalized the tool **rings**. Replaced `ToolSpec.min_tier: Tier` with **`ring: u8`** (0 = core); the 8 builtins are `ring: 0` except `search_files` + `move_path` → `ring: 1`. Added `ferric_core::ring_for_tier(Tier) -> u8` (Nano→0, Small→1, Medium→2, Large/Xl/Ultra→3) — the capability→ring ceiling (honours `measured_level`, so a model is promoted by demonstrated reliability). Rewrote `tools_for_policy` to keep `ring ≤ ring_for_tier(tier)`, **trim from the outer ring first** when over `max_tools` (priority by `(ring, name)`, then name-sorted, ADR-008) — replacing the old alphabetical `.take` that could silently drop an essential core tool (e.g. `write_file` once 8 builtins exceeded the Nano cap of 6). `RunPolicy` unchanged ⇒ the tier-table snapshot stays put. Tests: `ring_ceiling_per_tier`; `tools_for_policy_trims_outer_ring_first` (core survives a cap, outer dropped, Nano sees only Ring 0); `rings_gate_builtins_by_tier` (Nano → exactly the 6 core, Small → all 8). Green across the workspace; clippy `--all-targets -D warnings` clean.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-tools/src/{spec.rs,registry.rs,builtin/*.rs (8)}, crates/ferric-core/src/{scale.rs,lib.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** `6efca95`

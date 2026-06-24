@@ -2,7 +2,6 @@ use std::path::Path;
 
 use serde_json::json;
 
-use ferric_core::Tier;
 use ferric_guard::PermissionLevel;
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
@@ -36,7 +35,7 @@ impl Tool for SearchFiles {
                 "required": ["query"]
             }),
             permission: PermissionLevel::Read,
-            min_tier: Tier::Nano,
+            ring: 1,
         }
     }
 

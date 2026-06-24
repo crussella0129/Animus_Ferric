@@ -1,17 +1,11 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 13 (complete Ring 0) is **done** — `edit_file` + `delete_path` shipped and
-> the full 8-tool core measured at **100% fire rate on qwen2.5-coder:7b AND
-> llama3.2:1b** (the "retain 100% reliability" gate). T-1301/1302/1303 committed.
+> Sprint 14: formalize the tool **rings** ([[ferric-tool-rings]]). A `ring` per tool,
+> capability-gated by `ring_for_tier`, and `tools_for_policy` **trims from the outer
+> ring first** (fixing the alphabetical `max_tools` cap). Plan: `sprints/s14/sprint-plans/build-plan.md`.
 
-**Next — Sprint 14: formalize the rings** ([[ferric-tool-rings]]):
-- a `ring: u8` on `ToolSpec` (0 = core).
-- ring-aware `tools_for_policy`: include rings `0..=active_ring`; **trim from the
-  outer ring first** — fixing the latent alphabetical `max_tools` cap (already a
-  real bug now that Nano has 8 tools > cap 6).
-- a config ring-cap + measured auto-promotion (unlock ring N+1 when the toolbench
-  scores `solid` on the rings inside it — the s13 100% baseline is the bar).
-- an ADR for the ring architecture.
+- [ ] T-1401 (sprint 14): `ring` field on `ToolSpec` (replaces `min_tier`) + `ring_for_tier` + ring-aware trim-from-outer `tools_for_policy` + ring assignments + tests — touches: crates/ferric-tools/src/{spec.rs,registry.rs,builtin/*.rs}, crates/ferric-core/src/scale.rs
+- [ ] T-1402 (sprint 14): ADR (ring architecture) + README/docs + re-bench — touches: decisions.md, README.md, docs/
 
-Larger later: MCP-stdio (ADR-012, needs the ADR-005 external-exec call); live-media
-heartbeat (human-gated on a multimodal server).
+Later: a `--max-ring` CLI override + explicit measured-promotion-from-toolbench
+wiring; MCP-stdio (ADR-012); live-media heartbeat (human-gated).

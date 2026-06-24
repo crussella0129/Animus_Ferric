@@ -416,3 +416,36 @@ fn move_path_into_ferric_denied() {
         "move into .ferric must be denied, got {outcome:?}"
     );
 }
+
+#[test]
+fn rings_gate_builtins_by_tier() {
+    use ferric_core::{ModelProfile, policy_for};
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+    let profile = |params_b: f32| ModelProfile {
+        params_b,
+        quant: "Q4_K_M".to_string(),
+        ctx: 4096,
+        family: "t".to_string(),
+        measured_level: None,
+    };
+
+    // Nano (params < 4 → ring ceiling 0) → exactly the 6 Ring-0 core tools.
+    let nano = registry.tools_for_policy(&policy_for(&profile(1.0)));
+    let nano_names: Vec<&str> = nano.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(nano.len(), 6, "Nano gets the 6-tool core: {nano_names:?}");
+    assert!(
+        nano_names.contains(&"write_file"),
+        "the core (e.g. write_file) is never dropped by the cap"
+    );
+    assert!(
+        !nano_names.contains(&"search_files") && !nano_names.contains(&"move_path"),
+        "Ring-1 tools are not in a Nano grammar"
+    );
+
+    // Small (4..13 → ring ceiling 1) → the full 8 (Ring 0 + Ring 1).
+    let small = registry.tools_for_policy(&policy_for(&profile(8.0)));
+    let small_names: Vec<&str> = small.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(small.len(), 8, "Small adds Ring 1: {small_names:?}");
+    assert!(small_names.contains(&"search_files") && small_names.contains(&"move_path"));
+}

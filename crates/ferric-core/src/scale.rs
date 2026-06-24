@@ -131,6 +131,21 @@ pub fn tier_for_level(level: u8) -> Tier {
     }
 }
 
+/// Tool-vocabulary ring ceiling for a tier (the rings model). A run may use
+/// rings `0..=ring_for_tier(tier)`. Ring 0 is the always-on navigate/mutate
+/// core (every model); higher rings (find/organize, plan/diff, external tools)
+/// unlock with capability — and since `tier` honours `measured_level`, a model
+/// is promoted to a wider ring set by demonstrated reliability, not size alone.
+/// Rings 2–3 are reserved for tools that land in later sprints.
+pub fn ring_for_tier(tier: Tier) -> u8 {
+    match tier {
+        Tier::Nano => 0,
+        Tier::Small => 1,
+        Tier::Medium => 2,
+        Tier::Large | Tier::Xl | Tier::Ultra => 3,
+    }
+}
+
 /// Per-tier seed row: (uses_planner, max_plan_steps, max_turns_per_step,
 /// max_turns, max_tools, prompt_budget_cap, max_output_tokens, allows_subagents).
 #[allow(clippy::type_complexity)]
@@ -205,6 +220,16 @@ mod tests {
         assert_eq!(policy_for(&profile(3.9, None)).tier, Tier::Nano);
         assert_eq!(policy_for(&profile(4.0, None)).tier, Tier::Small);
         assert_eq!(policy_for(&profile(13.1, None)).tier, Tier::Medium);
+    }
+
+    #[test]
+    fn ring_ceiling_per_tier() {
+        assert_eq!(ring_for_tier(Tier::Nano), 0);
+        assert_eq!(ring_for_tier(Tier::Small), 1);
+        assert_eq!(ring_for_tier(Tier::Medium), 2);
+        assert_eq!(ring_for_tier(Tier::Large), 3);
+        assert_eq!(ring_for_tier(Tier::Xl), 3);
+        assert_eq!(ring_for_tier(Tier::Ultra), 3);
     }
 
     #[test]

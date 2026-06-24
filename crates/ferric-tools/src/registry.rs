@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use ferric_core::RunPolicy;
+use ferric_core::{RunPolicy, ring_for_tier};
 use ferric_guard::{Decision, Workspace, check};
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
@@ -94,15 +94,27 @@ impl Registry {
         self.tools.insert(tool.spec().name.clone(), tool);
     }
 
-    /// The specs a given run policy may use: filtered by minimum tier, sorted
-    /// alphabetically (BTreeMap order), capped at `policy.max_tools`.
+    /// The specs a given run policy may use (the rings model): keep tools whose
+    /// `ring <= ring_for_tier(policy.tier)`, and when over `policy.max_tools`
+    /// **trim from the outer ring first** (priority by `(ring asc, name)`) so the
+    /// core is never dropped — then return the kept set name-sorted (ADR-008).
+    /// The loop builds the action grammar from exactly this set, so the active
+    /// rings ARE the model's grammar. (Replaces the old alphabetical `.take` cap,
+    /// which could silently drop an essential core tool — e.g. `write_file`.)
     pub fn tools_for_policy(&self, policy: &RunPolicy) -> Vec<ToolSpec> {
-        self.tools
+        let max_ring = ring_for_tier(policy.tier);
+        let mut specs: Vec<ToolSpec> = self
+            .tools
             .values()
             .map(|t| t.spec())
-            .filter(|spec| spec.min_tier <= policy.tier)
-            .take(policy.max_tools as usize)
-            .collect()
+            .filter(|spec| spec.ring <= max_ring)
+            .collect();
+        // Priority by (ring asc, name): a cap sheds the highest rings first.
+        specs.sort_by(|a, b| a.ring.cmp(&b.ring).then_with(|| a.name.cmp(&b.name)));
+        specs.truncate(policy.max_tools as usize);
+        // Deterministic presentation by name (ADR-008).
+        specs.sort_by(|a, b| a.name.cmp(&b.name));
+        specs
     }
 
     /// Execute `name` with `args` inside `workspace`. The guard check runs
@@ -194,6 +206,7 @@ mod tests {
         permission: PermissionLevel,
         output_len: usize,
         ran: std::sync::Arc<AtomicBool>,
+        ring: u8,
     }
 
     impl Tool for DummyTool {
@@ -203,7 +216,7 @@ mod tests {
                 description: "dummy".to_string(),
                 input_schema: json!({"type": "object"}),
                 permission: self.permission,
-                min_tier: ferric_core::Tier::Nano,
+                ring: self.ring,
             }
         }
 
@@ -225,9 +238,20 @@ mod tests {
                 permission,
                 output_len,
                 ran: ran.clone(),
+                ring: 0,
             },
             ran,
         )
+    }
+
+    fn dummy_ring(name: &str, ring: u8) -> DummyTool {
+        DummyTool {
+            name: name.to_string(),
+            permission: PermissionLevel::Read,
+            output_len: 1,
+            ran: std::sync::Arc::new(AtomicBool::new(false)),
+            ring,
+        }
     }
 
     fn temp_workspace() -> (tempfile::TempDir, Workspace) {
@@ -352,6 +376,61 @@ mod tests {
             .map(|s| s.name)
             .collect();
         assert_eq!(names, again.iter().map(String::as_str).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn tools_for_policy_trims_outer_ring_first() {
+        let mut registry = Registry::new();
+        let core: Vec<String> = (0..8).map(|i| format!("core_{i}")).collect();
+        for n in &core {
+            registry.register(Box::new(dummy_ring(n, 0)));
+        }
+        for i in 0..5 {
+            registry.register(Box::new(dummy_ring(&format!("outer_{i}"), 1)));
+        }
+        // Small: ring ceiling 1 (admits both rings), max_tools 10 < 13 → must trim.
+        let small = policy_for(&ModelProfile {
+            params_b: 8.0,
+            quant: "Q4_K_M".to_string(),
+            ctx: 4096,
+            family: "t".to_string(),
+            measured_level: None,
+        });
+        let names: Vec<String> = registry
+            .tools_for_policy(&small)
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names.len(), small.max_tools as usize, "capped to max_tools");
+        // Every Ring-0 (core) tool survives the cap; only Ring-1 tools are shed.
+        for c in &core {
+            assert!(
+                names.contains(c),
+                "core tool {c} must survive the cap: {names:?}"
+            );
+        }
+        // Deterministic, name-sorted (ADR-008).
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "result must be name-sorted");
+
+        // A Nano model (ring ceiling 0) sees ONLY the core ring, never the outer.
+        let nano = policy_for(&ModelProfile {
+            params_b: 1.0,
+            quant: "Q4_K_M".to_string(),
+            ctx: 4096,
+            family: "t".to_string(),
+            measured_level: None,
+        });
+        let nano_names: Vec<String> = registry
+            .tools_for_policy(&nano)
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert!(
+            nano_names.iter().all(|n| n.starts_with("core_")),
+            "Nano sees only Ring 0: {nano_names:?}"
+        );
     }
 
     #[test]

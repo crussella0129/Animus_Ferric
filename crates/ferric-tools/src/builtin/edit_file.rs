@@ -1,6 +1,5 @@
 use serde_json::json;
 
-use ferric_core::Tier;
 use ferric_guard::PermissionLevel;
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
@@ -29,7 +28,7 @@ impl Tool for EditFile {
                 "required": ["path", "old_string", "new_string"]
             }),
             permission: PermissionLevel::Write,
-            min_tier: Tier::Nano,
+            ring: 0,
         }
     }
 
