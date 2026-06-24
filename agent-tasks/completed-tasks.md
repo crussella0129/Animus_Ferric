@@ -371,3 +371,9 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** crates/ferric-provider/src/mistralrs.rs
 - **Commit:** `8c3fc60`
+
+## T-1102 (sprint 11)
+- **Description:** Probe verdict + revert (ADR-027). Ran the bounded `grammar_probe` through T-1101's wired provider on Llama-3.2-1B: with the constraint actually applied, `complete()` hit the **5-minute engine timeout** on the trivial `{x:string}` schema (probe ran 314 s then panicked) — a definitive **HANG**. So the ADR-020 llguidance-on-GGUF hang is **not** fixed in mistralrs 0.8.15 (ADR-025's "returns" had measured the stripped path). **Reverted** T-1101's `set_constraint` wiring (restored the strip, documented inline) — keeping it would 5-minute-hang `toolbench --backend mistral --protocol grammar`. `supports_constraint` stays false; mistral.rs stays `TextXml`; the HTTP valve remains the sole constrained path. Post-revert: clippy `--all-targets -D warnings` clean, 11 lib tests pass, fmt clean. ADR-027 + README/timeline updated.
+- **Completed:** 2026-06-24 (test/loop phase)
+- **Files modified:** crates/ferric-provider/src/mistralrs.rs, decisions.md, README.md
+- **Commit:** `6db983d`

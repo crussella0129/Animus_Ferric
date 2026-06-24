@@ -114,10 +114,10 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 10). Two inference backends ship behind feature flags:
+Active development (sprint 11). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
-- **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. As of 0.8.15 the old constrained-decoding hang (ADR-020) is fixed upstream, but the constraint still isn't enforced through it (ADR-025) — so it stays the unconstrained fallback.
+- **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
 
 The action protocol (`NativeTools` / `ConstrainedJson` / `TextXml`) is chosen from each backend's real capabilities. An embedded PyO3/PyTorch backend was tried and removed (ADR-021) — external engines are reached only via the out-of-process valve. Development follows a sprint-loop protocol; see `decisions.md` for ADRs and `agent-tasks/` for the ledger.
 
@@ -134,4 +134,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 - **Sprint 9 — Fleet calibration** (2026-06-23). `ferric toolbench --models` sweeps a fleet into one sorted leaderboard. **The constraint holds 100% down to a 1B model where native collapses to 22%** — it extends the usable model floor to 1B. A native-`content` fallback closes the "Ollama returns the call as text" gap; the mistral.rs 0.8.15 probe confirmed the hang is fixed upstream but the constraint still isn't enforced. *ADR-025.*
 - **Sprint 10 — Multimodal "any file" input** (2026-06-24). `ferric query --file` takes any file: text/code folds into the prompt (any model); image/audio/video attach as OpenAI content parts, capability-gated by `--modality` + the backend's `supports_media` (the valve carries media; the in-process path doesn't). Additive `Message.media` (media-free messages serialize unchanged); a dependency-free base64 encoder. The pure pipeline is fully unit-tested; the live-media heartbeat (a real model reading a clip) is deferred until a multimodal server is stood up.
 
-> **Next — Sprint 11: TBD** (the deferred live-media heartbeat once a multimodal server exists; or a new direction from the next research phase).
+- **Sprint 11 — mistral.rs constrained-decoding spike** (2026-06-24). Settled an open question: `MistralRsProvider` had been *stripping* the decoding constraint since the s3 pivot, so the sprint-9 probe (ADR-025) had measured the stripped path, not enforcement. Wired the constraint through (`set_constraint`) and re-probed — mistralrs 0.8.15 **still hangs** llguidance on GGUF even for a trivial schema (5-minute engine timeout). The ADR-020 hang is *not* fixed; the wiring was reverted (no regression), mistral.rs stays text-only, and the HTTP valve remains the sole constrained path. *ADR-027.*
+
+> **Next — Sprint 12: TBD** (the deferred live-media heartbeat once a multimodal server exists; or a new direction from the next research phase — e.g. MCP-stdio integration, ADR-012).
