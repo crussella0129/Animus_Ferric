@@ -1,12 +1,17 @@
-use std::path::PathBuf;
 use clap::{Args, ValueEnum};
+use std::path::PathBuf;
+
+// `Provider` is only named by the feature-gated `create_provider` return type.
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 use ferric_provider::Provider;
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum BackendArg {
+    /// In-process mistral.rs (GGUF). Text-only / `TextXml` — no constraint.
     Mistral,
+    /// OpenAI-compatible HTTP valve (llama.cpp / Ollama). Enforces a
+    /// `response_format` constraint server-side → `ConstrainedJson`.
     Openai,
-    Python,
 }
 
 #[derive(Args, Clone)]
@@ -15,7 +20,7 @@ pub struct BackendOpts {
     #[arg(long, value_enum, default_value = "mistral")]
     pub backend: BackendArg,
 
-    /// Directory containing the model (required for mistral and python backends)
+    /// Directory containing the GGUF model (required for the mistral backend)
     #[arg(long)]
     pub model_dir: Option<PathBuf>,
 
@@ -27,9 +32,10 @@ pub struct BackendOpts {
     #[arg(long)]
     pub model: Option<String>,
 
-    /// The OpenAI-compatible API base URL (for openai backend)
-    #[arg(long, default_value = "http://localhost:1234/v1")]
-    pub api_base: String,
+    /// OpenAI-compatible API base URL. Defaults to the running `ferric server`
+    /// (`.ferric/server.json` in the cwd), else `http://localhost:1234/v1`.
+    #[arg(long)]
+    pub api_base: Option<String>,
 
     /// The API key for the OpenAI-compatible API (for openai backend)
     #[arg(long)]
@@ -49,14 +55,27 @@ pub struct BackendOpts {
     pub tok_model_id: Option<String>,
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python"))]
-pub async fn create_provider(opts: &BackendOpts) -> Result<Box<dyn Provider + Send + Sync>, String> {
+/// Resolve the OpenAI base URL (T-805 auto-discovery): an explicit `--api-base`
+/// wins, else the running `ferric server` runfile's `base_url`, else the
+/// built-in default.
+#[cfg(any(feature = "backend-openai", test))]
+fn resolve_base(explicit: Option<&str>, runfile: Option<&str>) -> String {
+    explicit
+        .or(runfile)
+        .map(str::to_string)
+        .unwrap_or_else(|| "http://localhost:1234/v1".to_string())
+}
+
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+pub async fn create_provider(
+    opts: &BackendOpts,
+) -> Result<Box<dyn Provider + Send + Sync>, String> {
     match opts.backend {
         BackendArg::Mistral => {
             #[cfg(feature = "backend-mistralrs")]
             {
                 use ferric_provider::mistralrs::{MistralRsConfig, MistralRsProvider};
-                
+
                 let model_dir = opts
                     .model_dir
                     .as_ref()
@@ -81,7 +100,7 @@ pub async fn create_provider(opts: &BackendOpts) -> Result<Box<dyn Provider + Se
                 config.chat_template = opts.chat_template.as_ref().map(|p| p.display().to_string());
                 config.tokenizer_json = tokenizer_json;
                 config.tok_model_id = opts.tok_model_id.clone();
-                
+
                 let provider = MistralRsProvider::load(config)
                     .await
                     .map_err(|e| format!("mistral backend: {e}"))?;
@@ -95,11 +114,24 @@ pub async fn create_provider(opts: &BackendOpts) -> Result<Box<dyn Provider + Se
         BackendArg::Openai => {
             #[cfg(feature = "backend-openai")]
             {
-                use ferric_provider::openai::{OpenAiProvider, OpenAiConfig};
-                let model_id = opts.model.clone().ok_or("--model is required for openai backend")?;
-                let api_key = opts.api_key.clone().or_else(|| std::env::var("OPENAI_API_KEY").ok());
+                use ferric_provider::openai::{OpenAiConfig, OpenAiProvider};
+                let model_id = opts
+                    .model
+                    .clone()
+                    .ok_or("--model is required for openai backend")?;
+                let api_key = opts
+                    .api_key
+                    .clone()
+                    .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+                let runfile = std::env::current_dir()
+                    .ok()
+                    .and_then(|d| crate::server::read_runfile(&d));
+                let base_url = resolve_base(
+                    opts.api_base.as_deref(),
+                    runfile.as_ref().map(|r| r.base_url.as_str()),
+                );
                 let config = OpenAiConfig {
-                    base_url: opts.api_base.clone(),
+                    base_url,
                     api_key: api_key.unwrap_or_else(|| "ollama".to_string()),
                     model: model_id,
                 };
@@ -111,34 +143,29 @@ pub async fn create_provider(opts: &BackendOpts) -> Result<Box<dyn Provider + Se
                 Err("binary built without openai backend".to_string())
             }
         }
-        BackendArg::Python => {
-            #[cfg(feature = "backend-python")]
-            {
-                use ferric_provider::python::{PythonProvider, PythonConfig};
-                let model_dir = opts
-                    .model_dir
-                    .as_ref()
-                    .ok_or("--model-dir is required for python backend")?;
-                
-                let config = PythonConfig {
-                    model_dir: model_dir.clone(),
-                };
-                let provider = PythonProvider::new(config);
-                Ok(Box::new(provider))
-            }
-            #[cfg(not(feature = "backend-python"))]
-            {
-                Err("binary built without python backend".to_string())
-            }
-        }
     }
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python")))]
-pub async fn create_provider(_opts: &BackendOpts) -> Result<Box<dyn Provider + Send + Sync>, String> {
-    Err(
-        "this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai,backend-python`, or use --mock"
-            .to_string(),
-    )
+// No `create_provider` stub for the backend-free build: the only callers
+// (`query::drive_real`, `toolbench`) carry their own `cfg(not(any(...)))`
+// stubs that surface the "built without backends; use --mock" error directly,
+// so a stub here would be unreachable dead code.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_base_precedence() {
+        // explicit > runfile > built-in default.
+        assert_eq!(
+            resolve_base(Some("http://explicit/v1"), Some("http://runfile/v1")),
+            "http://explicit/v1"
+        );
+        assert_eq!(
+            resolve_base(None, Some("http://runfile/v1")),
+            "http://runfile/v1"
+        );
+        assert_eq!(resolve_base(None, None), "http://localhost:1234/v1");
+    }
 }

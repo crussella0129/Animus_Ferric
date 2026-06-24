@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use ferric_core::{ActionProtocol, FerricError, Message, RunPolicy, ToolCall};
+use ferric_core::{ActionProtocol, FerricError, Message, RunPolicy};
 use ferric_guard::Workspace;
-use ferric_provider::{CompletionRequest, Provider, SamplingParams, ToolDescriptor};
+use ferric_provider::{CompletionRequest, Constraint, Provider, SamplingParams, ToolDescriptor};
 use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
 use ferric_trace::{Event, JsonlSink};
 
@@ -94,7 +94,6 @@ pub async fn run(
         v
     };
 
-
     let mut repetition = crate::repetition::RepetitionGuard::new();
     let mut last_text: Option<String> = None;
     let mut nudged_for_no_action = false;
@@ -114,12 +113,22 @@ pub async fn run(
         // unrepresentable here).
         let tools = match args.protocol {
             ActionProtocol::NativeTools => native_tools.clone(),
-            ActionProtocol::UnifiedGrammar => Vec::new(),
+            ActionProtocol::ConstrainedJson | ActionProtocol::TextXml => Vec::new(),
+        };
+        // ConstrainedJson carries the harness-authored action schema as a real
+        // server-enforced constraint (the thesis). TextXml stays unconstrained
+        // (the model emits XML; the loop scrapes it). Native uses tools.
+        let constraint = match args.protocol {
+            ActionProtocol::ConstrainedJson => Some(Constraint::JsonSchema(
+                crate::grammar::action_schema(&registry_tools),
+            )),
+            ActionProtocol::NativeTools | ActionProtocol::TextXml => None,
         };
         let request = CompletionRequest {
             messages: messages.clone(),
             sampling: args.sampling.clone(),
             tools,
+            constraint,
         };
         if let Err(e) = request.validate() {
             sink.write_event(Event::Note {
@@ -136,7 +145,9 @@ pub async fn run(
                 .sum(),
             offered_tools: offered_names.clone(),
         })?;
-        if args.protocol == ActionProtocol::UnifiedGrammar {
+        // Only ConstrainedJson truly applies a constraint — emit the event
+        // honestly (TextXml previously emitted a false ConstraintApplied).
+        if args.protocol == ActionProtocol::ConstrainedJson {
             sink.write_event(Event::ConstraintApplied {
                 kind: "json_schema".to_string(),
             })?;
@@ -162,11 +173,11 @@ pub async fn run(
             output_tokens: completion.output_tokens,
         })?;
 
-        // Grammar truncation (ADR-015): a completion cut off by the token
+        // Constrained truncation (ADR-015): a completion cut off by the token
         // budget cannot be a valid action — do not parse it. Nudge once to
         // re-issue concisely; a second truncation stops the loop. (The
         // partial JSON is NOT added to history; it is recorded in TurnEnd.)
-        if args.protocol == ActionProtocol::UnifiedGrammar && completion.truncated {
+        if args.protocol == ActionProtocol::ConstrainedJson && completion.truncated {
             if truncated_once {
                 break StopReason::TruncatedAction;
             }
@@ -188,7 +199,16 @@ pub async fn run(
 
         let (actions, parse_error) = match args.protocol {
             ActionProtocol::NativeTools => (completion.message.tool_calls.clone(), None),
-            ActionProtocol::UnifiedGrammar => {
+            ActionProtocol::ConstrainedJson => {
+                match crate::grammar::parse_json_action(
+                    turn,
+                    completion.message.text.as_deref().unwrap_or_default(),
+                ) {
+                    Ok(call) => (vec![call], None),
+                    Err(e) => (Vec::new(), Some(e)),
+                }
+            }
+            ActionProtocol::TextXml => {
                 match crate::grammar::parse_action(
                     turn,
                     completion.message.text.as_deref().unwrap_or_default(),
@@ -213,7 +233,7 @@ pub async fn run(
                 break StopReason::EmptyCompletion;
             }
             nudged_for_no_action = true;
-            
+
             let nudge_text = match parse_error {
                 Some(e) => format!("XML parse error: {e}. {}", no_action_nudge(args.protocol)),
                 None => no_action_nudge(args.protocol).to_string(),
@@ -293,7 +313,10 @@ pub async fn run(
 fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
     match protocol {
         ActionProtocol::NativeTools => "Respond with a tool call, or your final answer as text.",
-        ActionProtocol::UnifiedGrammar => {
+        ActionProtocol::ConstrainedJson => {
+            "Respond with a single JSON action: {\"tool\": \"tool_name\", \"args\": { ... }}"
+        }
+        ActionProtocol::TextXml => {
             "Respond with an XML tool call: <tool_call><name>tool_name</name><args>{\"arg\": \"value\"}</args></tool_call>"
         }
     }
@@ -305,7 +328,9 @@ fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
 fn result_message(protocol: ActionProtocol, call_id: &str, name: &str, output: &str) -> Message {
     match protocol {
         ActionProtocol::NativeTools => Message::tool_result(call_id, output),
-        ActionProtocol::UnifiedGrammar => {
+        // No tools are in context for these protocols, so the template's tool
+        // role may misbehave — frame results as user messages (ADR-015).
+        ActionProtocol::ConstrainedJson | ActionProtocol::TextXml => {
             Message::user(format!("[tool_result for {name}] {output}"))
         }
     }

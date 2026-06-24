@@ -251,3 +251,93 @@
 - **Completed:** 2026-06-13 (build phase; real-model runs in Test phase)
 - **Files modified:** crates/ferric-cli/tests/l0_smoke.rs, decisions.md
 - **Commit:** (see git log for T-216)
+
+## T-001 (sprint 7)
+- **Description:** Reinstated the `Constraint` enum (`JsonSchema|Regex|Lark`) and `constraint: Option<Constraint>` on `CompletionRequest`; restored `validate()` to enforce ADR-010 (constraint XOR tools); added `supports_constraint` to `Capabilities` (honest, set false on every existing backend pending its own wiring); re-exported `Constraint`; updated all `Capabilities{}`/`CompletionRequest{}` literals. Also restored the CI gate to green from inherited s6 breakage: fixed the corrupted `.gitignore` (16 GB `models/` + logs were not actually ignored), stripped trailing whitespace + gated feature-only imports in `toolbench_cmd.rs`, removed dead `ToolCall`/`json` imports, and deleted the unreachable no-backend `create_provider` stub.
+- **Completed:** 2026-06-22 (build phase)
+- **Files modified:** .gitignore, crates/ferric-provider/src/{types.rs,lib.rs,mock.rs,mistralrs.rs,openai.rs,python.rs}, crates/ferric-provider/tests/mock_loop_skeleton.rs, crates/ferric-loop/src/{run.rs,protocol.rs}, crates/ferric-loop/tests/backoff_tests.rs, crates/ferric-cli/src/{backend.rs,query.rs,toolbench_cmd.rs}
+- **Commit:** `e4a5684`
+
+## T-002 (sprint 7)
+- **Description:** `OpenAiProvider` now carries the harness constraint to the server. Extracted a pure `build_body(&CompletionRequest) -> Value`: a `Constraint::JsonSchema` becomes `response_format:{type:json_schema, json_schema:{name,schema,strict:true}}` (server-enforced, ADR-001 valve) with tools omitted; `Lark` maps to llama.cpp's `grammar` field; tools-without-constraint keeps native `tools`/`tool_choice`. `capabilities()` now honestly reports `supports_constraint:true`. Three model-free unit tests on the body shape + capability flags.
+- **Completed:** 2026-06-22 (build phase)
+- **Files modified:** crates/ferric-provider/src/openai.rs
+- **Commit:** `c340ce8`
+
+## T-003 (sprint 7)
+- **Description:** Added the unified action grammar to ferric-loop: `action_schema(tools)` builds an `anyOf` of one const-discriminated `{tool,args}` branch per tool plus a `task_complete` branch (each `additionalProperties:false`), and `parse_json_action(turn,text)` parses the constrained `{"tool","args"}` completion into a `ToolCall` (id `g-<turn>-0`) with typed errors for non-object / missing tool / missing args. The XML `parse_action` is retained for the `TextXml` fallback. Exported all four from the crate root for the toolbench/loop. Six model-free unit tests.
+- **Completed:** 2026-06-22 (build phase)
+- **Files modified:** crates/ferric-loop/src/{grammar.rs,lib.rs}
+- **Commit:** `fc0d8b2`
+
+## T-004 (sprint 7)
+- **Description:** Replaced the protocol dichotomy with an honest trichotomy `ActionProtocol { NativeTools, ConstrainedJson, TextXml }` (serde alias `unified_grammar` kept for old traces/bench rows). `select_protocol` now reads `Capabilities`: constraint→ConstrainedJson, native→NativeTools, neither→TextXml (override always wins). The loop (run.rs) builds the request per protocol — ConstrainedJson carries `Constraint::JsonSchema(action_schema(tools))` with empty tools and emits a TRUTHFUL `ConstraintApplied`, TextXml carries neither and emits none, NativeTools carries tools — and parses per protocol (tool_calls / parse_json_action / parse_action). Made mistral.rs `capabilities()` honest (neither native nor constraint → TextXml; was the s6 0.0% lie). CLI `--protocol {native,grammar,xml}`; query seeds caps from the chosen backend (OpenAI→constrained, mistral→xml). Added a `protocol-constrained-json` prompt atom and taught ferric-prompt all three (C-002). Cascaded the rename through trace/bench. Tests: protocol.rs trichotomy (4), new constrained_loop.rs (2, incl. real constraint on the request + ConstraintApplied), grammar_loop.rs→TextXml (asserts NO ConstraintApplied), truncation_tests→ConstrainedJson.
+- **Completed:** 2026-06-22 (build phase)
+- **Files modified:** crates/ferric-core/src/scale.rs, crates/ferric-loop/src/{run.rs,protocol.rs,grammar.rs}, crates/ferric-provider/src/mistralrs.rs, crates/ferric-cli/src/query.rs, crates/ferric-prompt/src/lib.rs, prompts/protocol-constrained-json.md, crates/ferric-trace/src/lib.rs, crates/ferric-bench/src/{runner.rs,results.rs}, crates/ferric-cli/tests/bench_mock.rs, crates/ferric-loop/tests/{common/mod.rs,grammar_loop.rs,truncation_tests.rs,constrained_loop.rs}
+- **Commit:** `87ae78d`
+
+## T-005 + T-006 (sprint 7)
+- **Description:** Deleted the PyO3/PyTorch backend end-to-end (ADR-021): the `STATUS_HEAP_CORRUPTION` path that embedded CPython+PyTorch in the agent process, violating ADR-013 and the no-translational-layers rule. Landed as ONE commit because the two planned tasks are atomically coupled — removing `ferric-provider`'s `backend-python` feature breaks `ferric-cli`'s feature forwarding, so the tree can't compile with one without the other. T-005: deleted `crates/ferric-provider/src/python.rs` + the `python/` dir (incl. `inference.py`), dropped the `backend-python` feature and the `pyo3` dep from Cargo.toml, removed the `python` module/exports from lib.rs. T-006: removed `BackendArg::Python` + its match arm, all `feature = "backend-python"` cfgs (would trip `unexpected_cfgs` under -D warnings), the CLI feature declaration, and the python invocations in `test_both_models.ps1`/`run_benchmarks.ps1` (Gemma-4-e4b now reached via `--backend openai` behind Ollama). Verified `cargo tree --all-features` shows 0 pyo3.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** deleted crates/ferric-provider/src/python.rs + crates/ferric-provider/python/, crates/ferric-provider/{Cargo.toml,src/lib.rs}, crates/ferric-cli/{Cargo.toml,src/{backend.rs,query.rs,toolbench_cmd.rs}}, test_both_models.ps1, run_benchmarks.ps1, Cargo.lock
+- **Commit:** `9bbe21b`
+
+## T-007 (sprint 7)
+- **Description:** Rebuilt the toolbench to measure the ACTIVE protocol's real fire rate instead of a native-only check that always read empty (the s6 0.0% bug). `extract_action(protocol, completion)` parses with the SAME parser the agent loop uses — native `tool_calls`, `parse_json_action` for ConstrainedJson, `parse_action` for TextXml — and a pass is a name match via that path. Added `--protocol` (defaults to the backend's real `capabilities()` via `select_protocol`, so the bench measures what `ferric query` runs). `build_request` sends the action-schema constraint (empty tools) for ConstrainedJson, tools for native, neither for TextXml. `extract_action` is gated `any(feature,test)` so its four dispatch unit tests run in the DEFAULT CI test job while the network-driving `run_toolbench` stays feature-gated. Also fixed a latent cli.rs test (`query_without_backend_errors`) that asserted the literal flag `backend-mistralrs` but the create_provider path says "mistralrs backend" — both name `mistralrs`; surfaced by running `cargo test --features backend-openai`.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs, crates/ferric-cli/tests/cli.rs
+- **Commit:** `a0f7693`
+
+## T-008 (sprint 7)
+- **Description:** Recorded ADR-021 (PyO3/PyTorch backend removed; external engines reached only via the out-of-process HTTP valve; closes the ADR-013 gap) and ADR-022 (Constraint reinstated, ADR-010 re-enforced, honest capabilities, the NativeTools/ConstrainedJson/TextXml trichotomy; amends ADR-015/ADR-020, fulfils ADR-017) in decisions.md. Corrected the two lying docs: ferric-provider/lib.rs module doc (now describes the two real backends + the PyO3 removal, not "real backends land in s1"), and README Status (was "Sprint 0 — no inference backend yet"; now describes the dual-backend constrained-decoding state). The architecture record now matches the code.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** decisions.md, crates/ferric-provider/src/lib.rs, README.md
+- **Commit:** `d6ad065`
+
+## T-801 (sprint 8)
+- **Description:** Replaced the toolbench's `extract_action -> Option<ToolCall>` with a diagnostic `classify(protocol, completion, target, schema) -> Outcome { Success, WrongTool(name), MalformedArgs, NoAction, ParseError }` — it says *why* a model missed, not just pass/fail. Uses the same per-protocol parser as the loop (native tool_calls / parse_json_action / parse_action), distinguishes empty (NoAction) from non-empty-unparseable (ParseError), wrong-tool, and right-tool-missing-required-arg (lightweight `schema.required` check, not full JSON-Schema). `run_toolbench` now classifies and counts `is_success()`. Seven `cfg(test)` unit tests (one per Outcome + is_success), running in default CI. `label()` deferred to T-802 (the report consumer).
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
+- **Commit:** `c82fe72`
+
+## T-802 (sprint 8)
+- **Description:** Turned the toolbench into a written diagnostic. Added `BenchSummary`/`ToolStat` (per-tool fires/success/failure-histogram), `verdict(rate)` bands (≥90% solid / ≥70% marginal / else unreliable), pure `render_report(&BenchSummary) -> String` (Markdown table: per-tool rate + verdict + failure taxonomy, plus an overall band) and `summary_rows(&BenchSummary) -> Vec<Value>` (one JSONL row per tool + an `__overall__` row). `run_toolbench` accumulates the histogram via `Outcome::label()` and prints the report; `--report <path>` writes `<path>` (md) + a sibling `.jsonl`. This is the "is this model good enough — dial it down and watch where it breaks" readout the user asked for. Four unit tests (verdict bands, report taxonomy+verdict, JSONL shape, labels) in default CI.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
+- **Commit:** `71e7a46`
+
+## T-803 + T-804 (sprint 8)
+- **Description:** Built the `ferric server` launcher (ADR-023). Landed as ONE commit because the pure `Engine`/`command`/`health_url` (T-803) are dead code until the subcommand that calls them (T-804) exists. New `server.rs`: `Engine { LlamaServer (default), Ollama }` (closed enum — never execs arbitrary input, ADR-005), `command(&ServerConfig)` builds the argv/env (`llama-server -m … --mmproj … -c … --host 127.0.0.1 --port …`; `ollama serve` + `OLLAMA_HOST`), `health_url`, and a `ServerRunfile {engine,pid,port,base_url}` written to `.ferric/server.json`. The `ferric server` subcommand: `up` (spawn child, TCP-connect readiness poll ≤60s, write runfile, leave it running), `status` (reachability + base_url), `down` (kill PID portably — taskkill/kill — + remove runfile), `doctor` (engine-binary + model presence + reachability). All std-only (TCP readiness, no reqwest), so it's in the default build; host pinned to loopback. 8 unit tests (argv/env, mmproj, loopback, health URLs, runfile serde, absent-runfile) in default CI; real spawn is the E2E heartbeat. Smoke-verified: status/down with no server + `up --help`.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/server.rs (new), crates/ferric-cli/src/main.rs, crates/ferric-cli/Cargo.toml (serde dep)
+- **Commit:** `44bb01e`
+
+## T-805 (sprint 8)
+- **Description:** `query`/`toolbench` auto-discover the running server. Changed `BackendOpts.api_base` from a defaulted `String` to `Option<String>` and resolve it in `create_provider`'s OpenAI arm via `resolve_base(explicit, runfile)` — precedence **explicit `--api-base` > `.ferric/server.json` base_url > built-in default**. Reads the runfile from the cwd (where `ferric server up` wrote it). Both commands go through `create_provider`, so the one change covers both. `resolve_base` is a pure helper (gated openai+test) with a precedence unit test in default CI.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/backend.rs
+- **Commit:** `020d418`
+
+## T-806 (sprint 8)
+- **Description:** Documented the testbench. Added a "First run — the testbench" section to the README (the `ferric server up` → `ferric toolbench --report` → read-the-verdict loop, noting auto-discovery + `server doctor`), bumped the Status marker to sprint 8, and wrote `docs/testbench.md` (full walkthrough: launch, the outcome taxonomy table, the verdict bands, and the dial-down workflow). Rewrote `run_benchmarks.ps1` and the Gemma path of `test_both_models.ps1` to wrap `ferric server up`/`down` around the toolbench/query instead of assuming a manually-started server.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** README.md, docs/testbench.md (new), run_benchmarks.ps1, test_both_models.ps1
+- **Commit:** `4c180bd`
+
+## T-901 (sprint 9)
+- **Description:** Fleet sweep — added `--models <comma-list>` to `ferric toolbench`: extracted the per-model loop into `bench_model() -> BenchSummary` (reuses `classify`/`build_request`), the fleet path loops `create_provider` per model (overriding `BackendOpts.model`/`model_file` by backend), and `render_leaderboard()` prints a `model | protocol | success | rate | verdict` table sorted best→worst (+ a combined `.jsonl` of every model's `summary_rows`). Added a `model` field to `BenchSummary` (surfaced in the report header + JSONL rows). Single-`--model` behaviour unchanged. Unit test `leaderboard_sorts_best_first` asserts best→worst ordering + all three verdict bands.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
+- **Commit:** `515bc11`
+
+## T-902 (sprint 9)
+- **Description:** Native-`content` fallback (ADR-024). The OpenAI backend's `complete()` now, when `tool_calls` is empty and `content` is itself a tool-call object, recovers the call via `toolcall_from_content()` — handling both the ollama shape (`{name, arguments}`) and the harness shape (`{tool, args}`), with `arguments` as a JSON object or a JSON-encoded string. Requires both a name and an args object so ordinary prose (or a stray JSON object) is never misread as a call. This closes the ADR-024 native-on-ollama 0% (ollama returns the call as text with `tool_calls` null). Collapsed into an edition-2024 let-chain. Four unit tests cover both shapes, string-encoded args, and prose→None.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-provider/src/openai.rs
+- **Commit:** `c3482e6`
+
+## T-903 (sprint 9)
+- **Description:** Documented fleet calibration. Added a "Calibrate the whole fleet at once" section to `docs/testbench.md` (the `--models` sweep, an example leaderboard, and how to read it top-down to pick the smallest model still in the band you need — noting it does not touch `measured_level`). Added the fleet sweep one-liner to the README testbench section. Extended `run_benchmarks.ps1` with an `$OllamaFleet` param + a fleet-sweep step (`--models … --report toolbench_fleet.md`) targeting a running ollama, with a note on the GGUF/mistral fleet alternative.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** docs/testbench.md, README.md, run_benchmarks.ps1
+- **Commit:** `f913d78`

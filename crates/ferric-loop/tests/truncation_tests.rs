@@ -1,4 +1,7 @@
-//! T-208 integration tests: truncated and malformed grammar actions.
+//! Integration tests: truncated and malformed constrained (`ConstrainedJson`)
+//! actions. A token-budget truncation cannot be a valid action, so the loop
+//! must not parse it — it nudges once, then stops with `TruncatedAction`,
+//! distinct from a parse failure's `EmptyCompletion`.
 
 mod common;
 
@@ -13,10 +16,10 @@ fn truncated_once_then_recovers() {
     let result = run_scripted_protocol(
         vec![
             truncated_completion(),
-            grammar_completion(json!({"tool": "task_complete", "args": {"summary": "done"}})),
+            json_completion(json!({"tool": "task_complete", "args": {"summary": "done"}})),
         ],
         &nano_policy(),
-        ActionProtocol::UnifiedGrammar,
+        ActionProtocol::ConstrainedJson,
         |provider| {
             // The truncation nudge reaches the model on the second request,
             // and the partial JSON is NOT in history (only the nudge).
@@ -41,7 +44,7 @@ fn truncated_twice_stops() {
     let result = run_scripted_protocol(
         vec![truncated_completion(), truncated_completion()],
         &nano_policy(),
-        ActionProtocol::UnifiedGrammar,
+        ActionProtocol::ConstrainedJson,
         |_| {},
     );
     assert_eq!(result.outcome.stop, StopReason::TruncatedAction);
@@ -54,11 +57,11 @@ fn truncation_distinct_from_parse_failure() {
     // NOT truncated_action — the two failure modes stay distinguishable.
     let result = run_scripted_protocol(
         vec![
-            grammar_completion(json!({"not": "an action"})),
-            grammar_completion(json!({"still": "not"})),
+            json_completion(json!({"not": "an action"})),
+            json_completion(json!({"still": "not"})),
         ],
         &nano_policy(),
-        ActionProtocol::UnifiedGrammar,
+        ActionProtocol::ConstrainedJson,
         |_| {},
     );
     assert_eq!(result.outcome.stop, StopReason::EmptyCompletion);

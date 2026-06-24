@@ -21,22 +21,26 @@ use ferric_provider::{Capabilities, Completion, MockProvider, Provider, Sampling
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink};
 
-use crate::backend::BackendOpts;
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python"))]
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 use crate::backend::create_provider;
+use crate::backend::{BackendArg, BackendOpts};
 
-/// CLI spelling of `ActionProtocol`.
+/// CLI spelling of `ActionProtocol`. `grammar` is the server-enforced
+/// constrained-JSON path (the thesis); `xml` is the unconstrained
+/// regex-scraped fallback.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ProtocolArg {
     Native,
     Grammar,
+    Xml,
 }
 
 impl From<ProtocolArg> for ActionProtocol {
     fn from(p: ProtocolArg) -> Self {
         match p {
             ProtocolArg::Native => ActionProtocol::NativeTools,
-            ProtocolArg::Grammar => ActionProtocol::UnifiedGrammar,
+            ProtocolArg::Grammar => ActionProtocol::ConstrainedJson,
+            ProtocolArg::Xml => ActionProtocol::TextXml,
         }
     }
 }
@@ -118,10 +122,32 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
         measured_level: None,
     };
     let policy = policy_for(&profile);
-    // Both backends (mock and mistralrs) enforce constraints.
-    let caps = Capabilities {
-        supports_native_tool_calls: true,
-        exposes_logits: false,
+    // Capability seed for auto protocol selection (an explicit `--protocol`
+    // always overrides it). The backend's own `capabilities()` is the source of
+    // truth, but the provider is constructed later (in drive_real), so we mirror
+    // it from the chosen backend: the HTTP valve enforces a JSON-Schema
+    // constraint (→ ConstrainedJson); mistral.rs does neither — its constrained
+    // path hangs upstream (ADR-020) and it strips tools — so it lands on the
+    // honest TextXml fallback.
+    let caps = if args.mock {
+        Capabilities {
+            supports_native_tool_calls: true,
+            supports_constraint: false,
+            exposes_logits: false,
+        }
+    } else {
+        match args.backend_opts.backend {
+            BackendArg::Openai => Capabilities {
+                supports_native_tool_calls: true,
+                supports_constraint: true,
+                exposes_logits: false,
+            },
+            BackendArg::Mistral => Capabilities {
+                supports_native_tool_calls: false,
+                supports_constraint: false,
+                exposes_logits: false,
+            },
+        }
     };
     let protocol = select_protocol(&policy, &caps, args.protocol.map(ActionProtocol::from));
     let sampling = SamplingParams {
@@ -249,9 +275,13 @@ fn mock_provider(protocol: ActionProtocol) -> MockProvider {
             native_completion("mock-0", "write_file", write_args),
             native_completion("mock-1", ferric_loop::TASK_COMPLETE, done_args),
         ],
-        ActionProtocol::UnifiedGrammar => vec![
-            grammar_completion("write_file", &write_args),
-            grammar_completion(ferric_loop::TASK_COMPLETE, &done_args),
+        ActionProtocol::ConstrainedJson => vec![
+            json_completion("write_file", &write_args),
+            json_completion(ferric_loop::TASK_COMPLETE, &done_args),
+        ],
+        ActionProtocol::TextXml => vec![
+            xml_completion("write_file", &write_args),
+            xml_completion(ferric_loop::TASK_COMPLETE, &done_args),
         ],
     };
     MockProvider::new(script)
@@ -276,9 +306,26 @@ fn native_completion(id: &str, name: &str, args: serde_json::Value) -> Completio
     }
 }
 
-fn grammar_completion(name: &str, args: &serde_json::Value) -> Completion {
+/// `ConstrainedJson` mock: the assistant text IS the `{"tool","args"}` action
+/// JSON the server constraint would force.
+fn json_completion(name: &str, args: &serde_json::Value) -> Completion {
+    let json = serde_json::json!({ "tool": name, "args": args }).to_string();
+    Completion {
+        message: Message::assistant(json),
+        input_tokens: Some(40),
+        output_tokens: Some(20),
+        truncated: false,
+    }
+}
+
+/// `TextXml` mock: the assistant text is a `<tool_call>` XML block the loop
+/// regex-scrapes.
+fn xml_completion(name: &str, args: &serde_json::Value) -> Completion {
     let args_str = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
-    let xml = format!("<tool_call><name>{}</name><args>{}</args></tool_call>", name, args_str);
+    let xml = format!(
+        "<tool_call><name>{}</name><args>{}</args></tool_call>",
+        name, args_str
+    );
     Completion {
         message: Message::assistant(xml),
         input_tokens: Some(40),
@@ -318,7 +365,7 @@ fn drive_mock(
     .map_err(|e| format!("loop error: {e}"))
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python"))]
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     args: &QueryArgs,
@@ -355,7 +402,7 @@ fn drive_real(
     })
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai", feature = "backend-python")))]
+#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     _args: &QueryArgs,
@@ -368,9 +415,7 @@ fn drive_real(
     _lineage: Option<PromptLineage>,
     _sink: &mut JsonlSink,
 ) -> Result<LoopOutcome, String> {
-    Err(
-        "this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai,backend-python`, or use --mock"
-            .to_string(),
-    )
+    Err("this binary was built without backend features; \
+         rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
+        .to_string())
 }

@@ -35,7 +35,7 @@ fn bench_mock_l0_passes_and_writes_results() {
     let row: serde_json::Value =
         serde_json::from_str(content.lines().next().expect("one row")).unwrap();
     assert_eq!(row["level"], 0);
-    assert_eq!(row["protocol"], "UnifiedGrammar");
+    assert_eq!(row["protocol"], "ConstrainedJson");
     // plan_steps is null (no planner — flagged, not faked).
     assert!(row["plan_steps"].is_null());
     // The row carries a terminator (the mock completes via task_complete).

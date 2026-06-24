@@ -13,7 +13,6 @@
 //! Real-GGUF validation policy (ADR-009): any change to this module requires
 //! a traced real-model run (the L0 smoke) before merge.
 
-
 use std::path::PathBuf;
 
 use async_trait::async_trait;
@@ -21,9 +20,7 @@ use async_trait::async_trait;
 use ferric_core::{Message, Role, ToolCall};
 
 use crate::traits::Provider;
-use crate::types::{
-    Capabilities, Completion, CompletionRequest, ProviderError, SamplingParams,
-};
+use crate::types::{Capabilities, Completion, CompletionRequest, ProviderError, SamplingParams};
 
 pub struct MistralRsConfig {
     /// Directory containing the GGUF file.
@@ -94,10 +91,8 @@ impl MistralRsProvider {
                 .map_err(|e| ProviderError::Backend(format!("model load: {e:#}")))?
         } else {
             let full_path = config.model_dir.join(&config.model_file);
-            let mut builder = mistralrs::TextModelBuilder::new(
-                full_path.display().to_string()
-            )
-            .with_max_num_seqs(config.max_num_seqs);
+            let mut builder = mistralrs::TextModelBuilder::new(full_path.display().to_string())
+                .with_max_num_seqs(config.max_num_seqs);
             if config.force_cpu {
                 builder = builder.with_force_cpu();
             }
@@ -121,8 +116,15 @@ impl Provider for MistralRsProvider {
     }
 
     fn capabilities(&self) -> Capabilities {
+        // Honest (ADR-022): `complete()` passes NEITHER tools NOR a grammar to
+        // the engine — tools are stripped (the s3 pivot) and a JSON-Schema
+        // constraint hangs llguidance on GGUF (ADR-020). So this backend does
+        // not do native tool calls and does not enforce constraints; the loop
+        // routes it to `TextXml` (the model emits `<tool_call>` XML, scraped by
+        // the loop). Reporting `true` here was the s6 toolbench 0.0% bug.
         Capabilities {
-            supports_native_tool_calls: true,
+            supports_native_tool_calls: false,
+            supports_constraint: false,
             exposes_logits: false,
         }
     }
@@ -137,13 +139,19 @@ impl Provider for MistralRsProvider {
 
         let response = match tokio::time::timeout(
             std::time::Duration::from_secs(300),
-            self.model.send_chat_request(builder)
-        ).await {
+            self.model.send_chat_request(builder),
+        )
+        .await
+        {
             Ok(res) => match res {
                 Ok(r) => r,
                 Err(e) => return Err(classify_anyhow(&format!("{e:#}"))),
             },
-            Err(_) => return Err(ProviderError::Backend("inference timeout: engine hung for >5m".to_string())),
+            Err(_) => {
+                return Err(ProviderError::Backend(
+                    "inference timeout: engine hung for >5m".to_string(),
+                ));
+            }
         };
 
         let choice = response
@@ -185,7 +193,6 @@ pub(crate) fn is_truncated(finish_reason: &str) -> bool {
 }
 
 // ---- mapping layer: free functions so they unit-test without a model ----
-
 
 pub(crate) fn map_messages(messages: &[Message]) -> mistralrs::RequestBuilder {
     let mut builder = mistralrs::RequestBuilder::new();
@@ -288,7 +295,6 @@ pub(crate) fn classify_anyhow(message: &str) -> ProviderError {
 mod tests {
     use super::*;
     use serde_json::json;
-
 
     #[test]
     fn sampling_maps_with_deterministic_switch() {

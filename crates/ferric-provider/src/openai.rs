@@ -1,12 +1,12 @@
 use async_trait::async_trait;
-use serde_json::json;
 use reqwest::Client;
+use serde_json::json;
 
-use ferric_core::{Message, Role, ToolCall};
 use crate::traits::Provider;
 use crate::types::{
-    Capabilities, Completion, CompletionRequest, ProviderError, SamplingParams, ToolDescriptor,
+    Capabilities, Completion, CompletionRequest, Constraint, ProviderError, ToolDescriptor,
 };
+use ferric_core::{Message, Role, ToolCall};
 
 pub struct OpenAiConfig {
     pub base_url: String,
@@ -89,6 +89,58 @@ impl OpenAiProvider {
             }
         })
     }
+
+    /// Build the `/chat/completions` request body. Pure (no network) so the
+    /// constraint/tool wiring is unit-testable. ADR-010 holds by construction:
+    /// a `Constraint` and `tools` are mutually exclusive, so they live in
+    /// disjoint match arms — a constrained request never carries `tools`.
+    ///
+    /// `JsonSchema` becomes server-enforced `response_format` (llama.cpp /
+    /// OpenAI structured outputs); this is where "the harness owns decoding"
+    /// is actually true for the HTTP valve. The schema is NOT injected into the
+    /// prompt by the server, so callers must still describe the tools in the
+    /// system prompt (the loop's `ConstrainedJson` path does, via ferric-prompt).
+    fn build_body(&self, request: &CompletionRequest) -> serde_json::Value {
+        let messages: Vec<_> = request.messages.iter().map(Self::map_message).collect();
+
+        let mut body = json!({
+            "model": self.config.model,
+            "messages": messages,
+            "max_tokens": request.sampling.max_tokens,
+            "temperature": request.sampling.temperature,
+            "top_p": request.sampling.top_p,
+        });
+
+        match &request.constraint {
+            Some(Constraint::JsonSchema(schema)) => {
+                body["response_format"] = json!({
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "ferric_action",
+                        "schema": schema,
+                        "strict": true,
+                    }
+                });
+            }
+            // llama.cpp accepts a GBNF/Lark grammar via the `grammar` field.
+            Some(Constraint::Lark(grammar)) => {
+                body["grammar"] = json!(grammar);
+            }
+            // No standard OpenAI-compatible field carries a bare regex; the
+            // loop only ever emits `JsonSchema` today, so this is unreachable
+            // in practice and deliberately left unconstrained rather than faked.
+            Some(Constraint::Regex(_)) => {}
+            None => {
+                if !request.tools.is_empty() {
+                    let tools: Vec<_> = request.tools.iter().map(Self::map_tool).collect();
+                    body["tools"] = json!(tools);
+                    body["tool_choice"] = json!("auto");
+                }
+            }
+        }
+
+        body
+    }
 }
 
 #[async_trait]
@@ -98,8 +150,12 @@ impl Provider for OpenAiProvider {
     }
 
     fn capabilities(&self) -> Capabilities {
+        // Honest: the HTTP valve enforces a JSON-Schema constraint server-side
+        // via `response_format`, AND speaks native tool calling. The request's
+        // `constraint`/`tools` (ADR-010 mutually exclusive) selects which.
         Capabilities {
             supports_native_tool_calls: true,
+            supports_constraint: true,
             exposes_logits: false,
         }
     }
@@ -107,25 +163,15 @@ impl Provider for OpenAiProvider {
     async fn complete(&self, request: CompletionRequest) -> Result<Completion, ProviderError> {
         request.validate()?;
 
-        let messages: Vec<_> = request.messages.iter().map(Self::map_message).collect();
-        
-        let mut body = json!({
-            "model": self.config.model,
-            "messages": messages,
-            "max_tokens": request.sampling.max_tokens,
-            "temperature": request.sampling.temperature,
-            "top_p": request.sampling.top_p,
-        });
+        let body = self.build_body(&request);
 
-        if !request.tools.is_empty() {
-            let tools: Vec<_> = request.tools.iter().map(Self::map_tool).collect();
-            body["tools"] = json!(tools);
-            body["tool_choice"] = json!("auto");
-        }
+        let url = format!(
+            "{}/chat/completions",
+            self.config.base_url.trim_end_matches('/')
+        );
 
-        let url = format!("{}/chat/completions", self.config.base_url.trim_end_matches('/'));
-
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("Content-Type", "application/json")
@@ -135,7 +181,12 @@ impl Provider for OpenAiProvider {
 
         let response = match response {
             Ok(res) => res,
-            Err(e) => return Err(ProviderError::RetryableBackend(format!("Network error: {}", e))),
+            Err(e) => {
+                return Err(ProviderError::RetryableBackend(format!(
+                    "Network error: {}",
+                    e
+                )));
+            }
         };
 
         if !response.status().is_success() {
@@ -156,19 +207,33 @@ impl Provider for OpenAiProvider {
 
         let message = &choice["message"];
         let content = message["content"].as_str().map(|s| s.to_string());
-        
+
         let mut tool_calls = Vec::new();
         if let Some(tcs) = message["tool_calls"].as_array() {
             for tc in tcs {
                 let id = tc["id"].as_str().unwrap_or_default().to_string();
-                let name = tc["function"]["name"].as_str().unwrap_or_default().to_string();
+                let name = tc["function"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 let args_str = tc["function"]["arguments"].as_str().unwrap_or_default();
-                
+
                 let args = serde_json::from_str(args_str)
                     .unwrap_or_else(|_| serde_json::Value::String(args_str.to_string()));
 
                 tool_calls.push(ToolCall { id, name, args });
             }
+        }
+
+        // ADR-024 fallback: ollama's OpenAI-compatible endpoint returns a tool
+        // call as plain text in `content` with `tool_calls` null. If nothing
+        // parsed natively but the content is itself a tool-call object, recover
+        // it so the native path sees the call instead of `no_action`.
+        if tool_calls.is_empty()
+            && let Some(text) = &content
+            && let Some(tc) = toolcall_from_content(text)
+        {
+            tool_calls.push(tc);
         }
 
         let finish_reason = choice["finish_reason"].as_str().unwrap_or("");
@@ -189,5 +254,137 @@ impl Provider for OpenAiProvider {
             output_tokens,
             truncated,
         })
+    }
+}
+
+/// ADR-024: ollama's OpenAI-compatible endpoint emits a tool call as plain text
+/// in `content` (`{"name": ..., "arguments": {...}}`) with `tool_calls` null.
+/// Recover a `ToolCall` from such content. Accepts the ollama shape
+/// (`{name, arguments}`) and the harness shape (`{tool, args}`); `arguments`
+/// may be a JSON object or a JSON-encoded string. Both a name and an
+/// arguments object must be present, so ordinary assistant prose (or a stray
+/// JSON object without them) is never misread as a call.
+fn toolcall_from_content(content: &str) -> Option<ToolCall> {
+    let trimmed = content.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+    let name = v
+        .get("name")
+        .or_else(|| v.get("tool"))?
+        .as_str()?
+        .to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let raw_args = v.get("arguments").or_else(|| v.get("args"))?;
+    let args = match raw_args {
+        // ollama sometimes JSON-encodes the args as a string.
+        serde_json::Value::String(s) => serde_json::from_str(s).ok()?,
+        other => other.clone(),
+    };
+    Some(ToolCall {
+        id: String::new(),
+        name,
+        args,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::SamplingParams;
+
+    fn provider() -> OpenAiProvider {
+        OpenAiProvider::new(OpenAiConfig::default())
+    }
+
+    fn base_request() -> CompletionRequest {
+        CompletionRequest {
+            messages: vec![Message::user("hi")],
+            sampling: SamplingParams::default(),
+            tools: Vec::new(),
+            constraint: None,
+        }
+    }
+
+    fn tool() -> ToolDescriptor {
+        ToolDescriptor {
+            name: "read_file".to_string(),
+            description: "read a file".to_string(),
+            input_schema: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        }
+    }
+
+    #[test]
+    fn toolcall_from_content_ollama_shape() {
+        // ADR-024: ollama returns the call as text in `content`.
+        let tc = toolcall_from_content(r#"{"name": "read_file", "arguments": {"path": "a.txt"}}"#)
+            .expect("ollama-shaped content is a tool call");
+        assert_eq!(tc.name, "read_file");
+        assert_eq!(tc.args["path"], "a.txt");
+    }
+
+    #[test]
+    fn toolcall_from_content_harness_shape() {
+        let tc = toolcall_from_content(r#"{"tool": "read_file", "args": {"path": "a.txt"}}"#)
+            .expect("harness-shaped content is a tool call");
+        assert_eq!(tc.name, "read_file");
+        assert_eq!(tc.args["path"], "a.txt");
+    }
+
+    #[test]
+    fn toolcall_from_content_args_as_json_string() {
+        let tc =
+            toolcall_from_content(r#"{"name": "read_file", "arguments": "{\"path\": \"a.txt\"}"}"#)
+                .expect("string-encoded args parse");
+        assert_eq!(tc.args["path"], "a.txt");
+    }
+
+    #[test]
+    fn toolcall_from_content_prose_is_none() {
+        assert!(toolcall_from_content("Sure, I'll read the file for you.").is_none());
+        // Has a name but no args → not a call (guards against misreading prose).
+        assert!(toolcall_from_content(r#"{"name": "Bob"}"#).is_none());
+        assert!(toolcall_from_content(r#"{"summary": "done"}"#).is_none());
+    }
+
+    #[test]
+    fn build_body_constraint_emits_response_format() {
+        // WHEN a JSON-Schema constraint is present THEN response_format carries
+        // it (strict) and tools are absent (ADR-010).
+        let schema = json!({"type": "object", "required": ["tool", "args"]});
+        let mut req = base_request();
+        req.constraint = Some(Constraint::JsonSchema(schema.clone()));
+        let body = provider().build_body(&req);
+
+        assert_eq!(body["response_format"]["type"], json!("json_schema"));
+        assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
+        assert_eq!(
+            body["response_format"]["json_schema"]["strict"],
+            json!(true)
+        );
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn build_body_tools_no_response_format() {
+        // WHEN tools are present and no constraint THEN tools/tool_choice are
+        // set and response_format is absent.
+        let mut req = base_request();
+        req.tools = vec![tool()];
+        let body = provider().build_body(&req);
+
+        assert!(body["tools"].is_array());
+        assert_eq!(body["tool_choice"], json!("auto"));
+        assert!(body.get("response_format").is_none());
+    }
+
+    #[test]
+    fn capabilities_advertise_constraint_and_native() {
+        let caps = provider().capabilities();
+        assert!(caps.supports_constraint);
+        assert!(caps.supports_native_tool_calls);
     }
 }

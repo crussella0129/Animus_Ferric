@@ -1,15 +1,39 @@
 param (
-    [string]$Iterations = "10"
+    [string]$Iterations = "10",
+    # Constrained path: a GGUF for `ferric server up` (llama-server) to load.
+    [string]$LlamaGguf = "D:\Models\gguf\Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+    [string]$OpenAiModel = "Llama-3.2-1B-Instruct",
+    # Fleet calibration: ollama models to sweep into one leaderboard (must be
+    # `ollama pull`-ed). For a GGUF fleet instead, sweep `--backend mistral`
+    # with `--models file1.gguf,file2.gguf`.
+    [string]$OllamaFleet = "qwen2.5-coder:7b,llama3.1:8b"
 )
 
 $ErrorActionPreference = "Continue"
+$Features = "backend-mistralrs,backend-openai"
 
-Write-Host "Running Mistral backend with Llama-3.2-1B..."
-$MistralLog = "toolbench_mistral.log"
-cargo run --release -p ferric-cli --features backend-mistralrs,backend-openai,backend-python -- toolbench --backend mistral --model-dir "D:\Models" --model-file "Llama-3.2-1B-Instruct-Q4_K_M.gguf" --iterations $Iterations > $MistralLog 2>&1
+Write-Host "Building ferric ($Features)..." -ForegroundColor Cyan
+cargo build --release -p ferric-cli --features $Features
+$Ferric = ".\target\release\ferric.exe"
 
-Write-Host "Running Python backend with Gemma-4-e4b..."
-$PythonLog = "toolbench_python.log"
-cargo run --release -p ferric-cli --features backend-mistralrs,backend-openai,backend-python -- toolbench --backend python --model-dir "D:\Models\google--gemma-4-e4b" --iterations $Iterations > $PythonLog 2>&1
+# 1. In-process mistral.rs (TextXml protocol — no constraint, no server).
+Write-Host "`nMistral backend (TextXml) — Llama-3.2-1B..." -ForegroundColor Cyan
+& $Ferric toolbench --backend mistral --model-dir "D:\Models" --model-file "Llama-3.2-1B-Instruct-Q4_K_M.gguf" --iterations $Iterations --report toolbench_mistral.md
 
-Write-Host "Benchmark complete!"
+# 2. Constrained-JSON thesis via the OpenAI-compatible HTTP valve. The launcher
+# brings up llama-server, toolbench auto-discovers it (.ferric/server.json),
+# then we stop it. Gemma-4-e4b (the removed PyTorch path, ADR-021) is reached the
+# same way — just point --model/--mmproj at it.
+Write-Host "`nOpenAI valve (ConstrainedJson) via ferric server..." -ForegroundColor Cyan
+& $Ferric server up --engine llama-server --model $LlamaGguf
+& $Ferric server status
+& $Ferric toolbench --backend openai --model $OpenAiModel --protocol grammar --iterations $Iterations --report toolbench_openai.md
+& $Ferric server down
+
+# 3. Fleet calibration across installed ollama models — one leaderboard, sorted
+# best->worst, so you can pick the smallest model that's still "solid". Targets a
+# running ollama directly (default :11434); skipped silently if ollama isn't up.
+Write-Host "`nFleet calibration (ollama) — $OllamaFleet ..." -ForegroundColor Cyan
+& $Ferric toolbench --backend openai --api-base "http://localhost:11434/v1" --models $OllamaFleet --protocol grammar --iterations $Iterations --report toolbench_fleet.md
+
+Write-Host "`nReports: toolbench_mistral.md / toolbench_openai.md / toolbench_fleet.md (+ .jsonl). Read the verdict bands." -ForegroundColor Green

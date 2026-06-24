@@ -24,7 +24,7 @@ mod tests {
             },
             Event::PolicySelected {
                 tier: ferric_core::Tier::Nano,
-                protocol: ferric_core::ActionProtocol::UnifiedGrammar,
+                protocol: ferric_core::ActionProtocol::ConstrainedJson,
                 max_turns: 15,
                 max_tools: 6,
                 prompt_budget_tokens: 2_800,

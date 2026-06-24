@@ -36,7 +36,7 @@ function Invoke-ModelTest {
 
     $Command = "cargo"
     $ArgsList = @(
-        "run", "--release", "-p", "ferric-cli", "--features", "backend-mistralrs,backend-openai,backend-python",
+        "run", "--release", "-p", "ferric-cli", "--features", "backend-mistralrs,backend-openai",
         "--", "query", $Prompt, 
         "--workspace", "./$Workspace"
     ) + $BackendArgs
@@ -60,9 +60,19 @@ function Invoke-ModelTest {
     }
 }
 
-# Run tests
+# Run tests.
+$FerricRun = @("run", "--release", "-p", "ferric-cli", "--features", "backend-mistralrs,backend-openai", "--")
+
+# Llama-3.2-1B: in-process mistral.rs, TextXml protocol (no server).
 Invoke-ModelTest -ModelName "Llama3.2-1B" -BackendArgs @("--backend", "mistral", "--model-dir", $Model1Dir, "--model-file", $Model1File)
-Invoke-ModelTest -ModelName "Gemma-4-e4b" -BackendArgs @("--backend", "python", "--model-dir", "C:\Users\charl\Animus_Ferric\models\safetensors\google--gemma-4-e4b")
+
+# Gemma-4-e4b: via the OpenAI valve (ADR-021 replaced the crashing PyTorch
+# backend). `ferric server` brings the server up; query auto-discovers it from
+# .ferric/server.json, so no --api-base is needed. Stop it afterwards.
+Write-Host "Starting server for Gemma-4-e4b..." -ForegroundColor Yellow
+& cargo @FerricRun server up --engine ollama --model $Model2Name
+Invoke-ModelTest -ModelName "Gemma-4-e4b" -BackendArgs @("--backend", "openai", "--model", $Model2Name)
+& cargo @FerricRun server down
 
 Write-Host "`n==========================================================" -ForegroundColor Magenta
 Write-Host "Multi-Model Test Suite Completed!" -ForegroundColor Magenta

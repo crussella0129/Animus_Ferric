@@ -36,6 +36,7 @@ impl Provider for FlakyProvider {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             supports_native_tool_calls: true,
+            supports_constraint: false,
             exposes_logits: false,
         }
     }

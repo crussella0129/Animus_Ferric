@@ -1,5 +1,10 @@
-- [ ] T-501: Add `pyo3` dependency to `crates/ferric-provider/Cargo.toml` under a new `backend-python` feature.
-- [ ] T-502: Implement `crates/ferric-provider/src/python.rs` containing `PythonProvider` logic to execute a python script via `pyo3`.
-- [ ] T-503: Write `crates/ferric-provider/python/inference.py` to wrap `AutoModelForCausalLM` and handle tool-calls with `transformers`.
-- [ ] T-504: Update `crates/ferric-cli/src/query.rs` to add `BackendArg::Python` and branch in `drive_real`.
-- [ ] T-505: Update `test_both_models.ps1` to test the new Python backend with Gemma-4-e4b.
+# Agent Tasks (Persistent Backlog)
+
+> Sprint 9: fleet calibration (cash in the testbench → capability table) + the
+> ADR-024 native-`content` fallback. mistral.rs 0.8.15 viability is a test-phase
+> experiment. Multimodal "any file" → sprint 10 (ADR-023). Plan: `sprints/s9/sprint-plans/build-plan.md`.
+
+Sprint 9 build tasks T-901 (fleet sweep), T-902 (native-`content` fallback),
+T-903 (docs + driver) are complete — see `agent-tasks/completed-tasks.md`.
+The remaining sprint-9 work is the Test phase: the real fleet-calibration run
+(the headline artifact) + the mistral.rs 0.8.15 viability probe.

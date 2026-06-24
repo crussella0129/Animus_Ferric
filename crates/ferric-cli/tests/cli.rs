@@ -95,7 +95,11 @@ fn query_without_backend_errors() {
             .unwrap();
         assert!(!out.status.success());
         let stderr = String::from_utf8(out.stderr).unwrap();
-        assert!(stderr.contains("backend-mistralrs"));
+        // Names the missing backend. The no-backend build's stub says
+        // "...--features backend-mistralrs..."; a backend-openai-only build
+        // reaches create_provider and says "built without mistralrs backend".
+        // Both name `mistralrs`.
+        assert!(stderr.contains("mistralrs"));
     }
 }
 

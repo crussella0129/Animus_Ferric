@@ -1,34 +1,38 @@
-//! Action-protocol selection (ADR-015).
+//! Action-protocol selection (ADR-015/022).
 
 use ferric_core::{ActionProtocol, RunPolicy};
 use ferric_provider::Capabilities;
 
-/// Decide how the loop talks to the backend about actions.
+/// Decide how the loop talks to the backend about actions, from the backend's
+/// real `Capabilities`. An explicit `override_` always wins.
 ///
-/// An explicit `override_` always wins. Absent an override the default is
-/// `NativeTools`.
+/// Preference order (ADR-022): a backend that enforces a harness-authored
+/// constraint server-side (`supports_constraint`, e.g. the HTTP valve via
+/// `response_format`) runs `ConstrainedJson` — the "harness owns decoding"
+/// thesis. Else a backend that speaks native tool calling runs `NativeTools`.
+/// Else `TextXml`, the honest fallback: the model is prompted to emit
+/// `<tool_call>` XML and the loop regex-scrapes it, claiming no constraint.
 ///
-/// NOTE (ADR-020, s2 finding): UnifiedGrammar is NOT the auto-default even
-/// though the policy wants constrained JSON and the backend reports
-/// constraint support. The s2 real-GGUF gate found that
-/// `mistralrs::send_chat_request` with a `Constraint::JsonSchema` HANGS on the
-/// 1B (engine-level llguidance pathology — our model-free grammar tests all
-/// pass, so the loop is correct; the hang is downstream). Until that is
-/// root-caused, grammar mode is opt-in via `--protocol grammar`; the auto
-/// path stays on the proven NativeTools backend so `ferric query` never hangs
-/// by default. The `_caps` argument is retained for the eventual re-enable.
+/// The in-process mistral.rs backend advertises neither capability (its
+/// constrained path hangs upstream — ADR-020), so it lands on `TextXml` and
+/// never hangs by default; the constrained thesis lives on the backend that
+/// can actually enforce it. `_policy` is retained for signature stability
+/// (selection is capability-driven, not model-size-driven).
 pub fn select_protocol(
-    policy: &RunPolicy,
-    _caps: &Capabilities,
+    _policy: &RunPolicy,
+    caps: &Capabilities,
     override_: Option<ActionProtocol>,
 ) -> ActionProtocol {
     if let Some(p) = override_ {
         return p;
     }
-    // Auto-default: NativeTools (see note above). `policy.protocol` is read so
-    // the signature stays stable when grammar is re-enabled as the default.
-    let _ = policy.protocol;
-    ActionProtocol::NativeTools
+    if caps.supports_constraint {
+        ActionProtocol::ConstrainedJson
+    } else if caps.supports_native_tool_calls {
+        ActionProtocol::NativeTools
+    } else {
+        ActionProtocol::TextXml
+    }
 }
 
 #[cfg(test)]
@@ -36,15 +40,15 @@ mod tests {
     use super::*;
     use ferric_core::{ModelProfile, policy_for};
 
-    fn caps() -> Capabilities {
+    fn caps(native: bool, constraint: bool) -> Capabilities {
         Capabilities {
-            supports_native_tool_calls: true,
+            supports_native_tool_calls: native,
+            supports_constraint: constraint,
             exposes_logits: false,
         }
     }
 
     fn nano() -> RunPolicy {
-        // NANO policy.protocol is ConstrainedJson.
         policy_for(&ModelProfile {
             params_b: 1.0,
             quant: "Q4_K_M".to_string(),
@@ -55,28 +59,51 @@ mod tests {
     }
 
     #[test]
-    fn auto_default_is_native_pending_grammar_root_cause() {
-        // ADR-020: grammar is NOT auto-selected even when capable — it hangs
-        // the real engine. Default must be NativeTools so query never hangs.
+    fn constraint_capable_selects_constrained_json() {
+        // The thesis: a constraint-honoring backend runs ConstrainedJson.
         assert_eq!(
-            select_protocol(&nano(), &caps(), None),
+            select_protocol(&nano(), &caps(true, true), None),
+            ActionProtocol::ConstrainedJson
+        );
+    }
+
+    #[test]
+    fn native_only_selects_native_tools() {
+        assert_eq!(
+            select_protocol(&nano(), &caps(true, false), None),
             ActionProtocol::NativeTools
         );
     }
 
     #[test]
-    fn override_to_grammar_wins() {
-        // Grammar is opt-in via explicit override (`--protocol grammar`).
+    fn neither_selects_text_xml() {
+        // mistral.rs-shaped caps: neither constraint nor native → honest XML.
         assert_eq!(
-            select_protocol(&nano(), &caps(), Some(ActionProtocol::UnifiedGrammar)),
-            ActionProtocol::UnifiedGrammar
+            select_protocol(&nano(), &caps(false, false), None),
+            ActionProtocol::TextXml
         );
     }
 
     #[test]
-    fn override_to_native_wins() {
+    fn override_always_wins() {
         assert_eq!(
-            select_protocol(&nano(), &caps(), Some(ActionProtocol::NativeTools)),
+            select_protocol(&nano(), &caps(true, true), Some(ActionProtocol::TextXml)),
+            ActionProtocol::TextXml
+        );
+        assert_eq!(
+            select_protocol(
+                &nano(),
+                &caps(false, false),
+                Some(ActionProtocol::ConstrainedJson)
+            ),
+            ActionProtocol::ConstrainedJson
+        );
+        assert_eq!(
+            select_protocol(
+                &nano(),
+                &caps(true, true),
+                Some(ActionProtocol::NativeTools)
+            ),
             ActionProtocol::NativeTools
         );
     }

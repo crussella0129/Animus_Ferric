@@ -1,9 +1,10 @@
-//! T-207 integration tests: UnifiedGrammar mode.
+//! Integration tests: `TextXml` mode (the unconstrained fallback).
 //!
-//! The mock returns grammar-shaped JSON as the assistant's TEXT (tool_calls
-//! empty) — exactly what a real backend produces under a JSON-Schema
-//! constraint. The loop must parse it into an action and route it through the
-//! same dispatch path as native tool calls.
+//! The mock returns a `<tool_call>` XML block as the assistant's TEXT
+//! (tool_calls empty) — what an unconstrained model is prompted to emit. The
+//! loop regex-scrapes it into an action and routes it through the same dispatch
+//! path as native tool calls. No constraint is sent, so no `ConstraintApplied`
+//! event is claimed.
 
 mod common;
 
@@ -14,21 +15,19 @@ use ferric_trace::{Event, ParsedEvent};
 use serde_json::json;
 
 #[test]
-fn grammar_happy_path() {
+fn textxml_happy_path() {
     let result = run_scripted_protocol(
         vec![
-            grammar_completion(
+            xml_completion(
                 json!({"tool": "write_file", "args": {"path": "out.txt", "content": "hi"}}),
             ),
-            grammar_completion(
-                json!({"tool": "task_complete", "args": {"summary": "wrote out.txt"}}),
-            ),
+            xml_completion(json!({"tool": "task_complete", "args": {"summary": "wrote out.txt"}})),
         ],
         &nano_policy(),
-        ActionProtocol::UnifiedGrammar,
+        ActionProtocol::TextXml,
         |provider| {
-            // C-006: the tool result is fed back as a user-role message
-            // framed `[tool_result for write_file] ...`.
+            // The tool result is fed back as a user-role message framed
+            // `[tool_result for write_file] ...` (no tools in context).
             let second = &provider.requests()[1];
             let fed = second
                 .messages
@@ -40,49 +39,53 @@ fn grammar_happy_path() {
                             .unwrap_or_default()
                             .starts_with("[tool_result for write_file]")
                 })
-                .expect("grammar tool result framed as user message");
+                .expect("tool result framed as user message");
             assert!(fed.text.as_deref().unwrap().contains("wrote"));
         },
     );
     assert_eq!(result.outcome.stop, StopReason::TaskComplete);
     assert_eq!(result.outcome.final_text.as_deref(), Some("wrote out.txt"));
 
-    // Golden event order: ConstraintApplied present, PolicySelected first.
     let ks = kinds(&result.records);
     assert_eq!(ks[0], "session_start");
     assert_eq!(ks[1], "policy_selected");
     assert!(ks.contains(&"tool_call"));
     assert!(ks.contains(&"tool_result"));
     assert!(ks.contains(&"permission_check"));
+    // Honesty (ADR-022): TextXml sends no constraint, so NO ConstraintApplied.
+    assert!(!ks.contains(&"constraint_applied"));
     assert_eq!(session_end_reason(&result.records), "task_complete");
 }
 
 #[test]
-fn grammar_request_shape() {
-    // Every grammar-mode request: tools empty AND constraint Some (ADR-010
-    // invalid state is unrepresentable).
+fn textxml_request_shape() {
+    // Every TextXml request: tools empty AND constraint None (unconstrained).
     run_scripted_protocol(
-        vec![grammar_completion(
+        vec![xml_completion(
             json!({"tool": "task_complete", "args": {"summary": "done"}}),
         )],
         &nano_policy(),
-        ActionProtocol::UnifiedGrammar,
+        ActionProtocol::TextXml,
         |provider| {
             for req in provider.requests() {
-                assert!(req.tools.is_empty(), "grammar requests carry no tools");
+                assert!(req.tools.is_empty(), "TextXml requests carry no tools");
+                assert!(
+                    req.constraint.is_none(),
+                    "TextXml requests carry no constraint"
+                );
             }
         },
     );
 }
 
 #[test]
-fn grammar_terminator_intercepted() {
+fn textxml_terminator_intercepted() {
     let result = run_scripted_protocol(
-        vec![grammar_completion(
+        vec![xml_completion(
             json!({"tool": "task_complete", "args": {"summary": "nothing to do"}}),
         )],
         &nano_policy(),
-        ActionProtocol::UnifiedGrammar,
+        ActionProtocol::TextXml,
         |_| {},
     );
     assert_eq!(result.outcome.stop, StopReason::TaskComplete);
@@ -91,16 +94,16 @@ fn grammar_terminator_intercepted() {
 }
 
 #[test]
-fn grammar_non_action_json_rejected() {
-    // C-012: valid JSON that is NOT an action → no FinalText; nudge once,
-    // then EmptyCompletion. (Grammar mode has no final-text path.)
+fn textxml_malformed_action_rejected() {
+    // A `<tool_call>` with no name → no action; nudge once, then
+    // EmptyCompletion. (TextXml has no final-text path.)
     let result = run_scripted_protocol(
         vec![
-            grammar_completion(json!({"message": "I will think about it"})),
-            grammar_completion(json!({"message": "still thinking"})),
+            xml_completion(json!({"message": "I will think about it"})),
+            xml_completion(json!({"message": "still thinking"})),
         ],
         &nano_policy(),
-        ActionProtocol::UnifiedGrammar,
+        ActionProtocol::TextXml,
         |provider| {
             // The nudge reaches the model on the second request.
             let second = &provider.requests()[1];
@@ -110,7 +113,7 @@ fn grammar_non_action_json_rejected() {
                         .as_deref()
                         .unwrap_or_default()
                         .contains("XML tool call")),
-                "grammar no-action nudge must reach the model"
+                "TextXml no-action nudge must reach the model"
             );
         },
     );
@@ -118,12 +121,12 @@ fn grammar_non_action_json_rejected() {
 }
 
 #[test]
-fn grammar_repetition_guard() {
-    let same = || grammar_completion(json!({"tool": "list_dir", "args": {"path": "."}}));
+fn textxml_repetition_guard() {
+    let same = || xml_completion(json!({"tool": "list_dir", "args": {"path": "."}}));
     let result = run_scripted_protocol(
         vec![same(), same(), same()],
         &nano_policy(),
-        ActionProtocol::UnifiedGrammar,
+        ActionProtocol::TextXml,
         |_| {},
     );
     assert_eq!(result.outcome.stop, StopReason::RepetitionGuard);

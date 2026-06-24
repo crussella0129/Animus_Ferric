@@ -39,7 +39,7 @@ impl Invocation {
     pub fn mock() -> Self {
         Self {
             ferric_bin: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ferric")),
-            protocol: ActionProtocol::UnifiedGrammar,
+            protocol: ActionProtocol::ConstrainedJson,
             model: None,
             prompts_dir: None,
             keep_workspace: false,
@@ -161,7 +161,8 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
 fn protocol_flag(p: ActionProtocol) -> &'static str {
     match p {
         ActionProtocol::NativeTools => "native",
-        ActionProtocol::UnifiedGrammar => "grammar",
+        ActionProtocol::ConstrainedJson => "grammar",
+        ActionProtocol::TextXml => "xml",
     }
 }
 
