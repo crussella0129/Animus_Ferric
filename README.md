@@ -116,7 +116,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 13). Two inference backends ship behind feature flags:
+Active development (sprint 14). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
@@ -142,4 +142,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 13 — complete Ring 0** (2026-06-24). Added the two missing core tools — `edit_file` (surgical replace) and `delete_path` (guard-scoped, `recursive`-gated) — then re-ran the toolbench to *measure* that the full navigate/mutate core still fires reliably. Introduces the **tool-rings** model: a curated core that widens as a model proves itself, with the active rings = the grammar.
 
-> **Next — Sprint 14: formalize the rings** (a `ring` field on every tool, ring-aware `tools_for_policy` that trims from the outer ring first — fixing the alphabetical `max_tools` cap — plus a config ring-cap and measured auto-promotion).
+- **Sprint 14 — formalize the rings** (2026-06-24). Made the tool-rings model real: every tool declares a `ring` (0 = the navigate/mutate core), `ring_for_tier` sets the capability ceiling (and honours `measured_level`, so reliability — not size — widens the set), and `tools_for_policy` **trims from the outer ring first** so the core is never dropped. Fixes the latent alphabetical `max_tools` cap. The active rings literally *are* the constrained grammar. *ADR-028.*
+
+> **Next — Sprint 15: TBD** (a `--max-ring` override to pin rings independently of tier; or wiring the per-ring toolbench fire-rate into measured promotion; MCP-stdio (ADR-012) and the live-media heartbeat remain the larger/human-gated candidates).

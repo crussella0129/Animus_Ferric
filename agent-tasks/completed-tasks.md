@@ -413,3 +413,9 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** crates/ferric-tools/src/{spec.rs,registry.rs,builtin/*.rs (8)}, crates/ferric-core/src/{scale.rs,lib.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
 - **Commit:** `6efca95`
+
+## T-1402 (sprint 14)
+- **Description:** ADR + docs for the ring architecture. **ADR-028** records the rings model (the `ring` field, `ring_for_tier` capability ceiling honouring `measured_level`, trim-from-outer `tools_for_policy` superseding the alphabetical cap, Ring 0/1 assignments, rings 2–3 reserved, and the `--max-ring`/measured-promotion follow-ons). README Status bumped to sprint 14 + the Sprint 14 timeline entry appended (with a Sprint 15 "Next" pointer). The builtin-tools section already frames Ring 0 (from sprint 13).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** decisions.md, README.md
+- **Commit:** `f96f01e`
