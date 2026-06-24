@@ -4,6 +4,7 @@
 > ADR-024 native-`content` fallback. mistral.rs 0.8.15 viability is a test-phase
 > experiment. Multimodal "any file" → sprint 10 (ADR-023). Plan: `sprints/s9/sprint-plans/build-plan.md`.
 
-- [ ] T-901 (sprint 9): Fleet sweep — `--models` + sorted leaderboard (Markdown + combined JSONL) — touches: crates/ferric-cli/src/toolbench_cmd.rs
-- [ ] T-902 (sprint 9): Native-`content` fallback (synthesize ToolCall from content when tool_calls null) — touches: crates/ferric-provider/src/openai.rs
-- [ ] T-903 (sprint 9): Docs + fleet driver — touches: README.md, docs/testbench.md, run_benchmarks.ps1
+Sprint 9 build tasks T-901 (fleet sweep), T-902 (native-`content` fallback),
+T-903 (docs + driver) are complete — see `agent-tasks/completed-tasks.md`.
+The remaining sprint-9 work is the Test phase: the real fleet-calibration run
+(the headline artifact) + the mistral.rs 0.8.15 viability probe.
