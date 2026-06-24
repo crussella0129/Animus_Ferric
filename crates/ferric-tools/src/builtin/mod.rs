@@ -5,12 +5,14 @@ mod list_dir;
 mod make_dir;
 mod move_path;
 mod read_file;
+mod search_files;
 mod write_file;
 
 pub use list_dir::ListDir;
 pub use make_dir::MakeDir;
 pub use move_path::MovePath;
 pub use read_file::ReadFile;
+pub use search_files::SearchFiles;
 pub use write_file::WriteFile;
 
 use crate::registry::Registry;
@@ -22,6 +24,7 @@ pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(ListDir));
     registry.register(Box::new(MovePath));
     registry.register(Box::new(MakeDir));
+    registry.register(Box::new(SearchFiles));
 }
 
 /// Shared helper: the required string `path` argument.

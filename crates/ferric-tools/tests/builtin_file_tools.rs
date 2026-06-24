@@ -166,6 +166,102 @@ fn make_dir_creates_parents_and_is_idempotent() {
 }
 
 #[test]
+fn search_files_finds_matches_with_relpath_and_lineno() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("src/a.rs"),
+        "fn foo() {}\nlet MARKER = 1;\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("b.txt"), "no hits here\nMARKER again\n").unwrap();
+
+    let (out, err) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "MARKER"})));
+    assert!(!err, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.iter().any(|l| l.starts_with("b.txt:2:")), "{out}");
+    assert!(lines.iter().any(|l| l.starts_with("src/a.rs:2:")), "{out}");
+    assert!(lines.iter().all(|l| l.contains("MARKER")));
+    // Sorted (ADR-008).
+    let mut sorted = lines.clone();
+    sorted.sort_unstable();
+    assert_eq!(lines, sorted, "results must be sorted");
+}
+
+#[test]
+fn search_files_miss_is_empty_not_error() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("a.txt"), "nothing relevant").unwrap();
+    let (out, err) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "ZZZ_absent"})));
+    assert!(!err, "a miss must not be an error: {out}");
+    assert!(out.is_empty(), "no matches → empty output, got {out:?}");
+}
+
+#[test]
+fn search_files_caps_results() {
+    let (dir, ws, registry) = setup();
+    let body: String = (0..20).map(|_| "HIT\n").collect();
+    std::fs::write(dir.path().join("many.txt"), body).unwrap();
+    let (out, _err) = expect_completed(registry.execute(
+        &ws,
+        "search_files",
+        &json!({"query": "HIT", "max_results": 5}),
+    ));
+    assert_eq!(out.lines().count(), 5, "must cap at max_results");
+}
+
+#[test]
+fn search_files_skips_binary_and_noise_dirs() {
+    let (dir, ws, registry) = setup();
+    // Non-UTF-8 file (read_to_string fails → skipped), even though it has the bytes.
+    std::fs::write(
+        dir.path().join("blob.bin"),
+        [0xff, 0xfe, b'N', b'E', b'E', b'D', b'L', b'E'],
+    )
+    .unwrap();
+    // Match under a noise dir.
+    std::fs::create_dir_all(dir.path().join("target/sub")).unwrap();
+    std::fs::write(dir.path().join("target/sub/gen.txt"), "NEEDLE").unwrap();
+    // A real hit.
+    std::fs::write(dir.path().join("real.txt"), "NEEDLE here").unwrap();
+
+    let (out, err) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "NEEDLE"})));
+    assert!(!err, "{out}");
+    assert!(out.contains("real.txt:1:"), "real hit present: {out}");
+    assert!(!out.contains("blob.bin"), "binary file must be skipped");
+    assert!(!out.contains("target/"), "noise dir must be skipped");
+}
+
+#[test]
+fn search_files_refuses_outside_workspace() {
+    let (_dir, ws, registry) = setup();
+    let outcome = registry.execute(&ws, "search_files", &json!({"query": "x", "path": ".."}));
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "search outside the workspace must be denied, got {outcome:?}"
+    );
+}
+
+#[test]
+fn search_files_deterministic() {
+    let (dir, ws, registry) = setup();
+    for n in ["c.txt", "a.txt", "b.txt"] {
+        std::fs::write(dir.path().join(n), "TOKEN\n").unwrap();
+    }
+    let (first, _) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "TOKEN"})));
+    let (second, _) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "TOKEN"})));
+    assert_eq!(
+        first, second,
+        "two identical searches must match byte-for-byte"
+    );
+}
+
+#[test]
 fn move_path_into_ferric_denied() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("x.txt"), "data").unwrap();

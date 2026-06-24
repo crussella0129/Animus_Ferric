@@ -377,3 +377,9 @@
 - **Completed:** 2026-06-24 (test/loop phase)
 - **Files modified:** crates/ferric-provider/src/mistralrs.rs, decisions.md, README.md
 - **Commit:** `6db983d`
+
+## T-1201 (sprint 12)
+- **Description:** `search_files` builtin tool — the workspace content-search primitive a small coding agent needs to locate code before reading/editing. New `SearchFiles` (mirrors `list_dir`): recurses from `ctx.workspace.resolve(path|".")`, reads files as UTF-8 (read errors → binaries skipped for free), returns `relpath:lineno:line` for lines containing the literal `query` substring — sorted/deterministic (ADR-008, entries sorted before descent), capped at `max_results` (default 50, ADR-018), relpath via `strip_prefix(workspace.root())` + `/`-normalized. Skips noise dirs (`.git`/`target`/`node_modules`/`.ferric`). `permission: Read`, `min_tier: Nano`; `target_paths` returns the search root so the registry boundary-checks it (escapes Denied, ADR-005). Dependency-free substring (no `regex` dep). Registered in `register_builtin_tools`. 6 integration tests (hit+sorted+relpath/lineno, miss→empty, cap, binary+noise-dir skip, boundary-refusal, determinism). clippy `--all-targets -D warnings` clean.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/search_files.rs (new), crates/ferric-tools/src/builtin/mod.rs, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** `2de7bb7`

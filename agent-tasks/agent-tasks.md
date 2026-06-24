@@ -1,11 +1,11 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 11 (mistral.rs constrained-decoding spike) is **complete** — T-1101 wired
-> `set_constraint`, the bounded probe showed mistralrs 0.8.15 **still hangs** on a
-> trivial GGUF schema (ADR-027), so the wiring was reverted (no regression).
-> mistral.rs stays text-only; the HTTP valve remains the sole constrained path.
+> Sprint 12: add a workspace `search_files` tool — the content-search primitive a
+> small coding agent needs to locate code before reading/editing. Guard-scoped,
+> dependency-free, mirrors `list_dir`, gated at `Nano`. Plan: `sprints/s12/sprint-plans/build-plan.md`.
 
-Open candidates for a future sprint:
-- **Live-media E2E heartbeat** (sprint-10 deferral) — human-gated on standing up a multimodal server (`llama-server`+mmproj or an ollama vision pull).
-- **MCP-stdio integration** (ADR-012) — connect Ferric to external MCP tool servers.
-- Revisit mistral.rs constraints only when upstream fixes the llguidance-on-GGUF hang (ADR-027).
+- [ ] T-1201 (sprint 12): `SearchFiles` builtin (substring, capped, deterministic, guard-scoped) + register + tests — touches: crates/ferric-tools/src/builtin/search_files.rs (new), builtin/mod.rs, tests/builtin_file_tools.rs
+- [ ] T-1202 (sprint 12): Document `search_files` + README timeline — touches: README.md, docs/
+
+Larger follow-on candidate: MCP-stdio integration (ADR-012). Live-media E2E
+heartbeat remains human-gated (needs a multimodal server).
