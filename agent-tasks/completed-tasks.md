@@ -365,3 +365,9 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** docs/multimodal.md (new), README.md
 - **Commit:** `50b6d84`
+
+## T-1101 (sprint 11)
+- **Description:** Pass the decoding `Constraint` to the mistral.rs engine (ADR-027). `MistralRsProvider::complete()` no longer strips it (the s3 ADR-020 workaround) — it now maps our `Constraint::{JsonSchema,Lark,Regex}` 1:1 to `mistralrs::Constraint::*` via a pure `to_mistralrs_constraint` and applies `builder.set_constraint(…)` when present (unchanged when absent). `capabilities().supports_constraint` stays **`false` provisionally** — the wiring is present but unadvertised until the bounded `grammar_probe` proves enforcement-without-hang, so the loop won't route to a possibly-hanging path; the existing 5-min engine timeout is the belt-and-braces. Unit test `constraint_maps_to_mistralrs_variants` (matches! per variant). Gated `backend-mistralrs`; default workspace unaffected.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-provider/src/mistralrs.rs
+- **Commit:** `8c3fc60`

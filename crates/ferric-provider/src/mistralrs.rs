@@ -20,7 +20,9 @@ use async_trait::async_trait;
 use ferric_core::{Message, Role, ToolCall};
 
 use crate::traits::Provider;
-use crate::types::{Capabilities, Completion, CompletionRequest, ProviderError, SamplingParams};
+use crate::types::{
+    Capabilities, Completion, CompletionRequest, Constraint, ProviderError, SamplingParams,
+};
 
 pub struct MistralRsConfig {
     /// Directory containing the GGUF file.
@@ -136,7 +138,15 @@ impl Provider for MistralRsProvider {
 
         let mut builder = map_messages(&request.messages);
         builder = apply_sampling(builder, &request.sampling);
-        // No engine-level tools or grammar constraints are passed (s3 pivot).
+        // ADR-027 (sprint 11): pass our decoding constraint to the engine. The
+        // ADR-020 llguidance hang is fixed in 0.8.15 (ADR-025), so the s3-era
+        // strip is lifted. `capabilities().supports_constraint` stays `false`
+        // until the bounded grammar_probe proves enforcement-without-hang, so
+        // the loop won't route here on an unverified capability; the 5-minute
+        // engine timeout below is the belt-and-braces against a recurrence.
+        if let Some(constraint) = &request.constraint {
+            builder = builder.set_constraint(to_mistralrs_constraint(constraint));
+        }
 
         let response = match tokio::time::timeout(
             std::time::Duration::from_secs(300),
@@ -195,6 +205,17 @@ pub(crate) fn is_truncated(finish_reason: &str) -> bool {
 }
 
 // ---- mapping layer: free functions so they unit-test without a model ----
+
+/// Map our `Constraint` to the mistralrs engine constraint (ADR-027). 1:1: both
+/// expose `JsonSchema(Value)` / `Lark(String)` / `Regex(String)` (the payload is
+/// moved through unchanged).
+fn to_mistralrs_constraint(c: &Constraint) -> mistralrs::Constraint {
+    match c {
+        Constraint::JsonSchema(schema) => mistralrs::Constraint::JsonSchema(schema.clone()),
+        Constraint::Lark(grammar) => mistralrs::Constraint::Lark(grammar.clone()),
+        Constraint::Regex(re) => mistralrs::Constraint::Regex(re.clone()),
+    }
+}
 
 pub(crate) fn map_messages(messages: &[Message]) -> mistralrs::RequestBuilder {
     let mut builder = mistralrs::RequestBuilder::new();
@@ -297,6 +318,24 @@ pub(crate) fn classify_anyhow(message: &str) -> ProviderError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn constraint_maps_to_mistralrs_variants() {
+        // 1:1 variant mapping; payload passes through. `matches!` (not eq) since
+        // the mistralrs type may not impl PartialEq.
+        assert!(matches!(
+            to_mistralrs_constraint(&Constraint::JsonSchema(json!({"type": "object"}))),
+            mistralrs::Constraint::JsonSchema(_)
+        ));
+        assert!(matches!(
+            to_mistralrs_constraint(&Constraint::Lark("start: \"x\"".to_string())),
+            mistralrs::Constraint::Lark(_)
+        ));
+        assert!(matches!(
+            to_mistralrs_constraint(&Constraint::Regex("[0-9]+".to_string())),
+            mistralrs::Constraint::Regex(_)
+        ));
+    }
 
     #[test]
     fn sampling_maps_with_deterministic_switch() {

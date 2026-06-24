@@ -1,11 +1,12 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 10 (multimodal "any file" input) build phase is **complete** — T-1001..T-1004
-> all committed (see `agent-tasks/completed-tasks.md`). Remaining: test phase
-> (unit/integration green; live-media E2E is the DEFERRED heartbeat) → loop close + ADR-026.
+> Sprint 11: re-enable constrained decoding on the mistral.rs backend. `complete()`
+> currently strips the constraint (ADR-020 workaround); the hang is fixed in 0.8.15
+> and mistralrs exposes `RequestBuilder::set_constraint`. Wire it, then the bounded
+> `grammar_probe` decides enforce/ignore/hang → ADR-027. Plan: `sprints/s11/sprint-plans/build-plan.md`.
 
-Deferred (heartbeat): **live-media E2E** — a real multimodal model (Gemma 3n)
-reading an attached image/audio clip end-to-end. Needs a multimodal-capable
-server the dev machine lacks (route TBD: `llama-server`+mmproj vs an ollama
-vision pull). The whole input pipeline is unit/integration-tested; only this
-final "real model reads the bytes" check is deferred.
+- [ ] T-1101 (sprint 11): Pass `Constraint` to the mistralrs `RequestBuilder` (`to_mistralrs_constraint` + `set_constraint`; `supports_constraint` stays false provisionally) — touches: crates/ferric-provider/src/mistralrs.rs
+
+Test/loop (post-build): run the bounded `grammar_probe` (trivial + unified) on the
+1B GGUF → enforce/ignore/hang; ADR-027 records the verdict; flip
+`supports_constraint:true` only if it enforces without hanging.
