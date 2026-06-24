@@ -183,6 +183,7 @@ pub fn run_scripted_protocol(
             sleeper: &sleeper,
             system_prompt: None,
             prompt_lineage: None,
+            media: Vec::new(),
         },
         &mut sink,
         "do the task",

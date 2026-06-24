@@ -7,8 +7,8 @@ mod scale;
 
 pub use error::FerricError;
 pub use media::{
-    Attachment, FileKind, MediaPart, Modality, classify_path, decide_attachment, modality_flag,
-    parse_modalities,
+    Attachment, FileKind, MediaPart, Modality, base64_encode, classify_path, decide_attachment,
+    modality_flag, parse_modalities,
 };
 pub use message::{Message, Role, ToolCall};
 pub use scale::{

@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Args, ValueEnum};
 
-use ferric_core::{ActionProtocol, Message, ModelProfile, RunPolicy, policy_for};
+use ferric_core::{ActionProtocol, MediaPart, Message, ModelProfile, RunPolicy, policy_for};
 use ferric_guard::Workspace;
 use ferric_loop::{
     LoopOutcome, PromptLineage, RunArgs, StopReason, ThreadSleeper, run, select_protocol,
@@ -90,6 +90,19 @@ pub struct QueryArgs {
     /// Run against a built-in scripted mock instead of a real model
     #[arg(long)]
     pub mock: bool,
+
+    /// Attach a file to the prompt (repeatable). Text/code files fold into the
+    /// prompt as text (works on any model); media files (image/audio/video)
+    /// attach as content parts when `--modality` declares them and the backend
+    /// carries media (the OpenAI valve).
+    #[arg(long = "file")]
+    pub files: Vec<PathBuf>,
+
+    /// Declare the model's accepted non-text modalities (comma list:
+    /// `image,audio,video`). Explicit config (ADR-006) — media files attach
+    /// only for declared modalities; others are skipped with a reason.
+    #[arg(long)]
+    pub modality: Option<String>,
 }
 
 pub fn run_query(args: QueryArgs) -> ExitCode {
@@ -206,6 +219,39 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
         None => (None, None),
     };
 
+    // Route each --file (ADR-023): text/code folds into the prompt (any model);
+    // media attaches as a gated MediaPart; anything skipped is surfaced (stderr),
+    // never silent. The decision logic is the pure `ferric_core::media` routing.
+    let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
+    let mut media_parts: Vec<MediaPart> = Vec::new();
+    let mut prompt_suffix = String::new();
+    for path in &args.files {
+        let kind = ferric_core::classify_path(path);
+        match ferric_core::decide_attachment(&kind, &declared, caps.supports_media) {
+            ferric_core::Attachment::AppendText => match std::fs::read_to_string(path) {
+                Ok(text) => {
+                    prompt_suffix.push_str(&format!("\n\n--- file: {} ---\n{text}", path.display()))
+                }
+                Err(e) => eprintln!("skip {}: cannot read as text: {e}", path.display()),
+            },
+            ferric_core::Attachment::Media(_modality, mime) => match std::fs::read(path) {
+                Ok(bytes) => media_parts.push(MediaPart {
+                    mime,
+                    data: ferric_core::base64_encode(&bytes),
+                }),
+                Err(e) => eprintln!("skip {}: cannot read: {e}", path.display()),
+            },
+            ferric_core::Attachment::Skip(reason) => {
+                eprintln!("skip {}: {reason}", path.display())
+            }
+        }
+    }
+    let effective_prompt = if prompt_suffix.is_empty() {
+        args.prompt.clone()
+    } else {
+        format!("{}{prompt_suffix}", args.prompt)
+    };
+
     let outcome = if args.mock {
         let provider = mock_provider(protocol);
         drive_mock(
@@ -218,7 +264,8 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
             system_prompt,
             lineage,
             &mut sink,
-            &args.prompt,
+            &effective_prompt,
+            media_parts,
         )
     } else {
         drive_real(
@@ -231,6 +278,8 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
             system_prompt,
             lineage,
             &mut sink,
+            &effective_prompt,
+            media_parts,
         )
     };
 
@@ -350,6 +399,7 @@ fn drive_mock(
     lineage: Option<PromptLineage>,
     sink: &mut JsonlSink,
     prompt: &str,
+    media: Vec<MediaPart>,
 ) -> Result<LoopOutcome, String> {
     futures_executor::block_on(run(
         RunArgs {
@@ -362,6 +412,7 @@ fn drive_mock(
             sleeper: &ThreadSleeper,
             system_prompt,
             prompt_lineage: lineage,
+            media,
         },
         sink,
         prompt,
@@ -381,9 +432,11 @@ fn drive_real(
     system_prompt: Option<&str>,
     lineage: Option<PromptLineage>,
     sink: &mut JsonlSink,
+    prompt: &str,
+    media: Vec<MediaPart>,
 ) -> Result<LoopOutcome, String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    runtime.block_on(async {
+    runtime.block_on(async move {
         let provider_box = create_provider(&args.backend_opts).await?;
         let provider = provider_box.as_ref();
         run(
@@ -397,9 +450,10 @@ fn drive_real(
                 sleeper: &ThreadSleeper,
                 system_prompt,
                 prompt_lineage: lineage,
+                media,
             },
             sink,
-            &args.prompt,
+            prompt,
         )
         .await
         .map_err(|e| format!("loop error: {e}"))
@@ -418,6 +472,8 @@ fn drive_real(
     _system_prompt: Option<&str>,
     _lineage: Option<PromptLineage>,
     _sink: &mut JsonlSink,
+    _prompt: &str,
+    _media: Vec<MediaPart>,
 ) -> Result<LoopOutcome, String> {
     Err("this binary was built without backend features; \
          rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
