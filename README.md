@@ -66,6 +66,8 @@ ferric server down
 
 `ferric query` also takes **any file** as input with `--file` (repeatable): text/code files fold into the prompt (works on any model), while image/audio/video attach as content parts when you declare `--modality` and the model can read them (Gemma 3n on the OpenAI valve). See [docs/multimodal.md](docs/multimodal.md).
 
+**Builtin tools** (all workspace-scoped and security-checked through the guard): `read_file`, `write_file`, `list_dir`, `make_dir`, `move_path`, and `search_files` — grep-style content search (`{query, path?, max_results?}` → `relpath:lineno:line`) so a small model can *find* code before it reads or edits.
+
 ## Test it with your own models
 
 Ferric works with large and small models alike, but *how well* a small model drives the tools varies — so don't take it on faith, **measure it**. The testbench runs every tool many times, classifies *why* it misses, and grades the result, so you can dial a model down until quality drops.
@@ -114,7 +116,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 11). Two inference backends ship behind feature flags:
+Active development (sprint 12). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
@@ -136,4 +138,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 11 — mistral.rs constrained-decoding spike** (2026-06-24). Settled an open question: `MistralRsProvider` had been *stripping* the decoding constraint since the s3 pivot, so the sprint-9 probe (ADR-025) had measured the stripped path, not enforcement. Wired the constraint through (`set_constraint`) and re-probed — mistralrs 0.8.15 **still hangs** llguidance on GGUF even for a trivial schema (5-minute engine timeout). The ADR-020 hang is *not* fixed; the wiring was reverted (no regression), mistral.rs stays text-only, and the HTTP valve remains the sole constrained path. *ADR-027.*
 
-> **Next — Sprint 12: TBD** (the deferred live-media heartbeat once a multimodal server exists; or a new direction from the next research phase — e.g. MCP-stdio integration, ADR-012).
+- **Sprint 12 — `search_files` tool** (2026-06-24). Added the missing content-search primitive a small coding agent leans on most: a workspace-scoped, guard-checked, dependency-free substring search (`relpath:lineno:line`, sorted + capped, binary/noise-dir skipping) gated at `Nano` so every model gets it. Mirrors the `list_dir` pattern; six temp-workspace tests.
+
+> **Next — Sprint 13: TBD** (MCP-stdio integration, ADR-012, is the next large self-contained candidate; the live-media heartbeat remains human-gated on a multimodal server).

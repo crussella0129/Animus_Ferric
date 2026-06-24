@@ -383,3 +383,9 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** crates/ferric-tools/src/builtin/search_files.rs (new), crates/ferric-tools/src/builtin/mod.rs, crates/ferric-tools/tests/builtin_file_tools.rs
 - **Commit:** `2de7bb7`
+
+## T-1202 (sprint 12)
+- **Description:** Documented `search_files`. Added a **Builtin tools** line to the README (lists all six workspace-scoped tools incl. `search_files` with its args + "find-before-edit" use), bumped Status to sprint 12, and appended the Sprint 12 development-timeline entry (with a Sprint 13 "Next" pointer — MCP-stdio).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** README.md
+- **Commit:** `d2bea8b`
