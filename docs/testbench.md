@@ -69,3 +69,33 @@ Now dial the model down (a smaller quant, fewer params) and re-run. When the
 verdict slips from *solid* to *marginal* to *unreliable*, you've found the floor
 for that machine. The `constrained` path should sit far higher than `native` on
 small models — that's the whole point of harness-owned decoding.
+
+## 4. Calibrate the whole fleet at once
+
+Rather than dialing one model down by hand, sweep a list in one shot with
+`--models` (comma-separated — ollama model names, or GGUF files for the mistral
+backend). Each model is benched in turn and the results collapse into a single
+**leaderboard**, sorted best→worst:
+
+```sh
+# Every model shares the one running ollama server, so this is cheap:
+ferric toolbench --backend openai \
+  --models qwen2.5-coder:7b,llama3.1:8b,qwen2.5-coder:1.5b \
+  --protocol grammar --iterations 20 --report fleet.md
+```
+
+```
+# Fleet Leaderboard
+
+| Model              | Protocol        | Success | Rate   | Verdict  |
+|--------------------|-----------------|---------|--------|----------|
+| qwen2.5-coder:7b   | ConstrainedJson | 100/100 | 100.0% | solid    |
+| llama3.1:8b        | ConstrainedJson |  96/100 |  96.0% | solid    |
+| qwen2.5-coder:1.5b | ConstrainedJson |  74/100 |  74.0% | marginal |
+```
+
+Read it top-down and **pick the smallest model still in the band you need** —
+that's the "good enough on this machine" answer, found in one run. `--report`
+also writes `fleet.jsonl`, every model's per-tool rows tagged by `model`. (This
+is a human-facing readout; it does not change a model's stored `measured_level`
+— that stays `ferric bench`'s job.)

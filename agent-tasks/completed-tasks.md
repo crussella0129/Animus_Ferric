@@ -335,3 +335,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** crates/ferric-provider/src/openai.rs
 - **Commit:** `c3482e6`
+
+## T-903 (sprint 9)
+- **Description:** Documented fleet calibration. Added a "Calibrate the whole fleet at once" section to `docs/testbench.md` (the `--models` sweep, an example leaderboard, and how to read it top-down to pick the smallest model still in the band you need — noting it does not touch `measured_level`). Added the fleet sweep one-liner to the README testbench section. Extended `run_benchmarks.ps1` with an `$OllamaFleet` param + a fleet-sweep step (`--models … --report toolbench_fleet.md`) targeting a running ollama, with a note on the GGUF/mistral fleet alternative.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** docs/testbench.md, README.md, run_benchmarks.ps1
+- **Commit:** `f913d78`

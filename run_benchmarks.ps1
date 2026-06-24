@@ -2,7 +2,11 @@ param (
     [string]$Iterations = "10",
     # Constrained path: a GGUF for `ferric server up` (llama-server) to load.
     [string]$LlamaGguf = "D:\Models\gguf\Llama-3.2-1B-Instruct-Q4_K_M.gguf",
-    [string]$OpenAiModel = "Llama-3.2-1B-Instruct"
+    [string]$OpenAiModel = "Llama-3.2-1B-Instruct",
+    # Fleet calibration: ollama models to sweep into one leaderboard (must be
+    # `ollama pull`-ed). For a GGUF fleet instead, sweep `--backend mistral`
+    # with `--models file1.gguf,file2.gguf`.
+    [string]$OllamaFleet = "qwen2.5-coder:7b,llama3.1:8b"
 )
 
 $ErrorActionPreference = "Continue"
@@ -26,4 +30,10 @@ Write-Host "`nOpenAI valve (ConstrainedJson) via ferric server..." -ForegroundCo
 & $Ferric toolbench --backend openai --model $OpenAiModel --protocol grammar --iterations $Iterations --report toolbench_openai.md
 & $Ferric server down
 
-Write-Host "`nReports: toolbench_mistral.md / toolbench_openai.md (+ .jsonl). Read the verdict bands." -ForegroundColor Green
+# 3. Fleet calibration across installed ollama models — one leaderboard, sorted
+# best->worst, so you can pick the smallest model that's still "solid". Targets a
+# running ollama directly (default :11434); skipped silently if ollama isn't up.
+Write-Host "`nFleet calibration (ollama) — $OllamaFleet ..." -ForegroundColor Cyan
+& $Ferric toolbench --backend openai --api-base "http://localhost:11434/v1" --models $OllamaFleet --protocol grammar --iterations $Iterations --report toolbench_fleet.md
+
+Write-Host "`nReports: toolbench_mistral.md / toolbench_openai.md / toolbench_fleet.md (+ .jsonl). Read the verdict bands." -ForegroundColor Green

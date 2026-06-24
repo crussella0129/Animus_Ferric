@@ -54,7 +54,10 @@ ferric toolbench --backend openai --model <name> --protocol grammar --report rep
 #    (wrong_tool / malformed_args / no_action / parse_error), and a verdict band
 #    (solid >=90% / marginal >=70% / unreliable <70%). Try a smaller model and re-run.
 
+# …or sweep a whole fleet in one shot and rank them best→worst:
+ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.1:8b --protocol grammar --report fleet.md
+
 ferric server down   # stop it when done
 ```
 
-`ferric query` and `ferric toolbench` **auto-discover** the running server (no `--api-base` needed — it's read from `.ferric/server.json`). `ferric server doctor` checks your engine binary + model before you start. Full walkthrough: [docs/testbench.md](docs/testbench.md).
+`ferric query` and `ferric toolbench` **auto-discover** the running server (no `--api-base` needed — it's read from `.ferric/server.json`). `--models <a,b,c>` benches a fleet into one sorted leaderboard so you can pick the smallest model that's still *solid*. `ferric server doctor` checks your engine binary + model before you start. Full walkthrough: [docs/testbench.md](docs/testbench.md).
