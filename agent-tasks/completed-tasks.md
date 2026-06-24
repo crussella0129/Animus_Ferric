@@ -323,3 +323,9 @@
 - **Completed:** 2026-06-23 (build phase)
 - **Files modified:** README.md, docs/testbench.md (new), run_benchmarks.ps1, test_both_models.ps1
 - **Commit:** `4c180bd`
+
+## T-901 (sprint 9)
+- **Description:** Fleet sweep — added `--models <comma-list>` to `ferric toolbench`: extracted the per-model loop into `bench_model() -> BenchSummary` (reuses `classify`/`build_request`), the fleet path loops `create_provider` per model (overriding `BackendOpts.model`/`model_file` by backend), and `render_leaderboard()` prints a `model | protocol | success | rate | verdict` table sorted best→worst (+ a combined `.jsonl` of every model's `summary_rows`). Added a `model` field to `BenchSummary` (surfaced in the report header + JSONL rows). Single-`--model` behaviour unchanged. Unit test `leaderboard_sorts_best_first` asserts best→worst ordering + all three verdict bands.
+- **Completed:** 2026-06-23 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
+- **Commit:** `515bc11`
