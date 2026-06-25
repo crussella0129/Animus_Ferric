@@ -232,6 +232,82 @@ fn max_ring_caps_the_offered_tools() {
 }
 
 #[test]
+fn persisted_calibrated_ring_caps_the_offered_tools() {
+    // A persisted `calibrated_ring: 0` makes a query run at the core grammar
+    // automatically — no `--max-ring` flag (ADR-029, the durable promotion). And
+    // with no profile file the offered set is unchanged (no-op safety). Reads the
+    // offered tools from the trace, like `max_ring_caps_the_offered_tools`.
+    fn offered(model: &str, profile_dir: &std::path::Path, ws: &std::path::Path) -> Vec<String> {
+        let out = ferric()
+            .args([
+                "query",
+                "--mock",
+                "do a task",
+                "--params-b",
+                "8",
+                "--protocol",
+                "grammar",
+            ])
+            .args(["--model", model])
+            .arg("--profile-dir")
+            .arg(profile_dir)
+            .arg("--workspace")
+            .arg(ws)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let trace_dir = ws.join(".ferric").join("trace");
+        let trace = std::fs::read_dir(&trace_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+            .expect("a q-*.jsonl trace");
+        let content = std::fs::read_to_string(trace.path()).unwrap();
+        content
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .find(|v| v["event"]["type"] == "prompt_assembled")
+            .and_then(|v| {
+                v["event"]["offered_tools"].as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.as_str().map(String::from))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    // A profile dir carrying calibrated_ring 0 for ConstrainedJson + this model.
+    let pdir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        pdir.path().join("model_profiles.json"),
+        r#"[{"model":"mockmodel","params_b":8.0,"protocol":"ConstrainedJson","measured_level":null,"tier_from_params":"Small","tier_from_measured":null,"calibrated_ring":0}]"#,
+    )
+    .unwrap();
+
+    // With the persisted ring 0: only the Ring-0 core, even at Small tier — no flag.
+    let ws1 = tempfile::tempdir().unwrap();
+    let capped = offered("mockmodel", pdir.path(), ws1.path());
+    assert!(
+        !capped.contains(&"search_files".to_string()) && capped.contains(&"write_file".to_string()),
+        "persisted calibrated_ring 0 caps to the core: {capped:?}"
+    );
+
+    // No-op safety: an empty profile dir leaves Small's Ring 1 intact.
+    let empty = tempfile::tempdir().unwrap();
+    let ws2 = tempfile::tempdir().unwrap();
+    let full = offered("mockmodel", empty.path(), ws2.path());
+    assert!(
+        full.contains(&"search_files".to_string()),
+        "no profile ⇒ unchanged (Ring 1 still offered): {full:?}"
+    );
+}
+
+#[test]
 fn unknown_args_fail_with_usage() {
     let out = ferric().arg("frobnicate").output().unwrap();
     assert!(!out.status.success());

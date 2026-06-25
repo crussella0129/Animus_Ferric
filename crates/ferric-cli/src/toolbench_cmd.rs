@@ -61,6 +61,12 @@ pub struct ToolbenchArgs {
     /// drives — the recommended `--max-ring`. Supersedes `--max-ring`.
     #[arg(long)]
     pub calibrate_rings: bool,
+
+    /// With `--calibrate-rings`, persist each model's recommended ring into
+    /// `<dir>/model_profiles.json` (`calibrated_ring`) so `ferric query` applies
+    /// it automatically (ADR-029). Default matches `ferric bench`'s results dir.
+    #[arg(long, default_value = "benchmarks")]
+    pub profile_dir: std::path::PathBuf,
 }
 
 /// The classified outcome of one toolbench iteration. This is what turns the
@@ -539,6 +545,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                 let mut results: Vec<(u8, usize, f64)> = Vec::new();
                 let mut solids: Vec<bool> = Vec::new();
                 let mut prev_len = usize::MAX;
+                let mut proto_label = String::new();
                 for ring_cap in 0u8..=8 {
                     let mut p = policy.clone();
                     p.max_ring = Some(ring_cap);
@@ -556,6 +563,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                     }
                     let ring_schema = action_schema(&ring_tools);
                     let proto = select_protocol(&p, &provider.capabilities(), protocol_override);
+                    proto_label = format!("{proto:?}");
                     let summary = bench_model(
                         provider,
                         proto,
@@ -585,7 +593,21 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                 }
                 match recommend_max_ring(&solids) {
                     Some(r) => {
-                        println!("  → Recommended --max-ring {r} (solid through ring {r})")
+                        println!("  → Recommended --max-ring {r} (solid through ring {r})");
+                        // Persist the earned ring so `ferric query` auto-applies it (ADR-029).
+                        match ferric_bench::write_calibrated_ring(
+                            &args.profile_dir,
+                            model,
+                            &proto_label,
+                            profile.params_b,
+                            r,
+                        ) {
+                            Ok(()) => println!(
+                                "    saved calibrated_ring {r} → {}/model_profiles.json",
+                                args.profile_dir.display()
+                            ),
+                            Err(e) => eprintln!("    cannot persist calibrated_ring: {e}"),
+                        }
                     }
                     None => println!(
                         "  → ring 0 is NOT solid — this model can't reliably drive even the core; \

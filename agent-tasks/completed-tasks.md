@@ -449,3 +449,9 @@
 - **Completed:** 2026-06-25 (build phase)
 - **Files modified:** crates/ferric-bench/src/{calibrate.rs,lib.rs}
 - **Commit:** 57b4c51
+
+## T-1702 (sprint 17)
+- **Description:** Persist + apply the profile (CLI), closing the read-back loop (ADR-029). `toolbench --calibrate-rings` gained `--profile-dir` (default `benchmarks`) and now writes each model's recommended ring via `ferric_bench::write_calibrated_ring` (keyed by model + the swept protocol label). `query` gained `--profile-dir` (default `benchmarks`): the caps-driven protocol is resolved up-front (it keys the lookup), then `ferric_bench::read_profile(profile_dir, model, protocol)` — model name from `backend_opts.model`/`model_file` — seeds `ModelProfile.measured_level` (→ tier) and defaults `policy.max_ring` to the record's `calibrated_ring`. Operator `--max-ring` still wins; a missing file / un-keyed model / mock-without-`--model` → `None` → byte-identical to before. CLI `--mock` test `persisted_calibrated_ring_caps_the_offered_tools` (a written `calibrated_ring: 0` caps the trace's `offered_tools` to the core; an empty profile-dir leaves Ring 1 intact). ADR-029 + README timeline (Status→17) + docs/testbench.md §5 "Make the promotion durable".
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-cli/src/{toolbench_cmd.rs,query.rs}, crates/ferric-cli/tests/cli.rs, decisions.md, README.md, docs/testbench.md
+- **Commit:** fb29def

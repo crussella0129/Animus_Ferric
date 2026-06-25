@@ -121,8 +121,28 @@ ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.2:1b \
 ```
 
 It sweeps `ring 0, 1, …` until a ring stops being `solid` (≥90%), then reports
-the highest ring with an unbroken solid run from the core. Feed that number to
-`ferric query --max-ring N` to run the model at exactly the rings it's earned —
-or, if even ring 0 isn't solid, the report says so (pick a stronger model). This
-is the demonstrated-reliability promotion: a model *earns* a wider grammar by
-proving it on the bench.
+the highest ring with an unbroken solid run from the core. This is the
+demonstrated-reliability promotion: a model *earns* a wider grammar by proving it
+on the bench.
+
+### Make the promotion durable (`--profile-dir`)
+
+Add `--profile-dir <dir>` (default `benchmarks`) and `--calibrate-rings` **persists**
+each model's earned ring into `<dir>/model_profiles.json` (the same store
+`ferric bench` writes `measured_level` to). Then `ferric query --profile-dir <dir>`
+reads it back: a model with a recorded profile **automatically** runs at its earned
+tier (`measured_level`) and ring (`calibrated_ring`) — no manual `--max-ring`:
+
+```sh
+# 1. Prove the model once — writes calibrated_ring into benchmarks/model_profiles.json
+ferric toolbench --backend openai --models llama3.2:1b --protocol grammar \
+  --calibrate-rings --profile-dir benchmarks
+
+# 2. Every later query auto-applies it (the trace shows the capped ring)
+ferric query --backend openai --model llama3.2:1b "refactor this module"
+```
+
+`measured_level` *raises* the tier (capability earned); `calibrated_ring` *caps*
+the rings at what was proven (earned, not assumed). An explicit `--max-ring` still
+overrides, and a model with no recorded profile runs exactly as before — the
+read-back is a safe no-op until you've actually measured the model.
