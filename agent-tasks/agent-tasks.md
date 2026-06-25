@@ -1,13 +1,13 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 17 (durable promotion) is **done** — closed the profile read-back loop.
-> `model_profiles.json` was written by `ferric bench` but never read; now
-> `toolbench --calibrate-rings --profile-dir` persists `calibrated_ring` and
-> `ferric query --profile-dir` reads the profile back, auto-applying `measured_level`
-> (tier) + `calibrated_ring` (max_ring). Proven end-to-end (llama3.2:1b: write ring 1
-> → query reads Some(1)). T-1701/1702 committed, ADR-029. [[ferric-tool-rings]]
+> Sprint 18 (round out Ring 1) is **done** — added `find_files` (find by name) +
+> `copy_file` (organize complement to move_path), making Ring 1 a coherent four-tool
+> "find & organize" set (search_files, find_files, move_path, copy_file). Re-bench:
+> both qwen2.5-coder:7b AND llama3.2:1b still calibrate `--max-ring 1` at 100% with
+> Ring 1 now 10 tools — widening the ring cost zero reliability. T-1801/1802/1803
+> committed, ADR-028 amended. [[ferric-tool-rings]]
 
-Open candidates (sprint 18+):
-- **Grow the Ring-1/2 tool sets** (find/organize, plan/diff) — gives calibration more rings to sweep and the profile more to carry.
+Open candidates (sprint 19+):
+- **Ring-2 tools** (plan/diff) — the next ring out; gives calibration a third ring to sweep and a model a reason to earn Medium tier.
 - **MCP-stdio** (ADR-012) — needs the ADR-005 external-exec security call (the user's).
 - **Live-media heartbeat** — human-gated on a multimodal server.
