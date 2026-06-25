@@ -98,6 +98,12 @@ pub struct RunPolicy {
     /// leaves headroom over the largest expected single action (~450 tokens).
     pub max_output_tokens: u32,
     pub allows_subagents: bool,
+    /// Operator cap on the active tool ring (ADR-028). `None` ⇒ the tier's
+    /// `ring_for_tier` ceiling; `Some(n)` caps the active rings at
+    /// `min(tier_ceiling, n)` — restrict-only (raise via `measured_level`). The
+    /// CLI `--max-ring` sets it; `policy_for` leaves it `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_ring: Option<u8>,
 }
 
 /// Tier from parameter count. Boundaries follow Animus `tiers.py`:
@@ -128,6 +134,21 @@ pub fn tier_for_level(level: u8) -> Tier {
         2..=4 => Tier::Small,
         5 => Tier::Medium,
         _ => Tier::Large,
+    }
+}
+
+/// Tool-vocabulary ring ceiling for a tier (the rings model). A run may use
+/// rings `0..=ring_for_tier(tier)`. Ring 0 is the always-on navigate/mutate
+/// core (every model); higher rings (find/organize, plan/diff, external tools)
+/// unlock with capability — and since `tier` honours `measured_level`, a model
+/// is promoted to a wider ring set by demonstrated reliability, not size alone.
+/// Rings 2–3 are reserved for tools that land in later sprints.
+pub fn ring_for_tier(tier: Tier) -> u8 {
+    match tier {
+        Tier::Nano => 0,
+        Tier::Small => 1,
+        Tier::Medium => 2,
+        Tier::Large | Tier::Xl | Tier::Ultra => 3,
     }
 }
 
@@ -176,6 +197,7 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
         prompt_budget_tokens,
         max_output_tokens,
         allows_subagents: subagents,
+        max_ring: None,
     }
 }
 
@@ -205,6 +227,16 @@ mod tests {
         assert_eq!(policy_for(&profile(3.9, None)).tier, Tier::Nano);
         assert_eq!(policy_for(&profile(4.0, None)).tier, Tier::Small);
         assert_eq!(policy_for(&profile(13.1, None)).tier, Tier::Medium);
+    }
+
+    #[test]
+    fn ring_ceiling_per_tier() {
+        assert_eq!(ring_for_tier(Tier::Nano), 0);
+        assert_eq!(ring_for_tier(Tier::Small), 1);
+        assert_eq!(ring_for_tier(Tier::Medium), 2);
+        assert_eq!(ring_for_tier(Tier::Large), 3);
+        assert_eq!(ring_for_tier(Tier::Xl), 3);
+        assert_eq!(ring_for_tier(Tier::Ultra), 3);
     }
 
     #[test]

@@ -1,6 +1,5 @@
 use serde_json::json;
 
-use ferric_core::Tier;
 use ferric_guard::PermissionLevel;
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
@@ -26,7 +25,7 @@ impl Tool for WriteFile {
                 "required": ["path", "content"]
             }),
             permission: PermissionLevel::Write,
-            min_tier: Tier::Nano,
+            ring: 0,
         }
     }
 

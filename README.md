@@ -64,6 +64,10 @@ ferric server down
 
 `query` and `toolbench` **auto-discover** the running server from `.ferric/server.json` — no `--api-base` needed. To target a server you didn't launch (e.g. an already-running Ollama), pass `--api-base http://localhost:11434/v1`. By default `query` runs the **constrained** path, which is the reliable one for small models.
 
+`ferric query` also takes **any file** as input with `--file` (repeatable): text/code files fold into the prompt (works on any model), while image/audio/video attach as content parts when you declare `--modality` and the model can read them (Gemma 3n on the OpenAI valve). See [docs/multimodal.md](docs/multimodal.md).
+
+**Builtin tools** (all workspace-scoped and security-checked through the guard). The always-on **core** (Ring 0) is the navigate/mutate set: `read_file`, `list_dir`, `write_file`, `make_dir`, `edit_file` (surgical first-occurrence replace — small models do targeted edits far more reliably than full rewrites), and `delete_path` (file or, with `recursive`, a directory). Beyond the core: `search_files` — grep-style content search (`{query, path?, max_results?}` → `relpath:lineno:line`) so a small model can *find* code before it acts. Tool vocabularies are organized as **rings** that widen as a model proves it can call them reliably, with the active rings forming the constrained grammar. `ferric query --max-ring 0` pins any model to the Ring-0 core — the smallest, surest grammar — regardless of its size (restrict-only; to *widen* a small model's rings, prove it with the toolbench so `measured_level` promotes it).
+
 ## Test it with your own models
 
 Ferric works with large and small models alike, but *how well* a small model drives the tools varies — so don't take it on faith, **measure it**. The testbench runs every tool many times, classifies *why* it misses, and grades the result, so you can dial a model down until quality drops.
@@ -112,10 +116,10 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 9). Two inference backends ship behind feature flags:
+Active development (sprint 15). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
-- **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. As of 0.8.15 the old constrained-decoding hang (ADR-020) is fixed upstream, but the constraint still isn't enforced through it (ADR-025) — so it stays the unconstrained fallback.
+- **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
 
 The action protocol (`NativeTools` / `ConstrainedJson` / `TextXml`) is chosen from each backend's real capabilities. An embedded PyO3/PyTorch backend was tried and removed (ADR-021) — external engines are reached only via the out-of-process valve. Development follows a sprint-loop protocol; see `decisions.md` for ADRs and `agent-tasks/` for the ledger.
 
@@ -130,5 +134,16 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 - **Sprint 7 — The realignment** (2026-06-23). The PyO3/PyTorch backend removed; external engines reached only through the out-of-process HTTP valve. The constraint reinstated, capabilities made honest, and the `NativeTools` / `ConstrainedJson` / `TextXml` trichotomy chosen from each backend's *real* capabilities; toolbench rebuilt around the active protocol. *ADR-021–023.*
 - **Sprint 8 — Launcher + testbench** (2026-06-23). The `ferric server` lifecycle manager (llama-server default, Ollama pluggable, runfile auto-discovery) and the diagnostic toolbench (failure taxonomy + verdict bands). **Thesis proven on a real model: constrained 100% vs native 0% on the same Ollama model.** *ADR-024.*
 - **Sprint 9 — Fleet calibration** (2026-06-23). `ferric toolbench --models` sweeps a fleet into one sorted leaderboard. **The constraint holds 100% down to a 1B model where native collapses to 22%** — it extends the usable model floor to 1B. A native-`content` fallback closes the "Ollama returns the call as text" gap; the mistral.rs 0.8.15 probe confirmed the hang is fixed upstream but the constraint still isn't enforced. *ADR-025.*
+- **Sprint 10 — Multimodal "any file" input** (2026-06-24). `ferric query --file` takes any file: text/code folds into the prompt (any model); image/audio/video attach as OpenAI content parts, capability-gated by `--modality` + the backend's `supports_media` (the valve carries media; the in-process path doesn't). Additive `Message.media` (media-free messages serialize unchanged); a dependency-free base64 encoder. The pure pipeline is fully unit-tested; the live-media heartbeat (a real model reading a clip) is deferred until a multimodal server is stood up.
 
-> **Next — Sprint 10: multimodal "any file" input** (audio / video / image through the valve, capability-gated), per ADR-023/025.
+- **Sprint 11 — mistral.rs constrained-decoding spike** (2026-06-24). Settled an open question: `MistralRsProvider` had been *stripping* the decoding constraint since the s3 pivot, so the sprint-9 probe (ADR-025) had measured the stripped path, not enforcement. Wired the constraint through (`set_constraint`) and re-probed — mistralrs 0.8.15 **still hangs** llguidance on GGUF even for a trivial schema (5-minute engine timeout). The ADR-020 hang is *not* fixed; the wiring was reverted (no regression), mistral.rs stays text-only, and the HTTP valve remains the sole constrained path. *ADR-027.*
+
+- **Sprint 12 — `search_files` tool** (2026-06-24). Added the missing content-search primitive a small coding agent leans on most: a workspace-scoped, guard-checked, dependency-free substring search (`relpath:lineno:line`, sorted + capped, binary/noise-dir skipping) gated at `Nano` so every model gets it. Mirrors the `list_dir` pattern; six temp-workspace tests.
+
+- **Sprint 13 — complete Ring 0** (2026-06-24). Added the two missing core tools — `edit_file` (surgical replace) and `delete_path` (guard-scoped, `recursive`-gated) — then re-ran the toolbench to *measure* that the full navigate/mutate core still fires reliably. Introduces the **tool-rings** model: a curated core that widens as a model proves itself, with the active rings = the grammar.
+
+- **Sprint 14 — formalize the rings** (2026-06-24). Made the tool-rings model real: every tool declares a `ring` (0 = the navigate/mutate core), `ring_for_tier` sets the capability ceiling (and honours `measured_level`, so reliability — not size — widens the set), and `tools_for_policy` **trims from the outer ring first** so the core is never dropped. Fixes the latent alphabetical `max_tools` cap. The active rings literally *are* the constrained grammar. *ADR-028.*
+
+- **Sprint 15 — `--max-ring` override** (2026-06-24). The explicit "control exactly which rings" lever: `ferric query`/`toolbench --max-ring N` caps the active rings independent of tier (`--max-ring 0` = the core-only grammar). Restrict-only — widening past a model's capability stays earned via `measured_level`. Proven end-to-end via the trace's offered-tools. *ADR-028 (amended).*
+
+> **Next — Sprint 16: TBD** (wire the per-ring toolbench fire-rate into measured ring promotion — the s13 100% is the `solid` bar; or grow the Ring-1/2 tool sets; MCP-stdio (ADR-012) and the live-media heartbeat remain the larger/human-gated candidates).

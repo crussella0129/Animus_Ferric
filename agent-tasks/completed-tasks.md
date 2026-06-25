@@ -359,3 +359,75 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** crates/ferric-core/src/{media.rs,lib.rs}, crates/ferric-loop/src/run.rs, crates/ferric-loop/tests/{backoff_tests.rs,common/mod.rs}, crates/ferric-cli/src/query.rs, crates/ferric-cli/tests/cli.rs
 - **Commit:** `d8b2a1d`
+
+## T-1004 (sprint 10)
+- **Description:** Multimodal docs + README timeline. New `docs/multimodal.md` (the `--file`/`--modality` walkthrough: file-routing table, the ADR-006/022 gating rules, and how to run media E2E via `llama-server --mmproj`). Added a `--file` "any file" note to the README's Using-Ferric section, bumped Status to sprint 10, and appended the **Sprint 10** entry to the development timeline (with a Sprint 11 "Next" pointer).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** docs/multimodal.md (new), README.md
+- **Commit:** `50b6d84`
+
+## T-1101 (sprint 11)
+- **Description:** Pass the decoding `Constraint` to the mistral.rs engine (ADR-027). `MistralRsProvider::complete()` no longer strips it (the s3 ADR-020 workaround) — it now maps our `Constraint::{JsonSchema,Lark,Regex}` 1:1 to `mistralrs::Constraint::*` via a pure `to_mistralrs_constraint` and applies `builder.set_constraint(…)` when present (unchanged when absent). `capabilities().supports_constraint` stays **`false` provisionally** — the wiring is present but unadvertised until the bounded `grammar_probe` proves enforcement-without-hang, so the loop won't route to a possibly-hanging path; the existing 5-min engine timeout is the belt-and-braces. Unit test `constraint_maps_to_mistralrs_variants` (matches! per variant). Gated `backend-mistralrs`; default workspace unaffected.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-provider/src/mistralrs.rs
+- **Commit:** `8c3fc60`
+
+## T-1102 (sprint 11)
+- **Description:** Probe verdict + revert (ADR-027). Ran the bounded `grammar_probe` through T-1101's wired provider on Llama-3.2-1B: with the constraint actually applied, `complete()` hit the **5-minute engine timeout** on the trivial `{x:string}` schema (probe ran 314 s then panicked) — a definitive **HANG**. So the ADR-020 llguidance-on-GGUF hang is **not** fixed in mistralrs 0.8.15 (ADR-025's "returns" had measured the stripped path). **Reverted** T-1101's `set_constraint` wiring (restored the strip, documented inline) — keeping it would 5-minute-hang `toolbench --backend mistral --protocol grammar`. `supports_constraint` stays false; mistral.rs stays `TextXml`; the HTTP valve remains the sole constrained path. Post-revert: clippy `--all-targets -D warnings` clean, 11 lib tests pass, fmt clean. ADR-027 + README/timeline updated.
+- **Completed:** 2026-06-24 (test/loop phase)
+- **Files modified:** crates/ferric-provider/src/mistralrs.rs, decisions.md, README.md
+- **Commit:** `6db983d`
+
+## T-1201 (sprint 12)
+- **Description:** `search_files` builtin tool — the workspace content-search primitive a small coding agent needs to locate code before reading/editing. New `SearchFiles` (mirrors `list_dir`): recurses from `ctx.workspace.resolve(path|".")`, reads files as UTF-8 (read errors → binaries skipped for free), returns `relpath:lineno:line` for lines containing the literal `query` substring — sorted/deterministic (ADR-008, entries sorted before descent), capped at `max_results` (default 50, ADR-018), relpath via `strip_prefix(workspace.root())` + `/`-normalized. Skips noise dirs (`.git`/`target`/`node_modules`/`.ferric`). `permission: Read`, `min_tier: Nano`; `target_paths` returns the search root so the registry boundary-checks it (escapes Denied, ADR-005). Dependency-free substring (no `regex` dep). Registered in `register_builtin_tools`. 6 integration tests (hit+sorted+relpath/lineno, miss→empty, cap, binary+noise-dir skip, boundary-refusal, determinism). clippy `--all-targets -D warnings` clean.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/search_files.rs (new), crates/ferric-tools/src/builtin/mod.rs, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** `2de7bb7`
+
+## T-1202 (sprint 12)
+- **Description:** Documented `search_files`. Added a **Builtin tools** line to the README (lists all six workspace-scoped tools incl. `search_files` with its args + "find-before-edit" use), bumped Status to sprint 12, and appended the Sprint 12 development-timeline entry (with a Sprint 13 "Next" pointer — MCP-stdio).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** README.md
+- **Commit:** `d2bea8b`
+
+## T-1301 (sprint 13)
+- **Description:** `edit_file` builtin — surgical replace of the first occurrence of `old_string` with `new_string` (`{path, old_string, new_string}`), the targeted edit small models do far more reliably than a full-file `write_file` rewrite. Resolves through `Workspace` (`permission: Write`); reads, `replacen(.., 1)`, writes back. Errors (no write) when `old_string` is empty, absent, or the file is unreadable. Mirrors `write_file.rs`. First-occurrence (not require-unique) maximizes small-model fire rate. 4 integration tests (replace-first, absent→error+unchanged, empty→error, outside-workspace→Denied). Completes Ring 0 of the tool-rings north star ([[ferric-tool-rings]]). (Built alongside T-1302 during a classifier outage; shared `builtin/mod.rs` + test file → one commit.)
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/edit_file.rs (new), crates/ferric-tools/src/builtin/mod.rs, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 05e3b57
+
+## T-1302 (sprint 13)
+- **Description:** `delete_path` builtin — delete a file or directory (`{path, recursive?}`). Resolves through `Workspace` (`permission: Write`, so the guard denylist auto-denies `.ferric`/git/ssh exactly like `write_file`/`move_path`); removes a file or **empty** dir, and a **non-empty** dir only with `recursive: true` (else a clear error — a small model can't accidentally nuke a tree). Uses `symlink_metadata` so a symlink is removed as a link, never followed. Missing path → clear error. Mirrors `move_path.rs`. 6 integration tests (file, empty-dir, non-empty needs-recursive + with-recursive, missing→error, outside-workspace→Denied, `.ferric`→Denied).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/delete_path.rs (new), crates/ferric-tools/src/builtin/mod.rs, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 05e3b57
+
+## T-1303 (sprint 13)
+- **Description:** Docs — reframed the README builtin-tools list around **Ring 0** (the always-on `read_file/list_dir/write_file/make_dir/edit_file/delete_path` core) with `search_files` beyond it, and a one-line statement of the rings model (vocabularies widen with proven reliability; active rings = the grammar). Bumped Status to sprint 13; appended the Sprint 13 timeline entry with a Sprint 14 "Next" pointer (formalize the rings + fix the alphabetical `max_tools` cap).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** README.md
+- **Commit:** 05e3b57
+
+## T-1401 (sprint 14)
+- **Description:** Formalized the tool **rings**. Replaced `ToolSpec.min_tier: Tier` with **`ring: u8`** (0 = core); the 8 builtins are `ring: 0` except `search_files` + `move_path` → `ring: 1`. Added `ferric_core::ring_for_tier(Tier) -> u8` (Nano→0, Small→1, Medium→2, Large/Xl/Ultra→3) — the capability→ring ceiling (honours `measured_level`, so a model is promoted by demonstrated reliability). Rewrote `tools_for_policy` to keep `ring ≤ ring_for_tier(tier)`, **trim from the outer ring first** when over `max_tools` (priority by `(ring, name)`, then name-sorted, ADR-008) — replacing the old alphabetical `.take` that could silently drop an essential core tool (e.g. `write_file` once 8 builtins exceeded the Nano cap of 6). `RunPolicy` unchanged ⇒ the tier-table snapshot stays put. Tests: `ring_ceiling_per_tier`; `tools_for_policy_trims_outer_ring_first` (core survives a cap, outer dropped, Nano sees only Ring 0); `rings_gate_builtins_by_tier` (Nano → exactly the 6 core, Small → all 8). Green across the workspace; clippy `--all-targets -D warnings` clean.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-tools/src/{spec.rs,registry.rs,builtin/*.rs (8)}, crates/ferric-core/src/{scale.rs,lib.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** `6efca95`
+
+## T-1402 (sprint 14)
+- **Description:** ADR + docs for the ring architecture. **ADR-028** records the rings model (the `ring` field, `ring_for_tier` capability ceiling honouring `measured_level`, trim-from-outer `tools_for_policy` superseding the alphabetical cap, Ring 0/1 assignments, rings 2–3 reserved, and the `--max-ring`/measured-promotion follow-ons). README Status bumped to sprint 14 + the Sprint 14 timeline entry appended (with a Sprint 15 "Next" pointer). The builtin-tools section already frames Ring 0 (from sprint 13).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** decisions.md, README.md
+- **Commit:** `f96f01e`
+
+## T-1501 (sprint 15)
+- **Description:** `RunPolicy.max_ring: Option<u8>` (`#[serde(default, skip_serializing_if)]`, `None` = the `ring_for_tier(tier)` ceiling; `policy_for` leaves it `None`). `tools_for_policy`'s ceiling is now `ring_for_tier(tier).min(max_ring.unwrap_or(u8::MAX))` — restrict-only (an override above the tier ceiling is a no-op; the trim-from-outer logic is unchanged, no signature change). The two `RunPolicy` test helpers call `policy_for` (not literals) so they inherit `None` — no change. Unit test `tools_for_policy_max_ring_override_caps`: `None`/`Some(1)` → all 8, `Some(0)` → the 6 core, `Some(5)` → no-op. (Built with T-1502 during a classifier outage → one commit.)
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-core/src/scale.rs, crates/ferric-tools/src/registry.rs
+- **Commit:** 4a15eb0
+
+## T-1502 (sprint 15)
+- **Description:** `--max-ring` CLI flag (the user's "control exactly what rings"). `ferric query --max-ring <u8>` sets `policy.max_ring` after `policy_for`; `ferric toolbench --max-ring` benches rings `0..=N`. CLI integration test `max_ring_caps_the_offered_tools` runs `query --mock --params-b 8 --max-ring 0` and asserts the trace's `PromptAssembled.offered_tools` is the Ring-0 core (no `search_files`/`move_path`; `write_file` present) — proving the cap flows CLI → policy → `tools_for_policy` → grammar. ADR-028 amended (override shipped, restrict-only); README `--max-ring` note + Status sprint 15 + Sprint 15 timeline entry.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-cli/src/{query.rs,toolbench_cmd.rs}, crates/ferric-cli/tests/cli.rs, decisions.md, README.md
+- **Commit:** 4a15eb0

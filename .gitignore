@@ -27,3 +27,5 @@ e2e_log_*.txt
 /fleet*.jsonl
 /toolbench_*.md
 /toolbench_*.jsonl
+/ring*.md
+/ring*.jsonl

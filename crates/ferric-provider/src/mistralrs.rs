@@ -136,7 +136,14 @@ impl Provider for MistralRsProvider {
 
         let mut builder = map_messages(&request.messages);
         builder = apply_sampling(builder, &request.sampling);
-        // No engine-level tools or grammar constraints are passed (s3 pivot).
+        // ADR-027 (sprint 11): the decoding constraint is deliberately NOT passed
+        // to the engine. Sprint 11 wired it through `set_constraint` and probed it
+        // — mistralrs 0.8.15 still HANGS llguidance on GGUF even for a trivial
+        // `{x:string}` schema (the engine hit its 5-minute timeout). So the
+        // ADR-020 hang is NOT fixed in 0.8.15: ADR-025's "it returns" was this
+        // strip, not enforcement. The constrained path stays on the HTTP valve
+        // (ADR-001); passing a constraint here would just 5-minute-hang the caller
+        // (e.g. `toolbench --backend mistral --protocol grammar`).
 
         let response = match tokio::time::timeout(
             std::time::Duration::from_secs(300),

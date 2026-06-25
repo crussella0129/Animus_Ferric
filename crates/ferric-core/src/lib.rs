@@ -12,6 +12,6 @@ pub use media::{
 };
 pub use message::{Message, Role, ToolCall};
 pub use scale::{
-    ActionProtocol, ModelProfile, Protocol, RunPolicy, Tier, policy_for, tier_for_level,
-    tier_for_params,
+    ActionProtocol, ModelProfile, Protocol, RunPolicy, Tier, policy_for, ring_for_tier,
+    tier_for_level, tier_for_params,
 };

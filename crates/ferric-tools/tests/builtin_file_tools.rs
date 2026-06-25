@@ -166,6 +166,243 @@ fn make_dir_creates_parents_and_is_idempotent() {
 }
 
 #[test]
+fn search_files_finds_matches_with_relpath_and_lineno() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("src/a.rs"),
+        "fn foo() {}\nlet MARKER = 1;\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("b.txt"), "no hits here\nMARKER again\n").unwrap();
+
+    let (out, err) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "MARKER"})));
+    assert!(!err, "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.iter().any(|l| l.starts_with("b.txt:2:")), "{out}");
+    assert!(lines.iter().any(|l| l.starts_with("src/a.rs:2:")), "{out}");
+    assert!(lines.iter().all(|l| l.contains("MARKER")));
+    // Sorted (ADR-008).
+    let mut sorted = lines.clone();
+    sorted.sort_unstable();
+    assert_eq!(lines, sorted, "results must be sorted");
+}
+
+#[test]
+fn search_files_miss_is_empty_not_error() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("a.txt"), "nothing relevant").unwrap();
+    let (out, err) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "ZZZ_absent"})));
+    assert!(!err, "a miss must not be an error: {out}");
+    assert!(out.is_empty(), "no matches → empty output, got {out:?}");
+}
+
+#[test]
+fn search_files_caps_results() {
+    let (dir, ws, registry) = setup();
+    let body: String = (0..20).map(|_| "HIT\n").collect();
+    std::fs::write(dir.path().join("many.txt"), body).unwrap();
+    let (out, _err) = expect_completed(registry.execute(
+        &ws,
+        "search_files",
+        &json!({"query": "HIT", "max_results": 5}),
+    ));
+    assert_eq!(out.lines().count(), 5, "must cap at max_results");
+}
+
+#[test]
+fn search_files_skips_binary_and_noise_dirs() {
+    let (dir, ws, registry) = setup();
+    // Non-UTF-8 file (read_to_string fails → skipped), even though it has the bytes.
+    std::fs::write(
+        dir.path().join("blob.bin"),
+        [0xff, 0xfe, b'N', b'E', b'E', b'D', b'L', b'E'],
+    )
+    .unwrap();
+    // Match under a noise dir.
+    std::fs::create_dir_all(dir.path().join("target/sub")).unwrap();
+    std::fs::write(dir.path().join("target/sub/gen.txt"), "NEEDLE").unwrap();
+    // A real hit.
+    std::fs::write(dir.path().join("real.txt"), "NEEDLE here").unwrap();
+
+    let (out, err) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "NEEDLE"})));
+    assert!(!err, "{out}");
+    assert!(out.contains("real.txt:1:"), "real hit present: {out}");
+    assert!(!out.contains("blob.bin"), "binary file must be skipped");
+    assert!(!out.contains("target/"), "noise dir must be skipped");
+}
+
+#[test]
+fn search_files_refuses_outside_workspace() {
+    let (_dir, ws, registry) = setup();
+    let outcome = registry.execute(&ws, "search_files", &json!({"query": "x", "path": ".."}));
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "search outside the workspace must be denied, got {outcome:?}"
+    );
+}
+
+#[test]
+fn search_files_deterministic() {
+    let (dir, ws, registry) = setup();
+    for n in ["c.txt", "a.txt", "b.txt"] {
+        std::fs::write(dir.path().join(n), "TOKEN\n").unwrap();
+    }
+    let (first, _) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "TOKEN"})));
+    let (second, _) =
+        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "TOKEN"})));
+    assert_eq!(
+        first, second,
+        "two identical searches must match byte-for-byte"
+    );
+}
+
+#[test]
+fn edit_file_replaces_first_occurrence() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.rs"), "let x = 1;\nlet x = 2;\n").unwrap();
+    let (out, err) = expect_completed(registry.execute(
+        &ws,
+        "edit_file",
+        &json!({"path": "f.rs", "old_string": "let x = 1;", "new_string": "let y = 9;"}),
+    ));
+    assert!(!err, "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.rs")).unwrap(),
+        "let y = 9;\nlet x = 2;\n",
+        "only the first occurrence is replaced"
+    );
+}
+
+#[test]
+fn edit_file_absent_old_string_is_error_and_no_write() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "original").unwrap();
+    let (output, is_error) = expect_completed(registry.execute(
+        &ws,
+        "edit_file",
+        &json!({"path": "f.txt", "old_string": "absent", "new_string": "x"}),
+    ));
+    assert!(is_error);
+    assert!(output.contains("f.txt"));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        "original",
+        "file untouched when old_string is absent"
+    );
+}
+
+#[test]
+fn edit_file_empty_old_string_is_error() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+    let (_o, is_error) = expect_completed(registry.execute(
+        &ws,
+        "edit_file",
+        &json!({"path": "f.txt", "old_string": "", "new_string": "y"}),
+    ));
+    assert!(is_error, "empty old_string must error");
+}
+
+#[test]
+fn edit_file_outside_workspace_denied() {
+    let (_dir, ws, registry) = setup();
+    let outcome = registry.execute(
+        &ws,
+        "edit_file",
+        &json!({"path": "../escape.txt", "old_string": "a", "new_string": "b"}),
+    );
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "edit outside the workspace must be denied, got {outcome:?}"
+    );
+}
+
+#[test]
+fn delete_path_removes_file() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("gone.txt"), "x").unwrap();
+    let (out, err) =
+        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "gone.txt"})));
+    assert!(!err, "{out}");
+    assert!(!dir.path().join("gone.txt").exists());
+}
+
+#[test]
+fn delete_path_removes_empty_dir() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir(dir.path().join("empty")).unwrap();
+    let (_o, err) =
+        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "empty"})));
+    assert!(!err);
+    assert!(!dir.path().join("empty").exists());
+}
+
+#[test]
+fn delete_path_nonempty_dir_needs_recursive() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir(dir.path().join("d")).unwrap();
+    std::fs::write(dir.path().join("d").join("f"), "x").unwrap();
+    // Without recursive → error, tree intact.
+    let (output, is_error) =
+        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "d"})));
+    assert!(is_error);
+    assert!(output.contains("recursive"));
+    assert!(
+        dir.path().join("d").join("f").exists(),
+        "tree intact without recursive"
+    );
+    // With recursive → gone.
+    let (_o, err) = expect_completed(registry.execute(
+        &ws,
+        "delete_path",
+        &json!({"path": "d", "recursive": true}),
+    ));
+    assert!(!err);
+    assert!(!dir.path().join("d").exists());
+}
+
+#[test]
+fn delete_path_missing_is_error() {
+    let (_dir, ws, registry) = setup();
+    let (output, is_error) =
+        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "ghost.txt"})));
+    assert!(is_error);
+    assert!(output.contains("ghost.txt"));
+}
+
+#[test]
+fn delete_path_outside_workspace_denied() {
+    let (dir, ws, registry) = setup();
+    let outside = dir.path().parent().unwrap().join("victim.txt");
+    std::fs::write(&outside, "data").unwrap();
+    let outcome = registry.execute(&ws, "delete_path", &json!({"path": "../victim.txt"}));
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "delete outside the workspace must be denied, got {outcome:?}"
+    );
+    assert!(outside.exists(), "denied delete must remove nothing");
+    let _ = std::fs::remove_file(&outside);
+}
+
+#[test]
+fn delete_path_into_ferric_denied() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir_all(dir.path().join(".ferric")).unwrap();
+    std::fs::write(dir.path().join(".ferric").join("server.json"), "{}").unwrap();
+    let outcome = registry.execute(&ws, "delete_path", &json!({"path": ".ferric/server.json"}));
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "deleting under .ferric must be denied, got {outcome:?}"
+    );
+    assert!(dir.path().join(".ferric").join("server.json").exists());
+}
+
+#[test]
 fn move_path_into_ferric_denied() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("x.txt"), "data").unwrap();
@@ -178,4 +415,37 @@ fn move_path_into_ferric_denied() {
         matches!(outcome, ExecuteOutcome::Denied { .. }),
         "move into .ferric must be denied, got {outcome:?}"
     );
+}
+
+#[test]
+fn rings_gate_builtins_by_tier() {
+    use ferric_core::{ModelProfile, policy_for};
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+    let profile = |params_b: f32| ModelProfile {
+        params_b,
+        quant: "Q4_K_M".to_string(),
+        ctx: 4096,
+        family: "t".to_string(),
+        measured_level: None,
+    };
+
+    // Nano (params < 4 → ring ceiling 0) → exactly the 6 Ring-0 core tools.
+    let nano = registry.tools_for_policy(&policy_for(&profile(1.0)));
+    let nano_names: Vec<&str> = nano.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(nano.len(), 6, "Nano gets the 6-tool core: {nano_names:?}");
+    assert!(
+        nano_names.contains(&"write_file"),
+        "the core (e.g. write_file) is never dropped by the cap"
+    );
+    assert!(
+        !nano_names.contains(&"search_files") && !nano_names.contains(&"move_path"),
+        "Ring-1 tools are not in a Nano grammar"
+    );
+
+    // Small (4..13 → ring ceiling 1) → the full 8 (Ring 0 + Ring 1).
+    let small = registry.tools_for_policy(&policy_for(&profile(8.0)));
+    let small_names: Vec<&str> = small.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(small.len(), 8, "Small adds Ring 1: {small_names:?}");
+    assert!(small_names.contains(&"search_files") && small_names.contains(&"move_path"));
 }

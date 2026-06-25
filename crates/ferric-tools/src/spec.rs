@@ -1,17 +1,19 @@
 use serde::Serialize;
 
-use ferric_core::Tier;
 use ferric_guard::{PermissionLevel, Workspace};
 
 /// Declarative description of a tool: what the model sees (name, description,
-/// schema) plus what the harness enforces (permission level, minimum tier).
+/// schema) plus what the harness enforces (permission level, ring).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
     pub permission: PermissionLevel,
-    pub min_tier: Tier,
+    /// Tool-vocabulary ring (0 = the always-on navigate/mutate core). The loop
+    /// includes rings `0..=ring_for_tier(tier)` and the registry trims from the
+    /// outer ring first, so the active rings = the model's grammar.
+    pub ring: u8,
 }
 
 /// Execution context handed to tools. Tools must resolve every path they
