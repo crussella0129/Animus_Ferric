@@ -443,3 +443,9 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** docs/testbench.md, README.md, run_benchmarks.ps1
 - **Commit:** 84006aa
+
+## T-1701 (sprint 17)
+- **Description:** Profile read-back primitive (ferric-bench). Added `calibrated_ring: Option<u8>` to `ModelProfileRecord` (additive `#[serde(default)]` — records written before the field deserialize with `None`; `calibrate()` sets `None`). New `read_profile(dir, model, protocol) -> Option<ModelProfileRecord>` (exact (model, protocol) match; missing file/record → `None` — a safe no-op for the consumer). New `write_calibrated_ring(dir, model, protocol, params_b, ring)` — loads-or-creates the record and sets ONLY `calibrated_ring`, preserving any `measured_level` the L0–L6 bench wrote (reuses the `write_profile` merge-by-key discipline). Re-exported from lib.rs. 4 unit tests: read round-trip + wrong-key/missing → None; ring-merge preserves measured_level; create-when-absent; old JSON without the field → ring None.
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-bench/src/{calibrate.rs,lib.rs}
+- **Commit:** 57b4c51

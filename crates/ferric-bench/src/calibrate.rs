@@ -20,6 +20,11 @@ pub struct ModelProfileRecord {
     pub measured_level: Option<u8>,
     pub tier_from_params: String,
     pub tier_from_measured: Option<String>,
+    /// Highest tool ring the model drove `solid` in a `--calibrate-rings` sweep
+    /// (ADR-028/029) — the recommended `--max-ring`. Additive: records written
+    /// before this field deserialize with `None`.
+    #[serde(default)]
+    pub calibrated_ring: Option<u8>,
 }
 
 /// The highest level with `completed == true` across a model's rows.
@@ -42,7 +47,44 @@ pub fn calibrate(
         measured_level,
         tier_from_params: format!("{:?}", tier_for_params(params_b)),
         tier_from_measured: measured_level.map(|l| format!("{:?}", tier_for_level(l))),
+        calibrated_ring: None,
     }
+}
+
+/// Read this model+protocol's record from `<dir>/model_profiles.json`, or `None`
+/// when the file or the (model, protocol) key is absent. The read-back consumer
+/// (`ferric query`) applies `measured_level` (→ tier) and `calibrated_ring`
+/// (→ `max_ring`); a miss is a safe no-op (ADR-029).
+pub fn read_profile(dir: &Path, model: &str, protocol: &str) -> Option<ModelProfileRecord> {
+    let path = dir.join("model_profiles.json");
+    let records: Vec<ModelProfileRecord> =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    records
+        .into_iter()
+        .find(|r| r.model == model && r.protocol == protocol)
+}
+
+/// Persist a `--calibrate-rings` result: load-or-create the (model, protocol)
+/// record and set ONLY `calibrated_ring`, preserving any `measured_level` the
+/// L0–L6 bench wrote. Uses the same merge-by-key discipline as `write_profile`.
+pub fn write_calibrated_ring(
+    dir: &Path,
+    model: &str,
+    protocol: &str,
+    params_b: f32,
+    ring: u8,
+) -> std::io::Result<()> {
+    let mut record = read_profile(dir, model, protocol).unwrap_or_else(|| ModelProfileRecord {
+        model: model.to_string(),
+        params_b,
+        protocol: protocol.to_string(),
+        measured_level: None,
+        tier_from_params: format!("{:?}", tier_for_params(params_b)),
+        tier_from_measured: None,
+        calibrated_ring: None,
+    });
+    record.calibrated_ring = Some(ring);
+    write_profile(dir, &record)
 }
 
 /// Write/replace this model+protocol's record in `<dir>/model_profiles.json`
@@ -156,5 +198,59 @@ mod tests {
         let rec = calibrate("weak", 1.0, "native_tools", &[row(0, false)]);
         assert_eq!(rec.measured_level, None);
         assert_eq!(rec.tier_from_measured, None);
+    }
+
+    #[test]
+    fn read_profile_round_trips_and_misses_are_none() {
+        let dir = tempfile::tempdir().unwrap();
+        // Missing file → None.
+        assert_eq!(read_profile(dir.path(), "m", "ConstrainedJson"), None);
+        let rec = calibrate("qwen-7b", 7.0, "ConstrainedJson", &[row(0, true), row(3, true)]);
+        write_profile(dir.path(), &rec).unwrap();
+        // Exact key round-trips; a wrong key → None.
+        assert_eq!(
+            read_profile(dir.path(), "qwen-7b", "ConstrainedJson").as_ref(),
+            Some(&rec)
+        );
+        assert_eq!(read_profile(dir.path(), "qwen-7b", "NativeTools"), None);
+        assert_eq!(read_profile(dir.path(), "absent", "ConstrainedJson"), None);
+    }
+
+    #[test]
+    fn write_calibrated_ring_preserves_measured_level() {
+        let dir = tempfile::tempdir().unwrap();
+        // A model the L0–L6 bench measured to level 4.
+        let rec = calibrate(
+            "llama-1b",
+            1.0,
+            "ConstrainedJson",
+            &[row(0, true), row(2, true), row(4, true)],
+        );
+        assert_eq!(rec.measured_level, Some(4));
+        write_profile(dir.path(), &rec).unwrap();
+        // Now the ring calibration writes ring 1 — it must NOT clobber the level.
+        write_calibrated_ring(dir.path(), "llama-1b", "ConstrainedJson", 1.0, 1).unwrap();
+        let back = read_profile(dir.path(), "llama-1b", "ConstrainedJson").unwrap();
+        assert_eq!(back.measured_level, Some(4), "level preserved");
+        assert_eq!(back.calibrated_ring, Some(1), "ring set");
+    }
+
+    #[test]
+    fn write_calibrated_ring_creates_record_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        write_calibrated_ring(dir.path(), "fresh", "ConstrainedJson", 7.0, 2).unwrap();
+        let back = read_profile(dir.path(), "fresh", "ConstrainedJson").unwrap();
+        assert_eq!(back.calibrated_ring, Some(2));
+        assert_eq!(back.measured_level, None);
+    }
+
+    #[test]
+    fn old_json_without_ring_field_defaults_none() {
+        // A record serialized before `calibrated_ring` existed.
+        let json = r#"[{"model":"m","params_b":1.0,"protocol":"ConstrainedJson",
+            "measured_level":2,"tier_from_params":"Nano","tier_from_measured":"Small"}]"#;
+        let recs: Vec<ModelProfileRecord> = serde_json::from_str(json).unwrap();
+        assert_eq!(recs[0].calibrated_ring, None);
+        assert_eq!(recs[0].measured_level, Some(2));
     }
 }
