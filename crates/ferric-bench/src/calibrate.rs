@@ -205,7 +205,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Missing file → None.
         assert_eq!(read_profile(dir.path(), "m", "ConstrainedJson"), None);
-        let rec = calibrate("qwen-7b", 7.0, "ConstrainedJson", &[row(0, true), row(3, true)]);
+        let rec = calibrate(
+            "qwen-7b",
+            7.0,
+            "ConstrainedJson",
+            &[row(0, true), row(3, true)],
+        );
         write_profile(dir.path(), &rec).unwrap();
         // Exact key round-trips; a wrong key → None.
         assert_eq!(
