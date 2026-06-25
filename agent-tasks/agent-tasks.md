@@ -1,12 +1,13 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 16: ring **calibration** — `ferric toolbench --calibrate-rings` sweeps a
-> model ring-by-ring and reports the highest ring it reliably drives (the
-> demonstrated-reliability promotion the user described). Composes existing
-> `bench_model`/`verdict`/`max_ring`. Plan: `sprints/s16/sprint-plans/build-plan.md`.
+> Sprint 16 (ring **calibration**) is **done** — `ferric toolbench --calibrate-rings`
+> sweeps a model ring-by-ring and reports the highest ring it reliably drives (the
+> recommended `--max-ring`). Proven vs ollama: qwen2.5-coder:7b AND llama3.2:1b both
+> calibrate to `--max-ring 1` at 100%. T-1601/1602 committed. The rings loop is closed:
+> defined (s14) → controllable (s15) → measured/earned (s16). [[ferric-tool-rings]]
 
-- [ ] T-1601 (sprint 16): `--calibrate-rings` sweep + pure `recommend_max_ring` + per-model report — touches: crates/ferric-cli/src/toolbench_cmd.rs
-- [ ] T-1602 (sprint 16): Docs — calibration workflow + run_benchmarks.ps1 step + timeline — touches: README.md, docs/testbench.md, run_benchmarks.ps1
-
-Later: persist the recommended ring into a model profile (auto-apply, not just
-recommend); more Ring-1/2 tools; MCP-stdio (ADR-012); live-media heartbeat.
+Open candidates (sprint 17+):
+- **Persist the calibrated ring** into a model profile so it auto-applies on `query` (calibration currently *recommends*; this would make the promotion durable).
+- More **Ring-1/2 tools** (find/organize, plan/diff) — gives calibration more rings to sweep.
+- **MCP-stdio** (ADR-012) — needs the ADR-005 external-exec security call (the user's).
+- **Live-media heartbeat** — human-gated on a multimodal server.
