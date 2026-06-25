@@ -98,6 +98,12 @@ pub struct RunPolicy {
     /// leaves headroom over the largest expected single action (~450 tokens).
     pub max_output_tokens: u32,
     pub allows_subagents: bool,
+    /// Operator cap on the active tool ring (ADR-028). `None` ⇒ the tier's
+    /// `ring_for_tier` ceiling; `Some(n)` caps the active rings at
+    /// `min(tier_ceiling, n)` — restrict-only (raise via `measured_level`). The
+    /// CLI `--max-ring` sets it; `policy_for` leaves it `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_ring: Option<u8>,
 }
 
 /// Tier from parameter count. Boundaries follow Animus `tiers.py`:
@@ -191,6 +197,7 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
         prompt_budget_tokens,
         max_output_tokens,
         allows_subagents: subagents,
+        max_ring: None,
     }
 }
 

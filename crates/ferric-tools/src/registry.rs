@@ -102,12 +102,15 @@ impl Registry {
     /// rings ARE the model's grammar. (Replaces the old alphabetical `.take` cap,
     /// which could silently drop an essential core tool — e.g. `write_file`.)
     pub fn tools_for_policy(&self, policy: &RunPolicy) -> Vec<ToolSpec> {
-        let max_ring = ring_for_tier(policy.tier);
+        // The tier sets the ceiling; an explicit `--max-ring` (policy.max_ring)
+        // can only lower it further (restrict-only — expansion is earned via
+        // measured_level, ADR-028/019).
+        let ceiling = ring_for_tier(policy.tier).min(policy.max_ring.unwrap_or(u8::MAX));
         let mut specs: Vec<ToolSpec> = self
             .tools
             .values()
             .map(|t| t.spec())
-            .filter(|spec| spec.ring <= max_ring)
+            .filter(|spec| spec.ring <= ceiling)
             .collect();
         // Priority by (ring asc, name): a cap sheds the highest rings first.
         specs.sort_by(|a, b| a.ring.cmp(&b.ring).then_with(|| a.name.cmp(&b.name)));
@@ -430,6 +433,54 @@ mod tests {
         assert!(
             nano_names.iter().all(|n| n.starts_with("core_")),
             "Nano sees only Ring 0: {nano_names:?}"
+        );
+    }
+
+    #[test]
+    fn tools_for_policy_max_ring_override_caps() {
+        let mut registry = Registry::new();
+        for n in ["a_core", "b_core", "c_core"] {
+            registry.register(Box::new(dummy_ring(n, 0)));
+        }
+        for n in ["x_outer", "y_outer"] {
+            registry.register(Box::new(dummy_ring(n, 1)));
+        }
+        // Small → ring ceiling 1 → both rings admitted (5 tools).
+        let base = policy_for(&ModelProfile {
+            params_b: 8.0,
+            quant: "Q4_K_M".to_string(),
+            ctx: 4096,
+            family: "t".to_string(),
+            measured_level: None,
+        });
+        assert_eq!(base.max_ring, None, "policy_for leaves the override unset");
+        assert_eq!(
+            registry.tools_for_policy(&base).len(),
+            5,
+            "None = tier default"
+        );
+
+        // --max-ring 0 → only the core ring, even though the tier allows ring 1.
+        let mut capped = base.clone();
+        capped.max_ring = Some(0);
+        let names: Vec<String> = registry
+            .tools_for_policy(&capped)
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert!(
+            names.iter().all(|n| n.ends_with("_core")),
+            "max_ring 0 restricts to the core: {names:?}"
+        );
+        assert_eq!(names.len(), 3);
+
+        // --max-ring above the tier ceiling is a no-op (capped by the tier).
+        let mut high = base.clone();
+        high.max_ring = Some(5);
+        assert_eq!(
+            registry.tools_for_policy(&high).len(),
+            5,
+            "override only lowers"
         );
     }
 

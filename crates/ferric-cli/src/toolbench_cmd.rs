@@ -52,6 +52,10 @@ pub struct ToolbenchArgs {
     /// report only prints to stdout.
     #[arg(long)]
     pub report: Option<PathBuf>,
+
+    /// Cap the active tool ring (ADR-028) — bench exactly rings `0..=N`.
+    #[arg(long)]
+    pub max_ring: Option<u8>,
 }
 
 /// The classified outcome of one toolbench iteration. This is what turns the
@@ -440,7 +444,9 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             family: "unknown".to_string(),
             measured_level: None,
         };
-        let policy = policy_for(&profile);
+        let mut policy = policy_for(&profile);
+        // `--max-ring` benches exactly rings 0..=N (ADR-028).
+        policy.max_ring = args.max_ring;
 
         let all_tools: Vec<ToolDescriptor> = registry
             .tools_for_policy(&policy)

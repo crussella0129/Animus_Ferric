@@ -419,3 +419,15 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** decisions.md, README.md
 - **Commit:** `f96f01e`
+
+## T-1501 (sprint 15)
+- **Description:** `RunPolicy.max_ring: Option<u8>` (`#[serde(default, skip_serializing_if)]`, `None` = the `ring_for_tier(tier)` ceiling; `policy_for` leaves it `None`). `tools_for_policy`'s ceiling is now `ring_for_tier(tier).min(max_ring.unwrap_or(u8::MAX))` — restrict-only (an override above the tier ceiling is a no-op; the trim-from-outer logic is unchanged, no signature change). The two `RunPolicy` test helpers call `policy_for` (not literals) so they inherit `None` — no change. Unit test `tools_for_policy_max_ring_override_caps`: `None`/`Some(1)` → all 8, `Some(0)` → the 6 core, `Some(5)` → no-op. (Built with T-1502 during a classifier outage → one commit.)
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-core/src/scale.rs, crates/ferric-tools/src/registry.rs
+- **Commit:** 4a15eb0
+
+## T-1502 (sprint 15)
+- **Description:** `--max-ring` CLI flag (the user's "control exactly what rings"). `ferric query --max-ring <u8>` sets `policy.max_ring` after `policy_for`; `ferric toolbench --max-ring` benches rings `0..=N`. CLI integration test `max_ring_caps_the_offered_tools` runs `query --mock --params-b 8 --max-ring 0` and asserts the trace's `PromptAssembled.offered_tools` is the Ring-0 core (no `search_files`/`move_path`; `write_file` present) — proving the cap flows CLI → policy → `tools_for_policy` → grammar. ADR-028 amended (override shipped, restrict-only); README `--max-ring` note + Status sprint 15 + Sprint 15 timeline entry.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-cli/src/{query.rs,toolbench_cmd.rs}, crates/ferric-cli/tests/cli.rs, decisions.md, README.md
+- **Commit:** 4a15eb0

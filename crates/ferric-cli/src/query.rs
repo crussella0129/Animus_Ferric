@@ -103,6 +103,13 @@ pub struct QueryArgs {
     /// only for declared modalities; others are skipped with a reason.
     #[arg(long)]
     pub modality: Option<String>,
+
+    /// Cap the active tool ring (ADR-028). `0` pins the model to the Ring-0
+    /// navigate/mutate core — the smallest, surest grammar — regardless of its
+    /// size. Restrict-only: it cannot raise the ceiling above what the model's
+    /// tier/`measured_level` allows.
+    #[arg(long)]
+    pub max_ring: Option<u8>,
 }
 
 pub fn run_query(args: QueryArgs) -> ExitCode {
@@ -134,7 +141,9 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
         family: args.family.clone(),
         measured_level: None,
     };
-    let policy = policy_for(&profile);
+    let mut policy = policy_for(&profile);
+    // `--max-ring` caps the active rings (ADR-028); None leaves the tier ceiling.
+    policy.max_ring = args.max_ring;
     // Capability seed for auto protocol selection (an explicit `--protocol`
     // always overrides it). The backend's own `capabilities()` is the source of
     // truth, but the provider is constructed later (in drive_real), so we mirror

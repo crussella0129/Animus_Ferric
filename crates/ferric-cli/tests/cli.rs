@@ -173,6 +173,65 @@ fn query_file_media_skipped_with_reason() {
 }
 
 #[test]
+fn max_ring_caps_the_offered_tools() {
+    // Run a `--mock` query at Small tier (params-b 8 → ring ceiling 1) and read
+    // the tools actually offered to the grammar from the trace's PromptAssembled.
+    fn offered(extra: &[&str], dir: &std::path::Path) -> Vec<String> {
+        let out = ferric()
+            .args(["query", "--mock", "do a task", "--params-b", "8"])
+            .args(extra)
+            .arg("--workspace")
+            .arg(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let trace_dir = dir.join(".ferric").join("trace");
+        let trace = std::fs::read_dir(&trace_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+            .expect("a q-*.jsonl trace");
+        let content = std::fs::read_to_string(trace.path()).unwrap();
+        content
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .find(|v| v["event"]["type"] == "prompt_assembled")
+            .and_then(|v| {
+                v["event"]["offered_tools"].as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.as_str().map(String::from))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    // Without the cap: Small admits Ring 0 + Ring 1.
+    let d1 = tempfile::tempdir().unwrap();
+    let full = offered(&[], d1.path());
+    assert!(
+        full.contains(&"search_files".to_string()) && full.contains(&"move_path".to_string()),
+        "Small offers Ring 1 too: {full:?}"
+    );
+
+    // --max-ring 0: only the Ring-0 core, even at Small tier.
+    let d2 = tempfile::tempdir().unwrap();
+    let core = offered(&["--max-ring", "0"], d2.path());
+    assert!(
+        !core.contains(&"search_files".to_string()) && !core.contains(&"move_path".to_string()),
+        "--max-ring 0 drops Ring 1: {core:?}"
+    );
+    assert!(
+        core.contains(&"write_file".to_string()),
+        "the core is still offered: {core:?}"
+    );
+}
+
+#[test]
 fn unknown_args_fail_with_usage() {
     let out = ferric().arg("frobnicate").output().unwrap();
     assert!(!out.status.success());
