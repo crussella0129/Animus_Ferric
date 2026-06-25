@@ -467,3 +467,9 @@
 - **Completed:** 2026-06-25 (build phase)
 - **Files modified:** crates/ferric-tools/src/builtin/{copy_file.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
 - **Commit:** 5baf4b0
+
+## T-1803 (sprint 18)
+- **Description:** Docs + re-bench for the Ring-1 round-out. README: the builtin-tools paragraph now describes Ring 1 as the four-tool "find & organize" set (`search_files`/`find_files`/`move_path`/`copy_file`); Status → sprint 18; Sprint 18 timeline entry (+ Sprint 19 pointer). decisions.md: ADR-028 sprint-18 amendment (Ring 1 rounded out; Small's max_tools=10 fits Ring 0+1 exactly; re-bench solid). **Re-bench (ollama): both qwen2.5-coder:7b AND llama3.2:1b still calibrate to `--max-ring 1` at 100%** with Ring 1 now 10 tools total — widening the ring cost zero reliability, even at 1B. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-25 (build/test phase)
+- **Files modified:** README.md, decisions.md
+- **Commit:** 7f5e8b9
