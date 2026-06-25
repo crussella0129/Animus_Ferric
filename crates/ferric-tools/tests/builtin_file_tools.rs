@@ -443,9 +443,103 @@ fn rings_gate_builtins_by_tier() {
         "Ring-1 tools are not in a Nano grammar"
     );
 
-    // Small (4..13 → ring ceiling 1) → the full 8 (Ring 0 + Ring 1).
+    // Small (4..13 → ring ceiling 1) → the full 10 (Ring 0 + the 4-tool Ring 1).
     let small = registry.tools_for_policy(&policy_for(&profile(8.0)));
     let small_names: Vec<&str> = small.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(small.len(), 8, "Small adds Ring 1: {small_names:?}");
-    assert!(small_names.contains(&"search_files") && small_names.contains(&"move_path"));
+    assert_eq!(
+        small.len(),
+        10,
+        "Small adds the 4-tool Ring 1: {small_names:?}"
+    );
+    for ring1 in ["search_files", "move_path", "find_files", "copy_file"] {
+        assert!(small_names.contains(&ring1), "Ring 1 includes {ring1}");
+    }
+    // The Ring-1 round-out stays out of a Nano grammar.
+    assert!(
+        !nano_names.contains(&"find_files") && !nano_names.contains(&"copy_file"),
+        "Ring-1 round-out absent at Nano"
+    );
+}
+
+#[test]
+fn find_files_matches_names_sorted_scoped_and_skips_noise() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("config.toml"), "a").unwrap();
+    std::fs::write(dir.path().join("notes.md"), "b").unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src").join("config.rs"), "c").unwrap();
+    std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+    std::fs::write(dir.path().join(".git").join("config"), "noise").unwrap();
+
+    // From the root: both `config` files, name-sorted, no `notes.md`, no `.git`.
+    let (out, err) =
+        expect_completed(registry.execute(&ws, "find_files", &json!({"pattern": "config"})));
+    assert!(!err);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines, vec!["config.toml", "src/config.rs"], "got {lines:?}");
+
+    // `path` scopes the walk.
+    let (scoped, _) = expect_completed(registry.execute(
+        &ws,
+        "find_files",
+        &json!({"pattern": "config", "path": "src"}),
+    ));
+    assert_eq!(scoped, "src/config.rs");
+
+    // Cap honoured.
+    let (capped, _) = expect_completed(registry.execute(
+        &ws,
+        "find_files",
+        &json!({"pattern": "config", "max_results": 1}),
+    ));
+    assert_eq!(capped.lines().count(), 1);
+
+    // Empty pattern errors.
+    let (_, empty_err) =
+        expect_completed(registry.execute(&ws, "find_files", &json!({"pattern": ""})));
+    assert!(empty_err, "empty pattern must error");
+}
+
+#[test]
+fn copy_file_copies_keeps_original_and_creates_parent() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("a.txt"), "payload").unwrap();
+    let (out, err) = expect_completed(registry.execute(
+        &ws,
+        "copy_file",
+        &json!({"from": "a.txt", "to": "b/a.txt"}),
+    ));
+    assert!(!err && out.contains("copied"), "copy failed: {out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("b").join("a.txt")).unwrap(),
+        "payload"
+    );
+    assert!(dir.path().join("a.txt").exists(), "original kept");
+}
+
+#[test]
+fn copy_file_into_ferric_denied() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("x.txt"), "data").unwrap();
+    let outcome = registry.execute(
+        &ws,
+        "copy_file",
+        &json!({"from": "x.txt", "to": ".ferric/stash.txt"}),
+    );
+    assert!(
+        matches!(outcome, ExecuteOutcome::Denied { .. }),
+        "copy into .ferric must be denied, got {outcome:?}"
+    );
+}
+
+#[test]
+fn copy_file_directory_source_errors() {
+    let (dir, ws, registry) = setup();
+    std::fs::create_dir_all(dir.path().join("adir")).unwrap();
+    let (out, is_error) = expect_completed(registry.execute(
+        &ws,
+        "copy_file",
+        &json!({"from": "adir", "to": "bdir"}),
+    ));
+    assert!(is_error, "a directory source must error, got: {out}");
 }

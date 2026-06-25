@@ -455,3 +455,15 @@
 - **Completed:** 2026-06-25 (build phase)
 - **Files modified:** crates/ferric-cli/src/{toolbench_cmd.rs,query.rs}, crates/ferric-cli/tests/cli.rs, decisions.md, README.md, docs/testbench.md
 - **Commit:** fb29def
+
+## T-1801 (sprint 18)
+- **Description:** `find_files` builtin (Ring 1, Read) — the name-search companion to `search_files`' content search. `{pattern, path?: ".", max_results?: 100}` recurses from `path` and returns workspace-relative paths of files whose **name** contains `pattern`, name-sorted (ADR-008), capped (ADR-018), skipping noise dirs (`.git/target/node_modules/.ferric`); empty pattern → error. Mirrors `search_files.rs` (sorted walk, noise-skip). Registered in mod.rs. 1 unit test (finds by name + `path` scoping + cap + noise-skip + empty-pattern error). (Built with T-1802 — shared mod.rs + test file.)
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/{find_files.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 5baf4b0
+
+## T-1802 (sprint 18)
+- **Description:** `copy_file` builtin (Ring 1, Write) — the organize complement to `move_path`. `{from, to}` resolves+guards both endpoints, `create_dir_all`s the destination parent, `std::fs::copy`; a directory source errors (file-only — recursive copy out of scope). Write permission, so the destination denylist (`.ferric`, `.git/config`, ssh keys) applies. Mirrors `move_path.rs`. Registered in mod.rs. 3 unit tests (copies + keeps original + creates parent; copy into `.ferric` denied; directory source errors). Bumped `rings_gate_builtins_by_tier` 8 → 10 (Small now gets the 4-tool Ring 1: search_files, move_path, find_files, copy_file; still exactly `max_tools`=10; Nano unaffected at the 6 core). All ferric-tools tests green; clippy clean.
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/{copy_file.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 5baf4b0
