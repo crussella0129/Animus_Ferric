@@ -108,7 +108,9 @@ ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.1:8b,llama3.2
 | llama3.2:1b        | ConstrainedJson | 50/50   | 100.0% | solid   |
 ```
 
-That run is real: the constrained path holds at **100% down to a 1B model**, where the same model's *native* tool-calling collapses to 22% — which is the whole point of harness-owned decoding. Full walkthrough: [docs/testbench.md](docs/testbench.md).
+That run is real: the constrained path holds at **100% down to a 1B model**, where the same model's *native* tool-calling collapses to 22% — which is the whole point of harness-owned decoding.
+
+**5. Calibrate the rings.** `--calibrate-rings` benches a model **ring by ring** and reports the highest ring it reliably drives — the recommended `--max-ring` to run it at (`ferric toolbench … --calibrate-rings`). It's the demonstrated-reliability promotion: a model *earns* a wider grammar by proving it on the bench. Full walkthrough: [docs/testbench.md](docs/testbench.md).
 
 ## Portability
 
@@ -116,7 +118,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 15). Two inference backends ship behind feature flags:
+Active development (sprint 16). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
@@ -146,4 +148,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 15 — `--max-ring` override** (2026-06-24). The explicit "control exactly which rings" lever: `ferric query`/`toolbench --max-ring N` caps the active rings independent of tier (`--max-ring 0` = the core-only grammar). Restrict-only — widening past a model's capability stays earned via `measured_level`. Proven end-to-end via the trace's offered-tools. *ADR-028 (amended).*
 
-> **Next — Sprint 16: TBD** (wire the per-ring toolbench fire-rate into measured ring promotion — the s13 100% is the `solid` bar; or grow the Ring-1/2 tool sets; MCP-stdio (ADR-012) and the live-media heartbeat remain the larger/human-gated candidates).
+- **Sprint 16 — ring calibration** (2026-06-24). `toolbench --calibrate-rings` sweeps a model ring-by-ring and reports the highest ring it reliably drives — the recommended `--max-ring`. Closes the rings loop: a model *earns* a wider grammar by proving it on the bench (the demonstrated-reliability promotion). *ADR-028.*
+
+> **Next — Sprint 17: TBD** (persist the calibrated ring into a model profile so it auto-applies; or grow the Ring-1/2 tool sets; MCP-stdio (ADR-012) and the live-media heartbeat remain the larger/human-gated candidates).

@@ -99,3 +99,30 @@ that's the "good enough on this machine" answer, found in one run. `--report`
 also writes `fleet.jsonl`, every model's per-tool rows tagged by `model`. (This
 is a human-facing readout; it does not change a model's stored `measured_level`
 — that stays `ferric bench`'s job.)
+
+## 5. Calibrate the rings — how far can this model go?
+
+Tools are organized into **rings** (the always-on Ring-0 core, then wider rings
+as a model proves itself). `--calibrate-rings` benches a model **ring by ring**
+and tells you the largest ring it reliably drives — the recommended `--max-ring`:
+
+```sh
+ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.2:1b \
+  --protocol grammar --iterations 20 --calibrate-rings --report calib.md
+```
+
+```
+=== calibrating qwen2.5-coder:7b ===
+  ring | tools |   rate | verdict
+  -----|-------|--------|----------
+     0 |     6 | 100.0% | solid
+     1 |     8 | 100.0% | solid
+  → Recommended --max-ring 1 (solid through ring 1)
+```
+
+It sweeps `ring 0, 1, …` until a ring stops being `solid` (≥90%), then reports
+the highest ring with an unbroken solid run from the core. Feed that number to
+`ferric query --max-ring N` to run the model at exactly the rings it's earned —
+or, if even ring 0 isn't solid, the report says so (pick a stronger model). This
+is the demonstrated-reliability promotion: a model *earns* a wider grammar by
+proving it on the bench.

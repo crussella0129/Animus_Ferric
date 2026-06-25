@@ -36,4 +36,9 @@ Write-Host "`nOpenAI valve (ConstrainedJson) via ferric server..." -ForegroundCo
 Write-Host "`nFleet calibration (ollama) — $OllamaFleet ..." -ForegroundColor Cyan
 & $Ferric toolbench --backend openai --api-base "http://localhost:11434/v1" --models $OllamaFleet --protocol grammar --iterations $Iterations --report toolbench_fleet.md
 
-Write-Host "`nReports: toolbench_mistral.md / toolbench_openai.md / toolbench_fleet.md (+ .jsonl). Read the verdict bands." -ForegroundColor Green
+# 4. Ring calibration — for each ollama model, sweep rings 0,1,... and report the
+# highest ring it reliably drives (the recommended --max-ring).
+Write-Host "`nRing calibration (ollama) — $OllamaFleet ..." -ForegroundColor Cyan
+& $Ferric toolbench --backend openai --api-base "http://localhost:11434/v1" --models $OllamaFleet --protocol grammar --iterations $Iterations --calibrate-rings --report toolbench_calib.md
+
+Write-Host "`nReports: toolbench_mistral.md / toolbench_openai.md / toolbench_fleet.md / toolbench_calib.md (+ .jsonl). Read the verdict bands + the recommended --max-ring." -ForegroundColor Green

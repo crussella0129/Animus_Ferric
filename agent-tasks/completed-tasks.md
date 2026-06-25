@@ -431,3 +431,15 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** crates/ferric-cli/src/{query.rs,toolbench_cmd.rs}, crates/ferric-cli/tests/cli.rs, decisions.md, README.md
 - **Commit:** 4a15eb0
+
+## T-1601 (sprint 16)
+- **Description:** `ferric toolbench --calibrate-rings` — sweeps a model ring-by-ring and reports the highest ring it reliably drives (the recommended `--max-ring`). New `--calibrate-rings` flag; a calibrate branch in `run_toolbench` that, per `--models` entry (or the single configured model), loops `ring_cap=0,1,…` setting `policy.max_ring=Some(ring_cap)`, re-derives `tools_for_policy`+`action_schema`, runs the existing `bench_model`, records `(ring, tools, rate, verdict)`, and **stops when a ring adds no new tools** (auto-detects the max ring). Prints a per-model `ring|tools|rate|verdict` table + the recommendation; `--report` writes per-ring JSONL. Pure `recommend_max_ring(&[bool])->Option<u8>` = highest unbroken-`solid`-prefix ring (`None` if ring 0 not solid). `--calibrate-rings` supersedes a single `--max-ring`. Unit test `recommend_max_ring_longest_solid_prefix` (6 cases incl. break-after + ring-0-fail). Reuses `bench_model`/`verdict`/`overall_rate`; gated behind the backend features.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
+- **Commit:** 84006aa
+
+## T-1602 (sprint 16)
+- **Description:** Calibration docs. `docs/testbench.md` §5 "Calibrate the rings — how far can this model go?" (the `--calibrate-rings` workflow, an example table, and how to feed the recommended ring to `--max-ring`). README: a calibration step #5 in the testbench section, Status bumped to sprint 16, and the Sprint 16 timeline entry (+ a Sprint 17 "Next" pointer toward persisting the calibrated ring). `run_benchmarks.ps1` gained a ring-calibration step (`--calibrate-rings --report toolbench_calib.md`).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** docs/testbench.md, README.md, run_benchmarks.ps1
+- **Commit:** 84006aa

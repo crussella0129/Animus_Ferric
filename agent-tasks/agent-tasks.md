@@ -1,12 +1,12 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 15 (`--max-ring` override) is **done** — `RunPolicy.max_ring` + restrict-only
-> `min(tier_ceiling, override)` in `tools_for_policy`; `--max-ring` on query/toolbench.
-> `--max-ring 0` pins any model to the Ring-0 core grammar. T-1501/1502 committed
-> (ADR-028 amended). The rings are now fully controllable ([[ferric-tool-rings]]).
+> Sprint 16: ring **calibration** — `ferric toolbench --calibrate-rings` sweeps a
+> model ring-by-ring and reports the highest ring it reliably drives (the
+> demonstrated-reliability promotion the user described). Composes existing
+> `bench_model`/`verdict`/`max_ring`. Plan: `sprints/s16/sprint-plans/build-plan.md`.
 
-Open candidates (sprint 16+):
-- **Measured ring promotion** — wire the per-ring toolbench fire-rate into `measured_level`/ring unlock (the s13 100% is the `solid` bar); the last piece of "rings expand as the model proves itself."
-- More **Ring-1/2 tools** (find/organize, plan/diff).
-- **MCP-stdio** (ADR-012) — needs the ADR-005 external-exec security call (the user's).
-- **Live-media heartbeat** — human-gated on a multimodal server.
+- [ ] T-1601 (sprint 16): `--calibrate-rings` sweep + pure `recommend_max_ring` + per-model report — touches: crates/ferric-cli/src/toolbench_cmd.rs
+- [ ] T-1602 (sprint 16): Docs — calibration workflow + run_benchmarks.ps1 step + timeline — touches: README.md, docs/testbench.md, run_benchmarks.ps1
+
+Later: persist the recommended ring into a model profile (auto-apply, not just
+recommend); more Ring-1/2 tools; MCP-stdio (ADR-012); live-media heartbeat.
