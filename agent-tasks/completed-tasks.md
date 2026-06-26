@@ -473,3 +473,9 @@
 - **Completed:** 2026-06-25 (build/test phase)
 - **Files modified:** README.md, decisions.md
 - **Commit:** 7f5e8b9
+
+## T-1901 (sprint 19)
+- **Description:** `multi_edit` builtin (Ring 2, Write) — seeds Ring 2 ("plan & apply structured changes"). `{path, edits:[{old_string,new_string},…]}` reads the file once, applies each edit **sequentially** to an in-memory working copy via `replacen(_,_,1)` (a later edit may touch text an earlier one inserted), and writes **once** only if all validated — **atomic**: empty `edits`, an empty `old_string`, or an absent `old_string` at its turn → error with the file left byte-identical. Mirrors `edit_file.rs`; default `target_paths` guards `path` (Write → denylist). `ring: 2`. Registered in mod.rs. 3 unit tests (ordered batch incl. editing earlier-inserted text; missing-old leaves file unchanged; empty edits/old error). Bumped `rings_gate_builtins_by_tier`: added a Medium (params 20 → ring ceiling 2) case → 11 tools incl. `multi_edit`; asserted multi_edit absent at Small (10) and Nano (6). All 34 ferric-tools tests green; clippy clean.
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/{multi_edit.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 041dafb

@@ -8,6 +8,7 @@ mod find_files;
 mod list_dir;
 mod make_dir;
 mod move_path;
+mod multi_edit;
 mod read_file;
 mod search_files;
 mod write_file;
@@ -19,6 +20,7 @@ pub use find_files::FindFiles;
 pub use list_dir::ListDir;
 pub use make_dir::MakeDir;
 pub use move_path::MovePath;
+pub use multi_edit::MultiEdit;
 pub use read_file::ReadFile;
 pub use search_files::SearchFiles;
 pub use write_file::WriteFile;
@@ -37,6 +39,7 @@ pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(DeletePath));
     registry.register(Box::new(FindFiles));
     registry.register(Box::new(CopyFile));
+    registry.register(Box::new(MultiEdit));
 }
 
 /// Shared helper: the required string `path` argument.
