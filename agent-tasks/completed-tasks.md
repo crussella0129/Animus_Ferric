@@ -431,3 +431,45 @@
 - **Completed:** 2026-06-24 (build phase)
 - **Files modified:** crates/ferric-cli/src/{query.rs,toolbench_cmd.rs}, crates/ferric-cli/tests/cli.rs, decisions.md, README.md
 - **Commit:** 4a15eb0
+
+## T-1601 (sprint 16)
+- **Description:** `ferric toolbench --calibrate-rings` — sweeps a model ring-by-ring and reports the highest ring it reliably drives (the recommended `--max-ring`). New `--calibrate-rings` flag; a calibrate branch in `run_toolbench` that, per `--models` entry (or the single configured model), loops `ring_cap=0,1,…` setting `policy.max_ring=Some(ring_cap)`, re-derives `tools_for_policy`+`action_schema`, runs the existing `bench_model`, records `(ring, tools, rate, verdict)`, and **stops when a ring adds no new tools** (auto-detects the max ring). Prints a per-model `ring|tools|rate|verdict` table + the recommendation; `--report` writes per-ring JSONL. Pure `recommend_max_ring(&[bool])->Option<u8>` = highest unbroken-`solid`-prefix ring (`None` if ring 0 not solid). `--calibrate-rings` supersedes a single `--max-ring`. Unit test `recommend_max_ring_longest_solid_prefix` (6 cases incl. break-after + ring-0-fail). Reuses `bench_model`/`verdict`/`overall_rate`; gated behind the backend features.
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs
+- **Commit:** 84006aa
+
+## T-1602 (sprint 16)
+- **Description:** Calibration docs. `docs/testbench.md` §5 "Calibrate the rings — how far can this model go?" (the `--calibrate-rings` workflow, an example table, and how to feed the recommended ring to `--max-ring`). README: a calibration step #5 in the testbench section, Status bumped to sprint 16, and the Sprint 16 timeline entry (+ a Sprint 17 "Next" pointer toward persisting the calibrated ring). `run_benchmarks.ps1` gained a ring-calibration step (`--calibrate-rings --report toolbench_calib.md`).
+- **Completed:** 2026-06-24 (build phase)
+- **Files modified:** docs/testbench.md, README.md, run_benchmarks.ps1
+- **Commit:** 84006aa
+
+## T-1701 (sprint 17)
+- **Description:** Profile read-back primitive (ferric-bench). Added `calibrated_ring: Option<u8>` to `ModelProfileRecord` (additive `#[serde(default)]` — records written before the field deserialize with `None`; `calibrate()` sets `None`). New `read_profile(dir, model, protocol) -> Option<ModelProfileRecord>` (exact (model, protocol) match; missing file/record → `None` — a safe no-op for the consumer). New `write_calibrated_ring(dir, model, protocol, params_b, ring)` — loads-or-creates the record and sets ONLY `calibrated_ring`, preserving any `measured_level` the L0–L6 bench wrote (reuses the `write_profile` merge-by-key discipline). Re-exported from lib.rs. 4 unit tests: read round-trip + wrong-key/missing → None; ring-merge preserves measured_level; create-when-absent; old JSON without the field → ring None.
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-bench/src/{calibrate.rs,lib.rs}
+- **Commit:** 57b4c51
+
+## T-1702 (sprint 17)
+- **Description:** Persist + apply the profile (CLI), closing the read-back loop (ADR-029). `toolbench --calibrate-rings` gained `--profile-dir` (default `benchmarks`) and now writes each model's recommended ring via `ferric_bench::write_calibrated_ring` (keyed by model + the swept protocol label). `query` gained `--profile-dir` (default `benchmarks`): the caps-driven protocol is resolved up-front (it keys the lookup), then `ferric_bench::read_profile(profile_dir, model, protocol)` — model name from `backend_opts.model`/`model_file` — seeds `ModelProfile.measured_level` (→ tier) and defaults `policy.max_ring` to the record's `calibrated_ring`. Operator `--max-ring` still wins; a missing file / un-keyed model / mock-without-`--model` → `None` → byte-identical to before. CLI `--mock` test `persisted_calibrated_ring_caps_the_offered_tools` (a written `calibrated_ring: 0` caps the trace's `offered_tools` to the core; an empty profile-dir leaves Ring 1 intact). ADR-029 + README timeline (Status→17) + docs/testbench.md §5 "Make the promotion durable".
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-cli/src/{toolbench_cmd.rs,query.rs}, crates/ferric-cli/tests/cli.rs, decisions.md, README.md, docs/testbench.md
+- **Commit:** fb29def
+
+## T-1801 (sprint 18)
+- **Description:** `find_files` builtin (Ring 1, Read) — the name-search companion to `search_files`' content search. `{pattern, path?: ".", max_results?: 100}` recurses from `path` and returns workspace-relative paths of files whose **name** contains `pattern`, name-sorted (ADR-008), capped (ADR-018), skipping noise dirs (`.git/target/node_modules/.ferric`); empty pattern → error. Mirrors `search_files.rs` (sorted walk, noise-skip). Registered in mod.rs. 1 unit test (finds by name + `path` scoping + cap + noise-skip + empty-pattern error). (Built with T-1802 — shared mod.rs + test file.)
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/{find_files.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 5baf4b0
+
+## T-1802 (sprint 18)
+- **Description:** `copy_file` builtin (Ring 1, Write) — the organize complement to `move_path`. `{from, to}` resolves+guards both endpoints, `create_dir_all`s the destination parent, `std::fs::copy`; a directory source errors (file-only — recursive copy out of scope). Write permission, so the destination denylist (`.ferric`, `.git/config`, ssh keys) applies. Mirrors `move_path.rs`. Registered in mod.rs. 3 unit tests (copies + keeps original + creates parent; copy into `.ferric` denied; directory source errors). Bumped `rings_gate_builtins_by_tier` 8 → 10 (Small now gets the 4-tool Ring 1: search_files, move_path, find_files, copy_file; still exactly `max_tools`=10; Nano unaffected at the 6 core). All ferric-tools tests green; clippy clean.
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/{copy_file.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 5baf4b0
+
+## T-1803 (sprint 18)
+- **Description:** Docs + re-bench for the Ring-1 round-out. README: the builtin-tools paragraph now describes Ring 1 as the four-tool "find & organize" set (`search_files`/`find_files`/`move_path`/`copy_file`); Status → sprint 18; Sprint 18 timeline entry (+ Sprint 19 pointer). decisions.md: ADR-028 sprint-18 amendment (Ring 1 rounded out; Small's max_tools=10 fits Ring 0+1 exactly; re-bench solid). **Re-bench (ollama): both qwen2.5-coder:7b AND llama3.2:1b still calibrate to `--max-ring 1` at 100%** with Ring 1 now 10 tools total — widening the ring cost zero reliability, even at 1B. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-25 (build/test phase)
+- **Files modified:** README.md, decisions.md
+- **Commit:** 7f5e8b9

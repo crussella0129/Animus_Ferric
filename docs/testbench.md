@@ -99,3 +99,50 @@ that's the "good enough on this machine" answer, found in one run. `--report`
 also writes `fleet.jsonl`, every model's per-tool rows tagged by `model`. (This
 is a human-facing readout; it does not change a model's stored `measured_level`
 — that stays `ferric bench`'s job.)
+
+## 5. Calibrate the rings — how far can this model go?
+
+Tools are organized into **rings** (the always-on Ring-0 core, then wider rings
+as a model proves itself). `--calibrate-rings` benches a model **ring by ring**
+and tells you the largest ring it reliably drives — the recommended `--max-ring`:
+
+```sh
+ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.2:1b \
+  --protocol grammar --iterations 20 --calibrate-rings --report calib.md
+```
+
+```
+=== calibrating qwen2.5-coder:7b ===
+  ring | tools |   rate | verdict
+  -----|-------|--------|----------
+     0 |     6 | 100.0% | solid
+     1 |     8 | 100.0% | solid
+  → Recommended --max-ring 1 (solid through ring 1)
+```
+
+It sweeps `ring 0, 1, …` until a ring stops being `solid` (≥90%), then reports
+the highest ring with an unbroken solid run from the core. This is the
+demonstrated-reliability promotion: a model *earns* a wider grammar by proving it
+on the bench.
+
+### Make the promotion durable (`--profile-dir`)
+
+Add `--profile-dir <dir>` (default `benchmarks`) and `--calibrate-rings` **persists**
+each model's earned ring into `<dir>/model_profiles.json` (the same store
+`ferric bench` writes `measured_level` to). Then `ferric query --profile-dir <dir>`
+reads it back: a model with a recorded profile **automatically** runs at its earned
+tier (`measured_level`) and ring (`calibrated_ring`) — no manual `--max-ring`:
+
+```sh
+# 1. Prove the model once — writes calibrated_ring into benchmarks/model_profiles.json
+ferric toolbench --backend openai --models llama3.2:1b --protocol grammar \
+  --calibrate-rings --profile-dir benchmarks
+
+# 2. Every later query auto-applies it (the trace shows the capped ring)
+ferric query --backend openai --model llama3.2:1b "refactor this module"
+```
+
+`measured_level` *raises* the tier (capability earned); `calibrated_ring` *caps*
+the rings at what was proven (earned, not assumed). An explicit `--max-ring` still
+overrides, and a model with no recorded profile runs exactly as before — the
+read-back is a safe no-op until you've actually measured the model.

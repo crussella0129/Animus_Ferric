@@ -56,6 +56,17 @@ pub struct ToolbenchArgs {
     /// Cap the active tool ring (ADR-028) — bench exactly rings `0..=N`.
     #[arg(long)]
     pub max_ring: Option<u8>,
+
+    /// Sweep rings 0, 1, … and report the highest ring this model reliably
+    /// drives — the recommended `--max-ring`. Supersedes `--max-ring`.
+    #[arg(long)]
+    pub calibrate_rings: bool,
+
+    /// With `--calibrate-rings`, persist each model's recommended ring into
+    /// `<dir>/model_profiles.json` (`calibrated_ring`) so `ferric query` applies
+    /// it automatically (ADR-029). Default matches `ferric bench`'s results dir.
+    #[arg(long, default_value = "benchmarks")]
+    pub profile_dir: std::path::PathBuf,
 }
 
 /// The classified outcome of one toolbench iteration. This is what turns the
@@ -205,6 +216,24 @@ pub fn verdict(rate: f64) -> &'static str {
     } else {
         "unreliable"
     }
+}
+
+/// The recommended `--max-ring` from a ring-by-ring calibration: the highest
+/// ring with an unbroken `solid` prefix from ring 0. `None` means even ring 0
+/// is not solid — the model can't reliably drive the core (ADR-028/019).
+#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+pub fn recommend_max_ring(ring_solid: &[bool]) -> Option<u8> {
+    if ring_solid.first() != Some(&true) {
+        return None;
+    }
+    let mut r = 0u8;
+    for &solid in &ring_solid[1..] {
+        if !solid {
+            break;
+        }
+        r += 1;
+    }
+    Some(r)
 }
 
 /// Render the human-facing Markdown report.
@@ -477,6 +506,122 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             println!("Wrote {} + {}", path.display(), jsonl_path.display());
             Ok(())
         };
+
+        if args.calibrate_rings {
+            // Ring calibration: bench each model ring-by-ring and report the
+            // highest ring it reliably drives (the recommended --max-ring).
+            let model_list: Vec<String> = match &args.models {
+                Some(m) => m
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                None => vec![
+                    args.backend_opts
+                        .model
+                        .clone()
+                        .or_else(|| args.backend_opts.model_file.clone())
+                        .unwrap_or_else(|| "model".to_string()),
+                ],
+            };
+            let mut rows: Vec<serde_json::Value> = Vec::new();
+            for model in &model_list {
+                println!("\n=== calibrating {model} ===");
+                let mut opts = args.backend_opts.clone();
+                if args.models.is_some() {
+                    match opts.backend {
+                        BackendArg::Openai => opts.model = Some(model.clone()),
+                        BackendArg::Mistral => opts.model_file = Some(model.clone()),
+                    }
+                }
+                let provider_box = match create_provider(&opts).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("skip {model}: {e}");
+                        continue;
+                    }
+                };
+                let provider = provider_box.as_ref();
+                let mut results: Vec<(u8, usize, f64)> = Vec::new();
+                let mut solids: Vec<bool> = Vec::new();
+                let mut prev_len = usize::MAX;
+                let mut proto_label = String::new();
+                for ring_cap in 0u8..=8 {
+                    let mut p = policy.clone();
+                    p.max_ring = Some(ring_cap);
+                    let ring_tools: Vec<ToolDescriptor> = registry
+                        .tools_for_policy(&p)
+                        .into_iter()
+                        .map(|spec| ToolDescriptor {
+                            name: spec.name,
+                            description: spec.description,
+                            input_schema: spec.input_schema,
+                        })
+                        .collect();
+                    if ring_tools.len() == prev_len {
+                        break; // this ring added no tools → max ring reached
+                    }
+                    let ring_schema = action_schema(&ring_tools);
+                    let proto = select_protocol(&p, &provider.capabilities(), protocol_override);
+                    proto_label = format!("{proto:?}");
+                    let summary = bench_model(
+                        provider,
+                        proto,
+                        &ring_tools,
+                        &ring_schema,
+                        args.iterations,
+                        model,
+                    )
+                    .await?;
+                    let rate = summary.overall_rate();
+                    results.push((ring_cap, ring_tools.len(), rate));
+                    solids.push(verdict(rate) == "solid");
+                    rows.push(serde_json::json!({
+                        "model": model, "ring": ring_cap, "tools": ring_tools.len(),
+                        "rate": rate, "verdict": verdict(rate),
+                    }));
+                    prev_len = ring_tools.len();
+                }
+                println!("\n  ring | tools |   rate | verdict");
+                println!("  -----|-------|--------|----------");
+                for (r, t, rate) in &results {
+                    println!(
+                        "  {r:>4} | {t:>5} | {:>5.1}% | {}",
+                        rate * 100.0,
+                        verdict(*rate)
+                    );
+                }
+                match recommend_max_ring(&solids) {
+                    Some(r) => {
+                        println!("  → Recommended --max-ring {r} (solid through ring {r})");
+                        // Persist the earned ring so `ferric query` auto-applies it (ADR-029).
+                        match ferric_bench::write_calibrated_ring(
+                            &args.profile_dir,
+                            model,
+                            &proto_label,
+                            profile.params_b,
+                            r,
+                        ) {
+                            Ok(()) => println!(
+                                "    saved calibrated_ring {r} → {}/model_profiles.json",
+                                args.profile_dir.display()
+                            ),
+                            Err(e) => eprintln!("    cannot persist calibrated_ring: {e}"),
+                        }
+                    }
+                    None => println!(
+                        "  → ring 0 is NOT solid — this model can't reliably drive even the core; \
+                         pick a stronger model or recalibrate"
+                    ),
+                }
+            }
+            if let Some(path) = &args.report {
+                let body = "# Ring Calibration\n\nPer-model recommended `--max-ring` is printed to \
+                    stdout; the per-ring rows are in the sibling `.jsonl`.\n";
+                write_outputs(path, body, rows)?;
+            }
+            return Ok::<(), String>(());
+        }
 
         if let Some(models) = &args.models {
             // Fleet sweep: bench each model (same backend, model overridden) → leaderboard.
@@ -781,6 +926,17 @@ mod tests {
                 histogram: vec![("success".to_string(), success)],
             }],
         }
+    }
+
+    #[test]
+    fn recommend_max_ring_longest_solid_prefix() {
+        assert_eq!(recommend_max_ring(&[true, true]), Some(1));
+        assert_eq!(recommend_max_ring(&[true, false]), Some(0));
+        assert_eq!(recommend_max_ring(&[false, true]), None);
+        assert_eq!(recommend_max_ring(&[]), None);
+        assert_eq!(recommend_max_ring(&[true, true, true]), Some(2));
+        // A later solid ring after a break does not count (unbroken prefix only).
+        assert_eq!(recommend_max_ring(&[true, true, false, true]), Some(1));
     }
 
     #[test]

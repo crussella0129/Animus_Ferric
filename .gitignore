@@ -29,3 +29,5 @@ e2e_log_*.txt
 /toolbench_*.jsonl
 /ring*.md
 /ring*.jsonl
+/calib*.md
+/calib*.jsonl

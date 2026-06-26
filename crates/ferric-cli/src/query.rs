@@ -110,6 +110,13 @@ pub struct QueryArgs {
     /// tier/`measured_level` allows.
     #[arg(long)]
     pub max_ring: Option<u8>,
+
+    /// Directory holding `model_profiles.json` (written by `ferric bench` and
+    /// `toolbench --calibrate-rings`). When a record exists for this model, its
+    /// `measured_level` sets the tier and its `calibrated_ring` defaults
+    /// `--max-ring` — the durable promotion (ADR-029). A missing file is a no-op.
+    #[arg(long, default_value = "benchmarks")]
+    pub profile_dir: PathBuf,
 }
 
 pub fn run_query(args: QueryArgs) -> ExitCode {
@@ -134,16 +141,6 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
     let mut registry = Registry::new();
     register_builtin_tools(&mut registry);
 
-    let profile = ModelProfile {
-        params_b: args.params_b,
-        quant: args.quant.clone(),
-        ctx: args.ctx,
-        family: args.family.clone(),
-        measured_level: None,
-    };
-    let mut policy = policy_for(&profile);
-    // `--max-ring` caps the active rings (ADR-028); None leaves the tier ceiling.
-    policy.max_ring = args.max_ring;
     // Capability seed for auto protocol selection (an explicit `--protocol`
     // always overrides it). The backend's own `capabilities()` is the source of
     // truth, but the provider is constructed later (in drive_real), so we mirror
@@ -174,7 +171,57 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
             },
         }
     };
-    let protocol = select_protocol(&policy, &caps, args.protocol.map(ActionProtocol::from));
+    // Protocol is caps/override-driven (`select_protocol` ignores the policy), so
+    // resolve it up-front — it keys the persisted profile lookup below.
+    let protocol = select_protocol(
+        &policy_for(&ModelProfile {
+            params_b: args.params_b,
+            quant: args.quant.clone(),
+            ctx: args.ctx,
+            family: args.family.clone(),
+            measured_level: None,
+        }),
+        &caps,
+        args.protocol.map(ActionProtocol::from),
+    );
+
+    // Read-back of a persisted profile (ADR-029): a prior `ferric bench` /
+    // `toolbench --calibrate-rings` may have recorded this model's
+    // `measured_level` (→ tier) and `calibrated_ring` (→ `max_ring`). The durable
+    // promotion — a proven model auto-runs at its earned tier + ring. Operator
+    // `--max-ring` still wins; `--mock` or a missing file is a no-op (identical to
+    // an un-calibrated run).
+    let profile_record = args
+        .backend_opts
+        .model
+        .clone()
+        .or_else(|| args.backend_opts.model_file.clone())
+        .and_then(|model| {
+            ferric_bench::read_profile(&args.profile_dir, &model, &format!("{protocol:?}"))
+        });
+    if let Some(rec) = &profile_record {
+        eprintln!(
+            "profile {}: measured_level {:?}, calibrated_ring {:?} ({})",
+            rec.model,
+            rec.measured_level,
+            rec.calibrated_ring,
+            args.profile_dir.display()
+        );
+    }
+
+    let profile = ModelProfile {
+        params_b: args.params_b,
+        quant: args.quant.clone(),
+        ctx: args.ctx,
+        family: args.family.clone(),
+        measured_level: profile_record.as_ref().and_then(|r| r.measured_level),
+    };
+    let mut policy = policy_for(&profile);
+    // `--max-ring` wins; else the persisted `calibrated_ring`; else the tier
+    // ceiling. Restrict-only either way (ADR-028).
+    policy.max_ring = args
+        .max_ring
+        .or_else(|| profile_record.as_ref().and_then(|r| r.calibrated_ring));
     let sampling = SamplingParams {
         temperature: args.temperature,
         max_tokens: policy.max_output_tokens,
