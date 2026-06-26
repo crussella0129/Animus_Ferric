@@ -177,3 +177,10 @@ It writes `measured_level` into `benchmarks/model_profiles.json`, so a later
 `ferric server`; `--backend mistral` uses a local GGUF (text-only — its constrained
 path hangs upstream); `--mock` is the CI self-test. This is the end-to-end check
 that the constrained loop *completes tasks*, not just that it emits tool calls.
+
+**Fleet sweep:** `--models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b` runs the whole
+ladder for each model and prints an **agentic capability leaderboard**
+(`model | measured_level | tier`) — the multi-turn analogue of §4's fire-rate
+leaderboard. It answers "how small can a model be and still *complete* real tasks?",
+and writes each model's `measured_level` so `query --profile-dir` auto-runs it at its
+earned tier.

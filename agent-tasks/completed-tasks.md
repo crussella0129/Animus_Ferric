@@ -503,3 +503,9 @@
 - **Completed:** 2026-06-26 (build phase)
 - **Files modified:** crates/ferric-cli/src/bench_cmd.rs
 - **Commit:** 8e62121
+
+## T-2102 (sprint 21)
+- **Description:** Ran the fleet L0–L6 sweep + docs. **Agentic capability map (ollama, ConstrainedJson):** qwen2.5-coder:7b → measured_level 6 (Large, all pass); llama3.1:8b → 5 (Medium; passes L0–L3,L5, fails L4,L6); llama3.2:1b → none (fails even L0). **Findings:** (1) single-tool-call reliability ≠ agentic capability — the 1B fires single tool calls at 100% (toolbench) but can't *complete* a multi-turn task; (2) the code-tuned 7B beats the larger general 8B; (3) the ladder discriminates (6/5/none) so L7+ isn't urgent. Per-model `measured_level` persisted to `model_profiles.json`. Docs: ADR-030 sprint-21 amendment (fleet map + findings); README Status 21 + Sprint 21 timeline; docs/testbench.md §6 `--models` fleet note; run_benchmarks.ps1 fleet bench step. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-26 (build/test phase)
+- **Files modified:** decisions.md, README.md, docs/testbench.md, run_benchmarks.ps1
+- **Commit:** c3968b1

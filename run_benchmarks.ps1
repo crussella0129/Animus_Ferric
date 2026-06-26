@@ -41,11 +41,11 @@ Write-Host "`nFleet calibration (ollama) — $OllamaFleet ..." -ForegroundColor 
 Write-Host "`nRing calibration (ollama) — $OllamaFleet ..." -ForegroundColor Cyan
 & $Ferric toolbench --backend openai --api-base "http://localhost:11434/v1" --models $OllamaFleet --protocol grammar --iterations $Iterations --calibrate-rings --report toolbench_calib.md
 
-# 5. Full agentic loop (L0-L6) — multi-turn task completion, not just single tool
-# calls. Sets measured_level in benchmarks/model_profiles.json, which `ferric query
-# --profile-dir benchmarks` then auto-applies. Targets the first ollama model.
-$BenchModel = ($OllamaFleet -split ',')[0].Trim()
-Write-Host "`nFull agentic loop L0-L6 (ollama) — $BenchModel ..." -ForegroundColor Cyan
-& $Ferric bench --backend openai --api-base "http://localhost:11434/v1" --model $BenchModel --params-b 7 --protocol grammar --results-dir benchmarks
+# 5. Full agentic loop (L0-L6) across the fleet — multi-turn task completion, not
+# just single tool calls. Writes each model's measured_level to
+# benchmarks/model_profiles.json (which `ferric query --profile-dir benchmarks`
+# auto-applies) and prints an agentic capability leaderboard.
+Write-Host "`nFull agentic loop L0-L6 fleet (ollama) — $OllamaFleet ..." -ForegroundColor Cyan
+& $Ferric bench --backend openai --api-base "http://localhost:11434/v1" --models $OllamaFleet --params-b 7 --protocol grammar --results-dir benchmarks
 
 Write-Host "`nReports: toolbench_mistral.md / toolbench_openai.md / toolbench_fleet.md / toolbench_calib.md (+ .jsonl); benchmarks/model_profiles.json (measured_level). Read the verdict bands + the recommended --max-ring." -ForegroundColor Green
