@@ -1,13 +1,14 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 18 (round out Ring 1) is **done** — added `find_files` (find by name) +
-> `copy_file` (organize complement to move_path), making Ring 1 a coherent four-tool
-> "find & organize" set (search_files, find_files, move_path, copy_file). Re-bench:
-> both qwen2.5-coder:7b AND llama3.2:1b still calibrate `--max-ring 1` at 100% with
-> Ring 1 now 10 tools — widening the ring cost zero reliability. T-1801/1802/1803
-> committed, ADR-028 amended. [[ferric-tool-rings]]
+> Sprint 19 (seed Ring 2) is **done** — added `multi_edit` (`ring: 2`), an ordered
+> atomic batch of edits to one file, and `toolbench --params-b` so calibration can
+> reach Ring 2. Live: qwen2.5-coder:7b at `--params-b 20` calibrates `--max-ring 2`
+> — rings 0/1/2 (6/10/11 tools) all 100% solid. The 7B drives the nested-array
+> `multi_edit` at 100% — Ring 2 is reachable. T-1901/1902 committed, ADR-028 amended.
+> [[ferric-tool-rings]]
 
-Open candidates (sprint 19+):
-- **Ring-2 tools** (plan/diff) — the next ring out; gives calibration a third ring to sweep and a model a reason to earn Medium tier.
+Open candidates (sprint 20+):
+- **More Ring-2 tools** (apply_patch / structured-plan) — Ring 2 is proven drivable; widen it.
 - **MCP-stdio** (ADR-012) — needs the ADR-005 external-exec security call (the user's).
 - **Live-media heartbeat** — human-gated on a multimodal server.
+- **A 13B+ model** to calibrate Ring 2 by *tier* (not just via `--params-b`).
