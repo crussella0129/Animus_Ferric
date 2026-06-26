@@ -459,6 +459,24 @@ fn rings_gate_builtins_by_tier() {
         !nano_names.contains(&"find_files") && !nano_names.contains(&"copy_file"),
         "Ring-1 round-out absent at Nano"
     );
+    // Ring 2 (`multi_edit`) is still above the Small ceiling.
+    assert!(
+        !small_names.contains(&"multi_edit"),
+        "Ring-2 multi_edit absent at Small"
+    );
+
+    // Medium (13..30 → ring ceiling 2) → 11: Ring 0 + Ring 1 + `multi_edit`.
+    let medium = registry.tools_for_policy(&policy_for(&profile(20.0)));
+    let medium_names: Vec<&str> = medium.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        medium.len(),
+        11,
+        "Medium adds Ring 2 (multi_edit): {medium_names:?}"
+    );
+    assert!(
+        medium_names.contains(&"multi_edit"),
+        "Ring 2 includes multi_edit: {medium_names:?}"
+    );
 }
 
 #[test]
@@ -542,4 +560,65 @@ fn copy_file_directory_source_errors() {
         &json!({"from": "adir", "to": "bdir"}),
     ));
     assert!(is_error, "a directory source must error, got: {out}");
+}
+
+#[test]
+fn multi_edit_applies_ordered_batch_atomically() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "a b").unwrap();
+    // Sequential: "a b" -[a→X]-> "X b" -[X b→DONE]-> "DONE" (2nd edits the 1st's output).
+    let (out, err) = expect_completed(registry.execute(
+        &ws,
+        "multi_edit",
+        &json!({"path": "f.txt", "edits": [
+            {"old_string": "a", "new_string": "X"},
+            {"old_string": "X b", "new_string": "DONE"}
+        ]}),
+    ));
+    assert!(!err, "{out}");
+    assert!(out.contains("applied 2 edits"));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        "DONE"
+    );
+}
+
+#[test]
+fn multi_edit_missing_old_leaves_file_unchanged() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "hello world").unwrap();
+    // The first edit would apply, but the second's old_string is absent → abort,
+    // nothing written.
+    let (_out, err) = expect_completed(registry.execute(
+        &ws,
+        "multi_edit",
+        &json!({"path": "f.txt", "edits": [
+            {"old_string": "hello", "new_string": "hi"},
+            {"old_string": "ABSENT", "new_string": "z"}
+        ]}),
+    ));
+    assert!(err, "a missing old_string must error");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        "hello world",
+        "file must be byte-identical when any edit fails"
+    );
+}
+
+#[test]
+fn multi_edit_empty_edits_and_empty_old_error() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "data").unwrap();
+    let (_o1, e1) = expect_completed(registry.execute(
+        &ws,
+        "multi_edit",
+        &json!({"path": "f.txt", "edits": []}),
+    ));
+    assert!(e1, "empty edits must error");
+    let (_o2, e2) = expect_completed(registry.execute(
+        &ws,
+        "multi_edit",
+        &json!({"path": "f.txt", "edits": [{"old_string": "", "new_string": "x"}]}),
+    ));
+    assert!(e2, "empty old_string must error");
 }

@@ -473,3 +473,39 @@
 - **Completed:** 2026-06-25 (build/test phase)
 - **Files modified:** README.md, decisions.md
 - **Commit:** 7f5e8b9
+
+## T-1901 (sprint 19)
+- **Description:** `multi_edit` builtin (Ring 2, Write) — seeds Ring 2 ("plan & apply structured changes"). `{path, edits:[{old_string,new_string},…]}` reads the file once, applies each edit **sequentially** to an in-memory working copy via `replacen(_,_,1)` (a later edit may touch text an earlier one inserted), and writes **once** only if all validated — **atomic**: empty `edits`, an empty `old_string`, or an absent `old_string` at its turn → error with the file left byte-identical. Mirrors `edit_file.rs`; default `target_paths` guards `path` (Write → denylist). `ring: 2`. Registered in mod.rs. 3 unit tests (ordered batch incl. editing earlier-inserted text; missing-old leaves file unchanged; empty edits/old error). Bumped `rings_gate_builtins_by_tier`: added a Medium (params 20 → ring ceiling 2) case → 11 tools incl. `multi_edit`; asserted multi_edit absent at Small (10) and Nano (6). All 34 ferric-tools tests green; clippy clean.
+- **Completed:** 2026-06-25 (build phase)
+- **Files modified:** crates/ferric-tools/src/builtin/{multi_edit.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** 041dafb
+
+## T-1902 (sprint 19)
+- **Description:** `toolbench --params-b` + docs + live Ring-2 bench. Added `--params-b <f32>` to `ToolbenchArgs` (default 8.0) replacing the hardcoded `params_b: 8.0` in the bench profile, so the bench tier (hence ring ceiling) is selectable — `--params-b 20` → Medium → ring ceiling 2, letting `--calibrate-rings` sweep rings 0–2. README: builtin list now names `multi_edit` as Ring 2; Status → sprint 19; Sprint 19 timeline. decisions.md: ADR-028 sprint-19 amendment. docs/testbench.md: `--params-b` note for reaching higher rings. **Live E2E (the headline): qwen2.5-coder:7b at `--params-b 20` calibrates `--max-ring 2` — rings 0/1/2 (6/10/11 tools) all 100% solid.** The 7B drives the new nested-array `multi_edit` at 100% — Ring 2 is reachable; the constrained-decoding thesis holds for structured edits. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-25 (build/test phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs, README.md, decisions.md, docs/testbench.md
+- **Commit:** bb99e3b
+
+## T-2001 (sprint 20)
+- **Description:** openai backend in the L0–L6 bench runner — so the full multi-turn agentic ladder can run the *constrained* path on a real model (it was `--mock`/mistral-GGUF-only, and mistral constrained hangs, ADR-027). Added additive `openai: Option<OpenAiArgs>` to `Invocation` (`OpenAiArgs{api_base: Option<String>, model, params_b, ctx}`); the 2 sites (`bench_cmd.rs`, `Invocation::mock()`) add `openai: None`. Extracted a pure `query_args(prompt, inv, workspace) -> Vec<String>` from `run_spec` (precedence: openai → mistral → `--mock`) so the backend branching is unit-testable without spawning. `bench` gained `--backend {mistral|openai}` (+ `--api-base`, `--model`); `--backend openai` builds the openai variant, keying the calibration record by the model id; defaults keep mistral/mock byte-identical. 3 `query_args` unit tests (openai arm has `--backend openai`/`--model`/`--api-base`, no `--model-dir`; mistral arm unchanged; mock arm). Verified manually: `query --backend openai` drives the loop (created hello.txt in 2 turns). default + openai builds + clippy + fmt clean.
+- **Completed:** 2026-06-26 (build phase)
+- **Files modified:** crates/ferric-bench/src/{runner.rs,lib.rs}, crates/ferric-cli/src/bench_cmd.rs
+- **Commit:** 16b6097
+
+## T-2002 (sprint 20)
+- **Description:** Ran the L0–L6 ladder on the constrained backend + fixed the verification bug it surfaced + docs. **Bug:** `task_complete` is a structured terminator (SessionEnd), not a dispatched ToolCall, so `parse_trace` never credited it → every spec's `expected_tools=["task_complete"]` falsely failed (`tools_ok: false` despite `terminator: task_complete`). Fixed in `verify.rs` (credit the `task_complete` terminator as a called tool). **Result:** `qwen2.5-coder:7b` (ollama, ConstrainedJson) **passes all L0–L6** → `measured_level 6`, promoting Small→Large (ADR-019 override on real data); persisted to `model_profiles.json`; `query --profile-dir` reads back `measured_level Some(6)` (ADR-029, real data). Docs: ADR-030; README Status 20 + Sprint 20 timeline; docs/testbench.md §6 (`ferric bench` full-loop); run_benchmarks.ps1 L0–L6 step. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-26 (build/test phase)
+- **Files modified:** crates/ferric-bench/src/verify.rs, decisions.md, README.md, docs/testbench.md, run_benchmarks.ps1
+- **Commit:** 2570297
+
+## T-2101 (sprint 21)
+- **Description:** `bench --models` fleet sweep over the full L0–L6 agentic ladder. Extracted the per-level loop (run_spec → parse_trace → verify → append_row → print PASS/FAIL) into a shared `run_levels(selected, inv, protocol, model_name, args) -> (Vec<ResultRow>, bool)`; the single-model path now calls it (byte-identical — `bench_mock`/`l0_smoke` green). Hoisted `ferric_bin`. New `--models <a,b,c>` (openai backend): per model id → openai `Invocation`, `run_levels`, `calibrate` + `write_profile` (one record per model), then a `model | measured_level | tier` leaderboard sorted by level desc (ADR-008). The fleet returns SUCCESS (a low measured_level is a valid measurement, not a failure); the single path keeps its FAILURE-on-any-level-fail contract. Imports `BenchSpec`/`ModelProfileRecord`. default build + openai clippy + fmt clean.
+- **Completed:** 2026-06-26 (build phase)
+- **Files modified:** crates/ferric-cli/src/bench_cmd.rs
+- **Commit:** 8e62121
+
+## T-2102 (sprint 21)
+- **Description:** Ran the fleet L0–L6 sweep + docs. **Agentic capability map (ollama, ConstrainedJson):** qwen2.5-coder:7b → measured_level 6 (Large, all pass); llama3.1:8b → 5 (Medium; passes L0–L3,L5, fails L4,L6); llama3.2:1b → none (fails even L0). **Findings:** (1) single-tool-call reliability ≠ agentic capability — the 1B fires single tool calls at 100% (toolbench) but can't *complete* a multi-turn task; (2) the code-tuned 7B beats the larger general 8B; (3) the ladder discriminates (6/5/none) so L7+ isn't urgent. Per-model `measured_level` persisted to `model_profiles.json`. Docs: ADR-030 sprint-21 amendment (fleet map + findings); README Status 21 + Sprint 21 timeline; docs/testbench.md §6 `--models` fleet note; run_benchmarks.ps1 fleet bench step. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-26 (build/test phase)
+- **Files modified:** decisions.md, README.md, docs/testbench.md, run_benchmarks.ps1
+- **Commit:** c3968b1
