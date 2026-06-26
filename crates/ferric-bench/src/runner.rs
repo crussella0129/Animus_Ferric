@@ -21,8 +21,14 @@ pub struct Invocation {
     /// The `ferric` binary to spawn (default: this executable).
     pub ferric_bin: PathBuf,
     pub protocol: ActionProtocol,
-    /// `None` → `--mock`; `Some` → real backend (requires the feature build).
+    /// Mistral GGUF backend. `None` + `openai: None` → `--mock`; `Some` requires
+    /// the `backend-mistralrs` feature in the spawned binary.
     pub model: Option<ModelArgs>,
+    /// OpenAI-compatible backend (ollama / llama-server — the constrained
+    /// workhorse). Takes precedence over `model`; requires `backend-openai` in
+    /// the spawned binary. This is what lets the full-loop ladder run the
+    /// constrained path on a real model (mistral constrained hangs, ADR-027).
+    pub openai: Option<OpenAiArgs>,
     /// Prompt library dir passed through as `--prompts-dir`.
     pub prompts_dir: Option<PathBuf>,
     pub keep_workspace: bool,
@@ -35,12 +41,23 @@ pub struct ModelArgs {
     pub ctx: u32,
 }
 
+pub struct OpenAiArgs {
+    /// `--api-base` (e.g. `http://localhost:11434/v1`); `None` auto-discovers a
+    /// `ferric server` runfile, like `query` itself.
+    pub api_base: Option<String>,
+    /// The model identifier (`--model`, e.g. `qwen2.5-coder:7b`).
+    pub model: String,
+    pub params_b: f32,
+    pub ctx: u32,
+}
+
 impl Invocation {
     pub fn mock() -> Self {
         Self {
             ferric_bin: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ferric")),
             protocol: ActionProtocol::ConstrainedJson,
             model: None,
+            openai: None,
             prompts_dir: None,
             keep_workspace: false,
         }
@@ -88,27 +105,7 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
     }
 
     let mut cmd = Command::new(&inv.ferric_bin);
-    cmd.arg("query")
-        .arg(&spec.prompt)
-        .arg("--workspace")
-        .arg(dir.path())
-        .arg("--protocol")
-        .arg(protocol_flag(inv.protocol));
-    if let Some(model) = &inv.model {
-        cmd.arg("--model-dir")
-            .arg(&model.model_dir)
-            .arg("--model-file")
-            .arg(&model.model_file)
-            .arg("--params-b")
-            .arg(model.params_b.to_string())
-            .arg("--ctx")
-            .arg(model.ctx.to_string());
-    } else {
-        cmd.arg("--mock");
-    }
-    if let Some(prompts) = &inv.prompts_dir {
-        cmd.arg("--prompts-dir").arg(prompts);
-    }
+    cmd.args(query_args(&spec.prompt, inv, dir.path()));
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -166,6 +163,56 @@ fn protocol_flag(p: ActionProtocol) -> &'static str {
     }
 }
 
+/// Build the child `query` argv (excluding the binary). Pure, so the backend
+/// branching is unit-testable without spawning. Precedence: `openai` (the
+/// constrained workhorse — ollama/llama-server) → `model` (mistral GGUF) →
+/// `--mock`. mistral's constrained path hangs (ADR-027), so the openai arm is how
+/// the full loop reaches a real *constrained* model.
+fn query_args(prompt: &str, inv: &Invocation, workspace: &Path) -> Vec<String> {
+    let mut args = vec![
+        "query".to_string(),
+        prompt.to_string(),
+        "--workspace".to_string(),
+        workspace.display().to_string(),
+        "--protocol".to_string(),
+        protocol_flag(inv.protocol).to_string(),
+    ];
+    if let Some(o) = &inv.openai {
+        args.push("--backend".to_string());
+        args.push("openai".to_string());
+        if let Some(base) = &o.api_base {
+            args.push("--api-base".to_string());
+            args.push(base.clone());
+        }
+        args.extend([
+            "--model".to_string(),
+            o.model.clone(),
+            "--params-b".to_string(),
+            o.params_b.to_string(),
+            "--ctx".to_string(),
+            o.ctx.to_string(),
+        ]);
+    } else if let Some(m) = &inv.model {
+        args.extend([
+            "--model-dir".to_string(),
+            m.model_dir.display().to_string(),
+            "--model-file".to_string(),
+            m.model_file.clone(),
+            "--params-b".to_string(),
+            m.params_b.to_string(),
+            "--ctx".to_string(),
+            m.ctx.to_string(),
+        ]);
+    } else {
+        args.push("--mock".to_string());
+    }
+    if let Some(prompts) = &inv.prompts_dir {
+        args.push("--prompts-dir".to_string());
+        args.push(prompts.display().to_string());
+    }
+    args
+}
+
 /// Find the single `q-*.jsonl` the child wrote under `<ws>/.ferric/trace/`.
 fn find_trace(workspace: &Path) -> Option<PathBuf> {
     let trace_dir = workspace.join(".ferric").join("trace");
@@ -178,6 +225,69 @@ fn find_trace(workspace: &Path) -> Option<PathBuf> {
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("q-") && n.ends_with(".jsonl"))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base() -> Invocation {
+        Invocation {
+            ferric_bin: PathBuf::from("ferric"),
+            protocol: ActionProtocol::ConstrainedJson,
+            model: None,
+            openai: None,
+            prompts_dir: None,
+            keep_workspace: false,
+        }
+    }
+
+    fn has_pair(args: &[String], flag: &str, value: &str) -> bool {
+        args.windows(2).any(|w| w[0] == flag && w[1] == value)
+    }
+
+    #[test]
+    fn query_args_openai_arm_targets_the_valve() {
+        let mut inv = base();
+        inv.openai = Some(OpenAiArgs {
+            api_base: Some("http://localhost:11434/v1".to_string()),
+            model: "qwen2.5-coder:7b".to_string(),
+            params_b: 7.0,
+            ctx: 4096,
+        });
+        let args = query_args("do a task", &inv, Path::new("/ws"));
+        assert!(has_pair(&args, "--backend", "openai"), "{args:?}");
+        assert!(has_pair(&args, "--model", "qwen2.5-coder:7b"));
+        assert!(has_pair(&args, "--api-base", "http://localhost:11434/v1"));
+        assert!(has_pair(&args, "--protocol", "grammar"));
+        assert!(!args.iter().any(|a| a == "--model-dir"), "no mistral flags");
+        assert!(!args.iter().any(|a| a == "--mock"));
+    }
+
+    #[test]
+    fn query_args_mistral_arm_unchanged() {
+        let mut inv = base();
+        inv.model = Some(ModelArgs {
+            model_dir: PathBuf::from("/m"),
+            model_file: "f.gguf".to_string(),
+            params_b: 1.0,
+            ctx: 4096,
+        });
+        let args = query_args("t", &inv, Path::new("/ws"));
+        assert!(args.iter().any(|a| a == "--model-dir"));
+        assert!(args.iter().any(|a| a == "--model-file"));
+        assert!(
+            !args.iter().any(|a| a == "--backend"),
+            "mistral arm adds no --backend"
+        );
+    }
+
+    #[test]
+    fn query_args_mock_arm() {
+        let args = query_args("t", &base(), Path::new("/ws"));
+        assert!(args.iter().any(|a| a == "--mock"));
+        assert!(!args.iter().any(|a| a == "--backend"));
+    }
 }
 
 fn tail(s: &str, n: usize) -> String {

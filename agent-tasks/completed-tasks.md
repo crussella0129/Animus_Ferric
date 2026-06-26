@@ -485,3 +485,9 @@
 - **Completed:** 2026-06-25 (build/test phase)
 - **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs, README.md, decisions.md, docs/testbench.md
 - **Commit:** bb99e3b
+
+## T-2001 (sprint 20)
+- **Description:** openai backend in the L0–L6 bench runner — so the full multi-turn agentic ladder can run the *constrained* path on a real model (it was `--mock`/mistral-GGUF-only, and mistral constrained hangs, ADR-027). Added additive `openai: Option<OpenAiArgs>` to `Invocation` (`OpenAiArgs{api_base: Option<String>, model, params_b, ctx}`); the 2 sites (`bench_cmd.rs`, `Invocation::mock()`) add `openai: None`. Extracted a pure `query_args(prompt, inv, workspace) -> Vec<String>` from `run_spec` (precedence: openai → mistral → `--mock`) so the backend branching is unit-testable without spawning. `bench` gained `--backend {mistral|openai}` (+ `--api-base`, `--model`); `--backend openai` builds the openai variant, keying the calibration record by the model id; defaults keep mistral/mock byte-identical. 3 `query_args` unit tests (openai arm has `--backend openai`/`--model`/`--api-base`, no `--model-dir`; mistral arm unchanged; mock arm). Verified manually: `query --backend openai` drives the loop (created hello.txt in 2 turns). default + openai builds + clippy + fmt clean.
+- **Completed:** 2026-06-26 (build phase)
+- **Files modified:** crates/ferric-bench/src/{runner.rs,lib.rs}, crates/ferric-cli/src/bench_cmd.rs
+- **Commit:** 16b6097

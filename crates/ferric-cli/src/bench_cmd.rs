@@ -9,11 +9,12 @@ use std::process::ExitCode;
 
 use clap::Args;
 use ferric_bench::{
-    Invocation, ModelArgs, ResultRow, append_row, calibrate, completed, embedded_specs,
+    Invocation, ModelArgs, OpenAiArgs, ResultRow, append_row, calibrate, completed, embedded_specs,
     failure_admission, parse_trace, run_spec, verify_expectations, verify_tools,
 };
 use ferric_core::{ActionProtocol, tier_for_params};
 
+use crate::backend::BackendArg;
 use crate::query::ProtocolArg;
 
 #[derive(Args)]
@@ -30,13 +31,28 @@ pub struct BenchArgs {
     #[arg(long, default_value = "default")]
     pub variant: String,
 
-    /// Model directory (omit for --mock).
+    /// Inference backend (without `--mock`): `mistral` (GGUF, `--model-dir`/
+    /// `--model-file`) or `openai` (ollama / llama-server via `--api-base`/
+    /// `--model` — the constrained workhorse; mistral constrained hangs, ADR-027).
+    #[arg(long, value_enum, default_value = "mistral")]
+    pub backend: BackendArg,
+
+    /// Model directory (mistral backend; omit for --mock).
     #[arg(long)]
     pub model_dir: Option<PathBuf>,
 
-    /// GGUF file name inside --model-dir.
+    /// GGUF file name inside --model-dir (mistral backend).
     #[arg(long)]
     pub model_file: Option<String>,
+
+    /// OpenAI-compatible base URL (openai backend; omit to auto-discover a
+    /// running `ferric server`).
+    #[arg(long)]
+    pub api_base: Option<String>,
+
+    /// Model identifier for the openai backend (e.g. `qwen2.5-coder:7b`).
+    #[arg(long)]
+    pub model: Option<String>,
 
     #[arg(long, default_value_t = 1.2)]
     pub params_b: f32,
@@ -90,20 +106,43 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
     }
 
     let protocol: ActionProtocol = args.protocol.into();
-    let model = match (&args.model_dir, &args.model_file) {
-        _ if args.mock => None,
-        (Some(dir), Some(file)) => Some(ModelArgs {
-            model_dir: dir.clone(),
-            model_file: file.clone(),
-            params_b: args.params_b,
-            ctx: args.ctx,
-        }),
-        _ => {
-            eprintln!("--model-dir and --model-file are required without --mock");
-            return ExitCode::FAILURE;
+    // Backend selection (mock overrides). openai = ollama/llama-server (the
+    // constrained workhorse); mistral = GGUF. `model_name` keys the calibration
+    // record (model-file for mistral, model-id for openai).
+    let (model, openai, model_name) = if args.mock {
+        (None, None, None)
+    } else {
+        match args.backend {
+            BackendArg::Openai => {
+                let Some(model_id) = args.model.clone() else {
+                    eprintln!("--model <id> is required for --backend openai");
+                    return ExitCode::FAILURE;
+                };
+                let oa = OpenAiArgs {
+                    api_base: args.api_base.clone(),
+                    model: model_id.clone(),
+                    params_b: args.params_b,
+                    ctx: args.ctx,
+                };
+                (None, Some(oa), Some(model_id))
+            }
+            BackendArg::Mistral => match (&args.model_dir, &args.model_file) {
+                (Some(dir), Some(file)) => {
+                    let ma = ModelArgs {
+                        model_dir: dir.clone(),
+                        model_file: file.clone(),
+                        params_b: args.params_b,
+                        ctx: args.ctx,
+                    };
+                    (Some(ma), None, Some(file.clone()))
+                }
+                _ => {
+                    eprintln!("--model-dir and --model-file are required for --backend mistral");
+                    return ExitCode::FAILURE;
+                }
+            },
         }
     };
-    let model_name = args.model_file.clone();
     let inv = Invocation {
         ferric_bin: args
             .ferric_bin
@@ -112,6 +151,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
             .unwrap_or_else(|| PathBuf::from("ferric")),
         protocol,
         model,
+        openai,
         prompts_dir: args.prompts_dir.clone(),
         keep_workspace: args.keep_workspace,
     };
