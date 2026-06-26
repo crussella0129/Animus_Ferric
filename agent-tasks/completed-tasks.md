@@ -515,3 +515,9 @@
 - **Completed:** 2026-06-26 (build phase)
 - **Files modified:** crates/ferric-loop/src/run.rs, crates/ferric-loop/tests/repetition_tests.rs
 - **Commit:** 9d6bd37
+
+## T-2202 (sprint 22)
+- **Description:** Re-benched llama3.2:1b L0–L6 with the sharper nudge + ADR + docs. **Result: no change — still `measured_level: none`, identical failure modes** (L0 `repetition_guard` ['list_dir','list_dir']; L1 repeats read_file/make_dir; L2 `max_turns` after 15 distinct make_dir = "semantic flailing" the guard misses). So the hypothesis (wording is the bottleneck) is **disproven**: the 1B's multi-turn failure is a genuine capability limit (planning/state-tracking/completion-recognition), not nudge text. Decisions (ADR-031): ship the nudge anyway (better wording, helps mid-tier models, can't regress capable ones); the 1B's role is settled as a reliable constrained tool-caller, not an agent (the tier machinery already encodes this); record a no-progress/max-same-tool guard for semantic flailing as future hardening. README Status 22 + Sprint 22 timeline.
+- **Completed:** 2026-06-26 (test phase)
+- **Files modified:** decisions.md, README.md
+- **Commit:** 260cdd1
