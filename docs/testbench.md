@@ -125,6 +125,11 @@ the highest ring with an unbroken solid run from the core. This is the
 demonstrated-reliability promotion: a model *earns* a wider grammar by proving it
 on the bench.
 
+The sweep only reaches the rings the bench *tier* admits. `--params-b <N>`
+(default 8.0 → Small → rings 0–1) sets that tier — `--params-b 20` benches at the
+**Medium** ceiling (rings 0–2), so `--calibrate-rings --params-b 20` measures
+whether a model can drive **Ring 2** (`multi_edit`) regardless of its nominal size.
+
 ### Make the promotion durable (`--profile-dir`)
 
 Add `--profile-dir <dir>` (default `benchmarks`) and `--calibrate-rings` **persists**

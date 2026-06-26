@@ -479,3 +479,9 @@
 - **Completed:** 2026-06-25 (build phase)
 - **Files modified:** crates/ferric-tools/src/builtin/{multi_edit.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
 - **Commit:** 041dafb
+
+## T-1902 (sprint 19)
+- **Description:** `toolbench --params-b` + docs + live Ring-2 bench. Added `--params-b <f32>` to `ToolbenchArgs` (default 8.0) replacing the hardcoded `params_b: 8.0` in the bench profile, so the bench tier (hence ring ceiling) is selectable — `--params-b 20` → Medium → ring ceiling 2, letting `--calibrate-rings` sweep rings 0–2. README: builtin list now names `multi_edit` as Ring 2; Status → sprint 19; Sprint 19 timeline. decisions.md: ADR-028 sprint-19 amendment. docs/testbench.md: `--params-b` note for reaching higher rings. **Live E2E (the headline): qwen2.5-coder:7b at `--params-b 20` calibrates `--max-ring 2` — rings 0/1/2 (6/10/11 tools) all 100% solid.** The 7B drives the new nested-array `multi_edit` at 100% — Ring 2 is reachable; the constrained-decoding thesis holds for structured edits. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-25 (build/test phase)
+- **Files modified:** crates/ferric-cli/src/toolbench_cmd.rs, README.md, decisions.md, docs/testbench.md
+- **Commit:** bb99e3b

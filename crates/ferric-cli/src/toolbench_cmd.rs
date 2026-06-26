@@ -67,6 +67,12 @@ pub struct ToolbenchArgs {
     /// it automatically (ADR-029). Default matches `ferric bench`'s results dir.
     #[arg(long, default_value = "benchmarks")]
     pub profile_dir: std::path::PathBuf,
+
+    /// Parameter count (billions) the bench profile is built at — sets the tier,
+    /// hence the ring ceiling. Default 8.0 (Small → rings 0–1); `--params-b 20`
+    /// reaches Medium (rings 0–2) so `--calibrate-rings` can sweep Ring 2.
+    #[arg(long, default_value_t = 8.0)]
+    pub params_b: f32,
 }
 
 /// The classified outcome of one toolbench iteration. This is what turns the
@@ -467,7 +473,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
         ferric_tools::register_builtin_tools(&mut registry);
 
         let profile = ModelProfile {
-            params_b: 8.0,
+            params_b: args.params_b,
             quant: "Q4".to_string(),
             ctx: 4096,
             family: "unknown".to_string(),
