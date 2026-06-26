@@ -227,6 +227,19 @@ fn find_trace(workspace: &Path) -> Option<PathBuf> {
         })
 }
 
+fn tail(s: &str, n: usize) -> String {
+    if s.len() <= n {
+        return s.to_string();
+    }
+    s.chars()
+        .rev()
+        .take(n)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,17 +301,4 @@ mod tests {
         assert!(args.iter().any(|a| a == "--mock"));
         assert!(!args.iter().any(|a| a == "--backend"));
     }
-}
-
-fn tail(s: &str, n: usize) -> String {
-    if s.len() <= n {
-        return s.to_string();
-    }
-    s.chars()
-        .rev()
-        .take(n)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect()
 }

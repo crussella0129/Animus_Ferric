@@ -88,7 +88,16 @@ pub fn parse_trace(path: &Path) -> std::io::Result<TraceMetrics> {
                     m.tier = Some(format!("{tier:?}"));
                     m.protocol = Some(format!("{protocol:?}"));
                 }
-                Event::SessionEnd { reason } => m.terminator = Some(reason),
+                Event::SessionEnd { reason } => {
+                    // `task_complete` is a structured terminator (ADR-013),
+                    // recorded as SessionEnd rather than a dispatched ToolCall —
+                    // but the model *did* emit it, so credit it as a called tool
+                    // so specs listing it in `expected_tools` verify correctly.
+                    if reason == "task_complete" {
+                        m.tools_called.push(reason.clone());
+                    }
+                    m.terminator = Some(reason);
+                }
                 Event::RepetitionGuard { action } if action == "stopped" => {
                     m.repetition_guard_fires += 1
                 }

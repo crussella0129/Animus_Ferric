@@ -151,3 +151,29 @@ ferric query --backend openai --model llama3.2:1b "refactor this module"
 the rings at what was proven (earned, not assumed). An explicit `--max-ring` still
 overrides, and a model with no recorded profile runs exactly as before — the
 read-back is a safe no-op until you've actually measured the model.
+
+## 6. The full agentic loop — `ferric bench` (L0–L6)
+
+The toolbench measures whether a model fires the *right single tool call*.
+`ferric bench` runs the **whole multi-turn loop** against a ladder of real tasks
+(L0 single readonly call → L6 a full todo app), and sets the model's
+`measured_level` = the highest level it *completes* end-to-end:
+
+```sh
+ferric bench --backend openai --api-base http://localhost:11434/v1 \
+  --model qwen2.5-coder:7b --params-b 7 --protocol grammar
+```
+
+```
+L0 single-readonly-tool — PASS (2 turns, 70 tok)
+...
+L6 full-todo-app        — PASS (5 turns, 1110 tok)
+calibrated qwen2.5-coder:7b: measured_level 6 (Small -> Large)
+```
+
+It writes `measured_level` into `benchmarks/model_profiles.json`, so a later
+`ferric query --profile-dir benchmarks` auto-runs the model at its *earned* tier
+(§5's read-back, now with full-loop data). `--backend openai` targets ollama or a
+`ferric server`; `--backend mistral` uses a local GGUF (text-only — its constrained
+path hangs upstream); `--mock` is the CI self-test. This is the end-to-end check
+that the constrained loop *completes tasks*, not just that it emits tool calls.

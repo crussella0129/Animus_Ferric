@@ -491,3 +491,9 @@
 - **Completed:** 2026-06-26 (build phase)
 - **Files modified:** crates/ferric-bench/src/{runner.rs,lib.rs}, crates/ferric-cli/src/bench_cmd.rs
 - **Commit:** 16b6097
+
+## T-2002 (sprint 20)
+- **Description:** Ran the L0–L6 ladder on the constrained backend + fixed the verification bug it surfaced + docs. **Bug:** `task_complete` is a structured terminator (SessionEnd), not a dispatched ToolCall, so `parse_trace` never credited it → every spec's `expected_tools=["task_complete"]` falsely failed (`tools_ok: false` despite `terminator: task_complete`). Fixed in `verify.rs` (credit the `task_complete` terminator as a called tool). **Result:** `qwen2.5-coder:7b` (ollama, ConstrainedJson) **passes all L0–L6** → `measured_level 6`, promoting Small→Large (ADR-019 override on real data); persisted to `model_profiles.json`; `query --profile-dir` reads back `measured_level Some(6)` (ADR-029, real data). Docs: ADR-030; README Status 20 + Sprint 20 timeline; docs/testbench.md §6 (`ferric bench` full-loop); run_benchmarks.ps1 L0–L6 step. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-26 (build/test phase)
+- **Files modified:** crates/ferric-bench/src/verify.rs, decisions.md, README.md, docs/testbench.md, run_benchmarks.ps1
+- **Commit:** 2570297
