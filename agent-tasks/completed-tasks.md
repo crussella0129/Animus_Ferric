@@ -497,3 +497,9 @@
 - **Completed:** 2026-06-26 (build/test phase)
 - **Files modified:** crates/ferric-bench/src/verify.rs, decisions.md, README.md, docs/testbench.md, run_benchmarks.ps1
 - **Commit:** 2570297
+
+## T-2101 (sprint 21)
+- **Description:** `bench --models` fleet sweep over the full L0–L6 agentic ladder. Extracted the per-level loop (run_spec → parse_trace → verify → append_row → print PASS/FAIL) into a shared `run_levels(selected, inv, protocol, model_name, args) -> (Vec<ResultRow>, bool)`; the single-model path now calls it (byte-identical — `bench_mock`/`l0_smoke` green). Hoisted `ferric_bin`. New `--models <a,b,c>` (openai backend): per model id → openai `Invocation`, `run_levels`, `calibrate` + `write_profile` (one record per model), then a `model | measured_level | tier` leaderboard sorted by level desc (ADR-008). The fleet returns SUCCESS (a low measured_level is a valid measurement, not a failure); the single path keeps its FAILURE-on-any-level-fail contract. Imports `BenchSpec`/`ModelProfileRecord`. default build + openai clippy + fmt clean.
+- **Completed:** 2026-06-26 (build phase)
+- **Files modified:** crates/ferric-cli/src/bench_cmd.rs
+- **Commit:** 8e62121

@@ -9,8 +9,9 @@ use std::process::ExitCode;
 
 use clap::Args;
 use ferric_bench::{
-    Invocation, ModelArgs, OpenAiArgs, ResultRow, append_row, calibrate, completed, embedded_specs,
-    failure_admission, parse_trace, run_spec, verify_expectations, verify_tools,
+    BenchSpec, Invocation, ModelArgs, ModelProfileRecord, OpenAiArgs, ResultRow, append_row,
+    calibrate, completed, embedded_specs, failure_admission, parse_trace, run_spec,
+    verify_expectations, verify_tools,
 };
 use ferric_core::{ActionProtocol, tier_for_params};
 
@@ -53,6 +54,12 @@ pub struct BenchArgs {
     /// Model identifier for the openai backend (e.g. `qwen2.5-coder:7b`).
     #[arg(long)]
     pub model: Option<String>,
+
+    /// Fleet sweep (openai backend): run the full L0–L6 ladder for each
+    /// comma-separated model id and print a `measured_level` leaderboard. One
+    /// profile record per model. Overrides `--model`.
+    #[arg(long)]
+    pub models: Option<String>,
 
     #[arg(long, default_value_t = 1.2)]
     pub params_b: f32,
@@ -106,9 +113,80 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
     }
 
     let protocol: ActionProtocol = args.protocol.into();
-    // Backend selection (mock overrides). openai = ollama/llama-server (the
-    // constrained workhorse); mistral = GGUF. `model_name` keys the calibration
-    // record (model-file for mistral, model-id for openai).
+    let ferric_bin = args
+        .ferric_bin
+        .clone()
+        .or_else(|| std::env::current_exe().ok())
+        .unwrap_or_else(|| PathBuf::from("ferric"));
+
+    // Fleet sweep (openai): the full L0–L6 ladder per `--models` id + a
+    // measured_level leaderboard. The fleet case is ollama model ids.
+    if let Some(models_csv) = &args.models {
+        let model_ids: Vec<String> = models_csv
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if model_ids.is_empty() {
+            eprintln!("--models is empty");
+            return ExitCode::FAILURE;
+        }
+        let mut board: Vec<ModelProfileRecord> = Vec::new();
+        for model_id in &model_ids {
+            println!("\n=== {model_id} ===");
+            let inv = Invocation {
+                ferric_bin: ferric_bin.clone(),
+                protocol,
+                model: None,
+                openai: Some(OpenAiArgs {
+                    api_base: args.api_base.clone(),
+                    model: model_id.clone(),
+                    params_b: args.params_b,
+                    ctx: args.ctx,
+                }),
+                prompts_dir: args.prompts_dir.clone(),
+                keep_workspace: args.keep_workspace,
+            };
+            let (rows, _) = run_levels(&selected, &inv, protocol, &Some(model_id.clone()), &args);
+            let record = calibrate(model_id, args.params_b, &format!("{protocol:?}"), &rows);
+            if let Err(e) = ferric_bench::write_profile(&args.results_dir, &record) {
+                eprintln!("cannot write model profile: {e}");
+            }
+            match record.measured_level {
+                Some(level) => println!(
+                    "calibrated {model_id}: measured_level {level} ({} -> {})",
+                    record.tier_from_params,
+                    record.tier_from_measured.as_deref().unwrap_or("?")
+                ),
+                None => println!("calibrated {model_id}: measured_level none (failed L0)"),
+            }
+            board.push(record);
+        }
+        // Leaderboard: highest measured_level first (ADR-008).
+        board.sort_by(|a, b| {
+            b.measured_level
+                .cmp(&a.measured_level)
+                .then_with(|| a.model.cmp(&b.model))
+        });
+        println!("\n# Agentic Capability Leaderboard (L0-L6)");
+        println!("| Model | measured_level | tier |");
+        println!("|-------|----------------|------|");
+        for r in &board {
+            println!(
+                "| {} | {} | {} |",
+                r.model,
+                r.measured_level
+                    .map(|l| l.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                r.tier_from_measured.as_deref().unwrap_or("-")
+            );
+        }
+        // A low measured_level is a valid measurement, not a failure.
+        return ExitCode::SUCCESS;
+    }
+
+    // Single-model path. openai = ollama/llama-server; mistral = GGUF; `model_name`
+    // keys the calibration record (model-file for mistral, model-id for openai).
     let (model, openai, model_name) = if args.mock {
         (None, None, None)
     } else {
@@ -144,11 +222,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         }
     };
     let inv = Invocation {
-        ferric_bin: args
-            .ferric_bin
-            .clone()
-            .or_else(|| std::env::current_exe().ok())
-            .unwrap_or_else(|| PathBuf::from("ferric")),
+        ferric_bin,
         protocol,
         model,
         openai,
@@ -156,10 +230,43 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         keep_workspace: args.keep_workspace,
     };
 
+    let (rows, all_passed) = run_levels(&selected, &inv, protocol, &model_name, &args);
+
+    // Calibrate from this sweep's rows.
+    if let Some(model_name) = &model_name {
+        let record = calibrate(model_name, args.params_b, &format!("{protocol:?}"), &rows);
+        if let Err(e) = ferric_bench::write_profile(&args.results_dir, &record) {
+            eprintln!("cannot write model profile: {e}");
+        } else if let Some(level) = record.measured_level {
+            println!(
+                "calibrated {model_name}: measured_level {level} ({} -> {})",
+                record.tier_from_params,
+                record.tier_from_measured.as_deref().unwrap_or("?")
+            );
+        }
+    }
+
+    if all_passed {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Run the full ladder for one (model, `inv`): execute each spec, verify, append
+/// a results row, print PASS/FAIL, and return the rows + whether every level
+/// passed. Shared by the single-model and `--models` fleet paths.
+fn run_levels(
+    selected: &[BenchSpec],
+    inv: &Invocation,
+    protocol: ActionProtocol,
+    model_name: &Option<String>,
+    args: &BenchArgs,
+) -> (Vec<ResultRow>, bool) {
     let mut rows: Vec<ResultRow> = Vec::new();
     let mut all_passed = true;
-    for spec in &selected {
-        let record = match run_spec(spec, &inv) {
+    for spec in selected {
+        let record = match run_spec(spec, inv) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("L{} run error: {e}", spec.level);
@@ -229,26 +336,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         );
         rows.push(row);
     }
-
-    // Calibrate from this sweep's rows.
-    if let Some(model_name) = &model_name {
-        let record = calibrate(model_name, args.params_b, &format!("{protocol:?}"), &rows);
-        if let Err(e) = ferric_bench::write_profile(&args.results_dir, &record) {
-            eprintln!("cannot write model profile: {e}");
-        } else if let Some(level) = record.measured_level {
-            println!(
-                "calibrated {model_name}: measured_level {level} ({} -> {})",
-                record.tier_from_params,
-                record.tier_from_measured.as_deref().unwrap_or("?")
-            );
-        }
-    }
-
-    if all_passed {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
+    (rows, all_passed)
 }
 
 /// Small display helper for the kept-workspace suffix.
