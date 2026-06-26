@@ -40,8 +40,11 @@ fn repetition_warn_then_stop() {
             let third = &provider.requests()[2];
             assert!(
                 third.messages.iter().any(|m| m.role == Role::User
-                    && m.text.as_deref().unwrap_or_default().contains("repeating")),
-                "nudge message must reach the model"
+                    && m.text
+                        .as_deref()
+                        .unwrap_or_default()
+                        .contains("task_complete")),
+                "nudge message (directing task_complete) must reach the model"
             );
         },
     );
