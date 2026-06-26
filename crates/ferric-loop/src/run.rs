@@ -255,10 +255,16 @@ pub async fn run(
                 sink.write_event(Event::RepetitionGuard {
                     action: "warned".to_string(),
                 })?;
-                messages.push(Message::user(
-                    "You are repeating the same tool calls. Take a different action, \
-                     or call task_complete if the task is done.",
-                ));
+                // A direct imperative naming the repeated tool steers small models
+                // far better than the old soft/conditional wording — the common
+                // small-model failure is repeat-not-terminate (it has the result
+                // but doesn't transition to task_complete). See ADR-031.
+                let repeated: Vec<&str> = actions.iter().map(|a| a.name.as_str()).collect();
+                messages.push(Message::user(format!(
+                    "You already called {} and have the result — do not call it again. \
+                     If the task is finished, call task_complete now with a one-sentence summary.",
+                    repeated.join(", ")
+                )));
             }
             crate::repetition::Verdict::Stop => {
                 sink.write_event(Event::RepetitionGuard {

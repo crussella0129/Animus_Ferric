@@ -509,3 +509,9 @@
 - **Completed:** 2026-06-26 (build/test phase)
 - **Files modified:** decisions.md, README.md, docs/testbench.md, run_benchmarks.ps1
 - **Commit:** c3968b1
+
+## T-2201 (sprint 22)
+- **Description:** Sharpened the repetition-guard `Verdict::Warn` nudge (`run.rs`) from the soft/conditional "You are repeating the same tool calls. Take a different action, or call task_complete if the task is done." to a **direct imperative naming the repeated tool(s)**: "You already called `<tool>` and have the result — do not call it again. If the task is finished, call task_complete now with a one-sentence summary." (built from the turn's `actions` names). Targets the diagnosed 1B failure mode (repeat-not-terminate — s21 finding). Two-strike guard *behavior* unchanged (wording only). Updated `repetition_tests.rs` to assert the nudge contains `task_complete` (stable directive) instead of `repeating`; `["warned","stopped"]` + `StopReason::RepetitionGuard` unchanged. ferric-loop tests + clippy + fmt clean.
+- **Completed:** 2026-06-26 (build phase)
+- **Files modified:** crates/ferric-loop/src/run.rs, crates/ferric-loop/tests/repetition_tests.rs
+- **Commit:** 9d6bd37
