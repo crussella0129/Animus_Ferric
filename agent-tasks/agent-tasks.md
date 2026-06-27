@@ -1,14 +1,13 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 23 (llama.cpp first-class) is **done** — validated Ferric on full
-> `llama-server` for the first time: the constrained loop runs at **100% Ring-0
-> fire rate, identical to ollama**, via an ollama GGUF blob (no re-download). It's
-> now the recommended engine (ollama = one-flag fallback); ADR-032 + docs/llama-cpp.md.
-> Wide context (`-c`), multimodal (`--mmproj`), and a single edge-ready binary are
-> proven/documented. The launcher needed no code change (already contract-tested).
+> Sprint 24 (live multimodal heartbeat) is **done** — the multimodal pipeline (built
+> s10, never run) is **validated end-to-end**: a red square → `ferric query --file
+> --modality image` → `llama-server --mmproj` (SmolVLM-500M) → the vision encoder
+> processed it; the model answered "Red." The `image_url`/base64 mapping is proven;
+> no Ferric code change. ADR-033. Caveat: a sub-1B VLM degrades under the JSON grammar.
 
-Open candidates (sprint 24+):
-- **Live multimodal heartbeat** — now unblocked: `llama-server --mmproj <proj.gguf>` + a vision GGUF → run `ferric query --file img.png --modality image` end-to-end (ADR-026 follow-on).
+Open candidates (sprint 25+):
+- **Relax the constraint for a vision turn** — a `--modality`-aware option to drop the JSON grammar on a describe step (the ADR-033 caveat: tiny VLMs caption poorly under the tool-call grammar). Or a bigger VLM.
 - **A no-progress / max-same-tool guard** for "semantic flailing" (ADR-031's L2 mode the repetition guard misses).
 - **Harder bench levels (L7+)**; more Ring-2 tools (apply_patch); MCP-stdio (ADR-012, needs the ADR-005 call).
-- **Edge run** — actually run on a Jetson Orin Nano / Pi (CUDA/arm64 build) to confirm the minimal footprint (human-gated on hardware).
+- **Actual edge run** — Jetson Orin Nano / Pi (CUDA/arm64 build) to confirm the minimal footprint live (human-gated on hardware).
