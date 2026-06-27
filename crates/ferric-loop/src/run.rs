@@ -101,6 +101,7 @@ pub async fn run(
     };
 
     let mut repetition = crate::repetition::RepetitionGuard::new();
+    let mut progress = crate::progress::ProgressGuard::new();
     let mut last_text: Option<String> = None;
     let mut nudged_for_no_action = false;
     let mut truncated_once = false;
@@ -271,6 +272,32 @@ pub async fn run(
                     action: "stopped".to_string(),
                 })?;
                 break StopReason::RepetitionGuard;
+            }
+        }
+
+        // No-progress guard (same tool NAME repeated with different args — the
+        // "semantic flailing" mode the repetition guard misses, ADR-031/037).
+        // Looser threshold than repetition; bounds wasted compute on a stuck
+        // model and emits a precise `no_progress` reason instead of max_turns.
+        match progress.observe(&actions) {
+            crate::repetition::Verdict::Proceed => {}
+            crate::repetition::Verdict::Warn => {
+                sink.write_event(Event::NoProgressGuard {
+                    action: "warned".to_string(),
+                })?;
+                let repeated: Vec<&str> = actions.iter().map(|a| a.name.as_str()).collect();
+                messages.push(Message::user(format!(
+                    "You have called {} repeatedly without finishing. If the task is \
+                     complete, call task_complete now; otherwise use a different tool or \
+                     arguments that move toward the goal.",
+                    repeated.join(", ")
+                )));
+            }
+            crate::repetition::Verdict::Stop => {
+                sink.write_event(Event::NoProgressGuard {
+                    action: "stopped".to_string(),
+                })?;
+                break StopReason::NoProgress;
             }
         }
 

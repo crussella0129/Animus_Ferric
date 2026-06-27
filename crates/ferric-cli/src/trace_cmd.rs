@@ -112,6 +112,9 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
         ParsedEvent::Known(Event::RepetitionGuard { action }) => {
             format!("repetition guard: {action}")
         }
+        ParsedEvent::Known(Event::NoProgressGuard { action }) => {
+            format!("no-progress guard: {action}")
+        }
         ParsedEvent::Known(Event::PermissionCheck {
             path,
             decision,

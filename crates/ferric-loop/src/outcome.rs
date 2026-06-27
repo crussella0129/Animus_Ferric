@@ -10,6 +10,9 @@ pub enum StopReason {
     MaxTurns,
     /// The repetition guard stopped a stuck loop.
     RepetitionGuard,
+    /// The no-progress guard stopped a same-tool-name flail (different args
+    /// each turn — the mode the repetition guard misses, ADR-031/037).
+    NoProgress,
     /// The provider failed permanently (or retries were exhausted).
     ProviderError,
     /// Two consecutive completions carried neither text nor tool calls
@@ -28,6 +31,7 @@ impl StopReason {
             StopReason::TaskComplete => "task_complete",
             StopReason::MaxTurns => "max_turns",
             StopReason::RepetitionGuard => "repetition_guard",
+            StopReason::NoProgress => "no_progress",
             StopReason::ProviderError => "provider_error",
             StopReason::EmptyCompletion => "empty_completion",
             StopReason::TruncatedAction => "truncated_action",
