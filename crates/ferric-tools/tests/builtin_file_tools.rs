@@ -418,6 +418,100 @@ fn move_path_into_ferric_denied() {
 }
 
 #[test]
+fn apply_patch_single_hunk_applies() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "a\nb\nc\n").unwrap();
+    let (out, err) = expect_completed(registry.execute(
+        &ws,
+        "apply_patch",
+        &json!({"path": "f.txt", "patch": "@@\n a\n-b\n+B\n c\n"}),
+    ));
+    assert!(!err, "apply_patch failed: {out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        "a\nB\nc\n"
+    );
+}
+
+#[test]
+fn apply_patch_context_disambiguates_the_second_occurrence() {
+    // The capability `multi_edit` lacks: two identical `x` lines; context pins
+    // the SECOND. `multi_edit`'s first-occurrence rule would hit the first.
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "x\nkeep\nx\n").unwrap();
+    let (out, err) = expect_completed(registry.execute(
+        &ws,
+        "apply_patch",
+        // Context line `keep` precedes the second `x`, so the hunk locates there.
+        &json!({"path": "f.txt", "patch": "@@\n keep\n-x\n+X\n"}),
+    ));
+    assert!(!err, "apply_patch failed: {out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        "x\nkeep\nX\n",
+        "the SECOND x must be edited (context-disambiguated)"
+    );
+}
+
+#[test]
+fn apply_patch_absent_context_is_error_and_no_write() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "a\nb\nc\n").unwrap();
+    let (out, err) = expect_completed(registry.execute(
+        &ws,
+        "apply_patch",
+        &json!({"path": "f.txt", "patch": "@@\n a\n-NOPE\n+Z\n"}),
+    ));
+    assert!(err, "absent context must be an error: {out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        "a\nb\nc\n",
+        "file must be byte-identical after a failed patch"
+    );
+}
+
+#[test]
+fn apply_patch_malformed_or_empty_is_error() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "a\nb\n").unwrap();
+    // Empty patch.
+    let (_o, e1) = expect_completed(registry.execute(
+        &ws,
+        "apply_patch",
+        &json!({"path": "f.txt", "patch": ""}),
+    ));
+    assert!(e1, "empty patch must error");
+    // A body line with no ' '/'-'/'+ prefix.
+    let (_o2, e2) = expect_completed(registry.execute(
+        &ws,
+        "apply_patch",
+        &json!({"path": "f.txt", "patch": "@@\nbogus line\n"}),
+    ));
+    assert!(e2, "unprefixed body line must error");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        "a\nb\n",
+        "file untouched after malformed patches"
+    );
+}
+
+#[test]
+fn apply_patch_multi_hunk_applies_in_order() {
+    let (dir, ws, registry) = setup();
+    std::fs::write(dir.path().join("f.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+    let (out, err) = expect_completed(registry.execute(
+        &ws,
+        "apply_patch",
+        &json!({"path": "f.txt", "patch": "@@\n one\n-two\n+TWO\n three\n@@\n three\n-four\n+FOUR\n"}),
+    ));
+    assert!(!err, "multi-hunk apply failed: {out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        "one\nTWO\nthree\nFOUR\n"
+    );
+}
+
+#[test]
 fn rings_gate_builtins_by_tier() {
     use ferric_core::{ModelProfile, policy_for};
     let mut registry = Registry::new();
@@ -459,24 +553,26 @@ fn rings_gate_builtins_by_tier() {
         !nano_names.contains(&"find_files") && !nano_names.contains(&"copy_file"),
         "Ring-1 round-out absent at Nano"
     );
-    // Ring 2 (`multi_edit`) is still above the Small ceiling.
+    // Ring-2 tools are still above the Small ceiling.
     assert!(
-        !small_names.contains(&"multi_edit"),
-        "Ring-2 multi_edit absent at Small"
+        !small_names.contains(&"multi_edit") && !small_names.contains(&"apply_patch"),
+        "Ring-2 tools absent at Small"
     );
 
-    // Medium (13..30 → ring ceiling 2) → 11: Ring 0 + Ring 1 + `multi_edit`.
+    // Medium (13..30 → ring ceiling 2) → 12: Ring 0 + Ring 1 + `multi_edit` + `apply_patch`.
     let medium = registry.tools_for_policy(&policy_for(&profile(20.0)));
     let medium_names: Vec<&str> = medium.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
         medium.len(),
-        11,
-        "Medium adds Ring 2 (multi_edit): {medium_names:?}"
+        12,
+        "Medium adds the 2-tool Ring 2 (multi_edit + apply_patch): {medium_names:?}"
     );
-    assert!(
-        medium_names.contains(&"multi_edit"),
-        "Ring 2 includes multi_edit: {medium_names:?}"
-    );
+    for ring2 in ["multi_edit", "apply_patch"] {
+        assert!(
+            medium_names.contains(&ring2),
+            "Ring 2 includes {ring2}: {medium_names:?}"
+        );
+    }
 }
 
 #[test]
