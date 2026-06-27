@@ -56,7 +56,7 @@ The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built wit
 A typical loop — bring a server up, point Ferric at it, work, tear it down:
 
 ```sh
-ferric server up --engine ollama --model qwen2.5-coder:7b   # or --engine llama-server --model your.gguf
+ferric server up --engine llama-server --model your.gguf    # recommended engine; or --engine ollama --model qwen2.5-coder:7b
 ferric server status                                        # prints base URL + health
 ferric query "list the Rust files and summarize lib.rs"     # auto-discovers the server
 ferric server down
@@ -118,7 +118,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 22). Two inference backends ship behind feature flags:
+Active development (sprint 23). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
@@ -162,4 +162,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 22 — why the 1B isn't an agent** (2026-06-26). Diagnosed (from the trace) *why* `llama3.2:1b` fails L0: **repeat-not-terminate** (it re-calls `list_dir` instead of `task_complete`) and **semantic flailing** (15 `make_dir`s, no progress). Sharpened the repetition nudge into a direct imperative — but it **didn't move the 1B** (still `measured_level: none`), so the ceiling is a real capability limit, not wording. The nudge ships anyway (helps mid-tier models, can't regress capable ones). *ADR-031.*
 
-> **Next — Sprint 23: TBD** (harder bench levels L7+; a no-progress guard for "semantic flailing"; more Ring-2 tools; MCP-stdio (ADR-012) and the live-media heartbeat remain the larger/human-gated candidates).
+- **Sprint 23 — llama.cpp first-class** (2026-06-26). Validated Ferric on full **llama.cpp** (`llama-server`) for the first time — it's now the recommended engine (ollama stays a one-flag fallback). The constrained loop runs on it at **100% Ring-0 tool-call fire rate, identical to ollama**, with a context window as wide as you want (`-c`), the multimodal path (`--mmproj`), and a single edge-ready binary (Jetson / Pi). Reuse an ollama GGUF blob to skip re-downloads. Guide: [docs/llama-cpp.md](docs/llama-cpp.md). *ADR-032.*
+
+> **Next — Sprint 24: TBD** (live multimodal heartbeat via llama-server + mmproj; harder bench levels L7+; a no-progress guard for "semantic flailing"; more Ring-2 tools; MCP-stdio (ADR-012)).
