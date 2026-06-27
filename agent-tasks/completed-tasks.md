@@ -521,3 +521,9 @@
 - **Completed:** 2026-06-26 (test phase)
 - **Files modified:** decisions.md, README.md
 - **Commit:** 260cdd1
+
+## T-2301 (sprint 23)
+- **Description:** Made llama.cpp (`llama-server`) the first-class engine — ADR-032 + a llama-server-first guide — and **validated it live for the first time**. The launcher already defaulted to llama-server and was already contract-tested (`server::command()`: `llama_server_argv`/`llama_server_mmproj`/`ollama_argv_and_env`), so **no launcher code change was needed**; the work is the validation + docs. Live (sprint 23 test phase): fetched the prebuilt `b9821` CPU/x64 release, pointed `llama-server -m` at an **ollama GGUF blob** (no re-download — ollama blobs are raw GGUF), and drove it with `ferric --backend openai --api-base :8080/v1 --protocol grammar` → the constrained loop created a file and a Ring-0 toolbench scored **36/36 = 100% solid, identical to ollama**. So the OpenAI constrained valve is engine-agnostic and works on full llama.cpp. Docs: `decisions.md` ADR-032; new `docs/llama-cpp.md` (install, ollama-blob trick, `-c` wide context, `--mmproj` multimodal, Jetson/Pi edge notes); README leads with `--engine llama-server` + Status 23 + Sprint 23 timeline. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-26 (build/test phase)
+- **Files modified:** decisions.md, docs/llama-cpp.md, README.md
+- **Commit:** 9e33741
