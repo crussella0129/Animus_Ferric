@@ -1,6 +1,7 @@
 //! Builtin tools. All are NANO-tier: the simple operations small models must
 //! get 100% right are exactly the ones every tier needs available.
 
+mod apply_patch;
 mod copy_file;
 mod delete_path;
 mod edit_file;
@@ -13,6 +14,7 @@ mod read_file;
 mod search_files;
 mod write_file;
 
+pub use apply_patch::ApplyPatch;
 pub use copy_file::CopyFile;
 pub use delete_path::DeletePath;
 pub use edit_file::EditFile;
@@ -40,6 +42,7 @@ pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(FindFiles));
     registry.register(Box::new(CopyFile));
     registry.register(Box::new(MultiEdit));
+    registry.register(Box::new(ApplyPatch));
 }
 
 /// Shared helper: the required string `path` argument.

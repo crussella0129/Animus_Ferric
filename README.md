@@ -118,7 +118,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 28). Two inference backends ship behind feature flags:
+Active development (sprint 29). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
@@ -174,4 +174,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 28 — repeated-failure guard** (2026-06-27). Completed the loop-hardening **guard family**. The repetition guard (identical calls) and no-progress guard (same tool name) both key off the *actions* a model emits; neither catches a model emitting a *different* tool every turn that *all error* (bad paths, denials) and never recovers — both reset, so it grinds to `max_turns`. The new `FailureGuard` keys off tool *results*: consecutive all-errored turns → an early stop with `StopReason::RepeatedFailure`. Same honest scope — it bounds wasted compute and sharpens the diagnostic, not a model's capability ceiling. *ADR-038.*
 
-> **Next — Sprint 29: TBD** (a GPU/edge run on Jetson Orin Nano to clear the CPU timeouts; harder bench levels L7+; more Ring-2 tools (apply_patch); MCP-stdio (ADR-012); audio on real non-TTS audio + video modality).
+- **Sprint 29 — `apply_patch` rounds out Ring 2** (2026-06-27). Pivoted from loop guards back to the **tool rings**. Added the second Ring-2 ("plan & apply structured changes") tool: `apply_patch` applies a context-located unified diff to one file, atomically. Unlike `multi_edit` (which only hits the *first* occurrence), a hunk's surrounding context **disambiguates** which occurrence to edit — and unified diffs are a format models emit naturally. Medium-tier models now offer 12 tools (Ring 0+1 + `multi_edit` + `apply_patch`). *ADR-039.*
+
+> **Next — Sprint 30: TBD** (a GPU/edge run on Jetson Orin Nano to clear the CPU timeouts; harder bench levels L7+; a multi-file `apply_patch`; MCP-stdio (ADR-012); audio on real non-TTS audio + video modality).
