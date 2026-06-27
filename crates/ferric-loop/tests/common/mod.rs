@@ -217,6 +217,7 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
             ParsedEvent::Known(Event::ConstraintApplied { .. }) => "constraint_applied",
             ParsedEvent::Known(Event::RepetitionGuard { .. }) => "repetition_guard",
             ParsedEvent::Known(Event::NoProgressGuard { .. }) => "no_progress_guard",
+            ParsedEvent::Known(Event::FailureGuard { .. }) => "failure_guard",
             ParsedEvent::Known(Event::PermissionCheck { .. }) => "permission_check",
             ParsedEvent::Known(Event::ToolCall { .. }) => "tool_call",
             ParsedEvent::Known(Event::ToolResult { .. }) => "tool_result",

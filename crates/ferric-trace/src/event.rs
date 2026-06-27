@@ -80,6 +80,11 @@ pub enum Event {
     NoProgressGuard {
         action: String,
     },
+    /// The repeated-failure guard fired — the model's tool calls all errored for
+    /// several turns in a row (ADR-038). `action` is "warned" or "stopped".
+    FailureGuard {
+        action: String,
+    },
     /// A guard decision made at the tool-dispatch chokepoint. `rule` and
     /// `matched` are present on denials.
     PermissionCheck {

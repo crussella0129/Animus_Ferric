@@ -102,6 +102,7 @@ pub async fn run(
 
     let mut repetition = crate::repetition::RepetitionGuard::new();
     let mut progress = crate::progress::ProgressGuard::new();
+    let mut failure = crate::failure::FailureGuard::new();
     let mut last_text: Option<String> = None;
     let mut nudged_for_no_action = false;
     let mut truncated_once = false;
@@ -301,8 +302,12 @@ pub async fn run(
             }
         }
 
-        // Dispatch actions in order; intercept the terminator.
+        // Dispatch actions in order; intercept the terminator. Tally the turn's
+        // dispatched (non-terminator) calls + how many errored, for the
+        // repeated-failure guard below.
         let mut terminate_with: Option<String> = None;
+        let mut dispatched = 0usize;
+        let mut errored = 0usize;
         for call in &actions {
             if crate::terminator::is_task_complete(&call.name) {
                 terminate_with = Some(crate::terminator::summary_of(&call.args));
@@ -315,6 +320,10 @@ pub async fn run(
             })?;
             let (result_text, is_error, duration_ms, checks) =
                 dispatch(args.registry, args.workspace, &call.name, &call.args);
+            dispatched += 1;
+            if is_error {
+                errored += 1;
+            }
             for check in &checks {
                 sink.write_event(permission_event(check))?;
             }
@@ -335,6 +344,30 @@ pub async fn run(
         if let Some(summary) = terminate_with {
             last_text = Some(summary);
             break 'outer StopReason::TaskComplete;
+        }
+
+        // Repeated-failure guard (keys off RESULTS — runs after dispatch, only
+        // on a non-terminating turn). Catches the "different tools, all failing"
+        // mode the repetition + no-progress guards reset on (ADR-038).
+        if dispatched > 0 {
+            match failure.observe_turn(dispatched, errored) {
+                crate::repetition::Verdict::Proceed => {}
+                crate::repetition::Verdict::Warn => {
+                    sink.write_event(Event::FailureGuard {
+                        action: "warned".to_string(),
+                    })?;
+                    messages.push(Message::user(
+                        "Your last tool call(s) failed. Read the error message and try a \
+                         different approach, or call task_complete if you cannot proceed.",
+                    ));
+                }
+                crate::repetition::Verdict::Stop => {
+                    sink.write_event(Event::FailureGuard {
+                        action: "stopped".to_string(),
+                    })?;
+                    break StopReason::RepeatedFailure;
+                }
+            }
         }
     };
 
