@@ -1,13 +1,15 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 24 (live multimodal heartbeat) is **done** — the multimodal pipeline (built
-> s10, never run) is **validated end-to-end**: a red square → `ferric query --file
-> --modality image` → `llama-server --mmproj` (SmolVLM-500M) → the vision encoder
-> processed it; the model answered "Red." The `image_url`/base64 mapping is proven;
-> no Ferric code change. ADR-033. Caveat: a sub-1B VLM degrades under the JSON grammar.
+> Sprint 25 (validate Gemma 4 E4B) is **done** — Gemma 4 E4B is Ferric's **reference
+> ~4B multimodal model** (ADR-035). Live on llama.cpp: **measured_level 5** (= the 8B,
+> above the 1B's none → confirms the ~4B agentic floor); **multimodal inside the
+> constrained loop** (`task_complete "a solid red rectangle"`) → closes ADR-033 with
+> no harness change; Ring-0 toolbench 100% solid. No Ferric code change. (Caveat: use a
+> GPU llama.cpp build — CPU timed out L0.)
 
-Open candidates (sprint 25+):
-- **Relax the constraint for a vision turn** — a `--modality`-aware option to drop the JSON grammar on a describe step (the ADR-033 caveat: tiny VLMs caption poorly under the tool-call grammar). Or a bigger VLM.
-- **A no-progress / max-same-tool guard** for "semantic flailing" (ADR-031's L2 mode the repetition guard misses).
-- **Harder bench levels (L7+)**; more Ring-2 tools (apply_patch); MCP-stdio (ADR-012, needs the ADR-005 call).
-- **Actual edge run** — Jetson Orin Nano / Pi (CUDA/arm64 build) to confirm the minimal footprint live (human-gated on hardware).
+Open candidates (sprint 26+):
+- **Gemma 4 E4B audio modality** — it has a native audio encoder; test `ferric query --file clip.wav --modality audio` (the pipeline already supports `input_audio`).
+- **GPU / edge run** — a CUDA build (or Jetson Orin Nano) to clear the CPU timeouts + confirm the edge footprint; Gemma 4 might then reach L6.
+- **A no-progress / max-same-tool guard** for "semantic flailing" (ADR-031).
+- **Harder bench levels (L7+)**; more Ring-2 tools (apply_patch); MCP-stdio (ADR-012).
+- `--chat` plain-LLM mode (deferred — a capable model removed the urgency).

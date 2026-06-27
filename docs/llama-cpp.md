@@ -77,11 +77,29 @@ ferric query --backend openai --api-base http://127.0.0.1:8080/v1 \
 ```
 
 Ferric base64's the file into an OpenAI `image_url` content-part (`data:<mime>;base64,…`)
-that llama-server's mmproj consumes — proven against real pixels (it answered "Red."
-to a red square). **Caveat:** a sub-1B VLM can degrade under the JSON tool-call
-grammar (it may not caption well); use a larger VLM, or for a pure description, an
-unconstrained query. See [docs/multimodal.md](multimodal.md) for the `--file`/`--modality`
-routing and ADR-033 for the validation.
+that llama-server's mmproj consumes — proven against real pixels (SmolVLM answered
+"Red." to a red square). **But a sub-1B VLM degrades under the JSON tool-call grammar**
+(SmolVLM-500M garbled inside the agentic loop). Use a *capable* model instead.
+
+### Recommended model — Gemma 4 E4B (the reference, ADR-035)
+**Gemma 4 E4B** is Ferric's recommended model: ~4B effective, **multimodal (vision +
+audio)**, **function-calling**, 128K context, edge-feasible. The data shows ~4B is the
+usable agentic floor (a 1B completes nothing; Gemma 4 E4B reaches **`measured_level 5`**,
+matching an 8B), and it **describes images *inside* the constrained agentic loop** —
+no workaround needed. Official, ungated GGUF + mmproj:
+
+```sh
+# google/gemma-4-E4B-it-qat-q4_0-gguf  (model 5.15GB QAT-q4 + mmproj 0.99GB)
+llama-server -m gemma-4-E4B_q4_0-it.gguf --mmproj gemma-4-E4B-it-mmproj.gguf -c 8192 --port 8080
+ferric query --backend openai --api-base http://127.0.0.1:8080/v1 \
+  --file pic.png --modality image "describe this image, then call task_complete"
+```
+
+> **Speed:** use a **CUDA/Vulkan/Metal** llama.cpp build for usable latency — a 4B on a
+> CPU build runs at tens of tok/s and timed out the simplest bench level. On a GPU
+> (incl. Jetson Orin Nano) it's fast.
+
+See [docs/multimodal.md](multimodal.md) for `--file`/`--modality` routing; ADR-033/035 for the validation.
 
 ## 6. Edge notes (Jetson Orin Nano / Raspberry Pi)
 - llama.cpp is the edge inference engine: one static binary + ggml libs, no daemon.

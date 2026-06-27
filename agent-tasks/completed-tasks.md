@@ -533,3 +533,9 @@
 - **Completed:** 2026-06-26 (build/test phase)
 - **Files modified:** decisions.md, docs/llama-cpp.md, README.md
 - **Commit:** f08412e
+
+## T-2501/T-2502/T-2503 (sprint 25)
+- **Description:** **Validated Gemma 4 E4B as Ferric's reference ~4B multimodal model** (research pivot from a `--chat` workaround — a capable model is the right answer to the ~4B agentic floor). No Ferric code change (validation, like s23/s24). Downloaded the official ungated `google/gemma-4-E4B-it-qat-q4_0-gguf` (model 5.15GB QAT-q4 + mmproj 0.99GB); the existing prebuilt `b9821` llama-server loaded the Gemma 4 arch + mmproj with **no update needed**. **Results:** (1) **Multimodal inside the constrained agentic loop** — `ferric query --file red.png --modality image --protocol grammar` → `task_complete("The image is a solid red rectangle.")`, closing the ADR-033 caveat with no harness change (where SmolVLM-500M garbled). (2) **Agentic L0–L6 bench → measured_level 5** (PASS L1/L3/L4/L5) — **matches the 8B (5), below the 7B (6), vastly above the 1B (none)**, confirming ~4B as the usable agentic floor (L0/L2/L6 fails mostly CPU-speed timeouts — L0 hit the 60s cap). (3) **Ring-0 toolbench 100% solid**. ADR-035 (Gemma 4 E4B = recommended reference model; ~4B floor; capability closes ADR-033); docs/llama-cpp.md §5 Gemma 4 quickstart + GPU-speed note; README Status 25 + Sprint 25 timeline. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-27 (build/test phase)
+- **Files modified:** decisions.md, docs/llama-cpp.md, README.md
+- **Commit:** b6a44ab
