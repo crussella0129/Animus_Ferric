@@ -118,7 +118,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 25). Two inference backends ship behind feature flags:
+Active development (sprint 26). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
@@ -168,4 +168,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 25 — Gemma 4 E4B is the reference model** (2026-06-27). The data shows a **~4B agentic floor** (1B → none, 7B → 6, 8B → 5), so the fix for small models isn't a workaround — it's a *capable* one. Validated **Gemma 4 E4B** (4B, multimodal, function-calling) on llama.cpp: **`measured_level 5`** (matches the 8B), Ring-0 toolbench **100% solid**, and it **describes an image *inside* the constrained agentic loop** (`task_complete("a solid red rectangle")`) — closing the ADR-033 caveat with no harness change. Edge-feasible q4. *ADR-035.* (Use a GPU build for speed — CPU timed out the simplest level.)
 
-> **Next — Sprint 26: TBD** (Gemma 4 E4B audio modality; harder bench levels L7+; a no-progress guard for "semantic flailing"; more Ring-2 tools; MCP-stdio (ADR-012); an actual edge run on Jetson/Pi with a GPU build).
+- **Sprint 26 — audio modality** (2026-06-27). Validated **audio** end-to-end (the other half of multimodal): a Windows-TTS speech clip → `ferric query --file speech.wav --modality audio` → `llama-server` (Gemma 4's Conformer encoder) → **`task_complete("The quick brown fox jumps over the lazy dog.")`** — an exact transcription *inside* the constrained agentic loop. So Ferric multimodal is now **vision + audio**, both live on the reference model. No Ferric code change (the `input_audio` mapping was already correct). *ADR-036.*
+
+> **Next — Sprint 27: TBD** (a GPU/edge run on Jetson Orin Nano to clear the CPU timeouts; harder bench levels L7+; a no-progress guard for "semantic flailing"; more Ring-2 tools; MCP-stdio (ADR-012)).

@@ -91,9 +91,20 @@ no workaround needed. Official, ungated GGUF + mmproj:
 ```sh
 # google/gemma-4-E4B-it-qat-q4_0-gguf  (model 5.15GB QAT-q4 + mmproj 0.99GB)
 llama-server -m gemma-4-E4B_q4_0-it.gguf --mmproj gemma-4-E4B-it-mmproj.gguf -c 8192 --port 8080
+
+# vision:
 ferric query --backend openai --api-base http://127.0.0.1:8080/v1 \
   --file pic.png --modality image "describe this image, then call task_complete"
+
+# audio (Gemma 4's mmproj is a unified vision+audio projector — same server):
+ferric query --backend openai --api-base http://127.0.0.1:8080/v1 \
+  --file speech.wav --modality audio "transcribe this audio, then call task_complete"
 ```
+
+Both are **validated end-to-end** (ADR-035/036): Gemma 4 described a red square and
+transcribed a speech clip exactly — *inside* the constrained agentic loop. Ferric
+sends images as `image_url` and audio as `input_audio` content-parts; llama-server's
+mmproj consumes both. (Audio is "experimental" in llama.cpp but works on clean speech.)
 
 > **Speed:** use a **CUDA/Vulkan/Metal** llama.cpp build for usable latency — a 4B on a
 > CPU build runs at tens of tok/s and timed out the simplest bench level. On a GPU
