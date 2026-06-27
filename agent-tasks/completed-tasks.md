@@ -527,3 +527,9 @@
 - **Completed:** 2026-06-26 (build/test phase)
 - **Files modified:** decisions.md, docs/llama-cpp.md, README.md
 - **Commit:** 9e33741
+
+## T-2401 (sprint 24)
+- **Description:** **Validated the multimodal pipeline end-to-end** (the marquee goal deferred since sprint 10) + ADR-033 + docs. No Ferric code change — the `image_url`/base64 content-parts mapping (`openai.rs:media_part_json`) + `--file`/`--modality` routing were already built + unit-tested (s10). Live: fetched SmolVLM-500M-Instruct GGUF (436MB) + its mmproj (108MB) from ggml-org, served via prebuilt llama.cpp `b9821` (`llama-server -m … --mmproj …`); a generated 96×96 red square went through `ferric query --file --modality image` → server log `process_mtmd: encoding mtmd batch n_chunks=1` (image reached the vision encoder), and a direct query in Ferric's exact `image_url` format returned **"Red."** — the model sees what Ferric sends. Finding: under the constrained JSON grammar a sub-1B VLM degrades free-form captioning (echoed a system-prompt line into task_complete); the image still reaches the model — use a bigger VLM or an unconstrained describe. decisions.md ADR-033; docs/llama-cpp.md §5 validated multimodal walkthrough; README Status 24 + Sprint 24 timeline. `cargo test --workspace` green; clippy + fmt clean.
+- **Completed:** 2026-06-26 (build/test phase)
+- **Files modified:** decisions.md, docs/llama-cpp.md, README.md
+- **Commit:** f08412e

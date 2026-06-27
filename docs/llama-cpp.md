@@ -62,14 +62,26 @@ ferric query --backend openai --api-base http://127.0.0.1:8080/v1 --model any-la
 `--engine ollama` remains available if you prefer ollama for model management.
 
 ## 5. Multimodal (image / audio / video)
-llama-server + a projector GGUF is the media path:
+llama-server + a projector GGUF (`--mmproj`) is the media path. **Validated live**
+(sprint 23–24): an image routed by Ferric reaches the vision encoder and the model
+describes it correctly. You supply a vision model GGUF **and its mmproj** (ollama's
+models are text-only, so there's no blob to reuse for vision):
 
 ```sh
-ferric server up --engine llama-server --model vision-model.gguf --mmproj mmproj.gguf
-ferric query --backend openai --protocol grammar --file pic.png --modality image "describe the image"
+# A tiny vision model to try — SmolVLM-500M (model ~436MB + mmproj ~108MB):
+#   huggingface.co/ggml-org/SmolVLM-500M-Instruct-GGUF
+llama-server -m SmolVLM-500M-Instruct-Q8_0.gguf --mmproj mmproj-SmolVLM-500M-Instruct-Q8_0.gguf -c 4096 --port 8080
+
+ferric query --backend openai --api-base http://127.0.0.1:8080/v1 \
+  --file pic.png --modality image "what is in this image?"
 ```
 
-(See [docs/multimodal.md](multimodal.md) for the `--file`/`--modality` routing.)
+Ferric base64's the file into an OpenAI `image_url` content-part (`data:<mime>;base64,…`)
+that llama-server's mmproj consumes — proven against real pixels (it answered "Red."
+to a red square). **Caveat:** a sub-1B VLM can degrade under the JSON tool-call
+grammar (it may not caption well); use a larger VLM, or for a pure description, an
+unconstrained query. See [docs/multimodal.md](multimodal.md) for the `--file`/`--modality`
+routing and ADR-033 for the validation.
 
 ## 6. Edge notes (Jetson Orin Nano / Raspberry Pi)
 - llama.cpp is the edge inference engine: one static binary + ggml libs, no daemon.
