@@ -1,14 +1,14 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 22 (why the 1B isn't an agent) is **done** — diagnosed the 1B's L0 failure
-> (repeat-not-terminate + semantic flailing) and tested a sharper repetition nudge.
-> **It didn't move the 1B** (still `measured_level: none`), so the ceiling is a real
-> capability limit, not wording (ADR-031). The nudge ships anyway. First sprint under
-> one-PR-per-sprint ([[one-pr-per-sprint]]).
+> Sprint 23 (llama.cpp first-class) is **done** — validated Ferric on full
+> `llama-server` for the first time: the constrained loop runs at **100% Ring-0
+> fire rate, identical to ollama**, via an ollama GGUF blob (no re-download). It's
+> now the recommended engine (ollama = one-flag fallback); ADR-032 + docs/llama-cpp.md.
+> Wide context (`-c`), multimodal (`--mmproj`), and a single edge-ready binary are
+> proven/documented. The launcher needed no code change (already contract-tested).
 
-Open candidates (sprint 23+):
-- **No-progress / semantic-flailing guard** — the repetition guard misses same-tool/different-args loops (L2: 15 `make_dir`s → `max_turns`). A "max consecutive same-tool" or no-workspace-change cap would catch it.
-- **Harder bench levels (L7+)** — to rank models above a 7B.
-- **More Ring-2 tools** (apply_patch).
-- **MCP-stdio** (ADR-012) — needs the ADR-005 external-exec security call (the user's).
-- **Live-media heartbeat** — human-gated on a multimodal server.
+Open candidates (sprint 24+):
+- **Live multimodal heartbeat** — now unblocked: `llama-server --mmproj <proj.gguf>` + a vision GGUF → run `ferric query --file img.png --modality image` end-to-end (ADR-026 follow-on).
+- **A no-progress / max-same-tool guard** for "semantic flailing" (ADR-031's L2 mode the repetition guard misses).
+- **Harder bench levels (L7+)**; more Ring-2 tools (apply_patch); MCP-stdio (ADR-012, needs the ADR-005 call).
+- **Edge run** — actually run on a Jetson Orin Nano / Pi (CUDA/arm64 build) to confirm the minimal footprint (human-gated on hardware).
