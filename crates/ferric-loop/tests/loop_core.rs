@@ -45,9 +45,12 @@ fn happy_path_golden_trace_order() {
 fn max_turns_budget() {
     let policy = nano_policy(); // max_turns = 15
     let n = policy.max_turns as usize;
-    // Script n+1 tool turns; the loop must stop after n.
+    // Script n+1 tool turns; the loop must stop after n. Alternate the tool
+    // NAME so the no-progress guard (same-name streak, ADR-037) never fires —
+    // this test isolates the turn-budget stop.
+    let names = ["list_dir", "read_file"];
     let script: Vec<_> = (0..=n)
-        .map(|i| tool_completion(vec![("tc", "list_dir", json!({"path": ".", "turn": i}))]))
+        .map(|i| tool_completion(vec![("tc", names[i % 2], json!({"path": ".", "turn": i}))]))
         .collect();
     let result = run_scripted(script, &policy, |_| {});
     assert_eq!(result.outcome.stop, StopReason::MaxTurns);
@@ -63,10 +66,13 @@ fn max_turns_budget() {
 #[test]
 fn max_turns_still_emits_last_text() {
     // Tool turns that also carry text: on MaxTurns the last text must surface.
+    // Alternate the tool NAME so the no-progress guard (ADR-037) stays silent
+    // and the run reaches the turn budget.
     let policy = nano_policy();
+    let names = ["list_dir", "read_file"];
     let script: Vec<_> = (0..=policy.max_turns as usize)
         .map(|i| {
-            let mut c = tool_completion(vec![("tc", "list_dir", json!({"path": ".", "i": i}))]);
+            let mut c = tool_completion(vec![("tc", names[i % 2], json!({"path": ".", "i": i}))]);
             c.message.text = Some(format!("thinking {i}"));
             c
         })

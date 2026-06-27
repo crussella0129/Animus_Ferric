@@ -545,3 +545,9 @@
 - **Completed:** 2026-06-27 (build/test phase)
 - **Files modified:** decisions.md, docs/llama-cpp.md, README.md
 - **Commit:** 3040626
+
+## T-2701/T-2702/T-2703 (sprint 27)
+- **Description:** **A no-progress guard closing ADR-031's second failure mode ("semantic flailing").** The repetition guard hashes the COMPLETE action signature (name + args), so it never fires on the same tool with *different* args every turn (`make_dir` ×15 → grinds to `max_turns`). Added `ProgressGuard` (`crates/ferric-loop/src/progress.rs`) mirroring `RepetitionGuard` but canonicalizing only the **sorted-unique tool NAMES** (arg-insensitive, order-independent via `BTreeSet`): Warn at `WARN_AT=4`, Stop at `STOP_AT=5` → `StopReason::NoProgress` (`Event::NoProgressGuard{action}`), wired right after the repetition guard in `run.rs`. Threshold ~6 turns — above realistic same-tool runs, under every tier's `max_turns` (Nano 15 … Large 40); the guards compose (repetition fires earlier on identical calls). 6 new tests incl. **the defining contrast** (`ProgressGuard`→Stop where `RepetitionGuard`→Proceed on the same input) + integration mirroring `repetition_tests`; the `max_turns` tests alternate tool names to isolate the budget. No bench change (`completed()` already treats non-terminator reasons as non-completions). ADR-037; README Status 27 + Sprint 27 timeline. Honest scope: bounds wasted compute + sharpens the diagnostic; does not lift a capability ceiling. `cargo test --workspace` green; clippy `-D warnings` + fmt clean.
+- **Completed:** 2026-06-27 (build/test phase)
+- **Files modified:** crates/ferric-loop/src/{progress.rs (new),lib.rs,outcome.rs,run.rs}, crates/ferric-trace/src/event.rs, crates/ferric-cli/src/trace_cmd.rs, crates/ferric-loop/tests/{progress_tests.rs (new),common/mod.rs,loop_core.rs}, decisions.md, README.md, agent-tasks/*
+- **Commits:** 80ffd8a (code+tests), de3442c (ADR+docs)

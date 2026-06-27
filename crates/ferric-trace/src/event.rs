@@ -74,6 +74,12 @@ pub enum Event {
     RepetitionGuard {
         action: String,
     },
+    /// The no-progress guard fired on a same-tool-name flail (different args
+    /// each turn — the mode the repetition guard misses, ADR-031/037).
+    /// `action` is "warned" or "stopped".
+    NoProgressGuard {
+        action: String,
+    },
     /// A guard decision made at the tool-dispatch chokepoint. `rule` and
     /// `matched` are present on denials.
     PermissionCheck {

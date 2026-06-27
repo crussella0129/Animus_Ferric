@@ -13,6 +13,7 @@
 mod backoff;
 mod grammar;
 mod outcome;
+mod progress;
 mod protocol;
 mod repetition;
 mod run;
