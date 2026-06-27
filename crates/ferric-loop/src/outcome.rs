@@ -13,6 +13,9 @@ pub enum StopReason {
     /// The no-progress guard stopped a same-tool-name flail (different args
     /// each turn — the mode the repetition guard misses, ADR-031/037).
     NoProgress,
+    /// The repeated-failure guard stopped a model whose tool calls all errored
+    /// for several turns in a row (ADR-038).
+    RepeatedFailure,
     /// The provider failed permanently (or retries were exhausted).
     ProviderError,
     /// Two consecutive completions carried neither text nor tool calls
@@ -32,6 +35,7 @@ impl StopReason {
             StopReason::MaxTurns => "max_turns",
             StopReason::RepetitionGuard => "repetition_guard",
             StopReason::NoProgress => "no_progress",
+            StopReason::RepeatedFailure => "repeated_failure",
             StopReason::ProviderError => "provider_error",
             StopReason::EmptyCompletion => "empty_completion",
             StopReason::TruncatedAction => "truncated_action",
