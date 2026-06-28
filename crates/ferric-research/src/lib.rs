@@ -24,7 +24,10 @@ use serde_json::json;
 use thiserror::Error;
 
 pub mod retriever;
-pub use retriever::{LocalFsRetriever, RetrieveError, RetrievedChunk, Retriever, research};
+pub use retriever::{
+    LocalFsRetriever, RetrieveError, RetrievedChunk, Retriever, SshTransport, TailnetDevice,
+    TailnetFsRetriever, research,
+};
 
 /// One provenance-tagged claim extracted from untrusted content. Data only —
 /// there is deliberately no field that can carry a tool name or an action.
