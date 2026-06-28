@@ -1447,6 +1447,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferric-research"
+version = "0.1.0"
+dependencies = [
+ "ferric-core",
+ "ferric-provider",
+ "futures-executor",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ferric-tools"
 version = "0.1.0"
 dependencies = [
