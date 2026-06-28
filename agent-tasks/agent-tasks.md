@@ -12,9 +12,12 @@
 - **Animus Loop** — the sprint-loops protocol (Research→Plan→Build→Test→Loop). **First priority = harden it.**
 - **Animus Manage** — multi-agent project-management layer (least-specified).
 
-## Open candidates (sprint 31+) — hardening Animus Loop
-- **Ornstein increment 2** — pick one: the **CaMeL taint + sink-policy table** (gate tool calls with tainted-derived args), OR the **container + allowlist-proxy + network-fetch** layer (bollard/gVisor) feeding `summarize_quarantined`.
-- **Ornstein increment 3** — **wire the quarantine into the Loop's research phase** (a sprint-loops repo change: route fetched content through `summarize_quarantined` before the planner sees it).
+## Ornstein = a quarantined MULTI-SOURCE research subsystem (user's expanded vision)
+One funnel (the built quarantine), many pluggable `Retriever`s (capability-probed). **Build order (user-chosen):**
+- **inc 2 — `Retriever` trait + Local FS retriever** ✅ **DONE (s31, ADR-041).** Keystone `Retriever` (plane/available/retrieve, async) + `LocalFsRetriever` + `research()` pipeline; source→funnel→digest proven.
+- **inc 3 — Tailnet/NAS FS retriever** ← **NEXT.** A `Retriever` that reaches a NAS + LAN devices over **Tailscale** (LocalAPI `/status` enumerate, `whois` identity, SSH/`serve` reach), searches their filesystems (substrate pre-scoped in s1 `docker-nix-tailscale.md`). Same trait shape as `LocalFsRetriever`, reached over the network.
+- **inc 4 — Web retriever + hardened container + allowlist proxy** (bollard/gVisor) — the online plane; the trifecta's exfil leg lives here, so its security layer comes last.
+- **inc 5 — CaMeL taint/sink-policy + research orchestrator + Loop research-phase wiring** (route fetched content through the quarantine before the planner sees it; a sprint-loops change).
 - **PR open+merge as the STANDARD final loop phase** — promote sprint-loops `06-loop-phase.md` step #6 from optional to standard (small, clear; matches one-PR-per-sprint).
 - **A testing system** — make the Loop's Test phase a real system (define first: containerized test runs? golden artifacts? coverage gates?).
 - **Animus Launch (crate in Animus_Ferric)** — the interactive bootstrapper, once loop-hardening has momentum.
