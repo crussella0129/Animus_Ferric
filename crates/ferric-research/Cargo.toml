@@ -1,0 +1,17 @@
+[package]
+name = "ferric-research"
+description = "Ornstein quarantined retrieval for Animus Ferric: untrusted content -> a no-tools/no-memory model under a data-only schema -> typed, provenance-tagged digests (the constrained valve as a security primitive)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ferric-core = { workspace = true }
+ferric-provider = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+futures-executor = { workspace = true }

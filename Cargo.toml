@@ -9,6 +9,7 @@ members = [
     "crates/ferric-loop",
     "crates/ferric-prompt",
     "crates/ferric-bench",
+    "crates/ferric-research",
     "crates/ferric-cli",
 ]
 
@@ -50,3 +51,4 @@ ferric-tools = { path = "crates/ferric-tools" }
 ferric-loop = { path = "crates/ferric-loop" }
 ferric-prompt = { path = "crates/ferric-prompt" }
 ferric-bench = { path = "crates/ferric-bench" }
+ferric-research = { path = "crates/ferric-research" }
