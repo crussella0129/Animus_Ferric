@@ -1,6 +1,6 @@
 # Agent Tasks (Persistent Backlog)
 
-> **Direction change (sprint 30):** began the **Animus** suite by **hardening Animus Loop**.
+> **Direction change in s30:** began the **Animus** suite by **hardening Animus Loop**.
 > Sprint 30 shipped **Ornstein increment 1** — the quarantined summarizer (`ferric-research`):
 > untrusted content → a no-tools/no-memory model under a data-only schema → a typed,
 > provenance-tagged `ResearchDigest`. The quarantine is *structural* (reuses the constrained
