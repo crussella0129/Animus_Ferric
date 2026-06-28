@@ -1,17 +1,24 @@
 # Agent Tasks (Persistent Backlog)
 
-> Sprint 29 (`apply_patch`) is **done** — rounded out Ring 2 (the rings-memory "room to
-> grow"). `apply_patch` (`crates/ferric-tools/src/builtin/apply_patch.rs`, ring 2) applies a
-> context-located unified diff to one file, atomically. Distinct from `multi_edit`: a hunk's
-> context **disambiguates** which occurrence to edit (multi_edit hits only the first), plus
-> diff-format familiarity. Line-based (round-trips trailing newline), single atomic write
-> (failure = byte-identical). 5 tests incl. the contrast that edits the 2nd of two identical
-> lines. Medium tier now offers 12 tools; Nano 6 / Small 10 unchanged. ADR-039. PR cadence clean.
+> **Direction change (sprint 30):** began the **Animus** suite by **hardening Animus Loop**.
+> Sprint 30 shipped **Ornstein increment 1** — the quarantined summarizer (`ferric-research`):
+> untrusted content → a no-tools/no-memory model under a data-only schema → a typed,
+> provenance-tagged `ResearchDigest`. The quarantine is *structural* (reuses the constrained
+> valve), so injections can only surface as quoted data. 4 tests incl. the injection-
+> containment proof. ADR-040; `docs/ornstein.md`. PR cadence clean.
 
-Open candidates (sprint 30+):
-- **Multi-file `apply_patch`** — a diff spanning several files (create/update/delete) with cross-file all-or-nothing. The clean follow-on to s29's single-file version.
-- **GPU / edge run** — a CUDA llama.cpp build (or Jetson Orin Nano) to clear the s25 CPU timeouts + confirm the edge footprint; Gemma 4 might then reach L6.
-- **Harder bench levels (L7+)** — best paired with a model stronger than the current 7B ceiling (which tops out at L6).
-- **MCP-stdio** (ADR-012, needs an ADR-005 security call); **`--chat` plain-LLM mode** (deferred).
-- **Audio on real (non-TTS) audio; video modality.**
-- **A live calibration run driving `apply_patch`/Ring 2 under a real model** (qwen-7b `--max-ring 2`), confirming the new tool is drivable beyond the unit tests.
+## Animus vision (recovered from the user, 2026-06-27)
+- **Animus Launch** — interactive Rust+scripts project bootstrapper (successor to GECK's launcher: `crates/geck-cli/wizard.rs` + `geck_generator`). Interview → git repo with main+dev → "begin work?". **Decision: lives as a crate in Animus_Ferric.**
+- **Animus Loop** — the sprint-loops protocol (Research→Plan→Build→Test→Loop). **First priority = harden it.**
+- **Animus Manage** — multi-agent project-management layer (least-specified).
+
+## Open candidates (sprint 31+) — hardening Animus Loop
+- **Ornstein increment 2** — pick one: the **CaMeL taint + sink-policy table** (gate tool calls with tainted-derived args), OR the **container + allowlist-proxy + network-fetch** layer (bollard/gVisor) feeding `summarize_quarantined`.
+- **Ornstein increment 3** — **wire the quarantine into the Loop's research phase** (a sprint-loops repo change: route fetched content through `summarize_quarantined` before the planner sees it).
+- **PR open+merge as the STANDARD final loop phase** — promote sprint-loops `06-loop-phase.md` step #6 from optional to standard (small, clear; matches one-PR-per-sprint).
+- **A testing system** — make the Loop's Test phase a real system (define first: containerized test runs? golden artifacts? coverage gates?).
+- **Animus Launch (crate in Animus_Ferric)** — the interactive bootstrapper, once loop-hardening has momentum.
+- A live small-model run measuring Ornstein summarization *quality* (safety is already structural).
+
+## Earlier backlog (still open)
+- Multi-file `apply_patch` (ADR-039 follow-on); GPU/edge run (Jetson/Pi → maybe L6); harder bench L7+; MCP-stdio (ADR-012); audio on real non-TTS audio + video modality.
