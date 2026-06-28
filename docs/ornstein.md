@@ -1,8 +1,9 @@
 # Ornstein — quarantined retrieval
 
-> Status: **increment 2** — the quarantined summarizer (inc 1) + the `Retriever` keystone and
-> the **Local-FS source plane** (inc 2) shipped in `ferric-research`. The tailnet/NAS + web
-> planes and the container/proxy/CaMeL-sink-policy/Loop-wiring layers are sequenced (ADR-040/041).
+> Status: **increment 3** — the quarantined summarizer (inc 1) + the `Retriever` keystone (inc 2)
+> + the **Local-FS** and **Tailnet/NAS-FS** source planes shipped in `ferric-research`. The web
+> plane + container/proxy/CaMeL-sink-policy/Loop-wiring layers are sequenced (ADR-040/041/042).
+> (The tailnet plane's deterministic core is tested; its live SSH E2E is the documented follow-up.)
 
 Ornstein is a **quarantined multi-source research subsystem**: *one funnel, many sources.* The
 quarantine (below) is the universal sink; each source plane is a pluggable `Retriever`.
@@ -82,10 +83,28 @@ binary files, and **symlinks** for escape-safety), matches files by name or cont
 *local* file is untrusted (a downloaded doc, a cloned README, a NAS share), so it routes through
 the funnel like any other source.
 
-## Sequenced next (ADR-040/041) — build order: Local FS ✅ → Tailnet/NAS → Web
-- **Tailnet/NAS-FS `Retriever`** — reach a NAS + LAN devices over **Tailscale** (LocalAPI
-  `/status` to enumerate, `whois` for identity, SSH/`serve` to reach), search their filesystems.
-  Substrate pre-scoped in the s1 research.
+**Tailnet/NAS-FS plane** (`TailnetFsRetriever`, ✅ built; live SSH E2E deferred): searches a
+*remote* tailnet device's filesystem over SSH and feeds matches to the same quarantine.
+
+```rust
+use ferric_research::{research, TailnetFsRetriever, SshTransport};
+
+// Linux tailnet device (keyless Tailscale SSH):
+let r = TailnetFsRetriever::new("switchblade", "/data", SshTransport::Tailscale);
+// or Termux sshd on a phone:
+let r = TailnetFsRetriever::new("pixel-10-pro-xl", "/sdcard", SshTransport::Plain { port: 8022 });
+let digests = research(&r, provider, "tailscale NAT traversal").await?; // source = "host:relpath"
+```
+
+> **Security — remote command injection.** `ssh` runs its command through the *remote* shell, so
+> the research query and remote root are POSIX single-quote-escaped (`shell_single_quote`) before
+> they ever reach `grep`/`cat` — untrusted research input cannot become a remote command. (And the
+> fetched content still flows through the quarantine, so a malicious *file* can't act either.) The
+> escaping + argv builders are unit-tested; the SSH spawn is the live path.
+
+## Sequenced next (ADR-040/041/042) — build order: Local FS ✅ → Tailnet/NAS ✅ → Web
+- **Live SSH E2E** for the tailnet plane — once a target's sshd is up (Termux `Plain{8022}` on the
+  Pixel, or `Tailscale` on switchblade when back online).
 - **Web `Retriever`** + hardened **container** + **allowlist egress proxy** (bollard/gVisor) — the
   online plane and the *code*-escape leg; its security layer lands last (the exfil leg lives here).
 - Full **CaMeL** taint tracking + a **sink-policy table** + a **research orchestrator** (run a

@@ -15,8 +15,9 @@
 ## Ornstein = a quarantined MULTI-SOURCE research subsystem (user's expanded vision)
 One funnel (the built quarantine), many pluggable `Retriever`s (capability-probed). **Build order (user-chosen):**
 - **inc 2 — `Retriever` trait + Local FS retriever** ✅ **DONE (s31, ADR-041).** Keystone `Retriever` (plane/available/retrieve, async) + `LocalFsRetriever` + `research()` pipeline; source→funnel→digest proven.
-- **inc 3 — Tailnet/NAS FS retriever** ← **NEXT.** A `Retriever` that reaches a NAS + LAN devices over **Tailscale** (LocalAPI `/status` enumerate, `whois` identity, SSH/`serve` reach), searches their filesystems (substrate pre-scoped in s1 `docker-nix-tailscale.md`). Same trait shape as `LocalFsRetriever`, reached over the network.
-- **inc 4 — Web retriever + hardened container + allowlist proxy** (bollard/gVisor) — the online plane; the trifecta's exfil leg lives here, so its security layer comes last.
+- **inc 3 — Tailnet/NAS FS retriever** ✅ **DONE (s32, ADR-042).** `TailnetFsRetriever` searches a remote tailnet device's FS over SSH (`SshTransport::{Tailscale, Plain{port}}`); query single-quote-escaped vs remote command injection; `parse_status_devices` for `available()`. Deterministic core tested; **live SSH E2E deferred** (no target's sshd was up — Pixel has none on :22/:8022, switchblade offline).
+- **inc 3b — live SSH E2E for the tailnet plane** ← run once a target's sshd is up (Termux `Plain{8022}` on pixel-10-pro-xl, or `Tailscale` on switchblade when back online): `research(&TailnetFsRetriever{…}, provider, query)` → quarantined `host:path` digests.
+- **inc 4 — Web retriever + hardened container + allowlist proxy** (bollard/gVisor) ← **NEXT.** The online plane; the trifecta's exfil leg lives here, so its security layer comes last.
 - **inc 5 — CaMeL taint/sink-policy + research orchestrator + Loop research-phase wiring** (route fetched content through the quarantine before the planner sees it; a sprint-loops change).
 - **PR open+merge as the STANDARD final loop phase** — promote sprint-loops `06-loop-phase.md` step #6 from optional to standard (small, clear; matches one-PR-per-sprint).
 - **A testing system** — make the Loop's Test phase a real system (define first: containerized test runs? golden artifacts? coverage gates?).
