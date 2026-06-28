@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.jpg" alt="Animus Ferric — agentic AI harness written in Rust" width="720">
+  <img src="docs/Animus.png" alt="Animus Ferric — agentic AI harness written in Rust" width="720">
 </p>
 
 # Animus Ferric
