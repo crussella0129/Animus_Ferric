@@ -12,6 +12,8 @@ ferric-provider = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 futures-executor = { workspace = true }
+tempfile = { workspace = true }

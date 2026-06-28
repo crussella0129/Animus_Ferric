@@ -23,6 +23,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 
+pub mod retriever;
+pub use retriever::{LocalFsRetriever, RetrieveError, RetrievedChunk, Retriever, research};
+
 /// One provenance-tagged claim extracted from untrusted content. Data only —
 /// there is deliberately no field that can carry a tool name or an action.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,6 +61,8 @@ pub enum ResearchError {
     EmptyOutput,
     #[error("could not parse the summarizer output as a ResearchDigest: {0}")]
     Parse(String),
+    #[error("retrieve error: {0}")]
+    Retrieve(String),
 }
 
 /// The JSON Schema the quarantined summarizer's whole output must satisfy. It
