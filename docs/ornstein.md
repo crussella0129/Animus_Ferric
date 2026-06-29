@@ -1,9 +1,10 @@
 # Ornstein — quarantined retrieval
 
-> Status: **increment 3** — the quarantined summarizer (inc 1) + the `Retriever` keystone (inc 2)
-> + the **Local-FS** and **Tailnet/NAS-FS** source planes shipped in `ferric-research`. The web
-> plane + container/proxy/CaMeL-sink-policy/Loop-wiring layers are sequenced (ADR-040/041/042).
-> (The tailnet plane's deterministic core is tested; its live SSH E2E is the documented follow-up.)
+> Status: the quarantined summarizer (inc 1) + the `Retriever` keystone (inc 2) + the **Local-FS**
+> and **Tailnet/NAS-FS** source planes + the **research orchestrator** (`research_all` across all
+> planes, ADR-043) shipped in `ferric-research`. The web plane + container/proxy/CaMeL-sink-policy/
+> Loop-wiring layers are sequenced (ADR-040–043). (The tailnet plane's deterministic core is
+> tested; its live SSH E2E is the documented follow-up.)
 
 Ornstein is a **quarantined multi-source research subsystem**: *one funnel, many sources.* The
 quarantine (below) is the universal sink; each source plane is a pluggable `Retriever`.
@@ -102,12 +103,31 @@ let digests = research(&r, provider, "tailscale NAT traversal").await?; // sourc
 > fetched content still flows through the quarantine, so a malicious *file* can't act either.) The
 > escaping + argv builders are unit-tested; the SSH spawn is the live path.
 
-## Sequenced next (ADR-040/041/042) — build order: Local FS ✅ → Tailnet/NAS ✅ → Web
+## The orchestrator — one query, many planes (ADR-043)
+
+```rust
+use ferric_research::{research_all, MultiResearch, LocalFsRetriever, TailnetFsRetriever, SshTransport};
+
+let local = LocalFsRetriever::new("/corpus");
+let nas = TailnetFsRetriever::new("switchblade", "/data", SshTransport::Tailscale);
+let planes: Vec<&dyn ferric_research::Retriever> = vec![&local, &nas];
+
+let MultiResearch { digests, planes: report } = research_all(&planes, provider, "NAT traversal").await?;
+// `digests`: quarantined, provenance-tagged, deduped by source, in plane order.
+// `report`:  per-plane { plane, available, digests } — e.g. local available (3), tailnet offline (0).
+```
+
+`research_all` probes each plane, quarantines every chunk, and **dedups by `source` before the
+model call** (a file reachable from two planes is summarized once — inference is the cost). An
+offline plane contributes nothing and is recorded `available: false`; it's never an error.
+
+## Sequenced next (ADR-040–043) — build order: Local FS ✅ → Tailnet/NAS ✅ → orchestrator ✅ → Web
 - **Live SSH E2E** for the tailnet plane — once a target's sshd is up (Termux `Plain{8022}` on the
   Pixel, or `Tailscale` on switchblade when back online).
 - **Web `Retriever`** + hardened **container** + **allowlist egress proxy** (bollard/gVisor) — the
   online plane and the *code*-escape leg; its security layer lands last (the exfil leg lives here).
-- Full **CaMeL** taint tracking + a **sink-policy table** + a **research orchestrator** (run a
-  query across the live planes) + **Loop research-phase wiring** — a sprint-loops change.
+  *(Gated on a containerizer — none installed yet.)*
+- Full **CaMeL** taint tracking + a **sink-policy table** + **Loop research-phase wiring** (route
+  digests through a sink policy before the planner acts on tainted-derived data) — a sprint-loops change.
 - A live small-model run to measure summarization *quality* (the quarantine's *safety* is already
   structural and model-independent).
