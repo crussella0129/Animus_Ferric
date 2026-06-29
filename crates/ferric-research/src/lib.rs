@@ -25,8 +25,8 @@ use thiserror::Error;
 
 pub mod retriever;
 pub use retriever::{
-    LocalFsRetriever, RetrieveError, RetrievedChunk, Retriever, SshTransport, TailnetDevice,
-    TailnetFsRetriever, research,
+    LocalFsRetriever, MultiResearch, PlaneResult, RetrieveError, RetrievedChunk, Retriever,
+    SshTransport, TailnetDevice, TailnetFsRetriever, research, research_all,
 };
 
 /// One provenance-tagged claim extracted from untrusted content. Data only —

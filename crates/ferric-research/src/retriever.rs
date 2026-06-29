@@ -7,6 +7,7 @@
 //! (local FS now; tailnet/NAS + web next) is an additive `Retriever`, not a
 //! rewrite.
 
+use std::collections::BTreeSet;
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -75,6 +76,67 @@ pub async fn research(
         digests.push(summarize_quarantined(provider, &chunk.source, &chunk.content, query).await?);
     }
     Ok(digests)
+}
+
+/// Per-plane outcome of an orchestrated [`research_all`] run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlaneResult {
+    /// The source plane label (`"local"` | `"tailnet"` | `"web"`).
+    pub plane: String,
+    /// Whether the plane was available (capability-probed) this run.
+    pub available: bool,
+    /// How many (deduped) digests this plane contributed.
+    pub digests: usize,
+}
+
+/// The aggregated result of running a query across several planes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultiResearch {
+    /// Quarantined digests, in plane order, deduped by `source`.
+    pub digests: Vec<ResearchDigest>,
+    /// Per-plane outcome (what ran, what was offline, counts) — observability.
+    pub planes: Vec<PlaneResult>,
+}
+
+/// Run `query` across every plane, quarantining each chunk — "one funnel, many
+/// sources". Each available `Retriever` is probed, retrieved, and its chunks
+/// quarantined; a `source` surfaced by more than one plane is summarized **once**
+/// (deduped *before* the model call, so a duplicate costs no inference). Returns
+/// the aggregated digests (plane order) plus a per-plane outcome report.
+/// Unavailable planes contribute nothing and are recorded — never an error.
+pub async fn research_all(
+    retrievers: &[&dyn Retriever],
+    provider: &dyn Provider,
+    query: &str,
+) -> Result<MultiResearch, ResearchError> {
+    let mut digests = Vec::new();
+    let mut planes = Vec::with_capacity(retrievers.len());
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for retriever in retrievers {
+        let available = retriever.available();
+        let mut count = 0;
+        if available {
+            let chunks = retriever
+                .retrieve(query)
+                .await
+                .map_err(|e| ResearchError::Retrieve(e.to_string()))?;
+            for chunk in chunks {
+                if seen.insert(chunk.source.clone()) {
+                    digests.push(
+                        summarize_quarantined(provider, &chunk.source, &chunk.content, query)
+                            .await?,
+                    );
+                    count += 1;
+                }
+            }
+        }
+        planes.push(PlaneResult {
+            plane: retriever.plane().to_string(),
+            available,
+            digests: count,
+        });
+    }
+    Ok(MultiResearch { digests, planes })
 }
 
 /// The Local-FS source plane: search files under a confined `root` for a query,
@@ -624,5 +686,71 @@ mod tests {
     fn tailnet_retriever_plane_label() {
         let r = TailnetFsRetriever::new("switchblade", "/data", SshTransport::Tailscale);
         assert_eq!(r.plane(), "tailnet");
+    }
+
+    // --- The research orchestrator (research_all across planes) ---
+
+    #[test]
+    fn research_all_aggregates_across_planes() {
+        let d1 = tempfile::tempdir().unwrap();
+        write(d1.path(), "a.md", b"tailscale one");
+        let d2 = tempfile::tempdir().unwrap();
+        write(d2.path(), "b.md", b"tailscale two");
+        let r1 = LocalFsRetriever::new(d1.path());
+        let r2 = LocalFsRetriever::new(d2.path());
+        let mock = MockProvider::new(vec![
+            digest_completion(r#"{"summary":"one","claims":[]}"#),
+            digest_completion(r#"{"summary":"two","claims":[]}"#),
+        ]);
+        let rs: Vec<&dyn Retriever> = vec![&r1, &r2];
+        let res = block(research_all(&rs, &mock, "tailscale")).unwrap();
+        assert_eq!(res.digests.len(), 2, "both planes contribute");
+        assert_eq!(res.planes.len(), 2);
+        assert!(res.planes.iter().all(|p| p.available && p.digests == 1));
+    }
+
+    #[test]
+    fn research_all_dedups_shared_source_with_one_model_call() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "shared.md", b"tailscale here");
+        let r1 = LocalFsRetriever::new(dir.path());
+        let r2 = LocalFsRetriever::new(dir.path()); // SAME dir → same source "shared.md"
+        // Only ONE completion scripted: dedup must happen BEFORE the model call,
+        // or the second plane's duplicate would exhaust the script.
+        let mock = MockProvider::new(vec![digest_completion(r#"{"summary":"x","claims":[]}"#)]);
+        let rs: Vec<&dyn Retriever> = vec![&r1, &r2];
+        let res = block(research_all(&rs, &mock, "tailscale")).unwrap();
+        assert_eq!(res.digests.len(), 1, "shared source summarized once");
+        assert_eq!(res.planes[0].digests, 1);
+        assert_eq!(
+            res.planes[1].digests, 0,
+            "second plane's duplicate excluded"
+        );
+    }
+
+    #[test]
+    fn research_all_skips_unavailable_plane() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "a.md", b"tailscale");
+        let good = LocalFsRetriever::new(dir.path());
+        let bad = LocalFsRetriever::new(dir.path().join("nope")); // missing root
+        let mock = MockProvider::new(vec![digest_completion(r#"{"summary":"x","claims":[]}"#)]);
+        let rs: Vec<&dyn Retriever> = vec![&bad, &good];
+        let res = block(research_all(&rs, &mock, "tailscale")).unwrap();
+        assert_eq!(res.digests.len(), 1);
+        assert!(!res.planes[0].available && res.planes[0].digests == 0);
+        assert!(res.planes[1].available && res.planes[1].digests == 1);
+    }
+
+    #[test]
+    fn research_all_all_unavailable_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad1 = LocalFsRetriever::new(dir.path().join("nope1"));
+        let bad2 = LocalFsRetriever::new(dir.path().join("nope2"));
+        let mock = MockProvider::new(vec![]);
+        let rs: Vec<&dyn Retriever> = vec![&bad1, &bad2];
+        let res = block(research_all(&rs, &mock, "x")).unwrap();
+        assert!(res.digests.is_empty());
+        assert!(res.planes.iter().all(|p| !p.available && p.digests == 0));
     }
 }
