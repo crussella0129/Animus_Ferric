@@ -118,7 +118,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 32). Two inference backends ship behind feature flags:
+Active development (sprint 33). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
@@ -182,4 +182,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 32 — Ornstein increment 3** (2026-06-28). The second source plane: a **Tailnet/NAS-FS retriever** that searches a *remote* tailnet device's filesystem over **Tailscale SSH** (`tailscale ssh` for Linux boxes, plain `ssh -p` for Termux), feeding matches to the same quarantine. The security core — `ssh` runs its command through the *remote* shell, so the research query is single-quote-escaped against **remote command injection** — is fully unit-tested; the live SSH E2E is deferred (no tailnet SSH target reachable at build time). Build order: Local FS ✅ → Tailnet/NAS ✅ → Web. See [`docs/ornstein.md`](docs/ornstein.md). *ADR-042.*
 
-> **Next — Sprint 33: TBD** (live SSH E2E for the tailnet plane once a target's sshd is up; the **Web retriever** + hardened container + allowlist proxy; CaMeL sink-policy; Loop research-phase wiring).
+- **Sprint 33 — Ornstein research orchestrator** (2026-06-28). The "one funnel, many sources" payoff: `research_all(planes, provider, query)` runs a query across every available source plane at once, quarantines each chunk, **dedups by source before the model call** (a file reachable from two planes costs one inference, not two), and returns the aggregated digests plus a per-plane outcome report (what ran / was offline / counts). Composes the local + tailnet planes with zero pipeline change. See [`docs/ornstein.md`](docs/ornstein.md). *ADR-043.*
+
+> **Next — Sprint 34: TBD** (install a containerizer → the **Web retriever** + hardened container + allowlist proxy; then CaMeL taint/sink-policy + Loop research-phase wiring; the deferred live tailnet SSH E2E once a target's sshd is up).
