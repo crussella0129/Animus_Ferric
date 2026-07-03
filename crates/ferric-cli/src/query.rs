@@ -450,7 +450,7 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
     }
 }
 
-fn now_ms() -> u128 {
+pub(crate) fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
