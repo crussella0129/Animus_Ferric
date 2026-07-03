@@ -95,6 +95,61 @@ pub fn render_line(resp: &RpcResponse) -> String {
     })
 }
 
+/// Fixed, hardcoded protocol version (ADR-005 spirit: no runtime negotiation
+/// surface). A client requesting a different version gets this one back and
+/// decides for itself whether to proceed.
+pub const PROTOCOL_VERSION: &str = "2025-11-25";
+
+pub fn handle_initialize(id: Value) -> RpcResponse {
+    RpcResponse::success(
+        id,
+        serde_json::json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "ferric", "version": env!("CARGO_PKG_VERSION")},
+        }),
+    )
+}
+
+/// The one MCP tool this server exposes. Deliberately has NO `workspace`,
+/// `backend`, or `model` field — those are `ferric mcp` launch-time CLI flags,
+/// fixed for the server's lifetime (ADR-046: the containment guarantee is
+/// structural, not something a handler must remember to enforce).
+pub fn ferric_query_tool_schema() -> Value {
+    serde_json::json!({
+        "name": "ferric_query",
+        "description": "Run a one-shot, workspace-scoped, policy-scaled coding/agentic \
+            task against the local model this Ferric MCP server was launched with. The \
+            full constrained agent loop runs (planning, tool calls, guard-enforced \
+            permission checks) inside Ferric's own workspace boundary; only the final \
+            answer is returned.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The task to perform.",
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional paths to attach. Text/code folds into the \
+                        prompt; images/audio/video attach as media if the server's \
+                        declared --modality supports it.",
+                },
+            },
+            "required": ["prompt"],
+        },
+    })
+}
+
+pub fn handle_tools_list(id: Value) -> RpcResponse {
+    RpcResponse::success(
+        id,
+        serde_json::json!({"tools": [ferric_query_tool_schema()]}),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +183,36 @@ mod tests {
         let line = render_line(&resp);
         assert!(!line.contains('\n'));
         assert!(line.contains("\"ok\":true"));
+    }
+
+    #[test]
+    fn initialize_returns_fixed_version_and_tools_capability() {
+        let resp = handle_initialize(Value::from(1));
+        let result = resp.result.unwrap();
+        assert_eq!(result["protocolVersion"], PROTOCOL_VERSION);
+        assert!(result["capabilities"]["tools"].is_object());
+        assert_eq!(result["serverInfo"]["name"], "ferric");
+    }
+
+    #[test]
+    fn tools_list_has_exactly_one_tool_named_ferric_query() {
+        let resp = handle_tools_list(Value::from(1));
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "ferric_query");
+    }
+
+    /// The structural containment-guarantee regression test (ADR-046): the
+    /// exposed tool's schema must never grow a workspace/backend/model field,
+    /// since that would let a caller redirect containment per-call instead of
+    /// it being fixed at `ferric mcp` launch.
+    #[test]
+    fn ferric_query_schema_has_no_workspace_backend_or_model_field() {
+        let schema = ferric_query_tool_schema();
+        let properties = &schema["inputSchema"]["properties"];
+        assert!(properties.get("workspace").is_none());
+        assert!(properties.get("backend").is_none());
+        assert!(properties.get("model").is_none());
+        assert!(properties.get("prompt").is_some());
     }
 }
