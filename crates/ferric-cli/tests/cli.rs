@@ -314,3 +314,71 @@ fn unknown_args_fail_with_usage() {
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.to_lowercase().contains("usage") || stderr.contains("unrecognized"));
 }
+
+/// T-3606 E2E (sprint 36, ADR-046): a real `ferric mcp --mock` child process,
+/// driven over its actual stdin/stdout pipes — proves the real stdio framing
+/// (line delimiting, stdout purity), not just the in-process dispatch logic
+/// `mcp::tests` already covers.
+#[test]
+fn mcp_stdio_e2e() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::Stdio;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = ferric()
+        .args(["mcp", "--mock"])
+        .arg("--workspace")
+        .arg(dir.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{}}}}"#
+    )
+    .unwrap();
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert!(
+        resp["result"]["protocolVersion"].is_string(),
+        "initialize response: {line}"
+    );
+
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#
+    )
+    .unwrap();
+
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{{}}}}"#
+    )
+    .unwrap();
+    line.clear();
+    reader.read_line(&mut line).unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(resp["result"]["tools"][0]["name"], "ferric_query");
+
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"ferric_query","arguments":{{"prompt":"do a mock task"}}}}}}"#
+    )
+    .unwrap();
+    line.clear();
+    reader.read_line(&mut line).unwrap();
+    let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(resp["result"]["content"][0]["text"], "mock run complete");
+    assert_eq!(resp["result"]["isError"], false);
+
+    drop(stdin); // EOF: the server should exit cleanly on its own.
+    let status = child.wait().unwrap();
+    assert!(status.success(), "ferric mcp did not exit cleanly on EOF");
+}
