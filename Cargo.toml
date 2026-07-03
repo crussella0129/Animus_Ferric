@@ -37,7 +37,11 @@ clap = { version = "4", features = ["derive"] }
 # different commit. Immutable until a deliberate, reviewed bump (matching the
 # oovra policy below).
 mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", rev = "15986c037bbe3ee31085d1c73abd2ea3cb11f094" }
-reqwest = { version = "0.12", features = ["json"] }
+# rustls-tls (sprint 35, ADR-045): default-tls pulls native OpenSSL bindings on
+# non-Windows targets -- a native dependency + cross-toolchain burden for ARM
+# edge cross-compilation (Jetson/RPi). rustls is pure Rust; Ferric only ever
+# talks to 127.0.0.1 (ADR-005) so TLS itself is barely exercised regardless.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 # Prompt composition (ADR-016): rev-pinned to oovra main; immutable until a
 # deliberate, reviewed bump. Swap to crates.io at oovra v0.3.
