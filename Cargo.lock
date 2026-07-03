@@ -492,7 +492,7 @@ checksum = "ade8366b8bd5ba243f0a58f036cc0ca8a2f069cff1a2351ef1cac6b083e16fc0"
 [[package]]
 name = "candle-core"
 version = "0.10.2"
-source = "git+https://github.com/huggingface/candle.git?rev=e020e8a#e020e8a42766c497c795c29df25c2ba2ef0e1480"
+source = "git+https://github.com/huggingface/candle.git?rev=a9667ca#a9667cad048e42911a6e038d495d5491dd9328be"
 dependencies = [
  "byteorder",
  "float8",
@@ -516,7 +516,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.10.2"
-source = "git+https://github.com/huggingface/candle.git?rev=e020e8a#e020e8a42766c497c795c29df25c2ba2ef0e1480"
+source = "git+https://github.com/huggingface/candle.git?rev=a9667ca#a9667cad048e42911a6e038d495d5491dd9328be"
 dependencies = [
  "candle-core",
  "half",
@@ -2785,8 +2785,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -2812,8 +2812,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-audio"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "anyhow",
  "apodize",
@@ -2822,9 +2822,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mistralrs-code-exec"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "image",
+ "libc",
+ "mistralrs-mcp",
+ "mistralrs-sandbox",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid 1.23.3",
+]
+
+[[package]]
 name = "mistralrs-core"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "ahash",
  "akin",
@@ -2867,6 +2886,7 @@ dependencies = [
  "minijinja",
  "minijinja-contrib",
  "mistralrs-audio",
+ "mistralrs-code-exec",
  "mistralrs-mcp",
  "mistralrs-quant",
  "mistralrs-sandbox",
@@ -2918,8 +2938,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-macros"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -2929,8 +2949,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-mcp"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2950,13 +2970,14 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-quant"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "byteorder",
  "candle-core",
  "candle-nn",
  "float8",
+ "futures",
  "half",
  "hf-hub",
  "indicatif 0.18.4",
@@ -2969,6 +2990,7 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
+ "sysinfo",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2977,8 +2999,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-sandbox"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "anyhow",
  "itoa",
@@ -2994,8 +3016,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-vision"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "candle-core",
  "image",
@@ -4304,13 +4326,15 @@ dependencies = [
 
 [[package]]
 name = "safetensors"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "675656c1eabb620b921efea4f9199f97fc86e36dd6ffd1fbbe48d0f59a4987f5"
+checksum = "79b079b829cb27a1c3c374341345ed2e8b2c0c839034522cee576c140bd7f846"
 dependencies = [
  "hashbrown 0.16.1",
+ "libc",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

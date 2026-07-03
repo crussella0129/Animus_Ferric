@@ -32,7 +32,11 @@ serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", branch = "master" }
+# mistral.rs (sprint 35, ADR-045): rev-pinned, not a floating branch --
+# `branch = "master"` let every fresh backend-mistralrs build silently pull a
+# different commit. Immutable until a deliberate, reviewed bump (matching the
+# oovra policy below).
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", rev = "15986c037bbe3ee31085d1c73abd2ea3cb11f094" }
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 # Prompt composition (ADR-016): rev-pinned to oovra main; immutable until a
