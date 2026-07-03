@@ -29,6 +29,9 @@ pub use retriever::{
     SshTransport, TailnetDevice, TailnetFsRetriever, research, research_all,
 };
 
+pub mod sink;
+pub use sink::{SinkAction, SinkDecision, SinkPolicy, TaintSet};
+
 /// One provenance-tagged claim extracted from untrusted content. Data only —
 /// there is deliberately no field that can carry a tool name or an action.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

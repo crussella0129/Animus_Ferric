@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 ferric-core = { workspace = true }
 ferric-provider = { workspace = true }
+ferric-guard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
