@@ -9,6 +9,9 @@ sprints/
 # Rust
 target/
 
+# JetBrains IDE project config (local to each dev's machine).
+.idea/
+
 # Local model weights (GGUF / safetensors) — 16 GB, never committed.
 models/
 
