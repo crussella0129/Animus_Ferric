@@ -507,6 +507,22 @@ mod tests {
         assert_eq!(resp.id, Value::Null);
     }
 
+    /// test-critique C-004: a source-level guard that this module never
+    /// writes a bare `println!` — stdout is reserved for JSON-RPC frames
+    /// (module doc comment); a stray log line would corrupt the stream. Cheap
+    /// static check standing in for a runtime stdio-capture test.
+    #[test]
+    fn no_bare_println_in_source() {
+        let source = include_str!("mcp.rs");
+        for line in source.lines() {
+            let trimmed = line.trim_start();
+            assert!(
+                !trimmed.starts_with("println!"),
+                "found a bare println! in mcp.rs (must be eprintln!): {trimmed}"
+            );
+        }
+    }
+
     #[test]
     fn render_line_has_no_embedded_newline() {
         let resp = RpcResponse::success(Value::from(1), serde_json::json!({"ok": true}));
@@ -582,6 +598,30 @@ mod tests {
         }
     }
 
+    /// test-critique C-005: `dispatch`'s unknown-*method* branch
+    /// (`METHOD_NOT_FOUND`) has a dedicated error constant and code path but
+    /// was never exercised — distinct from `tools_call_unknown_tool_is_json_rpc_error`
+    /// (unknown *tool name* within a valid `tools/call`, `INVALID_PARAMS`).
+    #[test]
+    fn dispatch_unknown_method_is_json_rpc_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = test_server(
+            dir.path(),
+            Box::new(crate::query::mock_provider(
+                ferric_core::ActionProtocol::NativeTools,
+            )),
+        );
+        let resp = server
+            .dispatch(RpcRequest {
+                id: Some(Value::from(1)),
+                method: "nonsense/method".to_string(),
+                params: Value::Null,
+            })
+            .unwrap();
+        assert!(resp.result.is_none());
+        assert_eq!(resp.error.unwrap().code, METHOD_NOT_FOUND);
+    }
+
     #[test]
     fn tools_call_ferric_query_success() {
         let dir = tempfile::tempdir().unwrap();
@@ -645,11 +685,34 @@ mod tests {
         assert_eq!(result["isError"], true);
     }
 
+    /// Reads the most recently written `mcp-*.jsonl` trace's `prompt_assembled`
+    /// event — the same event `cli.rs`'s CLI-level file-routing tests inspect.
+    fn latest_mcp_prompt_assembled(trace_dir: &std::path::Path) -> Value {
+        let entry = std::fs::read_dir(trace_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("mcp-"))
+            .max_by_key(|e| e.metadata().unwrap().modified().unwrap())
+            .expect("a mcp-*.jsonl trace");
+        let content = std::fs::read_to_string(entry.path()).unwrap();
+        content
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .find(|v| v["event"]["type"] == "prompt_assembled")
+            .expect("a prompt_assembled event")
+    }
+
+    /// `AppendText` branch: the file's content actually folds into the
+    /// assembled prompt (checked via the trace's char count) — not merely
+    /// "the call didn't error" (test-critique C-002: the prior version of
+    /// this test asserted only `isError:false`, which can't distinguish
+    /// "folded in" from "silently ignored").
     #[test]
-    fn tools_call_files_route_through_attach_fold_skip() {
+    fn tools_call_file_text_folds_into_prompt() {
         let dir = tempfile::tempdir().unwrap();
         let notes = dir.path().join("notes.md");
-        std::fs::write(&notes, "MARKER content").unwrap();
+        let body = "MARKER ".repeat(50);
+        std::fs::write(&notes, &body).unwrap();
         let server = test_server(
             dir.path(),
             Box::new(crate::query::mock_provider(
@@ -662,8 +725,44 @@ mod tests {
                 serde_json::json!({"prompt": "summarize", "files": [notes.to_str().unwrap()]}),
             ))
             .unwrap();
-        // AppendText: the file's content folds in — the mock still succeeds
-        // (it doesn't inspect the prompt), proving the routing didn't error.
+        assert_eq!(resp.result.as_ref().unwrap()["isError"], false);
+        let assembled = latest_mcp_prompt_assembled(&server.trace_dir);
+        let chars = assembled["event"]["chars"].as_u64().unwrap();
+        assert!(
+            chars as usize >= body.len(),
+            "assembled prompt ({chars} chars) should include the {}-char file",
+            body.len()
+        );
+    }
+
+    /// `Skip` branch (test-critique C-001: the locked test plan required all
+    /// three `Attachment` branches; only `AppendText` shipped). A media file
+    /// with no declared modality is dropped non-fatally — the
+    /// security-relevant path (an undeclared attachment must never silently
+    /// attach). Mirrors `cli.rs`'s `query_file_media_skipped_with_reason`.
+    /// (The `Media`-attaches case is not separately testable here: `--mock`
+    /// hardcodes `caps.supports_media = false`, so `decide_attachment` always
+    /// routes media to `Skip` regardless of `declared` — the same is true of
+    /// the existing CLI test suite, which likewise has no "media attaches"
+    /// case; this is parity with, not a regression from, prior coverage.)
+    #[test]
+    fn tools_call_file_media_skipped_with_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let photo = dir.path().join("photo.png");
+        std::fs::write(&photo, [0u8; 16]).unwrap();
+        let server = test_server(
+            dir.path(),
+            Box::new(crate::query::mock_provider(
+                ferric_core::ActionProtocol::NativeTools,
+            )),
+        );
+        let resp = server
+            .dispatch(call_request(
+                1,
+                serde_json::json!({"prompt": "describe", "files": [photo.to_str().unwrap()]}),
+            ))
+            .unwrap();
+        // Skip is non-fatal: the call still succeeds, just without the media.
         assert_eq!(resp.result.unwrap()["isError"], false);
     }
 

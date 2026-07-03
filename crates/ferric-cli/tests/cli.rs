@@ -319,10 +319,17 @@ fn unknown_args_fail_with_usage() {
 /// driven over its actual stdin/stdout pipes — proves the real stdio framing
 /// (line delimiting, stdout purity), not just the in-process dispatch logic
 /// `mcp::tests` already covers.
+///
+/// Test-critique C-007: reads go through a background thread + bounded
+/// `recv_timeout` (not a raw blocking `read_line`) so a server that stops
+/// responding fails this test instead of hanging CI; stderr is drained on its
+/// own thread so a full OS pipe buffer can never deadlock the child.
 #[test]
 fn mcp_stdio_e2e() {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     let dir = tempfile::tempdir().unwrap();
     let mut child = ferric()
@@ -336,15 +343,45 @@ fn mcp_stdio_e2e() {
         .unwrap();
 
     let mut stdin = child.stdin.take().unwrap();
-    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+
+    // Drain stderr on its own thread for the process's lifetime — an
+    // unread pipe can fill its OS buffer and deadlock the child.
+    std::thread::spawn(move || {
+        let mut sink = String::new();
+        let _ = stderr.read_to_string(&mut sink);
+    });
+
+    // Stream stdout lines to the test thread over a channel so reads are
+    // timeout-bounded instead of an unbounded blocking `read_line`.
+    let (tx, rx) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break, // EOF or read error: stop forwarding.
+                Ok(_) => {
+                    if tx.send(line.clone()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    let recv_line = |rx: &mpsc::Receiver<String>| -> String {
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("ferric mcp did not respond within 10s")
+    };
 
     writeln!(
         stdin,
         r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{}}}}"#
     )
     .unwrap();
-    let mut line = String::new();
-    reader.read_line(&mut line).unwrap();
+    let line = recv_line(&rx);
     let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert!(
         resp["result"]["protocolVersion"].is_string(),
@@ -357,13 +394,25 @@ fn mcp_stdio_e2e() {
     )
     .unwrap();
 
+    // Test-critique C-006: a malformed line mid-session must yield a
+    // `-32700` parse-error frame WITHOUT disrupting the requests around it —
+    // the property the subprocess E2E exists to prove (a unit test already
+    // covers `parse_line` in isolation; this proves it through the real
+    // stdin→stdout pipe, where "keeps serving after" actually lives).
+    writeln!(stdin, "not valid json at all").unwrap();
+    let line = recv_line(&rx);
+    let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(
+        resp["error"]["code"], -32700,
+        "malformed-line response: {line}"
+    );
+
     writeln!(
         stdin,
         r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{{}}}}"#
     )
     .unwrap();
-    line.clear();
-    reader.read_line(&mut line).unwrap();
+    let line = recv_line(&rx);
     let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(resp["result"]["tools"][0]["name"], "ferric_query");
 
@@ -372,13 +421,22 @@ fn mcp_stdio_e2e() {
         r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"ferric_query","arguments":{{"prompt":"do a mock task"}}}}}}"#
     )
     .unwrap();
-    line.clear();
-    reader.read_line(&mut line).unwrap();
+    let line = recv_line(&rx);
     let resp: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(resp["result"]["content"][0]["text"], "mock run complete");
     assert_eq!(resp["result"]["isError"], false);
 
     drop(stdin); // EOF: the server should exit cleanly on its own.
-    let status = child.wait().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "ferric mcp did not exit within 10s of stdin EOF"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
     assert!(status.success(), "ferric mcp did not exit cleanly on EOF");
 }

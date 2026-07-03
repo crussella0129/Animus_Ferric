@@ -720,7 +720,10 @@ mod tests {
             quant: "Q4_K_M".to_string(),
             family: "unknown".to_string(),
             ctx: 4096,
-            temperature: 0.0,
+            // Non-default on purpose (test-critique C-003): 0.0 is also
+            // `SamplingParams::default()`'s value, so a mis-wired temperature
+            // would pass a same-value assertion vacuously.
+            temperature: 0.7,
             protocol_override: None,
             prompts_dir: None,
             max_ring: None,
@@ -766,6 +769,13 @@ mod tests {
         assert_eq!(config.policy.tier, expected_policy.tier);
         assert_eq!(
             config.policy.max_output_tokens,
+            expected_policy.max_output_tokens
+        );
+        // test-critique C-003: the EARS clause names sampling too, not just
+        // protocol/policy — assert it, not just the first two of three legs.
+        assert_eq!(config.sampling.temperature, a.temperature);
+        assert_eq!(
+            config.sampling.max_tokens,
             expected_policy.max_output_tokens
         );
     }
