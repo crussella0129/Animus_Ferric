@@ -118,7 +118,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 34). Two inference backends ship behind feature flags:
+Active development (sprint 35). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
@@ -186,4 +186,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 34 — CaMeL-lite sink-policy primitive** (2026-06-28). Co-designed with the user: flow control on top of the quarantine. `TaintSet` marks a digest's text as tainted; `SinkPolicy::decide(permission, tainted)` decides whether a `Write`/`Execute` tool call whose args derive from tainted data may proceed — **all three enforcement modes ship** (`Deny` / `RequireApproval` / `Warn`, caller's choice). Pure primitive only — an end-to-end test proves it would `Deny` an injected write once wired; the live gate lands at the dispatch chokepoint with the research→loop wiring. See [`docs/ornstein.md`](docs/ornstein.md). *ADR-044.*
 
-> **Next — Sprint 35: TBD** (install a containerizer → the **Web retriever** + hardened container + allowlist proxy; wire the sink policy into `registry.execute` + populate the taint set from loop context; the deferred live tailnet SSH E2E once a target's sshd is up).
+- **Sprint 35 — expert review + refactor** (2026-06-29). The first full-project audit: what does Ferric need to become an operational, competitive, safe product, staying efficient for edge/personal-compute deployment? Full findings (file:line cited) in `sprints/s35/sprint-research/research-report.md`; four immediately-effective fixes shipped — a **read-side sensitive-file guard** (`.env`/SSH keys/cloud credentials can no longer be read into the plaintext trace), **`ferric server` edge-tuning flags** (`--threads`/`--gpu-layers`/`--batch-size` for Jetson/RPi-class latency tuning), **`mistralrs` rev-pinned** (was floating on `branch = "master"`), and **`reqwest` switched to `rustls-tls`** (no native OpenSSL dependency for ARM cross-compilation). Everything larger (MCP, a new chat mode, shell/git tools, streaming, session resume) is explicitly deferred with reasons, not silently dropped. *ADR-045.*
+
+> **Next — Sprint 36: TBD** (`ferric mcp` — activating ADR-012 — and/or the new raw chat mode reversing ADR-011, both already decided and driven by the upcoming **Animus IDE** organ; install a containerizer → the Web retriever; wire the CaMeL sink policy once the research→loop taint source exists).

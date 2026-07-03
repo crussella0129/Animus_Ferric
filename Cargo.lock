@@ -492,7 +492,7 @@ checksum = "ade8366b8bd5ba243f0a58f036cc0ca8a2f069cff1a2351ef1cac6b083e16fc0"
 [[package]]
 name = "candle-core"
 version = "0.10.2"
-source = "git+https://github.com/huggingface/candle.git?rev=e020e8a#e020e8a42766c497c795c29df25c2ba2ef0e1480"
+source = "git+https://github.com/huggingface/candle.git?rev=a9667ca#a9667cad048e42911a6e038d495d5491dd9328be"
 dependencies = [
  "byteorder",
  "float8",
@@ -516,7 +516,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.10.2"
-source = "git+https://github.com/huggingface/candle.git?rev=e020e8a#e020e8a42766c497c795c29df25c2ba2ef0e1480"
+source = "git+https://github.com/huggingface/candle.git?rev=a9667ca#a9667cad048e42911a6e038d495d5491dd9328be"
 dependencies = [
  "candle-core",
  "half",
@@ -1532,21 +1532,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
-name = "foreign-types"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1"
-dependencies = [
- "foreign-types-shared",
-]
-
-[[package]]
-name = "foreign-types-shared"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
-
-[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2089,22 +2074,6 @@ dependencies = [
  "tokio-rustls",
  "tower-service",
  "webpki-roots 1.0.7",
-]
-
-[[package]]
-name = "hyper-tls"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
-dependencies = [
- "bytes",
- "http-body-util",
- "hyper",
- "hyper-util",
- "native-tls",
- "tokio",
- "tokio-native-tls",
- "tower-service",
 ]
 
 [[package]]
@@ -2785,8 +2754,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -2812,8 +2781,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-audio"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "anyhow",
  "apodize",
@@ -2822,9 +2791,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mistralrs-code-exec"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "image",
+ "libc",
+ "mistralrs-mcp",
+ "mistralrs-sandbox",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid 1.23.3",
+]
+
+[[package]]
 name = "mistralrs-core"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "ahash",
  "akin",
@@ -2867,6 +2855,7 @@ dependencies = [
  "minijinja",
  "minijinja-contrib",
  "mistralrs-audio",
+ "mistralrs-code-exec",
  "mistralrs-mcp",
  "mistralrs-quant",
  "mistralrs-sandbox",
@@ -2918,8 +2907,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-macros"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -2929,8 +2918,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-mcp"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2950,13 +2939,14 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-quant"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "byteorder",
  "candle-core",
  "candle-nn",
  "float8",
+ "futures",
  "half",
  "hf-hub",
  "indicatif 0.18.4",
@@ -2969,6 +2959,7 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
+ "sysinfo",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2977,8 +2968,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-sandbox"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "anyhow",
  "itoa",
@@ -2994,8 +2985,8 @@ dependencies = [
 
 [[package]]
 name = "mistralrs-vision"
-version = "0.8.15"
-source = "git+https://github.com/EricLBuehler/mistral.rs?branch=master#80fdfbcb08bd93e4a7ab617d8a688a753dd24875"
+version = "0.8.23"
+source = "git+https://github.com/EricLBuehler/mistral.rs?rev=15986c037bbe3ee31085d1c73abd2ea3cb11f094#15986c037bbe3ee31085d1c73abd2ea3cb11f094"
 dependencies = [
  "candle-core",
  "image",
@@ -3049,23 +3040,6 @@ dependencies = [
  "rand_distr 0.4.3",
  "simba",
  "typenum",
-]
-
-[[package]]
-name = "native-tls"
-version = "0.2.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "465500e14ea162429d264d44189adc38b199b62b1c21eea9f69e4b73cb03bbf2"
-dependencies = [
- "libc",
- "log",
- "openssl",
- "openssl-probe",
- "openssl-sys",
- "schannel",
- "security-framework",
- "security-framework-sys",
- "tempfile",
 ]
 
 [[package]]
@@ -3332,47 +3306,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "openssl"
-version = "0.10.81"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77823a27f0babb03091cb9ed9ef80af3b39dbc82f97e8fa530374b7dafd87a45"
-dependencies = [
- "bitflags 2.13.0",
- "cfg-if",
- "foreign-types",
- "libc",
- "openssl-macros",
- "openssl-sys",
-]
-
-[[package]]
-name = "openssl-macros"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
-
-[[package]]
-name = "openssl-sys"
-version = "0.9.117"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b47e7e6bb2c38cd930d25a23b40fa52e068c10e85f3e03a7f5ba5aaca5713695"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
- "vcpkg",
-]
 
 [[package]]
 name = "option-ext"
@@ -4029,13 +3966,11 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-rustls",
- "hyper-tls",
  "hyper-util",
  "js-sys",
  "log",
  "mime",
  "mime_guess",
- "native-tls",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -4046,7 +3981,6 @@ dependencies = [
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
- "tokio-native-tls",
  "tokio-rustls",
  "tokio-util",
  "tower",
@@ -4304,13 +4238,15 @@ dependencies = [
 
 [[package]]
 name = "safetensors"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "675656c1eabb620b921efea4f9199f97fc86e36dd6ffd1fbbe48d0f59a4987f5"
+checksum = "79b079b829cb27a1c3c374341345ed2e8b2c0c839034522cee576c140bd7f846"
 dependencies = [
  "hashbrown 0.16.1",
+ "libc",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -5420,16 +5356,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-native-tls"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
-dependencies = [
- "native-tls",
- "tokio",
-]
-
-[[package]]
 name = "tokio-rayon"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5935,12 +5861,6 @@ dependencies = [
  "syn 1.0.109",
  "uuid 0.8.2",
 ]
-
-[[package]]
-name = "vcpkg"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"

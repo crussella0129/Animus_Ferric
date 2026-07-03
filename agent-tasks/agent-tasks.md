@@ -7,10 +7,36 @@
 > valve), so injections can only surface as quoted data. 4 tests incl. the injection-
 > containment proof. ADR-040; `docs/ornstein.md`. PR cadence clean.
 
-## Animus vision (recovered from the user, 2026-06-27)
+## Animus vision (recovered from the user, 2026-06-27; expanded 2026-06-29)
 - **Animus Launch** — interactive Rust+scripts project bootstrapper (successor to GECK's launcher: `crates/geck-cli/wizard.rs` + `geck_generator`). Interview → git repo with main+dev → "begin work?". **Decision: lives as a crate in Animus_Ferric.**
 - **Animus Loop** — the sprint-loops protocol (Research→Plan→Build→Test→Loop). **First priority = harden it.**
 - **Animus Manage** — multi-agent project-management layer (least-specified).
+- **Animus Beast-Zoo** (2026-06-29, **separate future repo**) — a safetensor→GGUF customizable fine-tune/conversion pipeline (HF fine-tunes, RAG/LoRA pipelines, eventually a visual "snap modules + sliders" app). Brief seed spec at `docs/beast-zoo-spec.md`; meant to be fed through its own future agent loop, not built here. User has a mixed GGUF+safetensors model library on a NAS (`192.168.86.27`, `Y:\models`) as a future test corpus.
+- **(unnamed) native Rust inference engine** (2026-06-29, **separate future repo**) — long-term replacement for llama.cpp as Animus_Ferric's inference backend. Not started, no spec — recorded only.
+- **Animus IDE** (2026-06-29, **separate future "organ"**) — an editor/IDE that talks to Ferric. Motivated the ADR-011 revision below.
+
+**Model-format decision (2026-06-29): Animus_Ferric is GGUF-only, permanently.** The user
+considered direct safetensors support in Ferric and decided against it for simplicity —
+cross-format loading is pushed to the separate Beast-Zoo repo instead. **Do not revisit
+multi-format model loading inside Ferric.**
+
+## ADR-011 revision decided (2026-06-29, mid-sprint-35-research) — Ferric gets MCP + a genuine chat mode
+The user deliberately revisited ADR-011 ("no REPL/chat mode") based on hands-on tool
+experience since writing it — driven by **Animus IDE** needing to send one-off natural-language
+change requests conversationally. **Both** of the following, not either/or:
+1. **`ferric mcp`** — activates the already-planned ADR-012 MCP-stdio surface (deferred since
+   s2–s3, blocked on "an ADR-005 security call" — do that call as part of this work). Each MCP
+   message still runs a full constrained agentic query; no departure from "harness owns decoding."
+2. **A genuine raw chat mode** — an actual unconstrained conversational surface. This is the
+   literal reversal of ADR-011's "no REPL/chat" clause and touches the "never raw unconstrained
+   chat" security thesis directly — needs its **own dedicated ADR** (not a quiet amendment)
+   spelling out the security boundary (what a chat turn can/cannot do to the workspace).
+Distinct from two prior, DIFFERENT "chat" rejections (don't conflate): ADR-011's original
+REPL-as-alternative-to-query rejection, and the separate sprint-25 `--chat` *capability fallback*
+for models too weak to agent (dropped once Gemma 4 E4B proved unnecessary).
+**Decided (2026-06-29, s35 plan phase): deferred to sprint 36+, not built in s35** — both are
+security-sensitive enough to deserve their own focused design sprint(s) rather than a tack-on to
+the s35 audit/refactor sprint. See the s35 completion note below.
 
 ## Ornstein = a quarantined MULTI-SOURCE research subsystem (user's expanded vision)
 One funnel (the built quarantine), many pluggable `Retriever`s (capability-probed). **Build order (user-chosen):**
@@ -27,4 +53,19 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
 - A live small-model run measuring Ornstein summarization *quality* (safety is already structural).
 
 ## Earlier backlog (still open)
-- Multi-file `apply_patch` (ADR-039 follow-on); GPU/edge run (Jetson/Pi → maybe L6); harder bench L7+; MCP-stdio (ADR-012); audio on real non-TTS audio + video modality.
+- Multi-file `apply_patch` (ADR-039 follow-on); GPU/edge run (Jetson/Pi → maybe L6); harder bench L7+; audio on real non-TTS audio + video modality. (MCP-stdio is now covered by the ADR-011-revision section above, no longer a standalone item.)
+
+## Sprint 35 (expert review + refactor) — DONE, ADR-045
+Full-project audit (security/efficiency/product-completeness); findings in
+`sprints/s35/sprint-research/research-report.md`. Four fixes shipped:
+- **Read-side sensitive-file guard** (`ferric-guard`) — `.env`/SSH keys/cloud credentials denied
+  on `Read`, closing a real secret-into-plaintext-trace gap; `.git` metadata reads stay allowed.
+- **`ferric server` edge-tuning flags** — `--threads`/`--gpu-layers`/`--batch-size` for
+  Jetson/RPi-class latency tuning (llama-server only).
+- **`mistralrs` rev-pinned** (was `branch = "master"`, matches the `oovra` policy).
+- **`reqwest` → `rustls-tls`** (was pulling native OpenSSL via `default-tls`, confirmed via
+  `cargo tree -e features`; edge/ARM cross-compilation win).
+Explicitly deferred (reasons in ADR-045, not silently dropped): CaMeL sink-policy wiring (no live
+taint source yet), `ferric mcp` + the new chat mode (own dedicated sprint — see above), shell/exec
++ git tools, streaming, session resume, trace rotation. Panic-safety sub-audit came back **clean**
+(no unwrap/expect/panic! found on adversarial model/backend/file-content paths).
