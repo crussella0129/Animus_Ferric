@@ -6,6 +6,7 @@
 
 mod backend;
 mod bench_cmd;
+mod mcp;
 mod query;
 mod server;
 mod toolbench_cmd;
