@@ -371,8 +371,9 @@ fn now_ms() -> u128 {
 
 /// Built-in mock script: one file write, then a structured termination —
 /// exercises the full loop/trace/guard path with zero model. Shaped to match
-/// `protocol` so `--mock` works in either mode.
-fn mock_provider(protocol: ActionProtocol) -> MockProvider {
+/// `protocol` so `--mock` works in either mode. `pub(crate)` so `ferric mcp`
+/// (`mcp.rs`) can build the same scripted provider under `--mock`.
+pub(crate) fn mock_provider(protocol: ActionProtocol) -> MockProvider {
     use serde_json::json;
 
     let write_args = json!({"path": "ferric-mock.txt", "content": "mock run"});
@@ -443,8 +444,15 @@ fn xml_completion(name: &str, args: &serde_json::Value) -> Completion {
     }
 }
 
+/// Run one loop turn against an already-constructed provider. The reusable
+/// core both `drive_mock`/`drive_real` (one provider per CLI invocation) and
+/// `ferric mcp` (one provider built once, reused across many `tools/call`s)
+/// drive — provider construction and loop execution are deliberately kept
+/// separate so a caller can build a provider once and call this many times.
+/// Unconditionally compiled (no backend feature needed): it only requires a
+/// `&dyn Provider`, which `MockProvider` already satisfies.
 #[allow(clippy::too_many_arguments)]
-fn drive_mock(
+pub(crate) async fn run_with_provider(
     provider: &dyn Provider,
     registry: &Registry,
     workspace: &Workspace,
@@ -457,7 +465,7 @@ fn drive_mock(
     prompt: &str,
     media: Vec<MediaPart>,
 ) -> Result<LoopOutcome, String> {
-    futures_executor::block_on(run(
+    run(
         RunArgs {
             provider,
             registry,
@@ -472,8 +480,38 @@ fn drive_mock(
         },
         sink,
         prompt,
-    ))
+    )
+    .await
     .map_err(|e| format!("loop error: {e}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drive_mock(
+    provider: &dyn Provider,
+    registry: &Registry,
+    workspace: &Workspace,
+    policy: &RunPolicy,
+    protocol: ActionProtocol,
+    sampling: SamplingParams,
+    system_prompt: Option<&str>,
+    lineage: Option<PromptLineage>,
+    sink: &mut JsonlSink,
+    prompt: &str,
+    media: Vec<MediaPart>,
+) -> Result<LoopOutcome, String> {
+    futures_executor::block_on(run_with_provider(
+        provider,
+        registry,
+        workspace,
+        policy,
+        protocol,
+        sampling,
+        system_prompt,
+        lineage,
+        sink,
+        prompt,
+        media,
+    ))
 }
 
 #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
@@ -494,25 +532,20 @@ fn drive_real(
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
         let provider_box = create_provider(&args.backend_opts).await?;
-        let provider = provider_box.as_ref();
-        run(
-            RunArgs {
-                provider,
-                registry,
-                workspace,
-                policy,
-                protocol,
-                sampling,
-                sleeper: &ThreadSleeper,
-                system_prompt,
-                prompt_lineage: lineage,
-                media,
-            },
+        run_with_provider(
+            provider_box.as_ref(),
+            registry,
+            workspace,
+            policy,
+            protocol,
+            sampling,
+            system_prompt,
+            lineage,
             sink,
             prompt,
+            media,
         )
         .await
-        .map_err(|e| format!("loop error: {e}"))
     })
 }
 
@@ -534,4 +567,60 @@ fn drive_real(
     Err("this binary was built without backend features; \
          rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferric_core::policy_for;
+
+    /// T-3601: `run_with_provider` is independently callable given only a
+    /// `&dyn Provider` — no `create_provider`/backend-feature dependency. This
+    /// is exactly the shape `ferric mcp` needs: build a provider once, drive
+    /// many loop executions against it without reconstructing anything.
+    #[test]
+    fn runs_loop_with_prebuilt_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+        let mut registry = Registry::new();
+        register_builtin_tools(&mut registry);
+        let protocol = ActionProtocol::ConstrainedJson;
+        let provider = mock_provider(protocol);
+        let profile = ModelProfile {
+            params_b: 1.2,
+            quant: "Q4_K_M".to_string(),
+            ctx: 4096,
+            family: "unknown".to_string(),
+            measured_level: None,
+        };
+        let policy = policy_for(&profile);
+        let sampling = SamplingParams {
+            temperature: 0.0,
+            max_tokens: policy.max_output_tokens,
+            ..SamplingParams::default()
+        };
+        let trace_path = dir.path().join("trace.jsonl");
+        let mut sink = JsonlSink::open(&trace_path, "test").unwrap();
+
+        let outcome = futures_executor::block_on(run_with_provider(
+            &provider,
+            &registry,
+            &workspace,
+            &policy,
+            protocol,
+            sampling,
+            None,
+            None,
+            &mut sink,
+            "do a mock task",
+            Vec::new(),
+        ))
+        .unwrap();
+
+        assert_eq!(outcome.stop, StopReason::TaskComplete);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("ferric-mock.txt")).unwrap(),
+            "mock run"
+        );
+    }
 }

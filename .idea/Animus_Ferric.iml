@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-bench/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-cli/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-cli/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-core/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-core/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-guard/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-loop/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-loop/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-prompt/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-provider/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-provider/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-research/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-tools/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-tools/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ferric-trace/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

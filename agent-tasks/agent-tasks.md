@@ -69,3 +69,17 @@ Explicitly deferred (reasons in ADR-045, not silently dropped): CaMeL sink-polic
 taint source yet), `ferric mcp` + the new chat mode (own dedicated sprint — see above), shell/exec
 + git tools, streaming, session resume, trace rotation. Panic-safety sub-audit came back **clean**
 (no unwrap/expect/panic! found on adversarial model/backend/file-content paths).
+
+## Sprint 36 (ferric mcp — the ADR-005 security call) — IN PROGRESS
+User-prioritized (2026-07-03) from the GLM-review "critical gaps" list: build `ferric mcp`
+(mistral.rs in-process hang explicitly dropped, not re-chased). Research + plan in
+`sprints/s36/sprint-research/research-report.md` / `sprints/s36/sprint-plans/`. Execution sequence
+(consumed from the top as each task completes):
+
+- [ ] T-3601 (sprint 36): separate provider construction from loop execution in `query.rs` — touches: crates/ferric-cli/src/query.rs
+- [ ] T-3602 (sprint 36): extract the launch-time-fixed run-config builder — touches: crates/ferric-cli/src/query.rs
+- [ ] T-3603 (sprint 36): JSON-RPC 2.0 message types + stdio framing — touches: crates/ferric-cli/src/mcp.rs (new)
+- [ ] T-3604 (sprint 36): initialize + tools/list handlers — touches: crates/ferric-cli/src/mcp.rs
+- [ ] T-3605 (sprint 36): tools/call handler for ferric_query + shared file-routing extraction — touches: crates/ferric-cli/src/mcp.rs, crates/ferric-cli/src/query.rs
+- [ ] T-3606 (sprint 36): McpArgs + Command::Mcp + run_mcp entrypoint — touches: crates/ferric-cli/src/main.rs, crates/ferric-cli/src/mcp.rs
+- [ ] T-3607 (sprint 36): ADR-046 + docs — touches: decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md, README.md
