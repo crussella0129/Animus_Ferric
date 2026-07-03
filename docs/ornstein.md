@@ -1,10 +1,11 @@
 # Ornstein — quarantined retrieval
 
 > Status: the quarantined summarizer (inc 1) + the `Retriever` keystone (inc 2) + the **Local-FS**
-> and **Tailnet/NAS-FS** source planes + the **research orchestrator** (`research_all` across all
-> planes, ADR-043) shipped in `ferric-research`. The web plane + container/proxy/CaMeL-sink-policy/
-> Loop-wiring layers are sequenced (ADR-040–043). (The tailnet plane's deterministic core is
-> tested; its live SSH E2E is the documented follow-up.)
+> and **Tailnet/NAS-FS** source planes + the **research orchestrator** (`research_all`) + the
+> **CaMeL-lite sink-policy primitive** (`SinkPolicy`/`TaintSet`, ADR-044) shipped in
+> `ferric-research`. The web plane + hardened container/proxy + the sink-policy's loop wiring are
+> sequenced (ADR-040–044). (The tailnet plane's deterministic core is tested; its live SSH E2E is
+> the documented follow-up.)
 
 Ornstein is a **quarantined multi-source research subsystem**: *one funnel, many sources.* The
 quarantine (below) is the universal sink; each source plane is a pluggable `Retriever`.
@@ -121,13 +122,42 @@ let MultiResearch { digests, planes: report } = research_all(&planes, provider, 
 model call** (a file reachable from two planes is summarized once — inference is the cost). An
 offline plane contributes nothing and is recorded `available: false`; it's never an error.
 
-## Sequenced next (ADR-040–043) — build order: Local FS ✅ → Tailnet/NAS ✅ → orchestrator ✅ → Web
+## CaMeL-lite: taint tracking + a sink policy (ADR-044)
+
+The quarantine keeps untrusted *content* from becoming an *action*. But once a digest's text is
+in the agent's context, nothing stopped the model from **echoing** it into a tool argument — a
+`write_file` call whose `content` quotes an injected instruction. `SinkPolicy` + `TaintSet` close
+that gap:
+
+```rust
+use ferric_research::{TaintSet, SinkPolicy, SinkAction};
+use ferric_guard::PermissionLevel;
+
+let mut taint = TaintSet::new();
+taint.taint_digest(&digest);              // mark the digest's summary + quotes as tainted
+
+let tainted = taint.args_tainted(&tool_args);  // does this call's args derive from tainted text?
+let policy = SinkPolicy::new(SinkAction::Deny); // or RequireApproval / Warn — caller's choice
+match policy.decide(tool_permission, tainted) {
+    SinkDecision::Allow => { /* dispatch */ }
+    SinkDecision::Deny => { /* refuse, feed a denial back to the model */ }
+    SinkDecision::RequireApproval => { /* pause for a human */ }
+    SinkDecision::Warn => { /* dispatch, but flag it */ }
+}
+```
+
+`Read`-permission tools always pass (reading isn't a dangerous sink); `Write`/`Execute` tools with
+tainted args follow the configured `SinkAction`. **Not yet wired** — this is the pure decision
+function; the live gate sits at `registry.execute` (`crates/ferric-tools/src/registry.rs`), beside
+the existing `check(permission, path)` call, once digests enter the loop's context.
+
+## Sequenced next (ADR-040–044) — build order: Local FS ✅ → Tailnet/NAS ✅ → orchestrator ✅ → CaMeL primitive ✅ → Web
 - **Live SSH E2E** for the tailnet plane — once a target's sshd is up (Termux `Plain{8022}` on the
   Pixel, or `Tailscale` on switchblade when back online).
 - **Web `Retriever`** + hardened **container** + **allowlist egress proxy** (bollard/gVisor) — the
   online plane and the *code*-escape leg; its security layer lands last (the exfil leg lives here).
   *(Gated on a containerizer — none installed yet.)*
-- Full **CaMeL** taint tracking + a **sink-policy table** + **Loop research-phase wiring** (route
-  digests through a sink policy before the planner acts on tainted-derived data) — a sprint-loops change.
+- **Wire the sink policy into the dispatch chokepoint + populate the `TaintSet`** as digests enter
+  the loop's context — **Loop research-phase wiring** (a sprint-loops change).
 - A live small-model run to measure summarization *quality* (the quarantine's *safety* is already
   structural and model-independent).
