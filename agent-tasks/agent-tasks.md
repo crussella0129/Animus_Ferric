@@ -116,4 +116,3 @@ the project's safety-before-blast-radius philosophy; its concrete future-task id
   is dated s34 (says "44 ADRs"); we're at ADR-046 / s36. (3) "Single-developer bus factor" and
   "external contribution / blog citation" success metrics are noted but out of scope for the
   harness itself.
-- [ ] T-3607 (sprint 36): ADR-046 + docs — touches: decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md, README.md
