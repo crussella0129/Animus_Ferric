@@ -160,7 +160,10 @@ mod tests {
     fn denies_reading_ferric_trace_dir() {
         // Symmetric with the write-side rule: the trace is protected from the
         // model that is being traced.
-        let path = PathBuf::from("ws").join(".ferric").join("trace").join("x.jsonl");
+        let path = PathBuf::from("ws")
+            .join(".ferric")
+            .join("trace")
+            .join("x.jsonl");
         assert!(!check(PermissionLevel::Read, &path).is_allow());
     }
 

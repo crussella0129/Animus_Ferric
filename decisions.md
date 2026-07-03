@@ -214,3 +214,57 @@ With two source planes built (local s31, tailnet s32), the multi-source payoff i
 Designed jointly with the user. Flow control on top of the quarantine: a `ResearchDigest`'s text is untrusted, but nothing previously stopped that text — once echoed into a tool argument by the model — from reaching a side-effecting sink. Added `crates/ferric-research/src/sink.rs`: **taint tracking** (`TaintSet`, CaMeL-lite substring matching, no interpreter) + a **configurable sink policy** (`SinkPolicy::decide(permission, tainted) -> SinkDecision`) keyed off the existing `ferric_guard::PermissionLevel`.
 - **Policy matrix:** untainted → always `Allow`. `Read` + tainted → `Allow` (reading isn't a dangerous sink; the workspace boundary already confines it). `Write`/`Execute` + tainted → the configured `SinkAction` (`Deny` | `RequireApproval` | `Warn`), mapped 1:1 to a `SinkDecision`.
 - **Decisions:** (1) **All three enforcement modes ship, caller picks** (explicit user choice) — `Deny` for the autonomous default, `RequireApproval` for a human-gated deployment, `Warn` for an observability-first rollout — so the eventual wiring doesn't need a breaking change to switch modes. (2) **Pure primitive only this sprint** — no loop wiring. The enforcement point is deferred to the `registry.execute` chokepoint (`crates/ferric-tools/src/registry.rs`), beside the existing `check(permission, path)` call, once digests enter the agent's context via the research→loop wiring (a `sprint-loops` change). (3) **Conservative substring taint, accepted knowingly:** a benign value containing a tainted substring is flagged (false positives), which is the safe direction for a *write* sink; empty/whitespace tainted strings are dropped on insert so an empty digest field can't taint everything. (4) The end-to-end test (a tainted digest's injected quote, echoed into `write_file` args, is flagged and `Deny`d under the autonomous default) is the structural proof the policy will gate a real injected write once wired — mirroring the injection-containment proof from ADR-040.
+
+## ADR-045 — 2026-06-29 (sprint 35): expert review + refactor — the full audit + four remediations
+The first full-project audit sprint: what does Ferric need to become an operational, competitive,
+safe product, staying efficient for edge/personal-compute deployment? Full findings (file:line
+cited) are in `sprints/s35/sprint-research/research-report.md`. This ADR records the audit's
+outcome: four small, immediately-effective fixes shipped, and an explicit, reasoned deferral list
+for everything larger.
+- **Audit method:** three background review agents (security/efficiency/product-completeness)
+  were stopped by the user before completing; per instruction, not relaunched. The audit was
+  instead done directly (file:line verified), cross-referenced against an external review (GLM-5-
+  turbo) the user supplied — three factual corrections made there (see the research report):
+  "over-engineered" reframed as safety-infra-ahead-of-functional-breadth; "no live-backend CI
+  tests" reframed as the correct trade-off (CI can't depend on live GGUF models — the existing
+  `#[ignore]`-gated + manual `bench --backend openai` pattern is the right answer); a crate-count
+  slip and an unsupported "burnout" claim dropped.
+- **Shipped this sprint:**
+  1. **Read-side sensitive-file guard** (`ferric-guard`) — `PermissionLevel::Read` previously
+     unconditionally `Allow`d; combined with the trace persisting full untruncated tool output
+     (ADR-002), a workspace secret read by the agent landed in plaintext in the JSONL trace. Added
+     `DENIED_READ_SEGMENTS` (credential stores minus `.git` — git-metadata reads are a legitimate
+     agent need) and `DENIED_READ_FILES` (the write-file list plus `.env`, the most common
+     real-world secret file, previously on no list at all). Write access to `.env` remains
+     allowed — only reading an *existing* one is denied.
+  2. **`ferric server` edge-tuning flags** — `command()` had no way to set CPU thread count, GPU
+     layer offload, or batch size, the primary latency levers on Jetson/RPi-class hardware. Added
+     `--threads`/`--gpu-layers`/`--batch-size` (llama-server only; accepted-but-ignored for
+     Ollama, which doesn't take them as CLI flags).
+  3. **`mistralrs` rev-pinned**, not floating on `branch = "master"` — matches the `oovra`
+     reproducibility policy; a fresh `--features backend-mistralrs` build no longer risks silently
+     picking up a different upstream commit.
+  4. **`reqwest` switched to `rustls-tls`** — `cargo tree -e features` confirmed `default-tls`
+     (native OpenSSL bindings on non-Windows) was active though unused in practice (Ferric only
+     ever calls `http://127.0.0.1` per ADR-005 — TLS itself is dormant for current traffic). Pure
+     dependency-weight/cross-compilation win for ARM edge targets, zero exercised behavior change.
+- **Explicitly deferred, with reasons (not silently dropped):**
+  - **CaMeL sink-policy wiring into `registry.execute`** — there is no live taint source yet
+    (nothing today ingests a `ResearchDigest` into a running loop's context); wiring the check now
+    would be dead plumbing that never fires. Deferred alongside the research→loop wiring itself.
+  - **`ferric mcp` (ADR-012 activation) + a genuine raw chat mode (ADR-011 revision)** — already
+    decided (2026-06-29, recorded in `agent-tasks/agent-tasks.md` + memory) but too large/security-
+    sensitive for a refactor sprint; the chat mode specifically needs its own dedicated ADR on the
+    security boundary. Natural next sprint(s).
+  - **Shell/exec + git tools** — need a real permission-model extension (a sandboxed execute
+    surface), not a quick add.
+  - **Streaming, session resume, trace rotation** — each a real product gap, each its own
+    focused increment.
+- **Decisions:** (1) Fix small + immediately-effective now; defer large/premature/security-
+  sensitive work explicitly rather than attempt everything in one sprint — matches the project's
+  own proven pattern (Ornstein's five-increment build, the three-guard family built one at a
+  time). (2) The panic-safety sub-audit (grepped `unwrap`/`expect`/`panic!` across the model-
+  output, backend-response, and file-content surfaces) came back **clean** — worth recording as a
+  positive finding, not just gaps. (3) Animus_Ferric's **GGUF-only** decision and the **ADR-011
+  revision** (MCP + chat) were made earlier the same day, outside this audit's direct scope, and
+  are recorded separately (`agent-tasks/agent-tasks.md`, memory) — not re-litigated here.

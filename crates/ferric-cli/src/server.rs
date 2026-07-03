@@ -492,7 +492,11 @@ mod tests {
         config.gpu_layers = Some(20);
         config.batch_size = Some(512);
         let c = command(&config);
-        assert_eq!(c.args, vec!["serve"], "edge-tuning flags must not leak into Ollama argv");
+        assert_eq!(
+            c.args,
+            vec!["serve"],
+            "edge-tuning flags must not leak into Ollama argv"
+        );
     }
 
     #[test]
