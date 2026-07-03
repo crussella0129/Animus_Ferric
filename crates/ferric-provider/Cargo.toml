@@ -29,5 +29,9 @@ futures-executor = { workspace = true }
 tempfile = { workspace = true }
 # Test-only: the grammar_probe diagnostic needs an ambient runtime to drive
 # the mistralrs client (matches query.rs). Dev-dep only — not in the default
-# library graph or the aarch64 check gate.
-tokio = { workspace = true }
+# library graph or the aarch64 check gate. `net`/`macros` (sprint 37, ADR-047):
+# the `backend-openai` streaming E2E test spins up a real
+# `tokio::net::TcpListener` fake server and uses `#[tokio::test]` — test-only,
+# NOT needed by `complete_streaming`'s production code path (it reads via
+# `Response::chunk()`, which needs no `stream` feature and no `tokio::net`).
+tokio = { workspace = true, features = ["net", "macros", "io-util"] }

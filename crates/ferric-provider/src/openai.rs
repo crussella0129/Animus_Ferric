@@ -2,9 +2,11 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
 
+use crate::stream_scan::ConstrainedJsonScanner;
 use crate::traits::Provider;
 use crate::types::{
-    Capabilities, Completion, CompletionRequest, Constraint, ProviderError, ToolDescriptor,
+    Capabilities, Completion, CompletionRequest, Constraint, ProviderError, StreamDelta,
+    ToolDescriptor,
 };
 use ferric_core::{MediaPart, Message, Role, ToolCall};
 
@@ -267,6 +269,227 @@ impl Provider for OpenAiProvider {
             truncated,
         })
     }
+
+    /// Real streaming (ADR-047): sets `stream: true`, reads the response body
+    /// incrementally via `Response::chunk()` (no `stream` cargo feature or
+    /// extra dependency needed — simpler than `bytes_stream()`), buffers into
+    /// complete SSE lines, and feeds each `data:` line's JSON payload to a
+    /// `StreamAccumulator`. Under `ConstrainedJson`, the accumulated content
+    /// is re-scanned by a `ConstrainedJsonScanner` each line (extracting the
+    /// tool-name/summary signals from the opaque action JSON); otherwise
+    /// (`NativeTools`/`TextXml`) `delta.content` is already prose and is
+    /// forwarded directly.
+    async fn complete_streaming(
+        &self,
+        request: CompletionRequest,
+        on_delta: &(dyn Fn(StreamDelta) + Sync),
+    ) -> Result<Completion, ProviderError> {
+        request.validate()?;
+        let constrained = request.constraint.is_some();
+        let mut body = self.build_body(&request);
+        body["stream"] = json!(true);
+
+        let url = format!(
+            "{}/chat/completions",
+            self.config.base_url.trim_end_matches('/')
+        );
+        let mut response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ProviderError::RetryableBackend(format!("Network error: {e}")))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(ProviderError::Backend(format!("HTTP {status}: {text}")));
+        }
+
+        let mut acc = StreamAccumulator::new(constrained, on_delta);
+        let mut buf = String::new();
+        while let Some(bytes) = response
+            .chunk()
+            .await
+            .map_err(|e| ProviderError::RetryableBackend(format!("stream error: {e}")))?
+        {
+            buf.push_str(&String::from_utf8_lossy(&bytes));
+            while let Some(pos) = buf.find('\n') {
+                let line = buf[..pos].trim_end_matches('\r').to_string();
+                buf.drain(..=pos);
+                match classify_sse_line(&line) {
+                    SseLine::Data(data) => acc.feed_line(&data),
+                    SseLine::Done => return Ok(acc.finish()),
+                    SseLine::Ignored => {}
+                }
+            }
+        }
+        Ok(acc.finish())
+    }
+}
+
+/// Classify one already-line-split piece of SSE framing. Pure — no I/O — so
+/// the line-splitting/classification logic is directly unit-testable
+/// separately from the async byte-stream reading loop.
+#[derive(Debug, Clone, PartialEq)]
+enum SseLine {
+    /// A `data: <json>` line carrying one chunk's payload.
+    Data(String),
+    /// The `data: [DONE]` terminator.
+    Done,
+    /// Blank lines (frame separators) and other SSE fields (`event:`, `id:`,
+    /// `: comment`) — not an error, just not a data payload.
+    Ignored,
+}
+
+fn classify_sse_line(line: &str) -> SseLine {
+    let Some(data) = line.strip_prefix("data:") else {
+        return SseLine::Ignored;
+    };
+    let data = data.trim_start();
+    if data == "[DONE]" {
+        SseLine::Done
+    } else {
+        SseLine::Data(data.to_string())
+    }
+}
+
+/// Accumulates SSE `data:` line payloads into a final `Completion`, firing
+/// `StreamDelta`s to `on_delta` as content becomes available. Pure with
+/// respect to I/O — `feed_line` takes an already-decoded line string, so this
+/// is directly unit-testable with plain `&str` inputs, no networking.
+struct StreamAccumulator<'a> {
+    content: String,
+    tool_calls: Vec<PartialToolCall>,
+    finish_reason: String,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    constrained: bool,
+    scanner: ConstrainedJsonScanner,
+    on_delta: &'a (dyn Fn(StreamDelta) + Sync),
+}
+
+#[derive(Default)]
+struct PartialToolCall {
+    id: String,
+    name: String,
+    args: String,
+}
+
+impl<'a> StreamAccumulator<'a> {
+    fn new(constrained: bool, on_delta: &'a (dyn Fn(StreamDelta) + Sync)) -> Self {
+        Self {
+            content: String::new(),
+            tool_calls: Vec::new(),
+            finish_reason: String::new(),
+            input_tokens: None,
+            output_tokens: None,
+            constrained,
+            scanner: ConstrainedJsonScanner::new(),
+            on_delta,
+        }
+    }
+
+    /// Feed one SSE `data:` line's JSON payload (the text after `data:`, not
+    /// including the `[DONE]` sentinel, which the caller handles separately).
+    fn feed_line(&mut self, line: &str) {
+        let Ok(chunk) = serde_json::from_str::<serde_json::Value>(line) else {
+            return; // malformed/ignorable line
+        };
+        let choice = &chunk["choices"][0];
+        let delta = &choice["delta"];
+
+        if let Some(text) = delta["content"].as_str() {
+            self.content.push_str(text);
+            if self.constrained {
+                for d in self.scanner.scan(&self.content) {
+                    (self.on_delta)(d);
+                }
+            } else {
+                (self.on_delta)(StreamDelta::Text(text.to_string()));
+            }
+        }
+
+        if let Some(tcs) = delta["tool_calls"].as_array() {
+            for tc in tcs {
+                let index = tc["index"].as_u64().unwrap_or(0) as usize;
+                while self.tool_calls.len() <= index {
+                    self.tool_calls.push(PartialToolCall::default());
+                }
+                let entry = &mut self.tool_calls[index];
+                if let Some(id) = tc["id"].as_str() {
+                    entry.id.push_str(id);
+                }
+                if let Some(name) = tc["function"]["name"].as_str() {
+                    entry.name.push_str(name);
+                }
+                if let Some(args) = tc["function"]["arguments"].as_str() {
+                    entry.args.push_str(args);
+                }
+            }
+        }
+
+        if let Some(fr) = choice["finish_reason"].as_str() {
+            self.finish_reason = fr.to_string();
+        }
+        if let Some(usage) = chunk.get("usage") {
+            if let Some(v) = usage["prompt_tokens"].as_u64() {
+                self.input_tokens = Some(v as u32);
+            }
+            if let Some(v) = usage["completion_tokens"].as_u64() {
+                self.output_tokens = Some(v as u32);
+            }
+        }
+    }
+
+    /// Finalize accumulation into the same `Completion` shape `complete()`
+    /// produces for an equivalent non-streaming response, including the
+    /// ADR-024 ollama-plain-text-tool-call recovery fallback.
+    fn finish(self) -> Completion {
+        let mut tool_calls: Vec<ToolCall> = self
+            .tool_calls
+            .into_iter()
+            .filter(|tc| !tc.name.is_empty())
+            .map(|tc| {
+                let args = serde_json::from_str(&tc.args)
+                    .unwrap_or_else(|_| serde_json::Value::String(tc.args.clone()));
+                ToolCall {
+                    id: tc.id,
+                    name: tc.name,
+                    args,
+                }
+            })
+            .collect();
+
+        let text = if self.content.is_empty() {
+            None
+        } else {
+            Some(self.content)
+        };
+
+        if tool_calls.is_empty()
+            && let Some(t) = &text
+            && let Some(tc) = toolcall_from_content(t)
+        {
+            tool_calls.push(tc);
+        }
+
+        Completion {
+            message: Message {
+                role: Role::Assistant,
+                text,
+                tool_calls,
+                tool_call_id: None,
+                media: Vec::new(),
+            },
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            truncated: self.finish_reason == "length",
+        }
+    }
 }
 
 /// Map one `MediaPart` to an OpenAI content-part (ADR-023). Audio →
@@ -327,6 +550,8 @@ fn toolcall_from_content(content: &str) -> Option<ToolCall> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use crate::types::SamplingParams;
 
@@ -459,5 +684,205 @@ mod tests {
         let caps = provider().capabilities();
         assert!(caps.supports_constraint);
         assert!(caps.supports_native_tool_calls);
+    }
+
+    #[test]
+    fn classify_sse_line_variants() {
+        assert_eq!(
+            classify_sse_line(r#"data: {"a":1}"#),
+            SseLine::Data(r#"{"a":1}"#.to_string())
+        );
+        assert_eq!(classify_sse_line("data: [DONE]"), SseLine::Done);
+        assert_eq!(classify_sse_line(""), SseLine::Ignored);
+        assert_eq!(classify_sse_line(": a comment"), SseLine::Ignored);
+        assert_eq!(classify_sse_line("event: message"), SseLine::Ignored);
+    }
+
+    fn collect_deltas(constrained: bool, lines: &[&str]) -> (Completion, Vec<StreamDelta>) {
+        let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
+        let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
+        let mut acc = StreamAccumulator::new(constrained, &sink);
+        for line in lines {
+            acc.feed_line(line);
+        }
+        (acc.finish(), deltas.into_inner().unwrap())
+    }
+
+    /// T-3703: `delta.content`-only SSE lines (`NativeTools`/`TextXml` shape)
+    /// accumulate into `Completion.message.text`; `on_delta` fires per chunk.
+    #[test]
+    fn accumulate_lines_content_only() {
+        let (completion, deltas) = collect_deltas(
+            false,
+            &[
+                r#"{"choices":[{"index":0,"delta":{"content":"Hello"}}]}"#,
+                r#"{"choices":[{"index":0,"delta":{"content":", world"},"finish_reason":"stop"}]}"#,
+            ],
+        );
+        assert_eq!(completion.message.text.as_deref(), Some("Hello, world"));
+        assert!(!completion.truncated);
+        assert_eq!(
+            deltas,
+            vec![
+                StreamDelta::Text("Hello".to_string()),
+                StreamDelta::Text(", world".to_string()),
+            ]
+        );
+    }
+
+    /// T-3703: `delta.tool_calls` fragments accumulate into the same final
+    /// tool-call shape `complete()`'s non-streaming parser would produce.
+    #[test]
+    fn accumulate_lines_tool_call_only() {
+        let (completion, _deltas) = collect_deltas(
+            false,
+            &[
+                r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read_file","arguments":""}}]}}]}"#,
+                r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\""}}]}}]}"#,
+                r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"a.txt\"}"}}]},"finish_reason":"tool_calls"}]}"#,
+            ],
+        );
+        assert_eq!(completion.message.tool_calls.len(), 1);
+        let tc = &completion.message.tool_calls[0];
+        assert_eq!(tc.id, "call_1");
+        assert_eq!(tc.name, "read_file");
+        assert_eq!(tc.args["path"], "a.txt");
+    }
+
+    /// A `data: [DONE]`-equivalent scenario is handled by the caller
+    /// (`complete_streaming`'s outer loop stops on `SseLine::Done` before
+    /// calling `feed_line`) — confirmed here at the classification level.
+    #[test]
+    fn accumulate_lines_done_terminates() {
+        assert_eq!(classify_sse_line("data: [DONE]"), SseLine::Done);
+        assert_ne!(classify_sse_line("data: [DONE]"), SseLine::Ignored);
+    }
+
+    #[test]
+    fn accumulate_lines_ignores_blank_and_comment_lines() {
+        let (completion, deltas) = collect_deltas(
+            false,
+            &[
+                "",
+                ": keep-alive comment",
+                r#"{"choices":[{"index":0,"delta":{"content":"ok"}}]}"#,
+            ],
+        );
+        // The blank/comment "lines" here are fed straight to `feed_line`
+        // (which itself no-ops on non-JSON); the real ignoring happens at
+        // `classify_sse_line` before `feed_line` is ever called in
+        // `complete_streaming`'s loop — this proves `feed_line` degrades
+        // gracefully too (belt-and-suspenders).
+        assert_eq!(completion.message.text.as_deref(), Some("ok"));
+        assert_eq!(deltas, vec![StreamDelta::Text("ok".to_string())]);
+    }
+
+    /// Under `ConstrainedJson`, `on_delta` receives the scanner's
+    /// `ToolNamed`/`Text` deltas (not raw JSON fragments) as content
+    /// accumulates — proves T-3703 wires T-3702's scanner in correctly.
+    #[test]
+    fn accumulate_lines_constrained_json_uses_scanner() {
+        let (completion, deltas) = collect_deltas(
+            true,
+            &[
+                r#"{"choices":[{"index":0,"delta":{"content":"{\"tool\":\"task_complete\","}}]}"#,
+                r#"{"choices":[{"index":0,"delta":{"content":"\"args\":{\"summary\":\"done\"}}"},"finish_reason":"stop"}]}"#,
+            ],
+        );
+        assert_eq!(
+            completion.message.text.as_deref(),
+            Some(r#"{"tool":"task_complete","args":{"summary":"done"}}"#)
+        );
+        assert!(
+            deltas.contains(&StreamDelta::ToolNamed("task_complete".to_string())),
+            "deltas: {deltas:?}"
+        );
+        assert!(
+            deltas.contains(&StreamDelta::Text("done".to_string())),
+            "deltas: {deltas:?}"
+        );
+        // No raw JSON fragments (e.g. the literal opening brace) were ever
+        // forwarded as prose.
+        assert!(
+            !deltas
+                .iter()
+                .any(|d| matches!(d, StreamDelta::Text(t) if t.contains('{')))
+        );
+    }
+}
+
+/// T-3703 E2E: a real `.chunk()`-driven read against an actual local TCP
+/// socket — proves the real wire protocol, not just the pure accumulator
+/// logic above.
+#[cfg(test)]
+mod streaming_e2e {
+    use std::sync::Mutex;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::*;
+    use crate::types::SamplingParams;
+
+    #[tokio::test]
+    async fn complete_streaming_over_real_tcp_stream() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            // Drain enough of the request to know it was sent; this fake
+            // server doesn't need to parse it.
+            let _ = socket.read(&mut buf).await;
+
+            let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\
+                        \n\
+                        data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\
+                        \n\
+                        data: [DONE]\n\
+                        \n";
+            // `Connection: close`, NOT `Content-Length` -- an SSE body is
+            // unbounded-length; a wrong/missing length would make reqwest
+            // hang waiting for more bytes instead of completing (test-critique
+            // C-009).
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{body}"
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            socket.shutdown().await.unwrap();
+        });
+
+        let provider = OpenAiProvider::new(OpenAiConfig {
+            base_url: format!("http://{addr}/v1"),
+            api_key: "test".to_string(),
+            model: "test-model".to_string(),
+        });
+        let request = CompletionRequest {
+            messages: vec![Message::user("hi")],
+            sampling: SamplingParams::default(),
+            tools: Vec::new(),
+            constraint: None,
+        };
+
+        let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
+        let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
+
+        let completion = provider
+            .complete_streaming(request, &sink)
+            .await
+            .expect("streaming completion should succeed");
+
+        server.await.unwrap();
+
+        assert_eq!(completion.message.text.as_deref(), Some("Hello world"));
+        assert!(!completion.truncated);
+        assert_eq!(
+            deltas.into_inner().unwrap(),
+            vec![
+                StreamDelta::Text("Hello".to_string()),
+                StreamDelta::Text(" world".to_string()),
+            ]
+        );
     }
 }
