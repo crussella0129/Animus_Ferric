@@ -106,6 +106,16 @@ pub struct Completion {
     pub truncated: bool,
 }
 
+/// An incremental piece of a streaming completion, pushed to a caller-supplied
+/// sink as it becomes available (ADR-047). `Text` is human-readable prose worth
+/// displaying live; `ToolNamed` is a cheap early "which tool is being called"
+/// activity signal, available before the tool's `args` finish streaming.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamDelta {
+    Text(String),
+    ToolNamed(String),
+}
+
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error("mock script exhausted after {0} completions")]

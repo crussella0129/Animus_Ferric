@@ -26,5 +26,5 @@ pub use openai::{OpenAiConfig, OpenAiProvider};
 pub use traits::Provider;
 pub use types::{
     Capabilities, Completion, CompletionRequest, Constraint, ProviderError, SamplingParams,
-    ToolDescriptor,
+    StreamDelta, ToolDescriptor,
 };

@@ -82,11 +82,10 @@ research + plan in `sprints/s36/`. See completed-tasks.md for the per-task commi
 An independent "Production Ready Action Plan" (docx, dated sprint 34) was reviewed. It aligns with
 the project's safety-before-blast-radius philosophy; its concrete future-task ideas, captured here
 (NOT yet scheduled — each is its own future sprint, most already tracked above in some form):
-- **Streaming inference** — token-by-token from the HTTP valve through the provider to CLI. The
-  doc's key insight: a **buffer-and-validate** approach (stream raw tokens to the display while the
-  JSON-Schema constraint still validates synchronously) preserves the constrained-decoding
-  guarantee. `--stream` (default on TTY) + a structured JSON streaming mode. Reconciling streaming
-  with `Constraint::JsonSchema` is the real design work (ADR-003 reserved `complete_stream`).
+- **Streaming inference** — ✅ **IN PROGRESS, sprint 37** (user-chosen 2026-07-03, framed as "a base
+  architectural choice"). See the Sprint 37 section below — token-by-token from the HTTP valve
+  through the provider to CLI (`ferric query --stream` this increment; MCP/mistral.rs streaming and
+  a structured/programmatic streaming mode are follow-ons, ADR-047).
 - **Session resume** — replay the existing JSONL trajectory (ADR-002) to reconstruct loop state;
   `--resume <path>` + `--save-interval`. The reader's unknown-event tolerance already gives forward
   compat.
@@ -116,3 +115,15 @@ the project's safety-before-blast-radius philosophy; its concrete future-task id
   is dated s34 (says "44 ADRs"); we're at ADR-046 / s36. (3) "Single-developer bus factor" and
   "external contribution / blog citation" success metrics are noted but out of scope for the
   harness itself.
+
+## Sprint 37 (streaming inference) — IN PROGRESS
+User-chosen (2026-07-03), framed as "a base architectural choice." Research + plan in
+`sprints/s37/sprint-research/research-report.md` / `sprints/s37/sprint-plans/`. Execution sequence
+(consumed from the top as each task completes):
+
+- [ ] T-3701 (sprint 37): StreamDelta + Provider::complete_streaming default method — touches: crates/ferric-provider/src/types.rs, crates/ferric-provider/src/traits.rs
+- [ ] T-3702 (sprint 37): ConstrainedJsonScanner, the incremental summary-field extractor (pure) — touches: crates/ferric-provider/src/stream_scan.rs (new), crates/ferric-provider/src/lib.rs
+- [ ] T-3703 (sprint 37): OpenAiProvider::complete_streaming (SSE accumulation + real I/O) — touches: crates/ferric-provider/src/openai.rs, Cargo.toml
+- [ ] T-3704 (sprint 37): thread the display sink through the agent loop — touches: crates/ferric-loop/src/run.rs, crates/ferric-loop/src/backoff.rs
+- [ ] T-3705 (sprint 37): ferric query --stream CLI wiring — touches: crates/ferric-cli/src/query.rs, crates/ferric-cli/src/mcp.rs
+- [ ] T-3706 (sprint 37): ADR-047 + docs — touches: decisions.md, README.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
