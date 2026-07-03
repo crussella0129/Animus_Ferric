@@ -156,23 +156,42 @@ fn decode_json_string_prefix(raw: &str) -> (String, bool) {
                     'u' => {
                         chars.next(); // consume 'u'
                         let mut hex = String::with_capacity(4);
-                        let mut complete = true;
+                        // Distinguish "ran out of input" (genuinely
+                        // incomplete -- more text may still resolve it) from
+                        // "a non-hex character arrived" (malformed; no amount
+                        // of further text will ever complete a valid escape
+                        // here — test-critique C-001: the two were
+                        // conflated, which could stall the live display
+                        // forever on adversarial/buggy backend output).
+                        let mut malformed = false;
+                        let mut incomplete = false;
                         for _ in 0..4 {
                             match chars.peek().copied() {
                                 Some((_, hc)) if hc.is_ascii_hexdigit() => {
                                     hex.push(hc);
                                     chars.next();
                                 }
-                                _ => {
-                                    complete = false;
+                                Some(_) => {
+                                    malformed = true;
+                                    break;
+                                }
+                                None => {
+                                    incomplete = true;
                                     break;
                                 }
                             }
                         }
-                        if !complete {
-                            // Incomplete \uXXXX -- hold back everything from
-                            // the backslash onward; wait for more text.
+                        if incomplete {
+                            // Hold back everything from the backslash
+                            // onward; wait for more text.
                             return (out, false);
+                        }
+                        if malformed {
+                            // Not valid JSON (shouldn't occur under
+                            // strict-schema enforcement) — stop decoding
+                            // this field cleanly rather than stalling
+                            // forever; treat it as if the string ended here.
+                            return (out, true);
                         }
                         if let Ok(cp) = u32::from_str_radix(&hex, 16)
                             && let Some(ch) = char::from_u32(cp)
@@ -373,6 +392,37 @@ mod tests {
             })
             .collect();
         assert_eq!(text, "xA");
+    }
+
+    /// Test-critique C-001: a genuinely MALFORMED `\u` escape (not merely
+    /// incomplete — more text will never resolve it, since the character
+    /// after `\u12` is not a hex digit) must stop decoding cleanly rather
+    /// than stalling forever waiting for a resolution that can never come.
+    #[test]
+    fn malformed_unicode_escape_stops_gracefully() {
+        let full = r#"{"tool":"task_complete","args":{"summary":"x\u12XY more text"}}"#;
+        let mut scanner = ConstrainedJsonScanner::new();
+        let text: String = scanner
+            .scan(full)
+            .into_iter()
+            .filter_map(|d| match d {
+                StreamDelta::Text(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            text, "x",
+            "only the text before the malformed escape decodes"
+        );
+
+        // A further scan call with the SAME (or even more) text must not
+        // hang, re-emit, or emit garbage -- the scanner treats the malformed
+        // point as if the string had ended there.
+        let more: Vec<StreamDelta> = scanner.scan(full);
+        assert!(
+            more.is_empty(),
+            "scanner must not stall or re-emit: {more:?}"
+        );
     }
 
     /// The closing unescaped quote stops emission for that field, even if

@@ -679,6 +679,20 @@ mod tests {
         assert!(body.get("response_format").is_none());
     }
 
+    /// Test-critique C-002: `complete_streaming` validates the request
+    /// exactly like `complete()` (ADR-010: constraint + tools is invalid) —
+    /// pinned so a future refactor can't accidentally drop or reorder the
+    /// `validate()?` call ahead of the network send.
+    #[test]
+    fn complete_streaming_rejects_invalid_request() {
+        let mut req = base_request();
+        req.tools = vec![tool()];
+        req.constraint = Some(Constraint::JsonSchema(json!({"type": "object"})));
+        let sink = |_: StreamDelta| panic!("must not fire any delta on a validation failure");
+        let result = futures_executor::block_on(provider().complete_streaming(req, &sink));
+        assert!(matches!(result, Err(ProviderError::InvalidRequest(_))));
+    }
+
     #[test]
     fn capabilities_advertise_constraint_and_native() {
         let caps = provider().capabilities();
@@ -883,6 +897,115 @@ mod streaming_e2e {
                 StreamDelta::Text("Hello".to_string()),
                 StreamDelta::Text(" world".to_string()),
             ]
+        );
+    }
+
+    /// Test-critique C-003: a non-2xx HTTP status is surfaced as
+    /// `ProviderError::Backend`, not a hang or a panic, over the real wire
+    /// (mirrors `complete()`'s equivalent status check, but exercised
+    /// through `complete_streaming`'s own branch).
+    #[tokio::test]
+    async fn complete_streaming_surfaces_http_error_status() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let body = "model not found";
+            let response = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{body}"
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            socket.shutdown().await.unwrap();
+        });
+
+        let provider = OpenAiProvider::new(OpenAiConfig {
+            base_url: format!("http://{addr}/v1"),
+            api_key: "test".to_string(),
+            model: "test-model".to_string(),
+        });
+        let request = CompletionRequest {
+            messages: vec![Message::user("hi")],
+            sampling: SamplingParams::default(),
+            tools: Vec::new(),
+            constraint: None,
+        };
+        let sink = |_: StreamDelta| panic!("no delta should fire on an HTTP error response");
+
+        let result = provider.complete_streaming(request, &sink).await;
+        server.await.unwrap();
+
+        match result {
+            Err(ProviderError::Backend(msg)) => {
+                assert!(msg.contains("404"), "error should name the status: {msg}");
+                assert!(
+                    msg.contains("model not found"),
+                    "error should carry the body: {msg}"
+                );
+            }
+            other => panic!("expected ProviderError::Backend, got {other:?}"),
+        }
+    }
+
+    /// Test-critique C-005: a single logical SSE `data:` line split across
+    /// TWO separate socket writes (genuine mid-line TCP fragmentation, not
+    /// incidental OS buffering) must still reassemble correctly — this is
+    /// the one piece of new I/O-adjacent logic (`buf`/`drain`/`find('\n')`
+    /// in `complete_streaming`'s read loop) that the pure `feed_line` unit
+    /// tests can't exercise, since those pre-split lines by construction.
+    #[tokio::test]
+    async fn complete_streaming_reassembles_a_line_split_mid_write() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+
+            let headers =
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+            socket.write_all(headers.as_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+
+            // Split squarely in the middle of the `data:` line's JSON, not
+            // at a line boundary.
+            let first_half = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel";
+            socket.write_all(first_half.as_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+            let second_half = "lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+            socket.write_all(second_half.as_bytes()).await.unwrap();
+            socket.shutdown().await.unwrap();
+        });
+
+        let provider = OpenAiProvider::new(OpenAiConfig {
+            base_url: format!("http://{addr}/v1"),
+            api_key: "test".to_string(),
+            model: "test-model".to_string(),
+        });
+        let request = CompletionRequest {
+            messages: vec![Message::user("hi")],
+            sampling: SamplingParams::default(),
+            tools: Vec::new(),
+            constraint: None,
+        };
+        let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
+        let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
+
+        let completion = provider
+            .complete_streaming(request, &sink)
+            .await
+            .expect("a mid-line split must not break parsing");
+        server.await.unwrap();
+
+        assert_eq!(completion.message.text.as_deref(), Some("Hello"));
+        assert_eq!(
+            deltas.into_inner().unwrap(),
+            vec![StreamDelta::Text("Hello".to_string())]
         );
     }
 }
