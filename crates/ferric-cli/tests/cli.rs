@@ -80,6 +80,33 @@ fn mock_query_end_to_end() {
     );
 }
 
+/// T-3705: `--stream` must not duplicate output. The `--mock` script's
+/// completions are native tool calls with no `message.text` (`text: None`),
+/// so the default `complete_streaming` impl fires zero deltas for either
+/// turn — the final echo is the ONLY place the text appears, exactly as
+/// without `--stream` (the EARS "no duplication, no missing text" clause).
+#[test]
+fn stream_flag_mock_no_duplication() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["query", "--mock", "--stream", "do a mock task"])
+        .arg("--workspace")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let occurrences = stdout.matches("mock run complete").count();
+    assert_eq!(
+        occurrences, 1,
+        "expected exactly one occurrence of the final text, got {occurrences}: {stdout:?}"
+    );
+}
+
 #[test]
 fn query_without_backend_errors() {
     // Default build lacks backend-mistralrs: a non-mock query must fail with
