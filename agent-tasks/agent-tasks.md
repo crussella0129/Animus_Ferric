@@ -82,7 +82,7 @@ research + plan in `sprints/s36/`. See completed-tasks.md for the per-task commi
 An independent "Production Ready Action Plan" (docx, dated sprint 34) was reviewed. It aligns with
 the project's safety-before-blast-radius philosophy; its concrete future-task ideas, captured here
 (NOT yet scheduled — each is its own future sprint, most already tracked above in some form):
-- **Streaming inference** — ✅ **IN PROGRESS, sprint 37** (user-chosen 2026-07-03, framed as "a base
+- **Streaming inference** — ✅ **DONE, sprint 37** (user-chosen 2026-07-03, framed as "a base
   architectural choice"). See the Sprint 37 section below — token-by-token from the HTTP valve
   through the provider to CLI (`ferric query --stream` this increment; MCP/mistral.rs streaming and
   a structured/programmatic streaming mode are follow-ons, ADR-047).
@@ -116,14 +116,13 @@ the project's safety-before-blast-radius philosophy; its concrete future-task id
   "external contribution / blog citation" success metrics are noted but out of scope for the
   harness itself.
 
-## Sprint 37 (streaming inference) — IN PROGRESS
-User-chosen (2026-07-03), framed as "a base architectural choice." Research + plan in
-`sprints/s37/sprint-research/research-report.md` / `sprints/s37/sprint-plans/`. Execution sequence
-(consumed from the top as each task completes):
-
-- [ ] T-3701 (sprint 37): StreamDelta + Provider::complete_streaming default method — touches: crates/ferric-provider/src/types.rs, crates/ferric-provider/src/traits.rs
-- [ ] T-3702 (sprint 37): ConstrainedJsonScanner, the incremental summary-field extractor (pure) — touches: crates/ferric-provider/src/stream_scan.rs (new), crates/ferric-provider/src/lib.rs
-- [ ] T-3703 (sprint 37): OpenAiProvider::complete_streaming (SSE accumulation + real I/O) — touches: crates/ferric-provider/src/openai.rs, Cargo.toml
-- [ ] T-3704 (sprint 37): thread the display sink through the agent loop — touches: crates/ferric-loop/src/run.rs, crates/ferric-loop/src/backoff.rs
-- [ ] T-3705 (sprint 37): ferric query --stream CLI wiring — touches: crates/ferric-cli/src/query.rs, crates/ferric-cli/src/mcp.rs
-- [ ] T-3706 (sprint 37): ADR-047 + docs — touches: decisions.md, README.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
+## Sprint 37 (streaming inference) — DONE, ADR-047
+User-chosen (2026-07-03), framed as "a base architectural choice." Fills ADR-003's reserved
+streaming extension point: `Provider::complete_streaming` (default impl = zero behavior change for
+non-overriding providers; `OpenAiProvider` gets a real SSE implementation via `Response::chunk()`,
+no new dependency), the `ConstrainedJsonScanner` (incremental `task_complete` summary extraction,
+handling JSON escapes correctly across chunk boundaries), `RunArgs.stream_sink` threaded through
+the loop (`None` = byte-identical to today), and `ferric query --stream`. All 6 build tasks
+(T-3701–T-3706) shipped; research + plan + two critique rounds in `sprints/s37/`. MCP streaming,
+mistral.rs streaming, seamless mid-stream retry, and a structured/programmatic streaming mode are
+explicit follow-ons, not built here. See completed-tasks.md for the per-task commit hashes.

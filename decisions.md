@@ -314,3 +314,58 @@ ADR-020/027 — the HTTP valve remains the only backend that matters). Full rese
   captured in `agent-tasks/agent-tasks.md` as reviewed backlog.
 - **Still deferred (unchanged):** the raw **chat mode** (the ADR-011 revision's second half) — its
   own future sprint + own dedicated ADR on the chat security boundary; it is NOT touched here.
+
+## ADR-047 — 2026-07-03 (sprint 37): streaming inference — `complete_streaming`, the `ConstrainedJsonScanner`, `ferric query --stream`
+User-chosen sprint focus, framed as "a base architectural choice." Fills ADR-003's reserved
+`complete_stream` extension point (never built — confirmed by grep, zero prior code) so `ferric
+query` shows live text instead of a wall of silence during inference. Full research/plan/critique
+in `sprints/s37/`.
+- **The core design tension:** `ConstrainedJson` (the flagship path) returns every turn's
+  completion — including the final `task_complete` answer — as ONE opaque JSON object. Raw token
+  deltas of that aren't human-readable. Solved with a small incremental scanner
+  (`ConstrainedJsonScanner`, `crates/ferric-provider/src/stream_scan.rs`) that recognizes exactly
+  two signals in the accumulating text: the `"tool":"<name>"` field (a cheap early activity
+  signal — reusing ADR-016's tool-before-args field-ordering discipline for a new purpose) and,
+  only when the tool is `task_complete`, the live-decoded characters of `args.summary` — the one
+  field that IS prose. Handles JSON string-escape sequences correctly across arbitrary chunk
+  boundaries (including multi-character `\uXXXX` splits, holding back from the start of any
+  incomplete escape). The false-positive-safety argument (no `args` string value can be misread as
+  the tool key) rests on `action_schema` always emitting `tool` first (ADR-016) plus valid JSON
+  syntax making a raw unescaped `"tool":"` decoy inside a string value structurally impossible.
+- **`Provider::complete_streaming`** (`crates/ferric-provider/src/traits.rs`): a new trait method,
+  `async fn complete_streaming(&self, request, on_delta: &(dyn Fn(StreamDelta) + Sync)) ->
+  Result<Completion, ProviderError>`, with a **default implementation** that calls `complete()` and
+  fires at most one `Text` delta with the full text — every provider that doesn't override this
+  (`MockProvider`, `MistralRsProvider`) behaves identically to `complete()` with zero code, zero
+  behavior change. Only `OpenAiProvider` overrides it with a real SSE-based implementation
+  (`Response::chunk()` — no `stream` cargo feature or extra dependency needed; simpler than
+  `bytes_stream()`, which would have required `futures_util::StreamExt`). Callback shape (not a
+  `Stream`/`futures` return type) chosen deliberately: `Provider` must stay dyn-compatible
+  (ADR-003), which an unboxed `impl Stream` return type breaks; the callback avoids a new
+  dependency and keeps the return type identical to `complete()`.
+- **The constrained-decoding guarantee is unchanged.** The constraint is enforced server-side by
+  llama-server/Ollama regardless of streaming; buffering is for *display* only — the full JSON
+  object is still parsed/validated/dispatched by the existing, untouched `ferric-loop` dispatch
+  logic once the stream ends. `RunArgs` gained one field, `stream_sink: Option<&(dyn Fn(StreamDelta)
+  + Sync)>` — `None` (every pre-sprint-37 caller) is byte-identical to today; `Some` routes the
+  turn through `complete_streaming_with_backoff` (mirrors `complete_with_backoff`'s retry policy —
+  a retryable mid-stream error retries the whole request fresh, so a failed attempt's deltas are
+  never replayed or duplicated by the next attempt).
+- **`ferric query --stream`** (opt-in this increment, not default-on): prints `Text` deltas to
+  stdout live-flushed, `ToolNamed` as a stderr activity line ("▸ calling `<name>`..."); skips the
+  final echo when streaming already displayed the answer (no duplication, proven for `--mock` where
+  the default impl fires zero deltas for a tool-calls-only completion, so the existing final-echo
+  path is the sole output — byte-identical to non-streaming).
+- **Scope, deliberately bounded (explicit follow-ons):** `ferric mcp` streaming is OUT — its stdout
+  is reserved exclusively for JSON-RPC frames (ADR-046); partial-text needs MCP's own notification
+  mechanism, a separate future increment. mistral.rs backend streaming is OUT — it's the fallback
+  path (ADR-023), not prioritized. Mid-stream retry beyond "restart the whole request" is OUT — no
+  attempt to seamlessly resume/dedupe a partially-displayed stream. A structured JSON streaming mode
+  for programmatic consumers (the reviewed production-readiness plan doc's second flag idea) is OUT
+  — worth its own increment once raw human-readable streaming is proven.
+- **Dependency note:** `reqwest`'s `stream` feature was considered, then dropped once
+  `Response::chunk()` was confirmed to need no feature flag at all — a strict simplification, not
+  an addition, to ADR-004's allowlist. `tokio` gained `net`/`macros`/`io-util`, dev-dependency-scoped
+  only (a hand-rolled `tokio::net::TcpListener` fake-server E2E test proves the real wire protocol,
+  mirroring sprint 36's real-process/real-socket testing preference) — NOT needed by
+  `complete_streaming`'s production code path.
