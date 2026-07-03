@@ -70,16 +70,50 @@ taint source yet), `ferric mcp` + the new chat mode (own dedicated sprint — se
 + git tools, streaming, session resume, trace rotation. Panic-safety sub-audit came back **clean**
 (no unwrap/expect/panic! found on adversarial model/backend/file-content paths).
 
-## Sprint 36 (ferric mcp — the ADR-005 security call) — IN PROGRESS
-User-prioritized (2026-07-03) from the GLM-review "critical gaps" list: build `ferric mcp`
-(mistral.rs in-process hang explicitly dropped, not re-chased). Research + plan in
-`sprints/s36/sprint-research/research-report.md` / `sprints/s36/sprint-plans/`. Execution sequence
-(consumed from the top as each task completes):
+## Sprint 36 (ferric mcp — the ADR-005 security call) — DONE, ADR-046
+User-prioritized (2026-07-03) from the GLM-review "critical gaps" list: built `ferric mcp`
+(mistral.rs in-process hang explicitly dropped, not re-chased). MCP-stdio server exposing exactly
+ONE tool (`ferric_query`, `{prompt, files?}`) — never Ferric's individual builtins, never
+workspace/backend/model as per-call params (all launch-time-fixed → the containment guarantee is
+structural). Hand-rolled JSON-RPC (no `rmcp` dep). All 7 build tasks (T-3601–T-3607) shipped;
+research + plan in `sprints/s36/`. See completed-tasks.md for the per-task commit hashes.
 
-- [ ] T-3601 (sprint 36): separate provider construction from loop execution in `query.rs` — touches: crates/ferric-cli/src/query.rs
-- [ ] T-3602 (sprint 36): extract the launch-time-fixed run-config builder — touches: crates/ferric-cli/src/query.rs
-- [ ] T-3603 (sprint 36): JSON-RPC 2.0 message types + stdio framing — touches: crates/ferric-cli/src/mcp.rs (new)
-- [ ] T-3604 (sprint 36): initialize + tools/list handlers — touches: crates/ferric-cli/src/mcp.rs
-- [ ] T-3605 (sprint 36): tools/call handler for ferric_query + shared file-routing extraction — touches: crates/ferric-cli/src/mcp.rs, crates/ferric-cli/src/query.rs
-- [ ] T-3606 (sprint 36): McpArgs + Command::Mcp + run_mcp entrypoint — touches: crates/ferric-cli/src/main.rs, crates/ferric-cli/src/mcp.rs
+## Production-readiness roadmap (external plan doc, reviewed 2026-07-03)
+An independent "Production Ready Action Plan" (docx, dated sprint 34) was reviewed. It aligns with
+the project's safety-before-blast-radius philosophy; its concrete future-task ideas, captured here
+(NOT yet scheduled — each is its own future sprint, most already tracked above in some form):
+- **Streaming inference** — token-by-token from the HTTP valve through the provider to CLI. The
+  doc's key insight: a **buffer-and-validate** approach (stream raw tokens to the display while the
+  JSON-Schema constraint still validates synchronously) preserves the constrained-decoding
+  guarantee. `--stream` (default on TTY) + a structured JSON streaming mode. Reconciling streaming
+  with `Constraint::JsonSchema` is the real design work (ADR-003 reserved `complete_stream`).
+- **Session resume** — replay the existing JSONL trajectory (ADR-002) to reconstruct loop state;
+  `--resume <path>` + `--save-interval`. The reader's unknown-event tolerance already gives forward
+  compat.
+- **Persistent config** — layered `.ferric/config.toml` (project) + `~/.config/ferric/config.toml`
+  (user): model, ring width, workspace, backend URL, temperature. Unblocks `ferric init-project`.
+- **`shell_exec` tool** — Ring 2 (Medium+); workspace cwd, command timeout, stdout/stderr capture,
+  output caps; **extend Ornstein to screen commands** for destructive/exfil/privesc patterns before
+  exec. (Needs the real permission-model extension flagged in ADR-045, not a quick add.)
+- **`git` tool** — curated subset (status/diff/add/commit/log/branch/checkout); Ring 1 read / Ring 2
+  write; reject force-push/rebase/reset unless an expert-only Ring 3 (10B+); subprocess not a git
+  lib (dep weight).
+- **Dev engine (`ferric dev`)** — the ADR-011-reserved self-modification arc (doc estimates ~3
+  sprints, matching ADR-011's "s4–s7"): separate stricter loop with a MIN tier floor, `cargo check`
+  in an isolated target dir, a distinct trajectory prefix, harness-source-protection rules in the
+  guard (block edits to `ferric-guard`/denylists/workspace containment behind an explicit escape
+  hatch), and **self-mod-specific guards** (modification-loop, scope-creep, regression).
+- **Deployment hardening** — `cargo bloat`/`cargo tree --duplicates` binary-size budget enforced in
+  CI per target (linux x86_64/aarch64, macOS aarch64, windows x86_64); **`oovra` supply-chain risk**
+  (pinned to a personal-repo git rev) → vendor or migrate to a published crate; release packaging
+  (GitHub Actions artifacts, `curl|sh`, cargo-binstall/Homebrew/AUR); docs site + cold-start
+  onboarding.
+- **Divergences from the doc, deliberately (already decided here):** (1) the doc slots MCP into its
+  Phase 2 (sprints 38–40) as a **separate `ferric-mcp` binary exposing tool rings as MCP tool
+  groups** — we shipped it EARLY (s36) as an **in-process `ferric mcp` subcommand exposing ONE
+  `ferric_query` tool**, precisely because exposing individual tools/rings over MCP would let a
+  client bypass the agent loop + guards (ADR-046's security call). Keep this divergence. (2) The doc
+  is dated s34 (says "44 ADRs"); we're at ADR-046 / s36. (3) "Single-developer bus factor" and
+  "external contribution / blog citation" success metrics are noted but out of scope for the
+  harness itself.
 - [ ] T-3607 (sprint 36): ADR-046 + docs — touches: decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md, README.md

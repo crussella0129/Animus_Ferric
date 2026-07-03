@@ -49,6 +49,7 @@ The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built wit
 |---|---|
 | `ferric server up\|status\|doctor\|down` | Launch & manage the local OpenAI-compatible inference server (the HTTP valve), bound to `127.0.0.1` only. Writes `.ferric/server.json` so other commands auto-discover it. |
 | `ferric query "<prompt>"` | Run one workspace-scoped agent turn against a local model. |
+| `ferric mcp` | Run an MCP-stdio server exposing one tool, `ferric_query`, to MCP clients (Claude Code, Cursor, an IDE). Workspace/backend/model are launch-time-fixed flags; each call runs the full constrained agent loop. *ADR-046.* |
 | `ferric toolbench` | Measure & diagnose tool-calling fire rate for a model (or a fleet — see below). |
 | `ferric bench` | Run the L0–L6 capability ladder and calibrate a model's `measured_level`. |
 | `ferric trace cat <file.jsonl>` | Render a session trace as a human-readable log. |
@@ -118,7 +119,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 35). Two inference backends ship behind feature flags:
+Active development (sprint 36). Two inference backends ship behind feature flags:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
@@ -188,4 +189,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 35 — expert review + refactor** (2026-06-29). The first full-project audit: what does Ferric need to become an operational, competitive, safe product, staying efficient for edge/personal-compute deployment? Full findings (file:line cited) in `sprints/s35/sprint-research/research-report.md`; four immediately-effective fixes shipped — a **read-side sensitive-file guard** (`.env`/SSH keys/cloud credentials can no longer be read into the plaintext trace), **`ferric server` edge-tuning flags** (`--threads`/`--gpu-layers`/`--batch-size` for Jetson/RPi-class latency tuning), **`mistralrs` rev-pinned** (was floating on `branch = "master"`), and **`reqwest` switched to `rustls-tls`** (no native OpenSSL dependency for ARM cross-compilation). Everything larger (MCP, a new chat mode, shell/git tools, streaming, session resume) is explicitly deferred with reasons, not silently dropped. *ADR-045.*
 
-> **Next — Sprint 36: TBD** (`ferric mcp` — activating ADR-012 — and/or the new raw chat mode reversing ADR-011, both already decided and driven by the upcoming **Animus IDE** organ; install a containerizer → the Web retriever; wire the CaMeL sink policy once the research→loop taint source exists).
+- **Sprint 36 — `ferric mcp`** (2026-07-03). The "ADR-005 security call" that blocked ADR-012 since sprint 1 is answered, and the MCP-stdio server it unblocks is built. `ferric mcp` exposes **exactly one** MCP tool, `ferric_query` (`{prompt, files?}`) — never Ferric's individual builtins and never workspace/backend/model as per-call parameters (those are launch-time-fixed CLI flags, so the containment guarantee is *structural*: a client can't redirect the workspace or swap the model because the wire protocol has no field for it). Every `tools/call` runs the same constrained agent loop `ferric query` drives, inheriting the guard/permission checks, tool rings, and per-call tracing. Hand-rolled JSON-RPC 2.0 (no `rmcp` dependency); the mistral.rs in-process hang was explicitly dropped rather than re-chased. *ADR-046.*
+
+> **Next — Sprint 37: TBD** (the new raw **chat mode** reversing ADR-011 — the revision's other half, needing its own dedicated security-boundary ADR; or a **Production-Readiness Roadmap** item — streaming via buffer-and-validate, session resume via JSONL replay, or persistent config — see `agent-tasks/agent-tasks.md`; install a containerizer → the Web retriever; wire the CaMeL sink policy once the research→loop taint source exists).

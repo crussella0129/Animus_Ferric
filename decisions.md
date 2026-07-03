@@ -268,3 +268,49 @@ for everything larger.
   positive finding, not just gaps. (3) Animus_Ferric's **GGUF-only** decision and the **ADR-011
   revision** (MCP + chat) were made earlier the same day, outside this audit's direct scope, and
   are recorded separately (`agent-tasks/agent-tasks.md`, memory) — not re-litigated here.
+
+## ADR-046 — 2026-07-03 (sprint 36): `ferric mcp` — the ADR-005 security call, one tool, launch-time-fixed containment
+The "ADR-005 security call" that blocked ADR-012 since sprint 1 is answered, and the MCP-stdio
+server it unblocks is built. User-prioritized from the GLM-review "critical gaps" list; the
+companion mistral.rs in-process-hang item was explicitly **dropped** (reprobed twice already,
+ADR-020/027 — the HTTP valve remains the only backend that matters). Full research + plan in
+`sprints/s36/`.
+- **The security call — the exposed surface.** `ferric mcp` exposes **exactly one MCP tool**,
+  `ferric_query` (`{prompt: string, files?: string[]}`), NOT Ferric's individual builtins
+  (read/write/exec) and NOT the tool rings as MCP tool groups. Every `tools/call` runs one full
+  constrained agent loop (`ferric-loop::run`) — the same one `ferric query` drives — so it inherits
+  the workspace boundary, the `ferric-guard` permission checks, the tool-ring ceiling, the loop
+  guards, and per-call JSONL tracing unchanged. MCP is a new **entrypoint**, not a new **decoding
+  path** or a new **privilege**.
+- **Structural containment (the key property).** Workspace root, backend, model, and protocol are
+  `ferric mcp` **launch-time CLI flags** (`McpArgs`, mirroring `QueryArgs` minus `prompt`/`files`),
+  fixed for the server-process lifetime — exactly as `ferric server` pins its engine to a closed
+  enum and its host to loopback. The `ferric_query` tool schema has **no** `workspace`/`backend`/
+  `model` field, so a compromised or confused MCP client *cannot* redirect containment or load a
+  different model per call — the guarantee is unrepresentable in the wire protocol, not something a
+  handler must remember to enforce. A dedicated test asserts the schema never grows those fields.
+- **Hand-rolled, not `rmcp`.** The needed surface is deliberately narrow (one tool; no resources,
+  prompts, sampling callbacks, or notifications), so the JSON-RPC 2.0 framing is hand-rolled in
+  `crates/ferric-cli/src/mcp.rs` (~a few hundred lines of `serde_json`), reusing the `tokio`
+  dependency Ferric already carries — zero new external protocol-implementation dependency, full
+  auditability (ADR-013's ownership-graph goal). Revisit `rmcp` only if the surface must grow
+  (resources/prompts, or the eventual Development Engine's multi-tool needs).
+- **Launch-time-fixed profile is a deliberate divergence from `ferric query`.** The persisted
+  profile (`measured_level`/`calibrated_ring`, ADR-029) is read ONCE at server launch and held for
+  the process lifetime; a `ferric bench --calibrate-rings` run against a *running* server is picked
+  up only on restart. `ferric query` re-reads per invocation. Accepted, matching the same
+  launch-time-fixed philosophy applied to workspace/backend/model.
+- **Errors never crash the server.** A loop/provider failure on one `tools/call` returns
+  `isError:true` (same convention as `ferric query`'s `StopReason::ProviderError` → exit-failure),
+  and the serve loop keeps accepting subsequent calls — proven by an error-then-success-same-session
+  test and a real-subprocess stdio E2E (`ferric mcp --mock`).
+- **Divergence from the external "Production Ready Action Plan" (reviewed same day).** That doc
+  slotted MCP into its Phase 2 (sprints 38–40) as a **separate `ferric-mcp` binary exposing tool
+  rings as MCP tool groups**. We shipped it early (s36) as an **in-process subcommand exposing one
+  `ferric_query` tool** — because exposing individual tools/rings over MCP is exactly the bypass of
+  the agent loop + guards this ADR's security call exists to prevent. The doc's other future-task
+  ideas (streaming via buffer-and-validate, session resume via JSONL replay, persistent config,
+  shell/git tools, the dev engine, deployment hardening incl. the `oovra` supply-chain risk) are
+  captured in `agent-tasks/agent-tasks.md` as reviewed backlog.
+- **Still deferred (unchanged):** the raw **chat mode** (the ADR-011 revision's second half) — its
+  own future sprint + own dedicated ADR on the chat security boundary; it is NOT touched here.
