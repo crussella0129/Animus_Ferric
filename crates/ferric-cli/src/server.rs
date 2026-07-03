@@ -68,6 +68,16 @@ pub struct ServerUpArgs {
     /// Port to bind on 127.0.0.1.
     #[arg(long, default_value_t = 8080)]
     pub port: u16,
+    /// CPU threads (llama-server only; ignored for Ollama). Edge-tuning knob —
+    /// the primary latency lever on constrained CPU targets (Jetson/RPi).
+    #[arg(long)]
+    pub threads: Option<u32>,
+    /// GPU layers to offload (llama-server only; ignored for Ollama).
+    #[arg(long)]
+    pub gpu_layers: Option<u32>,
+    /// Batch size (llama-server only; ignored for Ollama).
+    #[arg(long)]
+    pub batch_size: Option<u32>,
 }
 
 /// What `command()` needs. Built from `ServerUpArgs` with the host fixed.
@@ -78,6 +88,11 @@ pub struct ServerConfig {
     pub ctx: u32,
     pub host: String,
     pub port: u16,
+    /// Edge-tuning knobs (sprint 35). Only consumed by `Engine::LlamaServer`'s
+    /// argv builder — Ollama doesn't take these as CLI flags.
+    pub threads: Option<u32>,
+    pub gpu_layers: Option<u32>,
+    pub batch_size: Option<u32>,
 }
 
 impl ServerConfig {
@@ -109,6 +124,18 @@ pub fn command(cfg: &ServerConfig) -> LaunchCommand {
             }
             args.push("-c".to_string());
             args.push(cfg.ctx.to_string());
+            if let Some(threads) = cfg.threads {
+                args.push("-t".to_string());
+                args.push(threads.to_string());
+            }
+            if let Some(gpu_layers) = cfg.gpu_layers {
+                args.push("-ngl".to_string());
+                args.push(gpu_layers.to_string());
+            }
+            if let Some(batch_size) = cfg.batch_size {
+                args.push("-b".to_string());
+                args.push(batch_size.to_string());
+            }
             args.push("--host".to_string());
             args.push(cfg.host.clone());
             args.push("--port".to_string());
@@ -232,6 +259,9 @@ fn config_from(args: &ServerUpArgs) -> ServerConfig {
         ctx: args.ctx,
         host: "127.0.0.1".to_string(),
         port: args.port,
+        threads: args.threads,
+        gpu_layers: args.gpu_layers,
+        batch_size: args.batch_size,
     }
 }
 
@@ -395,6 +425,9 @@ mod tests {
             ctx: 4096,
             host: "127.0.0.1".to_string(),
             port: 8080,
+            threads: None,
+            gpu_layers: None,
+            batch_size: None,
         }
     }
 
@@ -435,6 +468,31 @@ mod tests {
             c.env,
             vec![("OLLAMA_HOST".to_string(), "127.0.0.1:8080".to_string())]
         );
+    }
+
+    #[test]
+    fn llama_server_edge_tuning_flags() {
+        // WHEN threads/gpu_layers/batch_size are set with llama-server THEN
+        // argv SHALL include the matching flags (sprint 35).
+        let mut config = cfg(Engine::LlamaServer);
+        config.threads = Some(4);
+        config.gpu_layers = Some(20);
+        config.batch_size = Some(512);
+        let c = command(&config);
+        assert!(c.args.windows(2).any(|w| w == ["-t", "4"]));
+        assert!(c.args.windows(2).any(|w| w == ["-ngl", "20"]));
+        assert!(c.args.windows(2).any(|w| w == ["-b", "512"]));
+    }
+
+    #[test]
+    fn ollama_ignores_edge_tuning_flags() {
+        // Ollama doesn't take these as CLI flags — set-but-unused, argv unchanged.
+        let mut config = cfg(Engine::Ollama);
+        config.threads = Some(4);
+        config.gpu_layers = Some(20);
+        config.batch_size = Some(512);
+        let c = command(&config);
+        assert_eq!(c.args, vec!["serve"], "edge-tuning flags must not leak into Ollama argv");
     }
 
     #[test]
