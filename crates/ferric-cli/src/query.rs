@@ -552,6 +552,7 @@ pub(crate) async fn run_with_provider(
     sink: &mut JsonlSink,
     prompt: &str,
     media: Vec<MediaPart>,
+    stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
 ) -> Result<LoopOutcome, String> {
     run(
         RunArgs {
@@ -565,6 +566,7 @@ pub(crate) async fn run_with_provider(
             system_prompt,
             prompt_lineage: lineage,
             media,
+            stream_sink,
         },
         sink,
         prompt,
@@ -599,6 +601,7 @@ fn drive_mock(
         sink,
         prompt,
         media,
+        None,
     ))
 }
 
@@ -632,6 +635,7 @@ fn drive_real(
             sink,
             prompt,
             media,
+            None,
         )
         .await
     })
@@ -702,6 +706,7 @@ mod tests {
             &mut sink,
             "do a mock task",
             Vec::new(),
+            None,
         ))
         .unwrap();
 

@@ -346,6 +346,9 @@ impl McpServer {
         prompt: &str,
         media: Vec<ferric_core::MediaPart>,
     ) -> Result<ferric_loop::LoopOutcome, String> {
+        // MCP does not stream this sprint (ADR-046: stdout is reserved
+        // exclusively for JSON-RPC frames; partial-text needs MCP's own
+        // notification mechanism, a separate future increment).
         let fut = run_with_provider(
             self.provider.as_ref(),
             &self.config.registry,
@@ -358,6 +361,7 @@ impl McpServer {
             sink,
             prompt,
             media,
+            None,
         );
         match &self.executor {
             Executor::Mock => futures_executor::block_on(fut),

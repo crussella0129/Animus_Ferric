@@ -184,6 +184,7 @@ pub fn run_scripted_protocol(
             system_prompt: None,
             prompt_lineage: None,
             media: Vec::new(),
+            stream_sink: None,
         },
         &mut sink,
         "do the task",
