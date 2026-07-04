@@ -334,6 +334,44 @@ fn persisted_calibrated_ring_caps_the_offered_tools() {
     );
 }
 
+/// T-3802: `params_b`/`quant`/`family`/`ctx`/`temperature`/`profile_dir` lost
+/// their clap `default_value_t`/`default_value` in favor of bare `Option<T>`,
+/// resolved via `.unwrap_or(today's constant)` at the call site — no config
+/// file exists yet at this point (T-3803). With NO flags and NO config file,
+/// the resolved values must be byte-identical to before: default `--params-b`
+/// 1.2 lands at `Tier::Nano` (512 max_output_tokens, per the pinned tier
+/// table) — isolates the mechanical refactor from any config-precedence
+/// regression, so a failure here points at T-3802, not T-3803.
+#[test]
+fn query_defaults_unchanged_after_clap_type_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["query", "--mock", "do a task"])
+        .arg("--workspace")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let trace_dir = dir.path().join(".ferric").join("trace");
+    let trace = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("a q-*.jsonl trace");
+    let content = std::fs::read_to_string(trace.path()).unwrap();
+    let policy = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["event"]["type"] == "policy_selected")
+        .expect("a policy_selected event");
+    assert_eq!(policy["event"]["tier"], "nano");
+    assert_eq!(policy["event"]["max_output_tokens"], 512);
+}
+
 #[test]
 fn unknown_args_fail_with_usage() {
     let out = ferric().arg("frobnicate").output().unwrap();

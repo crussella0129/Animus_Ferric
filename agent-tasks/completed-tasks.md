@@ -616,3 +616,9 @@
 - **Completed:** 2026-07-04 (build phase)
 - **Files modified:** crates/ferric-cli/src/config.rs (new), crates/ferric-cli/src/backend.rs, crates/ferric-cli/src/main.rs, crates/ferric-cli/Cargo.toml
 - **Commit:** `8aeb2dd`
+
+## T-3802 (sprint 38)
+- **Description:** **Mechanical clap-default removal for `ferric query` (behavior-preserving, split from config wiring per plan-critic C-002).** `params_b`/`quant`/`family`/`ctx`/`temperature`/`profile_dir` on `QueryArgs` lose their clap `default_value_t`/`default_value`, becoming bare `Option<T>`; `run_query`'s `build_run_config` call site applies the exact same hardcoded defaults via `.unwrap_or(...)`/`.unwrap_or_else(...)` — no config file involved yet (T-3803). New regression test `cli::query_defaults_unchanged_after_clap_type_change`: a no-flags `--mock` run's `policy_selected` trace event still shows `tier: nano` / `max_output_tokens: 512` (the default `--params-b` 1.2's tier), proving the refactor alone changed nothing — isolating this task's correctness from T-3803's config-precedence logic.
+- **Completed:** 2026-07-04 (build phase)
+- **Files modified:** crates/ferric-cli/src/query.rs, crates/ferric-cli/tests/cli.rs
+- **Commit:** `6022c98`

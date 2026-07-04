@@ -133,8 +133,6 @@ Layered `.ferric/config.toml` (project) + cross-platform user config, CLI flag >
 hardcoded default; `Animus.md` folded into the system prompt. Plan critiqued (8 concerns,
 `sprints/s38/sprint-plans/critique.md`) and finalized.
 
-- [ ] T-3802 (sprint 38): mechanical clap-default removal for `ferric query` (behavior-preserving)
-  — touches: crates/ferric-cli/src/query.rs
 - [ ] T-3803 (sprint 38): config loading + precedence resolution for `ferric query` + `model_key`
   fix — touches: crates/ferric-cli/src/query.rs
 - [ ] T-3804 (sprint 38): mechanical clap-default removal for `ferric mcp` (behavior-preserving) —

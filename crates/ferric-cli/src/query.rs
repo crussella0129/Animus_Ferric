@@ -57,25 +57,32 @@ pub struct QueryArgs {
     #[command(flatten)]
     pub backend_opts: BackendOpts,
 
-    /// Parameter count in billions
-    #[arg(long, default_value_t = 1.2)]
-    pub params_b: f32,
+    /// Parameter count in billions. Default 1.2 when neither this flag nor a
+    /// config file's `params_b` is set (T-3803).
+    #[arg(long)]
+    pub params_b: Option<f32>,
 
-    /// Quantization label
-    #[arg(long, default_value = "Q4_K_M")]
-    pub quant: String,
+    /// Quantization label. Default "Q4_K_M" when neither this flag nor a
+    /// config file's `quant` is set (T-3803).
+    #[arg(long)]
+    pub quant: Option<String>,
 
-    /// Model family label
-    #[arg(long, default_value = "unknown")]
-    pub family: String,
+    /// Model family label. Default "unknown" when neither this flag nor a
+    /// config file's `family` is set (T-3803).
+    #[arg(long)]
+    pub family: Option<String>,
 
-    /// Context window in tokens (ModelProfile is config-supplied, ADR-006)
-    #[arg(long, default_value_t = 4096)]
-    pub ctx: u32,
+    /// Context window in tokens (ModelProfile is config-supplied, ADR-006).
+    /// Default 4096 when neither this flag nor a config file's `ctx` is set
+    /// (T-3803).
+    #[arg(long)]
+    pub ctx: Option<u32>,
 
-    /// Sampling temperature (0.0 selects the deterministic sampler)
-    #[arg(long, default_value_t = 0.0)]
-    pub temperature: f32,
+    /// Sampling temperature (0.0 selects the deterministic sampler). Default
+    /// 0.0 when neither this flag nor a config file's `temperature` is set
+    /// (T-3803).
+    #[arg(long)]
+    pub temperature: Option<f32>,
 
     /// Action protocol override (default: chosen from policy + backend caps)
     #[arg(long, value_enum)]
@@ -115,8 +122,10 @@ pub struct QueryArgs {
     /// `toolbench --calibrate-rings`). When a record exists for this model, its
     /// `measured_level` sets the tier and its `calibrated_ring` defaults
     /// `--max-ring` — the durable promotion (ADR-029). A missing file is a no-op.
-    #[arg(long, default_value = "benchmarks")]
-    pub profile_dir: PathBuf,
+    /// Default "benchmarks" when neither this flag nor a config file's
+    /// `profile_dir` is set (T-3803).
+    #[arg(long)]
+    pub profile_dir: Option<PathBuf>,
 
     /// Stream text live to stdout as it's generated, instead of waiting for
     /// the whole multi-turn loop to finish (ADR-047). Opt-in this increment.
@@ -355,18 +364,25 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
         }
     };
 
+    // T-3802: mechanical clap-default removal — these six now resolve their
+    // hardcoded default here (via `.unwrap_or`) instead of via clap, with no
+    // config file involved yet (that's T-3803). Byte-identical when no flag
+    // is passed.
     let config = build_run_config(&RunConfigArgs {
         mock: args.mock,
         backend: args.backend_opts.backend,
-        params_b: args.params_b,
-        quant: args.quant.clone(),
-        family: args.family.clone(),
-        ctx: args.ctx,
-        temperature: args.temperature,
+        params_b: args.params_b.unwrap_or(1.2),
+        quant: args.quant.clone().unwrap_or_else(|| "Q4_K_M".to_string()),
+        family: args.family.clone().unwrap_or_else(|| "unknown".to_string()),
+        ctx: args.ctx.unwrap_or(4096),
+        temperature: args.temperature.unwrap_or(0.0),
         protocol_override: args.protocol,
         prompts_dir: args.prompts_dir.clone(),
         max_ring: args.max_ring,
-        profile_dir: args.profile_dir.clone(),
+        profile_dir: args
+            .profile_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("benchmarks")),
         model_key: args
             .backend_opts
             .model
