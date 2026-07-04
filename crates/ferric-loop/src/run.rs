@@ -75,6 +75,9 @@ pub async fn run(
 ) -> Result<LoopOutcome, FerricError> {
     sink.write_event(Event::SessionStart {
         workspace: args.workspace.root().display().to_string(),
+        // T-3904 (sprint 39) will set this from `args.resume` once that field
+        // exists; every caller today is a fresh (non-resumed) session.
+        resumed_from: None,
     })?;
     sink.write_event(Event::PolicySelected {
         tier: args.policy.tier,
@@ -93,6 +96,15 @@ pub async fn run(
     }
 
     let system = args.system_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
+    // T-3901 (sprint 39): the literal system+user prompt (+media), recorded
+    // once so a later `replay()` doesn't have to re-derive it. T-3904 will
+    // make this conditional on `args.resume` being absent; every caller today
+    // is a fresh session, so it always fires.
+    sink.write_event(Event::SessionPrompt {
+        system: system.to_string(),
+        user: prompt.to_string(),
+        media: args.media.clone(),
+    })?;
     let mut messages = vec![
         Message::system(system),
         Message::user_with_media(prompt, args.media.clone()),
@@ -201,6 +213,8 @@ pub async fn run(
             tool_call_count: completion.message.tool_calls.len() as u32,
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
+            // T-3902 (sprint 39) will set this from `completion.truncated`.
+            truncated: false,
         })?;
 
         // Constrained truncation (ADR-015): a completion cut off by the token

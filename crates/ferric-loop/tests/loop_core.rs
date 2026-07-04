@@ -24,6 +24,7 @@ fn happy_path_golden_trace_order() {
         vec![
             "session_start",
             "policy_selected",
+            "session_prompt",
             "turn_start",
             "prompt_assembled",
             "turn_end",

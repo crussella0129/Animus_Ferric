@@ -24,6 +24,12 @@ pub struct TraceEvent {
 pub enum Event {
     SessionStart {
         workspace: String,
+        /// The prior session's `session` id, when this run continues an
+        /// interrupted one (sprint 39, ADR-049). `None` for every ordinary
+        /// (non-resumed) run. Additive: an old `session_start` line with no
+        /// key here still parses as `Known` with `None`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resumed_from: Option<String>,
     },
     SessionEnd {
         reason: String,
@@ -45,6 +51,19 @@ pub enum Event {
         output_version: String,
         composed_of: Vec<(String, String)>,
     },
+    /// The literal system + user prompt (and any attached media) turn 0's
+    /// request was built from (sprint 39, ADR-049) — written once per
+    /// session, before `TurnStart(0)`, unless this session IS a resume (its
+    /// initial prompt already lives in the session it resumed from). Closes
+    /// the gap where only derived metadata (`PromptComposed`'s lineage,
+    /// `PromptAssembled`'s char count) was ever traced, never the actual text
+    /// — needed to losslessly replay a session's message history.
+    SessionPrompt {
+        system: String,
+        user: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        media: Vec<ferric_core::MediaPart>,
+    },
     TurnStart {
         turn: u32,
     },
@@ -56,6 +75,12 @@ pub enum Event {
         tool_call_count: u32,
         input_tokens: Option<u32>,
         output_tokens: Option<u32>,
+        /// Whether this turn's completion was cut off by the token budget
+        /// (sprint 39, ADR-049) — needed to replay the truncation-retry nudge
+        /// correctly. Additive: an old line with no key here parses as
+        /// `false`.
+        #[serde(default)]
+        truncated: bool,
     },
     /// What was about to be sent to the provider: size, shape, and which
     /// tools were on offer.

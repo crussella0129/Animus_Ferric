@@ -22,6 +22,7 @@ fn guarded_traced_execution() {
 
     sink.write_event(Event::SessionStart {
         workspace: ws_dir.path().display().to_string(),
+        resumed_from: None,
     })
     .unwrap();
 

@@ -86,9 +86,23 @@ the project's safety-before-blast-radius philosophy; its concrete future-task id
   architectural choice"). See the Sprint 37 section below — token-by-token from the HTTP valve
   through the provider to CLI (`ferric query --stream` this increment; MCP/mistral.rs streaming and
   a structured/programmatic streaming mode are follow-ons, ADR-047).
-- **Session resume** — replay the existing JSONL trajectory (ADR-002) to reconstruct loop state;
-  `--resume <path>` + `--save-interval`. The reader's unknown-event tolerance already gives forward
-  compat.
+- **Session resume** — ⏳ **IN PROGRESS, sprint 39** (user-chosen 2026-07-04). Scoped down mid-research
+  to `--resume <path>` alone (resume an interrupted, still-incomplete task — replay history,
+  continue the SAME task with more turns, no new prompt needed); `--save-interval` dropped from this
+  sprint entirely — see the next bullet, it turned into something bigger.
+- **Context-budget compaction (sprint 40, NEXT)** — user-introduced 2026-07-04 mid-sprint-39-research,
+  reframing `--save-interval`: **`RunPolicy.prompt_budget_tokens` (70% of `ModelProfile.ctx`, capped)
+  is already computed and traced (`PolicySelected`) but is NEVER enforced anywhere in `run.rs`** —
+  nothing today stops `messages` from growing past the model's real context window over a long
+  session. User-confirmed design: **model-driven summarization** — a dedicated single-shot, no-tools
+  summarizer condenses older turns into one synthetic "progress so far" message as the budget nears,
+  triggered by the model's own reported `input_tokens` (already available per turn, no new
+  estimation heuristic needed) approaching `prompt_budget_tokens`. Same MECHANISM pattern as
+  `ferric-research::summarize_quarantined` (constrained, tools-empty single completion) — but NOT a
+  literal reuse: Ornstein's summarizer is shaped for **untrusted** external content (quarantine
+  framing, `untrusted: true` stamping); compaction summarizes the agent's own **trusted** history, a
+  different trust tier needing a new, purpose-built summarizer, not a repurposed Ornstein one.
+  User-confirmed to be its OWN dedicated sprint, not bundled into sprint 39's `--resume` work.
 - **Persistent config** — ✅ **DONE, sprint 38** (user-chosen 2026-07-04, paired with `Animus.md`).
   See the Sprint 38 section below. `ferric init-project` (a scaffolding wizard) remains a follow-on.
 - **`shell_exec` tool** — Ring 2 (Medium+); workspace cwd, command timeout, stdout/stderr capture,
@@ -144,3 +158,20 @@ CLAUDE.md but for Animus") is read (no parsing) and folded into the system promp
 block — trusted context (the workspace owner's own words), not Ornstein-quarantined. All 7 build
 tasks (T-3801–T-3807) shipped; research + plan + critique in `sprints/s38/`. See completed-tasks.md
 for the per-task commit hashes.
+
+## Sprint 39 (session resume — `ferric query --resume <path>`) — IN PROGRESS
+User-chosen (2026-07-04). Scoped down mid-research to resuming an INTERRUPTED, still-incomplete
+task (process crashed/killed mid-loop) — not a chat-continuation feature; `--save-interval` split
+off entirely into sprint 40's context-budget compaction (see above). Plan critiqued (12 concerns,
+`sprints/s39/sprint-plans/critique.md`) and finalized.
+
+- [ ] T-3902 (sprint 39): extend existing events for full turn fidelity (terminator `ToolCall` +
+  `TurnEnd.truncated`) — touches: crates/ferric-trace/src/event.rs, crates/ferric-loop/src/run.rs
+- [ ] T-3903 (sprint 39): `ferric-loop::replay` — reconstruct `ReplayedState` from a trace file —
+  touches: crates/ferric-loop/src/replay.rs (new), crates/ferric-loop/src/{lib.rs,run.rs}
+- [ ] T-3904 (sprint 39): thread `ReplayedState` into `RunArgs`/`run()`; relax `prompt` to
+  `Option<&str>` — touches: crates/ferric-loop/src/run.rs, crates/ferric-cli/src/{query.rs,mcp.rs}
+- [ ] T-3905 (sprint 39): `ferric query --resume <path>` CLI wiring — touches:
+  crates/ferric-cli/src/query.rs
+- [ ] T-3906 (sprint 39): ADR-049 + docs — touches: decisions.md, README.md,
+  agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
