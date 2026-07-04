@@ -89,8 +89,8 @@ the project's safety-before-blast-radius philosophy; its concrete future-task id
 - **Session resume** — replay the existing JSONL trajectory (ADR-002) to reconstruct loop state;
   `--resume <path>` + `--save-interval`. The reader's unknown-event tolerance already gives forward
   compat.
-- **Persistent config** — layered `.ferric/config.toml` (project) + `~/.config/ferric/config.toml`
-  (user): model, ring width, workspace, backend URL, temperature. Unblocks `ferric init-project`.
+- **Persistent config** — ✅ **DONE, sprint 38** (user-chosen 2026-07-04, paired with `Animus.md`).
+  See the Sprint 38 section below. `ferric init-project` (a scaffolding wizard) remains a follow-on.
 - **`shell_exec` tool** — Ring 2 (Medium+); workspace cwd, command timeout, stdout/stderr capture,
   output caps; **extend Ornstein to screen commands** for destructive/exfil/privesc patterns before
   exec. (Needs the real permission-model extension flagged in ADR-045, not a quick add.)
@@ -126,3 +126,21 @@ the loop (`None` = byte-identical to today), and `ferric query --stream`. All 6 
 (T-3701–T-3706) shipped; research + plan + two critique rounds in `sprints/s37/`. MCP streaming,
 mistral.rs streaming, seamless mid-stream retry, and a structured/programmatic streaming mode are
 explicit follow-ons, not built here. See completed-tasks.md for the per-task commit hashes.
+
+## Sprint 38 (persistent config + `Animus.md`) — DONE, ADR-048
+User-chosen (2026-07-04): "persistent config and Animus.md (much like claude.md but for Animus)".
+Layered `.ferric/config.toml` (project) + cross-platform user config, CLI flag > project > user >
+hardcoded default, for `ferric query`/`ferric mcp`'s tunables (backend, model, params_b/quant/
+family/ctx/temperature, max_ring, profile_dir, stream) — a bounded, named `Config` field list
+(never a generic key-value map), so config can't touch security/guard/denylist policy (ADR-005).
+A foreground plan-critic pass (8 concerns, `sprints/s38/sprint-plans/critique.md`) caught a real,
+non-obvious bug before it shipped: the ADR-029 profile-lookup key `model_key` would have been
+derived from raw CLI args instead of the post-merge, config-resolved values — a config-only-set
+`model` would have silently skipped its profile lookup with no error or trace. Fixing it surfaced
+a SECOND instance of the same masking-hazard class mid-build: `BackendOpts.backend` itself still
+carried a leftover clap default (unlike its 8 sibling fields), which would have made a config-only
+`backend` invisible too — fixed the same way. `Animus.md` (the user's own framing: "much like
+CLAUDE.md but for Animus") is read (no parsing) and folded into the system prompt as a distinct
+block — trusted context (the workspace owner's own words), not Ornstein-quarantined. All 7 build
+tasks (T-3801–T-3807) shipped; research + plan + critique in `sprints/s38/`. See completed-tasks.md
+for the per-task commit hashes.

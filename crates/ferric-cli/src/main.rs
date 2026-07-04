@@ -9,6 +9,7 @@
 
 mod backend;
 mod bench_cmd;
+mod config;
 mod mcp;
 mod query;
 mod server;

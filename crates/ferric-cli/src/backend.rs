@@ -1,11 +1,16 @@
 use clap::{Args, ValueEnum};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 // `Provider` is only named by the feature-gated `create_provider` return type.
 #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 use ferric_provider::Provider;
 
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+/// `Serialize`/`Deserialize` + kebab-case (T-3801): lets `Config::backend`
+/// (sprint 38's persistent config) round-trip through TOML using the same
+/// spelling clap's own `ValueEnum` already uses (`"mistral"`/`"openai"`).
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum BackendArg {
     /// In-process mistral.rs (GGUF). Text-only / `TextXml` — no constraint.
     Mistral,
@@ -16,9 +21,13 @@ pub enum BackendArg {
 
 #[derive(Args, Clone)]
 pub struct BackendOpts {
-    /// Which backend to use
-    #[arg(long, value_enum, default_value = "mistral")]
-    pub backend: BackendArg,
+    /// Which backend to use. Default "mistral" when neither this flag nor a
+    /// config file's `backend` is set (T-3803/T-3805) — bare `Option<T>`
+    /// rather than a clap default so a config-only-set value isn't masked by
+    /// an indistinguishable clap default (the same class of bug the plan
+    /// critic's C-001 caught for `model_key`).
+    #[arg(long, value_enum)]
+    pub backend: Option<BackendArg>,
 
     /// Directory containing the GGUF model (required for the mistral backend)
     #[arg(long)]
@@ -70,7 +79,7 @@ fn resolve_base(explicit: Option<&str>, runfile: Option<&str>) -> String {
 pub async fn create_provider(
     opts: &BackendOpts,
 ) -> Result<Box<dyn Provider + Send + Sync>, String> {
-    match opts.backend {
+    match opts.backend.unwrap_or(BackendArg::Mistral) {
         BackendArg::Mistral => {
             #[cfg(feature = "backend-mistralrs")]
             {

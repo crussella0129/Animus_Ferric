@@ -15,7 +15,8 @@ use clap::{Args, ValueEnum};
 use ferric_core::{ActionProtocol, MediaPart, Message, ModelProfile, RunPolicy, policy_for};
 use ferric_guard::Workspace;
 use ferric_loop::{
-    LoopOutcome, PromptLineage, RunArgs, StopReason, ThreadSleeper, run, select_protocol,
+    DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, StopReason, ThreadSleeper, run,
+    select_protocol,
 };
 use ferric_provider::{Capabilities, Completion, MockProvider, Provider, SamplingParams};
 use ferric_tools::{Registry, register_builtin_tools};
@@ -57,25 +58,32 @@ pub struct QueryArgs {
     #[command(flatten)]
     pub backend_opts: BackendOpts,
 
-    /// Parameter count in billions
-    #[arg(long, default_value_t = 1.2)]
-    pub params_b: f32,
+    /// Parameter count in billions. Default 1.2 when neither this flag nor a
+    /// config file's `params_b` is set (T-3803).
+    #[arg(long)]
+    pub params_b: Option<f32>,
 
-    /// Quantization label
-    #[arg(long, default_value = "Q4_K_M")]
-    pub quant: String,
+    /// Quantization label. Default "Q4_K_M" when neither this flag nor a
+    /// config file's `quant` is set (T-3803).
+    #[arg(long)]
+    pub quant: Option<String>,
 
-    /// Model family label
-    #[arg(long, default_value = "unknown")]
-    pub family: String,
+    /// Model family label. Default "unknown" when neither this flag nor a
+    /// config file's `family` is set (T-3803).
+    #[arg(long)]
+    pub family: Option<String>,
 
-    /// Context window in tokens (ModelProfile is config-supplied, ADR-006)
-    #[arg(long, default_value_t = 4096)]
-    pub ctx: u32,
+    /// Context window in tokens (ModelProfile is config-supplied, ADR-006).
+    /// Default 4096 when neither this flag nor a config file's `ctx` is set
+    /// (T-3803).
+    #[arg(long)]
+    pub ctx: Option<u32>,
 
-    /// Sampling temperature (0.0 selects the deterministic sampler)
-    #[arg(long, default_value_t = 0.0)]
-    pub temperature: f32,
+    /// Sampling temperature (0.0 selects the deterministic sampler). Default
+    /// 0.0 when neither this flag nor a config file's `temperature` is set
+    /// (T-3803).
+    #[arg(long)]
+    pub temperature: Option<f32>,
 
     /// Action protocol override (default: chosen from policy + backend caps)
     #[arg(long, value_enum)]
@@ -115,8 +123,10 @@ pub struct QueryArgs {
     /// `toolbench --calibrate-rings`). When a record exists for this model, its
     /// `measured_level` sets the tier and its `calibrated_ring` defaults
     /// `--max-ring` — the durable promotion (ADR-029). A missing file is a no-op.
-    #[arg(long, default_value = "benchmarks")]
-    pub profile_dir: PathBuf,
+    /// Default "benchmarks" when neither this flag nor a config file's
+    /// `profile_dir` is set (T-3803).
+    #[arg(long)]
+    pub profile_dir: Option<PathBuf>,
 
     /// Stream text live to stdout as it's generated, instead of waiting for
     /// the whole multi-turn loop to finish (ADR-047). Opt-in this increment.
@@ -299,6 +309,18 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
     }
 }
 
+/// `Animus.md` (T-3806): a project-root, freeform, user-authored instructions
+/// file — trusted context (the workspace owner's own words), not Ornstein-
+/// quarantined content — folded into the system prompt as a distinct,
+/// clearly-delimited block. Pure; the caller does the actual file read (so it
+/// can also decide whether to trace a `Note`) and reuses whichever system
+/// prompt `build_run_config` already produced (oovra-composed, or
+/// `DEFAULT_SYSTEM_PROMPT` when no library is configured).
+pub(crate) fn fold_animus_md(existing: Option<&str>, animus_md: &str) -> String {
+    let base = existing.unwrap_or(DEFAULT_SYSTEM_PROMPT);
+    format!("{base}\n\n--- Animus.md (project instructions) ---\n{animus_md}")
+}
+
 /// Route each `--file` (ADR-023): text/code folds into the prompt (any model);
 /// media attaches as a gated `MediaPart`; anything skipped is surfaced
 /// (stderr), never silent. The decision logic (`classify_path`/
@@ -336,7 +358,7 @@ pub(crate) fn route_files(
     (media_parts, prompt_suffix)
 }
 
-pub fn run_query(args: QueryArgs) -> ExitCode {
+pub fn run_query(mut args: QueryArgs) -> ExitCode {
     let workspace_root = match &args.workspace {
         Some(path) => path.clone(),
         None => match std::env::current_dir() {
@@ -355,24 +377,64 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
         }
     };
 
-    let config = build_run_config(&RunConfigArgs {
+    // T-3803: layered config (CLI flag > project `.ferric/config.toml` > user
+    // config > today's hardcoded default). `BackendOpts`' fields are resolved
+    // IN PLACE on `args` so the same merged values reach `create_provider` in
+    // `drive_real` below, not just this function's own `RunConfigArgs` build.
+    let loaded_config = crate::config::load_layered(&workspace_root);
+    let cfg = loaded_config.config;
+    args.backend_opts = crate::config::merge_backend_opts(args.backend_opts, &cfg);
+    let resolved_params_b = args.params_b.or(cfg.params_b).unwrap_or(1.2);
+    let resolved_quant = args
+        .quant
+        .clone()
+        .or(cfg.quant)
+        .unwrap_or_else(|| "Q4_K_M".to_string());
+    let resolved_family = args
+        .family
+        .clone()
+        .or(cfg.family)
+        .unwrap_or_else(|| "unknown".to_string());
+    let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
+    let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
+    let resolved_max_ring = args.max_ring.or(cfg.max_ring);
+    let resolved_profile_dir = args
+        .profile_dir
+        .clone()
+        .or(cfg.profile_dir)
+        .unwrap_or_else(|| PathBuf::from("benchmarks"));
+    let resolved_stream = args.stream || cfg.stream.unwrap_or(false);
+
+    let mut config = build_run_config(&RunConfigArgs {
         mock: args.mock,
-        backend: args.backend_opts.backend,
-        params_b: args.params_b,
-        quant: args.quant.clone(),
-        family: args.family.clone(),
-        ctx: args.ctx,
-        temperature: args.temperature,
+        backend: args.backend_opts.backend.unwrap_or(BackendArg::Mistral),
+        params_b: resolved_params_b,
+        quant: resolved_quant,
+        family: resolved_family,
+        ctx: resolved_ctx,
+        temperature: resolved_temperature,
         protocol_override: args.protocol,
         prompts_dir: args.prompts_dir.clone(),
-        max_ring: args.max_ring,
-        profile_dir: args.profile_dir.clone(),
+        max_ring: resolved_max_ring,
+        profile_dir: resolved_profile_dir,
+        // C-001 (plan-critic): derived from the POST-merge, config-resolved
+        // `model`/`model_file` (already merged above) — a config-only-set
+        // `model` must still hit the ADR-029 profile lookup, not silently
+        // skip it because `model_key` was built from raw CLI args.
         model_key: args
             .backend_opts
             .model
             .clone()
             .or_else(|| args.backend_opts.model_file.clone()),
     });
+
+    // T-3806: `Animus.md` — read-only, no parsing. Presence folds its content
+    // into the system prompt as a distinct block; absence is a silent no-op
+    // (unchanged from today).
+    let animus_md = std::fs::read_to_string(workspace_root.join("Animus.md")).ok();
+    if let Some(content) = &animus_md {
+        config.system_prompt = Some(fold_animus_md(config.system_prompt.as_deref(), content));
+    }
 
     let trace_dir = workspace_root.join(".ferric").join("trace");
     if let Err(e) = std::fs::create_dir_all(&trace_dir) {
@@ -393,6 +455,20 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
     // exists; the config itself already fell back to DEFAULT_SYSTEM_PROMPT.
     if let Some(err) = &config.prompt_composition_error {
         let _ = sink.write_event(Event::Note { text: err.clone() });
+    }
+    // A malformed config layer (if any) is both reported to stderr and traced
+    // as a Note (C-004: testable data, not a bare eprintln) — never silent.
+    for diag in &loaded_config.diagnostics {
+        eprintln!("{diag}");
+        let _ = sink.write_event(Event::Note { text: diag.clone() });
+    }
+    // T-3806 (C-005, narrowed): `Animus.md`'s PRESENCE is traced as a Note —
+    // its absence stays silent, matching the existing precedent that the
+    // ordinary default path (e.g. no `prompts_dir` configured) is untraced.
+    if let Some(content) = &animus_md {
+        let _ = sink.write_event(Event::Note {
+            text: format!("Animus.md applied ({} chars)", content.len()),
+        });
     }
 
     let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
@@ -421,8 +497,11 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
             eprintln!("\u{25b8} calling {name}...");
         }
     };
-    let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
-        if args.stream { Some(&sink_fn) } else { None };
+    let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if resolved_stream {
+        Some(&sink_fn)
+    } else {
+        None
+    };
 
     let outcome = if args.mock {
         let provider = mock_provider(config.protocol);
@@ -703,6 +782,25 @@ fn drive_real(
 mod tests {
     use super::*;
     use ferric_core::policy_for;
+
+    /// T-3806: `Animus.md` folds in AFTER whichever base prompt already
+    /// exists (composed or default), as a distinct, clearly-delimited block.
+    #[test]
+    fn fold_animus_md_appends_a_distinct_block() {
+        let folded = fold_animus_md(Some("BASE"), "project rules");
+        assert!(folded.starts_with("BASE"));
+        assert!(folded.contains("project rules"));
+        assert!(folded.contains("Animus.md"));
+    }
+
+    /// Absent `existing` falls back to `DEFAULT_SYSTEM_PROMPT` — mirrors what
+    /// the loop itself does when `system_prompt` is `None`.
+    #[test]
+    fn fold_animus_md_falls_back_to_default_prompt() {
+        let folded = fold_animus_md(None, "project rules");
+        assert!(folded.starts_with(DEFAULT_SYSTEM_PROMPT));
+        assert!(folded.contains("project rules"));
+    }
 
     /// T-3601: `run_with_provider` is independently callable given only a
     /// `&dyn Provider` — no `create_provider`/backend-feature dependency. This
