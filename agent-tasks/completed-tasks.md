@@ -622,3 +622,9 @@
 - **Completed:** 2026-07-04 (build phase)
 - **Files modified:** crates/ferric-cli/src/query.rs, crates/ferric-cli/tests/cli.rs
 - **Commit:** `6022c98`
+
+## T-3804 (sprint 38)
+- **Description:** **Mechanical clap-default removal for `ferric mcp` (behavior-preserving), the same shape as T-3802.** `McpArgs`' matching six fields lose their clap defaults for bare `Option<T>`; `McpServer::launch`'s `build_run_config` call site applies the identical hardcoded defaults. New regression test `mcp::launch_defaults_unchanged_after_clap_type_change`: an all-`None` `McpArgs` (`--mock`, isolated tempdir workspace) resolves `Tier::Nano` / 512 max output tokens via `McpServer::launch` in-process, mirroring `cli::query_defaults_unchanged_after_clap_type_change`.
+- **Completed:** 2026-07-04 (build phase)
+- **Files modified:** crates/ferric-cli/src/mcp.rs
+- **Commit:** `fecbe7a`

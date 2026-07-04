@@ -135,8 +135,6 @@ hardcoded default; `Animus.md` folded into the system prompt. Plan critiqued (8 
 
 - [ ] T-3803 (sprint 38): config loading + precedence resolution for `ferric query` + `model_key`
   fix — touches: crates/ferric-cli/src/query.rs
-- [ ] T-3804 (sprint 38): mechanical clap-default removal for `ferric mcp` (behavior-preserving) —
-  touches: crates/ferric-cli/src/mcp.rs
 - [ ] T-3805 (sprint 38): config loading + precedence resolution for `ferric mcp` + `model_key` fix
   — touches: crates/ferric-cli/src/mcp.rs
 - [ ] T-3806 (sprint 38): `Animus.md` — read + fold into the system prompt — touches:
