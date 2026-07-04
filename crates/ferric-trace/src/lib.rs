@@ -21,6 +21,7 @@ mod tests {
         vec![
             Event::SessionStart {
                 workspace: "/tmp/ws".to_string(),
+                resumed_from: None,
             },
             Event::PolicySelected {
                 tier: ferric_core::Tier::Nano,
@@ -38,6 +39,11 @@ mod tests {
                     ("terminator-teaching".to_string(), "1.0.0".to_string()),
                 ],
             },
+            Event::SessionPrompt {
+                system: "You are Ferric.".to_string(),
+                user: "read a.txt".to_string(),
+                media: Vec::new(),
+            },
             Event::TurnStart { turn: 0 },
             Event::PromptAssembled {
                 turn: 0,
@@ -54,6 +60,7 @@ mod tests {
                 tool_call_count: 1,
                 input_tokens: Some(50),
                 output_tokens: Some(12),
+                truncated: false,
             },
             Event::RepetitionGuard {
                 action: "warned".to_string(),
@@ -192,11 +199,100 @@ mod tests {
             tool_call_count: 0,
             input_tokens: Some(120),
             output_tokens: Some(8),
+            truncated: false,
         };
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: Event = serde_json::from_str(&encoded).unwrap();
         assert_eq!(event, decoded);
         assert!(encoded.contains("the answer"));
+    }
+
+    /// T-3901 (sprint 39): `SessionStart.resumed_from` round-trips when set.
+    #[test]
+    fn session_start_resumed_from_roundtrip() {
+        let event = Event::SessionStart {
+            workspace: "/tmp/ws".to_string(),
+            resumed_from: Some("q-1720000000000".to_string()),
+        };
+        let encoded = serde_json::to_string(&event).unwrap();
+        let decoded: Event = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(event, decoded);
+        assert!(encoded.contains("q-1720000000000"));
+    }
+
+    /// T-3901 (sprint 39): a pre-sprint-39 `session_start` line (no
+    /// `resumed_from` key at all) still parses as `Known`, defaulting to
+    /// `None` — additive backward compat (ADR-002).
+    #[test]
+    fn old_session_start_line_parses_with_none_resumed_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.jsonl");
+        let line = r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#;
+        std::fs::write(&path, line).unwrap();
+        let record = TraceReader::open(&path).unwrap().next().unwrap().unwrap();
+        assert_eq!(
+            record.event,
+            ParsedEvent::Known(Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: None,
+            })
+        );
+    }
+
+    /// T-3902 (sprint 39): `TurnEnd.truncated` round-trips when `true`.
+    #[test]
+    fn turn_end_truncated_roundtrip() {
+        let event = Event::TurnEnd {
+            turn: 1,
+            text: Some("cut off".to_string()),
+            tool_call_count: 0,
+            input_tokens: Some(50),
+            output_tokens: Some(512),
+            truncated: true,
+        };
+        let encoded = serde_json::to_string(&event).unwrap();
+        let decoded: Event = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(event, decoded);
+        assert!(encoded.contains("\"truncated\":true"));
+    }
+
+    /// T-3902 (sprint 39): a pre-sprint-39 `turn_end` line (no `truncated`
+    /// key) still parses as `Known`, defaulting to `false`.
+    #[test]
+    fn old_turn_end_line_parses_with_truncated_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.jsonl");
+        let line = r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"turn_end","turn":0,"text":"hi","tool_call_count":0,"input_tokens":10,"output_tokens":2}}"#;
+        std::fs::write(&path, line).unwrap();
+        let record = TraceReader::open(&path).unwrap().next().unwrap().unwrap();
+        assert_eq!(
+            record.event,
+            ParsedEvent::Known(Event::TurnEnd {
+                turn: 0,
+                text: Some("hi".to_string()),
+                tool_call_count: 0,
+                input_tokens: Some(10),
+                output_tokens: Some(2),
+                truncated: false,
+            })
+        );
+    }
+
+    /// T-3901 (sprint 39): `Event::SessionPrompt` round-trips, including
+    /// attached media.
+    #[test]
+    fn session_prompt_roundtrip_with_media() {
+        let event = Event::SessionPrompt {
+            system: "You are Ferric.".to_string(),
+            user: "describe this image".to_string(),
+            media: vec![ferric_core::MediaPart {
+                mime: "image/png".to_string(),
+                data: "aGVsbG8=".to_string(),
+            }],
+        };
+        let encoded = serde_json::to_string(&event).unwrap();
+        let decoded: Event = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(event, decoded);
     }
 
     #[test]

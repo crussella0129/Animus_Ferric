@@ -28,9 +28,13 @@ pub fn trace_cat(path: &Path) -> ExitCode {
 
 fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
     let body = match event {
-        ParsedEvent::Known(Event::SessionStart { workspace }) => {
-            format!("session start (workspace: {workspace})")
-        }
+        ParsedEvent::Known(Event::SessionStart {
+            workspace,
+            resumed_from,
+        }) => match resumed_from {
+            Some(prior) => format!("session start (workspace: {workspace}, resumed from {prior})"),
+            None => format!("session start (workspace: {workspace})"),
+        },
         ParsedEvent::Known(Event::SessionEnd { reason }) => {
             format!("session end ({reason})")
         }
@@ -75,6 +79,13 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        ParsedEvent::Known(Event::SessionPrompt { system, user, .. }) => {
+            format!(
+                "session prompt: system {} chars, user {} chars",
+                system.chars().count(),
+                user.chars().count()
+            )
+        }
         ParsedEvent::Known(Event::TurnStart { turn }) => format!("turn {turn} start"),
         ParsedEvent::Known(Event::TurnEnd {
             turn,
@@ -82,6 +93,7 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             tool_call_count,
             input_tokens,
             output_tokens,
+            truncated,
         }) => {
             let preview = match text {
                 Some(t) => {
@@ -91,8 +103,9 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
                 }
                 None => String::new(),
             };
+            let truncated_note = if *truncated { " TRUNCATED" } else { "" };
             format!(
-                "turn {turn} end ({tool_call_count} tool calls, tokens in/out {}/{}){preview}",
+                "turn {turn} end ({tool_call_count} tool calls, tokens in/out {}/{}){truncated_note}{preview}",
                 input_tokens.map_or("?".to_string(), |t| t.to_string()),
                 output_tokens.map_or("?".to_string(), |t| t.to_string()),
             )

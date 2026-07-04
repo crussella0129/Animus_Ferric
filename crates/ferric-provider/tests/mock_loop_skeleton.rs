@@ -81,6 +81,7 @@ fn mock_loop_skeleton() {
     // stop on a text-only completion or the policy's turn budget.
     sink.write_event(Event::SessionStart {
         workspace: ws_dir.path().display().to_string(),
+        resumed_from: None,
     })
     .unwrap();
     let mut messages = vec![Message::user("What does hello.txt say?")];

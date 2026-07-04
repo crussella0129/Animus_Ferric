@@ -185,9 +185,10 @@ pub fn run_scripted_protocol(
             prompt_lineage: None,
             media: Vec::new(),
             stream_sink: None,
+            resume: None,
         },
         &mut sink,
-        "do the task",
+        Some("do the task"),
     ))
     .unwrap();
     inspect(&provider);
@@ -212,6 +213,7 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
             ParsedEvent::Known(Event::SessionEnd { .. }) => "session_end",
             ParsedEvent::Known(Event::PolicySelected { .. }) => "policy_selected",
             ParsedEvent::Known(Event::PromptComposed { .. }) => "prompt_composed",
+            ParsedEvent::Known(Event::SessionPrompt { .. }) => "session_prompt",
             ParsedEvent::Known(Event::TurnStart { .. }) => "turn_start",
             ParsedEvent::Known(Event::TurnEnd { .. }) => "turn_end",
             ParsedEvent::Known(Event::PromptAssembled { .. }) => "prompt_assembled",
@@ -224,6 +226,18 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
             ParsedEvent::Known(Event::ToolResult { .. }) => "tool_result",
             ParsedEvent::Known(Event::Note { .. }) => "note",
             ParsedEvent::Unknown(_) => "unknown",
+        })
+        .collect()
+}
+
+/// `ToolCall` event names in trace order (includes intercepted terminators,
+/// which are traced but never dispatched — sprint 39, T-3902).
+pub fn tool_call_names(records: &[TraceRecord]) -> Vec<String> {
+    records
+        .iter()
+        .filter_map(|r| match &r.event {
+            ParsedEvent::Known(Event::ToolCall { name, .. }) => Some(name.clone()),
+            _ => None,
         })
         .collect()
 }

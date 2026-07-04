@@ -84,9 +84,10 @@ fn run_flaky(script: Vec<Result<Completion, ProviderError>>) -> FlakyRun {
             prompt_lineage: None,
             media: Vec::new(),
             stream_sink: None,
+            resume: None,
         },
         &mut sink,
-        "do the task",
+        Some("do the task"),
     ))
     .unwrap();
     let records: Vec<_> = ferric_trace::TraceReader::open(&trace_path)

@@ -424,3 +424,69 @@ research/plan/critique in `sprints/s38/`.
   only reads an existing, hand-authored file, same as `CLAUDE.md` needs no wizard); config-defaulting
   `ferric server`/`ferric bench`/`ferric toolbench`; an MCP-side `Animus.md`/config-diagnostic
   `Note`-equivalent once MCP grows a launch-time trace mechanism.
+
+## ADR-049 — 2026-07-04 (sprint 39): session resume — `ferric query --resume <path>`
+User-chosen (2026-07-04) from a shortlist (chat-mode ADR / MCP streaming notifications / session
+resume). Full research/plan/critique in `sprints/s39/`.
+- **Scope: resuming an INTERRUPTED, still-incomplete task only — not a chat-continuation
+  mechanism.** Two follow-up questions during research materially narrowed this: (1) the user
+  confirmed "resume an interrupted task" (process crashed/killed mid-loop; continue the SAME task
+  with more turns, no new prompt needed) over "follow up on an already-completed task" (closer to a
+  chat continuation, sitting nearer the line ADR-011 draws against a REPL/chat catch-all); (2) the
+  backlog's `--save-interval` was reframed by the user, unprompted, into **context-budget
+  compaction** — a real, independent gap (`RunPolicy.prompt_budget_tokens` is computed and traced
+  but never enforced) big enough to be its own dedicated **sprint 40**, not bundled here. `replay`
+  therefore refuses (`ReplayError::AlreadyStopped`) any trace that already reached ANY stop reason,
+  clean or not — a session that finished isn't "interrupted."
+- **Two new/extended trace events, both independently valuable beyond resume:**
+  1. `Event::SessionPrompt { system, user, media }` — the original system+user prompt text was
+     never recorded anywhere before (only derived metadata: `PromptComposed`'s lineage,
+     `PromptAssembled`'s char counts). Written once per session, before `TurnStart(0)`, skipped only
+     when resuming (no new initial prompt exists for that session).
+  2. The terminator's (`task_complete`) `ToolCall` is now traced in EVERY protocol (still never
+     dispatched/executed) — closes a real, pre-existing gap where a `NativeTools` session's summary
+     was recorded nowhere in the trace at all (`ConstrainedJson`/`TextXml` already carried it in
+     `TurnEnd.text`). `TurnEnd` also gained `truncated: bool` (was computed, never traced). Both
+     additive (`#[serde(default)]`), both backward-compat tested against the old wire shapes.
+  3. `SessionStart.resumed_from: Option<String>` links a resumed session back to the ORIGINAL
+     session's id (not a file path — stable even if trace files move). A resumed session always
+     starts a brand-new trace file (never rewrites/reuses the old one — sidesteps `JsonlSink::
+     open`'s `next_seq`-always-starts-at-0 footgun and preserves ADR-002's "one immutable file per
+     session" invariant); resume-of-a-resume chains are allowed and need no special handling
+     (`replay()` only ever reads the ONE target file named by `--resume`).
+- **A real design correction found only during implementation of `ferric-loop::replay`:** `TurnEnd`
+  is written BEFORE dispatch in `run()`, not after — so "this turn has a `TurnEnd`" does NOT prove
+  its tool calls/guard checks/results finished; a crash mid-dispatch leaves a `TurnEnd` on disk with
+  an incomplete tail. The locked plan anticipated only "`TurnStart` with no matching `TurnEnd`" as
+  the dangling case; the actually-correct, stricter signal is: a turn is committed only once a LATER
+  `TurnStart` confirms its dispatch fully ran. This is a strict superset of the plan's literal
+  wording (discards MORE cases, never fewer) — recorded here as an honest build-time refinement.
+- **Guards start fresh on resume** (`RepetitionGuard`/`ProgressGuard`/`FailureGuard`'s internal
+  turn-history is NOT replayed) — they exist to catch NEW flailing, not re-litigate old turns;
+  replaying their exact state would add real complexity for no correctness benefit.
+- **Protocol match is validated, tier/budget is not.** `--resume` rejects a trace whose recorded
+  protocol doesn't match this invocation's resolved protocol (mixing message framings mid-
+  conversation would corrupt context — a real correctness break). `PolicySelected`/`PromptComposed`
+  are still written fresh on every run (recording the actual continuation's tier/budgets, which MAY
+  differ from the original's if different flags are passed) — this is harmless, only affecting the
+  forward budget ceiling, not correctness.
+- **The system message is frozen from the replayed trace on resume** — `--prompts-dir`/`Animus.md`
+  are silently inert for it (the assistant/user history already exists; there's no new initial
+  prompt to recompose). `ferric query` surfaces this explicitly with a stderr note when `--resume`
+  is combined with either, rather than leaving a user to wonder why an edited `Animus.md` didn't
+  apply to a continuation — matching this project's established practice of naming silent-no-op
+  risks (e.g. ADR-048's masking-hazard write-ups) rather than leaving them implicit.
+- **One accepted, narrow approximation:** a `TextXml` turn's exact parse-error text isn't traced
+  (only that a no-action nudge fired) — `replay` falls back to the generic protocol-keyed template.
+  Explicitly tested (never panics, always produces a valid nudge), not silently glossed over.
+- **A deliberate, small crack toward "follow-up" territory, named rather than hidden:** `--resume
+  <path> "extra instruction"` appends the extra prompt as one more user message after the replayed
+  history. Mechanically this is the SAME shape as the rejected "follow up on a completed task"
+  use case — but it's confined to genuinely-still-incomplete traces (the `AlreadyStopped` gate is
+  the real ADR-011 boundary, not the mere absence of an extra-prompt flag), so it stays within this
+  sprint's locked scope while giving a resumed run one small, useful affordance.
+- **Explicit deferrals:** context-budget compaction (sprint 40, its own dedicated sprint per the
+  user's own call — see `agent-tasks/agent-tasks.md`); `ferric mcp --resume` (`McpServer`'s
+  launch-time-fixed design, ADR-046, has no per-`tools/call` trace-file selection mechanism);
+  `--save-interval` in any form (dropped from this sprint entirely, reframed into the sprint 40
+  compaction work instead).

@@ -116,9 +116,10 @@ fn stream_sink_some_drives_dispatch() {
             prompt_lineage: None,
             media: Vec::new(),
             stream_sink: Some(&on_delta),
+            resume: None,
         },
         &mut sink,
-        "do the task",
+        Some("do the task"),
     ))
     .unwrap();
 
@@ -173,9 +174,10 @@ fn streaming_retry_does_not_replay_failed_attempt_deltas() {
             prompt_lineage: None,
             media: Vec::new(),
             stream_sink: Some(&on_delta),
+            resume: None,
         },
         &mut sink,
-        "do the task",
+        Some("do the task"),
     ))
     .unwrap();
 

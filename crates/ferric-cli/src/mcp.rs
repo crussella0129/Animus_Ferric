@@ -367,8 +367,12 @@ impl McpServer {
             self.config.system_prompt.as_deref(),
             self.config.lineage.clone(),
             sink,
-            prompt,
+            Some(prompt),
             media,
+            None,
+            // ADR-046: McpServer's launch-time-fixed design has no per-call
+            // trace-file selection — `ferric mcp --resume` is out of scope
+            // (T-3906, sprint 39).
             None,
         );
         match &self.executor {
