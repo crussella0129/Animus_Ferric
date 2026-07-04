@@ -89,8 +89,12 @@ fn textxml_terminator_intercepted() {
         |_| {},
     );
     assert_eq!(result.outcome.stop, StopReason::TaskComplete);
-    // task_complete is never dispatched through the registry.
-    assert!(!kinds(&result.records).contains(&"tool_call"));
+    // task_complete is never DISPATCHED through the registry (no ToolResult),
+    // even though it now IS traced as a ToolCall (T-3902, sprint 39 — closes
+    // the NativeTools summary-visibility gap for replay; harmless here since
+    // TextXml already carried the summary in this turn's raw TurnEnd.text).
+    assert!(kinds(&result.records).contains(&"tool_call"));
+    assert!(!kinds(&result.records).contains(&"tool_result"));
 }
 
 #[test]

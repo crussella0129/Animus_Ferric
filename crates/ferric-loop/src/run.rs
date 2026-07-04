@@ -213,8 +213,8 @@ pub async fn run(
             tool_call_count: completion.message.tool_calls.len() as u32,
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
-            // T-3902 (sprint 39) will set this from `completion.truncated`.
-            truncated: false,
+            // T-3902 (sprint 39): needed to replay the truncation-retry nudge.
+            truncated: completion.truncated,
         })?;
 
         // Constrained truncation (ADR-015): a completion cut off by the token
@@ -347,6 +347,18 @@ pub async fn run(
         for call in &actions {
             if crate::terminator::is_task_complete(&call.name) {
                 terminate_with = Some(crate::terminator::summary_of(&call.args));
+                // T-3902 (sprint 39): trace it too (never dispatched/executed)
+                // — closes the NativeTools gap where a terminator's summary
+                // args were otherwise recorded nowhere in the trace (ConstrainedJson/
+                // TextXml already carry them in this turn's raw `TurnEnd.text`).
+                // Written INLINE, at this exact loop position, so trace order
+                // matches `actions`' original order even when the terminator
+                // is mixed among other calls in the same turn.
+                sink.write_event(Event::ToolCall {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    args: call.args.clone(),
+                })?;
                 continue; // other calls in this turn still execute first
             }
             sink.write_event(Event::ToolCall {

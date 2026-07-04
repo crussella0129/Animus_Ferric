@@ -23,9 +23,12 @@ fn task_complete_terminates() {
         Some("created the file")
     );
     assert_eq!(session_end_reason(&result.records), "task_complete");
-    // Never dispatched: no tool_call/tool_result events for the terminator.
+    // Never DISPATCHED (no tool_result for the terminator), even though it IS
+    // now traced as a ToolCall (T-3902, sprint 39 — closes the NativeTools
+    // summary-visibility gap needed for replay).
+    assert!(kinds(&result.records).contains(&"tool_call"));
     assert!(
-        !kinds(&result.records).contains(&"tool_call"),
+        !kinds(&result.records).contains(&"tool_result"),
         "task_complete must not be dispatched through the registry"
     );
 }

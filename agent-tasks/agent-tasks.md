@@ -165,8 +165,6 @@ task (process crashed/killed mid-loop) — not a chat-continuation feature; `--s
 off entirely into sprint 40's context-budget compaction (see above). Plan critiqued (12 concerns,
 `sprints/s39/sprint-plans/critique.md`) and finalized.
 
-- [ ] T-3902 (sprint 39): extend existing events for full turn fidelity (terminator `ToolCall` +
-  `TurnEnd.truncated`) — touches: crates/ferric-trace/src/event.rs, crates/ferric-loop/src/run.rs
 - [ ] T-3903 (sprint 39): `ferric-loop::replay` — reconstruct `ReplayedState` from a trace file —
   touches: crates/ferric-loop/src/replay.rs (new), crates/ferric-loop/src/{lib.rs,run.rs}
 - [ ] T-3904 (sprint 39): thread `ReplayedState` into `RunArgs`/`run()`; relax `prompt` to
