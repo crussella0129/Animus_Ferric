@@ -1,11 +1,16 @@
 use clap::{Args, ValueEnum};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 // `Provider` is only named by the feature-gated `create_provider` return type.
 #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
 use ferric_provider::Provider;
 
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+/// `Serialize`/`Deserialize` + kebab-case (T-3801): lets `Config::backend`
+/// (sprint 38's persistent config) round-trip through TOML using the same
+/// spelling clap's own `ValueEnum` already uses (`"mistral"`/`"openai"`).
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum BackendArg {
     /// In-process mistral.rs (GGUF). Text-only / `TextXml` — no constraint.
     Mistral,

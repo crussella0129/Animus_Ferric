@@ -126,3 +126,22 @@ the loop (`None` = byte-identical to today), and `ferric query --stream`. All 6 
 (T-3701–T-3706) shipped; research + plan + two critique rounds in `sprints/s37/`. MCP streaming,
 mistral.rs streaming, seamless mid-stream retry, and a structured/programmatic streaming mode are
 explicit follow-ons, not built here. See completed-tasks.md for the per-task commit hashes.
+
+## Sprint 38 (persistent config + `Animus.md`) — IN PROGRESS
+User-chosen (2026-07-04): "persistent config and Animus.md (much like claude.md but for Animus)".
+Layered `.ferric/config.toml` (project) + cross-platform user config, CLI flag > project > user >
+hardcoded default; `Animus.md` folded into the system prompt. Plan critiqued (8 concerns,
+`sprints/s38/sprint-plans/critique.md`) and finalized.
+
+- [ ] T-3802 (sprint 38): mechanical clap-default removal for `ferric query` (behavior-preserving)
+  — touches: crates/ferric-cli/src/query.rs
+- [ ] T-3803 (sprint 38): config loading + precedence resolution for `ferric query` + `model_key`
+  fix — touches: crates/ferric-cli/src/query.rs
+- [ ] T-3804 (sprint 38): mechanical clap-default removal for `ferric mcp` (behavior-preserving) —
+  touches: crates/ferric-cli/src/mcp.rs
+- [ ] T-3805 (sprint 38): config loading + precedence resolution for `ferric mcp` + `model_key` fix
+  — touches: crates/ferric-cli/src/mcp.rs
+- [ ] T-3806 (sprint 38): `Animus.md` — read + fold into the system prompt — touches:
+  crates/ferric-cli/src/query.rs, crates/ferric-cli/src/mcp.rs
+- [ ] T-3807 (sprint 38): ADR-048 + docs — touches: decisions.md, README.md,
+  agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
