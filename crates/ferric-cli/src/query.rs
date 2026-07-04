@@ -345,7 +345,7 @@ pub(crate) fn route_files(
     (media_parts, prompt_suffix)
 }
 
-pub fn run_query(args: QueryArgs) -> ExitCode {
+pub fn run_query(mut args: QueryArgs) -> ExitCode {
     let workspace_root = match &args.workspace {
         Some(path) => path.clone(),
         None => match std::env::current_dir() {
@@ -364,25 +364,55 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
         }
     };
 
-    // T-3802: mechanical clap-default removal — these six now resolve their
-    // hardcoded default here (via `.unwrap_or`) instead of via clap, with no
-    // config file involved yet (that's T-3803). Byte-identical when no flag
-    // is passed.
+    // T-3803: layered config (CLI flag > project `.ferric/config.toml` > user
+    // config > today's hardcoded default). `BackendOpts`' fields are resolved
+    // IN PLACE on `args` so the same merged values reach `create_provider` in
+    // `drive_real` below, not just this function's own `RunConfigArgs` build.
+    let loaded_config = crate::config::load_layered(&workspace_root);
+    let cfg = loaded_config.config;
+    args.backend_opts.backend = args.backend_opts.backend.take().or(cfg.backend);
+    args.backend_opts.model_dir = args.backend_opts.model_dir.take().or(cfg.model_dir);
+    args.backend_opts.model_file = args.backend_opts.model_file.take().or(cfg.model_file);
+    args.backend_opts.model = args.backend_opts.model.take().or(cfg.model);
+    args.backend_opts.api_base = args.backend_opts.api_base.take().or(cfg.api_base);
+    args.backend_opts.api_key = args.backend_opts.api_key.take().or(cfg.api_key);
+    let resolved_params_b = args.params_b.or(cfg.params_b).unwrap_or(1.2);
+    let resolved_quant = args
+        .quant
+        .clone()
+        .or(cfg.quant)
+        .unwrap_or_else(|| "Q4_K_M".to_string());
+    let resolved_family = args
+        .family
+        .clone()
+        .or(cfg.family)
+        .unwrap_or_else(|| "unknown".to_string());
+    let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
+    let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
+    let resolved_max_ring = args.max_ring.or(cfg.max_ring);
+    let resolved_profile_dir = args
+        .profile_dir
+        .clone()
+        .or(cfg.profile_dir)
+        .unwrap_or_else(|| PathBuf::from("benchmarks"));
+    let resolved_stream = args.stream || cfg.stream.unwrap_or(false);
+
     let config = build_run_config(&RunConfigArgs {
         mock: args.mock,
-        backend: args.backend_opts.backend,
-        params_b: args.params_b.unwrap_or(1.2),
-        quant: args.quant.clone().unwrap_or_else(|| "Q4_K_M".to_string()),
-        family: args.family.clone().unwrap_or_else(|| "unknown".to_string()),
-        ctx: args.ctx.unwrap_or(4096),
-        temperature: args.temperature.unwrap_or(0.0),
+        backend: args.backend_opts.backend.unwrap_or(BackendArg::Mistral),
+        params_b: resolved_params_b,
+        quant: resolved_quant,
+        family: resolved_family,
+        ctx: resolved_ctx,
+        temperature: resolved_temperature,
         protocol_override: args.protocol,
         prompts_dir: args.prompts_dir.clone(),
-        max_ring: args.max_ring,
-        profile_dir: args
-            .profile_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("benchmarks")),
+        max_ring: resolved_max_ring,
+        profile_dir: resolved_profile_dir,
+        // C-001 (plan-critic): derived from the POST-merge, config-resolved
+        // `model`/`model_file` (already merged above) — a config-only-set
+        // `model` must still hit the ADR-029 profile lookup, not silently
+        // skip it because `model_key` was built from raw CLI args.
         model_key: args
             .backend_opts
             .model
@@ -409,6 +439,12 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
     // exists; the config itself already fell back to DEFAULT_SYSTEM_PROMPT.
     if let Some(err) = &config.prompt_composition_error {
         let _ = sink.write_event(Event::Note { text: err.clone() });
+    }
+    // A malformed config layer (if any) is both reported to stderr and traced
+    // as a Note (C-004: testable data, not a bare eprintln) — never silent.
+    for diag in &loaded_config.diagnostics {
+        eprintln!("{diag}");
+        let _ = sink.write_event(Event::Note { text: diag.clone() });
     }
 
     let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
@@ -437,8 +473,11 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
             eprintln!("\u{25b8} calling {name}...");
         }
     };
-    let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
-        if args.stream { Some(&sink_fn) } else { None };
+    let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if resolved_stream {
+        Some(&sink_fn)
+    } else {
+        None
+    };
 
     let outcome = if args.mock {
         let provider = mock_provider(config.protocol);

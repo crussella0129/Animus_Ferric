@@ -372,6 +372,187 @@ fn query_defaults_unchanged_after_clap_type_change() {
     assert_eq!(policy["event"]["max_output_tokens"], 512);
 }
 
+/// Shared by the T-3803 config-precedence tests below: the `policy_selected`
+/// trace event's tier, for a `--mock` run against workspace `ws`.
+fn policy_tier(ws: &std::path::Path) -> String {
+    let trace_dir = ws.join(".ferric").join("trace");
+    let trace = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("a q-*.jsonl trace");
+    let content = std::fs::read_to_string(trace.path()).unwrap();
+    content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["event"]["type"] == "policy_selected")
+        .expect("a policy_selected event")["event"]["tier"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn write_project_config(ws: &std::path::Path, toml: &str) {
+    std::fs::create_dir_all(ws.join(".ferric")).unwrap();
+    std::fs::write(ws.join(".ferric").join("config.toml"), toml).unwrap();
+}
+
+/// T-3803: a `.ferric/config.toml` setting `params_b` takes effect with no
+/// matching CLI flag — `params_b = 8.0` lands at `Tier::Small` (the same tier
+/// `max_ring_caps_the_offered_tools` pins for `--params-b 8`).
+#[test]
+fn config_file_sets_default_without_flag() {
+    let ws = tempfile::tempdir().unwrap();
+    write_project_config(ws.path(), "params_b = 8.0\n");
+
+    let out = ferric()
+        .args(["query", "--mock", "do a task"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(policy_tier(ws.path()), "small");
+}
+
+/// T-3803: a CLI flag wins over the same field set in `.ferric/config.toml`.
+#[test]
+fn cli_flag_overrides_config_file() {
+    let ws = tempfile::tempdir().unwrap();
+    write_project_config(ws.path(), "params_b = 8.0\n");
+
+    let out = ferric()
+        .args(["query", "--mock", "do a task", "--params-b", "1.2"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(policy_tier(ws.path()), "nano");
+}
+
+/// C-001 (plan-critic, the significant finding): `model_key` — which feeds
+/// the ADR-029 persisted-profile lookup — must be derived from the
+/// POST-merge, config-resolved `model` value, not the raw CLI arg. Set
+/// `model` ONLY via config.toml (no `--model` flag) alongside a persisted
+/// `calibrated_ring: 0` record for that model; if `model_key` were derived
+/// from the raw (unset) CLI arg instead, the profile lookup would be
+/// silently skipped and Ring 1 tools would still be offered.
+#[test]
+fn config_only_model_still_resolves_profile() {
+    let pdir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        pdir.path().join("model_profiles.json"),
+        r#"[{"model":"mockmodel","params_b":8.0,"protocol":"ConstrainedJson","measured_level":null,"tier_from_params":"Small","tier_from_measured":null,"calibrated_ring":0}]"#,
+    )
+    .unwrap();
+
+    let ws = tempfile::tempdir().unwrap();
+    write_project_config(
+        ws.path(),
+        &format!(
+            "model = \"mockmodel\"\nprofile_dir = '{}'\n",
+            pdir.path().display()
+        ),
+    );
+
+    let out = ferric()
+        .args([
+            "query",
+            "--mock",
+            "do a task",
+            "--params-b",
+            "8",
+            "--protocol",
+            "grammar",
+        ])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    let trace = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("a q-*.jsonl trace");
+    let content = std::fs::read_to_string(trace.path()).unwrap();
+    let offered: Vec<String> = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["event"]["type"] == "prompt_assembled")
+        .and_then(|v| {
+            v["event"]["offered_tools"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|t| t.as_str().map(String::from))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    assert!(
+        !offered.contains(&"search_files".to_string())
+            && offered.contains(&"write_file".to_string()),
+        "a config-only `model` must still hit the persisted calibrated_ring 0 profile: {offered:?}"
+    );
+}
+
+/// C-004 (plan-critic): a malformed `.ferric/config.toml` degrades to absent
+/// AND is traced as a `Note` — testable data, not just an unasserted
+/// `eprintln!`.
+#[test]
+fn malformed_config_traced_as_note() {
+    let ws = tempfile::tempdir().unwrap();
+    write_project_config(ws.path(), "this is not [valid toml");
+
+    let out = ferric()
+        .args(["query", "--mock", "do a task"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    let trace = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("a q-*.jsonl trace");
+    let content = std::fs::read_to_string(trace.path()).unwrap();
+    let has_note = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .any(|v| {
+            v["event"]["type"] == "note"
+                && v["event"]["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("malformed config")
+        });
+    assert!(
+        has_note,
+        "expected a Note event carrying the malformed-config diagnostic"
+    );
+}
+
 #[test]
 fn unknown_args_fail_with_usage() {
     let out = ferric().arg("frobnicate").output().unwrap();

@@ -133,8 +133,6 @@ Layered `.ferric/config.toml` (project) + cross-platform user config, CLI flag >
 hardcoded default; `Animus.md` folded into the system prompt. Plan critiqued (8 concerns,
 `sprints/s38/sprint-plans/critique.md`) and finalized.
 
-- [ ] T-3803 (sprint 38): config loading + precedence resolution for `ferric query` + `model_key`
-  fix — touches: crates/ferric-cli/src/query.rs
 - [ ] T-3805 (sprint 38): config loading + precedence resolution for `ferric mcp` + `model_key` fix
   — touches: crates/ferric-cli/src/mcp.rs
 - [ ] T-3806 (sprint 38): `Animus.md` — read + fold into the system prompt — touches:

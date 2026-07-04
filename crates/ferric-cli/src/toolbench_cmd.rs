@@ -535,7 +535,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                 println!("\n=== calibrating {model} ===");
                 let mut opts = args.backend_opts.clone();
                 if args.models.is_some() {
-                    match opts.backend {
+                    match opts.backend.unwrap_or(BackendArg::Mistral) {
                         BackendArg::Openai => opts.model = Some(model.clone()),
                         BackendArg::Mistral => opts.model_file = Some(model.clone()),
                     }
@@ -640,7 +640,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             for model in &model_list {
                 println!("\n=== {model} ===");
                 let mut opts = args.backend_opts.clone();
-                match opts.backend {
+                match opts.backend.unwrap_or(BackendArg::Mistral) {
                     BackendArg::Openai => opts.model = Some(model.clone()),
                     BackendArg::Mistral => opts.model_file = Some(model.clone()),
                 }
