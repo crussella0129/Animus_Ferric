@@ -83,6 +83,7 @@ fn run_flaky(script: Vec<Result<Completion, ProviderError>>) -> FlakyRun {
             system_prompt: None,
             prompt_lineage: None,
             media: Vec::new(),
+            stream_sink: None,
         },
         &mut sink,
         "do the task",

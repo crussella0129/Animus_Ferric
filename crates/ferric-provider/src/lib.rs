@@ -17,14 +17,16 @@ pub mod mistralrs;
 mod mock;
 #[cfg(feature = "backend-openai")]
 pub mod openai;
+mod stream_scan;
 mod traits;
 mod types;
 
 pub use mock::MockProvider;
 #[cfg(feature = "backend-openai")]
 pub use openai::{OpenAiConfig, OpenAiProvider};
+pub use stream_scan::ConstrainedJsonScanner;
 pub use traits::Provider;
 pub use types::{
     Capabilities, Completion, CompletionRequest, Constraint, ProviderError, SamplingParams,
-    ToolDescriptor,
+    StreamDelta, ToolDescriptor,
 };

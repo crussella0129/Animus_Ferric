@@ -117,6 +117,14 @@ pub struct QueryArgs {
     /// `--max-ring` — the durable promotion (ADR-029). A missing file is a no-op.
     #[arg(long, default_value = "benchmarks")]
     pub profile_dir: PathBuf,
+
+    /// Stream text live to stdout as it's generated, instead of waiting for
+    /// the whole multi-turn loop to finish (ADR-047). Opt-in this increment.
+    /// Under `ConstrainedJson`, only `task_complete`'s summary streams (an
+    /// activity line naming each intermediate tool call goes to stderr);
+    /// under `NativeTools`/`TextXml`, assistant prose streams directly.
+    #[arg(long)]
+    pub stream: bool,
 }
 
 /// The shared subset of `QueryArgs` (everything except `prompt`/`files`) that
@@ -396,6 +404,26 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
         format!("{}{prompt_suffix}", args.prompt)
     };
 
+    // `--stream` (ADR-047): print `Text` deltas to stdout live, flushed per
+    // delta; `ToolNamed` goes to stderr as a "which tool" activity line.
+    // `streamed_anything` (an AtomicBool, not a Cell, so the sink closure
+    // stays `Sync` — required since the closure is held across an `.await`
+    // inside `complete_streaming`) tracks whether anything was already
+    // printed live, so the final echo below isn't a duplicate.
+    let streamed_anything = std::sync::atomic::AtomicBool::new(false);
+    let sink_fn = |d: ferric_provider::StreamDelta| match d {
+        ferric_provider::StreamDelta::Text(t) => {
+            print!("{t}");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            streamed_anything.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        ferric_provider::StreamDelta::ToolNamed(name) => {
+            eprintln!("\u{25b8} calling {name}...");
+        }
+    };
+    let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
+        if args.stream { Some(&sink_fn) } else { None };
+
     let outcome = if args.mock {
         let provider = mock_provider(config.protocol);
         drive_mock(
@@ -410,6 +438,7 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
             &mut sink,
             &effective_prompt,
             media_parts,
+            stream_sink,
         )
     } else {
         drive_real(
@@ -424,6 +453,7 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
             &mut sink,
             &effective_prompt,
             media_parts,
+            stream_sink,
         )
     };
 
@@ -435,7 +465,12 @@ pub fn run_query(args: QueryArgs) -> ExitCode {
         }
     };
 
-    if let Some(text) = &outcome.final_text {
+    // Skip the final echo when streaming already displayed the text live —
+    // avoids double-printing (T-3705 EARS: `--stream` output must not
+    // duplicate).
+    if !streamed_anything.load(std::sync::atomic::Ordering::Relaxed)
+        && let Some(text) = &outcome.final_text
+    {
         println!("{text}");
     }
     eprintln!(
@@ -552,6 +587,7 @@ pub(crate) async fn run_with_provider(
     sink: &mut JsonlSink,
     prompt: &str,
     media: Vec<MediaPart>,
+    stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
 ) -> Result<LoopOutcome, String> {
     run(
         RunArgs {
@@ -565,6 +601,7 @@ pub(crate) async fn run_with_provider(
             system_prompt,
             prompt_lineage: lineage,
             media,
+            stream_sink,
         },
         sink,
         prompt,
@@ -586,6 +623,7 @@ fn drive_mock(
     sink: &mut JsonlSink,
     prompt: &str,
     media: Vec<MediaPart>,
+    stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
 ) -> Result<LoopOutcome, String> {
     futures_executor::block_on(run_with_provider(
         provider,
@@ -599,6 +637,7 @@ fn drive_mock(
         sink,
         prompt,
         media,
+        stream_sink,
     ))
 }
 
@@ -616,6 +655,7 @@ fn drive_real(
     sink: &mut JsonlSink,
     prompt: &str,
     media: Vec<MediaPart>,
+    stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
 ) -> Result<LoopOutcome, String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
@@ -632,6 +672,7 @@ fn drive_real(
             sink,
             prompt,
             media,
+            stream_sink,
         )
         .await
     })
@@ -651,6 +692,7 @@ fn drive_real(
     _sink: &mut JsonlSink,
     _prompt: &str,
     _media: Vec<MediaPart>,
+    _stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
 ) -> Result<LoopOutcome, String> {
     Err("this binary was built without backend features; \
          rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
@@ -702,6 +744,7 @@ mod tests {
             &mut sink,
             "do a mock task",
             Vec::new(),
+            None,
         ))
         .unwrap();
 

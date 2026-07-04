@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use ferric_core::{ActionProtocol, FerricError, MediaPart, Message, RunPolicy};
 use ferric_guard::Workspace;
-use ferric_provider::{CompletionRequest, Constraint, Provider, SamplingParams, ToolDescriptor};
+use ferric_provider::{
+    CompletionRequest, Constraint, Provider, SamplingParams, StreamDelta, ToolDescriptor,
+};
 use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
 use ferric_trace::{Event, JsonlSink};
 
@@ -54,6 +56,14 @@ pub struct RunArgs<'a> {
     /// Multimodal parts to attach to the first user message (ADR-023). Empty ⇒
     /// the message is text-only, identical to before.
     pub media: Vec<MediaPart>,
+    /// Optional live-display sink (ADR-047). `None` (every pre-sprint-37
+    /// caller) preserves byte-identical non-streaming behavior — the turn
+    /// loop calls the existing `complete_with_backoff`. `Some` drives each
+    /// turn's completion via `complete_streaming_with_backoff` instead,
+    /// firing `StreamDelta`s to the sink as they become available; the
+    /// resulting `Completion` still flows through the exact same
+    /// dispatch/validation logic below either way.
+    pub stream_sink: Option<&'a (dyn Fn(StreamDelta) + Sync)>,
 }
 
 /// Run the agent loop for one user prompt. Trace I/O errors abort with `Err`;
@@ -161,17 +171,29 @@ pub async fn run(
             })?;
         }
 
-        let completion =
-            match crate::backoff::complete_with_backoff(args.provider, request, args.sleeper).await
-            {
-                Ok(completion) => completion,
-                Err(e) => {
-                    sink.write_event(Event::Note {
-                        text: format!("provider error: {e}"),
-                    })?;
-                    break StopReason::ProviderError;
-                }
-            };
+        let completion_result = match args.stream_sink {
+            Some(on_delta) => {
+                crate::backoff::complete_streaming_with_backoff(
+                    args.provider,
+                    request,
+                    args.sleeper,
+                    on_delta,
+                )
+                .await
+            }
+            None => {
+                crate::backoff::complete_with_backoff(args.provider, request, args.sleeper).await
+            }
+        };
+        let completion = match completion_result {
+            Ok(completion) => completion,
+            Err(e) => {
+                sink.write_event(Event::Note {
+                    text: format!("provider error: {e}"),
+                })?;
+                break StopReason::ProviderError;
+            }
+        };
 
         sink.write_event(Event::TurnEnd {
             turn,
