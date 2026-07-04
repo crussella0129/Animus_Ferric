@@ -682,3 +682,9 @@
 - **Completed:** 2026-07-04 (build phase)
 - **Files modified:** crates/ferric-cli/src/query.rs, crates/ferric-cli/tests/cli.rs
 - **Commit:** `e85bf37`
+
+## T-3906 (sprint 39)
+- **Description:** **ADR-049 + docs.** Recorded the resume-scope decision (interrupted-task-only, confirmed via a user follow-up question, not a chat-continuation feature) and why; the two new/extended trace events (`SessionPrompt`, the terminator's now-always-traced `ToolCall`, `TurnEnd.truncated`) plus the `NativeTools`-summary-gap fix's independent value; the real design correction found only during `replay()`'s implementation (`TurnEnd` is written BEFORE dispatch, so the commit signal had to be strengthened to "a later `TurnStart` confirms it," a strict superset of the locked plan's literal wording); the fresh-guards decision; the protocol-match validation vs. the harmless tier/budget re-trace; the system-prompt-frozen-on-resume behavior (C-009) and its stderr note; the accepted `TextXml` parse-error approximation; the named (not hidden) "resume + extra prompt" overlap with the rejected use-case-2 (C-011); explicit deferrals (context-budget compaction/sprint 40 with the user's own rationale for splitting it out, `ferric mcp --resume`, `--save-interval` in any form). README Status bumped to sprint 39 + a new Sprint 39 timeline entry (replacing the stale "Next — TBD" with sprint 40's compaction preview); the Production-Readiness Roadmap's "Session resume" bullet marked DONE; the Sprint 39 backlog section rewritten from its in-progress checklist to a completed summary (matching sprints 36–38's precedent).
+- **Completed:** 2026-07-04 (build phase)
+- **Files modified:** decisions.md, README.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
+- **Commit:** `9595a41`

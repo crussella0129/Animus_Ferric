@@ -86,10 +86,11 @@ the project's safety-before-blast-radius philosophy; its concrete future-task id
   architectural choice"). See the Sprint 37 section below — token-by-token from the HTTP valve
   through the provider to CLI (`ferric query --stream` this increment; MCP/mistral.rs streaming and
   a structured/programmatic streaming mode are follow-ons, ADR-047).
-- **Session resume** — ⏳ **IN PROGRESS, sprint 39** (user-chosen 2026-07-04). Scoped down mid-research
+- **Session resume** — ✅ **DONE, sprint 39** (user-chosen 2026-07-04). Scoped down mid-research
   to `--resume <path>` alone (resume an interrupted, still-incomplete task — replay history,
   continue the SAME task with more turns, no new prompt needed); `--save-interval` dropped from this
-  sprint entirely — see the next bullet, it turned into something bigger.
+  sprint entirely — see the next bullet, it turned into something bigger. See the Sprint 39 section
+  below. *ADR-049.*
 - **Context-budget compaction (sprint 40, NEXT)** — user-introduced 2026-07-04 mid-sprint-39-research,
   reframing `--save-interval`: **`RunPolicy.prompt_budget_tokens` (70% of `ModelProfile.ctx`, capped)
   is already computed and traced (`PolicySelected`) but is NEVER enforced anywhere in `run.rs`** —
@@ -159,11 +160,24 @@ block — trusted context (the workspace owner's own words), not Ornstein-quaran
 tasks (T-3801–T-3807) shipped; research + plan + critique in `sprints/s38/`. See completed-tasks.md
 for the per-task commit hashes.
 
-## Sprint 39 (session resume — `ferric query --resume <path>`) — IN PROGRESS
-User-chosen (2026-07-04). Scoped down mid-research to resuming an INTERRUPTED, still-incomplete
-task (process crashed/killed mid-loop) — not a chat-continuation feature; `--save-interval` split
-off entirely into sprint 40's context-budget compaction (see above). Plan critiqued (12 concerns,
-`sprints/s39/sprint-plans/critique.md`) and finalized.
-
-- [ ] T-3906 (sprint 39): ADR-049 + docs — touches: decisions.md, README.md,
-  agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
+## Sprint 39 (session resume — `ferric query --resume <path>`) — DONE, ADR-049
+User-chosen (2026-07-04), scoped down mid-research to resuming an INTERRUPTED, still-incomplete
+task (process crashed/killed mid-loop) — not a chat-continuation feature. Two new/extended trace
+events close the reconstruction gaps: `Event::SessionPrompt` (the original system+user text was
+never recorded before) and the terminator's `ToolCall` now traced in every protocol (closes a
+pre-existing `NativeTools` audit gap). `ferric-loop::replay()` reconstructs the in-memory turn
+history from a trace file — a real design correction surfaced only during implementation: `TurnEnd`
+is written *before* dispatch in `run()`, so a turn is only safely committed once a *later*
+`TurnStart` confirms its dispatch actually finished (a stricter, superset refinement of the locked
+plan's simpler "no matching TurnEnd" wording). `ferric query --resume <path>` replays and continues;
+a trace that already reached any stop reason is rejected (`AlreadyStopped`) — that gate is the real
+ADR-011 boundary, not the mere absence of an extra-prompt flag (a resumed run MAY also carry one
+extra user-supplied nudge). A foreground plan-critic pass (12 concerns,
+`sprints/s39/sprint-plans/critique.md`) caught the single most consequential implementation risk
+before it shipped — the terminator-tracing ORDER ambiguity (C-003) — plus the session-scoped
+one-shot-flag semantics of the no-action/truncation nudges (C-004/C-006), both verified by dedicated
+tests. Test-critic C-010 added the strongest regression: a genuine round-trip through a REAL
+`run()`-produced (then truncated) trace, not another hand-built fixture. All 6 build tasks
+(T-3901–T-3906) shipped; research + plan + critique in `sprints/s39/`. See completed-tasks.md for
+the per-task commit hashes. The user's own mid-research pivot reframed the backlog's
+`--save-interval` into **context-budget compaction**, spun off as sprint 40 (see above).
