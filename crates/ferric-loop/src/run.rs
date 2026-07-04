@@ -64,20 +64,30 @@ pub struct RunArgs<'a> {
     /// resulting `Completion` still flows through the exact same
     /// dispatch/validation logic below either way.
     pub stream_sink: Option<&'a (dyn Fn(StreamDelta) + Sync)>,
+    /// Resume an interrupted, still-incomplete session (sprint 39, ADR-049).
+    /// `None` (every pre-sprint-39 caller) is byte-identical to today: a
+    /// fresh `[system, user]` history, `SessionPrompt` written, `resumed_from`
+    /// `None`. `Some` seeds `messages`/`turns`/`last_text` from it instead,
+    /// writes `resumed_from`, and skips `SessionPrompt` (there's no new
+    /// initial prompt for this session — its own prompt lives in the session
+    /// it resumed from).
+    pub resume: Option<crate::replay::ReplayedState>,
 }
 
-/// Run the agent loop for one user prompt. Trace I/O errors abort with `Err`;
-/// everything else (provider failures included) folds into the outcome.
+/// Run the agent loop for one user prompt. `prompt` is `Option` to support a
+/// pure continuation of a resumed session with no new instruction — required
+/// when `resume` is `None` (the CLI layer guarantees this; see `resume` on
+/// `RunArgs`), and optional (an extra nudge appended after the replayed
+/// history) when resuming. Trace I/O errors abort with `Err`; everything else
+/// (provider failures included) folds into the outcome.
 pub async fn run(
     args: RunArgs<'_>,
     sink: &mut JsonlSink,
-    prompt: &str,
+    prompt: Option<&str>,
 ) -> Result<LoopOutcome, FerricError> {
     sink.write_event(Event::SessionStart {
         workspace: args.workspace.root().display().to_string(),
-        // T-3904 (sprint 39) will set this from `args.resume` once that field
-        // exists; every caller today is a fresh (non-resumed) session.
-        resumed_from: None,
+        resumed_from: args.resume.as_ref().map(|r| r.source_session.clone()),
     })?;
     sink.write_event(Event::PolicySelected {
         tier: args.policy.tier,
@@ -95,20 +105,48 @@ pub async fn run(
         })?;
     }
 
-    let system = args.system_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
-    // T-3901 (sprint 39): the literal system+user prompt (+media), recorded
-    // once so a later `replay()` doesn't have to re-derive it. T-3904 will
-    // make this conditional on `args.resume` being absent; every caller today
-    // is a fresh session, so it always fires.
-    sink.write_event(Event::SessionPrompt {
-        system: system.to_string(),
-        user: prompt.to_string(),
-        media: args.media.clone(),
-    })?;
-    let mut messages = vec![
-        Message::system(system),
-        Message::user_with_media(prompt, args.media.clone()),
-    ];
+    let (mut messages, mut turns, mut last_text) = match &args.resume {
+        Some(replayed) => (
+            replayed.messages.clone(),
+            replayed.turns,
+            replayed.last_text.clone(),
+        ),
+        None => {
+            let system = args.system_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
+            let prompt = prompt.ok_or_else(|| {
+                FerricError::InvalidInput(
+                    "run() requires a prompt when not resuming a session".to_string(),
+                )
+            })?;
+            // T-3901 (sprint 39): the literal system+user prompt (+media),
+            // recorded once so a later `replay()` doesn't have to re-derive
+            // it. Only written for a fresh session — a resumed one's initial
+            // prompt already lives in the session it resumed from.
+            sink.write_event(Event::SessionPrompt {
+                system: system.to_string(),
+                user: prompt.to_string(),
+                media: args.media.clone(),
+            })?;
+            (
+                vec![
+                    Message::system(system),
+                    Message::user_with_media(prompt, args.media.clone()),
+                ],
+                0,
+                None,
+            )
+        }
+    };
+    // A resumed session MAY also carry one new user-supplied nudge, appended
+    // after the replayed history (T-3905's CLI layer decides when this is
+    // populated; still confined to a still-incomplete task, never a fresh
+    // instruction on an already-finished one — `replay()` already refuses
+    // those).
+    if args.resume.is_some()
+        && let Some(extra) = prompt
+    {
+        messages.push(Message::user(extra));
+    }
 
     // Registry tools (no terminator) drive both the native tools list and the
     // grammar schema; the terminator is appended where each mode needs it.
@@ -125,10 +163,8 @@ pub async fn run(
     let mut repetition = crate::repetition::RepetitionGuard::new();
     let mut progress = crate::progress::ProgressGuard::new();
     let mut failure = crate::failure::FailureGuard::new();
-    let mut last_text: Option<String> = None;
     let mut nudged_for_no_action = false;
     let mut truncated_once = false;
-    let mut turns = 0u32;
 
     let stop = 'outer: loop {
         if turns >= u32::from(args.policy.max_turns) {

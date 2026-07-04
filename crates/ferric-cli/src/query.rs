@@ -503,6 +503,8 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         None
     };
 
+    // T-3904 (sprint 39): `resume: None` here — every `ferric query`
+    // invocation is a fresh session until T-3905 wires `--resume`.
     let outcome = if args.mock {
         let provider = mock_provider(config.protocol);
         drive_mock(
@@ -515,9 +517,10 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             config.system_prompt.as_deref(),
             config.lineage.clone(),
             &mut sink,
-            &effective_prompt,
+            Some(&effective_prompt),
             media_parts,
             stream_sink,
+            None,
         )
     } else {
         drive_real(
@@ -530,9 +533,10 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             config.system_prompt.as_deref(),
             config.lineage.clone(),
             &mut sink,
-            &effective_prompt,
+            Some(&effective_prompt),
             media_parts,
             stream_sink,
+            None,
         )
     };
 
@@ -664,9 +668,10 @@ pub(crate) async fn run_with_provider(
     system_prompt: Option<&str>,
     lineage: Option<PromptLineage>,
     sink: &mut JsonlSink,
-    prompt: &str,
+    prompt: Option<&str>,
     media: Vec<MediaPart>,
     stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
+    resume: Option<ferric_loop::ReplayedState>,
 ) -> Result<LoopOutcome, String> {
     run(
         RunArgs {
@@ -681,6 +686,7 @@ pub(crate) async fn run_with_provider(
             prompt_lineage: lineage,
             media,
             stream_sink,
+            resume,
         },
         sink,
         prompt,
@@ -700,9 +706,10 @@ fn drive_mock(
     system_prompt: Option<&str>,
     lineage: Option<PromptLineage>,
     sink: &mut JsonlSink,
-    prompt: &str,
+    prompt: Option<&str>,
     media: Vec<MediaPart>,
     stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
+    resume: Option<ferric_loop::ReplayedState>,
 ) -> Result<LoopOutcome, String> {
     futures_executor::block_on(run_with_provider(
         provider,
@@ -717,6 +724,7 @@ fn drive_mock(
         prompt,
         media,
         stream_sink,
+        resume,
     ))
 }
 
@@ -732,9 +740,10 @@ fn drive_real(
     system_prompt: Option<&str>,
     lineage: Option<PromptLineage>,
     sink: &mut JsonlSink,
-    prompt: &str,
+    prompt: Option<&str>,
     media: Vec<MediaPart>,
     stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
+    resume: Option<ferric_loop::ReplayedState>,
 ) -> Result<LoopOutcome, String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
@@ -752,6 +761,7 @@ fn drive_real(
             prompt,
             media,
             stream_sink,
+            resume,
         )
         .await
     })
@@ -769,9 +779,10 @@ fn drive_real(
     _system_prompt: Option<&str>,
     _lineage: Option<PromptLineage>,
     _sink: &mut JsonlSink,
-    _prompt: &str,
+    _prompt: Option<&str>,
     _media: Vec<MediaPart>,
     _stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
+    _resume: Option<ferric_loop::ReplayedState>,
 ) -> Result<LoopOutcome, String> {
     Err("this binary was built without backend features; \
          rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
@@ -840,8 +851,9 @@ mod tests {
             None,
             None,
             &mut sink,
-            "do a mock task",
+            Some("do a mock task"),
             Vec::new(),
+            None,
             None,
         ))
         .unwrap();

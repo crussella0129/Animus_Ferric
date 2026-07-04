@@ -165,8 +165,6 @@ task (process crashed/killed mid-loop) — not a chat-continuation feature; `--s
 off entirely into sprint 40's context-budget compaction (see above). Plan critiqued (12 concerns,
 `sprints/s39/sprint-plans/critique.md`) and finalized.
 
-- [ ] T-3904 (sprint 39): thread `ReplayedState` into `RunArgs`/`run()`; relax `prompt` to
-  `Option<&str>` — touches: crates/ferric-loop/src/run.rs, crates/ferric-cli/src/{query.rs,mcp.rs}
 - [ ] T-3905 (sprint 39): `ferric query --resume <path>` CLI wiring — touches:
   crates/ferric-cli/src/query.rs
 - [ ] T-3906 (sprint 39): ADR-049 + docs — touches: decisions.md, README.md,
