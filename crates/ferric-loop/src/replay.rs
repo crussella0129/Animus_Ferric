@@ -407,6 +407,57 @@ mod tests {
         );
     }
 
+    /// Test-critic C-005: a `NativeTools` completion can carry BOTH prose
+    /// text and tool calls in the same message (`run()` pushes
+    /// `completion.message` verbatim) — every other test here exercises the
+    /// two fields in isolation. Prove both land in the reconstructed message.
+    #[test]
+    fn replay_preserves_native_text_alongside_tool_calls() {
+        let events = vec![
+            Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: None,
+            },
+            policy_selected(ActionProtocol::NativeTools),
+            session_prompt(),
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: Some("thinking...".to_string()),
+                tool_call_count: 1,
+                input_tokens: Some(50),
+                output_tokens: Some(10),
+                truncated: false,
+            },
+            Event::ToolCall {
+                id: "tc-0".to_string(),
+                name: "tool_a".to_string(),
+                args: json!({}),
+            },
+            Event::ToolResult {
+                id: "tc-0".to_string(),
+                name: "tool_a".to_string(),
+                output: "a-out".to_string(),
+                is_error: false,
+                duration_ms: 1,
+            },
+            Event::TurnStart { turn: 1 },
+        ];
+        let (_dir, path) = write_trace(&events);
+        let replayed = replay(&path).unwrap();
+
+        let assistant = &replayed.messages[2];
+        assert_eq!(assistant.text.as_deref(), Some("thinking..."));
+        assert_eq!(
+            assistant
+                .tool_calls
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tool_a"]
+        );
+    }
+
     /// Test-critic C-003: the terminator mixed into the MIDDLE of a
     /// multi-tool-call turn (not last) must preserve exact original order in
     /// the reconstructed assistant message.

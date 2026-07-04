@@ -230,6 +230,18 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
         .collect()
 }
 
+/// `ToolCall` event names in trace order (includes intercepted terminators,
+/// which are traced but never dispatched — sprint 39, T-3902).
+pub fn tool_call_names(records: &[TraceRecord]) -> Vec<String> {
+    records
+        .iter()
+        .filter_map(|r| match &r.event {
+            ParsedEvent::Known(Event::ToolCall { name, .. }) => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 pub fn session_end_reason(records: &[TraceRecord]) -> String {
     records
         .iter()

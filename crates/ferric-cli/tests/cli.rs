@@ -717,6 +717,14 @@ fn animus_md_present_traces_note() {
         has_note,
         "expected a Note event confirming Animus.md was applied"
     );
+    // C-003 (test-critic): the --resume-ignores-Animus.md stderr note
+    // (query.rs) is gated on `resume.is_some()` — prove it stays silent on an
+    // ordinary (non-resume) run, so a regression that made it unconditional
+    // would be caught.
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("ignores --prompts-dir/Animus.md"),
+        "the resume-ignored note must not print on a non-resume run"
+    );
 }
 
 /// A hand-written, synthetic trace fixture (matching `ferric-loop::replay`'s
@@ -796,36 +804,53 @@ fn resume_continues_an_interrupted_session() {
     assert_eq!(resumed_from, serde_json::json!("orig-1"));
 }
 
-#[test]
-fn resume_with_extra_prompt_appends_nudge() {
-    let ws = tempfile::tempdir().unwrap();
-    let fixture = write_interrupted_trace_fixture(ws.path(), "orig-2");
-
-    let out = ferric()
-        .args(["query", "--mock", "--resume"])
-        .arg(&fixture)
-        .arg("extra instruction")
-        .arg("--workspace")
-        .arg(ws.path())
-        .output()
-        .unwrap();
+/// The first (turn 1, since the fixture resumes at turn 1) `prompt_assembled`
+/// event's `chars` field for a `--resume` run of the given workspace/session,
+/// with or without an extra trailing prompt argument.
+fn first_resumed_turn_chars(
+    ws: &std::path::Path,
+    session: &str,
+    extra_prompt: Option<&str>,
+) -> u64 {
+    let fixture = write_interrupted_trace_fixture(ws, session);
+    let mut cmd = ferric();
+    cmd.args(["query", "--mock", "--resume"]).arg(&fixture);
+    if let Some(p) = extra_prompt {
+        cmd.arg(p);
+    }
+    cmd.arg("--workspace").arg(ws);
+    let out = cmd.output().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let content = std::fs::read_to_string(latest_q_trace(ws.path())).unwrap();
-    let max_chars = content
+    let content = std::fs::read_to_string(latest_q_trace(ws)).unwrap();
+    content
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter(|v| v["event"]["type"] == "prompt_assembled")
         .filter_map(|v| v["event"]["chars"].as_u64())
-        .max()
-        .unwrap_or(0);
-    assert!(
-        max_chars >= "extra instruction".len() as u64,
-        "assembled prompt ({max_chars} chars) should include the extra instruction"
+        .next()
+        .expect("a prompt_assembled event")
+}
+
+#[test]
+fn resume_with_extra_prompt_appends_nudge() {
+    // C-002 (test-critic): a loose `>=` floor on the char count passes even
+    // when the extra prompt is silently dropped, since the replayed history
+    // alone already clears it. Assert the EXACT delta instead.
+    let ws_without = tempfile::tempdir().unwrap();
+    let chars_without = first_resumed_turn_chars(ws_without.path(), "orig-2a", None);
+
+    let ws_with = tempfile::tempdir().unwrap();
+    let chars_with = first_resumed_turn_chars(ws_with.path(), "orig-2b", Some("extra instruction"));
+
+    assert_eq!(
+        chars_with,
+        chars_without + "extra instruction".len() as u64,
+        "the extra prompt must add exactly its own length to the assembled turn"
     );
 }
 

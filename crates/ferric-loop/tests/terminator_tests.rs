@@ -58,6 +58,50 @@ fn task_complete_mixed_turn() {
 }
 
 #[test]
+fn task_complete_mid_turn_preserves_emission_order() {
+    // The terminator's ToolCall event must be traced at the exact position it
+    // was emitted in `actions` — not after the dispatch loop finishes — so a
+    // trace with the terminator BETWEEN two other calls preserves that order.
+    // (Sprint 39, test-critic C-001: replay() itself has no terminator-aware
+    // logic, so this must be caught in run.rs's dispatch loop, not replay.)
+    let result = run_scripted(
+        vec![tool_completion(vec![
+            (
+                "tc-0",
+                "write_file",
+                json!({"path": "a.txt", "content": "a"}),
+            ),
+            ("tc-1", TASK_COMPLETE, json!({"summary": "done"})),
+            (
+                "tc-2",
+                "write_file",
+                json!({"path": "b.txt", "content": "b"}),
+            ),
+        ])],
+        &nano_policy(),
+        |_| {},
+    );
+    assert_eq!(result.outcome.stop, StopReason::TaskComplete);
+    assert_eq!(
+        tool_call_names(&result.records),
+        vec!["write_file", TASK_COMPLETE, "write_file"],
+        "traced tool_call order must match original emission order exactly"
+    );
+    // Only the two non-terminator calls actually dispatched.
+    let result_count = result
+        .records
+        .iter()
+        .filter(|r| {
+            matches!(
+                &r.event,
+                ferric_trace::ParsedEvent::Known(ferric_trace::Event::ToolResult { .. })
+            )
+        })
+        .count();
+    assert_eq!(result_count, 2, "the terminator must not be dispatched");
+}
+
+#[test]
 fn task_complete_always_offered() {
     // NANO max_tools is 6; builtins (3) + task_complete must both appear even
     // when the registry is overfull.
