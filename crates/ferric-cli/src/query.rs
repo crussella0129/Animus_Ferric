@@ -48,8 +48,20 @@ impl From<ProtocolArg> for ActionProtocol {
 
 #[derive(Args)]
 pub struct QueryArgs {
-    /// The task prompt
-    pub prompt: String,
+    /// The task prompt. Required unless `--resume` is given (a pure
+    /// continuation needs no new instruction); if BOTH are given, this is
+    /// appended as one extra user message after the replayed history.
+    #[arg(required_unless_present = "resume")]
+    pub prompt: Option<String>,
+
+    /// Resume an interrupted, still-incomplete session by replaying its
+    /// trace (sprint 39, ADR-049) and continuing the SAME task with more
+    /// turns. Not a chat-continuation mechanism: a trace that already
+    /// reached any stop reason (clean or not) is rejected. `--prompts-dir`/
+    /// `Animus.md` are inert for a resumed run's system message (frozen
+    /// from the replayed trace).
+    #[arg(long)]
+    pub resume: Option<PathBuf>,
 
     /// Workspace root (containment boundary). Default: current directory.
     #[arg(long)]
@@ -428,12 +440,55 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             .or_else(|| args.backend_opts.model_file.clone()),
     });
 
+    // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
+    // incomplete session. Resolved here (needs `config.protocol` for the
+    // match-validation) and threaded into `RunArgs.resume` below.
+    let resume = match &args.resume {
+        Some(path) => match ferric_loop::replay(path) {
+            Ok(replayed) => {
+                if replayed.protocol != config.protocol {
+                    eprintln!(
+                        "cannot resume {}: recorded protocol {:?} does not match this \
+                         invocation's resolved protocol {:?}",
+                        path.display(),
+                        replayed.protocol,
+                        config.protocol
+                    );
+                    return ExitCode::FAILURE;
+                }
+                Some(replayed)
+            }
+            Err(e) => {
+                eprintln!("cannot resume {}: {e}", path.display());
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+
     // T-3806: `Animus.md` — read-only, no parsing. Presence folds its content
     // into the system prompt as a distinct block; absence is a silent no-op
     // (unchanged from today).
     let animus_md = std::fs::read_to_string(workspace_root.join("Animus.md")).ok();
     if let Some(content) = &animus_md {
         config.system_prompt = Some(fold_animus_md(config.system_prompt.as_deref(), content));
+    }
+    // C-009 (plan-critic): a resumed run's system message is frozen from the
+    // replayed trace — `--prompts-dir`/`Animus.md` are silently inert for it.
+    // Surface this rather than let a user expect an edited `Animus.md` to
+    // apply to a continuation with no signal that it didn't. Checks whether
+    // prompts_dir composition was actually ATTEMPTED (lineage on success, the
+    // error field on failure), not just whether `--prompts-dir` was passed —
+    // `FERRIC_PROMPTS_DIR` can resolve it too.
+    if resume.is_some()
+        && (config.lineage.is_some()
+            || config.prompt_composition_error.is_some()
+            || animus_md.is_some())
+    {
+        eprintln!(
+            "note: --resume ignores --prompts-dir/Animus.md for the system message \
+             (frozen from the replayed session)"
+        );
     }
 
     let trace_dir = workspace_root.join(".ferric").join("trace");
@@ -474,10 +529,14 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
     let (media_parts, prompt_suffix) =
         route_files(&args.files, &declared, config.caps.supports_media);
-    let effective_prompt = if prompt_suffix.is_empty() {
-        args.prompt.clone()
-    } else {
-        format!("{}{prompt_suffix}", args.prompt)
+    // `Option<String>`: `None` when resuming with no extra prompt/files given
+    // (a pure continuation) — `run()` only requires a prompt when NOT
+    // resuming, a precondition clap's `required_unless_present` guarantees.
+    let effective_prompt = match (&args.prompt, prompt_suffix.is_empty()) {
+        (Some(p), true) => Some(p.clone()),
+        (Some(p), false) => Some(format!("{p}{prompt_suffix}")),
+        (None, true) => None,
+        (None, false) => Some(prompt_suffix),
     };
 
     // `--stream` (ADR-047): print `Text` deltas to stdout live, flushed per
@@ -503,8 +562,6 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         None
     };
 
-    // T-3904 (sprint 39): `resume: None` here — every `ferric query`
-    // invocation is a fresh session until T-3905 wires `--resume`.
     let outcome = if args.mock {
         let provider = mock_provider(config.protocol);
         drive_mock(
@@ -517,10 +574,10 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             config.system_prompt.as_deref(),
             config.lineage.clone(),
             &mut sink,
-            Some(&effective_prompt),
+            effective_prompt.as_deref(),
             media_parts,
             stream_sink,
-            None,
+            resume,
         )
     } else {
         drive_real(
@@ -533,10 +590,10 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             config.system_prompt.as_deref(),
             config.lineage.clone(),
             &mut sink,
-            Some(&effective_prompt),
+            effective_prompt.as_deref(),
             media_parts,
             stream_sink,
-            None,
+            resume,
         )
     };
 

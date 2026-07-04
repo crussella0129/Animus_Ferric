@@ -719,6 +719,201 @@ fn animus_md_present_traces_note() {
     );
 }
 
+/// A hand-written, synthetic trace fixture (matching `ferric-loop::replay`'s
+/// own test idiom): `SessionPrompt` + `PolicySelected` (`NativeTools`,
+/// matching `--mock`'s resolved protocol) + one COMPLETED turn (a `write_file`
+/// call+result), no `SessionEnd` — the realistic shape of an interrupted
+/// process (crashed after turn 0, before turn 1 started).
+fn write_interrupted_trace_fixture(ws: &std::path::Path, session: &str) -> std::path::PathBuf {
+    let trace_dir = ws.join(".ferric").join("trace");
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let path = trace_dir.join(format!("{session}.jsonl"));
+    let lines = [
+        format!(
+            r#"{{"v":1,"ts_ms":1,"session":"{session}","seq":0,"event":{{"type":"session_start","workspace":"/ws"}}}}"#
+        ),
+        format!(
+            r#"{{"v":1,"ts_ms":2,"session":"{session}","seq":1,"event":{{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512}}}}"#
+        ),
+        format!(
+            r#"{{"v":1,"ts_ms":3,"session":"{session}","seq":2,"event":{{"type":"session_prompt","system":"You are Ferric.","user":"do a mock task"}}}}"#
+        ),
+        format!(
+            r#"{{"v":1,"ts_ms":4,"session":"{session}","seq":3,"event":{{"type":"turn_start","turn":0}}}}"#
+        ),
+        format!(
+            r#"{{"v":1,"ts_ms":5,"session":"{session}","seq":4,"event":{{"type":"turn_end","turn":0,"text":null,"tool_call_count":1,"input_tokens":50,"output_tokens":10}}}}"#
+        ),
+        format!(
+            r#"{{"v":1,"ts_ms":6,"session":"{session}","seq":5,"event":{{"type":"tool_call","id":"tc-0","name":"write_file","args":{{"path":"a.txt","content":"hi"}}}}}}"#
+        ),
+        format!(
+            r#"{{"v":1,"ts_ms":7,"session":"{session}","seq":6,"event":{{"type":"tool_result","id":"tc-0","name":"write_file","output":"wrote 2 bytes","is_error":false,"duration_ms":1}}}}"#
+        ),
+        format!(
+            r#"{{"v":1,"ts_ms":8,"session":"{session}","seq":7,"event":{{"type":"turn_start","turn":1}}}}"#
+        ),
+    ];
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    path
+}
+
+fn latest_q_trace(ws: &std::path::Path) -> std::path::PathBuf {
+    let trace_dir = ws.join(".ferric").join("trace");
+    std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("a q-*.jsonl trace")
+        .path()
+}
+
+#[test]
+fn resume_continues_an_interrupted_session() {
+    let ws = tempfile::tempdir().unwrap();
+    let fixture = write_interrupted_trace_fixture(ws.path(), "orig-1");
+
+    let out = ferric()
+        .args(["query", "--mock", "--resume"])
+        .arg(&fixture)
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let content = std::fs::read_to_string(latest_q_trace(ws.path())).unwrap();
+    let resumed_from = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["event"]["type"] == "session_start")
+        .map(|v| v["event"]["resumed_from"].clone())
+        .unwrap();
+    assert_eq!(resumed_from, serde_json::json!("orig-1"));
+}
+
+#[test]
+fn resume_with_extra_prompt_appends_nudge() {
+    let ws = tempfile::tempdir().unwrap();
+    let fixture = write_interrupted_trace_fixture(ws.path(), "orig-2");
+
+    let out = ferric()
+        .args(["query", "--mock", "--resume"])
+        .arg(&fixture)
+        .arg("extra instruction")
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let content = std::fs::read_to_string(latest_q_trace(ws.path())).unwrap();
+    let max_chars = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["event"]["type"] == "prompt_assembled")
+        .filter_map(|v| v["event"]["chars"].as_u64())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_chars >= "extra instruction".len() as u64,
+        "assembled prompt ({max_chars} chars) should include the extra instruction"
+    );
+}
+
+#[test]
+fn no_resume_and_no_prompt_is_a_usage_error() {
+    let ws = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["query", "--mock"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.to_lowercase().contains("usage") || stderr.contains("required"));
+}
+
+#[test]
+fn resume_protocol_mismatch_is_a_clear_error() {
+    let ws = tempfile::tempdir().unwrap();
+    // The fixture records NativeTools; force this invocation's resolved
+    // protocol to ConstrainedJson (grammar) via --protocol.
+    let fixture = write_interrupted_trace_fixture(ws.path(), "orig-3");
+
+    let out = ferric()
+        .args(["query", "--mock", "--resume"])
+        .arg(&fixture)
+        .arg("--protocol")
+        .arg("grammar")
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("NativeTools") && stderr.contains("ConstrainedJson"));
+}
+
+#[test]
+fn resume_already_stopped_is_a_clear_error() {
+    let ws = tempfile::tempdir().unwrap();
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let path = trace_dir.join("stopped.jsonl");
+    let lines = [
+        r#"{"v":1,"ts_ms":1,"session":"stopped-1","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#.to_string(),
+        r#"{"v":1,"ts_ms":2,"session":"stopped-1","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#.to_string(),
+        r#"{"v":1,"ts_ms":3,"session":"stopped-1","seq":2,"event":{"type":"session_prompt","system":"You are Ferric.","user":"do a mock task"}}"#.to_string(),
+        r#"{"v":1,"ts_ms":4,"session":"stopped-1","seq":3,"event":{"type":"session_end","reason":"final_text"}}"#.to_string(),
+    ];
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let out = ferric()
+        .args(["query", "--mock", "--resume"])
+        .arg(&path)
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("final_text"));
+}
+
+/// Test-critic C-009: resuming with an `Animus.md` present prints a note
+/// that it's ignored (the resumed run's system message is frozen).
+#[test]
+fn resume_with_animus_md_prints_ignored_note() {
+    let ws = tempfile::tempdir().unwrap();
+    let fixture = write_interrupted_trace_fixture(ws.path(), "orig-4");
+    std::fs::write(ws.path().join("Animus.md"), "project rules").unwrap();
+
+    let out = ferric()
+        .args(["query", "--mock", "--resume"])
+        .arg(&fixture)
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("ignores --prompts-dir/Animus.md"));
+}
+
 #[test]
 fn unknown_args_fail_with_usage() {
     let out = ferric().arg("frobnicate").output().unwrap();
