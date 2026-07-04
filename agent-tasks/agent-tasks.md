@@ -133,7 +133,5 @@ Layered `.ferric/config.toml` (project) + cross-platform user config, CLI flag >
 hardcoded default; `Animus.md` folded into the system prompt. Plan critiqued (8 concerns,
 `sprints/s38/sprint-plans/critique.md`) and finalized.
 
-- [ ] T-3806 (sprint 38): `Animus.md` — read + fold into the system prompt — touches:
-  crates/ferric-cli/src/query.rs, crates/ferric-cli/src/mcp.rs
 - [ ] T-3807 (sprint 38): ADR-048 + docs — touches: decisions.md, README.md,
   agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md

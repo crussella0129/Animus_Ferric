@@ -426,7 +426,7 @@ impl McpServer {
             .or(cfg.profile_dir)
             .unwrap_or_else(|| PathBuf::from("benchmarks"));
 
-        let config = build_run_config(&RunConfigArgs {
+        let mut config = build_run_config(&RunConfigArgs {
             mock: args.mock,
             backend: backend_opts
                 .backend
@@ -457,6 +457,19 @@ impl McpServer {
         }
         for diag in &loaded_config.diagnostics {
             eprintln!("{diag}");
+        }
+
+        // T-3806: `Animus.md` — same fold as `run_query`. No sink exists yet
+        // at launch (each `tools/call` opens its own), so its presence is
+        // surfaced via `eprintln!` here rather than a per-call `Note` (same
+        // treatment as the malformed-config diagnostics above).
+        let animus_md = std::fs::read_to_string(workspace_root.join("Animus.md")).ok();
+        if let Some(content) = &animus_md {
+            config.system_prompt = Some(crate::query::fold_animus_md(
+                config.system_prompt.as_deref(),
+                content,
+            ));
+            eprintln!("Animus.md applied ({} chars)", content.len());
         }
 
         let trace_dir = workspace_root.join(".ferric").join("trace");

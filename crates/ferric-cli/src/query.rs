@@ -15,7 +15,8 @@ use clap::{Args, ValueEnum};
 use ferric_core::{ActionProtocol, MediaPart, Message, ModelProfile, RunPolicy, policy_for};
 use ferric_guard::Workspace;
 use ferric_loop::{
-    LoopOutcome, PromptLineage, RunArgs, StopReason, ThreadSleeper, run, select_protocol,
+    DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, StopReason, ThreadSleeper, run,
+    select_protocol,
 };
 use ferric_provider::{Capabilities, Completion, MockProvider, Provider, SamplingParams};
 use ferric_tools::{Registry, register_builtin_tools};
@@ -308,6 +309,18 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
     }
 }
 
+/// `Animus.md` (T-3806): a project-root, freeform, user-authored instructions
+/// file — trusted context (the workspace owner's own words), not Ornstein-
+/// quarantined content — folded into the system prompt as a distinct,
+/// clearly-delimited block. Pure; the caller does the actual file read (so it
+/// can also decide whether to trace a `Note`) and reuses whichever system
+/// prompt `build_run_config` already produced (oovra-composed, or
+/// `DEFAULT_SYSTEM_PROMPT` when no library is configured).
+pub(crate) fn fold_animus_md(existing: Option<&str>, animus_md: &str) -> String {
+    let base = existing.unwrap_or(DEFAULT_SYSTEM_PROMPT);
+    format!("{base}\n\n--- Animus.md (project instructions) ---\n{animus_md}")
+}
+
 /// Route each `--file` (ADR-023): text/code folds into the prompt (any model);
 /// media attaches as a gated `MediaPart`; anything skipped is surfaced
 /// (stderr), never silent. The decision logic (`classify_path`/
@@ -397,7 +410,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         .unwrap_or_else(|| PathBuf::from("benchmarks"));
     let resolved_stream = args.stream || cfg.stream.unwrap_or(false);
 
-    let config = build_run_config(&RunConfigArgs {
+    let mut config = build_run_config(&RunConfigArgs {
         mock: args.mock,
         backend: args.backend_opts.backend.unwrap_or(BackendArg::Mistral),
         params_b: resolved_params_b,
@@ -419,6 +432,14 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             .clone()
             .or_else(|| args.backend_opts.model_file.clone()),
     });
+
+    // T-3806: `Animus.md` — read-only, no parsing. Presence folds its content
+    // into the system prompt as a distinct block; absence is a silent no-op
+    // (unchanged from today).
+    let animus_md = std::fs::read_to_string(workspace_root.join("Animus.md")).ok();
+    if let Some(content) = &animus_md {
+        config.system_prompt = Some(fold_animus_md(config.system_prompt.as_deref(), content));
+    }
 
     let trace_dir = workspace_root.join(".ferric").join("trace");
     if let Err(e) = std::fs::create_dir_all(&trace_dir) {
@@ -445,6 +466,14 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     for diag in &loaded_config.diagnostics {
         eprintln!("{diag}");
         let _ = sink.write_event(Event::Note { text: diag.clone() });
+    }
+    // T-3806 (C-005, narrowed): `Animus.md`'s PRESENCE is traced as a Note —
+    // its absence stays silent, matching the existing precedent that the
+    // ordinary default path (e.g. no `prompts_dir` configured) is untraced.
+    if let Some(content) = &animus_md {
+        let _ = sink.write_event(Event::Note {
+            text: format!("Animus.md applied ({} chars)", content.len()),
+        });
     }
 
     let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
@@ -758,6 +787,25 @@ fn drive_real(
 mod tests {
     use super::*;
     use ferric_core::policy_for;
+
+    /// T-3806: `Animus.md` folds in AFTER whichever base prompt already
+    /// exists (composed or default), as a distinct, clearly-delimited block.
+    #[test]
+    fn fold_animus_md_appends_a_distinct_block() {
+        let folded = fold_animus_md(Some("BASE"), "project rules");
+        assert!(folded.starts_with("BASE"));
+        assert!(folded.contains("project rules"));
+        assert!(folded.contains("Animus.md"));
+    }
+
+    /// Absent `existing` falls back to `DEFAULT_SYSTEM_PROMPT` — mirrors what
+    /// the loop itself does when `system_prompt` is `None`.
+    #[test]
+    fn fold_animus_md_falls_back_to_default_prompt() {
+        let folded = fold_animus_md(None, "project rules");
+        assert!(folded.starts_with(DEFAULT_SYSTEM_PROMPT));
+        assert!(folded.contains("project rules"));
+    }
 
     /// T-3601: `run_with_provider` is independently callable given only a
     /// `&dyn Provider` — no `create_provider`/backend-feature dependency. This

@@ -553,6 +553,91 @@ fn malformed_config_traced_as_note() {
     );
 }
 
+/// T-3806: an `Animus.md` at the workspace root folds into the assembled
+/// system prompt — checked via the trace's `prompt_assembled` char count,
+/// mirroring `query_file_text_folds_into_prompt`'s technique.
+#[test]
+fn animus_md_folds_into_prompt() {
+    let ws = tempfile::tempdir().unwrap();
+    let body = "PROJECT RULE ".repeat(50);
+    std::fs::write(ws.path().join("Animus.md"), &body).unwrap();
+
+    let out = ferric()
+        .args(["query", "--mock", "do a task"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    let trace = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("a q-*.jsonl trace");
+    let content = std::fs::read_to_string(trace.path()).unwrap();
+    let max_chars = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["event"]["type"] == "prompt_assembled")
+        .filter_map(|v| v["event"]["chars"].as_u64())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_chars >= body.len() as u64,
+        "assembled prompt ({max_chars} chars) should include the {}-char Animus.md",
+        body.len()
+    );
+}
+
+/// C-005 (plan-critic, narrowed to presence-only): an `Animus.md`'s presence
+/// is traced as a `Note`. Absence staying untraced is already proven by every
+/// other CLI test (none create an `Animus.md`, none show this Note).
+#[test]
+fn animus_md_present_traces_note() {
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::write(ws.path().join("Animus.md"), "project rules").unwrap();
+
+    let out = ferric()
+        .args(["query", "--mock", "do a task"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    let trace = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("a q-*.jsonl trace");
+    let content = std::fs::read_to_string(trace.path()).unwrap();
+    let has_note = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .any(|v| {
+            v["event"]["type"] == "note"
+                && v["event"]["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("Animus.md applied")
+        });
+    assert!(
+        has_note,
+        "expected a Note event confirming Animus.md was applied"
+    );
+}
+
 #[test]
 fn unknown_args_fail_with_usage() {
     let out = ferric().arg("frobnicate").output().unwrap();
