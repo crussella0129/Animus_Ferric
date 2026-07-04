@@ -390,35 +390,73 @@ impl McpServer {
         };
         let workspace = Workspace::new(&workspace_root).map_err(|e| format!("workspace: {e}"))?;
 
-        // T-3804: mechanical clap-default removal — these six now resolve
-        // their hardcoded default here (via `.unwrap_or`) instead of via
-        // clap, with no config file involved yet (that's T-3805).
-        // Byte-identical when no flag is passed.
+        // T-3805: layered config (CLI flag > project `.ferric/config.toml` >
+        // user config > today's hardcoded default). `McpArgs` is `&`, not
+        // owned, so the merge happens on a local clone of `backend_opts`
+        // rather than in place (mirrors `run_query`'s T-3803 treatment) —
+        // that clone is what both `RunConfigArgs` and `build_real_provider`
+        // use below, so the config-resolved model/backend actually reaches
+        // the real provider, not just protocol/tier selection.
+        let loaded_config = crate::config::load_layered(&workspace_root);
+        let cfg = loaded_config.config;
+        let mut backend_opts = args.backend_opts.clone();
+        backend_opts.backend = backend_opts.backend.take().or(cfg.backend);
+        backend_opts.model_dir = backend_opts.model_dir.take().or(cfg.model_dir);
+        backend_opts.model_file = backend_opts.model_file.take().or(cfg.model_file);
+        backend_opts.model = backend_opts.model.take().or(cfg.model);
+        backend_opts.api_base = backend_opts.api_base.take().or(cfg.api_base);
+        backend_opts.api_key = backend_opts.api_key.take().or(cfg.api_key);
+        let resolved_params_b = args.params_b.or(cfg.params_b).unwrap_or(1.2);
+        let resolved_quant = args
+            .quant
+            .clone()
+            .or(cfg.quant)
+            .unwrap_or_else(|| "Q4_K_M".to_string());
+        let resolved_family = args
+            .family
+            .clone()
+            .or(cfg.family)
+            .unwrap_or_else(|| "unknown".to_string());
+        let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
+        let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
+        let resolved_max_ring = args.max_ring.or(cfg.max_ring);
+        let resolved_profile_dir = args
+            .profile_dir
+            .clone()
+            .or(cfg.profile_dir)
+            .unwrap_or_else(|| PathBuf::from("benchmarks"));
+
         let config = build_run_config(&RunConfigArgs {
             mock: args.mock,
-            backend: args.backend_opts.backend,
-            params_b: args.params_b.unwrap_or(1.2),
-            quant: args.quant.clone().unwrap_or_else(|| "Q4_K_M".to_string()),
-            family: args.family.clone().unwrap_or_else(|| "unknown".to_string()),
-            ctx: args.ctx.unwrap_or(4096),
-            temperature: args.temperature.unwrap_or(0.0),
+            backend: backend_opts
+                .backend
+                .unwrap_or(crate::backend::BackendArg::Mistral),
+            params_b: resolved_params_b,
+            quant: resolved_quant,
+            family: resolved_family,
+            ctx: resolved_ctx,
+            temperature: resolved_temperature,
             protocol_override: args.protocol,
             prompts_dir: args.prompts_dir.clone(),
-            max_ring: args.max_ring,
-            profile_dir: args
-                .profile_dir
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("benchmarks")),
-            model_key: args
-                .backend_opts
+            max_ring: resolved_max_ring,
+            profile_dir: resolved_profile_dir,
+            // C-001 (plan-critic): derived from the POST-merge, config-
+            // resolved `model`/`model_file` (already merged above into
+            // `backend_opts`).
+            model_key: backend_opts
                 .model
                 .clone()
-                .or_else(|| args.backend_opts.model_file.clone()),
+                .or_else(|| backend_opts.model_file.clone()),
         });
         // No trace sink exists yet at launch (each tools/call opens its own),
-        // so a composition failure is surfaced once here rather than dropped.
+        // so a composition failure — and any malformed-config diagnostic
+        // (C-004) — is surfaced once here rather than dropped, or (unlike
+        // `Note`-tracing) repeated on every subsequent call.
         if let Some(err) = &config.prompt_composition_error {
             eprintln!("{err}");
+        }
+        for diag in &loaded_config.diagnostics {
+            eprintln!("{diag}");
         }
 
         let trace_dir = workspace_root.join(".ferric").join("trace");
@@ -429,7 +467,7 @@ impl McpServer {
         let (provider, executor): (Box<dyn Provider + Send + Sync>, Executor) = if args.mock {
             (Box::new(mock_provider(config.protocol)), Executor::Mock)
         } else {
-            build_real_provider(&args.backend_opts)?
+            build_real_provider(&backend_opts)?
         };
 
         Ok(McpServer {
@@ -512,10 +550,19 @@ mod tests {
     #[test]
     fn launch_defaults_unchanged_after_clap_type_change() {
         let dir = tempfile::tempdir().unwrap();
-        let args = McpArgs {
-            workspace: Some(dir.path().to_path_buf()),
+        let args = base_mcp_args(dir.path());
+        let server = McpServer::launch(&args).unwrap();
+        assert_eq!(server.config.policy.tier, ferric_core::Tier::Nano);
+        assert_eq!(server.config.policy.max_output_tokens, 512);
+    }
+
+    /// All-`None`/`mock: true` `McpArgs` for a given workspace — the shared
+    /// base the T-3805 config-precedence tests below start from.
+    fn base_mcp_args(ws: &std::path::Path) -> McpArgs {
+        McpArgs {
+            workspace: Some(ws.to_path_buf()),
             backend_opts: crate::backend::BackendOpts {
-                backend: crate::backend::BackendArg::Mistral,
+                backend: None,
                 model_dir: None,
                 model_file: None,
                 model: None,
@@ -536,10 +583,58 @@ mod tests {
             modality: None,
             max_ring: None,
             profile_dir: None,
-        };
+        }
+    }
+
+    fn write_project_config(ws: &std::path::Path, toml: &str) {
+        std::fs::create_dir_all(ws.join(".ferric")).unwrap();
+        std::fs::write(ws.join(".ferric").join("config.toml"), toml).unwrap();
+    }
+
+    /// T-3805: same shape as `cli::config_file_sets_default_without_flag`.
+    #[test]
+    fn launch_config_file_sets_default_without_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "params_b = 8.0\n");
+        let server = McpServer::launch(&base_mcp_args(dir.path())).unwrap();
+        assert_eq!(server.config.policy.tier, ferric_core::Tier::Small);
+    }
+
+    /// T-3805: same shape as `cli::cli_flag_overrides_config_file`.
+    #[test]
+    fn launch_cli_flag_overrides_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "params_b = 8.0\n");
+        let mut args = base_mcp_args(dir.path());
+        args.params_b = Some(1.2);
         let server = McpServer::launch(&args).unwrap();
         assert_eq!(server.config.policy.tier, ferric_core::Tier::Nano);
-        assert_eq!(server.config.policy.max_output_tokens, 512);
+    }
+
+    /// C-001 (plan-critic): same shape as `cli::config_only_model_still_
+    /// resolves_profile`, scoped to `ferric mcp` — `model` set ONLY via
+    /// config.toml must still hit the persisted `calibrated_ring` lookup.
+    #[test]
+    fn launch_config_only_model_still_resolves_profile() {
+        let pdir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            pdir.path().join("model_profiles.json"),
+            r#"[{"model":"mockmodel","params_b":8.0,"protocol":"ConstrainedJson","measured_level":null,"tier_from_params":"Small","tier_from_measured":null,"calibrated_ring":0}]"#,
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            &format!(
+                "model = \"mockmodel\"\nprofile_dir = '{}'\n",
+                pdir.path().display()
+            ),
+        );
+        let mut args = base_mcp_args(dir.path());
+        args.params_b = Some(8.0);
+        args.protocol = Some(ProtocolArg::Grammar);
+        let server = McpServer::launch(&args).unwrap();
+        assert_eq!(server.config.policy.max_ring, Some(0));
     }
 
     #[test]
