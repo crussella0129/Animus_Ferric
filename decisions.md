@@ -369,3 +369,58 @@ in `sprints/s37/`.
   only (a hand-rolled `tokio::net::TcpListener` fake-server E2E test proves the real wire protocol,
   mirroring sprint 36's real-process/real-socket testing preference) — NOT needed by
   `complete_streaming`'s production code path.
+
+## ADR-048 — 2026-07-04 (sprint 38): persistent configuration + `Animus.md`
+User-chosen (2026-07-04): "persistent config and Animus.md (much like claude.md but for Animus)" —
+two related pieces, combined into one sprint since the user named them together. Full
+research/plan/critique in `sprints/s38/`.
+- **Config precedence:** `CLI flag > project (.ferric/config.toml) > user (cross-platform path) >
+  today's hardcoded default`, resolved per field via `cli_arg.or(config.field).unwrap_or(default)` —
+  extending `backend.rs`'s already-proven `resolve_base` idiom (ADR-008/T-805) one layer. `Config`
+  (`crates/ferric-cli/src/config.rs`) is a **bounded, named field list**, never a generic key-value
+  map: `backend`, `model_dir`, `model_file`, `model`, `api_base`, `api_key`, `params_b`, `quant`,
+  `family`, `ctx`, `temperature`, `max_ring`, `profile_dir`, `stream` — this makes "config never
+  touches security/guard/denylist policy" (ADR-005) a structural fact, not a review-time hope.
+  `ferric server`/`ferric bench`/`ferric toolbench` are NOT config-defaulted this sprint (scoped to
+  `ferric query`/`ferric mcp` only).
+- **A field losing a clap default is a masking hazard, not a cosmetic detail.** Several
+  `QueryArgs`/`McpArgs` fields (`params_b`, `quant`, `family`, `ctx`, `temperature`, `profile_dir`)
+  used `default_value_t`/`default_value`, making "the user explicitly passed this flag" and "clap's
+  baked-in default fired" indistinguishable — a config-only-set value would be silently invisible.
+  Fixed by making all six bare `Option<T>`, with the real default applied AFTER merging config. A
+  **plan-critic pass caught the same masking hazard twice more**: (1) `BackendOpts.backend` itself
+  still carried a clap default (`"mistral"`) even though its 8 sibling fields didn't — fixed the same
+  way (bare `Option<BackendArg>`, `.unwrap_or(BackendArg::Mistral)` at each of 4 call sites); (2) most
+  significantly, `model_key` (the ADR-029 persisted-profile lookup key) was originally going to be
+  derived from the RAW CLI `--model`/`--model-file` args rather than the post-merge, config-resolved
+  values — meaning a config-only-set `model` would silently skip its profile lookup and lose an
+  earned `measured_level`/`calibrated_ring` promotion with no error or trace. Fixed before it shipped
+  (`cli::config_only_model_still_resolves_profile` is the regression test that would fail without the
+  fix) — recorded here because it's a class of bug (a config value present in data but invisible to
+  the code that decides behavior) worth watching for in any future config-surfaced field.
+- **Malformed-layer diagnostics are testable data, not a bare `eprintln!`.** `load_layered_from`
+  returns `LoadedConfig { config, diagnostics: Vec<String> }` — mirrors the existing `RunConfig::
+  prompt_composition_error` pattern. `ferric query` (which has a trace sink) both `eprintln!`s and
+  `Note`-traces each diagnostic; `ferric mcp` (no sink exists yet at launch time — each `tools/call`
+  opens its own) only `eprintln!`s, matching the pre-existing treatment of `prompt_composition_error`
+  at launch — a deliberate, considered asymmetry between the two surfaces, not an oversight.
+- **The cross-platform user-config path is hand-rolled** (`user_config_path_from`, ~15 lines,
+  Windows `APPDATA` → XDG `XDG_CONFIG_HOME` → `.config` `HOME`-fallback → `None`), not a `dirs`/
+  `directories` dependency — matches ADR-004's minimal-dependency discipline. It takes an injected
+  env-lookup closure rather than reading `std::env::var` directly, so every branch is independently
+  unit-tested without mutating real process env.
+- **`Animus.md` is trusted context, not Ornstein-quarantined content.** Unlike Ornstein's untrusted
+  web/tailnet retrieval planes, `Animus.md` is authored by the workspace owner — the same trust tier
+  as the codebase they're already having the agent operate on. Read as plain text (no parsing, no
+  versioning) and appended as a distinct block to whichever system prompt already exists (oovra-
+  composed, or `DEFAULT_SYSTEM_PROMPT`) — deliberately NOT forced into oovra's versioned element
+  system, the wrong shape for unversioned freeform prose. Presence is traced as a `Note`; absence
+  stays silent, matching the existing precedent that the ordinary default path (no `prompts_dir`
+  configured) is likewise untraced.
+- **ADR-010 is unaffected.** `CompletionRequest::validate()`/`select_protocol` operate on the final
+  resolved values regardless of whether they originated from a CLI flag or a config file — the
+  constraint/native-tools mutual exclusion has no config-awareness dependency to get wrong.
+- **Explicit deferrals:** `ferric init-project` (a wizard to scaffold `config.toml`/`Animus.md` — v1
+  only reads an existing, hand-authored file, same as `CLAUDE.md` needs no wizard); config-defaulting
+  `ferric server`/`ferric bench`/`ferric toolbench`; an MCP-side `Animus.md`/config-diagnostic
+  `Note`-equivalent once MCP grows a launch-time trace mechanism.

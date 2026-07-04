@@ -646,3 +646,9 @@
 - **Completed:** 2026-07-04 (build phase)
 - **Files modified:** crates/ferric-cli/src/{query.rs,mcp.rs}, crates/ferric-cli/tests/cli.rs
 - **Commit:** `ef324aa`
+
+## T-3807 (sprint 38)
+- **Description:** **ADR-048 + docs.** Recorded the config-precedence design (CLI > project > user > default), the bounded-field ADR-005 rationale, the `Animus.md` trust-tier decision, the ADR-010 non-interaction note, and — the most notable part — the masking-hazard bug class the plan-critic caught (`model_key`'s C-001 fix) and its SECOND, self-discovered instance (`BackendOpts.backend`'s leftover clap default), recorded so future config-surfaced fields get checked for the same class of bug. README Status bumped to sprint 38 + a new Sprint 38 timeline entry; the Production-Readiness Roadmap's "Persistent config" bullet marked DONE; the Sprint 38 backlog section rewritten from its in-progress checklist to a completed summary (matching sprints 36/37's precedent).
+- **Completed:** 2026-07-04 (build phase)
+- **Files modified:** decisions.md, README.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
+- **Commit:** `7b99bd7`
