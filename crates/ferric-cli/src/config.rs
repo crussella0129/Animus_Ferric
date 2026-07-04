@@ -3,17 +3,12 @@
 //! config > today's hardcoded default. A bounded, named field list — never a
 //! generic key-value map — so "config never touches security/guard/denylist
 //! policy" (ADR-005) is a structural fact, not a review-time hope.
-//!
-//! `#![allow(dead_code)]`: this module lands in T-3801, ahead of its call
-//! sites in `query.rs`/`mcp.rs` (T-3803/T-3805) — deliberate task-attribution
-//! granularity (C-002). Removed once those wire it in.
-#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::backend::BackendArg;
+use crate::backend::{BackendArg, BackendOpts};
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct Config {
@@ -137,6 +132,23 @@ pub fn load_layered(workspace: &Path) -> LoadedConfig {
         &project_config_path(workspace),
         user_config_path().as_deref(),
     )
+}
+
+/// Merge CLI-supplied `BackendOpts` with config-resolved fallbacks: each
+/// field keeps its CLI value if set, else falls back to `cfg`'s. Shared by
+/// `run_query` (mutates `args.backend_opts` in place) and `McpServer::launch`
+/// (mutates a local clone, since `McpArgs` is `&`) so the merge can't drift
+/// between the two surfaces — and, per the test-critic's C-001/C-003, so it
+/// has ONE call site that's directly unit-testable in isolation, rather than
+/// being inlined at each of the two (previously duplicated) launch sites.
+pub fn merge_backend_opts(mut opts: BackendOpts, cfg: &Config) -> BackendOpts {
+    opts.backend = opts.backend.take().or(cfg.backend);
+    opts.model_dir = opts.model_dir.take().or_else(|| cfg.model_dir.clone());
+    opts.model_file = opts.model_file.take().or_else(|| cfg.model_file.clone());
+    opts.model = opts.model.take().or_else(|| cfg.model.clone());
+    opts.api_base = opts.api_base.take().or_else(|| cfg.api_base.clone());
+    opts.api_key = opts.api_key.take().or_else(|| cfg.api_key.clone());
+    opts
 }
 
 #[cfg(test)]
@@ -267,5 +279,78 @@ mod tests {
         // Matches clap's own lowercase ValueEnum spelling ("mistral"/"openai").
         let cfg: Config = toml::from_str("backend = \"openai\"\n").unwrap();
         assert_eq!(cfg.backend, Some(BackendArg::Openai));
+    }
+
+    fn no_backend_opts() -> BackendOpts {
+        BackendOpts {
+            backend: None,
+            model_dir: None,
+            model_file: None,
+            model: None,
+            api_base: None,
+            api_key: None,
+            chat_template: None,
+            tokenizer_json: None,
+            tok_model_id: None,
+        }
+    }
+
+    /// Test-critic C-001/C-003: `merge_backend_opts` — the same masking-
+    /// hazard class T-3803's `model_key` fix caught, but for `BackendOpts`'
+    /// own fields — is now directly unit-tested in isolation, not just
+    /// "correct by inspection" at its two call sites.
+    #[test]
+    fn merge_backend_opts_config_only_backend_is_applied() {
+        let cfg = Config {
+            backend: Some(BackendArg::Openai),
+            ..Config::default()
+        };
+        let merged = merge_backend_opts(no_backend_opts(), &cfg);
+        assert_eq!(merged.backend, Some(BackendArg::Openai));
+    }
+
+    #[test]
+    fn merge_backend_opts_cli_flag_wins_over_config() {
+        let cfg = Config {
+            backend: Some(BackendArg::Openai),
+            ..Config::default()
+        };
+        let mut opts = no_backend_opts();
+        opts.backend = Some(BackendArg::Mistral);
+        let merged = merge_backend_opts(opts, &cfg);
+        assert_eq!(merged.backend, Some(BackendArg::Mistral));
+    }
+
+    /// The remaining five `BackendOpts` fields get the same config-only
+    /// precedence, in one pass — closing the rest of the C-001-class gap the
+    /// critic flagged (not just `backend`).
+    #[test]
+    fn merge_backend_opts_config_only_remaining_fields_are_applied() {
+        let cfg = Config {
+            model_dir: Some(PathBuf::from("/models")),
+            model_file: Some("m.gguf".to_string()),
+            model: Some("mockmodel".to_string()),
+            api_base: Some("http://example/v1".to_string()),
+            api_key: Some("key123".to_string()),
+            ..Config::default()
+        };
+        let merged = merge_backend_opts(no_backend_opts(), &cfg);
+        assert_eq!(merged.model_dir, Some(PathBuf::from("/models")));
+        assert_eq!(merged.model_file, Some("m.gguf".to_string()));
+        assert_eq!(merged.model, Some("mockmodel".to_string()));
+        assert_eq!(merged.api_base, Some("http://example/v1".to_string()));
+        assert_eq!(merged.api_key, Some("key123".to_string()));
+    }
+
+    #[test]
+    fn merge_backend_opts_cli_model_wins_over_config_model() {
+        let cfg = Config {
+            model: Some("config-model".to_string()),
+            ..Config::default()
+        };
+        let mut opts = no_backend_opts();
+        opts.model = Some("cli-model".to_string());
+        let merged = merge_backend_opts(opts, &cfg);
+        assert_eq!(merged.model, Some("cli-model".to_string()));
     }
 }

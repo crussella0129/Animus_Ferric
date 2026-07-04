@@ -383,12 +383,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     // `drive_real` below, not just this function's own `RunConfigArgs` build.
     let loaded_config = crate::config::load_layered(&workspace_root);
     let cfg = loaded_config.config;
-    args.backend_opts.backend = args.backend_opts.backend.take().or(cfg.backend);
-    args.backend_opts.model_dir = args.backend_opts.model_dir.take().or(cfg.model_dir);
-    args.backend_opts.model_file = args.backend_opts.model_file.take().or(cfg.model_file);
-    args.backend_opts.model = args.backend_opts.model.take().or(cfg.model);
-    args.backend_opts.api_base = args.backend_opts.api_base.take().or(cfg.api_base);
-    args.backend_opts.api_key = args.backend_opts.api_key.take().or(cfg.api_key);
+    args.backend_opts = crate::config::merge_backend_opts(args.backend_opts, &cfg);
     let resolved_params_b = args.params_b.or(cfg.params_b).unwrap_or(1.2);
     let resolved_quant = args
         .quant

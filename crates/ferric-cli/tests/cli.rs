@@ -510,6 +510,87 @@ fn config_only_model_still_resolves_profile() {
     );
 }
 
+/// Test-critic C-002: `max_ring` is named in-scope for config precedence
+/// (build-plan.md T-3803) but had no CLI-observable test — only `params_b`/
+/// `model` did. Set `max_ring = 0` ONLY via config (no `--max-ring` flag) at
+/// Small tier (`--params-b 8`, which otherwise offers Ring 1 too, per
+/// `max_ring_caps_the_offered_tools`); the cap must still apply.
+#[test]
+fn config_only_max_ring_caps_the_offered_tools() {
+    let ws = tempfile::tempdir().unwrap();
+    write_project_config(ws.path(), "max_ring = 0\n");
+
+    let out = ferric()
+        .args(["query", "--mock", "do a task", "--params-b", "8"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    let trace = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("a q-*.jsonl trace");
+    let content = std::fs::read_to_string(trace.path()).unwrap();
+    let offered: Vec<String> = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["event"]["type"] == "prompt_assembled")
+        .and_then(|v| {
+            v["event"]["offered_tools"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|t| t.as_str().map(String::from))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    assert!(
+        !offered.contains(&"search_files".to_string())
+            && offered.contains(&"write_file".to_string()),
+        "a config-only `max_ring = 0` must cap to the core, same as `--max-ring 0`: {offered:?}"
+    );
+}
+
+/// Test-critic C-002: same gap for `stream`. `--mock`'s NativeTools script has
+/// `text: None` (no observable streaming difference — see
+/// `stream_flag_mock_no_duplication`'s doc comment), so this uses
+/// `--protocol grammar`, where the mock's completion text IS the raw
+/// `{"tool":...}` JSON. With streaming active, the default `complete_
+/// streaming` fires ONE `Text` delta of that raw JSON (printed live), and the
+/// final echo is skipped (already-streamed) — so the raw JSON appears on
+/// stdout instead of the clean `"mock run complete"` line. That only happens
+/// if `resolved_stream` (config-only, no `--stream` flag) was actually true.
+#[test]
+fn config_only_stream_enables_live_output() {
+    let ws = tempfile::tempdir().unwrap();
+    write_project_config(ws.path(), "stream = true\n");
+
+    let out = ferric()
+        .args(["query", "--mock", "--protocol", "grammar", "do a task"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("\"tool\":\"task_complete\""),
+        "expected the raw streamed JSON (proving config-only `stream` took \
+         effect), got: {stdout:?}"
+    );
+}
+
 /// C-004 (plan-critic): a malformed `.ferric/config.toml` degrades to absent
 /// AND is traced as a `Note` — testable data, not just an unasserted
 /// `eprintln!`.

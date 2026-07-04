@@ -399,13 +399,7 @@ impl McpServer {
         // the real provider, not just protocol/tier selection.
         let loaded_config = crate::config::load_layered(&workspace_root);
         let cfg = loaded_config.config;
-        let mut backend_opts = args.backend_opts.clone();
-        backend_opts.backend = backend_opts.backend.take().or(cfg.backend);
-        backend_opts.model_dir = backend_opts.model_dir.take().or(cfg.model_dir);
-        backend_opts.model_file = backend_opts.model_file.take().or(cfg.model_file);
-        backend_opts.model = backend_opts.model.take().or(cfg.model);
-        backend_opts.api_base = backend_opts.api_base.take().or(cfg.api_base);
-        backend_opts.api_key = backend_opts.api_key.take().or(cfg.api_key);
+        let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
         let resolved_params_b = args.params_b.or(cfg.params_b).unwrap_or(1.2);
         let resolved_quant = args
             .quant
