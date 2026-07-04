@@ -226,9 +226,7 @@ pub async fn run(
                 break StopReason::TruncatedAction;
             }
             truncated_once = true;
-            messages.push(Message::user(
-                "Your last action was cut off by the token limit. Re-issue it more concisely.",
-            ));
+            messages.push(truncation_retry_message());
             continue;
         }
 
@@ -298,11 +296,7 @@ pub async fn run(
                 // small-model failure is repeat-not-terminate (it has the result
                 // but doesn't transition to task_complete). See ADR-031.
                 let repeated: Vec<&str> = actions.iter().map(|a| a.name.as_str()).collect();
-                messages.push(Message::user(format!(
-                    "You already called {} and have the result — do not call it again. \
-                     If the task is finished, call task_complete now with a one-sentence summary.",
-                    repeated.join(", ")
-                )));
+                messages.push(repetition_warn_message(&repeated));
             }
             crate::repetition::Verdict::Stop => {
                 sink.write_event(Event::RepetitionGuard {
@@ -323,12 +317,7 @@ pub async fn run(
                     action: "warned".to_string(),
                 })?;
                 let repeated: Vec<&str> = actions.iter().map(|a| a.name.as_str()).collect();
-                messages.push(Message::user(format!(
-                    "You have called {} repeatedly without finishing. If the task is \
-                     complete, call task_complete now; otherwise use a different tool or \
-                     arguments that move toward the goal.",
-                    repeated.join(", ")
-                )));
+                messages.push(no_progress_warn_message(&repeated));
             }
             crate::repetition::Verdict::Stop => {
                 sink.write_event(Event::NoProgressGuard {
@@ -404,10 +393,7 @@ pub async fn run(
                     sink.write_event(Event::FailureGuard {
                         action: "warned".to_string(),
                     })?;
-                    messages.push(Message::user(
-                        "Your last tool call(s) failed. Read the error message and try a \
-                         different approach, or call task_complete if you cannot proceed.",
-                    ));
+                    messages.push(failure_warn_message());
                 }
                 crate::repetition::Verdict::Stop => {
                     sink.write_event(Event::FailureGuard {
@@ -430,7 +416,12 @@ pub async fn run(
     })
 }
 
-fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
+/// `pub(crate)` (T-3903, sprint 39): shared with `replay.rs`, which
+/// reconstructs the same no-action nudge for a turn with zero `ToolCall`
+/// events — the exact original `TextXml` parse-error text isn't traceable
+/// (an accepted, narrow approximation), so replay always uses the bare
+/// template, never the `"XML parse error: {e}. "`-prefixed form.
+pub(crate) fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
     match protocol {
         ActionProtocol::NativeTools => "Respond with a tool call, or your final answer as text.",
         ActionProtocol::ConstrainedJson => {
@@ -442,10 +433,52 @@ fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
     }
 }
 
+/// The truncation-retry nudge (T-3903, sprint 39: extracted so `replay.rs`
+/// can reproduce it byte-for-byte for a `TurnEnd.truncated == true` turn).
+pub(crate) fn truncation_retry_message() -> Message {
+    Message::user("Your last action was cut off by the token limit. Re-issue it more concisely.")
+}
+
+/// The repetition guard's "warned" nudge (T-3903, sprint 39: extracted; NOT
+/// interchangeable with `no_progress_warn_message` — different wording for a
+/// different guard).
+pub(crate) fn repetition_warn_message(repeated: &[&str]) -> Message {
+    Message::user(format!(
+        "You already called {} and have the result — do not call it again. \
+         If the task is finished, call task_complete now with a one-sentence summary.",
+        repeated.join(", ")
+    ))
+}
+
+/// The no-progress guard's "warned" nudge (T-3903, sprint 39: extracted).
+pub(crate) fn no_progress_warn_message(repeated: &[&str]) -> Message {
+    Message::user(format!(
+        "You have called {} repeatedly without finishing. If the task is \
+         complete, call task_complete now; otherwise use a different tool or \
+         arguments that move toward the goal.",
+        repeated.join(", ")
+    ))
+}
+
+/// The repeated-failure guard's "warned" nudge (T-3903, sprint 39: extracted;
+/// static text, no arguments — unlike the other two guards' nudges).
+pub(crate) fn failure_warn_message() -> Message {
+    Message::user(
+        "Your last tool call(s) failed. Read the error message and try a \
+         different approach, or call task_complete if you cannot proceed.",
+    )
+}
+
 /// Feed a tool result back to the model. Native mode uses the template's tool
 /// role; grammar mode frames it as a user message (the template's tool role
-/// may misbehave without `tools` in context — ADR-015).
-fn result_message(protocol: ActionProtocol, call_id: &str, name: &str, output: &str) -> Message {
+/// may misbehave without `tools` in context — ADR-015). `pub(crate)` (T-3903,
+/// sprint 39): shared with `replay.rs`.
+pub(crate) fn result_message(
+    protocol: ActionProtocol,
+    call_id: &str,
+    name: &str,
+    output: &str,
+) -> Message {
     match protocol {
         ActionProtocol::NativeTools => Message::tool_result(call_id, output),
         // No tools are in context for these protocols, so the template's tool
