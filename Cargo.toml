@@ -10,6 +10,7 @@ members = [
     "crates/ferric-prompt",
     "crates/ferric-bench",
     "crates/ferric-research",
+    "crates/animus-launch",
     "crates/ferric-cli",
 ]
 
@@ -60,3 +61,4 @@ ferric-loop = { path = "crates/ferric-loop" }
 ferric-prompt = { path = "crates/ferric-prompt" }
 ferric-bench = { path = "crates/ferric-bench" }
 ferric-research = { path = "crates/ferric-research" }
+animus-launch = { path = "crates/animus-launch" }

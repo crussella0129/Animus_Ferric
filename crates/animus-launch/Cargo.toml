@@ -1,0 +1,13 @@
+[package]
+name = "animus-launch"
+description = "Animus Launch: a deterministic, LLM-free project bootstrapper (the GECK successor) — interview a spec, scaffold a git repo (main+dev) with a sprint-loop-ready skeleton (ADR-053)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
