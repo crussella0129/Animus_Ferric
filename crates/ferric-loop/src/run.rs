@@ -166,6 +166,15 @@ pub async fn run(
     let mut nudged_for_no_action = false;
     let mut truncated_once = false;
 
+    // Context-budget compaction (sprint 40, ADR-050). `head_len` covers the
+    // entire seeded history (fresh OR resumed) — on a resumed session only
+    // NEW turns generated after resuming are foldable, a deliberate v1 scope
+    // limit. `last_input_tokens` is the last real signal a completion
+    // reported; compaction is checked against it at the top of the NEXT
+    // iteration, before that turn's request is assembled.
+    let mut compactor = crate::compact::HistoryCompactor::new(messages.len());
+    let mut last_input_tokens: Option<u32> = None;
+
     let stop = 'outer: loop {
         if turns >= u32::from(args.policy.max_turns) {
             break StopReason::MaxTurns;
@@ -173,6 +182,22 @@ pub async fn run(
         let turn = turns;
         turns += 1;
         sink.write_event(Event::TurnStart { turn })?;
+        // Ordering is load-bearing (see compact.rs's module doc): this call
+        // must run AFTER the TurnStart write above, so any HistoryCompacted
+        // it traces always appears after TurnStart(current) in the file —
+        // exactly what lets replay()'s "commit on next TurnStart" rule
+        // safely finalize the previous turn before a fold reads it back out.
+        compactor.record_turn_start(turn, messages.len());
+        compactor
+            .maybe_compact(
+                args.provider,
+                args.sleeper,
+                sink,
+                args.policy,
+                &mut messages,
+                last_input_tokens,
+            )
+            .await?;
 
         // Build the request per protocol (ADR-010/ADR-015: constraint and
         // tools are mutually exclusive by construction — the invalid state is
@@ -252,6 +277,9 @@ pub async fn run(
             // T-3902 (sprint 39): needed to replay the truncation-retry nudge.
             truncated: completion.truncated,
         })?;
+        // Sprint 40: the freshest real token-count signal, checked by the
+        // compactor at the top of the NEXT iteration.
+        last_input_tokens = completion.input_tokens;
 
         // Constrained truncation (ADR-015): a completion cut off by the token
         // budget cannot be a valid action — do not parse it. Nudge once to

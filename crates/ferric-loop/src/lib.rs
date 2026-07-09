@@ -11,6 +11,7 @@
 //! runtime for mistral.rs).
 
 mod backoff;
+mod compact;
 mod failure;
 mod grammar;
 mod outcome;
