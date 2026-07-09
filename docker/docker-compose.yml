@@ -1,0 +1,49 @@
+# Animus platform topology — SIBLING containers, not Docker-in-Docker (ADR-051,
+# sprint 41). This is a design skeleton: only `ferric-core` is a real,
+# buildable service; the others are STUBS marking where future sprints land.
+#
+# Two problems, two tools (ADR-051):
+#   - Deployment flexibility (one machine → datacenter): sibling services here,
+#     Kubernetes-ready later. That's what this file is.
+#   - Untrusted-content isolation (Ornstein's "airlock"): a microVM-class
+#     sandbox (Docker Sandboxes / gVisor), NOT nested Docker — a separate
+#     concern from this topology, sequenced in a later sprint.
+#
+# `ferric` + its inference backend (llama-server) are CO-LOCATED in the single
+# `ferric-core` image (ADR-005 loopback-only pin — see docker/Dockerfile), never
+# split across containers.
+
+services:
+  # The one real service: the harness + its co-located inference backend.
+  ferric-core:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    # The workspace the harness acts on (ferric-guard + ADR-005 remain the real
+    # containment boundary inside the container; the mount is just what `ferric
+    # query` operates against).
+    volumes:
+      - ../workspace:/workspace
+    # Reachability for future sibling services is intentionally a COMMENT, not a
+    # live `ports:`/`networks:` directive (ADR-051): the Dockerfile publishes no
+    # port and binds llama-server to loopback INSIDE the container only. When
+    # Ornstein/chat become real services that need to reach ferric-core, an
+    # internal Docker network (not a host-published port) is the intended path —
+    # decided in the sprint that operationalizes them, not here.
+    restart: unless-stopped
+
+  # STUB — Ornstein quarantined-research service. Today Ornstein runs in-process
+  # within ferric-core (ferric-research crate). Whether it becomes its OWN
+  # container process, and whether its "airlock" is a microVM-class sandbox
+  # layer (Docker Sandboxes / gVisor, ADR-051), is a future increment
+  # (Ornstein inc 4 — the Web retriever + hardened container). No real image yet.
+  # ornstein-search:
+  #   image: TODO  # sprint TBD, ADR-051 airlock design
+  #   depends_on: [ferric-core]
+
+  # STUB — the raw chat surface (ADR-011 revision's unbuilt half). Its own build
+  # + dedicated security-boundary ADR are sprint 42, deferred by the user's
+  # explicit sprint-41 scope choice. No real image yet.
+  # chat:
+  #   image: TODO  # sprint 42, chat security-boundary ADR
+  #   depends_on: [ferric-core]
