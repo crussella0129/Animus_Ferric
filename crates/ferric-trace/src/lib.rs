@@ -86,6 +86,11 @@ mod tests {
             Event::Note {
                 text: "checkpoint".to_string(),
             },
+            Event::HistoryCompacted {
+                through_turn: 4,
+                dropped_turns: 5,
+                summary: "created a.txt and b.txt".to_string(),
+            },
             Event::SessionEnd {
                 reason: "done".to_string(),
             },
@@ -293,6 +298,20 @@ mod tests {
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: Event = serde_json::from_str(&encoded).unwrap();
         assert_eq!(event, decoded);
+    }
+
+    /// T-4001 (sprint 40): `Event::HistoryCompacted` round-trips exactly.
+    #[test]
+    fn history_compacted_roundtrip() {
+        let event = Event::HistoryCompacted {
+            through_turn: 6,
+            dropped_turns: 7,
+            summary: "wrote out.txt then read config.json".to_string(),
+        };
+        let encoded = serde_json::to_string(&event).unwrap();
+        let decoded: Event = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(event, decoded);
+        assert!(encoded.contains("wrote out.txt then read config.json"));
     }
 
     #[test]

@@ -34,6 +34,25 @@ fn trace_cat_renders_unknown() {
     assert!(stdout.contains("session end (done)"));
 }
 
+/// T-4005 (sprint 40): `ferric trace cat` legibly renders `HistoryCompacted`.
+#[test]
+fn trace_cat_renders_history_compacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("trace.jsonl");
+    let lines = [
+        r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"history_compacted","through_turn":2,"dropped_turns":3,"summary":"did a, b, c"}}"#,
+    ];
+    std::fs::write(&path, lines.join("\n")).unwrap();
+
+    let out = ferric().args(["trace", "cat"]).arg(&path).output().unwrap();
+    assert!(out.status.success(), "exit code must be 0");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("history compacted"));
+    assert!(stdout.contains("folded 3 turns"));
+    assert!(stdout.contains("through turn 2"));
+    assert!(stdout.contains("did a, b, c"));
+}
+
 #[test]
 fn no_args_fails_with_usage() {
     let out = ferric().output().unwrap();

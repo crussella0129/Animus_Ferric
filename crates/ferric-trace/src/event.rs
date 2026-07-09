@@ -135,4 +135,20 @@ pub enum Event {
     Note {
         text: String,
     },
+    /// Older turns were folded into one synthetic summary message because
+    /// `input_tokens` crossed the context-budget trigger fraction (sprint 40,
+    /// ADR-050). `through_turn` names the highest-numbered folded turn
+    /// (absolute turn number, matching `TurnStart.turn`); turns numbered
+    /// `<= through_turn` are represented solely by `summary` from this point
+    /// on. `dropped_turns` is the count folded THIS round (informational —
+    /// `through_turn` is what a reader needs to reconstruct state; repeated
+    /// compactions each supersede the prior one, so only the LATEST
+    /// `HistoryCompacted` in a trace matters for reconstruction). A brand-new
+    /// variant, not an extension of an existing one — no `#[serde(default)]`
+    /// needed (old readers already tolerate unknown variants, ADR-002).
+    HistoryCompacted {
+        through_turn: u32,
+        dropped_turns: u32,
+        summary: String,
+    },
 }

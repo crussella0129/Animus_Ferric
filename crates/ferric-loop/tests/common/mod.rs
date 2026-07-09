@@ -225,6 +225,7 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
             ParsedEvent::Known(Event::ToolCall { .. }) => "tool_call",
             ParsedEvent::Known(Event::ToolResult { .. }) => "tool_result",
             ParsedEvent::Known(Event::Note { .. }) => "note",
+            ParsedEvent::Known(Event::HistoryCompacted { .. }) => "history_compacted",
             ParsedEvent::Unknown(_) => "unknown",
         })
         .collect()
