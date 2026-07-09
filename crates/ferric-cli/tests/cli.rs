@@ -1246,3 +1246,107 @@ fn chat_talk_turn_is_not_dispatched() {
         "talk mode must not write to the workspace"
     );
 }
+
+// ---- T-4304 (sprint 43): `ferric launch` subprocess tests ---------------------
+// A new stdin-piping helper modeled on `run_chat_mock`'s SHAPE (not the literal
+// fn — it hardcodes `chat --mock`; plan-critic C-005). Returns (stdout, status).
+fn run_launch(args: &[&std::ffi::OsStr], stdin_input: &str) -> (String, std::process::ExitStatus) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut cmd = ferric();
+    cmd.arg("launch");
+    cmd.args(args);
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(stdin_input.as_bytes()).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    (String::from_utf8_lossy(&out.stdout).to_string(), out.status)
+}
+
+#[test]
+fn launch_noninteractive_scaffolds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("demo");
+    let (stdout, status) = run_launch(
+        &[
+            "--name".as_ref(),
+            "demo".as_ref(),
+            "--path".as_ref(),
+            target.as_os_str(),
+            "--goal".as_ref(),
+            "a tiny CLI".as_ref(),
+        ],
+        "", // no stdin needed — all fields supplied
+    );
+    assert!(status.success(), "launch should succeed; stdout: {stdout}");
+    assert!(stdout.contains("Scaffolded"), "report on stdout: {stdout}");
+    // A real repo with the skeleton.
+    assert!(target.join(".git").is_dir());
+    assert!(target.join("README.md").exists());
+    assert!(target.join("agent-tasks").join("agent-tasks.md").exists());
+    // main + dev exist.
+    let branches = std::process::Command::new("git")
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(&target)
+        .output()
+        .unwrap();
+    let branches = String::from_utf8_lossy(&branches.stdout);
+    assert!(
+        branches.contains("main") && branches.contains("dev"),
+        "branches: {branches}"
+    );
+}
+
+#[test]
+fn launch_interactive_scaffolds_from_stdin() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("ip");
+    // --path is supplied; name + goal are piped (in that fixed order).
+    let (stdout, status) = run_launch(
+        &["--path".as_ref(), target.as_os_str()],
+        "interproj\na piped goal\n",
+    );
+    assert!(
+        status.success(),
+        "interactive launch should succeed; stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("interproj"),
+        "report names the project: {stdout}"
+    );
+    assert!(target.join(".git").is_dir());
+    let readme = std::fs::read_to_string(target.join("README.md")).unwrap();
+    assert!(readme.contains("interproj") && readme.contains("a piped goal"));
+}
+
+#[test]
+fn launch_refuses_to_clobber_nonempty() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("occupied");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("keep.txt"), "mine").unwrap();
+    let (_stdout, status) = run_launch(
+        &[
+            "--name".as_ref(),
+            "x".as_ref(),
+            "--path".as_ref(),
+            target.as_os_str(),
+            "--goal".as_ref(),
+            "g".as_ref(),
+        ],
+        "",
+    );
+    assert!(!status.success(), "must refuse to clobber a non-empty dir");
+    assert_eq!(
+        std::fs::read_to_string(target.join("keep.txt")).unwrap(),
+        "mine"
+    );
+    assert!(!target.join(".git").exists());
+}
