@@ -1,0 +1,25 @@
+# Build context excludes for docker/Dockerfile (sprint 41, ADR-051).
+# Keeps `COPY . .` in the build stage lean — only source needed to `cargo build`.
+
+# Rust build output (rebuilt inside the container).
+target/
+
+# VCS + CI metadata.
+.git/
+.github/
+
+# Ephemeral sprint-loop working memory (gitignored; not needed to build).
+sprints/
+
+# Editor/OS cruft.
+.vscode/
+.idea/
+**/*.swp
+.DS_Store
+
+# The docker artifacts themselves don't belong in their own build context.
+docker/
+
+# Local model blobs / traces if any ever land in-tree (never needed to build).
+**/*.gguf
+**/.ferric/

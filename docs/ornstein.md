@@ -154,9 +154,14 @@ the existing `check(permission, path)` call, once digests enter the loop's conte
 ## Sequenced next (ADR-040–044) — build order: Local FS ✅ → Tailnet/NAS ✅ → orchestrator ✅ → CaMeL primitive ✅ → Web
 - **Live SSH E2E** for the tailnet plane — once a target's sshd is up (Termux `Plain{8022}` on the
   Pixel, or `Tailscale` on switchblade when back online).
-- **Web `Retriever`** + hardened **container** + **allowlist egress proxy** (bollard/gVisor) — the
-  online plane and the *code*-escape leg; its security layer lands last (the exfil leg lives here).
-  *(Gated on a containerizer — none installed yet.)*
+- **Web `Retriever`** + a hardened **sandbox** + **allowlist egress proxy** — the online plane and
+  the *code*-escape leg; its security layer lands last (the exfil leg lives here). **The airlock is
+  a microVM-class sandbox** — [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (a
+  hypervisor boundary with no host-daemon access) primary, gVisor (userspace-kernel syscall
+  interception) the Linux-native alternative — **not Docker-in-Docker** (a shared-kernel
+  anti-pattern for untrusted-content isolation; ADR-051). *(Earlier notes said "bollard/gVisor";
+  bollard is a container-orchestration client library, not an isolation mechanism — corrected in
+  ADR-051.)* **Docker is now installed** (2026-07-09) — this increment is no longer install-blocked.
 - **Wire the sink policy into the dispatch chokepoint + populate the `TaintSet`** as digests enter
   the loop's context — **Loop research-phase wiring** (a sprint-loops change).
 - A live small-model run to measure summarization *quality* (the quarantine's *safety* is already
