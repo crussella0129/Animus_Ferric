@@ -57,6 +57,10 @@ pub enum ReplayError {
 /// whether it's confirmed complete or dangling.
 #[derive(Default)]
 struct PendingTurn {
+    /// The absolute turn number that opened this buffer (from the
+    /// `TurnStart{turn}` event) — sprint 40, needed by `HistoryCompacted`
+    /// reconstruction to know which committed turns a fold covers.
+    turn: u32,
     /// `(text, truncated)` from this turn's `TurnEnd`, once seen.
     turn_end: Option<(Option<String>, bool)>,
     /// `ToolCall` events for this turn, in trace order (includes the
@@ -138,6 +142,12 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     let mut last_text: Option<String> = None;
     let mut pending: Option<PendingTurn> = None;
     let mut session_prompt_seen = false;
+    // Sprint 40 (ADR-050): the fixed index a fold never crosses (right after
+    // `[system, user]` is pushed), and (absolute turn number, start index in
+    // `messages`) for every COMMITTED turn — needed to reconstruct a
+    // `HistoryCompacted` fold retroactively.
+    let mut head_len: usize = 0;
+    let mut committed_turn_starts: Vec<(u32, usize)> = Vec::new();
 
     // Commits the currently-open pending turn (a later TurnStart confirms it
     // finished dispatching) and starts a fresh one.
@@ -145,6 +155,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
         () => {
             if let Some(p) = pending.take() {
                 let proto = protocol.ok_or(ReplayError::MissingSessionPrompt)?;
+                let turn_num = p.turn;
                 if let Some(msgs) = p.finalize(proto) {
                     // Track NativeTools' "best-effort final text" the same way
                     // run() does: last non-empty text across committed turns.
@@ -155,6 +166,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                     {
                         last_text = Some(t.clone());
                     }
+                    committed_turn_starts.push((turn_num, messages.len()));
                     messages.extend(msgs);
                     turns += 1;
                 }
@@ -179,10 +191,41 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                 messages.push(Message::system(system));
                 messages.push(Message::user_with_media(user, media));
                 session_prompt_seen = true;
+                head_len = messages.len();
             }
-            ParsedEvent::Known(Event::TurnStart { .. }) => {
+            ParsedEvent::Known(Event::TurnStart { turn }) => {
                 commit_and_reset!();
-                pending = Some(PendingTurn::default());
+                pending = Some(PendingTurn {
+                    turn,
+                    ..Default::default()
+                });
+            }
+            ParsedEvent::Known(Event::HistoryCompacted {
+                through_turn,
+                summary,
+                ..
+            }) => {
+                // Safe by construction: `HistoryCompacted` is always traced
+                // AFTER `TurnStart(current)` (run.rs's wiring), which already
+                // ran `commit_and_reset!()` above for the previous turn — so
+                // every turn numbered `<= through_turn` is already committed.
+                let split_at = committed_turn_starts.partition_point(|&(t, _)| t <= through_turn);
+                if split_at > 0 {
+                    let preserve_from_idx = committed_turn_starts
+                        .get(split_at)
+                        .map(|&(_, idx)| idx)
+                        .unwrap_or(messages.len());
+                    let preserved_tail: Vec<Message> = messages[preserve_from_idx..].to_vec();
+                    messages.truncate(head_len);
+                    messages.push(Message::user(format!("[compacted history] {summary}")));
+                    let new_base = messages.len();
+                    messages.extend(preserved_tail);
+                    let shift = preserve_from_idx - new_base;
+                    committed_turn_starts = committed_turn_starts[split_at..]
+                        .iter()
+                        .map(|&(t, idx)| (t, idx - shift))
+                        .collect();
+                }
             }
             ParsedEvent::Known(Event::TurnEnd {
                 text, truncated, ..
@@ -781,5 +824,203 @@ mod tests {
             Err(ReplayError::AlreadyStopped(reason)) => assert_eq!(reason, "final_text"),
             other => panic!("expected AlreadyStopped, got {other:?}"),
         }
+    }
+
+    fn turn_events(turn: u32, tool: &str, output: &str) -> Vec<Event> {
+        let id = format!("tc-{turn}");
+        vec![
+            Event::TurnStart { turn },
+            Event::TurnEnd {
+                turn,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: Some(50),
+                output_tokens: Some(10),
+                truncated: false,
+            },
+            Event::ToolCall {
+                id: id.clone(),
+                name: tool.to_string(),
+                args: json!({}),
+            },
+            Event::ToolResult {
+                id,
+                name: tool.to_string(),
+                output: output.to_string(),
+                is_error: false,
+                duration_ms: 1,
+            },
+        ]
+    }
+
+    /// Sprint 40 (ADR-050): a single `HistoryCompacted` fold reconstructs
+    /// `messages` with the folded turns dropped, the summary inserted after
+    /// the head, and the preserved tail byte-identical/ordered. Places
+    /// `HistoryCompacted` in its REAL shape (right after the triggering
+    /// turn's own `TurnStart`, before its `TurnEnd`) for fixture realism,
+    /// matching `run.rs`'s actual output — but this positioning is NOT
+    /// load-bearing for what THIS test verifies: the match arm reconstructs
+    /// from `committed_turn_starts` alone (advanced only via `TurnStart`),
+    /// never touching `pending`, so the result is identical wherever the
+    /// event sits within turn 5's own span. The byte-order invariant itself
+    /// (test-critic C-002) is verified end-to-end by
+    /// `history_compacted_traced_after_triggering_turn_start` in
+    /// `compaction_tests.rs`, against a REAL `run()`-produced trace.
+    #[test]
+    fn replay_applies_one_history_compaction() {
+        let mut events = vec![
+            Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: None,
+            },
+            policy_selected(ActionProtocol::NativeTools),
+            session_prompt(),
+        ];
+        events.extend(turn_events(0, "tool_a", "a-out"));
+        events.extend(turn_events(1, "tool_b", "b-out"));
+        events.extend(turn_events(2, "tool_c", "c-out"));
+        events.extend(turn_events(3, "tool_d", "d-out"));
+        events.extend(turn_events(4, "tool_e", "e-out"));
+        // Turn 5 triggers a fold covering turns 0-2 (KEEP_LAST_TURNS=2 shape:
+        // turns 3,4 survive verbatim).
+        events.push(Event::TurnStart { turn: 5 });
+        events.push(Event::HistoryCompacted {
+            through_turn: 2,
+            dropped_turns: 3,
+            summary: "did a, b, c".to_string(),
+        });
+        events.push(Event::TurnEnd {
+            turn: 5,
+            text: None,
+            tool_call_count: 1,
+            input_tokens: Some(50),
+            output_tokens: Some(10),
+            truncated: false,
+        });
+        events.push(Event::ToolCall {
+            id: "tc-5".to_string(),
+            name: "tool_f".to_string(),
+            args: json!({}),
+        });
+        events.push(Event::ToolResult {
+            id: "tc-5".to_string(),
+            name: "tool_f".to_string(),
+            output: "f-out".to_string(),
+            is_error: false,
+            duration_ms: 1,
+        });
+        events.push(Event::TurnStart { turn: 6 }); // confirms turn 5 committed
+
+        let (_dir, path) = write_trace(&events);
+        let replayed = replay(&path).unwrap();
+
+        assert_eq!(replayed.messages.len(), 9);
+        assert_eq!(
+            replayed.messages[2].text.as_deref(),
+            Some("[compacted history] did a, b, c")
+        );
+        assert_eq!(replayed.messages[3].tool_calls[0].name, "tool_d");
+        assert_eq!(replayed.messages[5].tool_calls[0].name, "tool_e");
+        assert_eq!(replayed.messages[7].tool_calls[0].name, "tool_f");
+        assert_eq!(replayed.turns, 6, "total commits, folded or not");
+    }
+
+    /// Sprint 40: a SECOND `HistoryCompacted` later in the same trace folds
+    /// the surviving tail from the first fold together with newly-eligible
+    /// turns into ONE new summary — the old summary message must not linger
+    /// alongside the new one.
+    #[test]
+    fn replay_applies_two_sequential_history_compactions() {
+        let mut events = vec![
+            Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: None,
+            },
+            policy_selected(ActionProtocol::NativeTools),
+            session_prompt(),
+        ];
+        events.extend(turn_events(0, "tool_a", "a-out"));
+        events.extend(turn_events(1, "tool_b", "b-out"));
+        events.extend(turn_events(2, "tool_c", "c-out"));
+        events.extend(turn_events(3, "tool_d", "d-out"));
+        events.extend(turn_events(4, "tool_e", "e-out"));
+        events.push(Event::TurnStart { turn: 5 });
+        events.push(Event::HistoryCompacted {
+            through_turn: 2,
+            dropped_turns: 3,
+            summary: "did a, b, c".to_string(),
+        });
+        events.push(Event::TurnEnd {
+            turn: 5,
+            text: None,
+            tool_call_count: 1,
+            input_tokens: Some(50),
+            output_tokens: Some(10),
+            truncated: false,
+        });
+        events.push(Event::ToolCall {
+            id: "tc-5".to_string(),
+            name: "tool_f".to_string(),
+            args: json!({}),
+        });
+        events.push(Event::ToolResult {
+            id: "tc-5".to_string(),
+            name: "tool_f".to_string(),
+            output: "f-out".to_string(),
+            is_error: false,
+            duration_ms: 1,
+        });
+        events.extend(turn_events(6, "tool_g", "g-out"));
+        events.extend(turn_events(7, "tool_h", "h-out"));
+        // Turn 8 triggers a SECOND fold covering turns 3-5 (the surviving
+        // tail from fold 1, plus the new turn 5) — turns 6,7 now survive.
+        events.push(Event::TurnStart { turn: 8 });
+        events.push(Event::HistoryCompacted {
+            through_turn: 5,
+            dropped_turns: 3,
+            summary: "did d, e, f".to_string(),
+        });
+        events.push(Event::TurnEnd {
+            turn: 8,
+            text: None,
+            tool_call_count: 1,
+            input_tokens: Some(50),
+            output_tokens: Some(10),
+            truncated: false,
+        });
+        events.push(Event::ToolCall {
+            id: "tc-8".to_string(),
+            name: "tool_i".to_string(),
+            args: json!({}),
+        });
+        events.push(Event::ToolResult {
+            id: "tc-8".to_string(),
+            name: "tool_i".to_string(),
+            output: "i-out".to_string(),
+            is_error: false,
+            duration_ms: 1,
+        });
+        events.push(Event::TurnStart { turn: 9 }); // confirms turn 8 committed
+
+        let (_dir, path) = write_trace(&events);
+        let replayed = replay(&path).unwrap();
+
+        assert_eq!(replayed.messages.len(), 9);
+        assert_eq!(
+            replayed.messages[2].text.as_deref(),
+            Some("[compacted history] did d, e, f"),
+            "the LATEST fold's summary, not the first"
+        );
+        assert!(
+            !replayed
+                .messages
+                .iter()
+                .any(|m| m.text.as_deref() == Some("[compacted history] did a, b, c")),
+            "the first fold's summary must not linger alongside the second"
+        );
+        assert_eq!(replayed.messages[3].tool_calls[0].name, "tool_g");
+        assert_eq!(replayed.messages[5].tool_calls[0].name, "tool_h");
+        assert_eq!(replayed.messages[7].tool_calls[0].name, "tool_i");
+        assert_eq!(replayed.turns, 9, "total commits across both folds");
     }
 }

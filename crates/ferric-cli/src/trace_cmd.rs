@@ -145,6 +145,21 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             format!("permission {decision}: {path}{detail}")
         }
         ParsedEvent::Known(Event::Note { text }) => format!("note: {text}"),
+        ParsedEvent::Known(Event::HistoryCompacted {
+            through_turn,
+            dropped_turns,
+            summary,
+        }) => {
+            let preview: String = summary.chars().take(120).collect();
+            let ellipsis = if summary.chars().count() > 120 {
+                "…"
+            } else {
+                ""
+            };
+            format!(
+                "history compacted: folded {dropped_turns} turns (through turn {through_turn}): {preview}{ellipsis}"
+            )
+        }
         ParsedEvent::Unknown(raw) => {
             let kind = raw
                 .get("type")

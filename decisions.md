@@ -490,3 +490,78 @@ resume). Full research/plan/critique in `sprints/s39/`.
   launch-time-fixed design, ADR-046, has no per-`tools/call` trace-file selection mechanism);
   `--save-interval` in any form (dropped from this sprint entirely, reframed into the sprint 40
   compaction work instead).
+
+## ADR-050 — 2026-07-04 (sprint 40): context-budget compaction — `HistoryCompactor`
+Carved out of sprint 39's research when the user reframed `--save-interval`, unprompted, into
+context-budget compaction. `RunPolicy.prompt_budget_tokens` (70% of `ModelProfile.ctx`, tier-capped,
+`crates/ferric-core/src/scale.rs`) was computed and traced (`Event::PolicySelected`) but never
+enforced anywhere in `run.rs` — nothing stopped the ever-growing `messages: Vec<Message>` from
+exceeding the model's real context window over a long session. Full research/plan/critique in
+`sprints/s40/`.
+- **Model-driven summarization, always-on, no CLI flag.** `HistoryCompactor` (new
+  `crates/ferric-loop/src/compact.rs`) mirrors the repetition/no-progress/failure guards' precedent
+  (ADR-037/038: unconditional construction at loop start) — safe because the trigger is a real,
+  numeric threshold no existing (short) session/test can accidentally cross. Trigger: the last
+  known `completion.input_tokens` reaches 85% of `policy.prompt_budget_tokens` (a `deepagents`-
+  style precedent found in research; the user specified the mechanism, not an exact fraction).
+  `KEEP_LAST_TURNS = 2` — the most recent 2 turns always survive verbatim (mirrors the Microsoft
+  Agent Framework's `MinimumPreserved`/`keep_last_groups` floor, one of two external references
+  reviewed during research). Both are fixed constants for v1, not per-tier `RunPolicy` fields —
+  keeps the blast radius small (no `scale.rs`/tier-table changes); per-tier tuning is a clean future
+  follow-on, not required for the mechanism to be proven.
+- **Turn-number tracking is ABSOLUTE, not relative — a design correction made during the plan-critic
+  pass.** An earlier draft planned a `turn_offset` accumulator to re-key turn numbers after each
+  fold; the plan-critic found its role and update formula were never derived, only asserted (and
+  separately found that `replay.rs`'s real `TurnStart{ .. }` match arm discards the turn number
+  entirely — extending it required real new plumbing, not a drop-in addition). The shipped design
+  removes the offset scheme entirely: both `HistoryCompactor` (`run.rs` side) and `replay()`'s
+  reconstruction walk (`replay.rs` side) track `Vec<(u32 absolute_turn_number, usize
+  start_index_in_messages)>` directly. This makes the fold-span boundary a closed form
+  (`fold_to_idx = completed[fold_count].1` — "the start index of the first entry beyond the folded
+  range," by construction of the slice split, no off-by-one derivation needed) and makes a resumed
+  session's compactor (which may start counting from a nonzero `turns`) need zero special-casing —
+  absolute numbers just work regardless of where counting starts.
+- **The `replay()` extension is required, not optional — closing the sprint's single biggest risk.**
+  Sprint 39's `replay()` had no concept of a mid-session history rewrite. Without extending it, a
+  `--resume` of a compacted-then-killed session would resurrect the FULL pre-compaction history,
+  silently defeating this sprint's entire purpose for exactly the long-running-session case that
+  motivated it. `replay()` now tracks `committed_turn_starts: Vec<(u32, usize)>` (pushed inside
+  `commit_and_reset!()`, using a new `PendingTurn.turn: u32` field captured from `TurnStart{turn}` —
+  previously discarded) and, on `Event::HistoryCompacted{through_turn, summary, ..}`, partitions
+  committed turns at `through_turn` (`partition_point`), truncates `messages` back to `head_len`,
+  inserts the summary, and re-appends the preserved tail at shifted indices. Handles repeated
+  compactions naturally: a second fold just re-partitions whatever survives from the first.
+- **The ordering invariant is structural, not just conventional.** `HistoryCompactor::
+  record_turn_start` for the CURRENT turn must run before `maybe_compact` — this is what lets the
+  compactor's `completed` slice structurally exclude the in-flight turn (never just a code-review
+  convention), and it's what lets `HistoryCompacted` always land in the trace AFTER
+  `TurnStart(current)`, which is what lets `replay()`'s pre-existing "commit on next TurnStart" rule
+  (ADR-049) safely finalize the previous turn before a fold reads it back out. A direct regression
+  test (`history_compacted_traced_after_triggering_turn_start`) asserts the real trace byte-order,
+  not just the downstream message-count effect (a plan-critic finding: "load-bearing" ordering
+  claims deserve a direct test, not just correctness-by-convention).
+- **Same-provider reuse — a documented architectural divergence.** Every framework surveyed in
+  research (Microsoft Agent Framework, LangChain's autonomous context compression) assumes a
+  cheaper, separate model dedicated to summarization. Ferric runs one local GGUF model per session —
+  there is no second model to delegate to, so the summarizer reuses the SAME `provider` via the
+  existing `complete_with_backoff` (accepting its retry policy's up to ~1.75s worst-case latency on
+  a failed attempt as a cost, not a new one — reusing existing machinery beats inventing a second
+  completion-calling convention).
+- **Summarizer failure is non-fatal.** A provider error or empty summarizer output logs one
+  `Event::Note` ("compaction skipped: ...") and leaves `messages` unchanged — compaction never
+  aborts a session; matches the project's established surfaced-but-non-fatal convention (e.g.
+  media-skip in `query.rs`).
+- **Resume interaction: the entire replayed history is the compactor's protected head.**
+  `ReplayedState` (sprint 39) exposes only a flat `Vec<Message>`, no turn-boundary metadata — a
+  resumed run's `HistoryCompactor::new(head_len)` is constructed with `head_len` covering the FULL
+  seeded history, so only NEW turns generated after resuming are foldable. This is a deliberate,
+  documented v1 scope limit (the resumed prefix's size is already bounded at whatever it was when
+  the original session last compacted or ended), not a correctness gap.
+- **Explicit deferrals:** per-tier `COMPACT_TRIGGER_FRACTION`/`KEEP_LAST_TURNS` tuning (fixed
+  constants suffice to prove the mechanism); chunked summarization for a pathologically large first
+  fold (if a session runs long enough before ever triggering compaction, the foldable span itself
+  could be large enough to strain the summarizer's own context — noted in research as a real risk,
+  intentionally not solved this sprint); a hard truncation backstop for when even the summarizer's
+  own output keeps the budget exceeded (would sit behind summarization as an emergency fallback, not
+  replace it — matches the "Cure not Prevention" framing from research, with truncation reserved as
+  the last resort).
