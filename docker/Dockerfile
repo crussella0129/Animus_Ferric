@@ -13,8 +13,14 @@
 # future chat/MCP surfaces are SEPARATE sibling services, never nested here.
 
 # ---- Stage 1: build the `ferric` binary --------------------------------------
-# Pinned to the workspace toolchain (rust-toolchain.toml: 1.96).
-FROM rust:1.96-slim AS build
+# Pinned to the workspace toolchain (rust-toolchain.toml: 1.96). The `-bookworm`
+# tag is LOAD-BEARING: it must match the runtime stage's Debian release so the
+# built binary's GLIBC requirement (dynamic-linked) is satisfiable at runtime.
+# A bare `rust:1.96-slim` tracks a newer Debian (trixie, GLIBC 2.39) and the
+# resulting `ferric` fails on bookworm with "GLIBC_2.39 not found" — caught only
+# by actually RUNNING the image (T-4105 live validation), not by `docker build`
+# succeeding.
+FROM rust:1.96-slim-bookworm AS build
 
 # --features backend-openai is MANDATORY: ferric-cli's `default = []`, so a
 # plain release build produces a `ferric` that CANNOT drive the co-located
