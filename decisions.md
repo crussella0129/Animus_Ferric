@@ -660,3 +660,42 @@ owns decoding" thesis and therefore needs its own explicit boundary. The user ch
 - **Explicit deferrals:** a fancy TUI (plain stdin line-reading first); talk-mode streaming;
   a dedicated `Event::ChatTurn` trace variant (talk turns reuse `Note` for v1); wiring chat into the
   Animus IDE (a separate organ).
+
+## ADR-053 — 2026-07-09 (sprint 43): Animus Launch — the GECK-successor bootstrapper (`ferric launch`), increment 1
+Animus Launch is a named Animus-suite pillar (memory `animus-suite-direction`): "interview about
+goals → scaffold a git repo with main+dev already established → hand off to the Loop", living as a
+crate in the Ferric monorepo. This starts it. Research found GECK (`~/GECK`) is Python-only (the
+memory's "partial Rust geck-cli" was stale) and does macro-prompt/memory scaffolding but **no git
+bootstrapping** — so Launch's distinct value is the deterministic "interview → real git repo
+(main+dev) + a sprint-loop-ready skeleton" flow. The user chose to build **both** the deterministic
+scaffolder and the interactive interview in increment 1. Full research/plan/critique in
+`sprints/s43/`.
+- **Launch has a genuinely DIFFERENT security posture — the key architectural point.** It is
+  **user-run, deterministic, and LLM-free**: it CREATES a new project workspace at an arbitrary
+  path, so it is NOT a workspace-scoped agent operation. `ferric-guard`'s containment (which
+  confines an *agent* to one workspace, ADR-005) does not apply and is deliberately not forced onto
+  it. The **one real safety property is refuse-to-clobber**: `scaffold` proceeds only if the target
+  `!exists()` OR (`is_dir()` AND is empty, counting hidden entries like `.git` as non-empty); a path
+  that exists but is not a directory is refused. There is no LLM in the loop, so there is no agentic
+  risk to contain — the risk is only "don't destroy the user's existing files," which the
+  precondition covers.
+- **Git is a named subprocess boundary (ADR-013).** `scaffold` shells out to `git` via
+  `std::process::Command` as a closed set of subcommands (`init`, `add`, `commit`, `branch`) — never
+  a shell, never an arbitrary command — the same auditability posture as `ferric server` → `llama-
+  server`. Each git step runs to completion, its exit status is checked, and stderr is captured into
+  a typed `LaunchError::Git` on failure (so a failed `commit` never silently proceeds). The initial
+  commit uses a **fixed `-c user.name`/`-c user.email` identity** so the scaffold commit works even
+  where git has no global identity (CI); the user makes their own-identity commits thereafter. The
+  branch setup is `git init` → commit → `git branch -M main` (rename the default branch → `main`,
+  portable across git versions) → `git branch dev`.
+- **Placement:** a new `animus-launch` **library crate** holds the deterministic scaffolding logic
+  (`LaunchSpec`, validators, `derive_initial_tasks`, `scaffold`), and a `ferric launch` **subcommand**
+  drives it — mirroring `ferric-research` (Ornstein logic) ↔ `ferric-cli` (surface). Additive to the
+  CLI-first one-binary design (ADR-011), exactly as `mcp`/`chat` were.
+- **The interview is a hand-rolled plain-stdin wizard (no new dependency)** — matching the
+  conservative allowlist (ADR-004) and the sprint-42 chat-REPL precedent. The answer→spec logic is a
+  PURE function (`spec_from_answers`, unit-tested); prompts print to **stderr** (stdout stays the
+  final report), only for fields not supplied by flags, in the fixed order name → path → goal.
+- **Explicit deferrals (inc 2+):** the full GECK-style project-type *profile library* (inc 1 has a
+  bare `--type` passthrough or none); the "begin work?" **Loop auto-hand-off** that actually launches
+  a first sprint; environment detection; richer goal→task NLP; a fancy TUI.

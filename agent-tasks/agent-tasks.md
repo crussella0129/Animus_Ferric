@@ -241,3 +241,21 @@ file, mirroring `ferric mcp`, C-002); plus the mock/real provider+executor split
 call dispatches nothing, opens no agentic trace, touches no workspace file). 6 unit + 4 CLI
 subprocess tests (the suite's first stdin-piping harness). All 4 build tasks shipped; research +
 plan + critique in `sprints/s42/`. See completed-tasks.md for per-task detail.
+
+## Sprint 43 (Animus Launch increment 1 — `ferric launch`) — IN PROGRESS
+
+- [ ] T-4301 (sprint 43): ADR-053 — Animus Launch (distinct non-agent/LLM-free posture,
+      refuse-to-clobber, git-subprocess boundary, crate/subcommand placement) — touches:
+      `decisions.md`
+- [ ] T-4302 (sprint 43): `animus-launch` crate — `LaunchSpec` + validators + `scaffold()` (git
+      main+dev + sprint-loop skeleton, refuse-to-clobber) — touches: new
+      `crates/animus-launch/{Cargo.toml,src/lib.rs}`, workspace `Cargo.toml`
+- [ ] T-4303 (sprint 43): `ferric launch` subcommand + hand-rolled-stdin interview + wire into
+      `main.rs` — touches: new `crates/ferric-cli/src/launch.rs`, `crates/ferric-cli/src/main.rs`,
+      `crates/ferric-cli/Cargo.toml`
+- [ ] T-4304 (sprint 43): tests — animus-launch unit + integration (scaffold tempdir, clobber
+      edges) + CLI subprocess (non-interactive + piped-stdin) — touches:
+      `crates/animus-launch`, `crates/ferric-cli/src/launch.rs`, `crates/ferric-cli/tests/cli.rs`
+- [ ] T-4305 (sprint 43): docs — README + `main.rs` surface doc + agent-tasks wrap-up — touches:
+      `README.md`, `crates/ferric-cli/src/main.rs`, `agent-tasks/agent-tasks.md`,
+      `agent-tasks/completed-tasks.md`
