@@ -1,14 +1,18 @@
 //! The `ferric` binary. Surfaces (ADR-011 — no chat catch-all; revised
-//! 2026-06-29 to add both `ferric mcp` and a future raw chat mode):
+//! 2026-06-29 to add both `ferric mcp` and a raw chat mode, both now built):
 //! - `ferric query "<prompt>"` — one-shot, workspace-scoped, policy-scaled,
 //!   fully traced (T-111).
 //! - `ferric mcp` — MCP-stdio server exposing one tool, `ferric_query`
 //!   (ADR-046).
+//! - `ferric chat` — hybrid chat REPL: unconstrained talk by default,
+//!   user-initiated `/do <request>` escalation into the constrained agentic
+//!   loop (ADR-052).
 //! - `ferric trace cat <file>` — derived view of a JSONL trace.
 //! - `ferric dev` — reserved for the Development Engine (s4–s7).
 
 mod backend;
 mod bench_cmd;
+mod chat;
 mod config;
 mod mcp;
 mod query;
@@ -42,6 +46,8 @@ enum Command {
     Toolbench(Box<toolbench_cmd::ToolbenchArgs>),
     /// Run the MCP-stdio server (one tool, `ferric_query`; ADR-046)
     Mcp(Box<mcp::McpArgs>),
+    /// Start an interactive chat REPL (hybrid talk + `/do` escalate; ADR-052)
+    Chat(Box<chat::ChatArgs>),
     /// Launch and manage the OpenAI-compatible inference server (the HTTP valve)
     Server {
         #[command(subcommand)]
@@ -67,6 +73,7 @@ fn main() -> ExitCode {
         Command::Bench(args) => bench_cmd::run_bench(*args),
         Command::Toolbench(args) => toolbench_cmd::run_toolbench(*args),
         Command::Mcp(args) => mcp::run_mcp(*args),
+        Command::Chat(args) => chat::run_chat(*args),
         Command::Server { command } => {
             let workspace = std::env::current_dir().unwrap_or_default();
             server::run_server(&workspace, command)

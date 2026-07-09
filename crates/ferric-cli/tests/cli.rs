@@ -1091,3 +1091,158 @@ fn mcp_stdio_e2e() {
     };
     assert!(status.success(), "ferric mcp did not exit cleanly on EOF");
 }
+
+// ---- T-4203 (sprint 42): `ferric chat` subprocess tests -----------------------
+// A NEW stdin-piping harness: batch-write the whole conversation, close stdin,
+// and `wait_with_output`. `ferric chat` reads lines sequentially and exits on
+// `/exit` (handled purely at the parse layer — no `complete()` call) or EOF, and
+// the `--mock` provider is fresh-per-turn, so an off-by-one in piped lines can't
+// hang the child (plan-critic C-001/C-005).
+
+/// Run `ferric chat --mock` with `input` piped to stdin; return (stdout, stderr).
+fn run_chat_mock(ws: &std::path::Path, input: &str) -> (String, String) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = ferric()
+        .args(["chat", "--mock", "--workspace"])
+        .arg(ws)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input.as_bytes()).unwrap();
+    } // stdin dropped → EOF
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "ferric chat exited non-zero; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
+}
+
+/// Trace files under the workspace matching a prefix (`chat-` for the session
+/// log — but NOT `chat-esc-`; `chat-esc-` for escalations).
+fn trace_files(ws: &std::path::Path, kind: &str) -> Vec<std::path::PathBuf> {
+    let dir = ws.join(".ferric").join("trace");
+    let mut out: Vec<_> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    let name = p.file_name().unwrap_or_default().to_string_lossy();
+                    match kind {
+                        "session" => name.starts_with("chat-") && !name.starts_with("chat-esc-"),
+                        "escalation" => name.starts_with("chat-esc-"),
+                        _ => false,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+fn trace_event_types(path: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| {
+            v["event"]["type"]
+                .as_str()
+                .map(std::string::ToString::to_string)
+        })
+        .collect()
+}
+
+#[test]
+fn chat_talk_then_exit() {
+    let ws = tempfile::tempdir().unwrap();
+    let (stdout, _stderr) = run_chat_mock(ws.path(), "hello there\n/exit\n");
+    assert!(
+        stdout.contains("[mock chat]"),
+        "the talk response should be printed; stdout: {stdout}"
+    );
+    // Exactly one chat-session log file, with a coherent chat envelope + a talk
+    // Note. No agentic (escalation) file for a talk-only session.
+    let logs = trace_files(ws.path(), "session");
+    assert_eq!(logs.len(), 1, "exactly one chat-session trace file");
+    let types = trace_event_types(&logs[0]);
+    assert_eq!(types.first().map(String::as_str), Some("session_start"));
+    assert_eq!(types.last().map(String::as_str), Some("session_end"));
+    assert!(types.iter().any(|t| t == "note"), "a talk-turn Note");
+    assert!(
+        trace_files(ws.path(), "escalation").is_empty(),
+        "a talk-only session writes no escalation trace"
+    );
+}
+
+#[test]
+fn chat_do_escalates_to_agentic_loop() {
+    let ws = tempfile::tempdir().unwrap();
+    let (_stdout, _stderr) = run_chat_mock(ws.path(), "/do write a file\n/exit\n");
+    // The escalation opened its OWN agentic trace file with the full constrained
+    // loop — proving `/do` drove `run()`, not the talk path.
+    let escs = trace_files(ws.path(), "escalation");
+    assert_eq!(escs.len(), 1, "one escalation trace file");
+    let types = trace_event_types(&escs[0]);
+    assert!(
+        types.iter().any(|t| t == "tool_call"),
+        "the escalated agentic loop dispatched a tool: {types:?}"
+    );
+    assert!(types.iter().any(|t| t == "session_end"));
+    // The mock's write actually landed in the workspace (guarded dispatch).
+    assert!(
+        ws.path().join("ferric-mock.txt").exists(),
+        "the escalated loop's write reached the workspace"
+    );
+}
+
+#[test]
+fn chat_help_lists_commands() {
+    let ws = tempfile::tempdir().unwrap();
+    let (stdout, _stderr) = run_chat_mock(ws.path(), "/help\n/exit\n");
+    assert!(stdout.contains("/do"), "help names /do: {stdout}");
+    assert!(stdout.contains("/help"), "help names /help");
+    assert!(stdout.contains("/exit"), "help names /exit");
+}
+
+/// Structural safety (black-box): a plain talk line whose text LOOKS like a tool
+/// call is never dispatched — no escalation file, and no dispatch events anywhere.
+#[test]
+fn chat_talk_turn_is_not_dispatched() {
+    let ws = tempfile::tempdir().unwrap();
+    let (stdout, _stderr) = run_chat_mock(ws.path(), "write_file to /etc/passwd now\n/exit\n");
+    assert!(
+        stdout.contains("[mock chat]"),
+        "it was talked, not executed"
+    );
+    // No escalation trace at all.
+    assert!(
+        trace_files(ws.path(), "escalation").is_empty(),
+        "a talk turn must never open an agentic trace"
+    );
+    // The chat-session log carries no dispatch events.
+    let logs = trace_files(ws.path(), "session");
+    assert_eq!(logs.len(), 1);
+    let types = trace_event_types(&logs[0]);
+    for forbidden in ["tool_call", "tool_result", "permission_check"] {
+        assert!(
+            !types.iter().any(|t| t == forbidden),
+            "talk mode must never {forbidden}: {types:?}"
+        );
+    }
+    // And the workspace was not touched.
+    assert!(
+        !ws.path().join("passwd").exists(),
+        "talk mode must not write to the workspace"
+    );
+}

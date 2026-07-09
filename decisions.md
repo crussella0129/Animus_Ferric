@@ -617,3 +617,46 @@ was installed mid-sprint. Full research/plan/critique in `sprints/s41/`.
   stalled Ornstein's web-retriever container increment since sprint 30, ADR-040) is **resolved** —
   the user installed Docker Desktop (`linux/x86_64` engine, WSL2 backend). Ornstein inc 4 is no
   longer install-blocked.
+
+## ADR-052 — 2026-07-09 (sprint 42): raw chat mode — `ferric chat`, hybrid talk + escalate; the chat security boundary
+This is the dedicated security-boundary ADR the **ADR-011 revision** (2026-06-29) required for the
+second half of the `ferric mcp` + chat split. ADR-011 originally said "No REPL/chat mode will exist";
+the revision approved building it (motivated by Animus IDE sending natural-language change requests
+conversationally) but flagged that a genuinely conversational surface touches the "harness always
+owns decoding" thesis and therefore needs its own explicit boundary. The user chose the **Hybrid
+(talk + escalate)** shape. Full research/plan/critique in `sprints/s42/`.
+- **`ferric chat` is a REPL** with launch-time-fixed containment (ADR-046 pattern): workspace,
+  backend, model, and protocol are fixed CLI flags held for the session — no per-turn override.
+- **Talk mode (the default) is the harness's FIRST unconstrained-completion path.** A chat turn with
+  no leading command is a single `provider.complete()` with **empty `tools` and `constraint: None`**
+  (the lawful ADR-010 "neither" case), and its output is treated as **text only** — printed and
+  appended to the conversation history, **never parsed for tool calls, never dispatched, never
+  touching the registry or `ferric-guard`**. The safety is **structural, not a prompt instruction**:
+  the talk path simply never calls dispatch. This reverses ADR-011's *letter* (a chat REPL now
+  exists) but not its *security spirit* (talk mode has no action channel and cannot change the
+  workspace).
+- **`/do <request>` escalates a turn into the EXISTING constrained agentic loop.** Escalation drives
+  the unchanged `run_with_provider` → `ferric_loop::run()` + `ferric-guard` + the loop guards +
+  JSONL tracing — exactly the `ferric query` path. No new decoding path or privilege on the action
+  side; the conversation history seeds the run as a sprint-39 `ReplayedState` resume.
+- **Escalation is USER-initiated, NEVER model-initiated (ADR-005).** The LLM is never consulted on a
+  security decision; a talk completion can never promote itself into acting — only the human typing
+  `/do` moves a turn onto the constrained action path. Talk output is appended as an assistant
+  message and printed; it is never re-fed through the command parser, so there is no path by which a
+  model's talk output could trigger an action.
+- **`ferric-loop::run()` stays ALWAYS-constrained.** The new unconstrained talk path lives entirely
+  in the CLI chat module (`crates/ferric-cli/src/chat.rs`) — explicitly separate and auditable at the
+  CLI boundary, never inside the loop. "The loop always owns decoding" remains literally true.
+- **Trace shape.** Talk turns are logged to a single chat-session trace file (a chat-level
+  `SessionStart..SessionEnd` envelope with an `Event::Note` per talk turn + a `Note` per `/do`
+  referencing its escalation file). Each `/do` opens its OWN fresh agentic trace file — mirroring
+  `ferric mcp`, which opens a fresh file per `tools/call` precisely because `run()` emits a whole
+  `SessionStart..SessionEnd` envelope every call and cannot be nested. (A plan-critic finding: the
+  originally-planned "one held sink with embedded run() blocks" would have produced multiple envelope
+  pairs in one file and broken `replay()`.)
+- **`--mock` uses a fresh per-turn `MockProvider`** (talk-shaped vs agentic-shaped by turn kind) —
+  a REPL's turn count is stdin-driven, so a single fixed script would exhaust unpredictably (another
+  plan-critic finding). The session-held provider is real-backend-only.
+- **Explicit deferrals:** a fancy TUI (plain stdin line-reading first); talk-mode streaming;
+  a dedicated `Event::ChatTurn` trace variant (talk turns reuse `Note` for v1); wiring chat into the
+  Animus IDE (a separate organ).
