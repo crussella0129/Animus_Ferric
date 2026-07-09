@@ -9,6 +9,7 @@
 
 mod backend;
 mod bench_cmd;
+mod chat;
 mod config;
 mod mcp;
 mod query;
@@ -42,6 +43,8 @@ enum Command {
     Toolbench(Box<toolbench_cmd::ToolbenchArgs>),
     /// Run the MCP-stdio server (one tool, `ferric_query`; ADR-046)
     Mcp(Box<mcp::McpArgs>),
+    /// Start an interactive chat REPL (hybrid talk + `/do` escalate; ADR-052)
+    Chat(Box<chat::ChatArgs>),
     /// Launch and manage the OpenAI-compatible inference server (the HTTP valve)
     Server {
         #[command(subcommand)]
@@ -67,6 +70,7 @@ fn main() -> ExitCode {
         Command::Bench(args) => bench_cmd::run_bench(*args),
         Command::Toolbench(args) => toolbench_cmd::run_toolbench(*args),
         Command::Mcp(args) => mcp::run_mcp(*args),
+        Command::Chat(args) => chat::run_chat(*args),
         Command::Server { command } => {
             let workspace = std::env::current_dir().unwrap_or_default();
             server::run_server(&workspace, command)
