@@ -1373,6 +1373,7 @@ dependencies = [
 name = "ferric-cli"
 version = "0.1.0"
 dependencies = [
+ "animus-launch",
  "async-trait",
  "clap",
  "ferric-bench",

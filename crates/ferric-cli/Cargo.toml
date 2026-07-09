@@ -16,6 +16,7 @@ backend-mistralrs = ["ferric-provider/backend-mistralrs", "dep:tokio"]
 backend-openai = ["ferric-provider/backend-openai", "dep:tokio"]
 
 [dependencies]
+animus-launch = { workspace = true }
 ferric-bench = { workspace = true }
 ferric-core = { workspace = true }
 ferric-guard = { workspace = true }

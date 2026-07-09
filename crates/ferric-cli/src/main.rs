@@ -14,6 +14,7 @@ mod backend;
 mod bench_cmd;
 mod chat;
 mod config;
+mod launch;
 mod mcp;
 mod query;
 mod server;
@@ -48,6 +49,8 @@ enum Command {
     Mcp(Box<mcp::McpArgs>),
     /// Start an interactive chat REPL (hybrid talk + `/do` escalate; ADR-052)
     Chat(Box<chat::ChatArgs>),
+    /// Bootstrap a new project: scaffold a git repo (main+dev) + skeleton (ADR-053)
+    Launch(Box<launch::LaunchArgs>),
     /// Launch and manage the OpenAI-compatible inference server (the HTTP valve)
     Server {
         #[command(subcommand)]
@@ -74,6 +77,7 @@ fn main() -> ExitCode {
         Command::Toolbench(args) => toolbench_cmd::run_toolbench(*args),
         Command::Mcp(args) => mcp::run_mcp(*args),
         Command::Chat(args) => chat::run_chat(*args),
+        Command::Launch(args) => launch::run_launch(*args),
         Command::Server { command } => {
             let workspace = std::env::current_dir().unwrap_or_default();
             server::run_server(&workspace, command)
