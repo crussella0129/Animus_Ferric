@@ -222,17 +222,22 @@ validation upgraded from design-only to a live `docker build` + `docker compose 
 + its dedicated security-boundary ADR = sprint 42 (deferred, not dropped). All build tasks shipped;
 research + plan + critique in `sprints/s41/`. See completed-tasks.md for per-task detail.
 
-## Sprint 42 (raw chat mode — `ferric chat`) — IN PROGRESS
-
-- [ ] T-4201 (sprint 42): ADR-052 — the chat security boundary (hybrid talk+escalate; talk =
-      first unconstrained path, structurally safe; escalation user-initiated only, ADR-005) —
-      touches: `decisions.md`
-- [ ] T-4202 (sprint 42): `crates/ferric-cli/src/chat.rs` — the hybrid REPL (talk via direct
-      `provider.complete`, `/do` via `run_with_provider`) + wire into `main.rs` — touches: new file
-      `crates/ferric-cli/src/chat.rs`, `crates/ferric-cli/src/main.rs`
-- [ ] T-4203 (sprint 42): tests — unit (`parse_chat_input`, `talk_request` no-action-channel,
-      escalation seed) + CLI subprocess (stdin-piped `ferric chat --mock`) — touches:
-      `crates/ferric-cli/src/chat.rs`, `crates/ferric-cli/tests/cli.rs`
-- [ ] T-4204 (sprint 42): docs — README + `main.rs` surface doc + agent-tasks wrap-up — touches:
-      `README.md`, `crates/ferric-cli/src/main.rs`, `agent-tasks/agent-tasks.md`,
-      `agent-tasks/completed-tasks.md`
+## Sprint 42 (raw chat mode — `ferric chat`) — DONE, ADR-052
+The ADR-011-revision's second half (after `ferric mcp`, sprint 36), motivated by Animus IDE sending
+natural-language change requests conversationally. User chose the **hybrid talk + escalate** shape.
+`ferric chat` (`crates/ferric-cli/src/chat.rs`) is a REPL: **talk mode** (default) is the harness's
+FIRST unconstrained-completion path — a direct `provider.complete()` with empty tools + no
+constraint (`talk_request`), output text-only, printed + appended to history, NEVER dispatched
+(structurally safe: the talk path lives in the CLI and never touches `ferric-loop::run()`, which
+stays always-constrained). **`/do <req>`** escalates a turn into the existing constrained
+`run_with_provider` loop with the conversation as a sprint-39 `ReplayedState` resume seed;
+USER-initiated only (ADR-005 — never model-initiated). A foreground plan-critic caught two
+load-bearing issues pre-lock: a fixed mock script can't drive a stdin-length-driven REPL (→ a fresh
+per-turn `MockProvider`, C-001); `run()`'s per-call `SessionStart..SessionEnd` envelope can't be
+nested (→ each `/do` opens its OWN agentic trace file, talk turns log Notes to one chat-session
+file, mirroring `ferric mcp`, C-002); plus the mock/real provider+executor split with the
+`cfg(not(any))` fallback (C-003/C-004). Structural safety proven by a unit test
+(`talk_request_has_no_action_channel`) AND a black-box test (a talk line that *looks* like a tool
+call dispatches nothing, opens no agentic trace, touches no workspace file). 6 unit + 4 CLI
+subprocess tests (the suite's first stdin-piping harness). All 4 build tasks shipped; research +
+plan + critique in `sprints/s42/`. See completed-tasks.md for per-task detail.

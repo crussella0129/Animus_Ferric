@@ -1,9 +1,12 @@
 //! The `ferric` binary. Surfaces (ADR-011 — no chat catch-all; revised
-//! 2026-06-29 to add both `ferric mcp` and a future raw chat mode):
+//! 2026-06-29 to add both `ferric mcp` and a raw chat mode, both now built):
 //! - `ferric query "<prompt>"` — one-shot, workspace-scoped, policy-scaled,
 //!   fully traced (T-111).
 //! - `ferric mcp` — MCP-stdio server exposing one tool, `ferric_query`
 //!   (ADR-046).
+//! - `ferric chat` — hybrid chat REPL: unconstrained talk by default,
+//!   user-initiated `/do <request>` escalation into the constrained agentic
+//!   loop (ADR-052).
 //! - `ferric trace cat <file>` — derived view of a JSONL trace.
 //! - `ferric dev` — reserved for the Development Engine (s4–s7).
 
