@@ -242,20 +242,21 @@ call dispatches nothing, opens no agentic trace, touches no workspace file). 6 u
 subprocess tests (the suite's first stdin-piping harness). All 4 build tasks shipped; research +
 plan + critique in `sprints/s42/`. See completed-tasks.md for per-task detail.
 
-## Sprint 43 (Animus Launch increment 1 — `ferric launch`) — IN PROGRESS
-
-- [ ] T-4301 (sprint 43): ADR-053 — Animus Launch (distinct non-agent/LLM-free posture,
-      refuse-to-clobber, git-subprocess boundary, crate/subcommand placement) — touches:
-      `decisions.md`
-- [ ] T-4302 (sprint 43): `animus-launch` crate — `LaunchSpec` + validators + `scaffold()` (git
-      main+dev + sprint-loop skeleton, refuse-to-clobber) — touches: new
-      `crates/animus-launch/{Cargo.toml,src/lib.rs}`, workspace `Cargo.toml`
-- [ ] T-4303 (sprint 43): `ferric launch` subcommand + hand-rolled-stdin interview + wire into
-      `main.rs` — touches: new `crates/ferric-cli/src/launch.rs`, `crates/ferric-cli/src/main.rs`,
-      `crates/ferric-cli/Cargo.toml`
-- [ ] T-4304 (sprint 43): tests — animus-launch unit + integration (scaffold tempdir, clobber
-      edges) + CLI subprocess (non-interactive + piped-stdin) — touches:
-      `crates/animus-launch`, `crates/ferric-cli/src/launch.rs`, `crates/ferric-cli/tests/cli.rs`
-- [ ] T-4305 (sprint 43): docs — README + `main.rs` surface doc + agent-tasks wrap-up — touches:
-      `README.md`, `crates/ferric-cli/src/main.rs`, `agent-tasks/agent-tasks.md`,
-      `agent-tasks/completed-tasks.md`
+## Sprint 43 (Animus Launch increment 1 — `ferric launch`) — DONE, ADR-053
+The first slice of the Animus Launch suite pillar (the GECK successor). Research found GECK
+(`~/GECK`) is Python-only and does macro-prompt scaffolding but NO git bootstrapping — so Launch's
+distinct value is the deterministic, LLM-free "interview → real git repo (main+dev) + a
+sprint-loop-ready skeleton" flow. User chose "both" (scaffolder + interview together). New
+**`animus-launch`** library crate: `scaffold(&LaunchSpec)` refuses-to-clobber (safe iff the target
+is absent OR an empty dir — hidden entries count, a non-dir path is refused; plan-critic C-004),
+creates the root + nested `agent-tasks/` (create_dir_all, C-001), writes the seed skeleton, and runs
+`git` as a checked closed-subcommand sequence (init → add → commit with a fixed `-c` identity so
+CI-without-identity works → `branch -M main` → `branch dev`; each step's exit status checked, stderr
+captured, C-002/C-003). A **`ferric launch`** subcommand drives it: `spec_from_answers` (pure) +
+a hand-rolled-stdin interview (prompts to STDERR so stdout stays the report, fixed order name → path
+→ goal, only missing fields asked; C-006). **The key architectural point (ADR-053): Launch is
+user-run + LLM-free, so `ferric-guard`'s agent-containment doesn't apply — the sole safety property
+is refuse-to-clobber.** 6 unit + 5 animus-launch integration (all 3 clobber edges) + 3 CLI
+subprocess tests. All 5 build tasks shipped; research + plan + critique in `sprints/s43/`. **Deferred
+to inc 2+:** the project-type profile library, the "begin work?" Loop auto-hand-off, env detection.
+See completed-tasks.md for per-task detail.

@@ -7,6 +7,9 @@
 //! - `ferric chat` — hybrid chat REPL: unconstrained talk by default,
 //!   user-initiated `/do <request>` escalation into the constrained agentic
 //!   loop (ADR-052).
+//! - `ferric launch` — Animus Launch (inc 1): a deterministic, LLM-free
+//!   bootstrapper that scaffolds a new git repo (main+dev) + a sprint-loop
+//!   skeleton from an interview or flags (ADR-053).
 //! - `ferric trace cat <file>` — derived view of a JSONL trace.
 //! - `ferric dev` — reserved for the Development Engine (s4–s7).
 

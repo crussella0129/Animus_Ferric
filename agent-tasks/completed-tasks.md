@@ -766,3 +766,33 @@
 - **Completed:** 2026-07-09 (build phase)
 - **Files modified:** README.md, crates/ferric-cli/src/main.rs, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
 - **Commit:** `2ef9f4c`
+
+## T-4301 (sprint 43)
+- **Description:** **ADR-053 — Animus Launch (posture + placement).** Records the key architectural point: Launch is **user-run, deterministic, and LLM-free** — it CREATES a new workspace at an arbitrary path, so it is NOT a workspace-scoped agent operation and `ferric-guard`'s containment (ADR-005) does not apply; the **sole safety property is refuse-to-clobber** (never scaffold over a non-empty dir / non-dir path). Git is a **named subprocess boundary** (ADR-013, like `ferric server` → `llama-server`): a closed set of subcommands via `std::process::Command`, each step's exit status checked and stderr captured, the initial commit using a fixed `-c user.name`/`-c user.email` identity so CI-without-a-global-identity works, and `git init` → commit → `branch -M main` → `branch dev` (portable across git versions). Placement: an `animus-launch` library crate + a `ferric launch` subcommand (mirroring `ferric-research` ↔ `ferric-cli`). The interview is a hand-rolled plain-stdin wizard (no new dependency). Explicit deferrals (inc 2+): the GECK-style project-type profile library, the "begin work?" Loop auto-hand-off, environment detection, richer goal→task NLP.
+- **Completed:** 2026-07-09 (build phase)
+- **Files modified:** decisions.md, agent-tasks/agent-tasks.md
+- **Commit:** `0093658`
+
+## T-4302 (sprint 43)
+- **Description:** **`animus-launch` crate — `LaunchSpec` + validators + `scaffold()`.** New library crate registered in the workspace (`thiserror` dep — already allowlisted, no ADR-004 amendment; plan-critic C-007). `scaffold(&LaunchSpec) -> Result<ScaffoldReport, LaunchError>`: (1) **refuse-to-clobber** — safe iff `!exists()` OR (`is_dir()` AND `read_dir().next().is_none()`), hidden entries counting as non-empty, a non-dir path refused (plan-critic C-004); (2) validate name+goal; (3) `create_dir_all` the root AND the nested `agent-tasks/` (plan-critic C-001 — `fs::write` doesn't create parents); (4) write the seed skeleton (README from goal, `.gitignore` with `sprints/`, `agent-tasks/agent-tasks.md` with `derive_initial_tasks(goal)`, `decisions.md`); (5) run `git` via a checked `Command::output()` sequence — init → add → commit with a fixed `-c` identity → `branch -M main` → `branch dev` — checking `status.success()` between steps and capturing stderr into `LaunchError::Git` (plan-critic C-002/C-003; NOT `server.rs`'s spawn/status shape). Pure `validate_project_name`/`validate_goal`/`derive_initial_tasks`. 4 co-located unit tests (incl. all clobber-safety edges). The git sequence was verified working end-to-end (via the T-4304 integration tests) BEFORE this commit landed.
+- **Completed:** 2026-07-09 (build phase)
+- **Files modified:** crates/animus-launch/{Cargo.toml,src/lib.rs} (new), Cargo.toml, Cargo.lock
+- **Commit:** `db96b92`
+
+## T-4303 (sprint 43)
+- **Description:** **`ferric launch` subcommand + interview + wire into `main.rs`.** New `crates/ferric-cli/src/launch.rs` + `Command::Launch` wired (dep `animus-launch`). `LaunchArgs` (name/path/goal/project_type, all optional). Pure `spec_from_answers` (validate + build `LaunchSpec`) — unit-tested. `run_launch` asks for each MISSING field via `prompt_line` in the fixed order name → path → goal (a flagged field is skipped); **prompts print to STDERR** so stdout stays the `ScaffoldReport` (plan-critic C-006). Drives `animus_launch::scaffold`, prints the report + a "begin work with the Loop" hand-off hint. 2 unit tests (`spec_from_answers` valid/invalid). Live smoke confirmed both paths (non-interactive flags; interactive piped name+goal with `--path`) each scaffold a real repo (commit on `main`, `dev` present, goal-derived agent-tasks).
+- **Completed:** 2026-07-09 (build phase)
+- **Files modified:** crates/ferric-cli/src/{launch.rs (new),main.rs}, crates/ferric-cli/Cargo.toml, Cargo.lock
+- **Commit:** `6455009`
+
+## T-4304 (sprint 43)
+- **Description:** **Tests — animus-launch integration + `ferric launch` subprocess.** `animus-launch/tests/scaffold.rs` (5): `scaffold` creates a real git repo with `main`+`dev` + the scaffold commit + the four seed files (content asserted by SUBSTRING — Windows-`autocrlf`-safe, plan-critic C-008); refuse-to-clobber on a non-empty dir, a hidden-only dir, AND an existing file (all three edges, C-004); the fixed `-c` identity makes the commit succeed without a global git identity. `ferric-cli/tests/cli.rs` (3): a new `run_launch` stdin-piping helper modeled on `run_chat_mock`'s SHAPE (not the literal fn — plan-critic C-005); `launch_noninteractive_scaffolds`, `launch_interactive_scaffolds_from_stdin` (name+goal piped, `--path` flagged; stdout is the report since prompts go to stderr), `launch_refuses_to_clobber_nonempty`. `cargo test --workspace` green; clippy `-D warnings` clean (default + both backend feature sets); fmt clean.
+- **Completed:** 2026-07-09 (build phase)
+- **Files modified:** crates/animus-launch/tests/scaffold.rs (new), crates/ferric-cli/tests/cli.rs
+- **Commit:** `ac08e43`
+
+## T-4305 (sprint 43)
+- **Description:** **ADR-053 docs wrap-up.** `main.rs`'s surface doc adds `ferric launch` (the Animus Launch inc-1 bootstrapper, with the ADR-053 reference). README Status bumped to sprint 43 + a new Sprint 43 timeline entry (GECK is Python-only/no-git-bootstrap, Launch's LLM-free "interview → real repo" value, the distinct non-agent posture, the plan-critic catches); the stale "Next" line replaced with a fresh backlog preview naming Launch inc 2. The Sprint 43 backlog section rewritten from its in-progress checklist to a completed summary (sprints 38–42 precedent), the Animus-Launch suite pillar marked started (inc 1).
+- **Completed:** 2026-07-09 (build phase)
+- **Files modified:** README.md, crates/ferric-cli/src/main.rs, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
+- **Commit:** `676d155`
