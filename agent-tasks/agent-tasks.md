@@ -203,3 +203,19 @@ exhaustive match site, including `trace cat`'s renderer, to be touched together;
 `HistoryCompactor` is deliberately `pub(crate)`, so it's flagged unused until `run.rs` actually
 calls it) — both disclosed in their commit messages rather than silently merged. All 6 build tasks
 shipped; research + plan + critique in `sprints/s40/`. See completed-tasks.md for per-task detail.
+
+## Sprint 41 (container architecture — design + live-validated) — IN PROGRESS
+
+- [ ] T-4101 (sprint 41): ADR-051 — container architecture (sibling containers + microVM airlock,
+      not DinD) — touches: `decisions.md`
+- [ ] T-4102 (sprint 41): `docker/Dockerfile` — the `ferric-core` image (multi-stage: `ferric`
+      built with `--features backend-openai` + prebuilt `llama-server`) — touches: new file
+      `docker/Dockerfile`
+- [ ] T-4103 (sprint 41): `docker/docker-compose.yml` — sibling-container topology skeleton
+      (`ferric-core` real, `ornstein-search`/`chat` stubs) — touches: new file
+      `docker/docker-compose.yml`
+- [ ] T-4104 (sprint 41): `docs/ornstein.md` correction (bollard/gVisor → microVM sandbox) +
+      ADR-051 docs wrap-up — touches: `docs/ornstein.md`, `README.md`, `agent-tasks/agent-tasks.md`,
+      `agent-tasks/completed-tasks.md`
+- [ ] T-4105 (sprint 41): live `docker build` + `docker compose config` validation (Docker
+      installed mid-sprint) — touches: (validation only, findings in the test report)

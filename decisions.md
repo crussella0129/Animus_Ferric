@@ -565,3 +565,55 @@ exceeding the model's real context window over a long session. Full research/pla
   own output keeps the budget exceeded (would sit behind summarization as an emergency fallback, not
   replace it — matches the "Cure not Prevention" framing from research, with truncation reserved as
   the last resort).
+
+## ADR-051 — 2026-07-09 (sprint 41): container architecture — sibling containers + a microVM airlock, not Docker-in-Docker
+User-chosen focus was chat mode (the ADR-011-revision's unbuilt half), immediately reframed into a
+platform-wide question: **should the whole Animus platform run containerized** (Docker preferred,
+k8s/n8n considered — flexibility from one machine to a datacenter), with chat, Ornstein's search
+subsystem, and possibly MCP each in **nested** containers, citing **Docker-in-Docker (DinD)** as the
+mechanism. The user chose "container architecture only this sprint" (chat mode → sprint 42). This is
+a **design + skeleton** decision; the concrete artifacts (`docker/Dockerfile`, `docker/docker-
+compose.yml`) are live-validated (`docker build` / `docker compose config`) because Docker Desktop
+was installed mid-sprint. Full research/plan/critique in `sprints/s41/`.
+- **The DinD correction (the core finding).** Literal Docker-in-Docker — nesting a second `dockerd`,
+  or mounting the host `docker.sock` — is a **security anti-pattern for isolating untrusted content
+  specifically**: it's "operationally equivalent to full root on the host with extra steps" (a
+  shared-kernel boundary; runc `CVE-2024-21626`, NVIDIA Container Toolkit `CVE-2025-23359`, kernel
+  io_uring `CVE-2026-1109` each broke container→host in 2024–2026). **2026 practice for the
+  untrusted-execution use case has moved to microVM-class isolation** — Docker's own **Docker
+  Sandboxes** (GA Jan 2026, Windows/macOS native) gives real "build/run containers inside" via a
+  hypervisor boundary with **no host-daemon access**; gVisor (userspace-kernel syscall interception)
+  is the Linux-native alternative. The user's cited 2023 DockerCon DinD article addresses a
+  DIFFERENT problem (CI that must build other images), not an airlock.
+- **Two problems were named as one — split them.** (a) **Platform-wide deployment flexibility**
+  (single machine → datacenter): an ordinary service-topology question, answered by **sibling
+  containers via Docker Compose** today, Kubernetes-ready later. (b) **Security isolation for
+  untrusted-content execution** (Ornstein's "airlock"): answered by a **microVM-class sandbox**, NOT
+  nested Docker. Conflating them risks either over-isolating every service or under-isolating (b).
+- **`ferric` + its inference backend stay co-located in ONE container (`ferric-core`).** `ferric
+  server` pins the backend to **loopback only** (ADR-005, `crates/ferric-cli/src/server.rs` binds
+  `127.0.0.1`, never a public interface). Splitting `ferric` and `llama-server` into separate
+  containers would break that loopback guarantee without extra network-namespace plumbing (a real
+  security-posture change). Co-location preserves today's guarantee completely unchanged. Ornstein
+  and any future chat/MCP surfaces are **separate sibling services alongside** `ferric-core`, not
+  nested inside it. The `ferric-core` build must use **`--features backend-openai`** — `ferric-cli`'s
+  `default = []` would otherwise produce a binary that can't drive the co-located backend at all.
+- **Skeleton scope-limits (deliberate, not oversights).** The Dockerfile targets **x86_64/Linux
+  only** for now (the project's CI-gated aarch64 Pi/Jetson ambition — ADR-004 — is served later via
+  buildx `--platform`; `docs/llama-cpp.md`'s install is asset-selection-by-hardware, so one arch per
+  skeleton is honest); no `EXPOSE`/`ports:` publish path (loopback-only preserved structurally);
+  `ornstein-search`/`chat` are compose STUBS, never presented as functional.
+- **Explicit deferrals (each named, not dropped):** whether `ferric-research` (Ornstein) gets its
+  own binary/service entrypoint to run as a truly separate container process, or stays in-process
+  within `ferric-core` (answerable incrementally, matching Ornstein's own one-ADR-at-a-time
+  sequencing, ADR-040–044); **MCP's own containerization** ("we can assess" — not forced before the
+  architecture exists to decide it against); **chat mode's own build + its dedicated security-
+  boundary ADR** (sprint 42, per the user's scope choice); **multi-arch images** (buildx
+  `--platform`); actually **running** `ferric-core` end-to-end with a live model behind it (`compose
+  up` + a real query — needs a mounted GGUF; the natural first step of whatever sprint operationalizes
+  the container); a **CI `docker compose config` gate** (GitHub Actions has Docker — an available
+  future hardening, disproportionate to add for skeleton artifacts now).
+- **Blocker cleared mid-sprint.** The multi-sprint "no containerizer on this machine" blocker (had
+  stalled Ornstein's web-retriever container increment since sprint 30, ADR-040) is **resolved** —
+  the user installed Docker Desktop (`linux/x86_64` engine, WSL2 backend). Ornstein inc 4 is no
+  longer install-blocked.
