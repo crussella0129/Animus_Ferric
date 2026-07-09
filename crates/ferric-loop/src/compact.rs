@@ -309,6 +309,49 @@ mod tests {
         !provider.requests().is_empty()
     }
 
+    /// Test-critic C-003: pins the exact 85%-of-2800 boundary (2380.0) rather
+    /// than only ever testing values comfortably clear of it — `tokens < 2380`
+    /// must stay a no-op, `tokens == 2380` must trigger.
+    #[test]
+    fn maybe_compact_trigger_boundary_is_exclusive_below() {
+        let mut messages_below = vec![Message::system("sys"), Message::user("task")];
+        let head_len = messages_below.len();
+        let mut compactor_below = HistoryCompactor::new(head_len);
+        seed_completed_turns(&mut compactor_below, &mut messages_below, 5);
+        let before = messages_below.clone();
+        let provider_below = MockProvider::new(vec![]);
+        let (_dir1, mut sink1) = open_sink();
+        block(compactor_below.maybe_compact(
+            &provider_below,
+            &NoopSleeper,
+            &mut sink1,
+            &nano_policy(),
+            &mut messages_below,
+            Some(2379), // just below 0.85 * 2800 = 2380.0
+        ))
+        .unwrap();
+        assert_eq!(messages_below, before, "2379 must not trigger a fold");
+
+        let mut messages_at = vec![Message::system("sys"), Message::user("task")];
+        let mut compactor_at = HistoryCompactor::new(head_len);
+        seed_completed_turns(&mut compactor_at, &mut messages_at, 5);
+        let provider_at = MockProvider::new(vec![summary_completion("did turns 0-2")]);
+        let (_dir2, mut sink2) = open_sink();
+        block(compactor_at.maybe_compact(
+            &provider_at,
+            &NoopSleeper,
+            &mut sink2,
+            &nano_policy(),
+            &mut messages_at,
+            Some(2380), // exactly 0.85 * 2800
+        ))
+        .unwrap();
+        assert!(
+            provider_was_called(&provider_at),
+            "2380 (the exact threshold) must trigger a fold"
+        );
+    }
+
     #[test]
     fn maybe_compact_not_enough_history_is_noop() {
         let mut messages = vec![Message::system("sys"), Message::user("task")];

@@ -857,8 +857,15 @@ mod tests {
     /// `messages` with the folded turns dropped, the summary inserted after
     /// the head, and the preserved tail byte-identical/ordered. Places
     /// `HistoryCompacted` in its REAL shape (right after the triggering
-    /// turn's own `TurnStart`, before its `TurnEnd`), matching `run.rs`'s
-    /// wiring, not just an artificially "obviously safe" position.
+    /// turn's own `TurnStart`, before its `TurnEnd`) for fixture realism,
+    /// matching `run.rs`'s actual output — but this positioning is NOT
+    /// load-bearing for what THIS test verifies: the match arm reconstructs
+    /// from `committed_turn_starts` alone (advanced only via `TurnStart`),
+    /// never touching `pending`, so the result is identical wherever the
+    /// event sits within turn 5's own span. The byte-order invariant itself
+    /// (test-critic C-002) is verified end-to-end by
+    /// `history_compacted_traced_after_triggering_turn_start` in
+    /// `compaction_tests.rs`, against a REAL `run()`-produced trace.
     #[test]
     fn replay_applies_one_history_compaction() {
         let mut events = vec![

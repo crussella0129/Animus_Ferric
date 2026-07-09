@@ -466,11 +466,13 @@ fn resume_seeds_compactor_numbering_consistently() {
             _ => None,
         })
         .expect("a HistoryCompacted event");
-    // Loop turns after resuming start at 7 (turns: 7,8,9,10,...) — the fold
-    // must use THESE absolute numbers, never 0 or 1.
-    assert!(
-        through_turn >= 7,
-        "through_turn ({through_turn}) must use the loop's own absolute numbering, not reset to 0"
+    // Loop turns after resuming start at 7 (turns: 7,8,9,10,...). Only turn 7
+    // is folded (completed=[7,8,9], KEEP_LAST_TURNS=2 preserves 8,9) — the
+    // exact expected value, not just "at least 7" (test-critic C-001: a loose
+    // `>=` bound wouldn't catch an off-by-one shift to 8/9/10).
+    assert_eq!(
+        through_turn, 7,
+        "through_turn must use the loop's own absolute numbering, not reset to 0"
     );
 }
 
