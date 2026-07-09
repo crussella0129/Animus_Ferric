@@ -181,3 +181,25 @@ tests. Test-critic C-010 added the strongest regression: a genuine round-trip th
 (T-3901–T-3906) shipped; research + plan + critique in `sprints/s39/`. See completed-tasks.md for
 the per-task commit hashes. The user's own mid-research pivot reframed the backlog's
 `--save-interval` into **context-budget compaction**, spun off as sprint 40 (see above).
+
+## Sprint 40 (context-budget compaction) — DONE, ADR-050
+Carved out of sprint 39's research when the user reframed `--save-interval`, unprompted, into
+context-budget compaction: `RunPolicy.prompt_budget_tokens` was computed and traced but never
+enforced. New `HistoryCompactor` (`crates/ferric-loop/src/compact.rs`) is an always-on, no-CLI-flag
+mechanism (mirrors the repetition/no-progress/failure guards' precedent) folding older turns into
+one model-summarized message once `input_tokens` crosses 85% of budget, always preserving the most
+recent 2 turns verbatim. A foreground plan-critic pass caught the sprint's riskiest arithmetic
+before it shipped: an originally-planned `turn_offset` re-keying scheme was replaced with direct
+absolute-turn-number tracking (`Vec<(u32, usize)>`) in both the compactor and `replay()`'s
+reconstruction — simpler, and it closed a real gap where `replay.rs` was discovered to discard the
+turn number entirely (`TurnStart{ .. }` pattern-discarded its own field). `replay()` was extended (a
+required fix, not optional) so `--resume` of a compacted-then-killed session reconstructs the
+SHRUNK history, not the full pre-compaction one — proven by a real compact→kill→replay→resume
+round-trip test mirroring sprint 39's own C-010 precedent. The summarizer reuses the SAME provider
+(no second, cheaper model exists in Ferric's one-local-model architecture); a failed summarization
+is non-fatal (logs a Note, skips the fold). Rust's dead-code analysis forced two originally-planned
+task splits back together at commit time (T-4001+T-4005: a new `Event` variant forces every
+exhaustive match site, including `trace cat`'s renderer, to be touched together; T-4002+T-4003:
+`HistoryCompactor` is deliberately `pub(crate)`, so it's flagged unused until `run.rs` actually
+calls it) — both disclosed in their commit messages rather than silently merged. All 6 build tasks
+shipped; research + plan + critique in `sprints/s40/`. See completed-tasks.md for per-task detail.
