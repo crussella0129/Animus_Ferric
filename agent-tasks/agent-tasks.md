@@ -44,7 +44,7 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
 - **inc 3 — Tailnet/NAS FS retriever** ✅ **DONE (s32, ADR-042).** `TailnetFsRetriever` searches a remote tailnet device's FS over SSH (`SshTransport::{Tailscale, Plain{port}}`); query single-quote-escaped vs remote command injection; `parse_status_devices` for `available()`. Deterministic core tested; **live SSH E2E deferred** (no target's sshd was up — Pixel has none on :22/:8022, switchblade offline).
 - **inc 3b — live SSH E2E for the tailnet plane** ← run once a target's sshd is up (Termux `Plain{8022}` on pixel-10-pro-xl, or `Tailscale` on switchblade when back online): `research(&TailnetFsRetriever{…}, provider, query)` → quarantined `host:path` digests.
 - **research orchestrator** ✅ **DONE (s33, ADR-043).** `research_all(planes, provider, query) -> MultiResearch` runs a query across all available planes, chunk-level dedup by source (one model call per source), per-plane `PlaneResult` report; unavailable planes are recorded no-ops.
-- **inc 4 — Web retriever + hardened container + allowlist proxy** (bollard/gVisor) ← **NEXT, but BLOCKED on a containerizer** (no docker/podman on Windows or WSL as of s33). Install Docker Desktop (elevated `winget install Docker.DockerDesktop`) OR docker.io in WSL2 (`sudo apt install docker.io`) to unblock. The online plane; the trifecta's exfil leg lives here, so its security layer comes last.
+- **inc 4 — Web retriever + hardened sandbox + allowlist proxy** ← **NEXT, now UNBLOCKED** (Docker Desktop installed 2026-07-09, `linux/x86_64` engine). The airlock is a **microVM-class sandbox** (Docker Sandboxes / gVisor, ADR-051 — NOT Docker-in-Docker, a shared-kernel anti-pattern for untrusted-content isolation). The online plane; the trifecta's exfil leg lives here, so its security layer comes last.
 - **CaMeL-lite sink-policy primitive** ✅ **DONE (s34, ADR-044, co-designed with the user).** `crates/ferric-research/src/sink.rs`: `TaintSet` (substring taint over digest summary+quotes) + `SinkPolicy::decide(permission, tainted)` keyed off `PermissionLevel`, all 3 modes (`Deny`/`RequireApproval`/`Warn`, caller picks). 8 tests incl. the end-to-end gate shape. **Pure primitive — NOT wired into dispatch yet.**
 - **inc 5 (remaining) — wire the sink policy into `registry.execute` + Loop research-phase wiring** ← run when the research→loop integration lands: populate a `TaintSet` from digests entering context; call `SinkPolicy::decide` beside the existing `check(permission, path)` at the dispatch chokepoint; route fetched content through the quarantine before the planner acts (a sprint-loops change).
 - **PR open+merge as the STANDARD final loop phase** — promote sprint-loops `06-loop-phase.md` step #6 from optional to standard (small, clear; matches one-PR-per-sprint).
@@ -204,18 +204,20 @@ exhaustive match site, including `trace cat`'s renderer, to be touched together;
 calls it) — both disclosed in their commit messages rather than silently merged. All 6 build tasks
 shipped; research + plan + critique in `sprints/s40/`. See completed-tasks.md for per-task detail.
 
-## Sprint 41 (container architecture — design + live-validated) — IN PROGRESS
-
-- [ ] T-4101 (sprint 41): ADR-051 — container architecture (sibling containers + microVM airlock,
-      not DinD) — touches: `decisions.md`
-- [ ] T-4102 (sprint 41): `docker/Dockerfile` — the `ferric-core` image (multi-stage: `ferric`
-      built with `--features backend-openai` + prebuilt `llama-server`) — touches: new file
-      `docker/Dockerfile`
-- [ ] T-4103 (sprint 41): `docker/docker-compose.yml` — sibling-container topology skeleton
-      (`ferric-core` real, `ornstein-search`/`chat` stubs) — touches: new file
-      `docker/docker-compose.yml`
-- [ ] T-4104 (sprint 41): `docs/ornstein.md` correction (bollard/gVisor → microVM sandbox) +
-      ADR-051 docs wrap-up — touches: `docs/ornstein.md`, `README.md`, `agent-tasks/agent-tasks.md`,
-      `agent-tasks/completed-tasks.md`
-- [ ] T-4105 (sprint 41): live `docker build` + `docker compose config` validation (Docker
-      installed mid-sprint) — touches: (validation only, findings in the test report)
+## Sprint 41 (container architecture — design + live-validated) — DONE, ADR-051
+User picked chat mode, then reframed it into a platform-wide "containerize everything" question
+citing Docker-in-Docker. Research found the key correction: literal DinD is a security anti-pattern
+for isolating untrusted content specifically (2026 practice — incl. Docker's own Docker Sandboxes —
+uses microVM-class sandboxes for that use case), while ordinary sibling containers handle
+deployment flexibility (one machine → datacenter) — two different tools for two different problems
+the framing conflated. User chose "container architecture only" (chat mode → sprint 42). Shipped:
+**ADR-051** (the correction + the topology + the `ferric-core`-as-one-container recommendation,
+since `ferric server`'s ADR-005 loopback pin means splitting harness/backend across containers
+would break that guarantee); a **`ferric-core`** multi-stage Dockerfile (`ferric` built with
+`--features backend-openai` — plan-critic C-001 — + prebuilt `llama-server` b9821 Linux-x64;
+x86_64-only skeleton, no EXPOSE); a `docker-compose.yml` skeleton (`ferric-core` real, Ornstein/chat
+as marked stubs, no functional ports — plan-critic C-006). **Docker Desktop installed mid-sprint**
+→ the multi-sprint "no containerizer" blocker (stalled Ornstein inc 4 since s30) is CLEARED, and
+validation upgraded from design-only to a live `docker build` + `docker compose config`. Chat mode
++ its dedicated security-boundary ADR = sprint 42 (deferred, not dropped). All build tasks shipped;
+research + plan + critique in `sprints/s41/`. See completed-tasks.md for per-task detail.
