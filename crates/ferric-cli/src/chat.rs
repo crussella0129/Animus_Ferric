@@ -381,6 +381,11 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     let stdin = std::io::stdin();
     let mut handle = stdin.lock();
     let mut line = String::new();
+    // Per-session monotonic counter for escalation trace filenames — `now_ms()`
+    // alone can collide when two `/do` turns land in the same millisecond
+    // (implausible for human typing, but real for scripted/piped chat;
+    // test-critic C-001).
+    let mut esc_count: u32 = 0;
     loop {
         eprint!("you> ");
         let _ = std::io::stderr().flush();
@@ -414,7 +419,8 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             }
             ChatInput::Escalate(text) => {
                 let seed = escalation_seed(&history, &config, &chat_session);
-                let esc_session = format!("chat-esc-{}", now_ms());
+                esc_count += 1;
+                let esc_session = format!("chat-esc-{}-{esc_count}", now_ms());
                 let esc_path = trace_dir.join(format!("{esc_session}.jsonl"));
                 let mut esc_sink = match JsonlSink::open(&esc_path, &esc_session) {
                     Ok(s) => s,
