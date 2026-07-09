@@ -221,3 +221,18 @@ as marked stubs, no functional ports — plan-critic C-006). **Docker Desktop in
 validation upgraded from design-only to a live `docker build` + `docker compose config`. Chat mode
 + its dedicated security-boundary ADR = sprint 42 (deferred, not dropped). All build tasks shipped;
 research + plan + critique in `sprints/s41/`. See completed-tasks.md for per-task detail.
+
+## Sprint 42 (raw chat mode — `ferric chat`) — IN PROGRESS
+
+- [ ] T-4201 (sprint 42): ADR-052 — the chat security boundary (hybrid talk+escalate; talk =
+      first unconstrained path, structurally safe; escalation user-initiated only, ADR-005) —
+      touches: `decisions.md`
+- [ ] T-4202 (sprint 42): `crates/ferric-cli/src/chat.rs` — the hybrid REPL (talk via direct
+      `provider.complete`, `/do` via `run_with_provider`) + wire into `main.rs` — touches: new file
+      `crates/ferric-cli/src/chat.rs`, `crates/ferric-cli/src/main.rs`
+- [ ] T-4203 (sprint 42): tests — unit (`parse_chat_input`, `talk_request` no-action-channel,
+      escalation seed) + CLI subprocess (stdin-piped `ferric chat --mock`) — touches:
+      `crates/ferric-cli/src/chat.rs`, `crates/ferric-cli/tests/cli.rs`
+- [ ] T-4204 (sprint 42): docs — README + `main.rs` surface doc + agent-tasks wrap-up — touches:
+      `README.md`, `crates/ferric-cli/src/main.rs`, `agent-tasks/agent-tasks.md`,
+      `agent-tasks/completed-tasks.md`
