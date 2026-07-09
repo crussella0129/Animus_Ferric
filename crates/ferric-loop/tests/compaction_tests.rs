@@ -1,13 +1,12 @@
-//! T-4003 (sprint 40) integration tests: `HistoryCompactor` wired into
-//! `run()`. (T-4004's real compact-kill-replay-resume round-trip test lands
-//! in this same file in a later commit, once `replay()` is extended.)
+//! T-4003/T-4004 (sprint 40) integration tests: `HistoryCompactor` wired into
+//! `run()`, and the real compact-kill-replay-resume round-trip.
 
 mod common;
 
 use common::*;
 use ferric_core::{ActionProtocol, Message, Role, ToolCall};
 use ferric_guard::Workspace;
-use ferric_loop::{ReplayedState, RunArgs, StopReason, run};
+use ferric_loop::{ReplayedState, RunArgs, StopReason, replay, run};
 use ferric_provider::{Completion, MockProvider, SamplingParams};
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
@@ -473,4 +472,141 @@ fn resume_seeds_compactor_numbering_consistently() {
         through_turn >= 7,
         "through_turn ({through_turn}) must use the loop's own absolute numbering, not reset to 0"
     );
+}
+
+/// T-4004's strongest test (mirrors sprint 39's C-010
+/// `real_run_then_replay_then_resume_reaches_task_complete`): a REAL `run()`
+/// call triggers a REAL compaction, its REAL trace file is truncated
+/// (simulating a kill), `replay()`d, and the resulting `ReplayedState`'s
+/// history is smaller than the full pre-compaction history would have been —
+/// the end-to-end proof the mechanism survives a resume boundary.
+#[test]
+fn real_run_compact_kill_replay_resume_shrinks_history() {
+    let dir1 = tempfile::tempdir().unwrap();
+    let workspace1 = Workspace::new(dir1.path()).unwrap();
+    let mut registry1 = Registry::new();
+    register_builtin_tools(&mut registry1);
+    let trace_path = dir1.path().join("trace.jsonl");
+    let mut sink1 = JsonlSink::open(&trace_path, "compact-e2e-original").unwrap();
+
+    // Exactly 5 completions: 4 tool turns (the 4th crosses the trigger) plus
+    // the compaction summarizer call. Turn 4's OWN completion request (after
+    // the fold) then finds the script exhausted — a natural ProviderError
+    // stop, appending a SessionEnd line this test drops below to simulate a
+    // kill (mirrors sprint 39's C-010 technique exactly).
+    let provider1 = MockProvider::new(vec![
+        tool_completion_with_tokens(
+            "tc-0",
+            "write_file",
+            serde_json::json!({"path": "a.txt", "content": "a"}),
+            100,
+        ),
+        tool_completion_with_tokens(
+            "tc-1",
+            "write_file",
+            serde_json::json!({"path": "b.txt", "content": "b"}),
+            100,
+        ),
+        tool_completion_with_tokens(
+            "tc-2",
+            "write_file",
+            serde_json::json!({"path": "c.txt", "content": "c"}),
+            100,
+        ),
+        tool_completion_with_tokens(
+            "tc-3",
+            "write_file",
+            serde_json::json!({"path": "d.txt", "content": "d"}),
+            2500,
+        ),
+        text_completion("did a.txt and b.txt"),
+    ]);
+    let sleeper1 = RecordingSleeper::new();
+    let first = futures_executor::block_on(run(
+        RunArgs {
+            provider: &provider1,
+            registry: &registry1,
+            workspace: &workspace1,
+            policy: &nano_policy(),
+            protocol: ActionProtocol::NativeTools,
+            sampling: SamplingParams::default(),
+            sleeper: &sleeper1,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+        },
+        &mut sink1,
+        Some("write four files"),
+    ))
+    .unwrap();
+    assert_eq!(
+        first.stop,
+        StopReason::ProviderError,
+        "script exhausted on turn 4's own request"
+    );
+
+    // Simulate a kill: drop the trailing SessionEnd line (sprint 39's C-010
+    // technique) — turn 4 never got a TurnEnd at all, so replay's existing
+    // dangling-turn discard correctly drops it; the fold (turns 0-1) and the
+    // preserved tail (turns 2-3) survive.
+    let content = std::fs::read_to_string(&trace_path).unwrap();
+    let mut lines: Vec<&str> = content.lines().collect();
+    assert_eq!(lines.pop().map(|l| l.contains("session_end")), Some(true));
+    std::fs::write(&trace_path, lines.join("\n") + "\n").unwrap();
+
+    let replayed = replay(&trace_path).unwrap();
+    // Precise, deterministic shrinkage proof: turns 0-3 each produced 2
+    // messages (assistant + tool_result, no guard warnings) = 8, plus the
+    // head (2) = 10 if nothing were folded. After folding turns 0-1
+    // (KEEP_LAST_TURNS=2 preserves turns 2-3 verbatim): head(2) + summary(1)
+    // + turn2(2) + turn3(2) = 7. Turn 4 never got a TurnEnd (dangling,
+    // discarded) — contributes nothing.
+    assert_eq!(
+        replayed.messages.len(),
+        7,
+        "head(2) + summary(1) + preserved turns 2-3 (2 each) — turns 0-1 folded away, turn 4 dangling"
+    );
+    assert!(
+        replayed.messages.iter().any(|m| m
+            .text
+            .as_deref()
+            .is_some_and(|t| t.starts_with("[compacted history]"))),
+        "the resumed history must contain the compaction summary, not the raw folded turns"
+    );
+
+    // A second real run, resuming, finishes the task.
+    let dir2 = tempfile::tempdir().unwrap();
+    let workspace2 = Workspace::new(dir2.path()).unwrap();
+    let mut registry2 = Registry::new();
+    register_builtin_tools(&mut registry2);
+    let trace_path2 = dir2.path().join("trace.jsonl");
+    let mut sink2 = JsonlSink::open(&trace_path2, "compact-e2e-continuation").unwrap();
+    let provider2 = MockProvider::new(vec![tool_completion(vec![(
+        "tc-5",
+        ferric_loop::TASK_COMPLETE,
+        serde_json::json!({"summary": "wrote five files"}),
+    )])]);
+    let sleeper2 = RecordingSleeper::new();
+    let second = futures_executor::block_on(run(
+        RunArgs {
+            provider: &provider2,
+            registry: &registry2,
+            workspace: &workspace2,
+            policy: &nano_policy(),
+            protocol: ActionProtocol::NativeTools,
+            sampling: SamplingParams::default(),
+            sleeper: &sleeper2,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: Some(replayed),
+        },
+        &mut sink2,
+        None,
+    ))
+    .unwrap();
+    assert_eq!(second.stop, StopReason::TaskComplete);
 }
