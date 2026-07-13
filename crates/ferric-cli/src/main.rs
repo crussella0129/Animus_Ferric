@@ -23,6 +23,7 @@ mod query;
 mod server;
 mod toolbench_cmd;
 mod trace_cmd;
+mod trace_verify;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -70,6 +71,8 @@ enum Command {
 enum TraceCommand {
     /// Render a JSONL trace as a human-readable log
     Cat { file: PathBuf },
+    /// Replay a trace file with a MockProvider to ensure execution hasn't drifted
+    Verify { golden: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -88,5 +91,8 @@ fn main() -> ExitCode {
         Command::Trace {
             command: TraceCommand::Cat { file },
         } => trace_cmd::trace_cat(&file),
+        Command::Trace {
+            command: TraceCommand::Verify { golden },
+        } => trace_verify::trace_verify(&golden),
     }
 }
