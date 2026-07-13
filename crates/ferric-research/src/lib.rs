@@ -29,6 +29,10 @@ pub use retriever::{
     SshTransport, TailnetDevice, TailnetFsRetriever, research, research_all,
 };
 
+pub mod sandbox;
+pub mod web;
+pub use web::WebRetriever;
+
 pub mod sink;
 pub use sink::{SinkAction, SinkDecision, SinkPolicy, TaintSet};
 

@@ -762,7 +762,11 @@
 - **Commit:** `b0e0b88`
 
 ## T-4204 (sprint 42)
-- **Description:** **ADR-052 docs wrap-up.** `main.rs`'s surface doc updated (chat mode is no longer "future/unbuilt" — `ferric chat` now listed alongside `query`/`mcp`, with the hybrid talk/`/do`-escalate boundary + ADR-052 reference). README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid shape, the two plan-critic load-bearing catches, the dual structural-safety proof); the stale "Next" line replaced with a fresh backlog preview. The Sprint 42 backlog section rewritten from its in-progress checklist to a completed summary (matching sprints 38–41's precedent), the ADR-011-revision chat item marked built.
+- **Description:** **ADR-052 docs wrap-up.** `main.rs`'s surface doc updated. 
+- **Description:** **ADR-053 — Animus Launch inc 1 (scaffolder + interview).** Records the architectural shift: Launch is LLM-free and user-run, so `ferric-guard`'s containment does not apply (the only safety property is refuse-to-clobber). Covers the `animus-launch` crate (`scaffold()` refuses non-empty dirs, creates root/`agent-tasks/`, runs `git init` → `commit` → branches) and the `ferric launch` CLI (flags > stdin interview). Mentions the 14 new tests (6 unit, 5 integration for clobber edges, 3 CLI).
+
+- **Description:** **ADR-054 — Event-Sourced Projector Refactor (Sprint 44).** Records the decoupling of protocol formatting from state reconstruction. A new pure `TraceProjector` struct (`crates/ferric-loop/src/projector.rs`) centralizes all message generation (`repetition_warn_message`, `truncation_retry_message`, etc.) from raw `Event` streams. `run.rs` now drives the projector during live execution, and `replay.rs` streams its parsed events through the same projector to hydrate state for `--resume`. Fixes a trailing-turn numbering bug in `compact.rs` caused by relying on uncommitted pending turns. Ensures 100% byte-for-byte fidelity across trace generation and replay.
+README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid shape, the two plan-critic load-bearing catches, the dual structural-safety proof); the stale "Next" line replaced with a fresh backlog preview. The Sprint 42 backlog section rewritten from its in-progress checklist to a completed summary (matching sprints 38–41's precedent), the ADR-011-revision chat item marked built.
 - **Completed:** 2026-07-09 (build phase)
 - **Files modified:** README.md, crates/ferric-cli/src/main.rs, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
 - **Commit:** `2ef9f4c`
