@@ -49,6 +49,11 @@ pub struct ChatArgs {
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
+    /// Enable token-streaming to stdout (talk turns only). Escalate turns
+    /// follow the CLI default for agentic streaming.
+    #[arg(long)]
+    pub stream: bool,
+
     #[command(flatten)]
     pub backend_opts: BackendOpts,
 
@@ -188,17 +193,41 @@ enum ChatBackend {
 
 impl ChatBackend {
     /// Run one talk completion (unconstrained, no tools).
-    fn talk(&self, request: CompletionRequest) -> Result<Completion, String> {
+    fn talk(&self, request: CompletionRequest, stream: bool) -> Result<Completion, String> {
+        let sink_fn = |d: ferric_provider::StreamDelta| match d {
+            ferric_provider::StreamDelta::Text(t) => {
+                print!("{t}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            _ => {}
+        };
+        let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if stream {
+            Some(&sink_fn)
+        } else {
+            None
+        };
+
         match self {
             ChatBackend::Mock => {
                 let provider = MockProvider::new(vec![mock_talk_completion()]);
-                futures_executor::block_on(provider.complete(request))
-                    .map_err(|e| format!("talk completion failed: {e}"))
+                if let Some(sink) = stream_sink {
+                    futures_executor::block_on(provider.complete_streaming(request, sink))
+                        .map_err(|e| format!("talk completion failed: {e}"))
+                } else {
+                    futures_executor::block_on(provider.complete(request))
+                        .map_err(|e| format!("talk completion failed: {e}"))
+                }
             }
             #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
-            ChatBackend::Real { provider, runtime } => runtime
-                .block_on(provider.complete(request))
-                .map_err(|e| format!("talk completion failed: {e}")),
+            ChatBackend::Real { provider, runtime } => {
+                if let Some(sink) = stream_sink {
+                    runtime.block_on(provider.complete_streaming(request, sink))
+                        .map_err(|e| format!("talk completion failed: {e}"))
+                } else {
+                    runtime.block_on(provider.complete(request))
+                        .map_err(|e| format!("talk completion failed: {e}"))
+                }
+            }
         }
     }
 
@@ -407,10 +436,14 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             ChatInput::Talk(text) => {
                 history.push(Message::user(text));
                 let request = talk_request(&history, &config.sampling);
-                match backend.talk(request) {
+                match backend.talk(request, args.stream) {
                     Ok(completion) => {
                         let resp = completion.message.text.unwrap_or_default();
-                        println!("{resp}");
+                        if !args.stream {
+                            println!("{resp}");
+                        } else {
+                            println!(); // ensure newline after stream
+                        }
                         let _ = log.write_event(Event::Note {
                             text: format!("chat talk turn ({} response chars)", resp.len()),
                         });

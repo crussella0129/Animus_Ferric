@@ -215,4 +215,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 48 — Animus Launch Increment 2** (2026-07-13). Extended `ferric launch` to natively support generating project skeletons based on an explicit project type (`Rust`, `Python`, `Web`, or `Empty`). After scaffolding the repository, it now features an auto-hand-off mechanism that prompts the user if they'd like to immediately begin execution with the Ferric agent using their goal as the prompt, eliminating the friction between bootstrapping a repo and starting the Sprint 1 loop. *ADR-058.*
 
-> **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; talk-mode streaming + a fancy chat TUI; wiring chat into the Animus IDE; MCP streaming notifications; `ferric mcp --resume`; per-tier compaction tuning.
+- **Sprint 49 — Streamlining Streaming & Usability Assessment** (2026-07-13). Delivered `talk-mode` streaming for `ferric chat` and `ferric/streamDelta` JSON-RPC notifications for `ferric mcp` to solve laggy IDE UI feedback. Assessed project usability, concluding that it is functionally usable, natively LLM-free, and contained, but requires container operationalization and compaction tuning next. *ADR-059.*
+
+> **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; a fancy chat TUI; wiring chat into the Animus IDE; `ferric mcp --resume`; per-tier compaction tuning.

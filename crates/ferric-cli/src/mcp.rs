@@ -55,6 +55,13 @@ pub struct RpcResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct RpcNotification {
+    pub jsonrpc: &'static str,
+    pub method: String,
+    pub params: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct RpcError {
     pub code: i64,
     pub message: String,
@@ -354,9 +361,22 @@ impl McpServer {
         prompt: &str,
         media: Vec<ferric_core::MediaPart>,
     ) -> Result<ferric_loop::LoopOutcome, String> {
-        // MCP does not stream this sprint (ADR-046: stdout is reserved
-        // exclusively for JSON-RPC frames; partial-text needs MCP's own
-        // notification mechanism, a separate future increment).
+        // MCP streams partial text via custom JSON-RPC notification.
+        let sink_fn = |d: ferric_provider::StreamDelta| {
+            if let ferric_provider::StreamDelta::Text(t) = d {
+                let note = RpcNotification {
+                    jsonrpc: "2.0",
+                    method: "ferric/streamDelta".to_string(),
+                    params: serde_json::json!({ "text": t }),
+                };
+                if let Ok(line) = serde_json::to_string(&note) {
+                    let mut stdout = std::io::stdout().lock();
+                    let _ = writeln!(stdout, "{line}");
+                    let _ = stdout.flush();
+                }
+            }
+        };
+
         let fut = run_with_provider(
             self.provider.as_ref(),
             &self.config.registry,
@@ -369,7 +389,7 @@ impl McpServer {
             sink,
             Some(prompt),
             media,
-            None,
+            Some(&sink_fn),
             None,
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
