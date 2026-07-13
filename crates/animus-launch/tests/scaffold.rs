@@ -117,3 +117,25 @@ fn scaffold_commit_works_without_global_git_identity() {
     let (ok, count) = git_out(&target, &["rev-list", "--count", "HEAD"]);
     assert!(ok && count == "1", "exactly one scaffold commit exists");
 }
+
+#[test]
+fn scaffold_refuses_dot_target_when_cwd_is_nonempty() {
+    // The test runner's cwd is the workspace or crate root, which is non-empty.
+    let err = scaffold(&spec(std::path::PathBuf::from("."))).unwrap_err();
+    assert!(matches!(err, LaunchError::TargetNotEmpty(_)));
+}
+
+#[test]
+#[cfg(unix)]
+fn scaffold_refuses_symlink_to_nonempty_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real_dir = tmp.path().join("real");
+    std::fs::create_dir(&real_dir).unwrap();
+    std::fs::write(real_dir.join("existing.txt"), "keep me").unwrap();
+
+    let symlink_path = tmp.path().join("symlink");
+    std::os::unix::fs::symlink(&real_dir, &symlink_path).unwrap();
+
+    let err = scaffold(&spec(symlink_path)).unwrap_err();
+    assert!(matches!(err, LaunchError::TargetNotEmpty(_)));
+}
