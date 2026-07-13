@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use clap::Args;
 
-use animus_launch::{LaunchSpec, scaffold, validate_goal, validate_project_name};
+use animus_launch::{LaunchSpec, ProjectType, scaffold, validate_goal, validate_project_name};
 
 /// `ferric launch`'s CLI surface. All fields are optional — any not supplied is
 /// asked interactively (in the fixed order name → path → goal).
@@ -42,14 +42,15 @@ pub(crate) fn spec_from_answers(
     if path.trim().is_empty() {
         return Err("path must not be empty".to_string());
     }
+    let pt = match project_type.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => t.parse::<ProjectType>().map_err(|e| format!("invalid project type: {}", e))?,
+        None => ProjectType::Empty,
+    };
     Ok(LaunchSpec {
         name: name.trim().to_string(),
         path: PathBuf::from(path.trim()),
         goal: goal.trim().to_string(),
-        project_type: project_type
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .map(str::to_string),
+        project_type: pt,
     })
 }
 
@@ -113,6 +114,45 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                 report.branches.join(", ")
             );
             println!("Files: {}", report.files_created.join(", "));
+            
+            // Increment 2: Begin Work Auto-Hand-Off
+            if let Ok(ans) = prompt_line("Begin work now? (y/N)") {
+                if ans.trim().to_lowercase() == "y" || ans.trim().to_lowercase() == "yes" {
+                    println!("Handing off to ferric query...");
+                    let query_args = crate::query::QueryArgs {
+                        prompt: Some(spec.goal.clone()),
+                        files: vec![],
+                        workspace: Some(report.path.clone()),
+                        mock: false, // You could add args or let config handle backend etc.
+                        backend_opts: crate::backend::BackendOpts {
+                            backend: Some(crate::backend::BackendArg::Openai),
+                            model_dir: None,
+                            model_file: None,
+                            model: None,
+                            api_base: None,
+                            api_key: None,
+                            chat_template: None,
+                            tok_model_id: None,
+                            tokenizer_json: None,
+                        },
+                        params_b: Some(7.0),
+                        quant: Some("q4".to_string()),
+                        family: Some("llama3".to_string()),
+                        ctx: Some(8192),
+                        temperature: Some(0.0),
+                        protocol: None,
+                        prompts_dir: None,
+                        max_ring: None,
+                        profile_dir: Some(PathBuf::from(".ferric/profiles")),
+                        stream: false,
+                        resume: None,
+                        modality: None,
+                        research: None,
+                        sink_action: "deny".to_string(),
+                    };
+                    return crate::query::run_query(query_args);
+                }
+            }
             println!(
                 "Next: cd {} && begin work with the Loop.",
                 report.path.display()
@@ -136,11 +176,11 @@ mod tests {
         assert_eq!(spec.name, "demo");
         assert_eq!(spec.path, PathBuf::from("/tmp/demo"));
         assert_eq!(spec.goal, "build a thing");
-        assert!(spec.project_type.is_none());
+        assert_eq!(spec.project_type, ProjectType::Empty);
         // Trimming + a project-type passthrough.
-        let spec2 = spec_from_answers("  demo  ", " /tmp/x ", " goal ", Some(" cli ")).unwrap();
+        let spec2 = spec_from_answers("  demo  ", " /tmp/x ", " goal ", Some(" rust ")).unwrap();
         assert_eq!(spec2.name, "demo");
-        assert_eq!(spec2.project_type.as_deref(), Some("cli"));
+        assert_eq!(spec2.project_type, ProjectType::Rust);
     }
 
     #[test]

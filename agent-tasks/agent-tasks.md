@@ -52,11 +52,9 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
 - `registry.execute` requires those primitives
 - Route fetched content through quarantine *before* the planner acts (a sprint-loops change).
 - **PR open+merge as the STANDARD final loop phase** ✅ **DONE**. Added to AGENTS.md globally and applied in current sprint.
-- **Sprint 47 (DONE): Define and Build the Testing System**
-  - **Increment 1:** Golden Trace Testing (`ferric trace verify <golden.jsonl>`)
-  - **Increment 2:** Containerized E2E Harness (`tools/run-e2e.sh`)
-  - **Increment 3:** Coverage Scripts (`tools/run-coverage.sh`)
-- **Animus Launch (crate in Animus_Ferric)** — the interactive bootstrapper, once loop-hardening has momentum.
+- **Sprint 48 (DONE): Animus Launch Increment 2**
+  - **Increment 1:** Project-Type Profile Library (`Rust`, `Python`, `Web`, `Empty`)
+  - **Increment 2:** "Begin work now?" auto-hand-off to `ferric query`
 - A live small-model run measuring Ornstein summarization *quality* (safety is already structural).
 
 ## Earlier backlog (still open)
