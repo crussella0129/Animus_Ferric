@@ -128,6 +128,8 @@ impl Registry {
         workspace: &Workspace,
         name: &str,
         args: &serde_json::Value,
+        taint_set: &ferric_guard::TaintSet,
+        sink_policy: &ferric_guard::SinkPolicy,
     ) -> ExecuteOutcome {
         let Some(tool) = self.tools.get(name) else {
             return ExecuteOutcome::UnknownTool {
@@ -150,13 +152,34 @@ impl Registry {
             };
             if let Decision::Deny(reason) = check(spec.permission, &resolved) {
                 let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
-                checks.push(CheckRecord::deny(resolved, reason.rule, reason.matched));
+                checks.push(CheckRecord::deny(resolved, &reason.rule, &reason.matched));
                 return ExecuteOutcome::Denied {
                     reason: detail,
                     checks,
                 };
             }
             checks.push(CheckRecord::allow(resolved));
+        }
+
+        let is_tainted = taint_set.args_tainted(args);
+        match sink_policy.decide(spec.permission, is_tainted) {
+            ferric_guard::SinkDecision::Allow => {}
+            ferric_guard::SinkDecision::Warn => {
+                // Future: log a warning
+            }
+            ferric_guard::SinkDecision::RequireApproval => {
+                // Fall back to deny since human approval is not wired
+                return ExecuteOutcome::Denied {
+                    reason: "sink policy: require approval not implemented".to_string(),
+                    checks,
+                };
+            }
+            ferric_guard::SinkDecision::Deny => {
+                return ExecuteOutcome::Denied {
+                    reason: "sink policy: tainted data denied at sink".to_string(),
+                    checks,
+                };
+            }
         }
 
         let ctx = ToolCtx { workspace };
@@ -270,7 +293,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        let outcome = registry.execute(&ws, "writer", &json!({"path": ".git/config"}));
+        let outcome = registry.execute(
+            &ws, 
+            "writer", 
+            &json!({"path": ".git/config"}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        );
         assert!(
             matches!(outcome, ExecuteOutcome::Denied { ref reason, .. } if reason.contains(".git")),
             "expected Denied, got {outcome:?}"
@@ -285,7 +314,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        match registry.execute(&ws, "writer", &json!({"path": "notes.md"})) {
+        match registry.execute(
+            &ws, 
+            "writer", 
+            &json!({"path": "notes.md"}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        ) {
             ExecuteOutcome::Completed { checks, .. } => {
                 assert_eq!(checks.len(), 1);
                 assert_eq!(checks[0].decision, "allow");
@@ -303,7 +338,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        match registry.execute(&ws, "writer", &json!({"path": ".git/config"})) {
+        match registry.execute(
+            &ws, 
+            "writer", 
+            &json!({"path": ".git/config"}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        ) {
             ExecuteOutcome::Denied { checks, .. } => {
                 assert_eq!(checks.len(), 1);
                 assert_eq!(checks[0].decision, "deny");
@@ -321,7 +362,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        let outcome = registry.execute(&ws, "writer", &json!({"path": ".ferric/trace/x.jsonl"}));
+        let outcome = registry.execute(
+            &ws, 
+            "writer", 
+            &json!({"path": ".ferric/trace/x.jsonl"}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        );
         match outcome {
             ExecuteOutcome::Denied { checks, .. } => {
                 assert_eq!(checks[0].rule.as_deref(), Some("denied_write_segment"));
@@ -339,7 +386,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        match registry.execute(&ws, "bigout", &json!({})) {
+        match registry.execute(
+            &ws, 
+            "bigout", 
+            &json!({}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        ) {
             ExecuteOutcome::Completed { output, .. } => {
                 assert_eq!(output.full.len(), 1_000_000);
                 assert!(output.for_model.chars().count() <= DEFAULT_TRUNCATION_LIMIT + 100);
@@ -488,7 +541,13 @@ mod tests {
     fn unknown_tool_outcome() {
         let (_dir, ws) = temp_workspace();
         let registry = Registry::new();
-        let outcome = registry.execute(&ws, "nope", &json!({}));
+        let outcome = registry.execute(
+            &ws, 
+            "nope", 
+            &json!({}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        );
         assert!(matches!(outcome, ExecuteOutcome::UnknownTool { ref name } if name == "nope"));
     }
 }

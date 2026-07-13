@@ -46,7 +46,11 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
 - **research orchestrator** ✅ **DONE (s33, ADR-043).** `research_all(planes, provider, query) -> MultiResearch` runs a query across all available planes, chunk-level dedup by source (one model call per source), per-plane `PlaneResult` report; unavailable planes are recorded no-ops.
 - **inc 4 — Web retriever + hardened sandbox + allowlist proxy** ← **NEXT, now UNBLOCKED** (Docker Desktop installed 2026-07-09, `linux/x86_64` engine). The airlock is a **microVM-class sandbox** (Docker Sandboxes / gVisor, ADR-051 — NOT Docker-in-Docker, a shared-kernel anti-pattern for untrusted-content isolation). The online plane; the trifecta's exfil leg lives here, so its security layer comes last.
 - **CaMeL-lite sink-policy primitive** ✅ **DONE (s34, ADR-044, co-designed with the user).** `crates/ferric-research/src/sink.rs`: `TaintSet` (substring taint over digest summary+quotes) + `SinkPolicy::decide(permission, tainted)` keyed off `PermissionLevel`, all 3 modes (`Deny`/`RequireApproval`/`Warn`, caller picks). 8 tests incl. the end-to-end gate shape. **Pure primitive — NOT wired into dispatch yet.**
-- **inc 5 (remaining) — wire the sink policy into `registry.execute` + Loop research-phase wiring** ← run when the research→loop integration lands: populate a `TaintSet` from digests entering context; call `SinkPolicy::decide` beside the existing `check(permission, path)` at the dispatch chokepoint; route fetched content through the quarantine before the planner acts (a sprint-loops change).
+- **Sprint 46: Wire Sink Policy and Research Wiring (Inc 5)**
+**Status**: DONE
+- `ferric-guard` must now export a `TaintSet` and `SinkPolicy`
+- `registry.execute` requires those primitives
+- Route fetched content through quarantine *before* the planner acts (a sprint-loops change).
 - **PR open+merge as the STANDARD final loop phase** — promote sprint-loops `06-loop-phase.md` step #6 from optional to standard (small, clear; matches one-PR-per-sprint).
 - **A testing system** — make the Loop's Test phase a real system (define first: containerized test runs? golden artifacts? coverage gates?).
 - **Animus Launch (crate in Animus_Ferric)** — the interactive bootstrapper, once loop-hardening has momentum.

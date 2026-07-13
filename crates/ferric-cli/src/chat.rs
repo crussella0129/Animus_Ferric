@@ -229,6 +229,8 @@ impl ChatBackend {
                     Vec::new(),
                     None,
                     Some(seed),
+                    ferric_guard::TaintSet::new(),
+                    ferric_guard::SinkPolicy::deny(),
                 ))
             }
             #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]

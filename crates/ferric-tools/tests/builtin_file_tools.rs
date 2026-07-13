@@ -5,6 +5,15 @@ use ferric_guard::Workspace;
 use ferric_tools::{ExecuteOutcome, Registry, register_builtin_tools};
 use serde_json::json;
 
+
+trait RegistryTestExt {
+    fn execute_test(&self, ws: &ferric_guard::Workspace, name: &str, args: &serde_json::Value) -> ferric_tools::ExecuteOutcome;
+}
+impl RegistryTestExt for ferric_tools::Registry {
+    fn execute_test(&self, ws: &ferric_guard::Workspace, name: &str, args: &serde_json::Value) -> ferric_tools::ExecuteOutcome {
+        self.execute(ws, name, args, &ferric_guard::TaintSet::new(), &ferric_guard::SinkPolicy::deny())
+    }
+}
 fn setup() -> (tempfile::TempDir, Workspace, Registry) {
     let dir = tempfile::tempdir().unwrap();
     let ws = Workspace::new(dir.path()).unwrap();
@@ -25,7 +34,7 @@ fn write_then_read_roundtrip() {
     let (_dir, ws, registry) = setup();
     let content = "alpha\nbeta\ngamma\n";
 
-    let (write_out, write_err) = expect_completed(registry.execute(
+    let (write_out, write_err) = expect_completed(registry.execute_test(
         &ws,
         "write_file",
         &json!({"path": "notes/today.md", "content": content}),
@@ -33,7 +42,7 @@ fn write_then_read_roundtrip() {
     assert!(!write_err, "write failed: {write_out}");
 
     let (read_out, read_err) =
-        expect_completed(registry.execute(&ws, "read_file", &json!({"path": "notes/today.md"})));
+        expect_completed(registry.execute_test(&ws, "read_file", &json!({"path": "notes/today.md"})));
     assert!(!read_err, "read failed: {read_out}");
     assert_eq!(read_out, content);
 }
@@ -51,7 +60,7 @@ fn tools_refuse_outside_workspace() {
         ("read_file", json!({"path": "../escape.txt"})),
         ("list_dir", json!({"path": ".."})),
     ] {
-        let outcome = registry.execute(&ws, tool, &args);
+        let outcome = registry.execute_test(&ws, tool, &args);
         assert!(
             matches!(outcome, ExecuteOutcome::Denied { .. }),
             "{tool} must be denied outside the workspace, got {outcome:?}"
@@ -68,8 +77,8 @@ fn list_dir_deterministic_order() {
     }
     std::fs::create_dir(dir.path().join("subdir")).unwrap();
 
-    let (first, _) = expect_completed(registry.execute(&ws, "list_dir", &json!({"path": "."})));
-    let (second, _) = expect_completed(registry.execute(&ws, "list_dir", &json!({"path": "."})));
+    let (first, _) = expect_completed(registry.execute_test(&ws, "list_dir", &json!({"path": "."})));
+    let (second, _) = expect_completed(registry.execute_test(&ws, "list_dir", &json!({"path": "."})));
     assert_eq!(first, second, "two listings must be identical");
 
     let lines: Vec<&str> = first.lines().collect();
@@ -86,7 +95,7 @@ fn list_dir_deterministic_order() {
 fn read_missing_file_is_error_not_panic() {
     let (_dir, ws, registry) = setup();
     let (output, is_error) =
-        expect_completed(registry.execute(&ws, "read_file", &json!({"path": "nope.txt"})));
+        expect_completed(registry.execute_test(&ws, "read_file", &json!({"path": "nope.txt"})));
     assert!(is_error);
     assert!(output.contains("nope.txt"));
 }
@@ -95,7 +104,7 @@ fn read_missing_file_is_error_not_panic() {
 fn move_path_renames_file() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("old.py"), "x = 1").unwrap();
-    let (out, err) = expect_completed(registry.execute(
+    let (out, err) = expect_completed(registry.execute_test(
         &ws,
         "move_path",
         &json!({"from": "old.py", "to": "greet.py"}),
@@ -114,7 +123,7 @@ fn move_path_renames_dir() {
     std::fs::create_dir(dir.path().join("a")).unwrap();
     std::fs::write(dir.path().join("a").join("f"), "y").unwrap();
     let (_out, err) =
-        expect_completed(registry.execute(&ws, "move_path", &json!({"from": "a", "to": "b"})));
+        expect_completed(registry.execute_test(&ws, "move_path", &json!({"from": "a", "to": "b"})));
     assert!(!err);
     assert!(dir.path().join("b").join("f").exists());
     assert!(!dir.path().join("a").exists());
@@ -123,7 +132,7 @@ fn move_path_renames_dir() {
 #[test]
 fn move_path_missing_source_is_error() {
     let (_dir, ws, registry) = setup();
-    let (output, is_error) = expect_completed(registry.execute(
+    let (output, is_error) = expect_completed(registry.execute_test(
         &ws,
         "move_path",
         &json!({"from": "ghost.txt", "to": "x.txt"}),
@@ -137,7 +146,7 @@ fn move_path_outside_to_denied() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("secret.txt"), "data").unwrap();
     // `to` escapes the workspace — must be denied, source left intact.
-    let outcome = registry.execute(
+    let outcome = registry.execute_test(
         &ws,
         "move_path",
         &json!({"from": "secret.txt", "to": "../escaped.txt"}),
@@ -156,12 +165,12 @@ fn move_path_outside_to_denied() {
 #[test]
 fn make_dir_creates_parents_and_is_idempotent() {
     let (dir, ws, registry) = setup();
-    let (_o, err) = expect_completed(registry.execute(&ws, "make_dir", &json!({"path": "a/b/c"})));
+    let (_o, err) = expect_completed(registry.execute_test(&ws, "make_dir", &json!({"path": "a/b/c"})));
     assert!(!err);
     assert!(dir.path().join("a").join("b").join("c").is_dir());
     // Idempotent: a second call on the existing dir succeeds.
     let (_o2, err2) =
-        expect_completed(registry.execute(&ws, "make_dir", &json!({"path": "a/b/c"})));
+        expect_completed(registry.execute_test(&ws, "make_dir", &json!({"path": "a/b/c"})));
     assert!(!err2, "make_dir must be idempotent");
 }
 
@@ -177,7 +186,7 @@ fn search_files_finds_matches_with_relpath_and_lineno() {
     std::fs::write(dir.path().join("b.txt"), "no hits here\nMARKER again\n").unwrap();
 
     let (out, err) =
-        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "MARKER"})));
+        expect_completed(registry.execute_test(&ws, "search_files", &json!({"query": "MARKER"})));
     assert!(!err, "{out}");
     let lines: Vec<&str> = out.lines().collect();
     assert!(lines.iter().any(|l| l.starts_with("b.txt:2:")), "{out}");
@@ -194,7 +203,7 @@ fn search_files_miss_is_empty_not_error() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("a.txt"), "nothing relevant").unwrap();
     let (out, err) =
-        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "ZZZ_absent"})));
+        expect_completed(registry.execute_test(&ws, "search_files", &json!({"query": "ZZZ_absent"})));
     assert!(!err, "a miss must not be an error: {out}");
     assert!(out.is_empty(), "no matches → empty output, got {out:?}");
 }
@@ -204,7 +213,7 @@ fn search_files_caps_results() {
     let (dir, ws, registry) = setup();
     let body: String = (0..20).map(|_| "HIT\n").collect();
     std::fs::write(dir.path().join("many.txt"), body).unwrap();
-    let (out, _err) = expect_completed(registry.execute(
+    let (out, _err) = expect_completed(registry.execute_test(
         &ws,
         "search_files",
         &json!({"query": "HIT", "max_results": 5}),
@@ -228,7 +237,7 @@ fn search_files_skips_binary_and_noise_dirs() {
     std::fs::write(dir.path().join("real.txt"), "NEEDLE here").unwrap();
 
     let (out, err) =
-        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "NEEDLE"})));
+        expect_completed(registry.execute_test(&ws, "search_files", &json!({"query": "NEEDLE"})));
     assert!(!err, "{out}");
     assert!(out.contains("real.txt:1:"), "real hit present: {out}");
     assert!(!out.contains("blob.bin"), "binary file must be skipped");
@@ -238,7 +247,7 @@ fn search_files_skips_binary_and_noise_dirs() {
 #[test]
 fn search_files_refuses_outside_workspace() {
     let (_dir, ws, registry) = setup();
-    let outcome = registry.execute(&ws, "search_files", &json!({"query": "x", "path": ".."}));
+    let outcome = registry.execute_test(&ws, "search_files", &json!({"query": "x", "path": ".."}));
     assert!(
         matches!(outcome, ExecuteOutcome::Denied { .. }),
         "search outside the workspace must be denied, got {outcome:?}"
@@ -252,9 +261,9 @@ fn search_files_deterministic() {
         std::fs::write(dir.path().join(n), "TOKEN\n").unwrap();
     }
     let (first, _) =
-        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "TOKEN"})));
+        expect_completed(registry.execute_test(&ws, "search_files", &json!({"query": "TOKEN"})));
     let (second, _) =
-        expect_completed(registry.execute(&ws, "search_files", &json!({"query": "TOKEN"})));
+        expect_completed(registry.execute_test(&ws, "search_files", &json!({"query": "TOKEN"})));
     assert_eq!(
         first, second,
         "two identical searches must match byte-for-byte"
@@ -265,7 +274,7 @@ fn search_files_deterministic() {
 fn edit_file_replaces_first_occurrence() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.rs"), "let x = 1;\nlet x = 2;\n").unwrap();
-    let (out, err) = expect_completed(registry.execute(
+    let (out, err) = expect_completed(registry.execute_test(
         &ws,
         "edit_file",
         &json!({"path": "f.rs", "old_string": "let x = 1;", "new_string": "let y = 9;"}),
@@ -282,7 +291,7 @@ fn edit_file_replaces_first_occurrence() {
 fn edit_file_absent_old_string_is_error_and_no_write() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.txt"), "original").unwrap();
-    let (output, is_error) = expect_completed(registry.execute(
+    let (output, is_error) = expect_completed(registry.execute_test(
         &ws,
         "edit_file",
         &json!({"path": "f.txt", "old_string": "absent", "new_string": "x"}),
@@ -300,7 +309,7 @@ fn edit_file_absent_old_string_is_error_and_no_write() {
 fn edit_file_empty_old_string_is_error() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.txt"), "x").unwrap();
-    let (_o, is_error) = expect_completed(registry.execute(
+    let (_o, is_error) = expect_completed(registry.execute_test(
         &ws,
         "edit_file",
         &json!({"path": "f.txt", "old_string": "", "new_string": "y"}),
@@ -311,7 +320,7 @@ fn edit_file_empty_old_string_is_error() {
 #[test]
 fn edit_file_outside_workspace_denied() {
     let (_dir, ws, registry) = setup();
-    let outcome = registry.execute(
+    let outcome = registry.execute_test(
         &ws,
         "edit_file",
         &json!({"path": "../escape.txt", "old_string": "a", "new_string": "b"}),
@@ -327,7 +336,7 @@ fn delete_path_removes_file() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("gone.txt"), "x").unwrap();
     let (out, err) =
-        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "gone.txt"})));
+        expect_completed(registry.execute_test(&ws, "delete_path", &json!({"path": "gone.txt"})));
     assert!(!err, "{out}");
     assert!(!dir.path().join("gone.txt").exists());
 }
@@ -337,7 +346,7 @@ fn delete_path_removes_empty_dir() {
     let (dir, ws, registry) = setup();
     std::fs::create_dir(dir.path().join("empty")).unwrap();
     let (_o, err) =
-        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "empty"})));
+        expect_completed(registry.execute_test(&ws, "delete_path", &json!({"path": "empty"})));
     assert!(!err);
     assert!(!dir.path().join("empty").exists());
 }
@@ -349,7 +358,7 @@ fn delete_path_nonempty_dir_needs_recursive() {
     std::fs::write(dir.path().join("d").join("f"), "x").unwrap();
     // Without recursive → error, tree intact.
     let (output, is_error) =
-        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "d"})));
+        expect_completed(registry.execute_test(&ws, "delete_path", &json!({"path": "d"})));
     assert!(is_error);
     assert!(output.contains("recursive"));
     assert!(
@@ -357,7 +366,7 @@ fn delete_path_nonempty_dir_needs_recursive() {
         "tree intact without recursive"
     );
     // With recursive → gone.
-    let (_o, err) = expect_completed(registry.execute(
+    let (_o, err) = expect_completed(registry.execute_test(
         &ws,
         "delete_path",
         &json!({"path": "d", "recursive": true}),
@@ -370,7 +379,7 @@ fn delete_path_nonempty_dir_needs_recursive() {
 fn delete_path_missing_is_error() {
     let (_dir, ws, registry) = setup();
     let (output, is_error) =
-        expect_completed(registry.execute(&ws, "delete_path", &json!({"path": "ghost.txt"})));
+        expect_completed(registry.execute_test(&ws, "delete_path", &json!({"path": "ghost.txt"})));
     assert!(is_error);
     assert!(output.contains("ghost.txt"));
 }
@@ -380,7 +389,7 @@ fn delete_path_outside_workspace_denied() {
     let (dir, ws, registry) = setup();
     let outside = dir.path().parent().unwrap().join("victim.txt");
     std::fs::write(&outside, "data").unwrap();
-    let outcome = registry.execute(&ws, "delete_path", &json!({"path": "../victim.txt"}));
+    let outcome = registry.execute_test(&ws, "delete_path", &json!({"path": "../victim.txt"}));
     assert!(
         matches!(outcome, ExecuteOutcome::Denied { .. }),
         "delete outside the workspace must be denied, got {outcome:?}"
@@ -394,7 +403,7 @@ fn delete_path_into_ferric_denied() {
     let (dir, ws, registry) = setup();
     std::fs::create_dir_all(dir.path().join(".ferric")).unwrap();
     std::fs::write(dir.path().join(".ferric").join("server.json"), "{}").unwrap();
-    let outcome = registry.execute(&ws, "delete_path", &json!({"path": ".ferric/server.json"}));
+    let outcome = registry.execute_test(&ws, "delete_path", &json!({"path": ".ferric/server.json"}));
     assert!(
         matches!(outcome, ExecuteOutcome::Denied { .. }),
         "deleting under .ferric must be denied, got {outcome:?}"
@@ -406,7 +415,7 @@ fn delete_path_into_ferric_denied() {
 fn move_path_into_ferric_denied() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("x.txt"), "data").unwrap();
-    let outcome = registry.execute(
+    let outcome = registry.execute_test(
         &ws,
         "move_path",
         &json!({"from": "x.txt", "to": ".ferric/stash.txt"}),
@@ -421,7 +430,7 @@ fn move_path_into_ferric_denied() {
 fn apply_patch_single_hunk_applies() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.txt"), "a\nb\nc\n").unwrap();
-    let (out, err) = expect_completed(registry.execute(
+    let (out, err) = expect_completed(registry.execute_test(
         &ws,
         "apply_patch",
         &json!({"path": "f.txt", "patch": "@@\n a\n-b\n+B\n c\n"}),
@@ -439,7 +448,7 @@ fn apply_patch_context_disambiguates_the_second_occurrence() {
     // the SECOND. `multi_edit`'s first-occurrence rule would hit the first.
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.txt"), "x\nkeep\nx\n").unwrap();
-    let (out, err) = expect_completed(registry.execute(
+    let (out, err) = expect_completed(registry.execute_test(
         &ws,
         "apply_patch",
         // Context line `keep` precedes the second `x`, so the hunk locates there.
@@ -457,7 +466,7 @@ fn apply_patch_context_disambiguates_the_second_occurrence() {
 fn apply_patch_absent_context_is_error_and_no_write() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.txt"), "a\nb\nc\n").unwrap();
-    let (out, err) = expect_completed(registry.execute(
+    let (out, err) = expect_completed(registry.execute_test(
         &ws,
         "apply_patch",
         &json!({"path": "f.txt", "patch": "@@\n a\n-NOPE\n+Z\n"}),
@@ -475,14 +484,14 @@ fn apply_patch_malformed_or_empty_is_error() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.txt"), "a\nb\n").unwrap();
     // Empty patch.
-    let (_o, e1) = expect_completed(registry.execute(
+    let (_o, e1) = expect_completed(registry.execute_test(
         &ws,
         "apply_patch",
         &json!({"path": "f.txt", "patch": ""}),
     ));
     assert!(e1, "empty patch must error");
     // A body line with no ' '/'-'/'+ prefix.
-    let (_o2, e2) = expect_completed(registry.execute(
+    let (_o2, e2) = expect_completed(registry.execute_test(
         &ws,
         "apply_patch",
         &json!({"path": "f.txt", "patch": "@@\nbogus line\n"}),
@@ -499,7 +508,7 @@ fn apply_patch_malformed_or_empty_is_error() {
 fn apply_patch_multi_hunk_applies_in_order() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.txt"), "one\ntwo\nthree\nfour\n").unwrap();
-    let (out, err) = expect_completed(registry.execute(
+    let (out, err) = expect_completed(registry.execute_test(
         &ws,
         "apply_patch",
         &json!({"path": "f.txt", "patch": "@@\n one\n-two\n+TWO\n three\n@@\n three\n-four\n+FOUR\n"}),
@@ -587,13 +596,13 @@ fn find_files_matches_names_sorted_scoped_and_skips_noise() {
 
     // From the root: both `config` files, name-sorted, no `notes.md`, no `.git`.
     let (out, err) =
-        expect_completed(registry.execute(&ws, "find_files", &json!({"pattern": "config"})));
+        expect_completed(registry.execute_test(&ws, "find_files", &json!({"pattern": "config"})));
     assert!(!err);
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines, vec!["config.toml", "src/config.rs"], "got {lines:?}");
 
     // `path` scopes the walk.
-    let (scoped, _) = expect_completed(registry.execute(
+    let (scoped, _) = expect_completed(registry.execute_test(
         &ws,
         "find_files",
         &json!({"pattern": "config", "path": "src"}),
@@ -601,7 +610,7 @@ fn find_files_matches_names_sorted_scoped_and_skips_noise() {
     assert_eq!(scoped, "src/config.rs");
 
     // Cap honoured.
-    let (capped, _) = expect_completed(registry.execute(
+    let (capped, _) = expect_completed(registry.execute_test(
         &ws,
         "find_files",
         &json!({"pattern": "config", "max_results": 1}),
@@ -610,7 +619,7 @@ fn find_files_matches_names_sorted_scoped_and_skips_noise() {
 
     // Empty pattern errors.
     let (_, empty_err) =
-        expect_completed(registry.execute(&ws, "find_files", &json!({"pattern": ""})));
+        expect_completed(registry.execute_test(&ws, "find_files", &json!({"pattern": ""})));
     assert!(empty_err, "empty pattern must error");
 }
 
@@ -618,7 +627,7 @@ fn find_files_matches_names_sorted_scoped_and_skips_noise() {
 fn copy_file_copies_keeps_original_and_creates_parent() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("a.txt"), "payload").unwrap();
-    let (out, err) = expect_completed(registry.execute(
+    let (out, err) = expect_completed(registry.execute_test(
         &ws,
         "copy_file",
         &json!({"from": "a.txt", "to": "b/a.txt"}),
@@ -635,7 +644,7 @@ fn copy_file_copies_keeps_original_and_creates_parent() {
 fn copy_file_into_ferric_denied() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("x.txt"), "data").unwrap();
-    let outcome = registry.execute(
+    let outcome = registry.execute_test(
         &ws,
         "copy_file",
         &json!({"from": "x.txt", "to": ".ferric/stash.txt"}),
@@ -650,7 +659,7 @@ fn copy_file_into_ferric_denied() {
 fn copy_file_directory_source_errors() {
     let (dir, ws, registry) = setup();
     std::fs::create_dir_all(dir.path().join("adir")).unwrap();
-    let (out, is_error) = expect_completed(registry.execute(
+    let (out, is_error) = expect_completed(registry.execute_test(
         &ws,
         "copy_file",
         &json!({"from": "adir", "to": "bdir"}),
@@ -663,7 +672,7 @@ fn multi_edit_applies_ordered_batch_atomically() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.txt"), "a b").unwrap();
     // Sequential: "a b" -[a→X]-> "X b" -[X b→DONE]-> "DONE" (2nd edits the 1st's output).
-    let (out, err) = expect_completed(registry.execute(
+    let (out, err) = expect_completed(registry.execute_test(
         &ws,
         "multi_edit",
         &json!({"path": "f.txt", "edits": [
@@ -685,7 +694,7 @@ fn multi_edit_missing_old_leaves_file_unchanged() {
     std::fs::write(dir.path().join("f.txt"), "hello world").unwrap();
     // The first edit would apply, but the second's old_string is absent → abort,
     // nothing written.
-    let (_out, err) = expect_completed(registry.execute(
+    let (_out, err) = expect_completed(registry.execute_test(
         &ws,
         "multi_edit",
         &json!({"path": "f.txt", "edits": [
@@ -705,13 +714,13 @@ fn multi_edit_missing_old_leaves_file_unchanged() {
 fn multi_edit_empty_edits_and_empty_old_error() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("f.txt"), "data").unwrap();
-    let (_o1, e1) = expect_completed(registry.execute(
+    let (_o1, e1) = expect_completed(registry.execute_test(
         &ws,
         "multi_edit",
         &json!({"path": "f.txt", "edits": []}),
     ));
     assert!(e1, "empty edits must error");
-    let (_o2, e2) = expect_completed(registry.execute(
+    let (_o2, e2) = expect_completed(registry.execute_test(
         &ws,
         "multi_edit",
         &json!({"path": "f.txt", "edits": [{"old_string": "", "new_string": "x"}]}),

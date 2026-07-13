@@ -72,6 +72,9 @@ pub struct RunArgs<'a> {
     /// initial prompt for this session — its own prompt lives in the session
     /// it resumed from).
     pub resume: Option<crate::replay::ReplayedState>,
+    /// Security primitives for the Ornstein loop phase (CaMeL-lite)
+    pub taint_set: ferric_guard::TaintSet,
+    pub sink_policy: ferric_guard::SinkPolicy,
 }
 
 use crate::projector::TraceProjector;
@@ -421,8 +424,14 @@ pub async fn run(
             sink.write_event(tc.clone())?;
             projector.step(&tc);
             
-            let (result_text, is_error, duration_ms, checks) =
-                dispatch(args.registry, args.workspace, &call.name, &call.args);
+            let (result_text, is_error, duration_ms, checks) = dispatch(
+                args.registry,
+                args.workspace,
+                &call.name,
+                &call.args,
+                &args.taint_set,
+                &args.sink_policy,
+            );
             dispatched += 1;
             if is_error {
                 errored += 1;
@@ -515,8 +524,10 @@ fn dispatch(
     workspace: &Workspace,
     name: &str,
     args: &serde_json::Value,
+    taint_set: &ferric_guard::TaintSet,
+    sink_policy: &ferric_guard::SinkPolicy,
 ) -> (DispatchText, bool, u64, Vec<CheckRecord>) {
-    match registry.execute(workspace, name, args) {
+    match registry.execute(workspace, name, args, taint_set, sink_policy) {
         ExecuteOutcome::Completed {
             output,
             duration_ms,

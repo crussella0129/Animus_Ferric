@@ -370,10 +370,9 @@ impl McpServer {
             Some(prompt),
             media,
             None,
-            // ADR-046: McpServer's launch-time-fixed design has no per-call
-            // trace-file selection — `ferric mcp --resume` is out of scope
-            // (T-3906, sprint 39).
             None,
+            ferric_guard::TaintSet::new(),
+            ferric_guard::SinkPolicy::deny(),
         );
         match &self.executor {
             Executor::Mock => futures_executor::block_on(fut),

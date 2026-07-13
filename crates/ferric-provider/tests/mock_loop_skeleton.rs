@@ -108,7 +108,7 @@ fn mock_loop_skeleton() {
                 args: call.args.clone(),
             })
             .unwrap();
-            match registry.execute(&workspace, &call.name, &call.args) {
+            match registry.execute(&workspace, &call.name, &call.args, &ferric_guard::TaintSet::new(), &ferric_guard::SinkPolicy::deny()) {
                 ExecuteOutcome::Completed {
                     output,
                     duration_ms,

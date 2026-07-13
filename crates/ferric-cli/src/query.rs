@@ -147,6 +147,17 @@ pub struct QueryArgs {
     /// under `NativeTools`/`TextXml`, assistant prose streams directly.
     #[arg(long)]
     pub stream: bool,
+
+    /// Execute the research phase before the planner loop begins.
+    /// Queries the Web and Local FS to populate the context with quarantined
+    /// digests, gating sink access based on the TaintSet.
+    #[arg(long)]
+    pub research: Option<String>,
+
+    /// The SinkAction for the CaMeL sink policy. Deny | RequireApproval | Warn.
+    /// Defaults to Deny.
+    #[arg(long, default_value = "deny")]
+    pub sink_action: String,
 }
 
 /// The shared subset of `QueryArgs` (everything except `prompt`/`files`) that
@@ -578,6 +589,12 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             media_parts,
             stream_sink,
             resume,
+            ferric_guard::TaintSet::new(),
+            match args.sink_action.to_lowercase().as_str() {
+                "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
+                "requireapproval" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval),
+                _ => ferric_guard::SinkPolicy::deny(),
+            },
         )
     } else {
         drive_real(
@@ -594,6 +611,13 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             media_parts,
             stream_sink,
             resume,
+            ferric_guard::TaintSet::new(),
+            match args.sink_action.to_lowercase().as_str() {
+                "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
+                "requireapproval" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval),
+                _ => ferric_guard::SinkPolicy::deny(),
+            },
+            args.research.clone(),
         )
     };
 
@@ -729,6 +753,8 @@ pub(crate) async fn run_with_provider(
     media: Vec<MediaPart>,
     stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     resume: Option<ferric_loop::ReplayedState>,
+    taint_set: ferric_guard::TaintSet,
+    sink_policy: ferric_guard::SinkPolicy,
 ) -> Result<LoopOutcome, String> {
     run(
         RunArgs {
@@ -744,6 +770,8 @@ pub(crate) async fn run_with_provider(
             media,
             stream_sink,
             resume,
+            taint_set,
+            sink_policy,
         },
         sink,
         prompt,
@@ -767,6 +795,8 @@ fn drive_mock(
     media: Vec<MediaPart>,
     stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     resume: Option<ferric_loop::ReplayedState>,
+    taint_set: ferric_guard::TaintSet,
+    sink_policy: ferric_guard::SinkPolicy,
 ) -> Result<LoopOutcome, String> {
     futures_executor::block_on(run_with_provider(
         provider,
@@ -782,6 +812,8 @@ fn drive_mock(
         media,
         stream_sink,
         resume,
+        taint_set,
+        sink_policy,
     ))
 }
 
@@ -801,10 +833,39 @@ fn drive_real(
     media: Vec<MediaPart>,
     stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     resume: Option<ferric_loop::ReplayedState>,
+    mut taint_set: ferric_guard::TaintSet,
+    sink_policy: ferric_guard::SinkPolicy,
+    research_query: Option<String>,
 ) -> Result<LoopOutcome, String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
         let provider_box = create_provider(&args.backend_opts).await?;
+        let mut effective_prompt = prompt.map(|s| s.to_string());
+        if let Some(rq) = research_query {
+            // Perform research
+            let local_retriever = ferric_research::LocalFsRetriever::new(workspace.root().to_path_buf(), 50, 1024 * 1024);
+            let retrievers: Vec<&dyn ferric_research::Retriever> = vec![&local_retriever];
+            match ferric_research::research_all(&retrievers, provider_box.as_ref(), &rq).await {
+                Ok(multi) => {
+                    if !multi.digests.is_empty() {
+                        let mut cx = String::new();
+                        cx.push_str("\n\n<research_context>\n");
+                        for d in multi.digests {
+                            taint_set.insert(&d.source);
+                            cx.push_str(&d.summary);
+                            cx.push_str("\n---\n");
+                        }
+                        cx.push_str("</research_context>\n");
+                        let p = effective_prompt.unwrap_or_default();
+                        effective_prompt = Some(format!("{}{}", p, cx));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("research failed: {e}");
+                }
+            }
+        }
+
         run_with_provider(
             provider_box.as_ref(),
             registry,
@@ -815,10 +876,12 @@ fn drive_real(
             system_prompt,
             lineage,
             sink,
-            prompt,
+            effective_prompt.as_deref(),
             media,
             stream_sink,
             resume,
+            taint_set,
+            sink_policy,
         )
         .await
     })
@@ -840,6 +903,9 @@ fn drive_real(
     _media: Vec<MediaPart>,
     _stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     _resume: Option<ferric_loop::ReplayedState>,
+    _taint_set: ferric_guard::TaintSet,
+    _sink_policy: ferric_guard::SinkPolicy,
+    _research_query: Option<String>,
 ) -> Result<LoopOutcome, String> {
     Err("this binary was built without backend features; \
          rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
@@ -912,6 +978,8 @@ mod tests {
             Vec::new(),
             None,
             None,
+            ferric_guard::TaintSet::new(),
+            ferric_guard::SinkPolicy::deny(),
         ))
         .unwrap();
 

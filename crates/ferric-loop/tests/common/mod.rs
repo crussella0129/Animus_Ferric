@@ -174,6 +174,8 @@ pub fn run_scripted_protocol(
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
+sink_policy: ferric_guard::SinkPolicy::deny(),
+taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,

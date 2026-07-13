@@ -147,6 +147,8 @@ fn compaction_triggers_and_shrinks_next_prompt_assembled() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
+sink_policy: ferric_guard::SinkPolicy::deny(),
+taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -238,6 +240,8 @@ fn history_compacted_traced_after_triggering_turn_start() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
+sink_policy: ferric_guard::SinkPolicy::deny(),
+taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -350,6 +354,8 @@ fn resume_only_folds_new_post_resume_turns() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
+sink_policy: ferric_guard::SinkPolicy::deny(),
+taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -436,6 +442,8 @@ fn resume_seeds_compactor_numbering_consistently() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
+sink_policy: ferric_guard::SinkPolicy::deny(),
+taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -526,6 +534,8 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
     let sleeper1 = RecordingSleeper::new();
     let first = futures_executor::block_on(run(
         RunArgs {
+sink_policy: ferric_guard::SinkPolicy::deny(),
+taint_set: ferric_guard::TaintSet::new(),
             provider: &provider1,
             registry: &registry1,
             workspace: &workspace1,
@@ -593,6 +603,8 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
     let sleeper2 = RecordingSleeper::new();
     let second = futures_executor::block_on(run(
         RunArgs {
+sink_policy: ferric_guard::SinkPolicy::deny(),
+taint_set: ferric_guard::TaintSet::new(),
             provider: &provider2,
             registry: &registry2,
             workspace: &workspace2,
