@@ -242,6 +242,9 @@ call dispatches nothing, opens no agentic trace, touches no workspace file). 6 u
 subprocess tests (the suite's first stdin-piping harness). All 4 build tasks shipped; research +
 plan + critique in `sprints/s42/`. See completed-tasks.md for per-task detail.
 
+## Sprint 45 (Ornstein Web Retriever) — DONE, ADR-055
+Increment 4 of Ornstein. Built the Web Retriever plane (`crates/ferric-research/src/web.rs`) which uses a hardened microVM Docker sandbox (`sandbox.rs`) to securely fetch web pages without exposing the host to network pivoting or exfiltration risks. Configured `docker-compose.yml` to run a strict allowlist proxy (`squid.conf`) for the isolated fetchers.
+
 ## Sprint 44 (Event-Sourced Projector Refactor) — DONE, ADR-054
 The first phase of unblocking the Ornstein Web Retriever (increment 4). We extracted the duplicated state machine logic from `run.rs` and `replay.rs` into a new `TraceProjector` struct in `projector.rs`. This correctly decouples protocol formatting from event hydration and fixes trailing-turn tracking issues in `compact.rs`. All tests pass cleanly, ensuring a hardened foundation for the microVM web retriever next.
 
