@@ -17,6 +17,7 @@ mod grammar;
 mod outcome;
 mod progress;
 mod protocol;
+mod projector;
 mod repetition;
 mod replay;
 mod run;

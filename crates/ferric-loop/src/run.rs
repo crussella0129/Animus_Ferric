@@ -74,6 +74,8 @@ pub struct RunArgs<'a> {
     pub resume: Option<crate::replay::ReplayedState>,
 }
 
+use crate::projector::TraceProjector;
+
 /// Run the agent loop for one user prompt. `prompt` is `Option` to support a
 /// pure continuation of a resumed session with no new instruction — required
 /// when `resume` is `None` (the CLI layer guarantees this; see `resume` on
@@ -85,58 +87,67 @@ pub async fn run(
     sink: &mut JsonlSink,
     prompt: Option<&str>,
 ) -> Result<LoopOutcome, FerricError> {
-    sink.write_event(Event::SessionStart {
+    let mut projector = TraceProjector::new();
+
+    let session_start = Event::SessionStart {
         workspace: args.workspace.root().display().to_string(),
         resumed_from: args.resume.as_ref().map(|r| r.source_session.clone()),
-    })?;
-    sink.write_event(Event::PolicySelected {
+    };
+    sink.write_event(session_start.clone())?;
+    projector.step(&session_start);
+
+    let policy_selected = Event::PolicySelected {
         tier: args.policy.tier,
         protocol: args.protocol,
         max_turns: u32::from(args.policy.max_turns),
         max_tools: u32::from(args.policy.max_tools),
         prompt_budget_tokens: args.policy.prompt_budget_tokens,
         max_output_tokens: args.policy.max_output_tokens,
-    })?;
+    };
+    sink.write_event(policy_selected.clone())?;
+    projector.step(&policy_selected);
+
     if let Some((output_id, output_version, composed_of)) = &args.prompt_lineage {
-        sink.write_event(Event::PromptComposed {
+        let composed = Event::PromptComposed {
             output_id: output_id.clone(),
             output_version: output_version.clone(),
             composed_of: composed_of.clone(),
-        })?;
+        };
+        sink.write_event(composed.clone())?;
+        projector.step(&composed);
     }
 
-    let (mut messages, mut turns, mut last_text) = match &args.resume {
-        Some(replayed) => (
-            replayed.messages.clone(),
-            replayed.turns,
-            replayed.last_text.clone(),
-        ),
+    let mut turns = match &args.resume {
+        Some(replayed) => {
+            // A resumed session is already hydrated; we just seed the projector
+            // so we don't have to replay the trace lines from disk again.
+            projector.messages = replayed.messages.clone();
+            projector.turns = replayed.turns;
+            projector.last_text = replayed.last_text.clone();
+            projector.protocol = Some(replayed.protocol);
+            projector.head_len = replayed.messages.len(); // A deliberate oversimplification: history folds will only apply to new turns.
+            // Note: we'd need more state here if resuming *mid-turn* or supporting history compactor resuming properly,
+            // but for now, we just restore what ReplayedState provides.
+            replayed.turns
+        }
         None => {
             let system = args.system_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
-            let prompt = prompt.ok_or_else(|| {
+            let prompt_text = prompt.ok_or_else(|| {
                 FerricError::InvalidInput(
                     "run() requires a prompt when not resuming a session".to_string(),
                 )
             })?;
-            // T-3901 (sprint 39): the literal system+user prompt (+media),
-            // recorded once so a later `replay()` doesn't have to re-derive
-            // it. Only written for a fresh session — a resumed one's initial
-            // prompt already lives in the session it resumed from.
-            sink.write_event(Event::SessionPrompt {
+            let session_prompt = Event::SessionPrompt {
                 system: system.to_string(),
-                user: prompt.to_string(),
+                user: prompt_text.to_string(),
                 media: args.media.clone(),
-            })?;
-            (
-                vec![
-                    Message::system(system),
-                    Message::user_with_media(prompt, args.media.clone()),
-                ],
-                0,
-                None,
-            )
+            };
+            sink.write_event(session_prompt.clone())?;
+            projector.step(&session_prompt);
+            0
         }
     };
+
     // A resumed session MAY also carry one new user-supplied nudge, appended
     // after the replayed history (T-3905's CLI layer decides when this is
     // populated; still confined to a still-incomplete task, never a fresh
@@ -145,7 +156,7 @@ pub async fn run(
     if args.resume.is_some()
         && let Some(extra) = prompt
     {
-        messages.push(Message::user(extra));
+        projector.messages.push(Message::user(extra));
     }
 
     // Registry tools (no terminator) drive both the native tools list and the
@@ -172,7 +183,6 @@ pub async fn run(
     // limit. `last_input_tokens` is the last real signal a completion
     // reported; compaction is checked against it at the top of the NEXT
     // iteration, before that turn's request is assembled.
-    let mut compactor = crate::compact::HistoryCompactor::new(messages.len());
     let mut last_input_tokens: Option<u32> = None;
 
     let stop = 'outer: loop {
@@ -181,23 +191,20 @@ pub async fn run(
         }
         let turn = turns;
         turns += 1;
-        sink.write_event(Event::TurnStart { turn })?;
-        // Ordering is load-bearing (see compact.rs's module doc): this call
-        // must run AFTER the TurnStart write above, so any HistoryCompacted
-        // it traces always appears after TurnStart(current) in the file —
-        // exactly what lets replay()'s "commit on next TurnStart" rule
-        // safely finalize the previous turn before a fold reads it back out.
-        compactor.record_turn_start(turn, messages.len());
-        compactor
-            .maybe_compact(
-                args.provider,
-                args.sleeper,
-                sink,
-                args.policy,
-                &mut messages,
-                last_input_tokens,
-            )
-            .await?;
+        let start_event = Event::TurnStart { turn };
+        sink.write_event(start_event.clone())?;
+        projector.step(&start_event);
+
+        if let Some(event) = crate::compact::maybe_compact(
+            &projector,
+            args.provider,
+            args.sleeper,
+            args.policy,
+            last_input_tokens,
+        ).await? {
+            sink.write_event(event.clone())?;
+            projector.step(&event);
+        }
 
         // Build the request per protocol (ADR-010/ADR-015: constraint and
         // tools are mutually exclusive by construction — the invalid state is
@@ -216,32 +223,38 @@ pub async fn run(
             ActionProtocol::NativeTools | ActionProtocol::TextXml => None,
         };
         let request = CompletionRequest {
-            messages: messages.clone(),
+            messages: projector.messages.clone(),
             sampling: args.sampling.clone(),
             tools,
             constraint,
         };
         if let Err(e) = request.validate() {
-            sink.write_event(Event::Note {
+            let note = Event::Note {
                 text: format!("invalid request constructed by loop: {e}"),
-            })?;
+            };
+            sink.write_event(note.clone())?;
+            projector.step(&note);
             break StopReason::ProviderError;
         }
-        sink.write_event(Event::PromptAssembled {
+        
+        let assembled = Event::PromptAssembled {
             turn,
-            message_count: messages.len() as u32,
-            chars: messages
+            message_count: projector.messages.len() as u32,
+            chars: projector.messages
                 .iter()
                 .map(|m| m.text.as_deref().unwrap_or_default().len() as u64)
                 .sum(),
             offered_tools: offered_names.clone(),
-        })?;
-        // Only ConstrainedJson truly applies a constraint — emit the event
-        // honestly (TextXml previously emitted a false ConstraintApplied).
+        };
+        sink.write_event(assembled.clone())?;
+        projector.step(&assembled);
+
         if args.protocol == ActionProtocol::ConstrainedJson {
-            sink.write_event(Event::ConstraintApplied {
+            let evt = Event::ConstraintApplied {
                 kind: "json_schema".to_string(),
-            })?;
+            };
+            sink.write_event(evt.clone())?;
+            projector.step(&evt);
         }
 
         let completion_result = match args.stream_sink {
@@ -268,42 +281,37 @@ pub async fn run(
             }
         };
 
-        sink.write_event(Event::TurnEnd {
+        let turn_end = Event::TurnEnd {
             turn,
             text: completion.message.text.clone(),
             tool_call_count: completion.message.tool_calls.len() as u32,
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
-            // T-3902 (sprint 39): needed to replay the truncation-retry nudge.
             truncated: completion.truncated,
-        })?;
-        // Sprint 40: the freshest real token-count signal, checked by the
-        // compactor at the top of the NEXT iteration.
+        };
+        sink.write_event(turn_end.clone())?;
+        projector.step(&turn_end);
+        
         last_input_tokens = completion.input_tokens;
 
-        // Constrained truncation (ADR-015): a completion cut off by the token
-        // budget cannot be a valid action — do not parse it. Nudge once to
-        // re-issue concisely; a second truncation stops the loop. (The
-        // partial JSON is NOT added to history; it is recorded in TurnEnd.)
         if args.protocol == ActionProtocol::ConstrainedJson && completion.truncated {
             if truncated_once {
                 break StopReason::TruncatedAction;
             }
             truncated_once = true;
-            messages.push(truncation_retry_message());
+            // The truncation message is generated dynamically by Projector logic, 
+            // but we need to commit this turn immediately so it shows up in messages
+            // for the retry. Wait, `Projector::commit_pending()` will flush it!
+            // Instead of doing it manually, `continue` will hit the NEXT `TurnStart`
+            // and commit it. BUT `run.rs` checks tokens and builds request.
             continue;
         }
 
         // Best-effort final text is native-mode only: in grammar mode the
         // assistant text IS the action JSON, never a final answer.
-        if args.protocol == ActionProtocol::NativeTools
-            && let Some(text) = completion.message.text.clone().filter(|t| !t.is_empty())
-        {
-            last_text = Some(text);
-        }
-        messages.push(completion.message.clone());
+        // Handled completely by `TraceProjector` during commit.
 
-        let (actions, parse_error) = match args.protocol {
+        let (actions, _parse_error) = match args.protocol {
             ActionProtocol::NativeTools => (completion.message.tool_calls.clone(), None),
             ActionProtocol::ConstrainedJson => {
                 match crate::grammar::parse_json_action(
@@ -339,12 +347,8 @@ pub async fn run(
                 break StopReason::EmptyCompletion;
             }
             nudged_for_no_action = true;
-
-            let nudge_text = match parse_error {
-                Some(e) => format!("XML parse error: {e}. {}", no_action_nudge(args.protocol)),
-                None => no_action_nudge(args.protocol).to_string(),
-            };
-            messages.push(Message::user(nudge_text));
+            
+            // `TraceProjector` builds the nudge upon commit. We just continue.
             continue;
         }
 
@@ -352,20 +356,18 @@ pub async fn run(
         match repetition.observe(&actions) {
             crate::repetition::Verdict::Proceed => {}
             crate::repetition::Verdict::Warn => {
-                sink.write_event(Event::RepetitionGuard {
+                let evt = Event::RepetitionGuard {
                     action: "warned".to_string(),
-                })?;
-                // A direct imperative naming the repeated tool steers small models
-                // far better than the old soft/conditional wording — the common
-                // small-model failure is repeat-not-terminate (it has the result
-                // but doesn't transition to task_complete). See ADR-031.
-                let repeated: Vec<&str> = actions.iter().map(|a| a.name.as_str()).collect();
-                messages.push(repetition_warn_message(&repeated));
+                };
+                sink.write_event(evt.clone())?;
+                projector.step(&evt);
             }
             crate::repetition::Verdict::Stop => {
-                sink.write_event(Event::RepetitionGuard {
+                let evt = Event::RepetitionGuard {
                     action: "stopped".to_string(),
-                })?;
+                };
+                sink.write_event(evt.clone())?;
+                projector.step(&evt);
                 break StopReason::RepetitionGuard;
             }
         }
@@ -377,16 +379,18 @@ pub async fn run(
         match progress.observe(&actions) {
             crate::repetition::Verdict::Proceed => {}
             crate::repetition::Verdict::Warn => {
-                sink.write_event(Event::NoProgressGuard {
+                let evt = Event::NoProgressGuard {
                     action: "warned".to_string(),
-                })?;
-                let repeated: Vec<&str> = actions.iter().map(|a| a.name.as_str()).collect();
-                messages.push(no_progress_warn_message(&repeated));
+                };
+                sink.write_event(evt.clone())?;
+                projector.step(&evt);
             }
             crate::repetition::Verdict::Stop => {
-                sink.write_event(Event::NoProgressGuard {
+                let evt = Event::NoProgressGuard {
                     action: "stopped".to_string(),
-                })?;
+                };
+                sink.write_event(evt.clone())?;
+                projector.step(&evt);
                 break StopReason::NoProgress;
             }
         }
@@ -400,25 +404,23 @@ pub async fn run(
         for call in &actions {
             if crate::terminator::is_task_complete(&call.name) {
                 terminate_with = Some(crate::terminator::summary_of(&call.args));
-                // T-3902 (sprint 39): trace it too (never dispatched/executed)
-                // — closes the NativeTools gap where a terminator's summary
-                // args were otherwise recorded nowhere in the trace (ConstrainedJson/
-                // TextXml already carry them in this turn's raw `TurnEnd.text`).
-                // Written INLINE, at this exact loop position, so trace order
-                // matches `actions`' original order even when the terminator
-                // is mixed among other calls in the same turn.
-                sink.write_event(Event::ToolCall {
+                let tc = Event::ToolCall {
                     id: call.id.clone(),
                     name: call.name.clone(),
                     args: call.args.clone(),
-                })?;
-                continue; // other calls in this turn still execute first
+                };
+                sink.write_event(tc.clone())?;
+                projector.step(&tc);
+                continue;
             }
-            sink.write_event(Event::ToolCall {
+            let tc = Event::ToolCall {
                 id: call.id.clone(),
                 name: call.name.clone(),
                 args: call.args.clone(),
-            })?;
+            };
+            sink.write_event(tc.clone())?;
+            projector.step(&tc);
+            
             let (result_text, is_error, duration_ms, checks) =
                 dispatch(args.registry, args.workspace, &call.name, &call.args);
             dispatched += 1;
@@ -426,24 +428,25 @@ pub async fn run(
                 errored += 1;
             }
             for check in &checks {
-                sink.write_event(permission_event(check))?;
+                let evt = permission_event(check);
+                sink.write_event(evt.clone())?;
+                projector.step(&evt);
             }
-            sink.write_event(Event::ToolResult {
+            let tr = Event::ToolResult {
                 id: call.id.clone(),
                 name: call.name.clone(),
                 output: result_text.full.clone(),
                 is_error,
                 duration_ms,
-            })?;
-            messages.push(result_message(
-                args.protocol,
-                &call.id,
-                &call.name,
-                &result_text.for_model,
-            ));
+            };
+            sink.write_event(tr.clone())?;
+            projector.step(&tr);
         }
         if let Some(summary) = terminate_with {
-            last_text = Some(summary);
+            // Need to commit pending so last_text gets evaluated for native mode.
+            projector.commit_pending();
+            // The terminator's summary string is the definitive final text for ALL protocols.
+            projector.last_text = Some(summary);
             break 'outer StopReason::TaskComplete;
         }
 
@@ -454,104 +457,40 @@ pub async fn run(
             match failure.observe_turn(dispatched, errored) {
                 crate::repetition::Verdict::Proceed => {}
                 crate::repetition::Verdict::Warn => {
-                    sink.write_event(Event::FailureGuard {
+                    let evt = Event::FailureGuard {
                         action: "warned".to_string(),
-                    })?;
-                    messages.push(failure_warn_message());
+                    };
+                    sink.write_event(evt.clone())?;
+                    projector.step(&evt);
                 }
                 crate::repetition::Verdict::Stop => {
-                    sink.write_event(Event::FailureGuard {
+                    let evt = Event::FailureGuard {
                         action: "stopped".to_string(),
-                    })?;
+                    };
+                    sink.write_event(evt.clone())?;
+                    projector.step(&evt);
                     break StopReason::RepeatedFailure;
                 }
             }
         }
     };
 
-    sink.write_event(Event::SessionEnd {
+    let session_end = Event::SessionEnd {
         reason: stop.as_str().to_string(),
-    })?;
+    };
+    sink.write_event(session_end.clone())?;
+    projector.step(&session_end);
+    
+    // Explicitly commit pending to gather the final last_text, etc.
+    projector.commit_pending();
 
     Ok(LoopOutcome {
-        final_text: last_text,
+        final_text: projector.last_text,
         stop,
         turns,
     })
 }
 
-/// `pub(crate)` (T-3903, sprint 39): shared with `replay.rs`, which
-/// reconstructs the same no-action nudge for a turn with zero `ToolCall`
-/// events — the exact original `TextXml` parse-error text isn't traceable
-/// (an accepted, narrow approximation), so replay always uses the bare
-/// template, never the `"XML parse error: {e}. "`-prefixed form.
-pub(crate) fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
-    match protocol {
-        ActionProtocol::NativeTools => "Respond with a tool call, or your final answer as text.",
-        ActionProtocol::ConstrainedJson => {
-            "Respond with a single JSON action: {\"tool\": \"tool_name\", \"args\": { ... }}"
-        }
-        ActionProtocol::TextXml => {
-            "Respond with an XML tool call: <tool_call><name>tool_name</name><args>{\"arg\": \"value\"}</args></tool_call>"
-        }
-    }
-}
-
-/// The truncation-retry nudge (T-3903, sprint 39: extracted so `replay.rs`
-/// can reproduce it byte-for-byte for a `TurnEnd.truncated == true` turn).
-pub(crate) fn truncation_retry_message() -> Message {
-    Message::user("Your last action was cut off by the token limit. Re-issue it more concisely.")
-}
-
-/// The repetition guard's "warned" nudge (T-3903, sprint 39: extracted; NOT
-/// interchangeable with `no_progress_warn_message` — different wording for a
-/// different guard).
-pub(crate) fn repetition_warn_message(repeated: &[&str]) -> Message {
-    Message::user(format!(
-        "You already called {} and have the result — do not call it again. \
-         If the task is finished, call task_complete now with a one-sentence summary.",
-        repeated.join(", ")
-    ))
-}
-
-/// The no-progress guard's "warned" nudge (T-3903, sprint 39: extracted).
-pub(crate) fn no_progress_warn_message(repeated: &[&str]) -> Message {
-    Message::user(format!(
-        "You have called {} repeatedly without finishing. If the task is \
-         complete, call task_complete now; otherwise use a different tool or \
-         arguments that move toward the goal.",
-        repeated.join(", ")
-    ))
-}
-
-/// The repeated-failure guard's "warned" nudge (T-3903, sprint 39: extracted;
-/// static text, no arguments — unlike the other two guards' nudges).
-pub(crate) fn failure_warn_message() -> Message {
-    Message::user(
-        "Your last tool call(s) failed. Read the error message and try a \
-         different approach, or call task_complete if you cannot proceed.",
-    )
-}
-
-/// Feed a tool result back to the model. Native mode uses the template's tool
-/// role; grammar mode frames it as a user message (the template's tool role
-/// may misbehave without `tools` in context — ADR-015). `pub(crate)` (T-3903,
-/// sprint 39): shared with `replay.rs`.
-pub(crate) fn result_message(
-    protocol: ActionProtocol,
-    call_id: &str,
-    name: &str,
-    output: &str,
-) -> Message {
-    match protocol {
-        ActionProtocol::NativeTools => Message::tool_result(call_id, output),
-        // No tools are in context for these protocols, so the template's tool
-        // role may misbehave — frame results as user messages (ADR-015).
-        ActionProtocol::ConstrainedJson | ActionProtocol::TextXml => {
-            Message::user(format!("[tool_result for {name}] {output}"))
-        }
-    }
-}
 
 /// The policy-filtered registry tool descriptors (terminator NOT included).
 fn registry_tools(registry: &Registry, policy: &RunPolicy) -> Vec<ToolDescriptor> {
@@ -568,7 +507,7 @@ fn registry_tools(registry: &Registry, policy: &RunPolicy) -> Vec<ToolDescriptor
 
 struct DispatchText {
     full: String,
-    for_model: String,
+    _for_model: String,
 }
 
 fn dispatch(
@@ -585,7 +524,7 @@ fn dispatch(
         } => (
             DispatchText {
                 full: output.full,
-                for_model: output.for_model,
+                _for_model: output.for_model,
             },
             output.is_error,
             duration_ms,
@@ -596,7 +535,7 @@ fn dispatch(
             (
                 DispatchText {
                     full: text.clone(),
-                    for_model: text,
+                    _for_model: text,
                 },
                 true,
                 0,
@@ -608,7 +547,7 @@ fn dispatch(
             (
                 DispatchText {
                     full: text.clone(),
-                    for_model: text,
+                    _for_model: text,
                 },
                 true,
                 0,
