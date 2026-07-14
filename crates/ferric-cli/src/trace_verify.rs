@@ -95,8 +95,8 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
                 };
                 script.push(Completion {
                     message,
-                    input_tokens: input_tokens.clone(),
-                    output_tokens: output_tokens.clone(),
+                    input_tokens: *input_tokens,
+                    output_tokens: *output_tokens,
                     truncated: *truncated,
                 });
                 current_tool_calls.clear();

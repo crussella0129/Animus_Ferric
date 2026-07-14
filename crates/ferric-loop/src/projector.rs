@@ -224,21 +224,19 @@ impl TraceProjector {
     /// Commits the currently open pending turn (a later TurnStart confirms it
     /// finished dispatching) and appends its messages to the context window.
     pub fn commit_pending(&mut self) {
-        if let Some(p) = self.pending.take() {
-            if let Some(proto) = self.protocol {
-                let turn_num = p.turn;
-                if let Some(msgs) = p.finalize(proto) {
-                    if proto == ActionProtocol::NativeTools
-                        && let Some(assistant) = msgs.first()
-                        && let Some(t) = &assistant.text
-                        && !t.is_empty()
-                    {
-                        self.last_text = Some(t.clone());
-                    }
-                    self.committed_turn_starts.push((turn_num, self.messages.len()));
-                    self.messages.extend(msgs);
-                    self.turns += 1;
+        if let (Some(p), Some(proto)) = (self.pending.take(), self.protocol) {
+            let turn_num = p.turn;
+            if let Some(msgs) = p.finalize(proto) {
+                if proto == ActionProtocol::NativeTools
+                    && let Some(assistant) = msgs.first()
+                    && let Some(t) = &assistant.text
+                    && !t.is_empty()
+                {
+                    self.last_text = Some(t.clone());
                 }
+                self.committed_turn_starts.push((turn_num, self.messages.len()));
+                self.messages.extend(msgs);
+                self.turns += 1;
             }
         }
     }

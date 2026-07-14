@@ -7,6 +7,12 @@ pub struct WebRetriever {
     config: SandboxConfig,
 }
 
+impl Default for WebRetriever {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebRetriever {
     pub fn new() -> Self {
         Self {
@@ -46,7 +52,7 @@ impl Retriever for WebRetriever {
         }
 
         // We use wget inside alpine since it's built-in
-        let cmd = vec!["wget".to_string(), "-qO-".to_string(), query.to_string()];
+        let cmd = ["wget".to_string(), "-qO-".to_string(), query.to_string()];
         
         // For now, since Retriever is async, we can wrap the sync blocking call in spawn_blocking.
         let config_clone = SandboxConfig {

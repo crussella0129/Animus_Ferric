@@ -116,8 +116,8 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
             println!("Files: {}", report.files_created.join(", "));
             
             // Increment 2: Begin Work Auto-Hand-Off
-            if let Ok(ans) = prompt_line("Begin work now? (y/N)") {
-                if ans.trim().to_lowercase() == "y" || ans.trim().to_lowercase() == "yes" {
+            if let Ok(ans) = prompt_line("Begin work now? (y/N)")
+                && (ans.trim().to_lowercase() == "y" || ans.trim().to_lowercase() == "yes") {
                     println!("Handing off to ferric query...");
                     let query_args = crate::query::QueryArgs {
                         prompt: Some(spec.goal.clone()),
@@ -152,7 +152,6 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                     };
                     return crate::query::run_query(query_args);
                 }
-            }
             println!(
                 "Next: cd {} && begin work with the Loop.",
                 report.path.display()

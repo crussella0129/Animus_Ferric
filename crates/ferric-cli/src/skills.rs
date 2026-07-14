@@ -16,8 +16,8 @@ fn parse_frontmatter(content: &str) -> (String, String, String) {
     let mut description = String::new();
     let mut body = content.to_string();
 
-    if content.starts_with("---\n") {
-        if let Some(end_idx) = content[4..].find("\n---\n") {
+    if content.starts_with("---\n")
+        && let Some(end_idx) = content[4..].find("\n---\n") {
             let frontmatter = &content[4..4 + end_idx];
             body = content[4 + end_idx + 5..].trim_start().to_string();
 
@@ -29,7 +29,6 @@ fn parse_frontmatter(content: &str) -> (String, String, String) {
                 }
             }
         }
-    }
     (name, description, body)
 }
 

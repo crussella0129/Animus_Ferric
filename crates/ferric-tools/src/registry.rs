@@ -152,7 +152,7 @@ impl Registry {
             };
             if let Decision::Deny(reason) = check(spec.permission, &resolved) {
                 let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
-                checks.push(CheckRecord::deny(resolved, &reason.rule, &reason.matched));
+                checks.push(CheckRecord::deny(resolved, reason.rule, &reason.matched));
                 return ExecuteOutcome::Denied {
                     reason: detail,
                     checks,
