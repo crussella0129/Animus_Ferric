@@ -22,6 +22,7 @@ services:
     # The workspace the harness acts on (ferric-guard + ADR-005 remain the real
     # containment boundary inside the container; the mount is just what `ferric
     # query` operates against).
+    command: tail -f /dev/null
     volumes:
       - ../workspace:/workspace
       - ${MODELS_PATH:-../models}:/models
