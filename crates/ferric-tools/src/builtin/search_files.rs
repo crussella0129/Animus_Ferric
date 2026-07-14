@@ -35,7 +35,7 @@ impl Tool for SearchFiles {
                 "required": ["query"]
             }),
             permission: PermissionLevel::Read,
-            ring: 1,
+            ring: 0,
         }
     }
 

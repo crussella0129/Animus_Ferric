@@ -1,7 +1,7 @@
 //! Skill Loader: reads `.ferric/skills/*/SKILL.md` to expose knowledge via MCP Prompts.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct Skill {

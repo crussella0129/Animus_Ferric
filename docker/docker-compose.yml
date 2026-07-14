@@ -24,6 +24,7 @@ services:
     # query` operates against).
     volumes:
       - ../workspace:/workspace
+      - ../models:/models
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - proxy-net

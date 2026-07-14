@@ -26,7 +26,7 @@ impl Tool for CopyFile {
                 "required": ["from", "to"]
             }),
             permission: PermissionLevel::Write,
-            ring: 1,
+            ring: 0,
         }
     }
 

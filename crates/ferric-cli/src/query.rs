@@ -843,7 +843,7 @@ fn drive_real(
         let mut effective_prompt = prompt.map(|s| s.to_string());
         if let Some(rq) = research_query {
             // Perform research
-            let local_retriever = ferric_research::LocalFsRetriever::new(workspace.root().to_path_buf(), 50, 1024 * 1024);
+            let local_retriever = ferric_research::LocalFsRetriever::with_caps(workspace.root().to_path_buf(), 50, 1024 * 1024);
             let retrievers: Vec<&dyn ferric_research::Retriever> = vec![&local_retriever];
             match ferric_research::research_all(&retrievers, provider_box.as_ref(), &rq).await {
                 Ok(multi) => {
@@ -851,7 +851,7 @@ fn drive_real(
                         let mut cx = String::new();
                         cx.push_str("\n\n<research_context>\n");
                         for d in multi.digests {
-                            taint_set.insert(&d.source);
+                            taint_set.taint_str(&d.source);
                             cx.push_str(&d.summary);
                             cx.push_str("\n---\n");
                         }

@@ -115,7 +115,7 @@ mod tests {
             tier: ferric_core::Tier::Nano,
             protocol,
             max_turns: 15,
-            max_tools: 6,
+            max_tools: 10,
             prompt_budget_tokens: 2_800,
             max_output_tokens: 512,
         }

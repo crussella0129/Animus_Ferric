@@ -157,12 +157,12 @@ pub fn ring_for_tier(tier: Tier) -> u8 {
 #[allow(clippy::type_complexity)]
 fn tier_row(tier: Tier) -> (bool, u8, u8, u8, u8, u32, u32, bool) {
     match tier {
-        Tier::Nano => (true, 3, 5, 15, 6, 2_800, 512, false),
-        Tier::Small => (true, 5, 4, 20, 10, 5_600, 768, false),
-        Tier::Medium => (false, 1, 25, 25, 16, 11_200, 1_024, false),
-        Tier::Large => (false, 1, 40, 40, 24, 22_400, 1_536, true),
-        Tier::Xl => (false, 1, 60, 60, 32, 44_800, 2_048, true),
-        Tier::Ultra => (false, 1, 80, 80, 48, 89_600, 2_048, true),
+        Tier::Nano => (true, 3, 5, 15, 10, 2_800, 512, false),
+        Tier::Small => (true, 5, 4, 20, 14, 5_600, 768, false),
+        Tier::Medium => (false, 1, 25, 25, 20, 11_200, 1_024, false),
+        Tier::Large => (false, 1, 40, 40, 28, 22_400, 1_536, true),
+        Tier::Xl => (false, 1, 60, 60, 36, 44_800, 2_048, true),
+        Tier::Ultra => (false, 1, 80, 80, 52, 89_600, 2_048, true),
     }
 }
 
@@ -245,7 +245,7 @@ mod tests {
         assert_eq!(policy.tier, Tier::Nano);
         assert_eq!(policy.protocol, Protocol::ConstrainedJson);
         assert!(policy.uses_planner);
-        assert!(policy.max_tools <= 6);
+        assert!(policy.max_tools <= 10);
         assert_eq!(policy.prompt_budget_tokens, 2_800);
         assert!(!policy.allows_subagents);
     }

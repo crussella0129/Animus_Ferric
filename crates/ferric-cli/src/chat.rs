@@ -277,6 +277,8 @@ impl ChatBackend {
                 Vec::new(),
                 None,
                 Some(seed),
+                ferric_guard::TaintSet::new(),
+                ferric_guard::SinkPolicy::deny(),
             )),
         }
     }

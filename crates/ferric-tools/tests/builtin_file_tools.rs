@@ -101,6 +101,49 @@ fn read_missing_file_is_error_not_panic() {
 }
 
 #[test]
+fn read_file_pagination() {
+    let (dir, ws, registry) = setup();
+    let content = "line 1\nline 2\nline 3\nline 4\nline 5\n";
+    std::fs::write(dir.path().join("lines.txt"), content).unwrap();
+
+    // Test start_line only
+    let (out1, err1) = expect_completed(registry.execute_test(
+        &ws,
+        "read_file",
+        &json!({"path": "lines.txt", "start_line": 3}),
+    ));
+    assert!(!err1);
+    assert_eq!(out1, "line 3\nline 4\nline 5");
+
+    // Test end_line only
+    let (out2, err2) = expect_completed(registry.execute_test(
+        &ws,
+        "read_file",
+        &json!({"path": "lines.txt", "end_line": 2}),
+    ));
+    assert!(!err2);
+    assert_eq!(out2, "line 1\nline 2");
+
+    // Test start_line and end_line
+    let (out3, err3) = expect_completed(registry.execute_test(
+        &ws,
+        "read_file",
+        &json!({"path": "lines.txt", "start_line": 2, "end_line": 4}),
+    ));
+    assert!(!err3);
+    assert_eq!(out3, "line 2\nline 3\nline 4");
+    
+    // Test out of bounds (end_line > total lines)
+    let (out4, err4) = expect_completed(registry.execute_test(
+        &ws,
+        "read_file",
+        &json!({"path": "lines.txt", "start_line": 4, "end_line": 10}),
+    ));
+    assert!(!err4);
+    assert_eq!(out4, "line 4\nline 5");
+}
+
+#[test]
 fn move_path_renames_file() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("old.py"), "x = 1").unwrap();
@@ -533,33 +576,33 @@ fn rings_gate_builtins_by_tier() {
         measured_level: None,
     };
 
-    // Nano (params < 4 → ring ceiling 0) → exactly the 6 Ring-0 core tools.
+    // Nano (params < 4 → ring ceiling 0) → exactly the 9 Ring-0 core tools.
     let nano = registry.tools_for_policy(&policy_for(&profile(1.0)));
     let nano_names: Vec<&str> = nano.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(nano.len(), 6, "Nano gets the 6-tool core: {nano_names:?}");
+    assert_eq!(nano.len(), 9, "Nano gets the 9-tool core: {nano_names:?}");
     assert!(
         nano_names.contains(&"write_file"),
         "the core (e.g. write_file) is never dropped by the cap"
     );
     assert!(
-        !nano_names.contains(&"search_files") && !nano_names.contains(&"move_path"),
-        "Ring-1 tools are not in a Nano grammar"
+        nano_names.contains(&"search_files") && nano_names.contains(&"move_path"),
+        "Ring-0 tools are in a Nano grammar"
     );
 
-    // Small (4..13 → ring ceiling 1) → the full 10 (Ring 0 + the 4-tool Ring 1).
+    // Small (4..13 → ring ceiling 1) → the full 10 (Ring 0 + the 1-tool Ring 1).
     let small = registry.tools_for_policy(&policy_for(&profile(8.0)));
     let small_names: Vec<&str> = small.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
         small.len(),
         10,
-        "Small adds the 4-tool Ring 1: {small_names:?}"
+        "Small adds the 1-tool Ring 1: {small_names:?}"
     );
-    for ring1 in ["search_files", "move_path", "find_files", "copy_file"] {
+    for ring1 in ["find_files"] {
         assert!(small_names.contains(&ring1), "Ring 1 includes {ring1}");
     }
     // The Ring-1 round-out stays out of a Nano grammar.
     assert!(
-        !nano_names.contains(&"find_files") && !nano_names.contains(&"copy_file"),
+        !nano_names.contains(&"find_files"),
         "Ring-1 round-out absent at Nano"
     );
     // Ring-2 tools are still above the Small ceiling.

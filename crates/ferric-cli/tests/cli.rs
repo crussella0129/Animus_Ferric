@@ -260,7 +260,7 @@ fn max_ring_caps_the_offered_tools() {
     let d1 = tempfile::tempdir().unwrap();
     let full = offered(&[], d1.path());
     assert!(
-        full.contains(&"search_files".to_string()) && full.contains(&"move_path".to_string()),
+        full.contains(&"find_files".to_string()),
         "Small offers Ring 1 too: {full:?}"
     );
 
@@ -268,7 +268,7 @@ fn max_ring_caps_the_offered_tools() {
     let d2 = tempfile::tempdir().unwrap();
     let core = offered(&["--max-ring", "0"], d2.path());
     assert!(
-        !core.contains(&"search_files".to_string()) && !core.contains(&"move_path".to_string()),
+        !core.contains(&"find_files".to_string()),
         "--max-ring 0 drops Ring 1: {core:?}"
     );
     assert!(
@@ -339,7 +339,7 @@ fn persisted_calibrated_ring_caps_the_offered_tools() {
     let ws1 = tempfile::tempdir().unwrap();
     let capped = offered("mockmodel", pdir.path(), ws1.path());
     assert!(
-        !capped.contains(&"search_files".to_string()) && capped.contains(&"write_file".to_string()),
+        !capped.contains(&"find_files".to_string()) && capped.contains(&"write_file".to_string()),
         "persisted calibrated_ring 0 caps to the core: {capped:?}"
     );
 
@@ -523,7 +523,7 @@ fn config_only_model_still_resolves_profile() {
         })
         .unwrap_or_default();
     assert!(
-        !offered.contains(&"search_files".to_string())
+        !offered.contains(&"find_files".to_string())
             && offered.contains(&"write_file".to_string()),
         "a config-only `model` must still hit the persisted calibrated_ring 0 profile: {offered:?}"
     );
@@ -571,7 +571,7 @@ fn config_only_max_ring_caps_the_offered_tools() {
         })
         .unwrap_or_default();
     assert!(
-        !offered.contains(&"search_files".to_string())
+        !offered.contains(&"find_files".to_string())
             && offered.contains(&"write_file".to_string()),
         "a config-only `max_ring = 0` must cap to the core, same as `--max-ring 0`: {offered:?}"
     );
@@ -760,7 +760,7 @@ fn write_interrupted_trace_fixture(ws: &std::path::Path, session: &str) -> std::
             r#"{{"v":1,"ts_ms":1,"session":"{session}","seq":0,"event":{{"type":"session_start","workspace":"/ws"}}}}"#
         ),
         format!(
-            r#"{{"v":1,"ts_ms":2,"session":"{session}","seq":1,"event":{{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512}}}}"#
+            r#"{{"v":1,"ts_ms":2,"session":"{session}","seq":1,"event":{{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512}}}}"#
         ),
         format!(
             r#"{{"v":1,"ts_ms":3,"session":"{session}","seq":2,"event":{{"type":"session_prompt","system":"You are Ferric.","user":"do a mock task"}}}}"#
@@ -916,7 +916,7 @@ fn resume_already_stopped_is_a_clear_error() {
     let path = trace_dir.join("stopped.jsonl");
     let lines = [
         r#"{"v":1,"ts_ms":1,"session":"stopped-1","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#.to_string(),
-        r#"{"v":1,"ts_ms":2,"session":"stopped-1","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#.to_string(),
+        r#"{"v":1,"ts_ms":2,"session":"stopped-1","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#.to_string(),
         r#"{"v":1,"ts_ms":3,"session":"stopped-1","seq":2,"event":{"type":"session_prompt","system":"You are Ferric.","user":"do a mock task"}}"#.to_string(),
         r#"{"v":1,"ts_ms":4,"session":"stopped-1","seq":3,"event":{"type":"session_end","reason":"final_text"}}"#.to_string(),
     ];

@@ -38,11 +38,11 @@ fn fleet_expectations() -> Vec<Expected> {
         max_output_tokens,
     };
     vec![
-        row("llama-3.2",     1.0, 4096, Tier::Nano,   true,  3, 5,  15, 6,  2_800, 512),
-        row("qwen2.5-coder", 7.0, 4096, Tier::Small,  true,  5, 4,  20, 10, 2_867, 768),
-        row("command-r7b",   7.0, 4096, Tier::Small,  true,  5, 4,  20, 10, 2_867, 768),
-        row("qwen3-vl",      8.0, 4096, Tier::Small,  true,  5, 4,  20, 10, 2_867, 768),
-        row("qwen2.5-coder", 14.0, 4096, Tier::Medium, false, 1, 25, 25, 16, 2_867, 1_024),
+        row("llama-3.2",     1.0, 4096, Tier::Nano,   true,  3, 5,  15, 10, 2_800, 512),
+        row("qwen2.5-coder", 7.0, 4096, Tier::Small,  true,  5, 4,  20, 14, 2_867, 768),
+        row("command-r7b",   7.0, 4096, Tier::Small,  true,  5, 4,  20, 14, 2_867, 768),
+        row("qwen3-vl",      8.0, 4096, Tier::Small,  true,  5, 4,  20, 14, 2_867, 768),
+        row("qwen2.5-coder", 14.0, 4096, Tier::Medium, false, 1, 25, 25, 20, 2_867, 1_024),
     ]
 }
 

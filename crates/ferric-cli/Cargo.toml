@@ -23,6 +23,7 @@ ferric-guard = { workspace = true }
 ferric-loop = { workspace = true }
 ferric-prompt = { workspace = true }
 ferric-provider = { workspace = true }
+ferric-research = { workspace = true }
 ferric-tools = { workspace = true }
 ferric-trace = { workspace = true }
 clap = { workspace = true }

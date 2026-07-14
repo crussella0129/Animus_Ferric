@@ -57,7 +57,7 @@ The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built wit
 A typical loop — bring a server up, point Ferric at it, work, tear it down:
 
 ```sh
-ferric server up --engine llama-server --model your.gguf    # recommended engine; or --engine ollama --model qwen2.5-coder:7b
+ferric server up --engine llama-server --model your.gguf
 ferric server status                                        # prints base URL + health
 ferric query "list the Rust files and summarize lib.rs"     # auto-discovers the server
 ferric server down
@@ -78,8 +78,7 @@ Ferric works with large and small models alike, but *how well* a small model dri
 **1. Bring a model.** Any of:
 
 ```sh
-# Ollama — pull whatever you want to test:
-ollama pull qwen2.5-coder:7b
+
 
 # llama.cpp — point the launcher at a GGUF on disk (needs `llama-server` on PATH):
 ferric server up --engine llama-server --model /path/to/your-model.gguf [--mmproj mmproj.gguf] [--ctx 8192]
@@ -123,7 +122,7 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 Active development (sprint 44). Two inference backends ship behind feature flags:
 
-- **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
+- **`backend-openai`** — an OpenAI-compatible HTTP valve (`llama.cpp` / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 - **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
 
 The action protocol (`NativeTools` / `ConstrainedJson` / `TextXml`) is chosen from each backend's real capabilities. An embedded PyO3/PyTorch backend was tried and removed (ADR-021) — external engines are reached only via the out-of-process valve. Development follows a sprint-loop protocol; see `decisions.md` for ADRs and `agent-tasks/` for the ledger.
@@ -165,7 +164,7 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 22 — why the 1B isn't an agent** (2026-06-26). Diagnosed (from the trace) *why* `llama3.2:1b` fails L0: **repeat-not-terminate** (it re-calls `list_dir` instead of `task_complete`) and **semantic flailing** (15 `make_dir`s, no progress). Sharpened the repetition nudge into a direct imperative — but it **didn't move the 1B** (still `measured_level: none`), so the ceiling is a real capability limit, not wording. The nudge ships anyway (helps mid-tier models, can't regress capable ones). *ADR-031.*
 
-- **Sprint 23 — llama.cpp first-class** (2026-06-26). Validated Ferric on full **llama.cpp** (`llama-server`) for the first time — it's now the recommended engine (ollama stays a one-flag fallback). The constrained loop runs on it at **100% Ring-0 tool-call fire rate, identical to ollama**, with a context window as wide as you want (`-c`), the multimodal path (`--mmproj`), and a single edge-ready binary (Jetson / Pi). Reuse an ollama GGUF blob to skip re-downloads. Guide: [docs/llama-cpp.md](docs/llama-cpp.md). *ADR-032.*
+- **Sprint 23 — llama.cpp first-class** (2026-06-26). Validated Ferric on full **llama.cpp** (`llama-server`) for the first time — we have now fully removed inference from ollama and switched exclusively to `llama.cpp` due to speed. The constrained loop runs on it at **100% Ring-0 tool-call fire rate**, with a context window as wide as you want (`-c`), the multimodal path (`--mmproj`), and a single edge-ready binary (Jetson / Pi). Guide: [docs/llama-cpp.md](docs/llama-cpp.md). *ADR-032.*
 
 - **Sprint 24 — multimodal goes live** (2026-06-26). Ran an image end-to-end for the first time (the marquee goal deferred since sprint 10): a generated red square → `ferric query --file --modality image` → `llama-server --mmproj` (SmolVLM-500M) → the vision encoder processed it, and the model correctly answered **"Red."** The `image_url`/base64 content-parts mapping is proven against real pixels; no Ferric code change needed. Caveat: a sub-1B VLM degrades under the JSON grammar (use a bigger VLM or an unconstrained describe). *ADR-033.*
 
@@ -220,5 +219,7 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 - **Sprint 50 — Native Tailscale Integration** (2026-07-13). Added a `--tailscale` flag to `ferric server up`. Ferric now natively orchestrates Zero-Trust WireGuard tunneling by shelling out to `tailscale serve <port>` immediately after the engine (llama-server/Ollama) binds to loopback. This allows secure, authenticated, off-device access to the local inference API without exposing public firewall ports. *ADR-060.*
 
 - **Sprint 51 — Skill Loader via MCP Prompts** (2026-07-13). Added dynamic Knowledge Skill loading. `ferric mcp` now scans `.ferric/skills/*/SKILL.md` and serves them via the MCP `prompts/list` and `prompts/get` protocols. Agents connected to Ferric (Cursor, Claude Code, etc.) can now discover and inject project-specific skills dynamically into their context. *ADR-061.*
+
+- **Sprint 52 — Advanced File Tooling & ICM Adaptation** (2026-07-14). Adapted the file tooling to better support the Interpretable Context Methodology (ICM) across all tiers. Promoted `copy_file`, `move_path`, and `search_files` to Ring 0 (core) so Nano models can navigate workspace hierarchies, proportionally scaling up tier tool caps (e.g., Nano: 10, Small: 14) to accommodate. Implemented `start_line` and `end_line` pagination in `read_file` to allow small-context models to read large files safely. Validated with comprehensive tests across `ferric-core`, `ferric-cli`, and `ferric-tools`. *ADR-062.*
 
 > **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; a fancy chat TUI; wiring chat into the Animus IDE; `ferric mcp --resume`; per-tier compaction tuning.

@@ -1382,6 +1382,7 @@ dependencies = [
  "ferric-loop",
  "ferric-prompt",
  "ferric-provider",
+ "ferric-research",
  "ferric-tools",
  "ferric-trace",
  "futures-executor",

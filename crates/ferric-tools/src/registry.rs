@@ -437,14 +437,14 @@ mod tests {
     #[test]
     fn tools_for_policy_trims_outer_ring_first() {
         let mut registry = Registry::new();
-        let core: Vec<String> = (0..8).map(|i| format!("core_{i}")).collect();
+        let core: Vec<String> = (0..10).map(|i| format!("core_{i}")).collect();
         for n in &core {
             registry.register(Box::new(dummy_ring(n, 0)));
         }
-        for i in 0..5 {
+        for i in 0..10 {
             registry.register(Box::new(dummy_ring(&format!("outer_{i}"), 1)));
         }
-        // Small: ring ceiling 1 (admits both rings), max_tools 10 < 13 → must trim.
+        // Small: ring ceiling 1 (admits both rings), max_tools 14 < 20 → must trim.
         let small = policy_for(&ModelProfile {
             params_b: 8.0,
             quant: "Q4_K_M".to_string(),
