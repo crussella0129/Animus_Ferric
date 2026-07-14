@@ -64,6 +64,8 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
   - Resolved `cargo clippy` warnings in `ferric-cli` and `ferric-loop` to pass CI.
   - Mocked the Ornstein `WebRetriever` query (local model testing was blocked by MSVC/Docker issues).
   - Configured `Animus_IDE` to point to OpenVSX, rebranded `product.json`/`package.json`, and removed MS telemetry.
+- **Sprint 55 (DONE): `ferric mcp --resume` support**
+  - Added the `--resume <path>` flag to `ferric mcp` to allow an IDE to resume an interrupted task session via the first `ferric_query` call.
 
 ## Earlier backlog (still open)
 - Multi-file `apply_patch` (ADR-039 follow-on); GPU/edge run (Jetson/Pi → maybe L6); harder bench L7+; audio on real non-TTS audio + video modality. (MCP-stdio is now covered by the ADR-011-revision section above, no longer a standalone item.)

@@ -237,6 +237,12 @@ pub struct McpArgs {
     /// nor a config file's `profile_dir` is set (T-3805).
     #[arg(long)]
     pub profile_dir: Option<PathBuf>,
+
+    /// Resume an interrupted, still-incomplete session by replaying its
+    /// trace (sprint 55). Same semantics as `ferric query --resume`: the
+    /// first `ferric_query` call to this server will continue the task.
+    #[arg(long)]
+    pub resume: Option<PathBuf>,
 }
 
 /// How `McpServer` drives a loop turn. `Mock` needs no ambient async runtime
@@ -260,6 +266,7 @@ pub(crate) struct McpServer {
     pub executor: Executor,
     pub declared: Vec<Modality>,
     pub trace_dir: PathBuf,
+    pub resume: std::sync::Mutex<Option<ferric_loop::ReplayedState>>,
 }
 
 fn tool_content(text: String, is_error: bool) -> Value {
@@ -374,12 +381,14 @@ impl McpServer {
             }
         };
 
+        let resume_state = self.resume.lock().unwrap().take();
+
         // A `ProviderError` stop is the only failure mode surfaced as
         // `isError:true` — the same convention `ferric query`'s CLI already
         // uses (`StopReason::ProviderError` ⇒ `ExitCode::FAILURE`, every other
         // stop reason ⇒ success). This keeps the two surfaces' semantics
         // aligned rather than inventing a second failure taxonomy.
-        match self.run_one(&mut sink, &effective_prompt, media_parts) {
+        match self.run_one(&mut sink, &effective_prompt, media_parts, resume_state) {
             Ok(outcome) if outcome.stop != StopReason::ProviderError => RpcResponse::success(
                 id,
                 tool_content(outcome.final_text.unwrap_or_default(), false),
@@ -402,6 +411,7 @@ impl McpServer {
         sink: &mut JsonlSink,
         prompt: &str,
         media: Vec<ferric_core::MediaPart>,
+        resume: Option<ferric_loop::ReplayedState>,
     ) -> Result<ferric_loop::LoopOutcome, String> {
         // MCP streams partial text via custom JSON-RPC notification.
         let sink_fn = |d: ferric_provider::StreamDelta| {
@@ -432,7 +442,7 @@ impl McpServer {
             Some(prompt),
             media,
             Some(&sink_fn),
-            None,
+            resume,
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
         );
@@ -507,6 +517,28 @@ impl McpServer {
                 .clone()
                 .or_else(|| backend_opts.model_file.clone()),
         });
+
+        // T-3905 (sprint 39 / 55): `--resume <path>` replays an interrupted, still-
+        // incomplete session. Resolved here and passed to the first `ferric_query` call.
+        let resume_state = match &args.resume {
+            Some(path) => match ferric_loop::replay(path) {
+                Ok(replayed) => {
+                    if replayed.protocol != config.protocol {
+                        return Err(format!(
+                            "cannot resume {}: recorded protocol {:?} does not match this \
+                             invocation's resolved protocol {:?}",
+                            path.display(),
+                            replayed.protocol,
+                            config.protocol
+                        ));
+                    }
+                    Some(replayed)
+                }
+                Err(e) => return Err(format!("cannot resume {}: {e}", path.display())),
+            },
+            None => None,
+        };
+
         // No trace sink exists yet at launch (each tools/call opens its own),
         // so a composition failure — and any malformed-config diagnostic
         // (C-004) — is surfaced once here rather than dropped, or (unlike
@@ -531,6 +563,17 @@ impl McpServer {
             eprintln!("Animus.md applied ({} chars)", content.len());
         }
 
+        if resume_state.is_some()
+            && (config.lineage.is_some()
+                || config.prompt_composition_error.is_some()
+                || animus_md.is_some())
+        {
+            eprintln!(
+                "note: --resume ignores --prompts-dir/Animus.md for the system message \
+                 (frozen from the replayed session)"
+            );
+        }
+
         let trace_dir = workspace_root.join(".ferric").join("trace");
         std::fs::create_dir_all(&trace_dir)
             .map_err(|e| format!("cannot create trace dir {}: {e}", trace_dir.display()))?;
@@ -549,6 +592,7 @@ impl McpServer {
             executor,
             declared,
             trace_dir,
+            resume: std::sync::Mutex::new(resume_state),
         })
     }
 
@@ -655,6 +699,7 @@ mod tests {
             modality: None,
             max_ring: None,
             profile_dir: None,
+            resume: None,
         }
     }
 
@@ -812,6 +857,7 @@ mod tests {
             executor: Executor::Mock,
             declared: Vec::new(),
             trace_dir,
+            resume: std::sync::Mutex::new(None),
         }
     }
 

@@ -1350,3 +1350,79 @@ fn launch_refuses_to_clobber_nonempty() {
     );
     assert!(!target.join(".git").exists());
 }
+
+// ---- T-5501 (sprint 55): `ferric mcp --resume` subprocess tests ----------------
+
+fn run_mcp_mock(ws: &std::path::Path, extra_args: &[&str], input: &str) -> (String, String, std::process::ExitStatus) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = ferric()
+        .args(["mcp", "--mock", "--workspace"])
+        .arg(ws)
+        .args(extra_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input.as_bytes()).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    (
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+        out.status,
+    )
+}
+
+#[test]
+fn mcp_resume_continues_an_interrupted_session() {
+    let ws = tempfile::tempdir().unwrap();
+    let path = write_interrupted_trace_fixture(ws.path(), "res-1");
+    
+    // The MCP server expects a JSON-RPC request for `ferric_query`
+    let input = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ferric_query","arguments":{"prompt":"finish it"}}}"#;
+    let (stdout, stderr, status) = run_mcp_mock(ws.path(), &["--resume", path.to_str().unwrap()], input);
+    
+    assert!(status.success(), "mcp should succeed; stderr: {stderr}");
+    assert!(stdout.contains("mock run complete"), "stdout should contain the mock's output, got: {stdout}");
+    
+    // There should be a new trace file for this MCP session.
+    // The new trace file should contain the original 2 turns PLUS the new turn.
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    let new_traces: Vec<_> = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("mcp-"))
+        .collect();
+    assert_eq!(new_traces.len(), 1, "exactly one mcp- trace file expected");
+    let content = std::fs::read_to_string(new_traces[0].path()).unwrap();
+    
+    let is_resumed = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .any(|v| v["event"]["type"] == "session_start" && v["event"]["resumed_from"] == "res-1");
+    assert!(is_resumed, "trace must show it was resumed from res-1");
+}
+
+#[test]
+fn mcp_resume_rejects_already_stopped() {
+    let ws = tempfile::tempdir().unwrap();
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let path = trace_dir.join("stopped.jsonl");
+    let lines = [
+        r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#,
+        r#"{"v":1,"ts_ms":2,"session":"s","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#,
+        r#"{"v":1,"ts_ms":3,"session":"s","seq":2,"event":{"type":"session_prompt","system":"s","user":"u"}}"#,
+        r#"{"v":1,"ts_ms":4,"session":"s","seq":3,"event":{"type":"session_end","reason":"done"}}"#,
+    ];
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let (_stdout, stderr, status) = run_mcp_mock(ws.path(), &["--resume", path.to_str().unwrap()], "");
+    assert!(!status.success());
+    assert!(stderr.contains("cannot resume"), "stderr: {stderr}");
+    assert!(stderr.contains("already ended (done)"), "stderr: {stderr}");
+}

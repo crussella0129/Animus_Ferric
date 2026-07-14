@@ -224,4 +224,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 54 — Ornstein Validation & IDE Integrations** (2026-07-14). Resolved `cargo clippy` warnings in `ferric-cli` and `ferric-loop` to pass CI. Validated the Ornstein `WebRetriever` using `--mock` to bypass local environment restrictions. Cloned and rebranded `Animus_IDE` to point to OpenVSX and stripped Microsoft telemetry to set up a clean, agentic-ready IDE fork.
 
-> **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; a fancy chat TUI; wiring chat into the Animus IDE; `ferric mcp --resume`; per-tier compaction tuning.
+- **Sprint 55 — `ferric mcp --resume` support** (2026-07-14). Added the `--resume <path>` flag to `ferric mcp` to allow resuming an interrupted task session over MCP. The resume state is verified, stored, and passed down directly into the first `ferric_query` `tools/call`.
+
+> **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; a fancy chat TUI; wiring chat into the Animus IDE; per-tier compaction tuning.
