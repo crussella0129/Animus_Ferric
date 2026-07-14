@@ -24,6 +24,7 @@ mod server;
 mod toolbench_cmd;
 mod trace_cmd;
 mod trace_verify;
+mod skills;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
