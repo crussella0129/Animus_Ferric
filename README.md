@@ -222,4 +222,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 52 — Advanced File Tooling & ICM Adaptation** (2026-07-14). Adapted the file tooling to better support the Interpretable Context Methodology (ICM) across all tiers. Promoted `copy_file`, `move_path`, and `search_files` to Ring 0 (core) so Nano models can navigate workspace hierarchies, proportionally scaling up tier tool caps (e.g., Nano: 10, Small: 14) to accommodate. Implemented `start_line` and `end_line` pagination in `read_file` to allow small-context models to read large files safely. Validated with comprehensive tests across `ferric-core`, `ferric-cli`, and `ferric-tools`. *ADR-062.*
 
+- **Sprint 54 — Ornstein Validation & IDE Integrations** (2026-07-14). Resolved `cargo clippy` warnings in `ferric-cli` and `ferric-loop` to pass CI. Validated the Ornstein `WebRetriever` using `--mock` to bypass local environment restrictions. Cloned and rebranded `Animus_IDE` to point to OpenVSX and stripped Microsoft telemetry to set up a clean, agentic-ready IDE fork.
+
 > **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; a fancy chat TUI; wiring chat into the Animus IDE; `ferric mcp --resume`; per-tier compaction tuning.

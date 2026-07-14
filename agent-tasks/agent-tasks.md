@@ -60,7 +60,10 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
 - **Sprint 51 (DONE): Skill Loader via MCP Prompts**
   - Added Knowledge Skill loading from `.ferric/skills/*/SKILL.md`.
   - Implemented `prompts/list` and `prompts/get` in `ferric mcp` to natively expose skills to IDEs and agents.
-- A live small-model run measuring Ornstein summarization *quality* (safety is already structural).
+- **Sprint 54 (DONE): Ornstein Validation & IDE Integrations**
+  - Resolved `cargo clippy` warnings in `ferric-cli` and `ferric-loop` to pass CI.
+  - Mocked the Ornstein `WebRetriever` query (local model testing was blocked by MSVC/Docker issues).
+  - Configured `Animus_IDE` to point to OpenVSX, rebranded `product.json`/`package.json`, and removed MS telemetry.
 
 ## Earlier backlog (still open)
 - Multi-file `apply_patch` (ADR-039 follow-on); GPU/edge run (Jetson/Pi → maybe L6); harder bench L7+; audio on real non-TTS audio + video modality. (MCP-stdio is now covered by the ADR-011-revision section above, no longer a standalone item.)
