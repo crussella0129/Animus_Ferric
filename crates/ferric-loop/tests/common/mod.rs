@@ -15,13 +15,16 @@ use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, ParsedEvent, TraceReader, TraceRecord};
 
 pub fn nano_policy() -> RunPolicy {
-    policy_for(&ModelProfile {
+    let mut p = policy_for(&ModelProfile {
         params_b: 1.0,
         quant: "Q4_K_M".to_string(),
         ctx: 4096,
         family: "test".to_string(),
         measured_level: None,
-    })
+    });
+    p.compact_trigger_fraction = 0.85;
+    p.compact_keep_last_turns = 2;
+    p
 }
 
 pub fn text_completion(text: &str) -> Completion {

@@ -226,4 +226,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 55 — `ferric mcp --resume` support** (2026-07-14). Added the `--resume <path>` flag to `ferric mcp` to allow resuming an interrupted task session over MCP. The resume state is verified, stored, and passed down directly into the first `ferric_query` `tools/call`.
 
+- **Sprint 56:** Per-tier compaction tuning. `HistoryCompactor` triggers now scale natively per tier in `RunPolicy`.
+
 > **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; a fancy chat TUI; wiring chat into the Animus IDE; per-tier compaction tuning.

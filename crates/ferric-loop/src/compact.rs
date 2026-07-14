@@ -28,17 +28,6 @@ use ferric_trace::Event;
 use crate::backoff::complete_with_backoff;
 use crate::run::Sleeper;
 
-/// Fires when the last known `completion.input_tokens` reaches this fraction
-/// of `policy.prompt_budget_tokens` (matches a `deepagents`-style precedent
-/// cited in research — the user specified the mechanism, not an exact
-/// number). Fixed constant for v1, not a per-tier `RunPolicy` field.
-const COMPACT_TRIGGER_FRACTION: f64 = 0.85;
-
-/// The most recent N turns are always preserved verbatim, never folded
-/// (mirrors the Microsoft Agent Framework's `MinimumPreserved`/
-/// `keep_last_groups` floor). Fixed constant for v1.
-const KEEP_LAST_TURNS: usize = 2;
-
 const COMPACT_SYSTEM_PROMPT: &str = "You are summarizing an in-progress coding agent's own \
 history so older turns can be dropped from context. Write a concise, factual account of what \
 has been done and learned so far (files created/edited, commands run, decisions made, results \
@@ -60,7 +49,7 @@ pub(crate) async fn maybe_compact(
     let Some(tokens) = last_input_tokens else {
         return Ok(None);
     };
-    if (tokens as f64) < COMPACT_TRIGGER_FRACTION * policy.prompt_budget_tokens as f64 {
+    if (tokens as f32) < policy.compact_trigger_fraction * policy.prompt_budget_tokens as f32 {
         return Ok(None);
     }
     if projector.committed_turn_starts.is_empty() {
@@ -70,10 +59,11 @@ pub(crate) async fn maybe_compact(
     // have been fully committed (it does not contain the in-flight turn N).
     // So all entries here are completed and eligible for folding.
     let completed = &projector.committed_turn_starts[..];
-    if completed.len() <= KEEP_LAST_TURNS {
+    let keep_last = policy.compact_keep_last_turns as usize;
+    if completed.len() <= keep_last {
         return Ok(None);
     }
-    let fold_count = completed.len() - KEEP_LAST_TURNS;
+    let fold_count = completed.len() - keep_last;
     let (through_turn, _) = completed[fold_count - 1];
     let fold_from_idx = projector.head_len;
     // By construction of the slice split, this is exactly "the start
@@ -161,13 +151,16 @@ mod tests {
     use serde_json::json;
 
     fn nano_policy() -> RunPolicy {
-        ferric_core::policy_for(&ferric_core::ModelProfile {
+        let mut p = ferric_core::policy_for(&ferric_core::ModelProfile {
             params_b: 1.0,
             quant: "Q4_K_M".to_string(),
             ctx: 4096,
             family: "test".to_string(),
             measured_level: None,
-        })
+        });
+        p.compact_trigger_fraction = 0.85;
+        p.compact_keep_last_turns = 2;
+        p
     }
 
     struct NoopSleeper;

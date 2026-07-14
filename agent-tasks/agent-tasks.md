@@ -66,6 +66,9 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
   - Configured `Animus_IDE` to point to OpenVSX, rebranded `product.json`/`package.json`, and removed MS telemetry.
 - **Sprint 55 (DONE): `ferric mcp --resume` support**
   - Added the `--resume <path>` flag to `ferric mcp` to allow an IDE to resume an interrupted task session via the first `ferric_query` call.
+- **Sprint 56 (DONE): Per-tier compaction tuning**
+  - Migrated `COMPACT_TRIGGER_FRACTION` and `KEEP_LAST_TURNS` to `RunPolicy` for per-tier configuration.
+  - Adjusted limits for the Nano tier down to a 0.75 budget fraction and keeping only 1 history turn to improve recall.
 
 ## Earlier backlog (still open)
 - Multi-file `apply_patch` (ADR-039 follow-on); GPU/edge run (Jetson/Pi → maybe L6); harder bench L7+; audio on real non-TTS audio + video modality. (MCP-stdio is now covered by the ADR-011-revision section above, no longer a standalone item.)

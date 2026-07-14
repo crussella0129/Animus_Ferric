@@ -50,6 +50,8 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
         prompt_budget_tokens: 8192,
         max_output_tokens: 4096,
         max_ring: None,
+        compact_trigger_fraction: 0.85,
+        compact_keep_last_turns: 2,
     };
     let mut protocol = ferric_core::ActionProtocol::NativeTools;
 
@@ -72,6 +74,8 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
                     prompt_budget_tokens: *prompt_budget_tokens,
                     max_output_tokens: *max_output_tokens,
                     max_ring: None,
+                    compact_trigger_fraction: 0.85,
+                    compact_keep_last_turns: 2,
                 };
             }
             Event::SessionPrompt { system, user, media: _ } => {
