@@ -126,7 +126,7 @@ pub fn handle_initialize(id: Value) -> RpcResponse {
         id,
         serde_json::json!({
             "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {"tools": {}},
+            "capabilities": {"tools": {}, "prompts": {}},
             "serverInfo": {"name": "ferric", "version": env!("CARGO_PKG_VERSION")},
         }),
     )
@@ -281,8 +281,50 @@ impl McpServer {
             "initialize" => handle_initialize(id),
             "tools/list" => handle_tools_list(id),
             "tools/call" => self.handle_tools_call(id, &req.params),
+            "prompts/list" => self.handle_prompts_list(id),
+            "prompts/get" => self.handle_prompts_get(id, &req.params),
             other => RpcResponse::error(id, METHOD_NOT_FOUND, format!("unknown method: {other}")),
         })
+    }
+
+    fn handle_prompts_list(&self, id: Value) -> RpcResponse {
+        let skills = crate::skills::load_skills(self.workspace.root());
+        let prompts: Vec<Value> = skills
+            .into_iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "arguments": []
+                })
+            })
+            .collect();
+        RpcResponse::success(id, serde_json::json!({ "prompts": prompts }))
+    }
+
+    fn handle_prompts_get(&self, id: Value, params: &Value) -> RpcResponse {
+        let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+        let skills = crate::skills::load_skills(self.workspace.root());
+        
+        if let Some(skill) = skills.into_iter().find(|s| s.name == name) {
+            RpcResponse::success(
+                id,
+                serde_json::json!({
+                    "description": skill.description,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": skill.content
+                            }
+                        }
+                    ]
+                }),
+            )
+        } else {
+            RpcResponse::error(id, INVALID_PARAMS, format!("unknown prompt: {name}"))
+        }
     }
 
     fn handle_tools_call(&self, id: Value, params: &Value) -> RpcResponse {

@@ -57,6 +57,9 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
   - JSON-RPC streaming notifications (`ferric/streamDelta`) for `ferric mcp`.
 - **Sprint 50 (DONE): Native Tailscale Integration**
   - `--tailscale` flag for `ferric server up` to proxy the local port to the tailnet automatically.
+- **Sprint 51 (DONE): Skill Loader via MCP Prompts**
+  - Added Knowledge Skill loading from `.ferric/skills/*/SKILL.md`.
+  - Implemented `prompts/list` and `prompts/get` in `ferric mcp` to natively expose skills to IDEs and agents.
 - A live small-model run measuring Ornstein summarization *quality* (safety is already structural).
 
 ## Earlier backlog (still open)

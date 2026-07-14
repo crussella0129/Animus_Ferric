@@ -219,4 +219,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 50 — Native Tailscale Integration** (2026-07-13). Added a `--tailscale` flag to `ferric server up`. Ferric now natively orchestrates Zero-Trust WireGuard tunneling by shelling out to `tailscale serve <port>` immediately after the engine (llama-server/Ollama) binds to loopback. This allows secure, authenticated, off-device access to the local inference API without exposing public firewall ports. *ADR-060.*
 
+- **Sprint 51 — Skill Loader via MCP Prompts** (2026-07-13). Added dynamic Knowledge Skill loading. `ferric mcp` now scans `.ferric/skills/*/SKILL.md` and serves them via the MCP `prompts/list` and `prompts/get` protocols. Agents connected to Ferric (Cursor, Claude Code, etc.) can now discover and inject project-specific skills dynamically into their context. *ADR-061.*
+
 > **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; a fancy chat TUI; wiring chat into the Animus IDE; `ferric mcp --resume`; per-tier compaction tuning.
