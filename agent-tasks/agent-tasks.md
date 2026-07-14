@@ -55,6 +55,8 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
 - **Sprint 49 (DONE): Streamlining Streaming & Usability Assessment**
   - Talk-mode streaming for `ferric chat`.
   - JSON-RPC streaming notifications (`ferric/streamDelta`) for `ferric mcp`.
+- **Sprint 50 (DONE): Native Tailscale Integration**
+  - `--tailscale` flag for `ferric server up` to proxy the local port to the tailnet automatically.
 - A live small-model run measuring Ornstein summarization *quality* (safety is already structural).
 
 ## Earlier backlog (still open)

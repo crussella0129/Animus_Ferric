@@ -78,6 +78,9 @@ pub struct ServerUpArgs {
     /// Batch size (llama-server only; ignored for Ollama).
     #[arg(long)]
     pub batch_size: Option<u32>,
+    /// Securely expose the engine port over Tailscale (requires `tailscale` CLI).
+    #[arg(long)]
+    pub tailscale: bool,
 }
 
 /// What `command()` needs. Built from `ServerUpArgs` with the host fixed.
@@ -93,6 +96,7 @@ pub struct ServerConfig {
     pub threads: Option<u32>,
     pub gpu_layers: Option<u32>,
     pub batch_size: Option<u32>,
+    pub tailscale: bool,
 }
 
 impl ServerConfig {
@@ -175,6 +179,8 @@ pub struct ServerRunfile {
     pub pid: u32,
     pub port: u16,
     pub base_url: String,
+    #[serde(default)]
+    pub tailscale: bool,
 }
 
 /// Runfile location: `<workspace>/.ferric/server.json` (the `.ferric/` dir is
@@ -262,6 +268,7 @@ fn config_from(args: &ServerUpArgs) -> ServerConfig {
         threads: args.threads,
         gpu_layers: args.gpu_layers,
         batch_size: args.batch_size,
+        tailscale: args.tailscale,
     }
 }
 
@@ -298,11 +305,30 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    if cfg.tailscale {
+        println!("Exposing {} to Tailnet (tailscale serve {})...", cfg.base_url(), cfg.port);
+        match Command::new("tailscale")
+            .args(["serve", &cfg.port.to_string()])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                println!("Tailscale proxy active.");
+            }
+            Ok(out) => {
+                eprintln!("Warning: `tailscale serve` failed: {}", String::from_utf8_lossy(&out.stderr));
+            }
+            Err(e) => {
+                eprintln!("Warning: could not execute `tailscale serve`: {e}");
+            }
+        }
+    }
+
     let runfile = ServerRunfile {
         engine: cfg.engine,
         pid,
         port: cfg.port,
         base_url: cfg.base_url(),
+        tailscale: cfg.tailscale,
     };
     let path = runfile_path(workspace);
     if let Some(parent) = path.parent() {
@@ -428,6 +454,7 @@ mod tests {
             threads: None,
             gpu_layers: None,
             batch_size: None,
+            tailscale: false,
         }
     }
 
@@ -529,6 +556,7 @@ mod tests {
             pid: 4321,
             port: 8080,
             base_url: "http://127.0.0.1:8080/v1".to_string(),
+            tailscale: false,
         };
         let s = serde_json::to_string(&rf).unwrap();
         let back: ServerRunfile = serde_json::from_str(&s).unwrap();

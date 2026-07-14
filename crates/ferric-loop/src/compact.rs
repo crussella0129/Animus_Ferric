@@ -23,7 +23,7 @@
 
 use ferric_core::{FerricError, Message, Role, RunPolicy};
 use ferric_provider::{CompletionRequest, Provider, SamplingParams};
-use ferric_trace::{Event, JsonlSink};
+use ferric_trace::Event;
 
 use crate::backoff::complete_with_backoff;
 use crate::run::Sleeper;
