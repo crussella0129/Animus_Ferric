@@ -408,26 +408,32 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     }
 
     println!("Ferric chat — /help for commands, /exit to quit.");
-    let stdin = std::io::stdin();
-    let mut handle = stdin.lock();
-    let mut line = String::new();
+    let mut editor = match rustyline::DefaultEditor::new() {
+        Ok(ed) => ed,
+        Err(e) => {
+            eprintln!("failed to initialize rustyline: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let history_path = workspace_root.join(".ferric").join("chat_history.txt");
+    let _ = editor.load_history(&history_path);
+
     // Per-session monotonic counter for escalation trace filenames — `now_ms()`
     // alone can collide when two `/do` turns land in the same millisecond
     // (implausible for human typing, but real for scripted/piped chat;
     // test-critic C-001).
     let mut esc_count: u32 = 0;
     loop {
-        eprint!("you> ");
-        let _ = std::io::stderr().flush();
-        line.clear();
-        match handle.read_line(&mut line) {
-            Ok(0) => break, // EOF
-            Ok(_) => {}
+        let line = match editor.readline("you> ") {
+            Ok(line) => line,
+            Err(rustyline::error::ReadlineError::Interrupted) |
+            Err(rustyline::error::ReadlineError::Eof) => break,
             Err(e) => {
                 eprintln!("input error: {e}");
                 break;
             }
-        }
+        };
+        let _ = editor.add_history_entry(line.as_str());
         match parse_chat_input(&line) {
             ChatInput::Exit => break,
             ChatInput::Empty => {}
@@ -478,6 +484,8 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             }
         }
     }
+
+    let _ = editor.save_history(&history_path);
 
     let _ = log.write_event(Event::SessionEnd {
         reason: "chat session ended".to_string(),

@@ -228,4 +228,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 56:** Per-tier compaction tuning. `HistoryCompactor` triggers now scale natively per tier in `RunPolicy`.
 
-> **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; a fancy chat TUI; wiring chat into the Animus IDE; per-tier compaction tuning.
+- **Sprint 57 — Chat Mode Refinements** (2026-07-14). Integrated `rustyline` into `ferric chat` for robust REPL history and line editing, improving interactive workflow for conversation-driven escalations.
+
+> **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; wiring chat into the Animus IDE.

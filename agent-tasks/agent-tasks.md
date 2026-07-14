@@ -69,6 +69,10 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
 - **Sprint 56 (DONE): Per-tier compaction tuning**
   - Migrated `COMPACT_TRIGGER_FRACTION` and `KEEP_LAST_TURNS` to `RunPolicy` for per-tier configuration.
   - Adjusted limits for the Nano tier down to a 0.75 budget fraction and keeping only 1 history turn to improve recall.
+- **Sprint 57 (DONE): Fancy Chat REPL (rustyline)**
+  - Replaced the simple `stdin().read_line()` blocking loop in `ferric chat` with `rustyline`.
+  - Added persistent chat history saved to `.ferric/chat_history.txt`.
+  - Retained the core output token-streaming by keeping `rustyline` strictly as the input loop rather than a full alternate-screen event loop.
 
 ## Earlier backlog (still open)
 - Multi-file `apply_patch` (ADR-039 follow-on); GPU/edge run (Jetson/Pi → maybe L6); harder bench L7+; audio on real non-TTS audio + video modality. (MCP-stdio is now covered by the ADR-011-revision section above, no longer a standalone item.)
