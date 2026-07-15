@@ -802,3 +802,14 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-09 (build phase)
 - **Files modified:** README.md, crates/ferric-cli/src/main.rs, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
 - **Commit:** `676d155`
+
+## T-5801 (sprint 58)
+- **Description:** Implement `GitRead` (Ring 1) and `GitWrite` (Ring 2) built-in tools. Curated subset of git commands via subprocess with safe argument extraction for workspace constraints.
+- **Completed:** 2026-07-15
+- **Files modified:** crates/ferric-tools/src/builtin/mod.rs, crates/ferric-tools/src/builtin/git_read.rs, crates/ferric-tools/src/builtin/git_write.rs, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** `023edb3`
+## T-5901 (sprint 59)
+- **Description:** Implemented the `shell_exec` builtin tool and extended the `ferric-guard` permission model to enforce command string static screening (ADR-045). Wired `SinkPolicy` into `Registry::execute` for CaMeL taint validation. All unit tests pass, verifying the timeout execution capability, output cap string truncation, and security checks.
+- **Completed:** 2026-07-15 (build phase)
+- **Files modified:** crates/ferric-guard/src/{checker.rs,lib.rs}, crates/ferric-tools/src/spec.rs, crates/ferric-tools/src/registry.rs, crates/ferric-tools/src/builtin/{shell_exec.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** (see git log)

@@ -73,6 +73,9 @@ One funnel (the built quarantine), many pluggable `Retriever`s (capability-probe
   - Replaced the simple `stdin().read_line()` blocking loop in `ferric chat` with `rustyline`.
   - Added persistent chat history saved to `.ferric/chat_history.txt`.
   - Retained the core output token-streaming by keeping `rustyline` strictly as the input loop rather than a full alternate-screen event loop.
+- **Sprint 58 (DONE): Curated Git Tool**
+  - Added `GitRead` (Ring 1) and `GitWrite` (Ring 2) builtin tools.
+  - Implemented subprocess execution with workspace constraints and path heuristics.
 
 ## Earlier backlog (still open)
 - Multi-file `apply_patch` (ADR-039 follow-on); GPU/edge run (Jetson/Pi → maybe L6); harder bench L7+; audio on real non-TTS audio + video modality. (MCP-stdio is now covered by the ADR-011-revision section above, no longer a standalone item.)
@@ -128,12 +131,7 @@ the project's safety-before-blast-radius philosophy; its concrete future-task id
   User-confirmed to be its OWN dedicated sprint, not bundled into sprint 39's `--resume` work.
 - **Persistent config** — ✅ **DONE, sprint 38** (user-chosen 2026-07-04, paired with `Animus.md`).
   See the Sprint 38 section below. `ferric init-project` (a scaffolding wizard) remains a follow-on.
-- **`shell_exec` tool** — Ring 2 (Medium+); workspace cwd, command timeout, stdout/stderr capture,
-  output caps; **extend Ornstein to screen commands** for destructive/exfil/privesc patterns before
-  exec. (Needs the real permission-model extension flagged in ADR-045, not a quick add.)
-- **`git` tool** — curated subset (status/diff/add/commit/log/branch/checkout); Ring 1 read / Ring 2
-  write; reject force-push/rebase/reset unless an expert-only Ring 3 (10B+); subprocess not a git
-  lib (dep weight).
+- **`git` tool** — ✅ **DONE, sprint 58**. Curated subset (status/diff/add/commit/log/branch/checkout); Ring 1 read / Ring 2 write; reject force-push/rebase/reset unless an expert-only Ring 3 (10B+); subprocess not a git lib (dep weight).
 - **Dev engine (`ferric dev`)** — the ADR-011-reserved self-modification arc (doc estimates ~3
   sprints, matching ADR-011's "s4–s7"): separate stricter loop with a MIN tier floor, `cargo check`
   in an isolated target dir, a distinct trajectory prefix, harness-source-protection rules in the

@@ -230,4 +230,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 57 — Chat Mode Refinements** (2026-07-14). Integrated `rustyline` into `ferric chat` for robust REPL history and line editing, improving interactive workflow for conversation-driven escalations.
 
+- **Sprint 59 — `shell_exec` tool & CaMeL wiring** (2026-07-15). Delivered the `shell_exec` tool (Ring 2) and addressed ADR-045's deferred requirements. Extended the `Tool` trait with `target_commands()` and added `ferric-guard::check_command` to screen commands against static denylists prior to child process execution. Wired the CaMeL sink policy `TaintSet` into the `Registry::execute` chokepoint to govern `Write` and `Execute` tool calls according to the user's `--sink-action` flag.
+
 > **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; wiring chat into the Animus IDE.
