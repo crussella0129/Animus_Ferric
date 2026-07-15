@@ -102,6 +102,20 @@ fn check_write_target(path: &Path) -> Decision {
     Decision::Allow
 }
 
+/// Check if a command string contains any denied substrings.
+pub fn check_command(command: &str) -> Decision {
+    let lowered = command.to_ascii_lowercase();
+    for pattern in crate::denylist::DENIED_COMMAND_PATTERNS {
+        if lowered.contains(pattern) {
+            return Decision::Deny(DenyReason {
+                rule: "denied_command_pattern",
+                matched: pattern.to_string(),
+            });
+        }
+    }
+    Decision::Allow
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,5 +219,21 @@ mod tests {
         assert!(!crate::denylist::DENIED_WRITE_SEGMENTS.is_empty());
         assert!(!crate::denylist::DENIED_WRITE_FILES.is_empty());
         assert!(!crate::denylist::DENIED_COMMAND_PATTERNS.is_empty());
+    }
+
+    #[test]
+    fn denies_dangerous_commands() {
+        let cmd = "sudo rm -rf /var/log";
+        match check_command(cmd) {
+            Decision::Deny(reason) => {
+                assert_eq!(reason.rule, "denied_command_pattern");
+                assert_eq!(reason.matched, "rm -rf /");
+            }
+            Decision::Allow => panic!("rm -rf / must be denied"),
+        }
+
+        assert!(!check_command("echo 'test' | dd if=/dev/urandom").is_allow());
+        assert!(!check_command("git PUSH --FORCE origin main").is_allow()); // case insensitive
+        assert!(check_command("ls -la").is_allow());
     }
 }
