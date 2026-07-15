@@ -42,6 +42,13 @@ pub trait Tool: Send + Sync {
             .unwrap_or_default()
     }
 
+    /// The commands this tool intends to execute. The registry checks every
+    /// one against `ferric_guard::check_command` BEFORE `run` is invoked.
+    /// Default: an empty vector.
+    fn target_commands(&self, _args: &serde_json::Value) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Execute. `Ok` is the full (untruncated) success output; `Err` is the
     /// full error text. Truncation for the model happens in the registry.
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String>;
