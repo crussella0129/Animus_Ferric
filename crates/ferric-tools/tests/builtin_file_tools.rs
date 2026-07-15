@@ -594,10 +594,10 @@ fn rings_gate_builtins_by_tier() {
     let small_names: Vec<&str> = small.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
         small.len(),
-        10,
-        "Small adds the 1-tool Ring 1: {small_names:?}"
+        11,
+        "Small adds the 2-tool Ring 1: {small_names:?}"
     );
-    for ring1 in ["find_files"] {
+    for ring1 in ["find_files", "git_read"] {
         assert!(small_names.contains(&ring1), "Ring 1 includes {ring1}");
     }
     // The Ring-1 round-out stays out of a Nano grammar.
@@ -607,19 +607,19 @@ fn rings_gate_builtins_by_tier() {
     );
     // Ring-2 tools are still above the Small ceiling.
     assert!(
-        !small_names.contains(&"multi_edit") && !small_names.contains(&"apply_patch"),
+        !small_names.contains(&"multi_edit") && !small_names.contains(&"apply_patch") && !small_names.contains(&"git_write"),
         "Ring-2 tools absent at Small"
     );
 
-    // Medium (13..30 → ring ceiling 2) → 12: Ring 0 + Ring 1 + `multi_edit` + `apply_patch`.
+    // Medium (13..30 → ring ceiling 2) → 14: Ring 0 + Ring 1 + `multi_edit` + `apply_patch` + `git_write`.
     let medium = registry.tools_for_policy(&policy_for(&profile(20.0)));
     let medium_names: Vec<&str> = medium.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
         medium.len(),
-        12,
-        "Medium adds the 2-tool Ring 2 (multi_edit + apply_patch): {medium_names:?}"
+        14,
+        "Medium adds the 3-tool Ring 2 (multi_edit + apply_patch + git_write): {medium_names:?}"
     );
-    for ring2 in ["multi_edit", "apply_patch"] {
+    for ring2 in ["multi_edit", "apply_patch", "git_write"] {
         assert!(
             medium_names.contains(&ring2),
             "Ring 2 includes {ring2}: {medium_names:?}"
@@ -769,4 +769,28 @@ fn multi_edit_empty_edits_and_empty_old_error() {
         &json!({"path": "f.txt", "edits": [{"old_string": "", "new_string": "x"}]}),
     ));
     assert!(e2, "empty old_string must error");
+}
+
+#[test]
+fn git_read_extracts_paths_from_args() {
+    use ferric_tools::builtin::GitRead;
+    use ferric_tools::Tool;
+    let tool = GitRead;
+    let paths = tool.target_paths(&serde_json::json!({
+        "subcommand": "diff",
+        "args": ["--stat", "src/main.rs", "-p", "docs/"]
+    }));
+    assert_eq!(paths, vec!["src/main.rs", "docs/"]);
+}
+
+#[test]
+fn git_write_extracts_paths_from_args() {
+    use ferric_tools::builtin::GitWrite;
+    use ferric_tools::Tool;
+    let tool = GitWrite;
+    let paths = tool.target_paths(&serde_json::json!({
+        "subcommand": "commit",
+        "args": ["-m", "msg", "src/lib.rs"]
+    }));
+    assert_eq!(paths, vec!["msg", "src/lib.rs"]);
 }

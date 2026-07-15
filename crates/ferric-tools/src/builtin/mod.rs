@@ -13,6 +13,8 @@ mod multi_edit;
 mod read_file;
 mod search_files;
 mod write_file;
+mod git_read;
+mod git_write;
 
 pub use apply_patch::ApplyPatch;
 pub use copy_file::CopyFile;
@@ -26,6 +28,8 @@ pub use multi_edit::MultiEdit;
 pub use read_file::ReadFile;
 pub use search_files::SearchFiles;
 pub use write_file::WriteFile;
+pub use git_read::GitRead;
+pub use git_write::GitWrite;
 
 use crate::registry::Registry;
 
@@ -43,6 +47,8 @@ pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(CopyFile));
     registry.register(Box::new(MultiEdit));
     registry.register(Box::new(ApplyPatch));
+    registry.register(Box::new(GitRead));
+    registry.register(Box::new(GitWrite));
 }
 
 /// Shared helper: the required string `path` argument.
