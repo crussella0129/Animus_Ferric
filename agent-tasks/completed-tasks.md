@@ -813,3 +813,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-15 (build phase)
 - **Files modified:** crates/ferric-guard/src/{checker.rs,lib.rs}, crates/ferric-tools/src/spec.rs, crates/ferric-tools/src/registry.rs, crates/ferric-tools/src/builtin/{shell_exec.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
 - **Commit:** (see git log)
+
+## T-6001 (sprint 60)
+- **Description:** Remove mistralrs backend and relax --model requirement for container usage.
+- **Completed:** 2026-07-15
+- **Files modified:** crates/ferric-cli/src/backend.rs, README.md, demo_commands_cheatsheet.md
+- **Commit:** pending
+

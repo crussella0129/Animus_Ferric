@@ -611,15 +611,15 @@ fn rings_gate_builtins_by_tier() {
         "Ring-2 tools absent at Small"
     );
 
-    // Medium (13..30 → ring ceiling 2) → 14: Ring 0 + Ring 1 + `multi_edit` + `apply_patch` + `git_write`.
+    // Medium (13..30 → ring ceiling 2) → 15: Ring 0 + Ring 1 + `multi_edit` + `apply_patch` + `git_write` + `shell_exec`.
     let medium = registry.tools_for_policy(&policy_for(&profile(20.0)));
     let medium_names: Vec<&str> = medium.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
         medium.len(),
-        14,
-        "Medium adds the 3-tool Ring 2 (multi_edit + apply_patch + git_write): {medium_names:?}"
+        15,
+        "Medium adds the 4-tool Ring 2 (multi_edit + apply_patch + git_write + shell_exec): {medium_names:?}"
     );
-    for ring2 in ["multi_edit", "apply_patch", "git_write"] {
+    for ring2 in ["multi_edit", "apply_patch", "git_write", "shell_exec"] {
         assert!(
             medium_names.contains(&ring2),
             "Ring 2 includes {ring2}: {medium_names:?}"

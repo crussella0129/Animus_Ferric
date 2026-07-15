@@ -12,8 +12,6 @@
 //! reached only via the out-of-process valve. Per ADR-009, any change touching
 //! this crate requires a real-model run before merge.
 
-#[cfg(feature = "backend-mistralrs")]
-pub mod mistralrs;
 mod mock;
 #[cfg(feature = "backend-openai")]
 pub mod openai;

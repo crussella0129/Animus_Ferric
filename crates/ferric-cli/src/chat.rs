@@ -19,7 +19,6 @@
 //! (mirroring `ferric mcp`, since `run()` emits a whole `SessionStart..SessionEnd`
 //! envelope per call and cannot be nested).
 
-use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -37,7 +36,7 @@ use crate::query::{
     run_with_provider,
 };
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 use tokio::runtime::Runtime;
 
 /// `ferric chat`'s CLI surface: `QueryArgs` minus `prompt`/`resume`/`files` —
@@ -184,7 +183,7 @@ fn mock_talk_completion() -> Completion {
 /// `Real` holds the ONE provider + `tokio::runtime::Runtime` for the session.
 enum ChatBackend {
     Mock,
-    #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+    #[cfg(feature = "backend-openai")]
     Real {
         provider: Box<dyn Provider + Send + Sync>,
         runtime: Runtime,
@@ -215,7 +214,7 @@ impl ChatBackend {
                         .map_err(|e| format!("talk completion failed: {e}"))
                 }
             }
-            #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+            #[cfg(feature = "backend-openai")]
             ChatBackend::Real { provider, runtime } => {
                 if let Some(sink) = stream_sink {
                     runtime.block_on(provider.complete_streaming(request, sink))
@@ -259,7 +258,7 @@ impl ChatBackend {
                     ferric_guard::SinkPolicy::deny(),
                 ))
             }
-            #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+            #[cfg(feature = "backend-openai")]
             ChatBackend::Real { provider, runtime } => runtime.block_on(run_with_provider(
                 provider.as_ref(),
                 &config.registry,
@@ -281,17 +280,17 @@ impl ChatBackend {
     }
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 fn build_real_backend(backend_opts: &BackendOpts) -> Result<ChatBackend, String> {
     let runtime = Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     let provider = runtime.block_on(crate::backend::create_provider(backend_opts))?;
     Ok(ChatBackend::Real { provider, runtime })
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
+#[cfg(not(feature = "backend-openai"))]
 fn build_real_backend(_backend_opts: &BackendOpts) -> Result<ChatBackend, String> {
     Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
+         rebuild with `cargo build --features backend-openai`, or use --mock"
         .to_string())
 }
 
@@ -332,7 +331,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         mock: args.mock,
         backend: backend_opts
             .backend
-            .unwrap_or(crate::backend::BackendArg::Mistral),
+            .unwrap_or(crate::backend::BackendArg::Openai),
         params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
         quant: args
             .quant
@@ -356,8 +355,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             .unwrap_or_else(|| PathBuf::from("benchmarks")),
         model_key: backend_opts
             .model
-            .clone()
-            .or_else(|| backend_opts.model_file.clone()),
+            .clone(),
     });
     for diag in &loaded_config.diagnostics {
         eprintln!("{diag}");
@@ -568,7 +566,7 @@ mod tests {
         ];
         let config = build_run_config(&RunConfigArgs {
             mock: true,
-            backend: crate::backend::BackendArg::Mistral,
+            backend: crate::backend::BackendArg::Openai,
             params_b: 1.0,
             quant: "Q4_K_M".to_string(),
             family: "test".to_string(),

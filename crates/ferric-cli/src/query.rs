@@ -22,7 +22,7 @@ use ferric_provider::{Capabilities, Completion, MockProvider, Provider, Sampling
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink};
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 use crate::backend::create_provider;
 use crate::backend::{BackendArg, BackendOpts};
 
@@ -176,7 +176,7 @@ pub(crate) struct RunConfigArgs {
     pub prompts_dir: Option<PathBuf>,
     pub max_ring: Option<u8>,
     pub profile_dir: PathBuf,
-    /// `--model` (openai backend) or `--model-file` (mistral backend) — the key
+    /// `--model` (openai backend) — the key
     /// used to look up a persisted profile record (ADR-029). `None` skips the
     /// lookup entirely (matches today's behavior when neither flag is set).
     pub model_key: Option<String>,
@@ -225,12 +225,6 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
                 supports_constraint: true,
                 exposes_logits: false,
                 supports_media: true,
-            },
-            BackendArg::Mistral => Capabilities {
-                supports_native_tool_calls: false,
-                supports_constraint: false,
-                exposes_logits: false,
-                supports_media: false,
             },
         }
     };
@@ -430,7 +424,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
 
     let mut config = build_run_config(&RunConfigArgs {
         mock: args.mock,
-        backend: args.backend_opts.backend.unwrap_or(BackendArg::Mistral),
+        backend: args.backend_opts.backend.unwrap_or(BackendArg::Openai),
         params_b: resolved_params_b,
         quant: resolved_quant,
         family: resolved_family,
@@ -441,14 +435,13 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         max_ring: resolved_max_ring,
         profile_dir: resolved_profile_dir,
         // C-001 (plan-critic): derived from the POST-merge, config-resolved
-        // `model`/`model_file` (already merged above) — a config-only-set
+        // `model` (already merged above) — a config-only-set
         // `model` must still hit the ADR-029 profile lookup, not silently
         // skip it because `model_key` was built from raw CLI args.
         model_key: args
             .backend_opts
             .model
-            .clone()
-            .or_else(|| args.backend_opts.model_file.clone()),
+            .clone(),
     });
 
     // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
@@ -993,7 +986,7 @@ mod tests {
     fn base_run_config_args() -> RunConfigArgs {
         RunConfigArgs {
             mock: true,
-            backend: BackendArg::Mistral,
+            backend: BackendArg::Openai,
             params_b: 8.0,
             quant: "Q4_K_M".to_string(),
             family: "unknown".to_string(),

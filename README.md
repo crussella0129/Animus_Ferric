@@ -36,9 +36,6 @@ cd Animus_Ferric
 # Recommended: the OpenAI-compatible HTTP valve — the constrained-decoding path.
 # Talks to llama.cpp (llama-server), Ollama, or vLLM.
 cargo build --release -p ferric-cli --features backend-openai
-
-# Optional: also the in-process mistral.rs GGUF backend (text-only TextXml path).
-cargo build --release -p ferric-cli --features backend-openai,backend-mistralrs
 ```
 
 The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built with **no** backend feature, only the trace tooling works; `query`/`toolbench` will tell you to rebuild with a feature. Examples below assume `ferric` is on your `PATH`.
@@ -78,13 +75,8 @@ Ferric works with large and small models alike, but *how well* a small model dri
 **1. Bring a model.** Any of:
 
 ```sh
-
-
 # llama.cpp — point the launcher at a GGUF on disk (needs `llama-server` on PATH):
 ferric server up --engine llama-server --model /path/to/your-model.gguf [--mmproj mmproj.gguf] [--ctx 8192]
-
-# In-process GGUF (mistral.rs, text-only path) — no server needed:
-ferric toolbench --backend mistral --model-dir /path/to/models --model-file your-model.gguf
 ```
 
 **2. Benchmark it** under the constrained path, and write a report:
@@ -120,12 +112,11 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 44). Two inference backends ship behind feature flags:
+Active development (sprint 44). The single inference backend used by Ferric:
 
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (`llama.cpp` / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
-- **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
 
-The action protocol (`NativeTools` / `ConstrainedJson` / `TextXml`) is chosen from each backend's real capabilities. An embedded PyO3/PyTorch backend was tried and removed (ADR-021) — external engines are reached only via the out-of-process valve. Development follows a sprint-loop protocol; see `decisions.md` for ADRs and `agent-tasks/` for the ledger.
+The action protocol (`NativeTools` / `ConstrainedJson` / `TextXml`) is chosen from the backend's real capabilities. Development follows a sprint-loop protocol; see `decisions.md` for ADRs and `agent-tasks/` for the ledger.
 
 ## Development timeline
 

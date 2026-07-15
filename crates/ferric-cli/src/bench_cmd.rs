@@ -32,19 +32,10 @@ pub struct BenchArgs {
     #[arg(long, default_value = "default")]
     pub variant: String,
 
-    /// Inference backend (without `--mock`): `mistral` (GGUF, `--model-dir`/
-    /// `--model-file`) or `openai` (ollama / llama-server via `--api-base`/
-    /// `--model` — the constrained workhorse; mistral constrained hangs, ADR-027).
-    #[arg(long, value_enum, default_value = "mistral")]
+    /// Inference backend (without `--mock`): `openai` (ollama / llama-server via `--api-base`/
+    /// `--model` — the constrained workhorse).
+    #[arg(long, value_enum, default_value = "openai")]
     pub backend: BackendArg,
-
-    /// Model directory (mistral backend; omit for --mock).
-    #[arg(long)]
-    pub model_dir: Option<PathBuf>,
-
-    /// GGUF file name inside --model-dir (mistral backend).
-    #[arg(long)]
-    pub model_file: Option<String>,
 
     /// OpenAI-compatible base URL (openai backend; omit to auto-discover a
     /// running `ferric server`).
@@ -185,8 +176,8 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // Single-model path. openai = ollama/llama-server; mistral = GGUF; `model_name`
-    // keys the calibration record (model-file for mistral, model-id for openai).
+    // Single-model path. openai = ollama/llama-server; `model_name`
+    // keys the calibration record (model-id for openai).
     let (model, openai, model_name) = if args.mock {
         (None, None, None)
     } else {
@@ -204,21 +195,6 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
                 };
                 (None, Some(oa), Some(model_id))
             }
-            BackendArg::Mistral => match (&args.model_dir, &args.model_file) {
-                (Some(dir), Some(file)) => {
-                    let ma = ModelArgs {
-                        model_dir: dir.clone(),
-                        model_file: file.clone(),
-                        params_b: args.params_b,
-                        ctx: args.ctx,
-                    };
-                    (Some(ma), None, Some(file.clone()))
-                }
-                _ => {
-                    eprintln!("--model-dir and --model-file are required for --backend mistral");
-                    return ExitCode::FAILURE;
-                }
-            },
         }
     };
     let inv = Invocation {

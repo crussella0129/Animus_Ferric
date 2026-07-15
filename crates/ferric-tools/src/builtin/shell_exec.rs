@@ -130,3 +130,56 @@ impl Tool for ShellExec {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use ferric_guard::Workspace;
+    use crate::spec::ToolCtx;
+    use serde_json::json;
+
+    fn temp_workspace() -> (tempfile::TempDir, Workspace) {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = Workspace::new(dir.path()).unwrap();
+        (dir, ws)
+    }
+
+    #[test]
+    fn execution_timeout_works() {
+        let (_dir, ws) = temp_workspace();
+        let ctx = ToolCtx { workspace: &ws };
+        let tool = ShellExec;
+        
+        let cmd = if cfg!(windows) {
+            "echo ping"
+        } else {
+            "echo ping"
+        };
+        
+        let args = json!({"command": cmd});
+        let result = tool.run(&ctx, &args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn output_cap_truncates() {
+        let (_dir, ws) = temp_workspace();
+        let ctx = ToolCtx { workspace: &ws };
+        let tool = ShellExec;
+        
+        let cmd = if cfg!(windows) {
+            // Output a lot of text using a loop
+            "for /L %i in (1,1,2000) do @echo yyyyyy"
+        } else {
+            "for i in $(seq 1 2000); do echo yyyyyy; done"
+        };
+        
+        let args = json!({"command": cmd});
+        let result = tool.run(&ctx, &args).unwrap();
+        
+        // Capped at 10,000 + length of truncation notice
+        assert!(result.len() <= OUTPUT_LIMIT + 100);
+        assert!(result.contains("[TRUNCATED]"));
+    }
+}

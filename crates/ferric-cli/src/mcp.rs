@@ -499,7 +499,7 @@ impl McpServer {
             mock: args.mock,
             backend: backend_opts
                 .backend
-                .unwrap_or(crate::backend::BackendArg::Mistral),
+                .unwrap_or(crate::backend::BackendArg::Openai),
             params_b: resolved_params_b,
             quant: resolved_quant,
             family: resolved_family,
@@ -514,8 +514,7 @@ impl McpServer {
             // `backend_opts`).
             model_key: backend_opts
                 .model
-                .clone()
-                .or_else(|| backend_opts.model_file.clone()),
+                .clone(),
         });
 
         // T-3905 (sprint 39 / 55): `--resume <path>` replays an interrupted, still-
@@ -679,14 +678,9 @@ mod tests {
             workspace: Some(ws.to_path_buf()),
             backend_opts: crate::backend::BackendOpts {
                 backend: None,
-                model_dir: None,
-                model_file: None,
                 model: None,
                 api_base: None,
                 api_key: None,
-                chat_template: None,
-                tokenizer_json: None,
-                tok_model_id: None,
             },
             params_b: None,
             quant: None,
@@ -836,7 +830,7 @@ mod tests {
         let workspace = Workspace::new(dir).unwrap();
         let config = crate::query::build_run_config(&crate::query::RunConfigArgs {
             mock: true,
-            backend: crate::backend::BackendArg::Mistral,
+            backend: crate::backend::BackendArg::Openai,
             params_b: 1.2,
             quant: "Q4_K_M".to_string(),
             family: "unknown".to_string(),

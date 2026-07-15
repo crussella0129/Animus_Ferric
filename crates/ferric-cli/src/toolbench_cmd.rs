@@ -526,7 +526,6 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                     args.backend_opts
                         .model
                         .clone()
-                        .or_else(|| args.backend_opts.model_file.clone())
                         .unwrap_or_else(|| "model".to_string()),
                 ],
             };
@@ -535,10 +534,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                 println!("\n=== calibrating {model} ===");
                 let mut opts = args.backend_opts.clone();
                 if args.models.is_some() {
-                    match opts.backend.unwrap_or(BackendArg::Mistral) {
-                        BackendArg::Openai => opts.model = Some(model.clone()),
-                        BackendArg::Mistral => opts.model_file = Some(model.clone()),
-                    }
+                    opts.model = Some(model.clone());
                 }
                 let provider_box = match create_provider(&opts).await {
                     Ok(p) => p,
@@ -640,10 +636,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             for model in &model_list {
                 println!("\n=== {model} ===");
                 let mut opts = args.backend_opts.clone();
-                match opts.backend.unwrap_or(BackendArg::Mistral) {
-                    BackendArg::Openai => opts.model = Some(model.clone()),
-                    BackendArg::Mistral => opts.model_file = Some(model.clone()),
-                }
+                opts.model = Some(model.clone());
                 let provider_box = match create_provider(&opts).await {
                     Ok(p) => p,
                     Err(e) => {
@@ -685,7 +678,6 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                 .backend_opts
                 .model
                 .clone()
-                .or_else(|| args.backend_opts.model_file.clone())
                 .unwrap_or_else(|| provider.id().to_string());
             println!(
                 "Toolbench: {} tools x {} iterations | backend={} protocol={:?}",

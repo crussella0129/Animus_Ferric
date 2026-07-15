@@ -1,6 +1,5 @@
 param (
-    [string]$ModelDir,
-    [string]$ModelFile,
+    [string]$Model,
     [switch]$Mock
 )
 
@@ -21,7 +20,7 @@ Write-Host "Created fresh workspace: $Workspace" -ForegroundColor Green
 # 2. Build the command
 $Command = "cargo"
 $ArgsList = @(
-    "run", "--release", "-p", "ferric-cli", "--features", "backend-mistralrs",
+    "run", "--release", "-p", "ferric-cli", "--features", "backend-openai",
     "--", "query", $Prompt, "--workspace", "./$Workspace"
 )
 
@@ -29,16 +28,14 @@ if ($Mock) {
     Write-Host "Running in MOCK mode (no real model)..." -ForegroundColor Cyan
     $ArgsList += "--mock"
 } else {
-    if (-not $ModelDir -or -not $ModelFile) {
-        Write-Host "ERROR: You must provide -ModelDir and -ModelFile when not using -Mock." -ForegroundColor Red
-        Write-Host "Example: .\e2e_test.ps1 -ModelDir `"C:\models`" -ModelFile `"llama.gguf`"" -ForegroundColor Red
+    if (-not $Model) {
+        Write-Host "ERROR: You must provide -Model when not using -Mock." -ForegroundColor Red
+        Write-Host "Example: .\e2e_test.ps1 -Model `"gpt-4o`"" -ForegroundColor Red
         exit 1
     }
-    Write-Host "Running with REAL model: $ModelDir\$ModelFile" -ForegroundColor Cyan
-    $ArgsList += "--model-dir"
-    $ArgsList += $ModelDir
-    $ArgsList += "--model-file"
-    $ArgsList += $ModelFile
+    Write-Host "Running with REAL model: $Model" -ForegroundColor Cyan
+    $ArgsList += "--model"
+    $ArgsList += $Model
 }
 
 Write-Host "Starting E2E Test. Output is being appended to $LogFile..." -ForegroundColor Green

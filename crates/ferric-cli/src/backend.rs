@@ -2,18 +2,15 @@ use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-// `Provider` is only named by the feature-gated `create_provider` return type.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 use ferric_provider::Provider;
 
 /// `Serialize`/`Deserialize` + kebab-case (T-3801): lets `Config::backend`
 /// (sprint 38's persistent config) round-trip through TOML using the same
-/// spelling clap's own `ValueEnum` already uses (`"mistral"`/`"openai"`).
+/// spelling clap's own `ValueEnum` already uses (`"openai"`).
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendArg {
-    /// In-process mistral.rs (GGUF). Text-only / `TextXml` — no constraint.
-    Mistral,
     /// OpenAI-compatible HTTP valve (llama.cpp / Ollama). Enforces a
     /// `response_format` constraint server-side → `ConstrainedJson`.
     Openai,
@@ -21,21 +18,12 @@ pub enum BackendArg {
 
 #[derive(Args, Clone)]
 pub struct BackendOpts {
-    /// Which backend to use. Default "mistral" when neither this flag nor a
+    /// Which backend to use. Default "openai" when neither this flag nor a
     /// config file's `backend` is set (T-3803/T-3805) — bare `Option<T>`
     /// rather than a clap default so a config-only-set value isn't masked by
-    /// an indistinguishable clap default (the same class of bug the plan
-    /// critic's C-001 caught for `model_key`).
+    /// an indistinguishable clap default.
     #[arg(long, value_enum)]
     pub backend: Option<BackendArg>,
-
-    /// Directory containing the GGUF model (required for the mistral backend)
-    #[arg(long)]
-    pub model_dir: Option<PathBuf>,
-
-    /// GGUF file name inside --model-dir (required for mistral backend)
-    #[arg(long)]
-    pub model_file: Option<String>,
 
     /// The model string identifier (required for openai backend)
     #[arg(long)]
@@ -49,19 +37,6 @@ pub struct BackendOpts {
     /// The API key for the OpenAI-compatible API (for openai backend)
     #[arg(long)]
     pub api_key: Option<String>,
-
-    /// Path to a chat template override (for GGUFs without an embedded one)
-    #[arg(long)]
-    pub chat_template: Option<PathBuf>,
-
-    /// Path to the model's real tokenizer.json. REQUIRED for `--protocol
-    /// grammar` on GGUF models. Also read from FERRIC_TOKENIZER_JSON.
-    #[arg(long)]
-    pub tokenizer_json: Option<PathBuf>,
-
-    /// Alternatively, an HF model id to source tokenizer.json from.
-    #[arg(long)]
-    pub tok_model_id: Option<String>,
 }
 
 /// Resolve the OpenAI base URL (T-805 auto-discovery): an explicit `--api-base`
@@ -75,51 +50,11 @@ fn resolve_base(explicit: Option<&str>, runfile: Option<&str>) -> String {
         .unwrap_or_else(|| "http://localhost:1234/v1".to_string())
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 pub async fn create_provider(
     opts: &BackendOpts,
 ) -> Result<Box<dyn Provider + Send + Sync>, String> {
-    match opts.backend.unwrap_or(BackendArg::Mistral) {
-        BackendArg::Mistral => {
-            #[cfg(feature = "backend-mistralrs")]
-            {
-                use ferric_provider::mistralrs::{MistralRsConfig, MistralRsProvider};
-
-                let model_dir = opts
-                    .model_dir
-                    .as_ref()
-                    .ok_or("--model-dir is required for mistral backend")?;
-                let model_file = opts
-                    .model_file
-                    .as_ref()
-                    .ok_or("--model-file is required for mistral backend")?;
-
-                let tokenizer_json = opts
-                    .tokenizer_json
-                    .clone()
-                    .or_else(|| std::env::var_os("FERRIC_TOKENIZER_JSON").map(PathBuf::from));
-
-                if opts.tok_model_id.is_none() {
-                    unsafe {
-                        std::env::set_var("HF_HUB_OFFLINE", "1");
-                    }
-                }
-
-                let mut config = MistralRsConfig::new(model_dir, model_file);
-                config.chat_template = opts.chat_template.as_ref().map(|p| p.display().to_string());
-                config.tokenizer_json = tokenizer_json;
-                config.tok_model_id = opts.tok_model_id.clone();
-
-                let provider = MistralRsProvider::load(config)
-                    .await
-                    .map_err(|e| format!("mistral backend: {e}"))?;
-                Ok(Box::new(provider))
-            }
-            #[cfg(not(feature = "backend-mistralrs"))]
-            {
-                Err("binary built without mistralrs backend".to_string())
-            }
-        }
+    match opts.backend.unwrap_or(BackendArg::Openai) {
         BackendArg::Openai => {
             #[cfg(feature = "backend-openai")]
             {
@@ -127,7 +62,7 @@ pub async fn create_provider(
                 let model_id = opts
                     .model
                     .clone()
-                    .ok_or("--model is required for openai backend")?;
+                    .unwrap_or_else(|| "default".to_string());
                 let api_key = opts
                     .api_key
                     .clone()

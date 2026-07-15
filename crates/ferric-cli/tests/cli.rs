@@ -128,9 +128,9 @@ fn stream_flag_mock_no_duplication() {
 
 #[test]
 fn query_without_backend_errors() {
-    // Default build lacks backend-mistralrs: a non-mock query must fail with
+    // Default build lacks backend-openai: a non-mock query must fail with
     // a message naming the missing feature.
-    #[cfg(not(feature = "backend-mistralrs"))]
+    #[cfg(not(feature = "backend-openai"))]
     {
         let dir = tempfile::tempdir().unwrap();
         let out = ferric()
@@ -141,11 +141,8 @@ fn query_without_backend_errors() {
             .unwrap();
         assert!(!out.status.success());
         let stderr = String::from_utf8(out.stderr).unwrap();
-        // Names the missing backend. The no-backend build's stub says
-        // "...--features backend-mistralrs..."; a backend-openai-only build
-        // reaches create_provider and says "built without mistralrs backend".
-        // Both name `mistralrs`.
-        assert!(stderr.contains("mistralrs"));
+        // Names the missing backend.
+        assert!(stderr.contains("backend-openai"));
     }
 }
 

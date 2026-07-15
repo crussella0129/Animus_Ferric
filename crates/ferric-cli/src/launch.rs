@@ -126,14 +126,9 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                         mock: false, // You could add args or let config handle backend etc.
                         backend_opts: crate::backend::BackendOpts {
                             backend: Some(crate::backend::BackendArg::Openai),
-                            model_dir: None,
-                            model_file: None,
                             model: None,
                             api_base: None,
                             api_key: None,
-                            chat_template: None,
-                            tok_model_id: None,
-                            tokenizer_json: None,
                         },
                         params_b: Some(7.0),
                         quant: Some("q4".to_string()),
