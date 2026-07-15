@@ -68,10 +68,11 @@ fn branch_for(tool: &ToolDescriptor) -> Value {
     json!({
         "type": "object",
         "properties": {
+            "thought": { "type": "string" },
             "tool": { "const": tool.name },
             "args": tool.input_schema,
         },
-        "required": ["tool", "args"],
+        "required": ["thought", "tool", "args"],
         "additionalProperties": false,
     })
 }
@@ -148,7 +149,7 @@ mod tests {
         for b in branches {
             assert!(b["properties"]["tool"]["const"].is_string());
             assert_eq!(b["additionalProperties"], json!(false));
-            assert_eq!(b["required"], json!(["tool", "args"]));
+            assert_eq!(b["required"], json!(["thought", "tool", "args"]));
         }
     }
 

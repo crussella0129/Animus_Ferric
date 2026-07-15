@@ -31,6 +31,7 @@ impl Sleeper for ThreadSleeper {
 /// per-tier/per-protocol composition via oovra lands in ferric-prompt (s2).
 pub const DEFAULT_SYSTEM_PROMPT: &str = "You are Ferric, a coding agent. \
 Use the available tools to act on the workspace. \
+For each tool call, write out your reasoning in the `thought` field before executing the tool. \
 When the task is done, call task_complete with a one-sentence summary. \
 Never describe a tool call in prose - actually call the tool.";
 
