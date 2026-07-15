@@ -161,6 +161,18 @@ impl Registry {
             checks.push(CheckRecord::allow(resolved));
         }
 
+        for cmd in tool.target_commands(args) {
+            if let Decision::Deny(reason) = ferric_guard::check_command(&cmd) {
+                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
+                checks.push(CheckRecord::deny(std::path::PathBuf::from(&cmd), reason.rule, &reason.matched));
+                return ExecuteOutcome::Denied {
+                    reason: detail,
+                    checks,
+                };
+            }
+            checks.push(CheckRecord::allow(std::path::PathBuf::from(&cmd)));
+        }
+
         let is_tainted = taint_set.args_tainted(args);
         match sink_policy.decide(spec.permission, is_tainted) {
             ferric_guard::SinkDecision::Allow => {}
