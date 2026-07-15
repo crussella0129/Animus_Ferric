@@ -15,6 +15,7 @@ mod search_files;
 mod write_file;
 mod git_read;
 mod git_write;
+mod shell_exec;
 
 pub use apply_patch::ApplyPatch;
 pub use copy_file::CopyFile;
@@ -30,6 +31,7 @@ pub use search_files::SearchFiles;
 pub use write_file::WriteFile;
 pub use git_read::GitRead;
 pub use git_write::GitWrite;
+pub use shell_exec::ShellExec;
 
 use crate::registry::Registry;
 
@@ -49,6 +51,7 @@ pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(ApplyPatch));
     registry.register(Box::new(GitRead));
     registry.register(Box::new(GitWrite));
+    registry.register(Box::new(ShellExec));
 }
 
 /// Shared helper: the required string `path` argument.
