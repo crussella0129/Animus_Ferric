@@ -103,23 +103,42 @@ impl ConstrainedJsonScanner {
 }
 
 fn extract_tool_name(accumulated: &str, start_offset: usize) -> Option<String> {
-    const KEY: &str = "\"tool\":\"";
-    if start_offset >= accumulated.len() { return None; }
-    let start = accumulated[start_offset..].find(KEY)? + start_offset + KEY.len();
+    let start = find_key_value_start(accumulated, start_offset, "\"tool\"")?;
     let rest = &accumulated[start..];
     let end = rest.find('"')?;
     Some(rest[..end].to_string())
 }
 
 fn find_thought_value_start(accumulated: &str) -> Option<usize> {
-    const KEY: &str = "\"thought\":\"";
-    Some(accumulated.find(KEY)? + KEY.len())
+    find_key_value_start(accumulated, 0, "\"thought\"")
 }
 
 fn find_summary_value_start(accumulated: &str, start_offset: usize) -> Option<usize> {
-    const KEY: &str = "\"summary\":\"";
+    find_key_value_start(accumulated, start_offset, "\"summary\"")
+}
+
+/// Finds a key like `"tool"`, then skips any spaces, tabs, newlines, and the colon,
+/// until it finds the opening `"` of the string value. Returns the offset immediately
+/// AFTER that opening `"`.
+fn find_key_value_start(accumulated: &str, start_offset: usize, key: &str) -> Option<usize> {
     if start_offset >= accumulated.len() { return None; }
-    Some(accumulated[start_offset..].find(KEY)? + start_offset + KEY.len())
+    let key_idx = accumulated[start_offset..].find(key)? + start_offset;
+    let mut chars = accumulated[key_idx + key.len()..].char_indices();
+    
+    let mut found_colon = false;
+    for (i, c) in chars {
+        if c.is_whitespace() { continue; }
+        if c == ':' && !found_colon {
+            found_colon = true;
+            continue;
+        }
+        if c == '"' && found_colon {
+            return Some(key_idx + key.len() + i + 1);
+        }
+        // If we hit anything else before the quote (e.g. invalid json), bail out
+        return None;
+    }
+    None
 }
 
 fn decode_json_string_prefix(raw: &str) -> (String, bool, usize) {
