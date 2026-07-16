@@ -20,9 +20,9 @@ fn constrained_json_dispatches_tool() {
     let result = run_scripted_protocol(
         vec![
             json_completion(
-                json!({"tool": "write_file", "args": {"path": "out.txt", "content": "hi"}}),
+                json!({"thought": "...", "tool": "write_file", "args": {"path": "out.txt", "content": "hi"}}),
             ),
-            json_completion(json!({"tool": "task_complete", "args": {"summary": "wrote out.txt"}})),
+            json_completion(json!({"thought": "...", "tool": "task_complete", "args": {"summary": "wrote out.txt"}})),
         ],
         &nano_policy(),
         ActionProtocol::ConstrainedJson,
@@ -62,7 +62,7 @@ fn constrained_json_carries_action_schema() {
     // tools + task_complete.
     run_scripted_protocol(
         vec![json_completion(
-            json!({"tool": "task_complete", "args": {"summary": "done"}}),
+            json!({"thought": "...", "tool": "task_complete", "args": {"summary": "done"}}),
         )],
         &nano_policy(),
         ActionProtocol::ConstrainedJson,

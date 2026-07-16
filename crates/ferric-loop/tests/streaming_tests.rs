@@ -76,7 +76,7 @@ impl Provider for ScriptedStreamingProvider {
 }
 
 fn task_complete_completion(summary: &str) -> Completion {
-    json_completion(json!({"tool": "task_complete", "args": {"summary": summary}}))
+    json_completion(json!({"thought": "...", "tool": "task_complete", "args": {"summary": summary}}))
 }
 
 /// The turn loop, given `stream_sink: Some`, calls `complete_streaming` and
