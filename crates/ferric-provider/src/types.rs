@@ -114,6 +114,7 @@ pub struct Completion {
 pub enum StreamDelta {
     Text(String),
     ToolNamed(String),
+    Thought(String),
 }
 
 #[derive(Debug, Error)]

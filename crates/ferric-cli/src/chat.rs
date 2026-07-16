@@ -193,9 +193,12 @@ enum ChatBackend {
 impl ChatBackend {
     /// Run one talk completion (unconstrained, no tools).
     fn talk(&self, request: CompletionRequest, stream: bool) -> Result<Completion, String> {
-        let sink_fn = |d: ferric_provider::StreamDelta| if let ferric_provider::StreamDelta::Text(t) = d {
-            print!("{t}");
-            let _ = std::io::Write::flush(&mut std::io::stdout());
+        let sink_fn = |d: ferric_provider::StreamDelta| match d {
+            ferric_provider::StreamDelta::Text(t) | ferric_provider::StreamDelta::Thought(t) => {
+                print!("{t}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            _ => {}
         };
         let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if stream {
             Some(&sink_fn)

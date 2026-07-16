@@ -559,6 +559,11 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         ferric_provider::StreamDelta::ToolNamed(name) => {
             eprintln!("\u{25b8} calling {name}...");
         }
+        ferric_provider::StreamDelta::Thought(t) => {
+            print!("\x1b[90m{t}\x1b[0m"); // Dim ANSI color
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            streamed_anything.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     };
     let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if resolved_stream {
         Some(&sink_fn)

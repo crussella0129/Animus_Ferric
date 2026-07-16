@@ -414,8 +414,8 @@ impl McpServer {
         resume: Option<ferric_loop::ReplayedState>,
     ) -> Result<ferric_loop::LoopOutcome, String> {
         // MCP streams partial text via custom JSON-RPC notification.
-        let sink_fn = |d: ferric_provider::StreamDelta| {
-            if let ferric_provider::StreamDelta::Text(t) = d {
+        let sink_fn = |d: ferric_provider::StreamDelta| match d {
+            ferric_provider::StreamDelta::Text(t) | ferric_provider::StreamDelta::Thought(t) => {
                 let note = RpcNotification {
                     jsonrpc: "2.0",
                     method: "ferric/streamDelta".to_string(),
@@ -423,10 +423,12 @@ impl McpServer {
                 };
                 if let Ok(line) = serde_json::to_string(&note) {
                     let mut stdout = std::io::stdout().lock();
-                    let _ = writeln!(stdout, "{line}");
-                    let _ = stdout.flush();
+                    let _ = std::io::Write::write_all(&mut stdout, line.as_bytes());
+                    let _ = std::io::Write::write_all(&mut stdout, b"\n");
+                    let _ = std::io::Write::flush(&mut stdout);
                 }
             }
+            _ => {}
         };
 
         let fut = run_with_provider(
