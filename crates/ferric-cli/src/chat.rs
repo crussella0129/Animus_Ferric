@@ -48,10 +48,9 @@ pub struct ChatArgs {
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
-    /// Enable token-streaming to stdout (talk turns only). Escalate turns
-    /// follow the CLI default for agentic streaming.
+    /// Disable token-streaming to stdout. (By default, streaming is ON in chat mode).
     #[arg(long)]
-    pub stream: bool,
+    pub no_stream: bool,
 
     #[command(flatten)]
     pub backend_opts: BackendOpts,
@@ -239,7 +238,27 @@ impl ChatBackend {
         sink: &mut JsonlSink,
         prompt: &str,
         seed: ReplayedState,
+        stream: bool,
     ) -> Result<ferric_loop::LoopOutcome, String> {
+        let sink_fn = |d: ferric_provider::StreamDelta| match d {
+            ferric_provider::StreamDelta::Text(t) => {
+                print!("{t}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            ferric_provider::StreamDelta::Thought(t) => {
+                print!("\x1b[90m{t}\x1b[0m"); // Dim ANSI color
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            ferric_provider::StreamDelta::ToolNamed(name) => {
+                eprintln!("\u{25b8} calling {name}...");
+            }
+        };
+        let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if stream {
+            Some(&sink_fn)
+        } else {
+            None
+        };
+
         match self {
             ChatBackend::Mock => {
                 let provider = mock_provider(config.protocol);
@@ -255,7 +274,7 @@ impl ChatBackend {
                     sink,
                     Some(prompt),
                     Vec::new(),
-                    None,
+                    stream_sink,
                     Some(seed),
                     ferric_guard::TaintSet::new(),
                     ferric_guard::SinkPolicy::deny(),
@@ -274,7 +293,7 @@ impl ChatBackend {
                 sink,
                 Some(prompt),
                 Vec::new(),
-                None,
+                stream_sink,
                 Some(seed),
                 ferric_guard::TaintSet::new(),
                 ferric_guard::SinkPolicy::deny(),
@@ -442,10 +461,10 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             ChatInput::Talk(text) => {
                 history.push(Message::user(text));
                 let request = talk_request(&history, &config.sampling);
-                match backend.talk(request, args.stream) {
+                match backend.talk(request, !args.no_stream) {
                     Ok(completion) => {
                         let resp = completion.message.text.unwrap_or_default();
-                        if !args.stream {
+                        if args.no_stream {
                             println!("{resp}");
                         } else {
                             println!(); // ensure newline after stream
@@ -470,7 +489,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                         continue;
                     }
                 };
-                match backend.escalate(&config, &workspace, &mut esc_sink, &text, seed) {
+                match backend.escalate(&config, &workspace, &mut esc_sink, &text, seed, !args.no_stream) {
                     Ok(outcome) => {
                         let resp = outcome.final_text.unwrap_or_default();
                         println!("{resp}");
