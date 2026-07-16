@@ -226,4 +226,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 59 — `shell_exec` tool & CaMeL wiring** (2026-07-15). Delivered the `shell_exec` tool (Ring 2) and addressed ADR-045's deferred requirements. Extended the `Tool` trait with `target_commands()` and added `ferric-guard::check_command` to screen commands against static denylists prior to child process execution. Wired the CaMeL sink policy `TaintSet` into the `Registry::execute` chokepoint to govern `Write` and `Execute` tool calls according to the user's `--sink-action` flag.
 
+- **Sprint 62 — Schema-Enforced Chain of Thought** (2026-07-16). Replaced the nested JSON schema representation for `action` with a flattened, highly stable wrapper that explicitly forces the `thought` field *before* tool parameters. Fixed a critical agent hallucination where the missing JSON schema `description` metadata (stripped by `llama-server`) caused the LLM to misuse `make_dir` repeatedly for file creation; explicitly injected `registry_tools` descriptions into the system prompt for constrained environments.
+
 > **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; wiring chat into the Animus IDE.
