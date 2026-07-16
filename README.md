@@ -228,4 +228,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 62 — Schema-Enforced Chain of Thought** (2026-07-16). Replaced the nested JSON schema representation for `action` with a flattened, highly stable wrapper that explicitly forces the `thought` field *before* tool parameters. Fixed a critical agent hallucination where the missing JSON schema `description` metadata (stripped by `llama-server`) caused the LLM to misuse `make_dir` repeatedly for file creation; explicitly injected `registry_tools` descriptions into the system prompt for constrained environments.
 
+- **Sprint 63 — Real-Time Thought Streaming** (2026-07-16). Added real-time streaming of the model's scratchpad reasoning (the `thought` field). Expanded `StreamDelta` to include `Thought(String)` and added a state machine to `ConstrainedJsonScanner` to incrementally stream the field as text arrives. Rendered live thought outputs in dim ANSI gray (`\x1b[90m`) in `ferric query`, `ferric chat`, and `ferric mcp` to visually distinguish the agent's internal planning from standard tool output.
+
 > **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; wiring chat into the Animus IDE.
