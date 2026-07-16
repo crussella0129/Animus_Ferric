@@ -49,6 +49,8 @@ regex = "1"
 tempfile = "3"
 futures-executor = "0.3"
 rustyline = "14"
+axum = "0.8"
+tokio-stream = "0.1"
 
 ferric-core = { path = "crates/ferric-core" }
 ferric-trace = { path = "crates/ferric-trace" }

@@ -10,9 +10,12 @@
 //! - `ferric launch` — Animus Launch (inc 1): a deterministic, LLM-free
 //!   bootstrapper that scaffolds a new git repo (main+dev) + a sprint-loop
 //!   skeleton from an interview or flags (ADR-053).
+//! - `ferric api` — HTTP API server for IDE/web/mobile integration
+//!   (Sprint 64).
 //! - `ferric trace cat <file>` — derived view of a JSONL trace.
 //! - `ferric dev` — reserved for the Development Engine (s4–s7).
 
+mod api;
 mod backend;
 mod bench_cmd;
 mod chat;
@@ -56,6 +59,9 @@ enum Command {
     Chat(Box<chat::ChatArgs>),
     /// Bootstrap a new project: scaffold a git repo (main+dev) + skeleton (ADR-053)
     Launch(Box<launch::LaunchArgs>),
+    /// Start the HTTP API server for IDE/web/mobile integration (Sprint 64)
+    #[cfg(feature = "backend-openai")]
+    Api(Box<api::server::ApiArgs>),
     /// Launch and manage the OpenAI-compatible inference server (the HTTP valve)
     Server {
         #[command(subcommand)]
@@ -85,6 +91,11 @@ fn main() -> ExitCode {
         Command::Mcp(args) => mcp::run_mcp(*args),
         Command::Chat(args) => chat::run_chat(*args),
         Command::Launch(args) => launch::run_launch(*args),
+        #[cfg(feature = "backend-openai")]
+        Command::Api(args) => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(api::server::run_api(*args))
+        }
         Command::Server { command } => {
             let workspace = std::env::current_dir().unwrap_or_default();
             server::run_server(&workspace, command)
