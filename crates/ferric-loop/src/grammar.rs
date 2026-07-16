@@ -68,11 +68,11 @@ fn branch_for(tool: &ToolDescriptor) -> Value {
     json!({
         "type": "object",
         "properties": {
+            "thought": { "type": "string" },
             "tool": { "const": tool.name },
-            "thought": { "type": "string", "description": "Chain-of-thought reasoning before outputting args" },
             "args": tool.input_schema,
         },
-        "required": ["tool", "thought", "args"],
+        "required": ["thought", "tool", "args"],
         "additionalProperties": false,
     })
 }
