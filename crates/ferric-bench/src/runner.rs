@@ -21,13 +21,11 @@ pub struct Invocation {
     /// The `ferric` binary to spawn (default: this executable).
     pub ferric_bin: PathBuf,
     pub protocol: ActionProtocol,
-    /// Mistral GGUF backend. `None` + `openai: None` → `--mock`; `Some` requires
-    /// the `backend-mistralrs` feature in the spawned binary.
+    /// Mistral GGUF backend removed; kept for CLI compatibility if needed, but unused.
     pub model: Option<ModelArgs>,
     /// OpenAI-compatible backend (ollama / llama-server — the constrained
     /// workhorse). Takes precedence over `model`; requires `backend-openai` in
-    /// the spawned binary. This is what lets the full-loop ladder run the
-    /// constrained path on a real model (mistral constrained hangs, ADR-027).
+    /// the spawned binary.
     pub openai: Option<OpenAiArgs>,
     /// Prompt library dir passed through as `--prompts-dir`.
     pub prompts_dir: Option<PathBuf>,

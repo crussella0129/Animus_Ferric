@@ -5,14 +5,14 @@ use crate::types::{Capabilities, Completion, CompletionRequest, ProviderError, S
 /// An inference backend.
 ///
 /// Async and dyn-compatible from day one (ADR-003): the s1 backends are
-/// tokio-async (mistral.rs) and reqwest-async (OpenAI-compatible HTTP), and a
-/// sync trait here would force a breaking redesign.
+/// reqwest-async (OpenAI-compatible HTTP), and a deterministic synchronous
+/// mock for testing.
 ///
 /// Backends own their heavy state (loaded model, HTTP pool) internally; the
 /// trait itself is stateless per request.
 #[async_trait]
 pub trait Provider: Send + Sync {
-    /// Stable identifier, e.g. `"mock"`, `"mistralrs"`, `"openai-http"`.
+    /// Stable identifier, e.g. `"mock"`, `"openai-http"`.
     fn id(&self) -> &str;
 
     fn capabilities(&self) -> Capabilities;

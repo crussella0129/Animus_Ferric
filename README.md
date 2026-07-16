@@ -47,8 +47,8 @@ The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built wit
 | `ferric server up\|status\|doctor\|down` | Launch & manage the local OpenAI-compatible inference server (the HTTP valve), bound to `127.0.0.1` only. Writes `.ferric/server.json` so other commands auto-discover it. |
 | `ferric query "<prompt>"` | Run one workspace-scoped agent turn against a local model. |
 | `ferric mcp` | Run an MCP-stdio server exposing one tool, `ferric_query`, to MCP clients (Claude Code, Cursor, an IDE). Workspace/backend/model are launch-time-fixed flags; each call runs the full constrained agent loop. *ADR-046.* |
-| `ferric toolbench` | Measure & diagnose tool-calling fire rate for a model (or a fleet — see below). |
-| `ferric bench` | Run the L0–L6 capability ladder and calibrate a model's `measured_level`. |
+| `ferric bench ltd` | Measure & diagnose tool-calling fire rate for a model (or a fleet — see below). |
+| `ferric bench full` | Run the L0–L6 capability ladder and calibrate a model's `measured_level`. |
 | `ferric trace cat <file.jsonl>` | Render a session trace as a human-readable log. |
 
 A typical loop — bring a server up, point Ferric at it, work, tear it down:
@@ -85,7 +85,7 @@ ferric server up --engine llama-server --model /path/to/your-model.gguf [--mmpro
 **2. Benchmark it** under the constrained path, and write a report:
 
 ```sh
-ferric toolbench --backend openai --model <name> --protocol grammar --iterations 20 --report report.md
+ferric bench ltd --backend openai --model <name> --protocol grammar --iterations 20 --report report.md
 ```
 
 **3. Read the verdict.** `report.md` gives each tool a success rate, a **failure taxonomy** (`wrong_tool` / `malformed_args` / `no_action` / `parse_error`), and an acceptability band — **solid** (≥90%) / **marginal** (≥70%) / **unreliable** (<70%). Add `--protocol native` to compare the unconstrained path on the same model.
@@ -93,7 +93,7 @@ ferric toolbench --backend openai --model <name> --protocol grammar --iterations
 **4. Calibrate a whole fleet at once.** `--models <a,b,c>` benches each model and ranks them into one leaderboard, sorted best→worst — so you can pick the smallest model that's still *solid*:
 
 ```sh
-ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b --protocol grammar --report fleet.md
+ferric bench ltd --backend openai --models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b --protocol grammar --report fleet.md
 ```
 
 ```
@@ -107,7 +107,7 @@ ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.1:8b,llama3.2
 
 That run is real: the constrained path holds at **100% down to a 1B model**, where the same model's *native* tool-calling collapses to 22% — which is the whole point of harness-owned decoding.
 
-**5. Calibrate the rings.** `--calibrate-rings` benches a model **ring by ring** and reports the highest ring it reliably drives — the recommended `--max-ring` to run it at (`ferric toolbench … --calibrate-rings`). It's the demonstrated-reliability promotion: a model *earns* a wider grammar by proving it on the bench. Full walkthrough: [docs/testbench.md](docs/testbench.md).
+**5. Calibrate the rings.** `--calibrate-rings` benches a model **ring by ring** and reports the highest ring it reliably drives — the recommended `--max-ring` to run it at (`ferric bench ltd … --calibrate-rings`). It's the demonstrated-reliability promotion: a model *earns* a wider grammar by proving it on the bench. Full walkthrough: [docs/testbench.md](docs/testbench.md).
 
 ## Portability
 
@@ -131,7 +131,7 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 - **Sprints 3–6 — Exploration** (mid-June 2026). An embedded PyO3/PyTorch inference path and a first-generation toolbench. This era drifted from the *harness-owns-decoding* thesis — and set up the realignment.
 - **Sprint 7 — The realignment** (2026-06-23). The PyO3/PyTorch backend removed; external engines reached only through the out-of-process HTTP valve. The constraint reinstated, capabilities made honest, and the `NativeTools` / `ConstrainedJson` / `TextXml` trichotomy chosen from each backend's *real* capabilities; toolbench rebuilt around the active protocol. *ADR-021–023.*
 - **Sprint 8 — Launcher + testbench** (2026-06-23). The `ferric server` lifecycle manager (llama-server default, Ollama pluggable, runfile auto-discovery) and the diagnostic toolbench (failure taxonomy + verdict bands). **Thesis proven on a real model: constrained 100% vs native 0% on the same Ollama model.** *ADR-024.*
-- **Sprint 9 — Fleet calibration** (2026-06-23). `ferric toolbench --models` sweeps a fleet into one sorted leaderboard. **The constraint holds 100% down to a 1B model where native collapses to 22%** — it extends the usable model floor to 1B. A native-`content` fallback closes the "Ollama returns the call as text" gap; the mistral.rs 0.8.15 probe confirmed the hang is fixed upstream but the constraint still isn't enforced. *ADR-025.*
+- **Sprint 9 — Fleet calibration** (2026-06-23). `ferric bench ltd --models` sweeps a fleet into one sorted leaderboard. **The constraint holds 100% down to a 1B model where native collapses to 22%** — it extends the usable model floor to 1B. A native-`content` fallback closes the "Ollama returns the call as text" gap; the mistral.rs 0.8.15 probe confirmed the hang is fixed upstream but the constraint still isn't enforced. *ADR-025.*
 - **Sprint 10 — Multimodal "any file" input** (2026-06-24). `ferric query --file` takes any file: text/code folds into the prompt (any model); image/audio/video attach as OpenAI content parts, capability-gated by `--modality` + the backend's `supports_media` (the valve carries media; the in-process path doesn't). Additive `Message.media` (media-free messages serialize unchanged); a dependency-free base64 encoder. The pure pipeline is fully unit-tested; the live-media heartbeat (a real model reading a clip) is deferred until a multimodal server is stood up.
 
 - **Sprint 11 — mistral.rs constrained-decoding spike** (2026-06-24). Settled an open question: `MistralRsProvider` had been *stripping* the decoding constraint since the s3 pivot, so the sprint-9 probe (ADR-025) had measured the stripped path, not enforcement. Wired the constraint through (`set_constraint`) and re-probed — mistralrs 0.8.15 **still hangs** llguidance on GGUF even for a trivial schema (5-minute engine timeout). The ADR-020 hang is *not* fixed; the wiring was reverted (no regression), mistral.rs stays text-only, and the HTTP valve remains the sole constrained path. *ADR-027.*
@@ -146,17 +146,23 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 16 — ring calibration** (2026-06-24). `toolbench --calibrate-rings` sweeps a model ring-by-ring and reports the highest ring it reliably drives — the recommended `--max-ring`. Closes the rings loop: a model *earns* a wider grammar by proving it on the bench (the demonstrated-reliability promotion). *ADR-028.*
 
-- **Sprint 17 — durable promotion** (2026-06-25). Closed the profile read-back loop: `model_profiles.json` was written by `ferric bench` but never read. Now `toolbench --calibrate-rings --profile-dir` *persists* the earned ring, and `ferric query --profile-dir` *reads the profile back* — a proven model auto-runs at its earned tier (`measured_level`) and ring (`calibrated_ring`), no manual flag. Safe no-op without a profile. *ADR-029.*
+- **Sprint 15 — `--max-ring` override** (2026-06-24). The explicit "control exactly which rings" lever: `ferric query`/`bench ltd --max-ring N` caps the active rings independent of tier (`--max-ring 0` = the core-only grammar). Restrict-only — widening past a model's capability stays earned via `measured_level`. Proven end-to-end via the trace's offered-tools. *ADR-028 (amended).*
+
+- **Sprint 16 — ring calibration** (2026-06-24). `bench ltd --calibrate-rings` sweeps a model ring-by-ring and reports the highest ring it reliably drives — the recommended `--max-ring`. Closes the rings loop: a model *earns* a wider grammar by proving it on the bench (the demonstrated-reliability promotion). *ADR-028.*
+
+- **Sprint 17 — durable promotion** (2026-06-25). Closed the profile read-back loop: `model_profiles.json` was written by `bench full` but never read. Now `ferric bench ltd --calibrate-rings --profile-dir` *persists* the earned ring, and `ferric query --profile-dir` *reads the profile back* — a proven model auto-runs at its earned tier (`measured_level`) and ring (`calibrated_ring`), no manual flag. Safe no-op without a profile. *ADR-029.*
 
 - **Sprint 18 — round out Ring 1** (2026-06-25). Added `find_files` (find by *name*, the companion to `search_files`' content search) and `copy_file` (the organize complement to `move_path`), making Ring 1 a coherent four-tool "find & organize" set. Both fire `solid` in the re-bench — growing the ring didn't cost reliability. *ADR-028 (amended).*
 
-- **Sprint 19 — seed Ring 2** (2026-06-25). Added `multi_edit` (`ring: 2`) — an ordered, atomic batch of first-occurrence edits to one file (more than the Ring-0 `edit_file`, still reliably emittable vs a unified diff). Added `toolbench --params-b` so calibration can bench at a chosen tier and reach Ring 2 (`--params-b 20` → Medium → rings 0–2). *ADR-028 (amended).*
+- **Sprint 19 — seed Ring 2** (2026-06-25). Added `multi_edit` (`ring: 2`) — an ordered, atomic batch of first-occurrence edits to one file (more than the Ring-0 `edit_file`, still reliably emittable vs a unified diff). Added `bench ltd --params-b` so calibration can bench at a chosen tier and reach Ring 2 (`--params-b 20` → Medium → rings 0–2). *ADR-028 (amended).*
 
-- **Sprint 20 — the full agentic loop, validated on a real model** (2026-06-26). The L0–L6 ladder (`ferric bench`) tests multi-turn *task completion*, but its runner could only reach `--mock` or the mistral GGUF backend (which hangs under constraint). Wired the openai backend through (`bench --backend openai`), fixed a verification bug it surfaced (the `task_complete` terminator wasn't credited), and ran it: **qwen2.5-coder:7b passes all of L0–L6 on the constrained path → `measured_level 6` (Small→Large)**. The first end-to-end validation that the constrained multi-turn loop completes real tasks, not just single tool calls — and the demonstrated-reliability promotion now runs on real data. *ADR-030.*
+- **Sprint 20 — the full agentic loop, validated on a real model** (2026-06-26). The L0–L6 ladder (`ferric bench full`) tests multi-turn *task completion*, but its runner could only reach `--mock` or the mistral GGUF backend (which hangs under constraint). Wired the openai backend through (`ferric bench full --backend openai`), fixed a verification bug it surfaced (the `task_complete` terminator wasn't credited), and ran it: **qwen2.5-coder:7b passes all of L0–L6 on the constrained path → `measured_level 6` (Small→Large)**. The first end-to-end validation that the constrained multi-turn loop completes real tasks, not just single tool calls — and the demonstrated-reliability promotion now runs on real data. *ADR-030.*
 
-- **Sprint 21 — fleet agentic capability map** (2026-06-26). `bench --models` runs the full L0–L6 loop across the fleet and prints a `measured_level` leaderboard. The map: **qwen2.5-coder:7b → 6 (Large); llama3.1:8b → 5 (Medium); llama3.2:1b → none (fails L0)**. The honest finding: a 1B fires single tool calls at 100% but **can't complete a multi-turn task** — single-shot reliability ≠ agentic capability; and the code-tuned 7B beats the larger general 8B. *ADR-030 (amended).*
+- **Sprint 21 — fleet agentic capability map** (2026-06-26). `bench full --models` runs the full L0–L6 loop across the fleet and prints a `measured_level` leaderboard. The map: **qwen2.5-coder:7b → 6 (Large); llama3.1:8b → 5 (Medium); llama3.2:1b → none (fails L0)**. The honest finding: a 1B fires single tool calls at 100% but **can't complete a multi-turn task** — single-shot reliability ≠ agentic capability; and the code-tuned 7B beats the larger general 8B. *ADR-030 (amended).*
 
 - **Sprint 22 — why the 1B isn't an agent** (2026-06-26). Diagnosed (from the trace) *why* `llama3.2:1b` fails L0: **repeat-not-terminate** (it re-calls `list_dir` instead of `task_complete`) and **semantic flailing** (15 `make_dir`s, no progress). Sharpened the repetition nudge into a direct imperative — but it **didn't move the 1B** (still `measured_level: none`), so the ceiling is a real capability limit, not wording. The nudge ships anyway (helps mid-tier models, can't regress capable ones). *ADR-031.*
+- **Sprint 64 — HTTP API & IDE Chat** (2026-07-16). Delivered Ferric HTTP API (`/v1/query/stream`) and `animus-ferric` VS Code extension.
+- **Sprint 65 — Multi-arch container & CLI consolidation** (2026-07-16). Consolidated the `bench` and `toolbench` commands into subcommands under `ferric bench ltd` and `ferric bench full`. Operationalized the `ferric-core` container by modifying the Dockerfile for multi-arch builds (`amd64` and `arm64`) with dynamic `llama-server` asset resolution.
 
 - **Sprint 23 — llama.cpp first-class** (2026-06-26). Validated Ferric on full **llama.cpp** (`llama-server`) for the first time — we have now fully removed inference from ollama and switched exclusively to `llama.cpp` due to speed. The constrained loop runs on it at **100% Ring-0 tool-call fire rate**, with a context window as wide as you want (`-c`), the multimodal path (`--mmproj`), and a single edge-ready binary (Jetson / Pi). Guide: [docs/llama-cpp.md](docs/llama-cpp.md). *ADR-032.*
 

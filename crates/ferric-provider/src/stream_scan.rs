@@ -42,9 +42,10 @@ impl ConstrainedJsonScanner {
             if self.thought_value_start.is_none() {
                 self.thought_value_start = find_thought_value_start(accumulated);
             }
-            if let Some(start) = self.thought_value_start {
-                if start <= accumulated.len() {
-                    let (decoded, complete, consumed_bytes) = decode_json_string_prefix(&accumulated[start..]);
+            if let Some(start) = self.thought_value_start
+                && start <= accumulated.len()
+            {
+                let (decoded, complete, consumed_bytes) = decode_json_string_prefix(&accumulated[start..]);
                     if decoded.len() > self.thought_emitted_len {
                         let new_part = decoded[self.thought_emitted_len..].to_string();
                         self.thought_emitted_len = decoded.len();
@@ -55,7 +56,6 @@ impl ConstrainedJsonScanner {
                         self.thought_value_end = Some(start + consumed_bytes);
                     }
                 }
-            }
         }
 
         // Must wait for thought to finish so we don't falsely match "tool":"..." inside the thought string.
@@ -123,7 +123,7 @@ fn find_summary_value_start(accumulated: &str, start_offset: usize) -> Option<us
 fn find_key_value_start(accumulated: &str, start_offset: usize, key: &str) -> Option<usize> {
     if start_offset >= accumulated.len() { return None; }
     let key_idx = accumulated[start_offset..].find(key)? + start_offset;
-    let mut chars = accumulated[key_idx + key.len()..].char_indices();
+    let chars = accumulated[key_idx + key.len()..].char_indices();
     
     let mut found_colon = false;
     for (i, c) in chars {

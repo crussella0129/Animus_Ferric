@@ -9,8 +9,8 @@ use ferric_core::Message;
 ///
 /// These flags are a STRUCTURAL CONTRACT, not aspiration: a backend may only
 /// advertise a capability its `complete()` actually exercises on the path that
-/// runs. (mistral.rs reporting `supports_native_tool_calls: true` while
-/// stripping tools was the s6 toolbench 0.0% bug — ADR-022.)
+/// runs. (Backends that report `supports_native_tool_calls: true` while
+/// silently stripping tools trigger ADR-022's structural-honesty ruling).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capabilities {
     pub supports_native_tool_calls: bool,

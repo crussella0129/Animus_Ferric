@@ -50,10 +50,12 @@ impl Tool for ShellExec {
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
         let command = args.get("command").and_then(|v| v.as_str()).ok_or("missing 'command' argument")?;
 
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let temp_path = std::env::temp_dir().join(format!(
             "ferric_shell_exec_{}_{}",
             std::process::id(),
-            Instant::now().elapsed().as_nanos()
+            id
         ));
 
         let out_file = File::create(&temp_path).map_err(|e| format!("failed to create temp file: {e}"))?;
@@ -134,7 +136,6 @@ impl Tool for ShellExec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use ferric_guard::Workspace;
     use crate::spec::ToolCtx;
     use serde_json::json;
@@ -151,11 +152,7 @@ mod tests {
         let ctx = ToolCtx { workspace: &ws };
         let tool = ShellExec;
         
-        let cmd = if cfg!(windows) {
-            "echo ping"
-        } else {
-            "echo ping"
-        };
+        let cmd = "echo ping";
         
         let args = json!({"command": cmd});
         let result = tool.run(&ctx, &args);

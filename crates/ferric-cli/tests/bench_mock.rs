@@ -20,7 +20,7 @@ fn bench_mock_l0_passes_and_writes_results() {
     // harness runs, verifies, and records a row — not that the mock passes a
     // real task. Assert the machinery, not a fake pass.
     let out = ferric()
-        .args(["bench", "--mock", "--level", "0"])
+        .args(["bench", "full", "--mock", "--level", "0"])
         .arg("--results-dir")
         .arg(results.path())
         .output()
@@ -46,7 +46,7 @@ fn bench_mock_l0_passes_and_writes_results() {
 fn bench_mock_records_each_requested_level() {
     let results = tempfile::tempdir().unwrap();
     let out = ferric()
-        .args(["bench", "--mock", "--level", "3", "--level", "4"])
+        .args(["bench", "full", "--mock", "--level", "3", "--level", "4"])
         .arg("--results-dir")
         .arg(results.path())
         .output()
@@ -65,7 +65,7 @@ fn bench_mock_records_each_requested_level() {
 fn bench_keep_workspace_preserves_dir() {
     let results = tempfile::tempdir().unwrap();
     let out = ferric()
-        .args(["bench", "--mock", "--level", "0", "--keep-workspace"])
+        .args(["bench", "full", "--mock", "--level", "0", "--keep-workspace"])
         .arg("--results-dir")
         .arg(results.path())
         .output()

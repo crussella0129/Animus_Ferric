@@ -26,17 +26,17 @@ jobs:
       - name: tests
         run: cargo test --workspace
 
-  # Compile-checks the feature-gated mistral.rs backend so cfg-gated code
+  # Compile-checks the feature-gated openai backend so cfg-gated code
   # cannot rot behind -D warnings. Linux-only to bound CI minutes; Windows
   # CPU is CI-verified upstream and exercised daily on the dev machine.
   backend-check:
-    name: backend-mistralrs clippy (ubuntu)
+    name: backend-openai clippy (ubuntu)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      - name: clippy with backend-mistralrs
-        run: cargo clippy -p ferric-cli --features backend-mistralrs --all-targets -- -D warnings
+      - name: clippy with backend-openai
+        run: cargo clippy -p ferric-cli --features backend-openai --all-targets -- -D warnings
 
   # Portability gate: Ferric must keep type-checking for Raspberry Pi /
   # Orange Pi / Jetson class aarch64 Linux targets (ADR-004).

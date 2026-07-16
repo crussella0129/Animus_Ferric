@@ -102,6 +102,7 @@ pub mod server {
 
     /// The request body for query and chat endpoints.
     #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
     pub struct QueryRequest {
         pub prompt: String,
         #[serde(default)]
@@ -112,6 +113,7 @@ pub mod server {
 
     /// The JSON response for non-streaming query.
     #[derive(Debug, Serialize)]
+    #[allow(dead_code)]
     pub struct QueryResponse {
         pub text: Option<String>,
         pub turns: u32,
@@ -120,6 +122,7 @@ pub mod server {
 
     /// SSE event wrapper for streaming.
     #[derive(Debug, Serialize)]
+    #[allow(dead_code)]
     pub struct SsePayload {
         pub text: Option<String>,
         pub name: Option<String>,

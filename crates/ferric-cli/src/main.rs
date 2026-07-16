@@ -49,10 +49,11 @@ struct Cli {
 enum Command {
     /// Run a one-shot, workspace-scoped query against a local model
     Query(Box<query::QueryArgs>),
-    /// Run the L0–L6 capability benchmark and calibrate measured_level
-    Bench(Box<bench_cmd::BenchArgs>),
-    /// Run single-turn tool fire rate tests
-    Toolbench(Box<toolbench_cmd::ToolbenchArgs>),
+    /// Run benchmarking suites (ltd for syntax fire-rate, full for L0-L6 ladder)
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommand,
+    },
     /// Run the MCP-stdio server (one tool, `ferric_query`; ADR-046)
     Mcp(Box<mcp::McpArgs>),
     /// Start an interactive chat REPL (hybrid talk + `/do` escalate; ADR-052)
@@ -75,6 +76,14 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+enum BenchCommand {
+    /// Run single-turn tool fire rate tests
+    Ltd(Box<toolbench_cmd::ToolbenchArgs>),
+    /// Run the L0–L6 capability benchmark and calibrate measured_level
+    Full(Box<bench_cmd::BenchArgs>),
+}
+
+#[derive(Subcommand)]
 enum TraceCommand {
     /// Render a JSONL trace as a human-readable log
     Cat { file: PathBuf },
@@ -86,8 +95,10 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Query(args) => query::run_query(*args),
-        Command::Bench(args) => bench_cmd::run_bench(*args),
-        Command::Toolbench(args) => toolbench_cmd::run_toolbench(*args),
+        Command::Bench { command } => match command {
+            BenchCommand::Ltd(args) => toolbench_cmd::run_toolbench(*args),
+            BenchCommand::Full(args) => bench_cmd::run_bench(*args),
+        },
         Command::Mcp(args) => mcp::run_mcp(*args),
         Command::Chat(args) => chat::run_chat(*args),
         Command::Launch(args) => launch::run_launch(*args),

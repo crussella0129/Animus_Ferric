@@ -6,7 +6,7 @@ it answers *"is this model good enough to drive the tools?"* with a per-tool
 readout, so you can pick the smallest model that still works for your machine.
 
 It's two commands: `ferric server` (launch the inference server) and
-`ferric toolbench` (measure + diagnose).
+`ferric bench ltd` (measure + diagnose).
 
 ## 1. Launch a server
 
@@ -36,7 +36,7 @@ ferric server down      # stops it and clears the runfile
 ## 2. Run the diagnostic toolbench
 
 ```sh
-ferric toolbench --backend openai --model <name> --protocol grammar --iterations 20 --report report.md
+ferric bench ltd --backend openai --model <name> --protocol grammar --iterations 20 --report report.md
 ```
 
 - `--backend openai` with no `--api-base` auto-discovers the server from the runfile.
@@ -79,7 +79,7 @@ backend). Each model is benched in turn and the results collapse into a single
 
 ```sh
 # Every model shares the one running ollama server, so this is cheap:
-ferric toolbench --backend openai \
+ferric bench ltd --backend openai \
   --models qwen2.5-coder:7b,llama3.1:8b,qwen2.5-coder:1.5b \
   --protocol grammar --iterations 20 --report fleet.md
 ```
@@ -98,7 +98,7 @@ Read it top-down and **pick the smallest model still in the band you need** —
 that's the "good enough on this machine" answer, found in one run. `--report`
 also writes `fleet.jsonl`, every model's per-tool rows tagged by `model`. (This
 is a human-facing readout; it does not change a model's stored `measured_level`
-— that stays `ferric bench`'s job.)
+— that stays `ferric bench full`'s job.)
 
 ## 5. Calibrate the rings — how far can this model go?
 
@@ -107,7 +107,7 @@ as a model proves itself). `--calibrate-rings` benches a model **ring by ring**
 and tells you the largest ring it reliably drives — the recommended `--max-ring`:
 
 ```sh
-ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.2:1b \
+ferric bench ltd --backend openai --models qwen2.5-coder:7b,llama3.2:1b \
   --protocol grammar --iterations 20 --calibrate-rings --report calib.md
 ```
 
@@ -134,7 +134,7 @@ whether a model can drive **Ring 2** (`multi_edit`) regardless of its nominal si
 
 Add `--profile-dir <dir>` (default `benchmarks`) and `--calibrate-rings` **persists**
 each model's earned ring into `<dir>/model_profiles.json` (the same store
-`ferric bench` writes `measured_level` to). Then `ferric query --profile-dir <dir>`
+`ferric bench full` writes `measured_level` to). Then `ferric query --profile-dir <dir>`
 reads it back: a model with a recorded profile **automatically** runs at its earned
 tier (`measured_level`) and ring (`calibrated_ring`) — no manual `--max-ring`:
 
@@ -152,15 +152,15 @@ the rings at what was proven (earned, not assumed). An explicit `--max-ring` sti
 overrides, and a model with no recorded profile runs exactly as before — the
 read-back is a safe no-op until you've actually measured the model.
 
-## 6. The full agentic loop — `ferric bench` (L0–L6)
+## 6. The full agentic loop — `ferric bench full` (L0–L6)
 
 The toolbench measures whether a model fires the *right single tool call*.
-`ferric bench` runs the **whole multi-turn loop** against a ladder of real tasks
+`ferric bench full` runs the **whole multi-turn loop** against a ladder of real tasks
 (L0 single readonly call → L6 a full todo app), and sets the model's
 `measured_level` = the highest level it *completes* end-to-end:
 
 ```sh
-ferric bench --backend openai --api-base http://localhost:11434/v1 \
+ferric bench full --backend openai --api-base http://localhost:11434/v1 \
   --model qwen2.5-coder:7b --params-b 7 --protocol grammar
 ```
 

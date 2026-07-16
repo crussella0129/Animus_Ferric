@@ -39,10 +39,10 @@ impl Tool for GitRead {
         let mut paths = Vec::new();
         if let Some(arr) = args.get("args").and_then(|v| v.as_array()) {
             for v in arr {
-                if let Some(s) = v.as_str() {
-                    if !s.starts_with('-') {
-                        paths.push(s.to_string());
-                    }
+                if let Some(s) = v.as_str()
+                    && !s.starts_with('-')
+                {
+                    paths.push(s.to_string());
                 }
             }
         }

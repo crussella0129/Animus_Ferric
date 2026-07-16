@@ -1,9 +1,6 @@
 //! Async, constraint-carrying `Provider` trait + the deterministic MockProvider.
 //!
 //! Two real backends:
-//! - in-process mistral.rs GGUF (feature `backend-mistralrs`) — text-only,
-//!   driven via the loop's `TextXml` protocol; its constrained path hangs
-//!   upstream (ADR-020), so it advertises neither native tools nor constraint.
 //! - the OpenAI-compatible HTTP valve (feature `backend-openai`) — enforces a
 //!   harness-authored JSON-Schema constraint server-side via `response_format`,
 //!   where "the harness owns decoding" is actually true (ADR-022).

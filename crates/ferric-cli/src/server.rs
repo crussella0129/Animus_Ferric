@@ -196,17 +196,16 @@ pub fn global_runfile_path() -> Option<PathBuf> {
 /// Read the registered server, if any (local first, global fallback).
 pub fn read_runfile(workspace: &Path) -> Option<ServerRunfile> {
     let local = runfile_path(workspace);
-    if let Ok(text) = std::fs::read_to_string(&local) {
-        if let Ok(rf) = serde_json::from_str(&text) {
-            return Some(rf);
-        }
+    if let Ok(text) = std::fs::read_to_string(&local)
+        && let Ok(rf) = serde_json::from_str(&text)
+    {
+        return Some(rf);
     }
-    if let Some(global) = global_runfile_path() {
-        if let Ok(text) = std::fs::read_to_string(&global) {
-            if let Ok(rf) = serde_json::from_str(&text) {
-                return Some(rf);
-            }
-        }
+    if let Some(global) = global_runfile_path()
+        && let Ok(text) = std::fs::read_to_string(&global)
+        && let Ok(rf) = serde_json::from_str(&text)
+    {
+        return Some(rf);
     }
     None
 }
@@ -330,14 +329,13 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         {
             Ok(status) if status.success() => {
                 println!("Tailscale proxy active.");
-                if let Ok(status_out) = Command::new("tailscale").args(["status", "--json"]).output() {
-                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&status_out.stdout) {
-                        if let Some(dns_name) = json.get("DNSName").and_then(|v| v.as_str()) {
-                            let clean_dns = dns_name.trim_end_matches('.');
-                            base_url = format!("https://{}/v1", clean_dns);
-                            println!("Tailscale FQDN discovered: {}", clean_dns);
-                        }
-                    }
+                if let Ok(status_out) = Command::new("tailscale").args(["status", "--json"]).output()
+                    && let Ok(json) = serde_json::from_slice::<serde_json::Value>(&status_out.stdout)
+                    && let Some(dns_name) = json.get("DNSName").and_then(|v| v.as_str())
+                {
+                    let clean_dns = dns_name.trim_end_matches('.');
+                    base_url = format!("https://{}/v1", clean_dns);
+                    println!("Tailscale FQDN discovered: {}", clean_dns);
                 }
             }
             Ok(status) => {
