@@ -189,10 +189,26 @@ pub fn runfile_path(workspace: &Path) -> PathBuf {
     workspace.join(".ferric").join("server.json")
 }
 
-/// Read the registered server, if any.
+pub fn global_runfile_path() -> Option<PathBuf> {
+    crate::config::user_config_path().map(|p| p.with_file_name("server.json"))
+}
+
+/// Read the registered server, if any (local first, global fallback).
 pub fn read_runfile(workspace: &Path) -> Option<ServerRunfile> {
-    let text = std::fs::read_to_string(runfile_path(workspace)).ok()?;
-    serde_json::from_str(&text).ok()
+    let local = runfile_path(workspace);
+    if let Ok(text) = std::fs::read_to_string(&local) {
+        if let Ok(rf) = serde_json::from_str(&text) {
+            return Some(rf);
+        }
+    }
+    if let Some(global) = global_runfile_path() {
+        if let Ok(text) = std::fs::read_to_string(&global) {
+            if let Ok(rf) = serde_json::from_str(&text) {
+                return Some(rf);
+            }
+        }
+    }
+    None
 }
 
 /// Poll a TCP connect to `(host, port)` until it succeeds or `timeout` elapses.
@@ -296,26 +312,36 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
     // Drop the handle — the server keeps running past this command.
     drop(child);
 
-    if !wait_listening(&cfg.host, cfg.port, Duration::from_secs(60)) {
+    if !wait_listening(&cfg.host, cfg.port, Duration::from_secs(300)) {
         eprintln!(
-            "server did not become reachable on {} within 60s",
+            "server did not become reachable on {} within 300s",
             cfg.base_url()
         );
         let _ = kill_pid(pid);
         return ExitCode::FAILURE;
     }
 
+    let mut base_url = cfg.base_url();
     if cfg.tailscale {
-        println!("Exposing {} to Tailnet (tailscale serve {})...", cfg.base_url(), cfg.port);
+        println!("Exposing {} to Tailnet (tailscale serve {})...", base_url, cfg.port);
         match Command::new("tailscale")
-            .args(["serve", &cfg.port.to_string()])
-            .output()
+            .args(["serve", "--bg", &cfg.port.to_string()])
+            .status()
         {
-            Ok(out) if out.status.success() => {
+            Ok(status) if status.success() => {
                 println!("Tailscale proxy active.");
+                if let Ok(status_out) = Command::new("tailscale").args(["status", "--json"]).output() {
+                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&status_out.stdout) {
+                        if let Some(dns_name) = json.get("DNSName").and_then(|v| v.as_str()) {
+                            let clean_dns = dns_name.trim_end_matches('.');
+                            base_url = format!("https://{}/v1", clean_dns);
+                            println!("Tailscale FQDN discovered: {}", clean_dns);
+                        }
+                    }
+                }
             }
-            Ok(out) => {
-                eprintln!("Warning: `tailscale serve` failed: {}", String::from_utf8_lossy(&out.stderr));
+            Ok(status) => {
+                eprintln!("Warning: `tailscale serve` failed with status: {}", status);
             }
             Err(e) => {
                 eprintln!("Warning: could not execute `tailscale serve`: {e}");
@@ -327,23 +353,43 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         engine: cfg.engine,
         pid,
         port: cfg.port,
-        base_url: cfg.base_url(),
+        base_url: base_url.clone(),
         tailscale: cfg.tailscale,
     };
+    
     let path = runfile_path(workspace);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    match serde_json::to_string_pretty(&runfile).map(|s| std::fs::write(&path, s)) {
-        Ok(Ok(())) => {
-            println!("server ready: {} (pid {pid})", cfg.base_url());
-            println!("registered at {}", path.display());
-            ExitCode::SUCCESS
+    let local_res = serde_json::to_string_pretty(&runfile)
+        .map_err(|_| ())
+        .and_then(|s| std::fs::write(&path, &s).map_err(|_| ()));
+        
+    let global_res = if let Some(global) = global_runfile_path() {
+        if let Some(parent) = global.parent() {
+            let _ = std::fs::create_dir_all(parent);
         }
-        _ => {
-            eprintln!("server is up (pid {pid}) but the runfile could not be written");
-            ExitCode::FAILURE
+        serde_json::to_string_pretty(&runfile)
+            .map_err(|_| ())
+            .and_then(|s| std::fs::write(&global, &s).map_err(|_| ()))
+            .map(|_| global)
+    } else {
+        Err(())
+    };
+
+    if local_res.is_ok() || global_res.is_ok() {
+        println!("server ready: {} (pid {pid})", base_url);
+        if local_res.is_ok() {
+            println!("registered locally at {}", path.display());
         }
+        if let Ok(global) = global_res {
+            println!("registered globally at {}", global.display());
+        }
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("server is up (pid {pid}) but the runfile could not be written");
+        let _ = kill_pid(pid);
+        ExitCode::FAILURE
     }
 }
 
@@ -376,6 +422,9 @@ fn down(workspace: &Path) -> ExitCode {
         Some(rf) => {
             let killed = kill_pid(rf.pid);
             let _ = std::fs::remove_file(runfile_path(workspace));
+            if let Some(global) = global_runfile_path() {
+                let _ = std::fs::remove_file(global);
+            }
             if killed {
                 println!("stopped server pid {}", rf.pid);
                 ExitCode::SUCCESS

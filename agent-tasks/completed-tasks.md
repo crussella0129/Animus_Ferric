@@ -820,3 +820,7 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** crates/ferric-cli/src/backend.rs, README.md, demo_commands_cheatsheet.md
 - **Commit:** pending
 
+-   [ x ]   E d i t   c r a t e s / f e r r i c - l o o p / s r c / g r a m m a r . r s   t o   a d d   t h o u g h t   f i e l d  
+ -   [ x ]   E d i t   c r a t e s / f e r r i c - l o o p / s r c / r u n . r s   t o   u p d a t e   D E F A U L T _ S Y S T E M _ P R O M P T  
+ -   [ x ]   E d i t   c r a t e s / f e r r i c - t o o l s / s r c / b u i l t i n / w r i t e _ f i l e . r s   t o   c h e c k   i s _ d i r  
+ 

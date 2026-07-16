@@ -24,7 +24,7 @@ use crate::query::{
     run_with_provider,
 };
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 use tokio::runtime::Runtime;
 
 /// One incoming line, parsed. A request expects a response (`id` present,
@@ -252,7 +252,7 @@ pub struct McpArgs {
 /// too — see `run_with_provider`'s doc comment).
 pub(crate) enum Executor {
     Mock,
-    #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+    #[cfg(feature = "backend-openai")]
     Real(Runtime),
 }
 
@@ -448,7 +448,7 @@ impl McpServer {
         );
         match &self.executor {
             Executor::Mock => futures_executor::block_on(fut),
-            #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+            #[cfg(feature = "backend-openai")]
             Executor::Real(rt) => rt.block_on(fut),
         }
     }
@@ -620,7 +620,7 @@ impl McpServer {
     }
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 fn build_real_provider(
     backend_opts: &BackendOpts,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
@@ -629,12 +629,12 @@ fn build_real_provider(
     Ok((provider, Executor::Real(runtime)))
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
+#[cfg(not(feature = "backend-openai"))]
 fn build_real_provider(
     _backend_opts: &BackendOpts,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
     Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
+         rebuild with `cargo build --features backend-openai`, or use --mock"
         .to_string())
 }
 

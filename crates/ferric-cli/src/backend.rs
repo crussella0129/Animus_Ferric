@@ -1,6 +1,5 @@
 use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 #[cfg(feature = "backend-openai")]
 use ferric_provider::Provider;
