@@ -230,4 +230,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 63 — Real-Time Thought Streaming** (2026-07-16). Added real-time streaming of the model's scratchpad reasoning (the `thought` field). Expanded `StreamDelta` to include `Thought(String)` and added a state machine to `ConstrainedJsonScanner` to incrementally stream the field as text arrives. Rendered live thought outputs in dim ANSI gray (`\x1b[90m`) in `ferric query`, `ferric chat`, and `ferric mcp` to visually distinguish the agent's internal planning from standard tool output.
 
-> **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; wiring chat into the Animus IDE.
+- **Sprint 64 — Ferric HTTP API and VS Code extension** (2026-07-16). Designed and implemented the Ferric HTTP API (`/v1/query/stream`) to securely stream Server-Sent Events (SSE) representing agentic `StreamDelta`s (thoughts, tool calls, and text summaries). Built `animus-ferric`, a lightweight, native VS Code extension tailored for `Animus_IDE`, wired to stream the agent's internal monologue and tool operations directly into the IDE's Language Model Chat interface.
+
+> **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images.
