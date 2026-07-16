@@ -121,28 +121,34 @@ pub async fn run(
         projector.step(&composed);
     }
 
+    let registry_tools = registry_tools(args.registry, args.policy);
+
     let mut turns = match &args.resume {
         Some(replayed) => {
-            // A resumed session is already hydrated; we just seed the projector
-            // so we don't have to replay the trace lines from disk again.
             projector.messages = replayed.messages.clone();
             projector.turns = replayed.turns;
             projector.last_text = replayed.last_text.clone();
             projector.protocol = Some(replayed.protocol);
-            projector.head_len = replayed.messages.len(); // A deliberate oversimplification: history folds will only apply to new turns.
-            // Note: we'd need more state here if resuming *mid-turn* or supporting history compactor resuming properly,
-            // but for now, we just restore what ReplayedState provides.
+            projector.head_len = replayed.messages.len();
             replayed.turns
         }
         None => {
-            let system = args.system_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
+            let mut system = args.system_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT).to_string();
+            if args.system_prompt.is_none() {
+                system.push_str("\n\nAvailable tools:\n");
+                for t in &registry_tools {
+                    system.push_str(&format!("- {}: {}\n", t.name, t.description));
+                }
+                system.push_str("- task_complete: Finish the task and provide a summary.\n");
+            }
+            
             let prompt_text = prompt.ok_or_else(|| {
                 FerricError::InvalidInput(
                     "run() requires a prompt when not resuming a session".to_string(),
                 )
             })?;
             let session_prompt = Event::SessionPrompt {
-                system: system.to_string(),
+                system,
                 user: prompt_text.to_string(),
                 media: args.media.clone(),
             };
@@ -165,7 +171,6 @@ pub async fn run(
 
     // Registry tools (no terminator) drive both the native tools list and the
     // grammar schema; the terminator is appended where each mode needs it.
-    let registry_tools = registry_tools(args.registry, args.policy);
     let mut offered_names: Vec<String> = registry_tools.iter().map(|t| t.name.clone()).collect();
     offered_names.push(crate::terminator::TASK_COMPLETE.to_string());
 

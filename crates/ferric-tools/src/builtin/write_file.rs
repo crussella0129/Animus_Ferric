@@ -14,7 +14,7 @@ impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "write_file".to_string(),
-            description: "Write a UTF-8 text file (creates parents). Args: {\"path\": string, \"content\": string}"
+            description: "Create a new file or overwrite an existing file with UTF-8 text. Automatically creates parent directories. DO NOT call make_dir for files. Args: {\"path\": string, \"content\": string}"
                 .to_string(),
             input_schema: json!({
                 "type": "object",
