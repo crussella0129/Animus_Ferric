@@ -22,6 +22,7 @@ mod chat;
 mod config;
 mod dream_cmd;
 mod launch;
+mod logging;
 mod mcp;
 mod query;
 mod revert_cmd;
@@ -43,6 +44,12 @@ use clap::{Parser, Subcommand};
     about = "Animus Ferric: a local-first agentic coding harness for small models"
 )]
 struct Cli {
+    /// Increase harness-internal log verbosity (`-v` info, `-vv` debug,
+    /// `-vvv` trace). Diagnostics go to stderr — stdout stays a clean machine
+    /// channel. `FERRIC_LOG`/`RUST_LOG` override this entirely (ADR-063).
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -99,6 +106,9 @@ enum TraceCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // Install the stderr diagnostic subscriber before any command runs, so
+    // every subcommand (and its libraries) emits through one configured sink.
+    logging::init(cli.verbose);
     match cli.command {
         Command::Query(args) => query::run_query(*args),
         Command::Revert(args) => revert_cmd::run_revert(*args),

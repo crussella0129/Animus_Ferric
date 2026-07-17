@@ -824,3 +824,9 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
  -   [ x ]   E d i t   c r a t e s / f e r r i c - l o o p / s r c / r u n . r s   t o   u p d a t e   D E F A U L T _ S Y S T E M _ P R O M P T  
  -   [ x ]   E d i t   c r a t e s / f e r r i c - t o o l s / s r c / b u i l t i n / w r i t e _ f i l e . r s   t o   c h e c k   i s _ d i r  
  
+
+## T-7201 (sprint 72)
+- **Description:** Observability via `tracing`. Added workspace `tracing`/`tracing-subscriber` deps; `ferric-cli` owns a stderr, quiet-by-default (WARN) subscriber with a global `-v/-vv/-vvv` flag and `FERRIC_LOG`/`RUST_LOG` override (pure, unit-tested level resolution). Instrumented `ferric-loop` (turn span, guard-trip/hook/provider/retry WARNs, tool-dispatch DEBUGs, loop-finished INFO), `ferric-tools` registry chokepoint (guard-denial WARNs incl. the previously-TODO sink Warn path, handler-timing DEBUG), and the `ferric-provider` openai valve (request shape + network/HTTP-error, dep gated on `backend-openai`). Left `ferric-guard` pure by design. Added a buffer-writer capture test (guard trip emits WARN; clean run stays silent) and CLI level-resolution unit tests. Bundled: removed ~4.3MB of committed Windows build artifacts (`fix_*.exe/.pdb`, `payload.json`, `result.txt`, `ferric-mock.txt`) + extended `.gitignore`; reconciled two stale ledger items (ferric-prompt templating -> oovra; Retriever trait already shipped).
+- **Completed:** 2026-07-17
+- **Files modified:** Cargo.toml, .gitignore, crates/ferric-cli/src/{main.rs,logging.rs}, crates/ferric-cli/Cargo.toml, crates/ferric-loop/src/{run.rs,backoff.rs}, crates/ferric-loop/Cargo.toml, crates/ferric-loop/tests/tracing_capture.rs, crates/ferric-tools/src/registry.rs, crates/ferric-tools/Cargo.toml, crates/ferric-provider/src/openai.rs, crates/ferric-provider/Cargo.toml, README.md, decisions.md, agent-tasks/agent-tasks.md
+- **Commit:** pending

@@ -7,6 +7,7 @@ use ferric_provider::{
 };
 use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
 use ferric_trace::{Event, JsonlSink};
+use tracing::{debug, info, instrument, warn};
 
 use crate::outcome::{LoopOutcome, StopReason};
 use crate::projector::TraceProjector;
@@ -75,20 +76,27 @@ pub struct LoopState<'a> {
 
 impl<'a> LoopState<'a> {
     #[allow(clippy::collapsible_if)]
+    #[instrument(level = "debug", name = "turn", skip_all, fields(turn = self.turns))]
     pub async fn step(&mut self) -> Result<TurnOutcome, FerricError> {
         if let Some(cancel) = &self.args.cancel_flag {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                warn!("interrupt observed; stopping the loop");
                 return Ok(TurnOutcome::Stop(StopReason::Interrupted));
             }
         }
 
         if self.turns >= u32::from(self.args.policy.max_turns) {
+            info!(
+                max_turns = self.args.policy.max_turns,
+                "turn budget exhausted; stopping"
+            );
             return Ok(TurnOutcome::Stop(StopReason::MaxTurns));
         }
 
         if let Some(hooks) = &self.args.hooks {
             if let Some(cmd) = &hooks.pre_turn {
                 if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
+                    warn!(error = %e, "pre_turn hook failed; stopping");
                     let note = Event::Note {
                         text: format!("pre_turn hook failed: {e}"),
                     };
@@ -115,6 +123,10 @@ impl<'a> LoopState<'a> {
         )
         .await?
         {
+            debug!(
+                input_tokens = self.last_input_tokens,
+                "history compacted (budget threshold crossed)"
+            );
             self.sink.write_event(event.clone())?;
             self.projector.step(&event);
         }
@@ -198,6 +210,7 @@ impl<'a> LoopState<'a> {
         let completion = match completion_result {
             Ok(completion) => completion,
             Err(e) => {
+                warn!(error = %e, "provider error after retries; stopping");
                 self.sink.write_event(Event::Note {
                     text: format!("provider error: {e}"),
                 })?;
@@ -218,6 +231,11 @@ impl<'a> LoopState<'a> {
 
         let vcs = ferric_vcs::Vcs::new(self.args.workspace.root());
         if let Err(e) = vcs.snapshot(self.sink.session(), turn).await {
+            // debug, not warn: in a non-git workspace this fires every turn, so
+            // a WARN would break quiet-by-default. The failure is still recorded
+            // as a trace Note below (the durable record); revert is simply
+            // unavailable for this turn.
+            debug!(error = %e, turn, "vcs snapshot failed (revert unavailable for this turn)");
             self.sink.write_event(Event::Note {
                 text: format!("vcs snapshot failed: {e}"),
             })?;
@@ -297,6 +315,7 @@ impl<'a> LoopState<'a> {
                 self.projector.step(&evt);
             }
             crate::repetition::Verdict::Stop => {
+                warn!(guard = "repetition", "identical action repeated; stopping");
                 let evt = Event::RepetitionGuard {
                     action: "stopped".to_string(),
                 };
@@ -316,6 +335,10 @@ impl<'a> LoopState<'a> {
                 self.projector.step(&evt);
             }
             crate::repetition::Verdict::Stop => {
+                warn!(
+                    guard = "no_progress",
+                    "same tool with churning args; stopping"
+                );
                 let evt = Event::NoProgressGuard {
                     action: "stopped".to_string(),
                 };
@@ -360,6 +383,7 @@ impl<'a> LoopState<'a> {
             self.sink.write_event(tc.clone())?;
             self.projector.step(&tc);
 
+            debug!(tool = %call.name, "dispatching tool call");
             let (result_text, is_error, duration_ms, checks) = dispatch(
                 self.args.registry,
                 self.args.workspace,
@@ -368,6 +392,7 @@ impl<'a> LoopState<'a> {
                 &self.args.taint_set,
                 &self.args.sink_policy,
             );
+            debug!(tool = %call.name, is_error, duration_ms, "tool call finished");
             dispatched += 1;
             if is_error {
                 errored += 1;
@@ -437,6 +462,10 @@ impl<'a> LoopState<'a> {
                     self.projector.step(&evt);
                 }
                 crate::repetition::Verdict::Stop => {
+                    warn!(
+                        guard = "failure",
+                        dispatched, errored, "every tool call erroring; stopping"
+                    );
                     let evt = Event::FailureGuard {
                         action: "stopped".to_string(),
                     };
@@ -583,6 +612,8 @@ pub async fn run(
             TurnOutcome::Stop(reason) => break reason,
         }
     };
+
+    info!(reason = stop.as_str(), turns = state.turns, "loop finished");
 
     let session_end = Event::SessionEnd {
         reason: stop.as_str().to_string(),

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
+use tracing::{debug, warn};
 
 use crate::stream_scan::ConstrainedJsonScanner;
 use crate::traits::Provider;
@@ -187,6 +188,13 @@ impl Provider for OpenAiProvider {
             self.config.base_url.trim_end_matches('/')
         );
 
+        debug!(
+            model = %self.config.model,
+            messages = request.messages.len(),
+            constrained = request.constraint.is_some(),
+            "POST /chat/completions"
+        );
+
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
         let response = loop {
             tokio::select! {
@@ -212,6 +220,7 @@ impl Provider for OpenAiProvider {
         let response = match response {
             Ok(res) => res,
             Err(e) => {
+                warn!(error = %e, "network error contacting the inference server (retryable)");
                 return Err(ProviderError::RetryableBackend(format!(
                     "Network error: {}",
                     e
@@ -222,6 +231,7 @@ impl Provider for OpenAiProvider {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
+            warn!(%status, "inference server returned an error status");
             return Err(ProviderError::Backend(format!("HTTP {}: {}", status, text)));
         }
 
