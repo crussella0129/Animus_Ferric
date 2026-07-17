@@ -85,6 +85,20 @@ fn compose_scopes_layers_and_wires_prior_output_as_layer4() {
 }
 
 #[test]
+fn composed_prompt_carries_the_output_directive() {
+    // A live stage agent must be told where to write; the composed prompt
+    // includes the contract's Outputs (sprint 74).
+    let (_tmp, root) = scaffolded();
+    let ws = IcmWorkspace::discover(&root).unwrap();
+    let research = compose_stage(&ws, 0).unwrap(); // 01_research -> research.md
+    assert!(
+        research.prompt.contains("Outputs") && research.prompt.contains("research.md"),
+        "the stage's output contract must reach the agent; got:\n{}",
+        research.prompt
+    );
+}
+
+#[test]
 fn missing_input_is_recorded_not_fatal() {
     // A freshly scaffolded workspace has an empty 01_research/output/, so
     // stage 2's declared Layer 4 input is absent — plan must still succeed and

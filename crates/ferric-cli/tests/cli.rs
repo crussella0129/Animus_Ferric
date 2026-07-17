@@ -1499,3 +1499,91 @@ fn icm_init_refuses_to_clobber() {
         "mine"
     );
 }
+
+// ── ICM live execution (sprint 74, ADR-065) ────────────────────────────────
+
+#[test]
+fn icm_run_executes_every_stage_in_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+
+    let out = ferric()
+        .args(["icm", "run", "--auto", "--mock"])
+        .arg(&ws)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "pipeline must succeed");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    // All three stages ran and completed.
+    assert!(stderr.contains("01_research"), "stderr: {stderr}");
+    assert!(stderr.contains("02_script"));
+    assert!(stderr.contains("03_production"));
+    assert_eq!(stderr.matches("✔ Stage").count(), 3, "stderr: {stderr}");
+
+    // One trace per stage landed at the ICM root.
+    let traces: Vec<_> = std::fs::read_dir(ws.join(".ferric/trace"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert_eq!(traces.len(), 3, "one trace per stage");
+
+    // Containment: each stage's mock artifact stayed inside its OWN folder.
+    for stage in ["01_research", "02_script", "03_production"] {
+        assert!(
+            ws.join("stages")
+                .join(stage)
+                .join("ferric-mock.txt")
+                .exists(),
+            "stage {stage} ran contained to its own workspace"
+        );
+    }
+}
+
+#[test]
+fn icm_run_stops_at_review_gate_on_q() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+
+    // No --auto: a review gate follows stage 1. Feeding 'q' stops the pipeline.
+    let mut child = ferric()
+        .args(["icm", "run", "--mock"])
+        .arg(&ws)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"q\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("stopped at stage 01"), "stderr: {stderr}");
+    // Stage 2 never ran.
+    assert!(
+        !ws.join("stages/02_script/ferric-mock.txt").exists(),
+        "stage 2 must not run after the user stops at the gate"
+    );
+}
+
+#[test]
+fn icm_run_honors_a_stage_range() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+
+    let out = ferric()
+        .args(["icm", "run", "--auto", "--mock", "--from", "2", "--to", "2"])
+        .arg(&ws)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    // Only stage 2 ran.
+    assert!(ws.join("stages/02_script/ferric-mock.txt").exists());
+    assert!(!ws.join("stages/01_research/ferric-mock.txt").exists());
+    assert!(!ws.join("stages/03_production/ferric-mock.txt").exists());
+}

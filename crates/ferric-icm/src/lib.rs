@@ -435,6 +435,18 @@ pub fn compose_stage(ws: &IcmWorkspace, index: usize) -> Result<ComposedStage, I
         }
     }
 
+    // The output contract: tell the agent exactly where to write its
+    // deliverable(s). Live execution (inc 2) runs each stage contained to its
+    // own folder, so `output/` resolves inside the stage — the agent produces
+    // its product there and the next stage reads it as Layer 4.
+    if !stage.contract.outputs.is_empty() {
+        let mut out = String::new();
+        for o in &stage.contract.outputs {
+            out.push_str(&format!("- Write `{}` to `{}`\n", o.name, o.dest));
+        }
+        section(&mut prompt, "Outputs (write your deliverables here)", &out);
+    }
+
     Ok(ComposedStage {
         index: stage.index,
         name: stage.name.clone(),

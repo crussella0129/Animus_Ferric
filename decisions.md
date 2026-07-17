@@ -828,3 +828,50 @@ in `docs/icm.md`.
   rather than failing the plan, so a scaffolded-but-not-run workspace still plans
   cleanly. Scaffold `.gitkeep` placeholders are skipped when reading a working
   dir (a git placeholder is not an artifact).
+
+## ADR-065 — 2026-07-17 (sprint 74): ICM increment 2 — live per-stage execution through the constrained loop
+Increment 1 (ADR-064) built the ICM model and made the delegation *plan*
+inspectable. This increment makes it *run*: `ferric icm run` executes each
+stage's composed context through the same constrained agent loop `ferric query`
+drives, in numeric order, with human review gates. Full guide in `docs/icm.md`.
+- **Reuse the constrained path, don't reinvent it.** Each stage is driven by the
+  existing `run_with_provider` (query.rs, `pub(crate)`) — the exact loop `ferric
+  query`/`ferric mcp` use, so a stage inherits `ferric-guard`, the loop guards
+  (repetition/no-progress/failure), context compaction, hooks, and per-session
+  JSONL tracing for free. Config + provider are built once from the ICM root
+  (mirroring `ferric mcp`'s launch) and reused across stages; only the workspace
+  changes per stage. The one exception is the **mock**: it is a single-use
+  scripted provider, so a FRESH mock is built per stage (each stage is its own
+  agent session — the same reason sprint 42's chat REPL builds a per-turn mock).
+  A real backend is stateless per request and its provider + the one tokio
+  runtime are reused.
+- **Per-stage containment is stronger than the paper — the load-bearing security
+  decision.** Each stage executes bounded to its OWN `stages/NN_*/` folder
+  (`Workspace::new(stage_dir)`), NOT the whole workspace. So a stage can only
+  write inside its own directory — it cannot clobber a sibling stage's output or
+  the shared `_config/`. This is possible precisely because inc 1's `compose_stage`
+  already folds the prior stage's output into the context as Layer 4: a stage
+  never needs cross-stage filesystem *reads*, so cross-stage data flows only
+  through the composed context and the human review gate. The paper's model
+  (one agent, whole-workspace access, writes-to-current-output by convention) is
+  replaced by enforced containment — the Ferric way (ADR-005).
+- **Halt on failure.** A stage's terminator is inspected: a successful stop
+  (`task_complete`/`submit_plan`/final text) continues the pipeline; any other
+  stop (max turns, provider error, guard trip) halts it, because a downstream
+  stage reading an incomplete/untrustworthy output would compound the error. This
+  needed the outcome, not just an exit code — hence `run_with_provider`'s
+  `Result<LoopOutcome, String>` return (not the ExitCode-shaped `run_query`).
+- **Review gates = ICM's "every output is an edit surface."** Without `--auto`,
+  the run pauses on stderr after each stage (except the last in range); the human
+  edits the output on disk, then continues (Enter) or stops (`q`). EOF/closed
+  stdin proceeds, so a non-interactive run without `--auto` does not hang. `--from
+  N`/`--to N` run a stage sub-range (re-run one stage after editing its input).
+- **The composed prompt gained an Outputs directive (a small inc-1 refinement).**
+  `compose_stage` now appends the contract's `## Outputs` as a "write your
+  deliverables here" block, so a live agent knows where to write — data the plan
+  had but the composed prompt didn't. Traces are harness-written (not
+  agent-written), so they land centrally at `<workspace>/.ferric/trace/`, outside
+  the per-stage boundary, one file per stage.
+- **Deferred (unchanged from ADR-064):** Ornstein-quarantining of
+  externally-sourced Layer 4 content, the GECK-style workspace-builder, and
+  conditional/branch routing (ICM is sequential by design).
