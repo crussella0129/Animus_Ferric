@@ -1,7 +1,4 @@
-use std::fs::File;
-use std::io::Read;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::json;
 
@@ -50,86 +47,96 @@ impl Tool for ShellExec {
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
         let command = args.get("command").and_then(|v| v.as_str()).ok_or("missing 'command' argument")?;
 
-        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let temp_path = std::env::temp_dir().join(format!(
-            "ferric_shell_exec_{}_{}",
-            std::process::id(),
-            id
-        ));
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                use std::process::Stdio;
+                use tokio::io::AsyncReadExt;
+                
+                let mut cmd = if cfg!(windows) {
+                    let mut c = tokio::process::Command::new("cmd.exe");
+                    c.arg("/C").arg(command);
+                    c
+                } else {
+                    let mut c = tokio::process::Command::new("sh");
+                    c.arg("-c").arg(command);
+                    c
+                };
 
-        let out_file = File::create(&temp_path).map_err(|e| format!("failed to create temp file: {e}"))?;
-        let err_file = out_file.try_clone().map_err(|e| format!("failed to clone temp file: {e}"))?;
+                cmd.current_dir(ctx.workspace.root())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .stdin(Stdio::null())
+                    .kill_on_drop(true);
 
-        let mut cmd = if cfg!(windows) {
-            let mut c = Command::new("cmd.exe");
-            c.arg("/C").arg(command);
-            c
-        } else {
-            let mut c = Command::new("sh");
-            c.arg("-c").arg(command);
-            c
-        };
+                let mut child = match cmd.spawn() {
+                    Ok(c) => c,
+                    Err(e) => return Err(format!("failed to spawn command: {e}")),
+                };
 
-        cmd.current_dir(ctx.workspace.root())
-            .stdout(Stdio::from(out_file))
-            .stderr(Stdio::from(err_file))
-            .stdin(Stdio::null());
+                let stdout = child.stdout.take().unwrap();
+                let stderr = child.stderr.take().unwrap();
 
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => return Err(format!("failed to spawn command: {e}")),
-        };
+                // Read from stdout and stderr concurrently, up to a reasonable cap (e.g. 500KB)
+                // before stopping, just to avoid OOM.
+                let mut out_buf = Vec::new();
+                let mut err_buf = Vec::new();
 
-        let start = Instant::now();
-        let timeout = Duration::from_secs(TIMEOUT_SECS);
-        let mut timed_out = false;
+                let timeout = Duration::from_secs(TIMEOUT_SECS);
 
-        loop {
-            match child.try_wait() {
-                Ok(Some(_status)) => break,
-                Ok(None) => {
-                    if start.elapsed() > timeout {
-                        let _ = child.kill();
+                let mut out_take = stdout.take(500_000);
+                let mut err_take = stderr.take(500_000);
+                let read_pipes = async {
+                    let out_fut = out_take.read_to_end(&mut out_buf);
+                    let err_fut = err_take.read_to_end(&mut err_buf);
+                    let _ = tokio::join!(out_fut, err_fut);
+                };
+
+                let mut timed_out = false;
+                match tokio::time::timeout(timeout, async {
+                    let _ = tokio::join!(child.wait(), read_pipes);
+                }).await {
+                    Ok(_) => {}
+                    Err(_) => {
+                        let _ = child.kill().await;
                         timed_out = true;
-                        break;
                     }
-                    std::thread::sleep(Duration::from_millis(100));
                 }
-                Err(e) => {
-                    let _ = child.kill();
-                    return Err(format!("failed to wait on child: {e}"));
+
+                let out_str = String::from_utf8_lossy(&out_buf);
+                let err_str = String::from_utf8_lossy(&err_buf);
+                
+                let mut full_output = String::new();
+                if !out_str.is_empty() {
+                    full_output.push_str(&out_str);
                 }
-            }
-        }
+                if !err_str.is_empty() {
+                    if !full_output.is_empty() {
+                        full_output.push_str("\n");
+                    }
+                    full_output.push_str(&err_str);
+                }
 
-        // Wait for it to fully exit after kill to avoid leaking
-        let _ = child.wait();
+                let mut result_text = if timed_out {
+                    format!("Command timed out after {} seconds.\nOutput:\n", TIMEOUT_SECS)
+                } else {
+                    String::new()
+                };
 
-        let mut f = File::open(&temp_path).map_err(|e| format!("failed to open temp file: {e}"))?;
-        let mut full_output = String::new();
-        let _ = f.read_to_string(&mut full_output);
-        let _ = std::fs::remove_file(&temp_path);
+                if full_output.chars().count() > OUTPUT_LIMIT {
+                    let truncated: String = full_output.chars().take(OUTPUT_LIMIT).collect();
+                    result_text.push_str(&truncated);
+                    result_text.push_str("\n... [TRUNCATED]");
+                } else {
+                    result_text.push_str(&full_output);
+                }
 
-        let mut result_text = if timed_out {
-            format!("Command timed out after {} seconds.\nOutput:\n", TIMEOUT_SECS)
-        } else {
-            String::new()
-        };
-
-        if full_output.chars().count() > OUTPUT_LIMIT {
-            let truncated: String = full_output.chars().take(OUTPUT_LIMIT).collect();
-            result_text.push_str(&truncated);
-            result_text.push_str("\n... [TRUNCATED]");
-        } else {
-            result_text.push_str(&full_output);
-        }
-
-        if timed_out {
-            Err(result_text)
-        } else {
-            Ok(result_text)
-        }
+                if timed_out {
+                    Err(result_text)
+                } else {
+                    Ok(result_text)
+                }
+            })
+        })
     }
 }
 
@@ -146,8 +153,8 @@ mod tests {
         (dir, ws)
     }
 
-    #[test]
-    fn execution_timeout_works() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn execution_timeout_works() {
         let (_dir, ws) = temp_workspace();
         let ctx = ToolCtx { workspace: &ws };
         let tool = ShellExec;
@@ -159,8 +166,8 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn output_cap_truncates() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn output_cap_truncates() {
         let (_dir, ws) = temp_workspace();
         let ctx = ToolCtx { workspace: &ws };
         let tool = ShellExec;
