@@ -249,4 +249,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 68 — Background Task Management** (2026-07-17). Added detached `tokio` process management to `shell_exec` and exposed a `manage_task` built-in tool. This allows the agent to spin up long-running tasks in the background with automatic OS-level file redirection for stdout/stderr into `.ferric/tasks/`. The agent can then use `manage_task` (list, status, kill, send_input) to interact with these asynchronous processes without blocking the execution loop.
 
-> **Next — TBD.** Dream Mode / Background task consolidation.
+- **Sprint 69 — Dream Mode** (2026-07-17). Introduced `ferric dream`, an offline knowledge extraction command that asynchronously parses historical JSONL traces from `.ferric/traces/`. It consolidates previous agent activity (user requests, structural discoveries, recurring bugs) into a synthesized `MEMORY.md` persistent knowledge base using the configured LLM backend.
+
+> **Next — TBD.** Agent Delegation Structure (ICM) / Agentic Cron Jobs.

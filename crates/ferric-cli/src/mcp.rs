@@ -519,6 +519,7 @@ impl McpServer {
             model_key: backend_opts
                 .model
                 .clone(),
+            hooks: None,
         });
 
         // T-3905 (sprint 39 / 55): `--resume <path>` replays an interrupted, still-
