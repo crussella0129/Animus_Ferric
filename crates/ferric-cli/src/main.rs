@@ -28,6 +28,7 @@ mod toolbench_cmd;
 mod trace_cmd;
 mod trace_verify;
 mod skills;
+mod revert_cmd;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -63,6 +64,8 @@ enum Command {
     /// Start the HTTP API server for IDE/web/mobile integration (Sprint 64)
     #[cfg(feature = "backend-openai")]
     Api(Box<api::server::ApiArgs>),
+    /// Revert the workspace and trace to a specific turn snapshot
+    Revert(Box<revert_cmd::RevertArgs>),
     /// Launch and manage the OpenAI-compatible inference server (the HTTP valve)
     Server {
         #[command(subcommand)]
@@ -95,6 +98,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Query(args) => query::run_query(*args),
+        Command::Revert(args) => revert_cmd::run_revert(*args),
         Command::Bench { command } => match command {
             BenchCommand::Ltd(args) => toolbench_cmd::run_toolbench(*args),
             BenchCommand::Full(args) => bench_cmd::run_bench(*args),

@@ -26,6 +26,7 @@ ferric-provider = { workspace = true }
 ferric-research = { workspace = true }
 ferric-tools = { workspace = true }
 ferric-trace = { workspace = true }
+ferric-vcs = { workspace = true }
 clap = { workspace = true }
 futures-executor = { workspace = true }
 serde = { workspace = true }

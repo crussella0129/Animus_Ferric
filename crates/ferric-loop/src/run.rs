@@ -186,6 +186,13 @@ impl<'a> LoopState<'a> {
         self.sink.write_event(turn_end.clone())?;
         self.projector.step(&turn_end);
         
+        let vcs = ferric_vcs::Vcs::new(self.args.workspace.root());
+        if let Err(e) = vcs.snapshot(self.sink.session(), turn).await {
+            self.sink.write_event(Event::Note {
+                text: format!("vcs snapshot failed: {e}"),
+            })?;
+        }
+        
         self.last_input_tokens = completion.input_tokens;
 
         if (self.args.protocol == ActionProtocol::ConstrainedJson || self.args.protocol == ActionProtocol::Plan) && completion.truncated {
