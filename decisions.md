@@ -764,3 +764,67 @@ per-sprint working memory (`sprints/`, gitignored) and summarized in the README,
 but not appended here. This is a known ledger drift, recorded so a future sprint
 can backfill 054–062 from the README bullets if the full prose is wanted. ADR-063
 is numbered past the highest README-referenced ADR to stay globally unique.
+
+## ADR-064 — 2026-07-17 (sprint 73): Agent delegation via ICM (Interpretable Context Methodology) — the filesystem IS the orchestrator
+The backlog's "Agent Delegation Structure (ICM)" is answered by adopting
+**Interpretable Context Methodology** (Van Clief & McDermott, 2026, provided by
+the user) rather than a code-level multi-agent framework. The decision: for
+Ferric's target — sequential, human-reviewed workflows on small local models —
+orchestration belongs in **folder structure**, not in a coordination framework.
+Numbered stage folders encode execution order; each stage's `CONTEXT.md` is a
+contract; a five-layer context hierarchy scopes what each stage-agent sees. One
+agent runs every stage; the folder structure IS the delegation logic. Full guide
+in `docs/icm.md`.
+- **Why ICM over CrewAI/LangChain/AutoGen.** Those frameworks solve a
+  coordination problem that a *sequential, human-in-the-loop* pipeline does not
+  have. ICM's control surface is plain files: reorder folders to change stage
+  order, edit a markdown file to change a prompt, add/delete a folder to add/drop
+  a stage, open the folder to inspect state. It also keeps each stage's context
+  small and focused — the "lost in the middle" degradation of a monolithic
+  40k-token prompt never occurs because the folder structure loads only the
+  current stage's files. This matches Ferric's whole thesis (small models, small
+  focused steps) far better than a general agent-team framework.
+- **The five layers.** L0 identity (`Animus.md`/`CLAUDE.md`), L1 workspace
+  routing (`CONTEXT.md`), L2 the stage contract (`stages/NN_*/CONTEXT.md`), L3
+  reference material (`references/`, `_config/`) — stable across runs, the
+  *factory*, internalized as constraints — and L4 working artifacts (a prior
+  stage's `output/`) — per-run, the *product*, processed as input. Separating L3
+  from L4 in the filesystem hands the model already-organized context.
+- **Ferric-native security — the load-bearing adaptation.** ICM as published
+  treats the workspace as trusted. Ferric does not weaken its guarantees: each
+  stage is a **workspace-scoped run**, so `ferric-guard`'s containment (ADR-005)
+  applies unchanged. `compose_stage` resolves EVERY contract-referenced path
+  through `Workspace::resolve`, so a contract **cannot pull context from outside
+  the workspace** — an `../../../../etc/passwd` input is refused at the boundary,
+  proven by a test. Externally-*sourced* L4 content (a research stage fetching the
+  web) routes through Ornstein's quarantine (ADR-040) — that composition is a
+  later increment, named not silently assumed.
+- **Placement mirrors `animus-launch`.** A new **`ferric-icm`** library crate
+  holds the pure model (`parse_contract`, `IcmWorkspace::discover`,
+  `compose_stage`, `plan`, `scaffold_workspace`); a `ferric icm` subcommand
+  drives it. `ferric-icm` depends only on `ferric-guard` (for the boundary) and
+  `thiserror` — deliberately light, no loop/provider deps, so it stays pure and
+  fully unit-testable.
+- **Increment 1 scope (this sprint) — the model, inspection, and scaffold; NOT
+  live execution.** Following the project's increment discipline (Ornstein inc 1
+  built the quarantine primitive before wiring; CaMeL inc 1 shipped the sink
+  primitive with a "would-deny once wired" test; Launch inc 1 scaffolded before
+  the loop hand-off), inc 1 delivers: contract parsing, workspace discovery
+  (numeric — not lexical — stage ordering, so `10` sorts after `2`), guard-checked
+  layered composition into an `OrchestrationPlan`, and an LLM-free
+  refuse-to-clobber scaffolder. `ferric icm init` creates a runnable 3-stage
+  skeleton whose contracts round-trip through the parser; `ferric icm plan` prints
+  each stage's scoped context + provenance (which file at which layer, missing
+  inputs flagged) with NO model in the loop — the delegation made inspectable.
+- **Increment 2 (deferred, named).** `ferric icm run` feeds each composed stage
+  prompt into `ferric-loop::run` (guard-contained, traced, constrained) in numeric
+  order, with human review gates between stages (`--auto` to run straight through,
+  each stage a fresh trace file like `ferric mcp`). The `OrchestrationPlan` inc 1
+  produces is exactly its input. Also deferred: the GECK-style workspace-builder,
+  Ornstein-quarantining of externally-sourced L4 content, and conditional/branch
+  routing (ICM is sequential by design).
+- **A missing input is data, not an error.** A declared L4 input from an
+  upstream stage that has not run yet is recorded in provenance (`present: false`)
+  rather than failing the plan, so a scaffolded-but-not-run workspace still plans
+  cleanly. Scaffold `.gitkeep` placeholders are skipped when reading a working
+  dir (a git placeholder is not an artifact).

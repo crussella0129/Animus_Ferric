@@ -18,6 +18,7 @@ backend-openai = ["ferric-provider/backend-openai", "dep:axum", "dep:tokio-strea
 [dependencies]
 animus-launch = { workspace = true }
 ferric-bench = { workspace = true }
+ferric-icm = { workspace = true }
 ferric-core = { workspace = true }
 ferric-guard = { workspace = true }
 ferric-loop = { workspace = true }

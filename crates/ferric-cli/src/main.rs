@@ -21,6 +21,7 @@ mod bench_cmd;
 mod chat;
 mod config;
 mod dream_cmd;
+mod icm;
 mod launch;
 mod logging;
 mod mcp;
@@ -69,6 +70,8 @@ enum Command {
     Chat(Box<chat::ChatArgs>),
     /// Bootstrap a new project: scaffold a git repo (main+dev) + skeleton (ADR-053)
     Launch(Box<launch::LaunchArgs>),
+    /// ICM agent delegation: scaffold/plan a filesystem-orchestrated workspace (ADR-064)
+    Icm(Box<icm::IcmArgs>),
     /// Start the HTTP API server for IDE/web/mobile integration (Sprint 64)
     #[cfg(feature = "backend-openai")]
     Api(Box<api::server::ApiArgs>),
@@ -120,6 +123,7 @@ fn main() -> ExitCode {
         Command::Mcp(args) => mcp::run_mcp(*args),
         Command::Chat(args) => chat::run_chat(*args),
         Command::Launch(args) => launch::run_launch(*args),
+        Command::Icm(args) => icm::run_icm(*args),
         #[cfg(feature = "backend-openai")]
         Command::Api(args) => {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");

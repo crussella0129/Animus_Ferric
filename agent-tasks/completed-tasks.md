@@ -830,3 +830,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-17
 - **Files modified:** Cargo.toml, .gitignore, crates/ferric-cli/src/{main.rs,logging.rs}, crates/ferric-cli/Cargo.toml, crates/ferric-loop/src/{run.rs,backoff.rs}, crates/ferric-loop/Cargo.toml, crates/ferric-loop/tests/tracing_capture.rs, crates/ferric-tools/src/registry.rs, crates/ferric-tools/Cargo.toml, crates/ferric-provider/src/openai.rs, crates/ferric-provider/Cargo.toml, README.md, decisions.md, agent-tasks/agent-tasks.md
 - **Commit:** pending
+
+
+## T-7301 (sprint 73)
+- **Description:** Agent Delegation via ICM (Interpretable Context Methodology), increment 1. New `ferric-icm` library crate: `StageContract`/`parse_contract` (tolerant Inputs/Process/Outputs markdown parser), `IcmWorkspace::discover` (numeric stage ordering, Layer 0/1 pickup), guard-checked `compose_stage`/`plan` (five-layer scoped context -> `OrchestrationPlan` with provenance; every referenced path resolved through `ferric-guard::Workspace` so contracts cannot escape the workspace), and LLM-free refuse-to-clobber `scaffold_workspace`. New `ferric icm` subcommand (`init` scaffolds a runnable 3-stage workspace; `plan [--show-context]` prints the delegation plan with no model). 16 tests (4 inline parser, 9 workspace integration incl. boundary-escape refusal, 3 CLI black-box). Docs: docs/icm.md, ADR-064. Increment 2 (live per-stage loop execution + review gates) deferred.
+- **Completed:** 2026-07-17
+- **Files modified:** Cargo.toml, crates/ferric-icm/{Cargo.toml,src/lib.rs,tests/workspace.rs}, crates/ferric-cli/{Cargo.toml,src/main.rs,src/icm.rs,tests/cli.rs}, docs/icm.md, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending

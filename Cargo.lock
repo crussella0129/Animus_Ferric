@@ -365,6 +365,7 @@ dependencies = [
  "ferric-bench",
  "ferric-core",
  "ferric-guard",
+ "ferric-icm",
  "ferric-loop",
  "ferric-prompt",
  "ferric-provider",
@@ -400,6 +401,15 @@ dependencies = [
  "ferric-core",
  "serde",
  "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ferric-icm"
+version = "0.1.0"
+dependencies = [
+ "ferric-guard",
  "tempfile",
  "thiserror 2.0.18",
 ]
