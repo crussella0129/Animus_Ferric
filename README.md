@@ -253,4 +253,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 70 — CI Stability & Architectural Review** (2026-07-17). Fixed lingering GitHub Actions CI failures caused by strict `-D warnings` enforcement for `clippy::collapsible_if` nested conditions in `ferric-loop` and `ferric-provider`, alongside miscellaneous cleanup in `ferric-cli`. Conducted a comprehensive codebase review, seeding `agent-tasks.md` with forward-looking architectural priorities including `tracing` observability, procedural macro tool registration, and parallel execution for side-effect-free tool capabilities.
 
+- **Sprint 71 — Windows CI Robustness** (2026-07-17). Identified and resolved two persistent GitHub Actions `windows-latest` integration test failures. First, replaced `timeout /t 5` with `powershell -Command "Start-Sleep -Seconds 5"` in `test_background_tasks` to bypass immediate exit errors triggered by the CI runner's detached `stdin`. Second, skipped `ferric-research`'s `alpine:latest` Docker retrieval tests on Windows via `#[cfg_attr(windows, ignore)]`, as GitHub's default Windows runners do not support Linux containers (LCOW/WSL2) out-of-the-box. The CI is now fully green across all platforms.
+
 > **Next — TBD.** Agent Delegation Structure (ICM) / Agentic Cron Jobs.
