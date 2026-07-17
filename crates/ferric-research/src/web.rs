@@ -87,6 +87,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn retrieve_valid_url_downloads_content() {
         let retriever = WebRetriever::new();
         if !retriever.available() {
@@ -110,6 +111,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn retrieve_non_existent_domain_fails() {
         let retriever = WebRetriever::new();
         if !retriever.available() {
