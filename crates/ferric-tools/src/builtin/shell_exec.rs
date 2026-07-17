@@ -18,11 +18,12 @@ impl Tool for ShellExec {
         ToolSpec {
             name: "shell_exec".to_string(),
             description: "Run an arbitrary shell command within the workspace. Output is capped at 10KB. \
-                Timeout is 60 seconds. Args: {\"command\": string}".to_string(),
+                Timeout is 60 seconds (unless background is true). Args: {\"command\": string, \"background\": boolean (optional)}".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "The shell command to run" }
+                    "command": { "type": "string", "description": "The shell command to run" },
+                    "background": { "type": "boolean", "description": "Run the command in the background without blocking. Returns immediately with a task ID." }
                 },
                 "required": ["command"]
             }),
@@ -47,6 +48,8 @@ impl Tool for ShellExec {
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
         let command = args.get("command").and_then(|v| v.as_str()).ok_or("missing 'command' argument")?;
 
+        let is_background = args.get("background").and_then(|v| v.as_bool()).unwrap_or(false);
+
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 use std::process::Stdio;
@@ -63,10 +66,36 @@ impl Tool for ShellExec {
                 };
 
                 cmd.current_dir(ctx.workspace.root())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .stdin(Stdio::null())
                     .kill_on_drop(true);
+
+                if is_background {
+                    // Create tasks dir if it doesn't exist
+                    let tasks_dir = ctx.workspace.root().join(".ferric").join("tasks");
+                    if !tasks_dir.exists() {
+                        let _ = std::fs::create_dir_all(&tasks_dir);
+                    }
+                    
+                    let id = format!("task-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+                    let log_path = tasks_dir.join(format!("{}.log", id));
+                    
+                    let log_file = std::fs::File::create(&log_path).map_err(|e| format!("failed to create log file: {e}"))?;
+                    cmd.stdout(log_file.try_clone().map_err(|e| format!("failed to clone log file: {e}"))?)
+                        .stderr(log_file)
+                        .stdin(Stdio::piped());
+
+                    let child = match cmd.spawn() {
+                        Ok(c) => c,
+                        Err(e) => return Err(format!("failed to spawn background command: {e}")),
+                    };
+
+                    crate::builtin::task_registry::spawn_task(id.clone(), command.to_string(), log_path.clone(), child);
+                    
+                    return Ok(format!("Started background task {}. Log file: {}. Use manage_task to interact.", id, log_path.display()));
+                }
+
+                cmd.stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .stdin(Stdio::null());
 
                 let mut child = match cmd.spawn() {
                     Ok(c) => c,
