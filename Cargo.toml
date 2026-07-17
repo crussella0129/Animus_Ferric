@@ -40,7 +40,7 @@ clap = { version = "4", features = ["derive"] }
 # edge cross-compilation (Jetson/RPi). rustls is pure Rust; Ferric only ever
 # talks to 127.0.0.1 (ADR-005) so TLS itself is barely exercised regardless.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "time", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "time", "macros", "signal"] }
 # Prompt composition (ADR-016): rev-pinned to oovra main; immutable until a
 oovra = { git = "https://github.com/crussella0129/oovra", rev = "378abea6552f74ee7a8e4d9ce74418d6457ad002" }
 toml = "0.8"

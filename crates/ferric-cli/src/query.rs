@@ -757,9 +757,11 @@ pub(crate) async fn run_with_provider(
     resume: Option<ferric_loop::ReplayedState>,
     taint_set: ferric_guard::TaintSet,
     sink_policy: ferric_guard::SinkPolicy,
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<LoopOutcome, String> {
     run(
         RunArgs {
+            cancel_flag,
             provider,
             registry,
             workspace,
@@ -816,6 +818,7 @@ fn drive_mock(
         resume,
         taint_set,
         sink_policy,
+        None,
     ))
 }
 
@@ -842,6 +845,15 @@ fn drive_real(
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
         let provider_box = create_provider(&args.backend_opts).await?;
+        let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_flag_clone = cancel_flag.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                cancel_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                eprintln!("\n[Received Ctrl-C, interrupting gracefully...]");
+            }
+        });
+        
         let mut effective_prompt = prompt.map(|s| s.to_string());
         if let Some(rq) = research_query {
             // Perform research
@@ -884,6 +896,7 @@ fn drive_real(
             resume,
             taint_set,
             sink_policy,
+            Some(cancel_flag),
         )
         .await
     })
@@ -982,6 +995,7 @@ mod tests {
             None,
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
+            None,
         ))
         .unwrap();
 

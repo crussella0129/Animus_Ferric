@@ -25,7 +25,7 @@
 
 ## Advanced Harness Features (Plan, Stop, Revert, Dream)
 - [x] **Plan Mode**: Implement an `ActionProtocol::Plan` that strips write-permissions and provides a `submit_plan` terminator, effectively utilizing the robust constraint and tool-call mechanics to safely enforce an initial planning phase.
-- [ ] **Graceful Interrupts (Stop):** Integrate `tokio::signal::ctrl_c` handling in the CLI driver and pass a cancellation token to `LoopState` to abort execution and gracefully commit a `SessionEnd` trace.
+- [x] **Graceful Interrupts (Stop):** Integrate `tokio::signal::ctrl_c` handling in the CLI driver and pass a cancellation token to `LoopState` to abort execution and gracefully commit a `SessionEnd` trace.
 - [ ] **Time Travel (Revert):** Implement a lightweight VCS wrapper (`ferric-vcs`) to automatically orphan/stash workspace states tied to trace `TurnEnd` events, allowing the CLI `revert <turn_id>` command to rollback both the workspace and the replay trace.
 - [ ] **Dream Mode:** Create an asynchronous offline `ferric dream` worker that parses historical `.ferric/traces`, extracts high-value signals/patterns, and consolidates them into a persistent memory context (`MEMORY.md` or `.ferric/knowledge/`).
 - [ ] **Configurable Hooks:** Introduce a `ferric.toml` or `hooks/` system for synchronous pre-turn, post-turn, or on-error scripts.

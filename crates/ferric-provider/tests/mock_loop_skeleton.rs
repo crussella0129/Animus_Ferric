@@ -93,7 +93,7 @@ fn mock_loop_skeleton() {
             sampling: SamplingParams::default(),
             tools: tools.clone(),
             constraint: None,
-        }))
+        }, None))
         .unwrap();
         messages.push(completion.message.clone());
 

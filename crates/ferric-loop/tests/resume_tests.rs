@@ -37,6 +37,7 @@ fn resume_some_continues_from_replayed_state() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
+            cancel_flag: None,
 sink_policy: ferric_guard::SinkPolicy::deny(),
 taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
@@ -96,6 +97,7 @@ fn resume_some_with_extra_prompt_appends_one_user_message() {
     let sleeper = RecordingSleeper::new();
     futures_executor::block_on(run(
         RunArgs {
+            cancel_flag: None,
 sink_policy: ferric_guard::SinkPolicy::deny(),
 taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
@@ -141,6 +143,7 @@ fn resume_none_prompt_none_is_an_error_not_a_panic() {
     let sleeper = RecordingSleeper::new();
     let result = futures_executor::block_on(run(
         RunArgs {
+            cancel_flag: None,
 sink_policy: ferric_guard::SinkPolicy::deny(),
 taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
@@ -192,6 +195,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
     let sleeper1 = RecordingSleeper::new();
     let first = futures_executor::block_on(run(
         RunArgs {
+            cancel_flag: None,
 sink_policy: ferric_guard::SinkPolicy::deny(),
 taint_set: ferric_guard::TaintSet::new(),
             provider: &provider1,
@@ -241,6 +245,7 @@ taint_set: ferric_guard::TaintSet::new(),
     let sleeper2 = RecordingSleeper::new();
     let second = futures_executor::block_on(run(
         RunArgs {
+            cancel_flag: None,
 sink_policy: ferric_guard::SinkPolicy::deny(),
 taint_set: ferric_guard::TaintSet::new(),
             provider: &provider2,

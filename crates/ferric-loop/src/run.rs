@@ -45,6 +45,7 @@ pub struct RunArgs<'a> {
     pub media: Vec<MediaPart>,
     pub stream_sink: Option<&'a (dyn Fn(StreamDelta) + Sync)>,
     pub resume: Option<crate::replay::ReplayedState>,
+    pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub taint_set: ferric_guard::TaintSet,
     pub sink_policy: ferric_guard::SinkPolicy,
 }
@@ -72,6 +73,12 @@ pub struct LoopState<'a> {
 
 impl<'a> LoopState<'a> {
     pub async fn step(&mut self) -> Result<TurnOutcome, FerricError> {
+        if let Some(cancel) = &self.args.cancel_flag {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(TurnOutcome::Stop(StopReason::Interrupted));
+            }
+        }
+
         if self.turns >= u32::from(self.args.policy.max_turns) {
             return Ok(TurnOutcome::Stop(StopReason::MaxTurns));
         }
@@ -87,7 +94,9 @@ impl<'a> LoopState<'a> {
             self.args.sleeper,
             self.args.policy,
             self.last_input_tokens,
-        ).await? {
+            self.args.cancel_flag.clone(),
+        )
+        .await? {
             self.sink.write_event(event.clone())?;
             self.projector.step(&event);
         }
@@ -147,11 +156,12 @@ impl<'a> LoopState<'a> {
                     request,
                     self.args.sleeper,
                     on_delta,
+                    self.args.cancel_flag.clone(),
                 )
                 .await
             }
             None => {
-                crate::backoff::complete_with_backoff(self.args.provider, request, self.args.sleeper).await
+                crate::backoff::complete_with_backoff(self.args.provider, request, self.args.sleeper, self.args.cancel_flag.clone()).await
             }
         };
         

@@ -173,7 +173,11 @@ impl Provider for OpenAiProvider {
         }
     }
 
-    async fn complete(&self, request: CompletionRequest) -> Result<Completion, ProviderError> {
+    async fn complete(
+        &self,
+        request: CompletionRequest,
+        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Completion, ProviderError> {
         request.validate()?;
 
         let body = self.build_body(&request);
@@ -183,14 +187,27 @@ impl Provider for OpenAiProvider {
             self.config.base_url.trim_end_matches('/')
         );
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await;
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+        let response = loop {
+            tokio::select! {
+                res = self
+                    .client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", self.config.api_key))
+                    .header("Content-Type", "application/json")
+                    .json(&body)
+                    .send() => {
+                    break res;
+                }
+                _ = interval.tick() => {
+                    if let Some(cancel) = &cancel_flag {
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err(ProviderError::Backend("Interrupted".into()));
+                        }
+                    }
+                }
+            }
+        };
 
         let response = match response {
             Ok(res) => res,
@@ -283,6 +300,7 @@ impl Provider for OpenAiProvider {
         &self,
         request: CompletionRequest,
         on_delta: &(dyn Fn(StreamDelta) + Sync),
+        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Completion, ProviderError> {
         request.validate()?;
         let constrained = request.constraint.is_some();
@@ -309,13 +327,26 @@ impl Provider for OpenAiProvider {
             return Err(ProviderError::Backend(format!("HTTP {status}: {text}")));
         }
 
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
         let mut acc = StreamAccumulator::new(constrained, on_delta);
         let mut buf = String::new();
-        while let Some(bytes) = response
-            .chunk()
-            .await
-            .map_err(|e| ProviderError::RetryableBackend(format!("stream error: {e}")))?
-        {
+        loop {
+            let bytes = tokio::select! {
+                chunk_res = response.chunk() => {
+                    match chunk_res.map_err(|e| ProviderError::RetryableBackend(format!("stream error: {e}")))? {
+                        Some(b) => b,
+                        None => break,
+                    }
+                }
+                _ = interval.tick() => {
+                    if let Some(cancel) = &cancel_flag {
+                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err(ProviderError::Backend("Interrupted".into()));
+                        }
+                    }
+                    continue;
+                }
+            };
             buf.push_str(&String::from_utf8_lossy(&bytes));
             while let Some(pos) = buf.find('\n') {
                 let line = buf[..pos].trim_end_matches('\r').to_string();
@@ -689,7 +720,7 @@ mod tests {
         req.tools = vec![tool()];
         req.constraint = Some(Constraint::JsonSchema(json!({"type": "object"})));
         let sink = |_: StreamDelta| panic!("must not fire any delta on a validation failure");
-        let result = futures_executor::block_on(provider().complete_streaming(req, &sink));
+        let result = futures_executor::block_on(provider().complete_streaming(req, &sink, None));
         assert!(matches!(result, Err(ProviderError::InvalidRequest(_))));
     }
 
@@ -883,7 +914,7 @@ mod streaming_e2e {
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
         let completion = provider
-            .complete_streaming(request, &sink)
+            .complete_streaming(request, &sink, None)
             .await
             .expect("streaming completion should succeed");
 
@@ -934,7 +965,7 @@ mod streaming_e2e {
         };
         let sink = |_: StreamDelta| panic!("no delta should fire on an HTTP error response");
 
-        let result = provider.complete_streaming(request, &sink).await;
+        let result = provider.complete_streaming(request, &sink, None).await;
         server.await.unwrap();
 
         match result {
@@ -997,7 +1028,7 @@ mod streaming_e2e {
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
         let completion = provider
-            .complete_streaming(request, &sink)
+            .complete_streaming(request, &sink, None)
             .await
             .expect("a mid-line split must not break parsing");
         server.await.unwrap();

@@ -40,7 +40,17 @@ impl ConstrainedJsonScanner {
 
         if !self.thought_done {
             if self.thought_value_start.is_none() {
-                self.thought_value_start = find_thought_value_start(accumulated);
+                let tool_idx = accumulated.find("\"tool\"");
+                let thought_idx = accumulated.find("\"thought\"");
+                if let Some(ti) = tool_idx {
+                    if thought_idx.is_none() || thought_idx.unwrap() > ti {
+                        self.thought_done = true;
+                    } else {
+                        self.thought_value_start = find_thought_value_start(accumulated);
+                    }
+                } else {
+                    self.thought_value_start = find_thought_value_start(accumulated);
+                }
             }
             if let Some(start) = self.thought_value_start
                 && start <= accumulated.len()

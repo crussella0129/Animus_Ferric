@@ -27,6 +27,8 @@ pub enum StopReason {
     /// (`finish_reason == "length"`) — the one malformed-action case the
     /// constraint cannot prevent (ADR-015).
     TruncatedAction,
+    /// The user gracefully aborted execution (e.g. via Ctrl-C).
+    Interrupted,
 }
 
 impl StopReason {
@@ -42,6 +44,7 @@ impl StopReason {
             StopReason::ProviderError => "provider_error",
             StopReason::EmptyCompletion => "empty_completion",
             StopReason::TruncatedAction => "truncated_action",
+            StopReason::Interrupted => "interrupted",
         }
     }
 }
