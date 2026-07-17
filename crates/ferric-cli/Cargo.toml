@@ -20,6 +20,7 @@ animus-launch = { workspace = true }
 ferric-bench = { workspace = true }
 ferric-icm = { workspace = true }
 ferric-core = { workspace = true }
+ferric-cron = { workspace = true }
 ferric-guard = { workspace = true }
 ferric-loop = { workspace = true }
 ferric-prompt = { workspace = true }

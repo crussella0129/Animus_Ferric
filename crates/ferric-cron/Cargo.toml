@@ -1,0 +1,16 @@
+[package]
+name = "ferric-cron"
+description = "Agentic cron: parse `.ferric/cron/*.toml` job definitions, compute which periodic agent tasks are due, and track last-run state (ADR-066)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
