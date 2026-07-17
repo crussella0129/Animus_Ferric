@@ -24,7 +24,7 @@
 - [ ] Implement a templating engine (`minijinja` or `askama`) to replace manual `format!()` strings in `src/lib.rs`.
 
 ## Advanced Harness Features (Plan, Stop, Revert, Dream)
-- [ ] **Plan Mode:** Implement `ActionProtocol::Plan` in `ferric-core` and `ferric-loop` to enforce a strict read-only planning phase before execution, integrated via `prompt_lineage`.
+- [x] **Plan Mode**: Implement an `ActionProtocol::Plan` that strips write-permissions and provides a `submit_plan` terminator, effectively utilizing the robust constraint and tool-call mechanics to safely enforce an initial planning phase.
 - [ ] **Graceful Interrupts (Stop):** Integrate `tokio::signal::ctrl_c` handling in the CLI driver and pass a cancellation token to `LoopState` to abort execution and gracefully commit a `SessionEnd` trace.
 - [ ] **Time Travel (Revert):** Implement a lightweight VCS wrapper (`ferric-vcs`) to automatically orphan/stash workspace states tied to trace `TurnEnd` events, allowing the CLI `revert <turn_id>` command to rollback both the workspace and the replay trace.
 - [ ] **Dream Mode:** Create an asynchronous offline `ferric dream` worker that parses historical `.ferric/traces`, extracts high-value signals/patterns, and consolidates them into a persistent memory context (`MEMORY.md` or `.ferric/knowledge/`).

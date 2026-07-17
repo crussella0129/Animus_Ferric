@@ -81,6 +81,7 @@ pub enum ActionProtocol {
     #[serde(alias = "unified_grammar")]
     ConstrainedJson,
     TextXml,
+    Plan,
 }
 
 /// Everything the agent loop needs to know about how to run a given model.

@@ -29,4 +29,4 @@ pub use outcome::{LoopOutcome, StopReason};
 pub use protocol::select_protocol;
 pub use replay::{ReplayError, ReplayedState, replay};
 pub use run::{DEFAULT_SYSTEM_PROMPT, PromptLineage, RunArgs, Sleeper, ThreadSleeper, run};
-pub use terminator::TASK_COMPLETE;
+pub use terminator::{SUBMIT_PLAN, TASK_COMPLETE};

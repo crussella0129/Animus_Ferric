@@ -94,12 +94,12 @@ impl<'a> LoopState<'a> {
 
         let tools = match self.args.protocol {
             ActionProtocol::NativeTools => self.native_tools.clone(),
-            ActionProtocol::ConstrainedJson | ActionProtocol::TextXml => Vec::new(),
+            ActionProtocol::ConstrainedJson | ActionProtocol::TextXml | ActionProtocol::Plan => Vec::new(),
         };
 
         let constraint = match self.args.protocol {
-            ActionProtocol::ConstrainedJson => Some(Constraint::JsonSchema(
-                crate::grammar::action_schema(&self.registry_tools),
+            ActionProtocol::ConstrainedJson | ActionProtocol::Plan => Some(Constraint::JsonSchema(
+                crate::grammar::action_schema(&self.native_tools),
             )),
             ActionProtocol::NativeTools | ActionProtocol::TextXml => None,
         };
@@ -132,7 +132,7 @@ impl<'a> LoopState<'a> {
         self.sink.write_event(assembled.clone())?;
         self.projector.step(&assembled);
 
-        if self.args.protocol == ActionProtocol::ConstrainedJson {
+        if self.args.protocol == ActionProtocol::ConstrainedJson || self.args.protocol == ActionProtocol::Plan {
             let evt = Event::ConstraintApplied {
                 kind: "json_schema".to_string(),
             };
@@ -178,7 +178,7 @@ impl<'a> LoopState<'a> {
         
         self.last_input_tokens = completion.input_tokens;
 
-        if self.args.protocol == ActionProtocol::ConstrainedJson && completion.truncated {
+        if (self.args.protocol == ActionProtocol::ConstrainedJson || self.args.protocol == ActionProtocol::Plan) && completion.truncated {
             if self.truncated_once {
                 return Ok(TurnOutcome::Stop(StopReason::TruncatedAction));
             }
@@ -188,7 +188,7 @@ impl<'a> LoopState<'a> {
 
         let (actions, _parse_error) = match self.args.protocol {
             ActionProtocol::NativeTools => (completion.message.tool_calls.clone(), None),
-            ActionProtocol::ConstrainedJson => {
+            ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
                 match crate::grammar::parse_json_action(
                     turn,
                     completion.message.text.as_deref().unwrap_or_default(),
@@ -264,11 +264,23 @@ impl<'a> LoopState<'a> {
         }
 
         let mut terminate_with: Option<String> = None;
+        let mut plan_terminate_with: Option<String> = None;
         let mut dispatched = 0usize;
         let mut errored = 0usize;
         for call in &actions {
             if crate::terminator::is_task_complete(&call.name) {
                 terminate_with = Some(crate::terminator::summary_of(&call.args));
+                let tc = Event::ToolCall {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    args: call.args.clone(),
+                };
+                self.sink.write_event(tc.clone())?;
+                self.projector.step(&tc);
+                continue;
+            }
+            if crate::terminator::is_submit_plan(&call.name) {
+                plan_terminate_with = Some(crate::terminator::plan_of(&call.args));
                 let tc = Event::ToolCall {
                     id: call.id.clone(),
                     name: call.name.clone(),
@@ -318,6 +330,12 @@ impl<'a> LoopState<'a> {
             self.projector.commit_pending();
             self.projector.last_text = Some(summary);
             return Ok(TurnOutcome::Stop(StopReason::TaskComplete));
+        }
+        
+        if let Some(plan) = plan_terminate_with {
+            self.projector.commit_pending();
+            self.projector.last_text = Some(plan);
+            return Ok(TurnOutcome::Stop(StopReason::PlanSubmitted));
         }
 
         if dispatched > 0 {
@@ -380,7 +398,7 @@ pub async fn run(
         projector.step(&composed);
     }
 
-    let registry_tools = registry_tools(args.registry, args.policy);
+    let registry_tools = registry_tools(args.registry, args.policy, args.protocol);
 
     let turns = match &args.resume {
         Some(replayed) => {
@@ -424,11 +442,19 @@ pub async fn run(
     }
 
     let mut offered_names: Vec<String> = registry_tools.iter().map(|t| t.name.clone()).collect();
-    offered_names.push(crate::terminator::TASK_COMPLETE.to_string());
+    if args.protocol == ActionProtocol::Plan {
+        offered_names.push(crate::terminator::SUBMIT_PLAN.to_string());
+    } else {
+        offered_names.push(crate::terminator::TASK_COMPLETE.to_string());
+    }
 
     let native_tools: Vec<ToolDescriptor> = {
         let mut v = registry_tools.clone();
-        v.push(crate::terminator::descriptor());
+        if args.protocol == ActionProtocol::Plan {
+            v.push(crate::terminator::plan_descriptor());
+        } else {
+            v.push(crate::terminator::descriptor());
+        }
         v
     };
 
@@ -471,10 +497,17 @@ pub async fn run(
 }
 
 
-fn registry_tools(registry: &Registry, policy: &RunPolicy) -> Vec<ToolDescriptor> {
+fn registry_tools(registry: &Registry, policy: &RunPolicy, protocol: ActionProtocol) -> Vec<ToolDescriptor> {
     registry
         .tools_for_policy(policy)
         .into_iter()
+        .filter(|spec| {
+            if protocol == ActionProtocol::Plan {
+                spec.permission == ferric_guard::PermissionLevel::Read
+            } else {
+                true
+            }
+        })
         .map(|spec| ToolDescriptor {
             name: spec.name,
             description: spec.description,

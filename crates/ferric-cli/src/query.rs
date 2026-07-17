@@ -673,6 +673,10 @@ pub(crate) fn mock_provider(protocol: ActionProtocol) -> MockProvider {
             json_completion("write_file", &write_args),
             json_completion(ferric_loop::TASK_COMPLETE, &done_args),
         ],
+        ActionProtocol::Plan => vec![
+            json_completion("grep_search", &json!({"query": "mock", "path": "."})),
+            json_completion(ferric_loop::SUBMIT_PLAN, &json!({"plan": "mock plan complete"})),
+        ],
         ActionProtocol::TextXml => vec![
             xml_completion("write_file", &write_args),
             xml_completion(ferric_loop::TASK_COMPLETE, &done_args),

@@ -6,6 +6,8 @@ pub enum StopReason {
     FinalText,
     /// The model called the `task_complete` structured terminator.
     TaskComplete,
+    /// The model called the `submit_plan` terminating tool in Plan mode.
+    PlanSubmitted,
     /// The policy's turn budget ran out.
     MaxTurns,
     /// The repetition guard stopped a stuck loop.
@@ -32,6 +34,7 @@ impl StopReason {
         match self {
             StopReason::FinalText => "final_text",
             StopReason::TaskComplete => "task_complete",
+            StopReason::PlanSubmitted => "plan_submitted",
             StopReason::MaxTurns => "max_turns",
             StopReason::RepetitionGuard => "repetition_guard",
             StopReason::NoProgress => "no_progress",

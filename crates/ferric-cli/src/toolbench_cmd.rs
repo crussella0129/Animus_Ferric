@@ -127,7 +127,7 @@ pub fn classify(
     let text = completion.message.text.as_deref().unwrap_or_default();
     let parsed: Result<Option<ToolCall>, ()> = match protocol {
         ActionProtocol::NativeTools => Ok(completion.message.tool_calls.first().cloned()),
-        ActionProtocol::ConstrainedJson => {
+        ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
             if text.trim().is_empty() {
                 Ok(None)
             } else {

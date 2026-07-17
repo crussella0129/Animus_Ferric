@@ -158,6 +158,7 @@ fn protocol_flag(p: ActionProtocol) -> &'static str {
         ActionProtocol::NativeTools => "native",
         ActionProtocol::ConstrainedJson => "grammar",
         ActionProtocol::TextXml => "xml",
+        ActionProtocol::Plan => "plan",
     }
 }
 

@@ -59,8 +59,7 @@ pub fn parse_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseError>
 /// `ConstrainedJson` path; a constraint-honoring backend enforces it so the
 /// completion can only be a well-formed action.
 pub fn action_schema(tools: &[ToolDescriptor]) -> Value {
-    let mut branches: Vec<Value> = tools.iter().map(branch_for).collect();
-    branches.push(branch_for(&crate::terminator::descriptor()));
+    let branches: Vec<Value> = tools.iter().map(branch_for).collect();
     json!({ "type": "object", "anyOf": branches })
 }
 
@@ -144,7 +143,7 @@ mod tests {
     fn action_schema_branch_count() {
         let schema = action_schema(&[tool("read_file"), tool("write_file")]);
         let branches = schema["anyOf"].as_array().unwrap();
-        assert_eq!(branches.len(), 3);
+        assert_eq!(branches.len(), 2);
         for b in branches {
             assert!(b["properties"]["tool"]["const"].is_string());
             assert_eq!(b["additionalProperties"], json!(false));
@@ -156,8 +155,8 @@ mod tests {
     }
 
     #[test]
-    fn action_schema_includes_task_complete() {
-        let schema = action_schema(&[tool("read_file")]);
+    fn action_schema_includes_terminator_when_passed() {
+        let schema = action_schema(&[tool("read_file"), crate::terminator::descriptor()]);
         let branches = schema["anyOf"].as_array().unwrap();
         assert!(
             branches
