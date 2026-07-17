@@ -1587,3 +1587,164 @@ fn icm_run_honors_a_stage_range() {
     assert!(!ws.join("stages/01_research/ferric-mock.txt").exists());
     assert!(!ws.join("stages/03_production/ferric-mock.txt").exists());
 }
+
+// ── Agentic cron (sprint 75, ADR-066) ──────────────────────────────────────
+
+#[test]
+fn cron_add_then_list_shows_the_job() {
+    let ws = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args(["add", "nightly", "--schedule", "12h", "--command", "dream"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "cron add must succeed");
+    assert!(ws.path().join(".ferric/cron/nightly.toml").exists());
+
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .arg("list")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("nightly"), "list: {stdout}");
+    assert!(stdout.contains("12h"));
+    assert!(
+        stdout.contains("never"),
+        "an un-run job's last-run is 'never'"
+    );
+}
+
+#[test]
+fn cron_run_executes_a_due_mock_job_and_advances_state() {
+    let ws = tempfile::tempdir().unwrap();
+    // A mock query job runs offline (fast, no server) — proves execution.
+    ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args([
+            "add",
+            "summary",
+            "--schedule",
+            "1h",
+            "--command",
+            "query",
+            "--prompt",
+            "do a task",
+            "--mock",
+        ])
+        .output()
+        .unwrap();
+
+    // First run: the job is due (never run) → it executes.
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .arg("run")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(
+        ws.path().join("ferric-mock.txt").exists(),
+        "the mock query job must actually run"
+    );
+
+    // Second run immediately after: state advanced → nothing is due.
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .arg("run")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("No jobs due"),
+        "state must advance; got: {stdout}"
+    );
+}
+
+#[test]
+fn cron_dry_run_reports_without_executing() {
+    let ws = tempfile::tempdir().unwrap();
+    ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args([
+            "add",
+            "summary",
+            "--schedule",
+            "1h",
+            "--command",
+            "query",
+            "--prompt",
+            "x",
+            "--mock",
+        ])
+        .output()
+        .unwrap();
+
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args(["run", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("DUE (dry-run): summary"),
+        "dry-run: {stdout}"
+    );
+    // Nothing executed, state untouched → a subsequent dry-run still reports it.
+    assert!(!ws.path().join("ferric-mock.txt").exists());
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args(["run", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .contains("DUE (dry-run): summary")
+    );
+}
+
+#[test]
+fn cron_add_rejects_bad_input() {
+    let ws = tempfile::tempdir().unwrap();
+    let base = || {
+        let mut c = ferric();
+        c.args(["cron", "--workspace"]).arg(ws.path());
+        c
+    };
+    // query with no prompt
+    assert!(
+        !base()
+            .args(["add", "q", "--schedule", "1h", "--command", "query"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    // unknown command (not an arbitrary shell string)
+    assert!(
+        !base()
+            .args(["add", "q", "--schedule", "1h", "--command", "rm -rf /"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    // bad schedule
+    assert!(
+        !base()
+            .args(["add", "q", "--schedule", "soon", "--command", "dream"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}

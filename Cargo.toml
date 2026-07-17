@@ -12,6 +12,7 @@ members = [
     "crates/ferric-research",
     "crates/animus-launch",
     "crates/ferric-icm",
+    "crates/ferric-cron",
     "crates/ferric-cli",
     "crates/ferric-vcs",
 ]
@@ -73,4 +74,5 @@ ferric-bench = { path = "crates/ferric-bench" }
 ferric-research = { path = "crates/ferric-research" }
 animus-launch = { path = "crates/animus-launch" }
 ferric-icm = { path = "crates/ferric-icm" }
+ferric-cron = { path = "crates/ferric-cron" }
 ferric-vcs = { path = "crates/ferric-vcs" }

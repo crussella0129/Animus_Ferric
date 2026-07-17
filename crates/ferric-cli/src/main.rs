@@ -20,6 +20,7 @@ mod backend;
 mod bench_cmd;
 mod chat;
 mod config;
+mod cron;
 mod dream_cmd;
 mod icm;
 mod launch;
@@ -72,6 +73,8 @@ enum Command {
     Launch(Box<launch::LaunchArgs>),
     /// ICM agent delegation: scaffold/plan a filesystem-orchestrated workspace (ADR-064)
     Icm(Box<icm::IcmArgs>),
+    /// Agentic cron: schedule periodic agent tasks from `.ferric/cron/` (ADR-066)
+    Cron(Box<cron::CronArgs>),
     /// Start the HTTP API server for IDE/web/mobile integration (Sprint 64)
     #[cfg(feature = "backend-openai")]
     Api(Box<api::server::ApiArgs>),
@@ -124,6 +127,7 @@ fn main() -> ExitCode {
         Command::Chat(args) => chat::run_chat(*args),
         Command::Launch(args) => launch::run_launch(*args),
         Command::Icm(args) => icm::run_icm(*args),
+        Command::Cron(args) => cron::run_cron(*args),
         #[cfg(feature = "backend-openai")]
         Command::Api(args) => {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");

@@ -844,3 +844,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-17
 - **Files modified:** crates/ferric-icm/src/lib.rs, crates/ferric-icm/tests/workspace.rs, crates/ferric-cli/src/icm.rs, crates/ferric-cli/tests/cli.rs, docs/icm.md, decisions.md, agent-tasks/agent-tasks.md, README.md
 - **Commit:** pending
+
+
+## T-7501 (sprint 75)
+- **Description:** Agentic Cron Jobs. New `ferric-cron` pure crate: `parse_schedule` (Ns/Nm/Nh/Nd + hourly/daily/weekly), `parse_job`/`load_jobs` (`.ferric/cron/*.toml`), `CronState` (last-run JSON), `is_due`/`due_jobs`/`next_due_ms` (clock injected, fully unit-testable). New `ferric cron` subcommand: `add` (scaffold a job file, refuse-to-overwrite), `list` (schedule + last-run/next-due), `run [--dry-run]` (one tick — run due jobs, state advances on attempt), `watch [--interval]` (foreground loop until Ctrl-C, reusing the sprint-65 tokio ctrl_c pattern). Jobs run a bounded enum of Ferric subcommands (`dream`/`query`, `query` supports `mock`), executed by shelling out to `current_exe()` in the workspace — never arbitrary shell (narrower than hooks). 14 tests (10 pure: schedule units/aliases/errors, due logic, state round-trip, job parse/reject; 4 CLI: add+list, run executes mock query + advances state, dry-run, add rejects bad input). Docs: docs/cron.md, ADR-066.
+- **Completed:** 2026-07-17
+- **Files modified:** Cargo.toml, crates/ferric-cron/{Cargo.toml,src/lib.rs}, crates/ferric-cli/{Cargo.toml,src/main.rs,src/cron.rs,tests/cli.rs}, docs/cron.md, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending

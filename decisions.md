@@ -875,3 +875,51 @@ drives, in numeric order, with human review gates. Full guide in `docs/icm.md`.
 - **Deferred (unchanged from ADR-064):** Ornstein-quarantining of
   externally-sourced Layer 4 content, the GECK-style workspace-builder, and
   conditional/branch routing (ICM is sequential by design).
+
+## ADR-066 — 2026-07-17 (sprint 75): Agentic cron — scheduled periodic agent tasks, bounded to Ferric's own operations
+The backlog's "Agentic Cron Jobs" is delivered: a `.ferric/cron/` directory of
+TOML job definitions and a `ferric cron` watcher that runs due jobs. The canonical
+use case is `/dream every 12h` — periodically consolidating traces into memory.
+Full guide in `docs/cron.md`.
+- **A job runs a Ferric subcommand, NOT an arbitrary shell command — the security
+  boundary.** A job's `command` is an *enum* (`dream`, or `query` with a prompt),
+  not a free string. So cron can only ever trigger operations Ferric already
+  contains (a `query` is a workspace-scoped, guard-checked agent run; `dream` reads
+  traces and writes MEMORY.md). This is deliberately **narrower than the hooks
+  system** (ADR, sprint 67), which runs arbitrary user scripts on loop boundaries:
+  a hook is a per-workspace escape hatch the user writes; a cron job is a scheduled
+  trigger, and an unbounded scheduled shell command is a materially larger standing
+  surface. Bounding cron to Ferric's own verbs keeps the standing surface small
+  and every scheduled action guard-contained. New commands extend the enum, not a
+  shell.
+- **Pure core, CLI driver — the `ferric-icm`/`animus-launch` pattern.** A new
+  `ferric-cron` crate holds the pure, fully-unit-tested logic: parse a schedule
+  (`30s`/`15m`/`12h`/`2d` + `hourly`/`daily`/`weekly`), parse+validate a job TOML,
+  compute due-ness against an **injected** `now` (reads no clock itself), and
+  read/write last-run state. The `ferric cron` CLI drives it and performs
+  execution by shelling out to the same `ferric` binary (`current_exe()`), running
+  each job in the workspace — the same self-invocation pattern used elsewhere.
+  `ferric-cron` depends only on serde/toml/thiserror.
+- **Interval schedules, not full cron expressions (a deliberate scope choice).**
+  The use case is "every N hours", so schedules are simple recurrence intervals,
+  not five-field crontab syntax (no "every weekday at 09:00"). Interval + a last-run
+  timestamp is enough, far simpler to reason about, and covers `/dream every 12h`.
+  Calendar-anchored cron expressions are a named later extension.
+- **State advances on ATTEMPT, not success.** After a due job runs (whatever its
+  exit), its `last_run` is set to now, so a persistently-failing job reschedules to
+  its next interval instead of firing every single tick. State
+  (`.ferric/cron/.state.json`) is a runtime cache kept OUT of the user-authored job
+  files, and a missing/corrupt state file degrades to empty (never a hard failure).
+- **Surfaces:** `cron add` (scaffold a job file, refuse to overwrite),
+  `cron list` (schedule + last-run/next-due), `cron run [--dry-run]` (one tick —
+  run due jobs, or just report them; the tick an external scheduler could also
+  drive), and `cron watch [--interval]` (the loop — a foreground daemon that ticks
+  and runs due jobs until Ctrl-C, reusing the sprint-65 graceful-interrupt
+  `tokio::signal::ctrl_c` pattern). A `query` job may set `mock = true` to run
+  offline — useful for testing a schedule without a live model, and the hook that
+  makes `cron run` fully E2E-testable.
+- **Deferred (named):** calendar/crontab expressions; a detached watcher daemon
+  with a runfile + lifecycle management (`ferric cron watch` is foreground for v1,
+  backgroundable by the shell or the sprint-68 task machinery); catch-up/misfire
+  policy for a watcher that was down across a due window; more job command kinds
+  (e.g. an ICM pipeline run) as the enum grows.

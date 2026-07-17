@@ -33,7 +33,7 @@
 - [x] **Agent Delegation Structure (ICM):** Build a `ferric-icm` orchestrator crate that orchestrates sub-agents entirely via sequential local folders (`01_research/`, `02_script/`) and their `CONTEXT.md` files. *(Sprint 73 ADR-064 — inc 1: `ferric-icm` crate + `ferric icm init`/`plan`. Sprint 74 ADR-065 — inc 2: `ferric icm run` executes each stage through the constrained loop, contained to its own folder, with halt-on-failure + human review gates (`--auto`/`--from`/`--to`/`--mock`). See `docs/icm.md`. Follow-ups: Ornstein-quarantined web-research stage, workspace-builder.)*
 - [ ] **Interactive "Accept Edits" Mode:** Pause the driver to display unified diffs via a `PendingEdit` state, awaiting user confirmation before flushing to disk.
 - [ ] **Direct Terminal Passthrough:** Allow commands prefixed with `!` or `/run` in the chat UI to execute instantly via `shell_exec` without LLM roundtripping.
-- [ ] **Agentic Cron Jobs:** Introduce a `.ferric/cron/` directory and background watcher to schedule periodic agent tasks (e.g., `/dream every 12 hours`).
+- [x] **Agentic Cron Jobs:** Introduce a `.ferric/cron/` directory and background watcher to schedule periodic agent tasks (e.g., `/dream every 12 hours`). *(Sprint 75, ADR-066 — `ferric-cron` crate (schedule/due/state, pure) + `ferric cron add`/`list`/`run`/`watch`. Jobs run a bounded set of Ferric subcommands (`dream`/`query`), never arbitrary shell. See `docs/cron.md`. Deferred: crontab expressions, detached daemon w/ runfile.)*
 
 ## ferric-provider
 - [ ] Optimize SSE streaming in `src/stream_scan.rs` using `bytes::BytesMut` and `serde_json::StreamDeserializer` instead of `String` buffering.
