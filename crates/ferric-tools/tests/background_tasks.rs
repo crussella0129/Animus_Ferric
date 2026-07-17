@@ -19,7 +19,7 @@ async fn test_background_tasks() {
 
     // 1. Spawn a background task
     let command = if cfg!(windows) {
-        "timeout /t 5"
+        "powershell -Command \"Start-Sleep -Seconds 5\""
     } else {
         "sleep 5"
     };
