@@ -127,7 +127,7 @@ pub fn classify(
     let text = completion.message.text.as_deref().unwrap_or_default();
     let parsed: Result<Option<ToolCall>, ()> = match protocol {
         ActionProtocol::NativeTools => Ok(completion.message.tool_calls.first().cloned()),
-        ActionProtocol::ConstrainedJson => {
+        ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
             if text.trim().is_empty() {
                 Ok(None)
             } else {
@@ -379,6 +379,9 @@ fn build_request(
             "Respond with exactly one XML tool call: \
              <tool_call><name>TOOL</name><args>{\"arg\": \"value\"}</args></tool_call>."
         }
+        ActionProtocol::Plan => {
+            "Respond with exactly one Plan object: {\"plan\": \"...\"}."
+        }
     };
     let user_prompt =
         format!("Invoke the `{tool_name}` tool with dummy data that matches its schema.");
@@ -388,6 +391,7 @@ fn build_request(
         ActionProtocol::ConstrainedJson => {
             (Vec::new(), Some(Constraint::JsonSchema(schema.clone())))
         }
+        ActionProtocol::Plan => (Vec::new(), None),
         ActionProtocol::TextXml => (Vec::new(), None),
     };
     CompletionRequest {
@@ -422,7 +426,7 @@ async fn bench_model(
         for _ in 0..iterations {
             let request = build_request(protocol, all_tools, schema, &tool.name);
             let completion = provider
-                .complete(request)
+                .complete(request, None)
                 .await
                 .map_err(|e| format!("provider error: {e}"))?;
             let outcome = classify(protocol, &completion, &tool.name, &tool.input_schema);

@@ -209,20 +209,20 @@ impl ChatBackend {
             ChatBackend::Mock => {
                 let provider = MockProvider::new(vec![mock_talk_completion()]);
                 if let Some(sink) = stream_sink {
-                    futures_executor::block_on(provider.complete_streaming(request, sink))
+                    futures_executor::block_on(provider.complete_streaming(request, sink, None))
                         .map_err(|e| format!("talk completion failed: {e}"))
                 } else {
-                    futures_executor::block_on(provider.complete(request))
+                    futures_executor::block_on(provider.complete(request, None))
                         .map_err(|e| format!("talk completion failed: {e}"))
                 }
             }
             #[cfg(feature = "backend-openai")]
             ChatBackend::Real { provider, runtime } => {
                 if let Some(sink) = stream_sink {
-                    runtime.block_on(provider.complete_streaming(request, sink))
+                    runtime.block_on(provider.complete_streaming(request, sink, None))
                         .map_err(|e| format!("talk completion failed: {e}"))
                 } else {
-                    runtime.block_on(provider.complete(request))
+                    runtime.block_on(provider.complete(request, None))
                         .map_err(|e| format!("talk completion failed: {e}"))
                 }
             }
@@ -278,6 +278,7 @@ impl ChatBackend {
                     Some(seed),
                     ferric_guard::TaintSet::new(),
                     ferric_guard::SinkPolicy::deny(),
+                    None,
                 ))
             }
             #[cfg(feature = "backend-openai")]
@@ -297,6 +298,7 @@ impl ChatBackend {
                 Some(seed),
                 ferric_guard::TaintSet::new(),
                 ferric_guard::SinkPolicy::deny(),
+                None,
             )),
         }
     }

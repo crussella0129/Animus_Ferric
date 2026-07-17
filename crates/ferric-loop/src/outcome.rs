@@ -6,6 +6,8 @@ pub enum StopReason {
     FinalText,
     /// The model called the `task_complete` structured terminator.
     TaskComplete,
+    /// The model called the `submit_plan` terminating tool in Plan mode.
+    PlanSubmitted,
     /// The policy's turn budget ran out.
     MaxTurns,
     /// The repetition guard stopped a stuck loop.
@@ -25,6 +27,10 @@ pub enum StopReason {
     /// (`finish_reason == "length"`) — the one malformed-action case the
     /// constraint cannot prevent (ADR-015).
     TruncatedAction,
+    /// The user gracefully aborted execution (e.g. via Ctrl-C).
+    Interrupted,
+    /// A required hook script failed.
+    HookFailed,
 }
 
 impl StopReason {
@@ -32,6 +38,7 @@ impl StopReason {
         match self {
             StopReason::FinalText => "final_text",
             StopReason::TaskComplete => "task_complete",
+            StopReason::PlanSubmitted => "plan_submitted",
             StopReason::MaxTurns => "max_turns",
             StopReason::RepetitionGuard => "repetition_guard",
             StopReason::NoProgress => "no_progress",
@@ -39,6 +46,8 @@ impl StopReason {
             StopReason::ProviderError => "provider_error",
             StopReason::EmptyCompletion => "empty_completion",
             StopReason::TruncatedAction => "truncated_action",
+            StopReason::Interrupted => "interrupted",
+            StopReason::HookFailed => "hook_failed",
         }
     }
 }

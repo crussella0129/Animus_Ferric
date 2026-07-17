@@ -135,7 +135,7 @@ pub async fn summarize_quarantined(
     };
 
     let completion = provider
-        .complete(request)
+        .complete(request, None)
         .await
         .map_err(|e| ResearchError::Provider(e.to_string()))?;
 

@@ -30,6 +30,11 @@ impl JsonlSink {
         })
     }
 
+    /// Returns the session ID for this sink.
+    pub fn session(&self) -> &str {
+        &self.session
+    }
+
     /// Stamp, serialize, write, and flush one event. Returns the sequence
     /// number assigned to it.
     pub fn write_event(&mut self, event: Event) -> Result<u64, FerricError> {

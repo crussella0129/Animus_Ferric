@@ -5,7 +5,7 @@ use ferric_trace::Event;
 pub(crate) fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
     match protocol {
         ActionProtocol::NativeTools => "Respond with a tool call, or your final answer as text.",
-        ActionProtocol::ConstrainedJson => {
+        ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
             "Respond with a single JSON action: {\"tool\": \"tool_name\", \"args\": { ... }}"
         }
         ActionProtocol::TextXml => {
@@ -50,7 +50,7 @@ pub(crate) fn result_message(
 ) -> Message {
     match protocol {
         ActionProtocol::NativeTools => Message::tool_result(call_id, output),
-        ActionProtocol::ConstrainedJson | ActionProtocol::TextXml => {
+        ActionProtocol::ConstrainedJson | ActionProtocol::TextXml | ActionProtocol::Plan => {
             Message::user(format!("[tool_result for {name}] {output}"))
         }
     }
@@ -78,7 +78,7 @@ impl PendingTurn {
 
         // Truncation handling is ConstrainedJson-only (run.rs mirrors this
         // exact gate) — other protocols ignore the flag and proceed normally.
-        if truncated && protocol == ActionProtocol::ConstrainedJson {
+        if truncated && (protocol == ActionProtocol::ConstrainedJson || protocol == ActionProtocol::Plan) {
             return Some(vec![truncation_retry_message()]);
         }
 
@@ -90,7 +90,7 @@ impl PendingTurn {
                 tool_call_id: None,
                 media: Vec::new(),
             },
-            ActionProtocol::ConstrainedJson | ActionProtocol::TextXml => {
+            ActionProtocol::ConstrainedJson | ActionProtocol::TextXml | ActionProtocol::Plan => {
                 Message::assistant(text.unwrap_or_default())
             }
         };

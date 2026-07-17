@@ -128,6 +128,7 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
     let sleeper = ThreadSleeper;
 
     let args = RunArgs {
+            cancel_flag: None,
         provider: &provider,
         registry: &registry,
         workspace: &workspace,

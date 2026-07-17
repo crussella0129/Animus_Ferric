@@ -45,6 +45,7 @@ pub(crate) async fn maybe_compact(
     sleeper: &dyn Sleeper,
     policy: &RunPolicy,
     last_input_tokens: Option<u32>,
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<Option<Event>, FerricError> {
     let Some(tokens) = last_input_tokens else {
         return Ok(None);
@@ -72,11 +73,11 @@ pub(crate) async fn maybe_compact(
     let fold_to_idx = completed[fold_count].1;
 
     let transcript = render_transcript(&projector.messages[fold_from_idx..fold_to_idx]);
-    let summary = match summarize_history(provider, sleeper, &transcript).await {
+    let summary = match summarize_transcript(provider, sleeper, &transcript, cancel_flag).await {
         Ok(s) => s,
         Err(e) => {
             return Ok(Some(Event::Note {
-                text: format!("compaction skipped: {e}"),
+                text: format!("compaction summarizer failed: {e}"),
             }));
         }
     };
@@ -119,10 +120,11 @@ fn render_transcript(messages: &[Message]) -> String {
 /// `transcript` into a "progress so far" summary. Reuses the SAME provider
 /// driving the main loop (no second, cheaper model exists in this
 /// architecture) via the existing retry policy.
-async fn summarize_history(
+async fn summarize_transcript(
     provider: &dyn Provider,
     sleeper: &dyn Sleeper,
     transcript: &str,
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, FerricError> {
     let request = CompletionRequest {
         messages: vec![
@@ -133,7 +135,7 @@ async fn summarize_history(
         tools: Vec::new(),
         constraint: None,
     };
-    let completion = complete_with_backoff(provider, request, sleeper)
+    let completion = complete_with_backoff(provider, request, sleeper, cancel_flag)
         .await
         .map_err(|e| FerricError::Other(e.to_string()))?;
     completion
@@ -233,7 +235,8 @@ mod tests {
             &provider,
             &NoopSleeper,
             &nano_policy(),
-            Some(100), // far below 85% of 2800
+            Some(100),
+            None, // far below 85% of 2800
         ))
         .unwrap();
         
@@ -257,7 +260,8 @@ mod tests {
             &provider_below,
             &NoopSleeper,
             &nano_policy(),
-            Some(2379), // just below 0.85 * 2800 = 2380.0
+            Some(2379),
+            None, // just below 0.85 * 2800 = 2380.0
         ))
         .unwrap();
         assert!(res_below.is_none(), "2379 must not trigger a fold");
@@ -271,7 +275,8 @@ mod tests {
             &provider_at,
             &NoopSleeper,
             &nano_policy(),
-            Some(2380), // exactly 0.85 * 2800
+            Some(2380),
+            None, // exactly 0.85 * 2800
         ))
         .unwrap();
         
@@ -291,7 +296,8 @@ mod tests {
             &provider,
             &NoopSleeper,
             &nano_policy(),
-            Some(2500), // above 85% of 2800
+            Some(2500),
+            None, // above 85% of 2800
         ))
         .unwrap();
         assert!(result.is_none());
@@ -311,6 +317,7 @@ mod tests {
             &NoopSleeper,
             &nano_policy(),
             Some(2500),
+            None,
         ))
         .unwrap();
 
@@ -348,6 +355,7 @@ mod tests {
             &NoopSleeper,
             &nano_policy(),
             Some(2500),
+            None,
         ))
         .unwrap();
 
@@ -367,6 +375,7 @@ mod tests {
             &NoopSleeper,
             &nano_policy(),
             Some(2500),
+            None,
         )).unwrap().unwrap();
         projector.step(&event1);
 
@@ -384,6 +393,7 @@ mod tests {
             &NoopSleeper,
             &nano_policy(),
             Some(2500),
+            None,
         )).unwrap().unwrap();
         projector.step(&event2);
 

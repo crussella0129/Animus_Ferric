@@ -260,6 +260,7 @@ pub mod server {
             None,
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
+            None,
         )
         .await
         .map_err(|e| format!("query failed: {e}"))?;

@@ -447,6 +447,8 @@ impl McpServer {
             resume,
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
+            None,
+            self.config.hooks.clone(),
         );
         match &self.executor {
             Executor::Mock => futures_executor::block_on(fut),
@@ -1059,6 +1061,7 @@ mod tests {
         async fn complete(
             &self,
             _request: ferric_provider::CompletionRequest,
+            _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         ) -> Result<ferric_provider::Completion, ferric_provider::ProviderError> {
             use ferric_core::{Role, ToolCall};
             let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);

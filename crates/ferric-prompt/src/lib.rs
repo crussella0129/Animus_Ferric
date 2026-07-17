@@ -53,7 +53,7 @@ pub fn load_library(dir: &Path) -> Result<Library, PromptError> {
 pub fn recipe_for(_tier: Tier, protocol: ActionProtocol) -> Vec<(String, Option<String>)> {
     let protocol_atom = match protocol {
         ActionProtocol::NativeTools => "protocol-native-tools",
-        ActionProtocol::ConstrainedJson => "protocol-constrained-json",
+        ActionProtocol::ConstrainedJson | ActionProtocol::Plan => "protocol-constrained-json",
         // The legacy "unified-grammar" atom teaches the `<tool_call>` XML
         // format — exactly the TextXml fallback's wire shape.
         ActionProtocol::TextXml => "protocol-unified-grammar",
@@ -121,6 +121,7 @@ fn protocol_slug(protocol: ActionProtocol) -> &'static str {
     match protocol {
         ActionProtocol::NativeTools => "native",
         ActionProtocol::ConstrainedJson => "constrained",
+        ActionProtocol::Plan => "plan",
         ActionProtocol::TextXml => "xml",
     }
 }

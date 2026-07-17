@@ -176,10 +176,10 @@ pub(crate) struct RunConfigArgs {
     pub prompts_dir: Option<PathBuf>,
     pub max_ring: Option<u8>,
     pub profile_dir: PathBuf,
-    /// `--model` (openai backend) — the key
     /// used to look up a persisted profile record (ADR-029). `None` skips the
     /// lookup entirely (matches today's behavior when neither flag is set).
     pub model_key: Option<String>,
+    pub hooks: Option<ferric_core::HooksConfig>,
 }
 
 /// Everything derived from `RunConfigArgs` that a loop execution needs, minus
@@ -198,6 +198,7 @@ pub(crate) struct RunConfig {
     /// (which owns the trace sink, not yet open when this is built) is
     /// responsible for recording it as a `Note` once a sink exists.
     pub prompt_composition_error: Option<String>,
+    pub hooks: Option<ferric_core::HooksConfig>,
 }
 
 pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
@@ -323,6 +324,7 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
         system_prompt,
         lineage,
         prompt_composition_error,
+        hooks: a.hooks.clone(),
     }
 }
 
@@ -442,6 +444,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             .backend_opts
             .model
             .clone(),
+        hooks: cfg.hooks.clone(),
     });
 
     // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
@@ -673,6 +676,10 @@ pub(crate) fn mock_provider(protocol: ActionProtocol) -> MockProvider {
             json_completion("write_file", &write_args),
             json_completion(ferric_loop::TASK_COMPLETE, &done_args),
         ],
+        ActionProtocol::Plan => vec![
+            json_completion("grep_search", &json!({"query": "mock", "path": "."})),
+            json_completion(ferric_loop::SUBMIT_PLAN, &json!({"plan": "mock plan complete"})),
+        ],
         ActionProtocol::TextXml => vec![
             xml_completion("write_file", &write_args),
             xml_completion(ferric_loop::TASK_COMPLETE, &done_args),
@@ -753,9 +760,12 @@ pub(crate) async fn run_with_provider(
     resume: Option<ferric_loop::ReplayedState>,
     taint_set: ferric_guard::TaintSet,
     sink_policy: ferric_guard::SinkPolicy,
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    hooks: Option<ferric_core::HooksConfig>,
 ) -> Result<LoopOutcome, String> {
     run(
         RunArgs {
+            cancel_flag,
             provider,
             registry,
             workspace,
@@ -770,6 +780,7 @@ pub(crate) async fn run_with_provider(
             resume,
             taint_set,
             sink_policy,
+            hooks,
         },
         sink,
         prompt,
@@ -812,6 +823,8 @@ fn drive_mock(
         resume,
         taint_set,
         sink_policy,
+        None,
+        config.hooks,
     ))
 }
 
@@ -838,6 +851,15 @@ fn drive_real(
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
         let provider_box = create_provider(&args.backend_opts).await?;
+        let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_flag_clone = cancel_flag.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                cancel_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                eprintln!("\n[Received Ctrl-C, interrupting gracefully...]");
+            }
+        });
+        
         let mut effective_prompt = prompt.map(|s| s.to_string());
         if let Some(rq) = research_query {
             // Perform research
@@ -880,6 +902,8 @@ fn drive_real(
             resume,
             taint_set,
             sink_policy,
+            Some(cancel_flag),
+            config.hooks,
         )
         .await
     })
@@ -978,6 +1002,7 @@ mod tests {
             None,
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
+            None,
         ))
         .unwrap();
 

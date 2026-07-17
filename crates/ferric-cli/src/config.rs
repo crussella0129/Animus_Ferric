@@ -24,6 +24,7 @@ pub struct Config {
     pub max_ring: Option<u8>,
     pub profile_dir: Option<PathBuf>,
     pub stream: Option<bool>,
+    pub hooks: Option<ferric_core::HooksConfig>,
 }
 
 impl Config {
@@ -42,6 +43,7 @@ impl Config {
             max_ring: self.max_ring.or(user.max_ring),
             profile_dir: self.profile_dir.or(user.profile_dir),
             stream: self.stream.or(user.stream),
+            hooks: self.hooks.or(user.hooks),
         }
     }
 }

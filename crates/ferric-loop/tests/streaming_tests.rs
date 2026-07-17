@@ -53,7 +53,7 @@ impl Provider for ScriptedStreamingProvider {
         }
     }
 
-    async fn complete(&self, _request: CompletionRequest) -> Result<Completion, ProviderError> {
+    async fn complete(&self, _request: CompletionRequest, _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>) -> Result<Completion, ProviderError> {
         unreachable!("test provider only exercises complete_streaming")
     }
 
@@ -61,6 +61,7 @@ impl Provider for ScriptedStreamingProvider {
         &self,
         _request: CompletionRequest,
         on_delta: &(dyn Fn(StreamDelta) + Sync),
+        _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Completion, ProviderError> {
         let (deltas, result) = self
             .script
@@ -105,6 +106,7 @@ fn stream_sink_some_drives_dispatch() {
 
     let outcome = futures_executor::block_on(run(
         RunArgs {
+            cancel_flag: None,
 sink_policy: ferric_guard::SinkPolicy::deny(),
 taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
@@ -165,6 +167,7 @@ fn streaming_retry_does_not_replay_failed_attempt_deltas() {
 
     let outcome = futures_executor::block_on(run(
         RunArgs {
+            cancel_flag: None,
 sink_policy: ferric_guard::SinkPolicy::deny(),
 taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
