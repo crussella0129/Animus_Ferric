@@ -837,3 +837,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-17
 - **Files modified:** Cargo.toml, crates/ferric-icm/{Cargo.toml,src/lib.rs,tests/workspace.rs}, crates/ferric-cli/{Cargo.toml,src/main.rs,src/icm.rs,tests/cli.rs}, docs/icm.md, decisions.md, agent-tasks/agent-tasks.md, README.md
 - **Commit:** pending
+
+
+## T-7401 (sprint 74)
+- **Description:** ICM increment 2 — live per-stage execution. Added `ferric icm run <workspace>`: drives each stage's composed context through the constrained loop via `run_with_provider` (reusing guard/loop-guards/compaction/hooks/trace), in numeric order, each stage contained to its OWN `stages/NN_*/` folder (enforced containment, stronger than the paper). Halt-on-failure (inspects the LoopOutcome terminator), human review gates between stages (`--auto` skips; `--from`/`--to` range; `--mock` offline), fresh mock per stage (single-use scripted provider), config+real-provider built once and reused. Enhanced `ferric-icm::compose_stage` to append the contract Outputs directive so a live agent knows where to write. Traces land centrally at `<ws>/.ferric/trace/`. 4 new tests (full pipeline in-order + containment, review-gate `q` stop, stage range, compose outputs directive). Docs: docs/icm.md updated, ADR-065.
+- **Completed:** 2026-07-17
+- **Files modified:** crates/ferric-icm/src/lib.rs, crates/ferric-icm/tests/workspace.rs, crates/ferric-cli/src/icm.rs, crates/ferric-cli/tests/cli.rs, docs/icm.md, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending

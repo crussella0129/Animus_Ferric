@@ -117,20 +117,54 @@ ferric icm init ./my-workspace
 # made inspectable.
 ferric icm plan ./my-workspace
 ferric icm plan ./my-workspace --show-context   # also print each composed prompt
+
+# Run the pipeline. Each stage's composed context is fed into the same
+# constrained agent loop `ferric query` drives, in numeric order.
+ferric icm run ./my-workspace                    # pauses for review between stages
+ferric icm run ./my-workspace --auto             # run straight through, no gates
+ferric icm run ./my-workspace --from 2 --to 2    # run only stage 2
+ferric icm run ./my-workspace --auto --mock      # offline dry-run of the wiring
 ```
 
 A `!` in the plan marks a declared input that is absent (e.g. an upstream stage
 has not run yet) — expected before a run, not an error.
+
+### How `run` works
+
+For each stage in the chosen range, `ferric icm run`:
+
+1. Composes the stage's scoped context (the same `OrchestrationPlan` `plan`
+   prints), including the Outputs directive telling the agent where to write.
+2. Runs it through the constrained agent loop (`run_with_provider` — the exact
+   path `ferric query` uses: guard, loop guards, JSONL trace), with the stage's
+   **own folder** as the workspace boundary.
+3. Checks the terminator. A successful stop (`task_complete` / `submit_plan` /
+   final text) continues the pipeline; any other stop (max turns, provider error,
+   guard trip) **halts** it — a downstream stage must not read untrustworthy
+   output.
+4. Unless `--auto`, pauses at a **review gate** before the next stage: you edit
+   the output on disk, then press Enter to continue or `q` to stop. The next
+   stage reads whatever you left there.
+
+Each stage writes one trace to `<workspace>/.ferric/trace/icm-<stage>-<ts>.jsonl`.
+
+**Containment (stronger than the paper).** Each stage runs bounded to its own
+`stages/NN_*/` folder, so a stage can only write inside its own directory — it
+cannot clobber a sibling stage or the shared config. This works because the
+composed context already folds the prior stage's output in as Layer 4, so a stage
+never needs cross-stage filesystem *reads*; cross-stage data flows only through
+the composed context and the review gate.
 
 ## Increments
 
 - **Increment 1 (sprint 73, ADR-064) — the model + inspection + scaffold.** The
   `ferric-icm` crate: discover a workspace, parse contracts, compose each stage's
   scoped context (guard-checked) into an `OrchestrationPlan`, and scaffold a new
-  workspace skeleton. Surfaced via `ferric icm init` / `ferric icm plan`. The
-  delegation structure is fully realized as data.
-- **Increment 2 (planned) — live execution.** `ferric icm run` feeds each
-  composed stage prompt into the constrained agent loop (`ferric-loop::run`,
-  guard-contained, traced) in numeric order, with human review gates between
-  stages (`--auto` to run straight through). The plan increment 1 produces is
-  exactly what it executes.
+  workspace skeleton. Surfaced via `ferric icm init` / `ferric icm plan`.
+- **Increment 2 (sprint 74, ADR-065) — live execution.** `ferric icm run`
+  executes the pipeline stage by stage through the constrained loop, each stage
+  contained to its own folder, with halt-on-failure and human review gates
+  (`--auto`, `--from`/`--to`, `--mock`). The delegation actually runs.
+- **Later (deferred).** Ornstein-quarantining of externally-sourced Layer 4
+  content (a web-fetching research stage); a GECK-style workspace-builder;
+  conditional/branch routing (ICM is sequential by design).
