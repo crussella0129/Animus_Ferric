@@ -200,10 +200,10 @@ impl Provider for OpenAiProvider {
                     break res;
                 }
                 _ = interval.tick() => {
-                    if let Some(cancel) = &cancel_flag {
-                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            return Err(ProviderError::Backend("Interrupted".into()));
-                        }
+                    if let Some(cancel) = &cancel_flag
+                        && cancel.load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        return Err(ProviderError::Backend("Interrupted".into()));
                     }
                 }
             }
@@ -339,10 +339,10 @@ impl Provider for OpenAiProvider {
                     }
                 }
                 _ = interval.tick() => {
-                    if let Some(cancel) = &cancel_flag {
-                        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                            return Err(ProviderError::Backend("Interrupted".into()));
-                        }
+                    if let Some(cancel) = &cancel_flag
+                        && cancel.load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        return Err(ProviderError::Backend("Interrupted".into()));
                     }
                     continue;
                 }

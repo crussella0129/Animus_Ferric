@@ -59,7 +59,14 @@ impl Vcs {
         let tag_name = format!("refs/ferric/{}/{}", session_id, turn_id);
 
         // Use `git restore`
-        self.run_git(&["restore", "--source", &tag_name, "--worktree", "--staged", "."])?;
+        self.run_git(&[
+            "restore",
+            "--source",
+            &tag_name,
+            "--worktree",
+            "--staged",
+            ".",
+        ])?;
         // Clean untracked files (since restore leaves them)
         self.run_git(&["clean", "-fd"])?;
 

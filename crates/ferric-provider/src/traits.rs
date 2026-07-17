@@ -114,7 +114,8 @@ mod tests {
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
         let streamed =
-            futures_executor::block_on(provider.complete_streaming(request(), &sink, None)).unwrap();
+            futures_executor::block_on(provider.complete_streaming(request(), &sink, None))
+                .unwrap();
         let plain = futures_executor::block_on(
             MockProvider::new(vec![text_completion("hello there")]).complete(request(), None),
         )

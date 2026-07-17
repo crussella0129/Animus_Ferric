@@ -83,7 +83,7 @@ fn branch_for(tool: &ToolDescriptor) -> Value {
 pub fn parse_json_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseError> {
     let value: Value =
         serde_json::from_str(text.trim()).map_err(|e| ActionParseError::NotJson(e.to_string()))?;
-    
+
     let name = match value.get("tool").and_then(Value::as_str) {
         Some(n) if !n.is_empty() => n.to_string(),
         _ => return Err(ActionParseError::MissingTool),
@@ -93,7 +93,7 @@ pub fn parse_json_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseE
         Some(_) => return Err(ActionParseError::ArgsNotAnObject),
         None => return Err(ActionParseError::MissingArgs),
     };
-    
+
     Ok(ToolCall {
         id: format!("g-{turn}-0"),
         name,
@@ -167,7 +167,11 @@ mod tests {
 
     #[test]
     fn parse_json_action_happy() {
-        let call = parse_json_action(0, r#"{"thought": "...", "tool":"read_file","args":{"path":"foo.txt"}}"#).unwrap();
+        let call = parse_json_action(
+            0,
+            r#"{"thought": "...", "tool":"read_file","args":{"path":"foo.txt"}}"#,
+        )
+        .unwrap();
         assert_eq!(call.name, "read_file");
         assert_eq!(call.args, json!({"path":"foo.txt"}));
         assert_eq!(call.id, "g-0-0");

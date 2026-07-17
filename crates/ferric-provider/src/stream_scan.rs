@@ -55,17 +55,18 @@ impl ConstrainedJsonScanner {
             if let Some(start) = self.thought_value_start
                 && start <= accumulated.len()
             {
-                let (decoded, complete, consumed_bytes) = decode_json_string_prefix(&accumulated[start..]);
-                    if decoded.len() > self.thought_emitted_len {
-                        let new_part = decoded[self.thought_emitted_len..].to_string();
-                        self.thought_emitted_len = decoded.len();
-                        deltas.push(StreamDelta::Thought(new_part));
-                    }
-                    if complete {
-                        self.thought_done = true;
-                        self.thought_value_end = Some(start + consumed_bytes);
-                    }
+                let (decoded, complete, consumed_bytes) =
+                    decode_json_string_prefix(&accumulated[start..]);
+                if decoded.len() > self.thought_emitted_len {
+                    let new_part = decoded[self.thought_emitted_len..].to_string();
+                    self.thought_emitted_len = decoded.len();
+                    deltas.push(StreamDelta::Thought(new_part));
                 }
+                if complete {
+                    self.thought_done = true;
+                    self.thought_value_end = Some(start + consumed_bytes);
+                }
+            }
         }
 
         // Must wait for thought to finish so we don't falsely match "tool":"..." inside the thought string.
@@ -89,7 +90,8 @@ impl ConstrainedJsonScanner {
         }
 
         if self.summary_value_start.is_none() {
-            self.summary_value_start = find_summary_value_start(accumulated, search_start_after_thought);
+            self.summary_value_start =
+                find_summary_value_start(accumulated, search_start_after_thought);
         }
         let Some(start) = self.summary_value_start else {
             return deltas;
@@ -131,13 +133,17 @@ fn find_summary_value_start(accumulated: &str, start_offset: usize) -> Option<us
 /// until it finds the opening `"` of the string value. Returns the offset immediately
 /// AFTER that opening `"`.
 fn find_key_value_start(accumulated: &str, start_offset: usize, key: &str) -> Option<usize> {
-    if start_offset >= accumulated.len() { return None; }
+    if start_offset >= accumulated.len() {
+        return None;
+    }
     let key_idx = accumulated[start_offset..].find(key)? + start_offset;
     let chars = accumulated[key_idx + key.len()..].char_indices();
-    
+
     let mut found_colon = false;
     for (i, c) in chars {
-        if c.is_whitespace() { continue; }
+        if c.is_whitespace() {
+            continue;
+        }
         if c == ':' && !found_colon {
             found_colon = true;
             continue;
@@ -298,7 +304,8 @@ mod tests {
     /// its args — only the `ToolNamed` activity signal fires.
     #[test]
     fn non_task_complete_tool_never_emits_text() {
-        let full = r#"{"thought":"","tool":"write_file","args":{"path":"a.txt","content":"secret data"}}"#;
+        let full =
+            r#"{"thought":"","tool":"write_file","args":{"path":"a.txt","content":"secret data"}}"#;
         let mut scanner = ConstrainedJsonScanner::new();
         let mut texts = Vec::new();
         let mut tool_named = Vec::new();
@@ -441,7 +448,8 @@ mod tests {
     /// than stalling forever waiting for a resolution that can never come.
     #[test]
     fn malformed_unicode_escape_stops_gracefully() {
-        let full = r#"{"thought":"","tool":"task_complete","args":{"summary":"x\u12XY more text"}}"#;
+        let full =
+            r#"{"thought":"","tool":"task_complete","args":{"summary":"x\u12XY more text"}}"#;
         let mut scanner = ConstrainedJsonScanner::new();
         let text: String = scanner
             .scan(full)

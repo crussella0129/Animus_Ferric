@@ -77,7 +77,9 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     if projector.head_len == 0 {
         return Err(ReplayError::MissingSessionPrompt);
     }
-    let protocol = projector.protocol.ok_or(ReplayError::MissingSessionPrompt)?;
+    let protocol = projector
+        .protocol
+        .ok_or(ReplayError::MissingSessionPrompt)?;
     let source_session = source_session.ok_or(ReplayError::MissingSessionPrompt)?;
 
     Ok(ReplayedState {

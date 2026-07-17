@@ -251,4 +251,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 69 — Dream Mode** (2026-07-17). Introduced `ferric dream`, an offline knowledge extraction command that asynchronously parses historical JSONL traces from `.ferric/traces/`. It consolidates previous agent activity (user requests, structural discoveries, recurring bugs) into a synthesized `MEMORY.md` persistent knowledge base using the configured LLM backend.
 
+- **Sprint 70 — CI Stability & Architectural Review** (2026-07-17). Fixed lingering GitHub Actions CI failures caused by strict `-D warnings` enforcement for `clippy::collapsible_if` nested conditions in `ferric-loop` and `ferric-provider`, alongside miscellaneous cleanup in `ferric-cli`. Conducted a comprehensive codebase review, seeding `agent-tasks.md` with forward-looking architectural priorities including `tracing` observability, procedural macro tool registration, and parallel execution for side-effect-free tool capabilities.
+
 > **Next — TBD.** Agent Delegation Structure (ICM) / Agentic Cron Jobs.

@@ -1,10 +1,10 @@
 use std::path::Path;
 
 use ferric_core::Message;
-use ferric_loop::{RunArgs, ThreadSleeper};
 use ferric_guard::Workspace;
+use ferric_loop::{RunArgs, ThreadSleeper};
 use ferric_provider::{Completion, MockProvider};
-use ferric_trace::{Event, TraceReader, JsonlSink};
+use ferric_trace::{Event, JsonlSink, TraceReader};
 use std::process::ExitCode;
 
 pub fn trace_verify(golden: &Path) -> ExitCode {
@@ -36,7 +36,7 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
     let mut current_tool_calls = Vec::new();
     let mut system_prompt = String::new();
     let mut initial_user_prompt = String::new();
-    
+
     let mut workspace_path = String::new();
     let mut policy = ferric_core::RunPolicy {
         tier: ferric_core::Tier::Small,
@@ -60,7 +60,14 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
             Event::SessionStart { workspace, .. } => {
                 workspace_path = workspace.clone();
             }
-            Event::PolicySelected { tier, protocol: p, max_turns, max_tools, prompt_budget_tokens, max_output_tokens } => {
+            Event::PolicySelected {
+                tier,
+                protocol: p,
+                max_turns,
+                max_tools,
+                prompt_budget_tokens,
+                max_output_tokens,
+            } => {
                 protocol = *p;
                 policy = ferric_core::RunPolicy {
                     tier: *tier,
@@ -78,7 +85,11 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
                     compact_keep_last_turns: 2,
                 };
             }
-            Event::SessionPrompt { system, user, media: _ } => {
+            Event::SessionPrompt {
+                system,
+                user,
+                media: _,
+            } => {
                 system_prompt = system.clone();
                 initial_user_prompt = user.clone();
             }
@@ -89,7 +100,13 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
                     args: args.clone(),
                 });
             }
-            Event::TurnEnd { text, input_tokens, output_tokens, truncated, .. } => {
+            Event::TurnEnd {
+                text,
+                input_tokens,
+                output_tokens,
+                truncated,
+                ..
+            } => {
                 let message = Message {
                     role: ferric_core::Role::Assistant,
                     text: text.clone(),
@@ -110,10 +127,11 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
     }
 
     let provider = MockProvider::new(script);
-    
+
     // We cannot construct the original workspace if it doesn't exist, but typically trace verify is run inside the workspace or we create a dummy one.
     // For now, if the original workspace path fails, we fallback to current dir.
-    let workspace = Workspace::new(&workspace_path).unwrap_or_else(|_| Workspace::new(std::env::current_dir().unwrap()).unwrap());
+    let workspace = Workspace::new(&workspace_path)
+        .unwrap_or_else(|_| Workspace::new(std::env::current_dir().unwrap()).unwrap());
 
     let mut registry = ferric_tools::Registry::new();
     ferric_tools::register_builtin_tools(&mut registry);
@@ -128,7 +146,7 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
     let sleeper = ThreadSleeper;
 
     let args = RunArgs {
-            cancel_flag: None,
+        cancel_flag: None,
         provider: &provider,
         registry: &registry,
         workspace: &workspace,
@@ -156,15 +174,33 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
         Ok(_) => {
             // Compare traces
             let new_reader = TraceReader::open(&trace_path).unwrap();
-            let new_events: Vec<_> = new_reader.into_iter().filter_map(|e| e.ok()).map(|pe| pe.event).filter_map(|e| if let ferric_trace::ParsedEvent::Known(ev) = e { Some(ev) } else { None }).collect();
-            
+            let new_events: Vec<_> = new_reader
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .map(|pe| pe.event)
+                .filter_map(|e| {
+                    if let ferric_trace::ParsedEvent::Known(ev) = e {
+                        Some(ev)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             if new_events.len() != events.len() {
-                eprintln!("Mismatch in number of events: {} vs golden {}", new_events.len(), events.len());
+                eprintln!(
+                    "Mismatch in number of events: {} vs golden {}",
+                    new_events.len(),
+                    events.len()
+                );
                 std::process::exit(1);
             }
             for (i, (new_event, golden_event)) in new_events.iter().zip(events.iter()).enumerate() {
                 if std::mem::discriminant(new_event) != std::mem::discriminant(golden_event) {
-                    eprintln!("Event mismatch at index {}: {:?} vs {:?}", i, new_event, golden_event);
+                    eprintln!(
+                        "Event mismatch at index {}: {:?} vs {:?}",
+                        i, new_event, golden_event
+                    );
                     std::process::exit(1);
                 }
             }

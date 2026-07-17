@@ -22,7 +22,9 @@ fn constrained_json_dispatches_tool() {
             json_completion(
                 json!({"thought": "...", "tool": "write_file", "args": {"path": "out.txt", "content": "hi"}}),
             ),
-            json_completion(json!({"thought": "...", "tool": "task_complete", "args": {"summary": "wrote out.txt"}})),
+            json_completion(
+                json!({"thought": "...", "tool": "task_complete", "args": {"summary": "wrote out.txt"}}),
+            ),
         ],
         &nano_policy(),
         ActionProtocol::ConstrainedJson,
@@ -91,7 +93,9 @@ fn plan_mode_dispatches_read_tools_and_terminates() {
             json_completion(
                 json!({"thought": "...", "tool": "search_files", "args": {"query": "foo", "path": "."}}),
             ),
-            json_completion(json!({"thought": "...", "tool": "submit_plan", "args": {"plan": "found foo"}})),
+            json_completion(
+                json!({"thought": "...", "tool": "submit_plan", "args": {"plan": "found foo"}}),
+            ),
         ],
         &nano_policy(),
         ActionProtocol::Plan,
@@ -104,7 +108,10 @@ fn plan_mode_dispatches_read_tools_and_terminates() {
                         let text = schema.to_string();
                         assert!(text.contains("search_files"));
                         assert!(text.contains("submit_plan"));
-                        assert!(!text.contains("write_file"), "write_file should be excluded from plan mode");
+                        assert!(
+                            !text.contains("write_file"),
+                            "write_file should be excluded from plan mode"
+                        );
                     }
                     _ => panic!("Expected JsonSchema constraint"),
                 }

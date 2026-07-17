@@ -46,15 +46,21 @@ impl Tool for ShellExec {
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let command = args.get("command").and_then(|v| v.as_str()).ok_or("missing 'command' argument")?;
+        let command = args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or("missing 'command' argument")?;
 
-        let is_background = args.get("background").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_background = args
+            .get("background")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 use std::process::Stdio;
                 use tokio::io::AsyncReadExt;
-                
+
                 let mut cmd = if cfg!(windows) {
                     let mut c = tokio::process::Command::new("cmd.exe");
                     c.arg("/C").arg(command);
@@ -65,8 +71,7 @@ impl Tool for ShellExec {
                     c
                 };
 
-                cmd.current_dir(ctx.workspace.root())
-                    .kill_on_drop(true);
+                cmd.current_dir(ctx.workspace.root()).kill_on_drop(true);
 
                 if is_background {
                     // Create tasks dir if it doesn't exist
@@ -74,23 +79,43 @@ impl Tool for ShellExec {
                     if !tasks_dir.exists() {
                         let _ = std::fs::create_dir_all(&tasks_dir);
                     }
-                    
-                    let id = format!("task-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+
+                    let id = format!(
+                        "task-{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis()
+                    );
                     let log_path = tasks_dir.join(format!("{}.log", id));
-                    
-                    let log_file = std::fs::File::create(&log_path).map_err(|e| format!("failed to create log file: {e}"))?;
-                    cmd.stdout(log_file.try_clone().map_err(|e| format!("failed to clone log file: {e}"))?)
-                        .stderr(log_file)
-                        .stdin(Stdio::piped());
+
+                    let log_file = std::fs::File::create(&log_path)
+                        .map_err(|e| format!("failed to create log file: {e}"))?;
+                    cmd.stdout(
+                        log_file
+                            .try_clone()
+                            .map_err(|e| format!("failed to clone log file: {e}"))?,
+                    )
+                    .stderr(log_file)
+                    .stdin(Stdio::piped());
 
                     let child = match cmd.spawn() {
                         Ok(c) => c,
                         Err(e) => return Err(format!("failed to spawn background command: {e}")),
                     };
 
-                    crate::builtin::task_registry::spawn_task(id.clone(), command.to_string(), log_path.clone(), child);
-                    
-                    return Ok(format!("Started background task {}. Log file: {}. Use manage_task to interact.", id, log_path.display()));
+                    crate::builtin::task_registry::spawn_task(
+                        id.clone(),
+                        command.to_string(),
+                        log_path.clone(),
+                        child,
+                    );
+
+                    return Ok(format!(
+                        "Started background task {}. Log file: {}. Use manage_task to interact.",
+                        id,
+                        log_path.display()
+                    ));
                 }
 
                 cmd.stdout(Stdio::piped())
@@ -123,7 +148,9 @@ impl Tool for ShellExec {
                 let mut timed_out = false;
                 match tokio::time::timeout(timeout, async {
                     let _ = tokio::join!(child.wait(), read_pipes);
-                }).await {
+                })
+                .await
+                {
                     Ok(_) => {}
                     Err(_) => {
                         let _ = child.kill().await;
@@ -133,20 +160,23 @@ impl Tool for ShellExec {
 
                 let out_str = String::from_utf8_lossy(&out_buf);
                 let err_str = String::from_utf8_lossy(&err_buf);
-                
+
                 let mut full_output = String::new();
                 if !out_str.is_empty() {
                     full_output.push_str(&out_str);
                 }
                 if !err_str.is_empty() {
                     if !full_output.is_empty() {
-                        full_output.push_str("\n");
+                        full_output.push('\n');
                     }
                     full_output.push_str(&err_str);
                 }
 
                 let mut result_text = if timed_out {
-                    format!("Command timed out after {} seconds.\nOutput:\n", TIMEOUT_SECS)
+                    format!(
+                        "Command timed out after {} seconds.\nOutput:\n",
+                        TIMEOUT_SECS
+                    )
                 } else {
                     String::new()
                 };
@@ -172,8 +202,8 @@ impl Tool for ShellExec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferric_guard::Workspace;
     use crate::spec::ToolCtx;
+    use ferric_guard::Workspace;
     use serde_json::json;
 
     fn temp_workspace() -> (tempfile::TempDir, Workspace) {
@@ -187,9 +217,9 @@ mod tests {
         let (_dir, ws) = temp_workspace();
         let ctx = ToolCtx { workspace: &ws };
         let tool = ShellExec;
-        
+
         let cmd = "echo ping";
-        
+
         let args = json!({"command": cmd});
         let result = tool.run(&ctx, &args);
         assert!(result.is_ok());
@@ -200,17 +230,17 @@ mod tests {
         let (_dir, ws) = temp_workspace();
         let ctx = ToolCtx { workspace: &ws };
         let tool = ShellExec;
-        
+
         let cmd = if cfg!(windows) {
             // Output a lot of text using a loop
             "for /L %i in (1,1,2000) do @echo yyyyyy"
         } else {
             "for i in $(seq 1 2000); do echo yyyyyy; done"
         };
-        
+
         let args = json!({"command": cmd});
         let result = tool.run(&ctx, &args).unwrap();
-        
+
         // Capped at 10,000 + length of truncation notice
         assert!(result.len() <= OUTPUT_LIMIT + 100);
         assert!(result.contains("[TRUNCATED]"));

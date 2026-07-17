@@ -9,9 +9,9 @@ use std::process::ExitCode;
 
 use clap::Args;
 use ferric_bench::{
-    BenchSpec, Invocation, ModelProfileRecord, OpenAiArgs, ResultRow, append_row,
-    calibrate, completed, embedded_specs, failure_admission, parse_trace, run_spec,
-    verify_expectations, verify_tools,
+    BenchSpec, Invocation, ModelProfileRecord, OpenAiArgs, ResultRow, append_row, calibrate,
+    completed, embedded_specs, failure_admission, parse_trace, run_spec, verify_expectations,
+    verify_tools,
 };
 use ferric_core::{ActionProtocol, tier_for_params};
 

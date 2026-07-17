@@ -312,7 +312,7 @@ impl McpServer {
     fn handle_prompts_get(&self, id: Value, params: &Value) -> RpcResponse {
         let name = params.get("name").and_then(Value::as_str).unwrap_or("");
         let skills = crate::skills::load_skills(self.workspace.root());
-        
+
         if let Some(skill) = skills.into_iter().find(|s| s.name == name) {
             RpcResponse::success(
                 id,
@@ -516,9 +516,7 @@ impl McpServer {
             // C-001 (plan-critic): derived from the POST-merge, config-
             // resolved `model`/`model_file` (already merged above into
             // `backend_opts`).
-            model_key: backend_opts
-                .model
-                .clone(),
+            model_key: backend_opts.model.clone(),
             hooks: None,
         });
 
@@ -846,6 +844,7 @@ mod tests {
             max_ring: None,
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
+            hooks: None,
         });
         let trace_dir = dir.join(".ferric").join("trace");
         std::fs::create_dir_all(&trace_dir).unwrap();

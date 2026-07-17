@@ -1,11 +1,11 @@
 use ferric_core::hooks::HooksConfig;
-use ferric_core::{ActionProtocol, ModelProfile, Message, Role};
 use ferric_core::policy_for;
-use ferric_loop::{run, RunArgs, StopReason};
-use ferric_guard::{TaintSet, SinkPolicy, SinkAction, Workspace};
+use ferric_core::{ActionProtocol, Message, ModelProfile, Role};
+use ferric_guard::{SinkAction, SinkPolicy, TaintSet, Workspace};
+use ferric_loop::{RunArgs, StopReason, run};
+use ferric_provider::Completion;
 use ferric_provider::MockProvider;
 use ferric_provider::SamplingParams;
-use ferric_provider::Completion;
 use ferric_tools::Registry;
 use ferric_trace::JsonlSink;
 use tempfile::tempdir;
@@ -14,17 +14,17 @@ use tempfile::tempdir;
 fn test_hooks_success() {
     let dir = tempdir().unwrap();
     let root = dir.path().to_path_buf();
-    
+
     // Initialize git repo to prevent git from walking up the tree
     std::process::Command::new("git")
         .arg("init")
         .current_dir(&root)
         .output()
         .unwrap();
-    
+
     let pre_turn_file = root.join("pre.txt");
     let post_turn_file = root.join("post.txt");
-    
+
     let pre_turn_cmd = format!("echo pre > {}", pre_turn_file.display());
     let post_turn_cmd = format!("echo post > {}", post_turn_file.display());
 
@@ -36,7 +36,7 @@ fn test_hooks_success() {
 
     let workspace = Workspace::new(&root).unwrap();
     let registry = Registry::new();
-    
+
     let completion = Completion {
         message: Message {
             role: Role::Assistant,
@@ -50,7 +50,7 @@ fn test_hooks_success() {
         truncated: false,
     };
     let provider = MockProvider::new(vec![completion]);
-    
+
     let profile = ModelProfile {
         params_b: 7.0,
         quant: "Q4".to_string(),
@@ -84,7 +84,7 @@ fn test_hooks_success() {
     };
 
     let outcome = futures_executor::block_on(run(args, &mut sink, Some("prompt"))).unwrap();
-    
+
     // Empty completion results in StopReason::FinalText for NativeTools
     assert_eq!(outcome.stop, StopReason::FinalText);
 
@@ -96,7 +96,7 @@ fn test_hooks_success() {
 fn test_hooks_error() {
     let dir = tempdir().unwrap();
     let root = dir.path().to_path_buf();
-    
+
     let on_error_file = root.join("error.txt");
     let on_error_cmd = format!("echo err > {}", on_error_file.display());
 
@@ -109,7 +109,7 @@ fn test_hooks_error() {
     let workspace = Workspace::new(&root).unwrap();
     let registry = Registry::new();
     let provider = MockProvider::new(vec![]); // Will return ProviderError
-    
+
     let profile = ModelProfile {
         params_b: 7.0,
         quant: "Q4".to_string(),
@@ -142,7 +142,7 @@ fn test_hooks_error() {
     };
 
     let outcome = futures_executor::block_on(run(args, &mut sink, Some("prompt"))).unwrap();
-    
+
     assert_eq!(outcome.stop, StopReason::ProviderError);
     assert!(on_error_file.exists());
 }

@@ -88,12 +88,15 @@ fn mock_loop_skeleton() {
     let mut final_text = None;
 
     for _turn in 0..policy.max_turns {
-        let completion = futures_executor::block_on(provider.complete(CompletionRequest {
-            messages: messages.clone(),
-            sampling: SamplingParams::default(),
-            tools: tools.clone(),
-            constraint: None,
-        }, None))
+        let completion = futures_executor::block_on(provider.complete(
+            CompletionRequest {
+                messages: messages.clone(),
+                sampling: SamplingParams::default(),
+                tools: tools.clone(),
+                constraint: None,
+            },
+            None,
+        ))
         .unwrap();
         messages.push(completion.message.clone());
 
@@ -108,7 +111,13 @@ fn mock_loop_skeleton() {
                 args: call.args.clone(),
             })
             .unwrap();
-            match registry.execute(&workspace, &call.name, &call.args, &ferric_guard::TaintSet::new(), &ferric_guard::SinkPolicy::deny()) {
+            match registry.execute(
+                &workspace,
+                &call.name,
+                &call.args,
+                &ferric_guard::TaintSet::new(),
+                &ferric_guard::SinkPolicy::deny(),
+            ) {
                 ExecuteOutcome::Completed {
                     output,
                     duration_ms,

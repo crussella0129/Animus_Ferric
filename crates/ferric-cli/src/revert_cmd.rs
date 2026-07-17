@@ -1,4 +1,3 @@
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -30,6 +29,7 @@ pub fn run_revert(args: RevertArgs) -> ExitCode {
     })
 }
 
+#[allow(clippy::collapsible_if)]
 async fn revert_inner(args: RevertArgs) -> Result<(), String> {
     let reader = TraceReader::open(&args.trace).map_err(|e| format!("cannot open trace: {e}"))?;
     let mut session_id = String::new();
@@ -40,9 +40,11 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
         if session_id.is_empty() {
             session_id = record.session.clone();
         }
-        
+
         // Let's see if we need to do this or if we just want to execute the VCS revert.
-        if let ferric_trace::ParsedEvent::Known(ferric_trace::Event::TurnEnd { turn, .. }) = record.event {
+        if let ferric_trace::ParsedEvent::Known(ferric_trace::Event::TurnEnd { turn, .. }) =
+            record.event
+        {
             if turn == args.turn {
                 target_turn_found = true;
             }
@@ -57,13 +59,18 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
     // Assuming the workspace root is the current directory for now, or we can find it via the trace
     let workspace_root = std::env::current_dir().map_err(|e| format!("io error: {e}"))?;
     let vcs = ferric_vcs::Vcs::new(workspace_root);
-    
-    println!("Reverting workspace to session {}, turn {}...", session_id, args.turn);
-    vcs.revert(&session_id, args.turn).await.map_err(|e| format!("vcs error: {e}"))?;
+
+    println!(
+        "Reverting workspace to session {}, turn {}...",
+        session_id, args.turn
+    );
+    vcs.revert(&session_id, args.turn)
+        .await
+        .map_err(|e| format!("vcs error: {e}"))?;
 
     println!("Workspace reverted successfully.");
 
-    // Note: Trace truncation is complex if TraceReader doesn't track offsets. 
+    // Note: Trace truncation is complex if TraceReader doesn't track offsets.
     // The simplest way to truncate is to read all valid lines up to and including the target TurnEnd,
     // and rewrite the file.
     truncate_trace(&args.trace, args.turn)?;
@@ -71,6 +78,7 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::collapsible_if)]
 fn truncate_trace(path: &std::path::Path, target_turn: u32) -> Result<(), String> {
     let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
     let mut kept_lines = Vec::new();

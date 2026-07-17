@@ -75,7 +75,12 @@ impl Tool for GitWrite {
 
         if subcommand == "commit" {
             // Prevent hanging in an editor by enforcing -m or --message or -am
-            let has_message_flag = cmd_args.iter().any(|a| a == "-m" || a == "--message" || a.starts_with("-am") || (a.starts_with('-') && a.contains('m')));
+            let has_message_flag = cmd_args.iter().any(|a| {
+                a == "-m"
+                    || a == "--message"
+                    || a.starts_with("-am")
+                    || (a.starts_with('-') && a.contains('m'))
+            });
             if !has_message_flag {
                 return Err("git commit requires a message flag (e.g. -m) to prevent hanging in the terminal editor".to_string());
             }

@@ -42,7 +42,11 @@ impl Provider for FlakyProvider {
         }
     }
 
-    async fn complete(&self, _request: CompletionRequest, _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>) -> Result<Completion, ProviderError> {
+    async fn complete(
+        &self,
+        _request: CompletionRequest,
+        _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Completion, ProviderError> {
         self.script
             .lock()
             .unwrap()
@@ -74,8 +78,8 @@ fn run_flaky(script: Vec<Result<Completion, ProviderError>>) -> FlakyRun {
     let outcome = futures_executor::block_on(run(
         RunArgs {
             cancel_flag: None,
-sink_policy: ferric_guard::SinkPolicy::deny(),
-taint_set: ferric_guard::TaintSet::new(),
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -88,6 +92,7 @@ taint_set: ferric_guard::TaintSet::new(),
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            hooks: None,
         },
         &mut sink,
         Some("do the task"),

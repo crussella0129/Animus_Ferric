@@ -78,7 +78,9 @@ impl PendingTurn {
 
         // Truncation handling is ConstrainedJson-only (run.rs mirrors this
         // exact gate) — other protocols ignore the flag and proceed normally.
-        if truncated && (protocol == ActionProtocol::ConstrainedJson || protocol == ActionProtocol::Plan) {
+        if truncated
+            && (protocol == ActionProtocol::ConstrainedJson || protocol == ActionProtocol::Plan)
+        {
             return Some(vec![truncation_retry_message()]);
         }
 
@@ -149,9 +151,14 @@ impl TraceProjector {
     pub fn step(&mut self, event: &Event) {
         match event {
             Event::PolicySelected { protocol, .. } => self.protocol = Some(*protocol),
-            Event::SessionPrompt { system, user, media } => {
+            Event::SessionPrompt {
+                system,
+                user,
+                media,
+            } => {
                 self.messages.push(Message::system(system.clone()));
-                self.messages.push(Message::user_with_media(user.clone(), media.clone()));
+                self.messages
+                    .push(Message::user_with_media(user.clone(), media.clone()));
                 self.head_len = self.messages.len();
             }
             Event::TurnStart { turn } => {
@@ -161,7 +168,9 @@ impl TraceProjector {
                     ..Default::default()
                 });
             }
-            Event::TurnEnd { text, truncated, .. } => {
+            Event::TurnEnd {
+                text, truncated, ..
+            } => {
                 if let Some(p) = &mut self.pending {
                     p.turn_end = Some((text.clone(), *truncated));
                 }
@@ -175,9 +184,12 @@ impl TraceProjector {
                     });
                 }
             }
-            Event::ToolResult { id, name, output, .. } => {
+            Event::ToolResult {
+                id, name, output, ..
+            } => {
                 if let Some(p) = &mut self.pending {
-                    p.tool_results.push((id.clone(), name.clone(), output.clone()));
+                    p.tool_results
+                        .push((id.clone(), name.clone(), output.clone()));
                 }
             }
             Event::RepetitionGuard { action } if action == "warned" => {
@@ -195,7 +207,11 @@ impl TraceProjector {
                     p.failure_warned = true;
                 }
             }
-            Event::HistoryCompacted { through_turn, summary, .. } => {
+            Event::HistoryCompacted {
+                through_turn,
+                summary,
+                ..
+            } => {
                 let split_at = self
                     .committed_turn_starts
                     .partition_point(|&(t, _)| t <= *through_turn);
@@ -207,7 +223,8 @@ impl TraceProjector {
                         .unwrap_or(self.messages.len());
                     let preserved_tail: Vec<Message> = self.messages[preserve_from_idx..].to_vec();
                     self.messages.truncate(self.head_len);
-                    self.messages.push(Message::user(format!("[compacted history] {summary}")));
+                    self.messages
+                        .push(Message::user(format!("[compacted history] {summary}")));
                     let new_base = self.messages.len();
                     self.messages.extend(preserved_tail);
                     let shift = preserve_from_idx - new_base;
@@ -234,7 +251,8 @@ impl TraceProjector {
                 {
                     self.last_text = Some(t.clone());
                 }
-                self.committed_turn_starts.push((turn_num, self.messages.len()));
+                self.committed_turn_starts
+                    .push((turn_num, self.messages.len()));
                 self.messages.extend(msgs);
                 self.turns += 1;
             }

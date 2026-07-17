@@ -111,8 +111,12 @@ pub struct RunPolicy {
     pub compact_keep_last_turns: u8,
 }
 
-fn default_compact_trigger_fraction() -> f32 { 0.85 }
-fn default_compact_keep_last_turns() -> u8 { 2 }
+fn default_compact_trigger_fraction() -> f32 {
+    0.85
+}
+fn default_compact_keep_last_turns() -> u8 {
+    2
+}
 
 /// Tier from parameter count. Boundaries follow Animus `tiers.py`:
 /// NANO < 4B ≤ SMALL < 13B ≤ MEDIUM < 30B ≤ LARGE < 70B ≤ XL < 200B ≤ ULTRA.

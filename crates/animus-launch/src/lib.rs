@@ -177,7 +177,9 @@ pub fn scaffold(spec: &LaunchSpec) -> Result<ScaffoldReport, LaunchError> {
     );
     std::fs::write(spec.path.join("README.md"), readme)?;
 
-    let mut gitignore = String::from("# Sprint-loop working memory (ephemeral) + build output.\nsprints/\ntarget/\n*.tmp\n");
+    let mut gitignore = String::from(
+        "# Sprint-loop working memory (ephemeral) + build output.\nsprints/\ntarget/\n*.tmp\n",
+    );
     let mut files_created = vec![
         "README.md".to_string(),
         ".gitignore".to_string(),
@@ -194,26 +196,41 @@ pub fn scaffold(spec: &LaunchSpec) -> Result<ScaffoldReport, LaunchError> {
             );
             std::fs::write(spec.path.join("Cargo.toml"), cargo_toml)?;
             files_created.push("Cargo.toml".to_string());
-            
+
             std::fs::create_dir_all(spec.path.join("src"))?;
-            std::fs::write(spec.path.join("src").join("main.rs"), "fn main() {\n    println!(\"Hello, world!\");\n}\n")?;
+            std::fs::write(
+                spec.path.join("src").join("main.rs"),
+                "fn main() {\n    println!(\"Hello, world!\");\n}\n",
+            )?;
             files_created.push("src/main.rs".to_string());
         }
         ProjectType::Python => {
             std::fs::write(spec.path.join("requirements.txt"), "")?;
             files_created.push("requirements.txt".to_string());
-            
+
             std::fs::create_dir_all(spec.path.join("src"))?;
-            std::fs::write(spec.path.join("src").join("main.py"), "def main():\n    print(\"Hello, world!\")\n\nif __name__ == \"__main__\":\n    main()\n")?;
+            std::fs::write(
+                spec.path.join("src").join("main.py"),
+                "def main():\n    print(\"Hello, world!\")\n\nif __name__ == \"__main__\":\n    main()\n",
+            )?;
             files_created.push("src/main.py".to_string());
             gitignore.push_str("__pycache__/\n*.pyc\n.venv/\nvenv/\n");
         }
         ProjectType::Web => {
-            std::fs::write(spec.path.join("index.html"), "<!DOCTYPE html>\n<html>\n<head>\n    <title>App</title>\n    <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n    <h1>App</h1>\n    <script src=\"app.js\"></script>\n</body>\n</html>\n")?;
+            std::fs::write(
+                spec.path.join("index.html"),
+                "<!DOCTYPE html>\n<html>\n<head>\n    <title>App</title>\n    <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n    <h1>App</h1>\n    <script src=\"app.js\"></script>\n</body>\n</html>\n",
+            )?;
             files_created.push("index.html".to_string());
-            std::fs::write(spec.path.join("style.css"), "body {\n    font-family: sans-serif;\n}\n")?;
+            std::fs::write(
+                spec.path.join("style.css"),
+                "body {\n    font-family: sans-serif;\n}\n",
+            )?;
             files_created.push("style.css".to_string());
-            std::fs::write(spec.path.join("app.js"), "console.log(\"Hello, world!\");\n")?;
+            std::fs::write(
+                spec.path.join("app.js"),
+                "console.log(\"Hello, world!\");\n",
+            )?;
             files_created.push("app.js".to_string());
         }
         ProjectType::Empty => {}

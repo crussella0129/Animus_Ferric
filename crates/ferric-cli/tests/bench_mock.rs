@@ -65,7 +65,14 @@ fn bench_mock_records_each_requested_level() {
 fn bench_keep_workspace_preserves_dir() {
     let results = tempfile::tempdir().unwrap();
     let out = ferric()
-        .args(["bench", "full", "--mock", "--level", "0", "--keep-workspace"])
+        .args([
+            "bench",
+            "full",
+            "--mock",
+            "--level",
+            "0",
+            "--keep-workspace",
+        ])
         .arg("--results-dir")
         .arg(results.path())
         .output()

@@ -167,6 +167,34 @@ pub fn run_scripted_protocol(
     inspect: impl FnOnce(&MockProvider),
 ) -> RunResult {
     let dir = tempfile::tempdir().unwrap();
+    // Initialize a dummy git repo so vcs.snapshot() doesn't fail and emit Note events.
+    std::process::Command::new("git")
+        .arg("init")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    std::fs::write(dir.path().join("init.txt"), "init").unwrap();
+    std::process::Command::new("git")
+        .args(["add", "init.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
     let workspace = Workspace::new(dir.path()).unwrap();
     let mut registry = Registry::new();
     register_builtin_tools(&mut registry);
@@ -178,8 +206,8 @@ pub fn run_scripted_protocol(
     let outcome = futures_executor::block_on(run(
         RunArgs {
             cancel_flag: None,
-sink_policy: ferric_guard::SinkPolicy::deny(),
-taint_set: ferric_guard::TaintSet::new(),
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -192,6 +220,7 @@ taint_set: ferric_guard::TaintSet::new(),
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            hooks: None,
         },
         &mut sink,
         Some("do the task"),

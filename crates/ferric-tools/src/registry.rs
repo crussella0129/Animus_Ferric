@@ -164,7 +164,11 @@ impl Registry {
         for cmd in tool.target_commands(args) {
             if let Decision::Deny(reason) = ferric_guard::check_command(&cmd) {
                 let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
-                checks.push(CheckRecord::deny(std::path::PathBuf::from(&cmd), reason.rule, &reason.matched));
+                checks.push(CheckRecord::deny(
+                    std::path::PathBuf::from(&cmd),
+                    reason.rule,
+                    &reason.matched,
+                ));
                 return ExecuteOutcome::Denied {
                     reason: detail,
                     checks,
@@ -306,8 +310,8 @@ mod tests {
         registry.register(Box::new(tool));
 
         let outcome = registry.execute(
-            &ws, 
-            "writer", 
+            &ws,
+            "writer",
             &json!({"path": ".git/config"}),
             &ferric_guard::TaintSet::new(),
             &ferric_guard::SinkPolicy::deny(),
@@ -327,8 +331,8 @@ mod tests {
         registry.register(Box::new(tool));
 
         match registry.execute(
-            &ws, 
-            "writer", 
+            &ws,
+            "writer",
             &json!({"path": "notes.md"}),
             &ferric_guard::TaintSet::new(),
             &ferric_guard::SinkPolicy::deny(),
@@ -351,8 +355,8 @@ mod tests {
         registry.register(Box::new(tool));
 
         match registry.execute(
-            &ws, 
-            "writer", 
+            &ws,
+            "writer",
             &json!({"path": ".git/config"}),
             &ferric_guard::TaintSet::new(),
             &ferric_guard::SinkPolicy::deny(),
@@ -375,8 +379,8 @@ mod tests {
         registry.register(Box::new(tool));
 
         let outcome = registry.execute(
-            &ws, 
-            "writer", 
+            &ws,
+            "writer",
             &json!({"path": ".ferric/trace/x.jsonl"}),
             &ferric_guard::TaintSet::new(),
             &ferric_guard::SinkPolicy::deny(),
@@ -399,8 +403,8 @@ mod tests {
         registry.register(Box::new(tool));
 
         match registry.execute(
-            &ws, 
-            "bigout", 
+            &ws,
+            "bigout",
             &json!({}),
             &ferric_guard::TaintSet::new(),
             &ferric_guard::SinkPolicy::deny(),
@@ -554,8 +558,8 @@ mod tests {
         let (_dir, ws) = temp_workspace();
         let registry = Registry::new();
         let outcome = registry.execute(
-            &ws, 
-            "nope", 
+            &ws,
+            "nope",
             &json!({}),
             &ferric_guard::TaintSet::new(),
             &ferric_guard::SinkPolicy::deny(),

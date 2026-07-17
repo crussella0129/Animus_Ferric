@@ -31,9 +31,10 @@ pub fn descriptor() -> ToolDescriptor {
 pub fn plan_descriptor() -> ToolDescriptor {
     ToolDescriptor {
         name: SUBMIT_PLAN.to_string(),
-        description: "Call this when your implementation plan is complete. Args: {\"plan\": string} - \
+        description:
+            "Call this when your implementation plan is complete. Args: {\"plan\": string} - \
                       the full markdown text of the implementation plan."
-            .to_string(),
+                .to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {

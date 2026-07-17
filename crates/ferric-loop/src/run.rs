@@ -63,6 +63,7 @@ pub struct LoopState<'a> {
     pub turns: u32,
     pub offered_names: Vec<String>,
     pub native_tools: Vec<ToolDescriptor>,
+    #[allow(dead_code)]
     pub registry_tools: Vec<ToolDescriptor>,
     pub repetition: crate::repetition::RepetitionGuard,
     pub progress: crate::progress::ProgressGuard,
@@ -73,6 +74,7 @@ pub struct LoopState<'a> {
 }
 
 impl<'a> LoopState<'a> {
+    #[allow(clippy::collapsible_if)]
     pub async fn step(&mut self) -> Result<TurnOutcome, FerricError> {
         if let Some(cancel) = &self.args.cancel_flag {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -111,14 +113,17 @@ impl<'a> LoopState<'a> {
             self.last_input_tokens,
             self.args.cancel_flag.clone(),
         )
-        .await? {
+        .await?
+        {
             self.sink.write_event(event.clone())?;
             self.projector.step(&event);
         }
 
         let tools = match self.args.protocol {
             ActionProtocol::NativeTools => self.native_tools.clone(),
-            ActionProtocol::ConstrainedJson | ActionProtocol::TextXml | ActionProtocol::Plan => Vec::new(),
+            ActionProtocol::ConstrainedJson | ActionProtocol::TextXml | ActionProtocol::Plan => {
+                Vec::new()
+            }
         };
 
         let constraint = match self.args.protocol {
@@ -127,14 +132,14 @@ impl<'a> LoopState<'a> {
             )),
             ActionProtocol::NativeTools | ActionProtocol::TextXml => None,
         };
-        
+
         let request = CompletionRequest {
             messages: self.projector.messages.clone(),
             sampling: self.args.sampling.clone(),
             tools,
             constraint,
         };
-        
+
         if let Err(e) = request.validate() {
             let note = Event::Note {
                 text: format!("invalid request constructed by loop: {e}"),
@@ -143,11 +148,13 @@ impl<'a> LoopState<'a> {
             self.projector.step(&note);
             return Ok(TurnOutcome::Stop(StopReason::ProviderError));
         }
-        
+
         let assembled = Event::PromptAssembled {
             turn,
             message_count: self.projector.messages.len() as u32,
-            chars: self.projector.messages
+            chars: self
+                .projector
+                .messages
                 .iter()
                 .map(|m| m.text.as_deref().unwrap_or_default().len() as u64)
                 .sum(),
@@ -156,7 +163,9 @@ impl<'a> LoopState<'a> {
         self.sink.write_event(assembled.clone())?;
         self.projector.step(&assembled);
 
-        if self.args.protocol == ActionProtocol::ConstrainedJson || self.args.protocol == ActionProtocol::Plan {
+        if self.args.protocol == ActionProtocol::ConstrainedJson
+            || self.args.protocol == ActionProtocol::Plan
+        {
             let evt = Event::ConstraintApplied {
                 kind: "json_schema".to_string(),
             };
@@ -176,10 +185,16 @@ impl<'a> LoopState<'a> {
                 .await
             }
             None => {
-                crate::backoff::complete_with_backoff(self.args.provider, request, self.args.sleeper, self.args.cancel_flag.clone()).await
+                crate::backoff::complete_with_backoff(
+                    self.args.provider,
+                    request,
+                    self.args.sleeper,
+                    self.args.cancel_flag.clone(),
+                )
+                .await
             }
         };
-        
+
         let completion = match completion_result {
             Ok(completion) => completion,
             Err(e) => {
@@ -200,17 +215,20 @@ impl<'a> LoopState<'a> {
         };
         self.sink.write_event(turn_end.clone())?;
         self.projector.step(&turn_end);
-        
+
         let vcs = ferric_vcs::Vcs::new(self.args.workspace.root());
         if let Err(e) = vcs.snapshot(self.sink.session(), turn).await {
             self.sink.write_event(Event::Note {
                 text: format!("vcs snapshot failed: {e}"),
             })?;
         }
-        
+
         self.last_input_tokens = completion.input_tokens;
 
-        if (self.args.protocol == ActionProtocol::ConstrainedJson || self.args.protocol == ActionProtocol::Plan) && completion.truncated {
+        if (self.args.protocol == ActionProtocol::ConstrainedJson
+            || self.args.protocol == ActionProtocol::Plan)
+            && completion.truncated
+        {
             if self.truncated_once {
                 return Ok(TurnOutcome::Stop(StopReason::TruncatedAction));
             }
@@ -250,8 +268,11 @@ impl<'a> LoopState<'a> {
             if is_native_final {
                 if let Some(hooks) = &self.args.hooks {
                     if let Some(cmd) = &hooks.post_turn {
-                        if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                            let note = Event::Note { text: format!("post_turn hook failed: {e}") };
+                        if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root())
+                        {
+                            let note = Event::Note {
+                                text: format!("post_turn hook failed: {e}"),
+                            };
                             self.sink.write_event(note.clone())?;
                             self.projector.step(&note);
                         }
@@ -338,7 +359,7 @@ impl<'a> LoopState<'a> {
             };
             self.sink.write_event(tc.clone())?;
             self.projector.step(&tc);
-            
+
             let (result_text, is_error, duration_ms, checks) = dispatch(
                 self.args.registry,
                 self.args.workspace,
@@ -366,15 +387,17 @@ impl<'a> LoopState<'a> {
             self.sink.write_event(tr.clone())?;
             self.projector.step(&tr);
         }
-        
+
         if let Some(summary) = terminate_with {
             self.projector.commit_pending();
             self.projector.last_text = Some(summary);
-            
+
             if let Some(hooks) = &self.args.hooks {
                 if let Some(cmd) = &hooks.post_turn {
                     if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                        let note = Event::Note { text: format!("post_turn hook failed: {e}") };
+                        let note = Event::Note {
+                            text: format!("post_turn hook failed: {e}"),
+                        };
                         self.sink.write_event(note.clone())?;
                         self.projector.step(&note);
                     }
@@ -383,7 +406,7 @@ impl<'a> LoopState<'a> {
 
             return Ok(TurnOutcome::Stop(StopReason::TaskComplete));
         }
-        
+
         if let Some(plan) = plan_terminate_with {
             self.projector.commit_pending();
             self.projector.last_text = Some(plan);
@@ -391,7 +414,9 @@ impl<'a> LoopState<'a> {
             if let Some(hooks) = &self.args.hooks {
                 if let Some(cmd) = &hooks.post_turn {
                     if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                        let note = Event::Note { text: format!("post_turn hook failed: {e}") };
+                        let note = Event::Note {
+                            text: format!("post_turn hook failed: {e}"),
+                        };
                         self.sink.write_event(note.clone())?;
                         self.projector.step(&note);
                     }
@@ -424,7 +449,9 @@ impl<'a> LoopState<'a> {
         if let Some(hooks) = &self.args.hooks {
             if let Some(cmd) = &hooks.post_turn {
                 if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                    let note = Event::Note { text: format!("post_turn hook failed: {e}") };
+                    let note = Event::Note {
+                        text: format!("post_turn hook failed: {e}"),
+                    };
                     self.sink.write_event(note.clone())?;
                     self.projector.step(&note);
                 }
@@ -435,6 +462,7 @@ impl<'a> LoopState<'a> {
     }
 }
 
+#[allow(clippy::collapsible_if)]
 pub async fn run(
     args: RunArgs<'_>,
     sink: &mut JsonlSink,
@@ -482,7 +510,10 @@ pub async fn run(
             replayed.turns
         }
         None => {
-            let mut system = args.system_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT).to_string();
+            let mut system = args
+                .system_prompt
+                .unwrap_or(DEFAULT_SYSTEM_PROMPT)
+                .to_string();
             if args.system_prompt.is_none() {
                 system.push_str("\n\nAvailable tools:\n");
                 for t in &registry_tools {
@@ -490,7 +521,7 @@ pub async fn run(
                 }
                 system.push_str("- task_complete: Finish the task and provide a summary.\n");
             }
-            
+
             let prompt_text = prompt.ok_or_else(|| {
                 FerricError::InvalidInput(
                     "run() requires a prompt when not resuming a session".to_string(),
@@ -558,7 +589,7 @@ pub async fn run(
     };
     state.sink.write_event(session_end.clone())?;
     state.projector.step(&session_end);
-    
+
     state.projector.commit_pending();
 
     let is_error = !matches!(
@@ -586,8 +617,11 @@ pub async fn run(
     })
 }
 
-
-fn registry_tools(registry: &Registry, policy: &RunPolicy, protocol: ActionProtocol) -> Vec<ToolDescriptor> {
+fn registry_tools(
+    registry: &Registry,
+    policy: &RunPolicy,
+    protocol: ActionProtocol,
+) -> Vec<ToolDescriptor> {
     registry
         .tools_for_policy(policy)
         .into_iter()

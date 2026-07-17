@@ -24,12 +24,12 @@ mod dream_cmd;
 mod launch;
 mod mcp;
 mod query;
+mod revert_cmd;
 mod server;
+mod skills;
 mod toolbench_cmd;
 mod trace_cmd;
 mod trace_verify;
-mod skills;
-mod revert_cmd;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

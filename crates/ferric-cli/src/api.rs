@@ -30,10 +30,7 @@ pub mod server {
     use ferric_trace::JsonlSink;
 
     use crate::backend::BackendOpts;
-    use crate::query::{
-        ProtocolArg, RunConfigArgs, build_run_config, now_ms,
-        run_with_provider,
-    };
+    use crate::query::{ProtocolArg, RunConfigArgs, build_run_config, now_ms, run_with_provider};
 
     /// CLI arguments for `ferric api`.
     #[derive(Args)]
@@ -130,7 +127,9 @@ pub mod server {
 
     /// Health check handler.
     async fn health() -> Json<serde_json::Value> {
-        Json(serde_json::json!({"status": "ok", "service": "ferric-api", "version": env!("CARGO_PKG_VERSION")}))
+        Json(
+            serde_json::json!({"status": "ok", "service": "ferric-api", "version": env!("CARGO_PKG_VERSION")}),
+        )
     }
 
     /// Non-streaming query handler.
@@ -172,13 +171,14 @@ pub mod server {
 
             match run_query(&state, &prompt, true, Some(&sink_fn)).await {
                 Ok(outcome) => {
-                    let done_event = Event::default()
-                        .event("done")
-                        .data(serde_json::json!({
+                    let done_event = Event::default().event("done").data(
+                        serde_json::json!({
                             "turns": outcome.turns,
                             "stop_reason": outcome.stop_reason,
                             "text": outcome.text,
-                        }).to_string());
+                        })
+                        .to_string(),
+                    );
                     let _ = tx.send(Ok(done_event)).await;
                 }
                 Err(e) => {
@@ -197,7 +197,7 @@ pub mod server {
     async fn run_query(
         state: &AppState,
         prompt: &str,
-        stream: bool,
+        _stream: bool,
         sink_fn: Option<&(dyn Fn(StreamDelta) + Sync)>,
     ) -> Result<QueryResponse, String> {
         let args = &state.args;
@@ -240,8 +240,8 @@ pub mod server {
         let trace_dir = state.workspace.root().join(".ferric").join("trace");
         let _ = std::fs::create_dir_all(&trace_dir);
         let trace_path = trace_dir.join(format!("{session}.jsonl"));
-        let mut sink = JsonlSink::open(&trace_path, &session)
-            .map_err(|e| format!("trace open: {e}"))?;
+        let mut sink =
+            JsonlSink::open(&trace_path, &session).map_err(|e| format!("trace open: {e}"))?;
 
         let provider = crate::backend::create_provider(&backend_opts).await?;
 

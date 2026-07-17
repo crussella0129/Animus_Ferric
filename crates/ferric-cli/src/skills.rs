@@ -17,18 +17,19 @@ fn parse_frontmatter(content: &str) -> (String, String, String) {
     let mut body = content.to_string();
 
     if content.starts_with("---\n")
-        && let Some(end_idx) = content[4..].find("\n---\n") {
-            let frontmatter = &content[4..4 + end_idx];
-            body = content[4 + end_idx + 5..].trim_start().to_string();
+        && let Some(end_idx) = content[4..].find("\n---\n")
+    {
+        let frontmatter = &content[4..4 + end_idx];
+        body = content[4 + end_idx + 5..].trim_start().to_string();
 
-            for line in frontmatter.lines() {
-                if let Some(rest) = line.strip_prefix("name:") {
-                    name = rest.trim().trim_matches('"').trim_matches('\'').to_string();
-                } else if let Some(rest) = line.strip_prefix("description:") {
-                    description = rest.trim().trim_matches('"').trim_matches('\'').to_string();
-                }
+        for line in frontmatter.lines() {
+            if let Some(rest) = line.strip_prefix("name:") {
+                name = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            } else if let Some(rest) = line.strip_prefix("description:") {
+                description = rest.trim().trim_matches('"').trim_matches('\'').to_string();
             }
         }
+    }
     (name, description, body)
 }
 
@@ -43,10 +44,18 @@ pub fn load_skills(workspace: &Path) -> Vec<Skill> {
                 let skill_md = entry.path().join("SKILL.md");
                 if let Ok(content) = fs::read_to_string(&skill_md) {
                     let (parsed_name, parsed_desc, body) = parse_frontmatter(&content);
-                    
+
                     let dir_name = entry.file_name().to_string_lossy().to_string();
-                    let name = if parsed_name.is_empty() { dir_name } else { parsed_name };
-                    let description = if parsed_desc.is_empty() { "No description provided.".to_string() } else { parsed_desc };
+                    let name = if parsed_name.is_empty() {
+                        dir_name
+                    } else {
+                        parsed_name
+                    };
+                    let description = if parsed_desc.is_empty() {
+                        "No description provided.".to_string()
+                    } else {
+                        parsed_desc
+                    };
 
                     skills.push(Skill {
                         name,
@@ -88,7 +97,11 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let skills_dir = temp.path().join(".ferric").join("skills").join("deploy");
         fs::create_dir_all(&skills_dir).unwrap();
-        fs::write(skills_dir.join("SKILL.md"), "---\nname: deploy\ndescription: How to deploy\n---\nRun deploy.sh").unwrap();
+        fs::write(
+            skills_dir.join("SKILL.md"),
+            "---\nname: deploy\ndescription: How to deploy\n---\nRun deploy.sh",
+        )
+        .unwrap();
 
         let skills = load_skills(temp.path());
         assert_eq!(skills.len(), 1);

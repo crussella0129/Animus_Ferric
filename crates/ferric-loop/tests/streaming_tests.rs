@@ -53,7 +53,11 @@ impl Provider for ScriptedStreamingProvider {
         }
     }
 
-    async fn complete(&self, _request: CompletionRequest, _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>) -> Result<Completion, ProviderError> {
+    async fn complete(
+        &self,
+        _request: CompletionRequest,
+        _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Completion, ProviderError> {
         unreachable!("test provider only exercises complete_streaming")
     }
 
@@ -77,7 +81,9 @@ impl Provider for ScriptedStreamingProvider {
 }
 
 fn task_complete_completion(summary: &str) -> Completion {
-    json_completion(json!({"thought": "...", "tool": "task_complete", "args": {"summary": summary}}))
+    json_completion(
+        json!({"thought": "...", "tool": "task_complete", "args": {"summary": summary}}),
+    )
 }
 
 /// The turn loop, given `stream_sink: Some`, calls `complete_streaming` and
@@ -107,8 +113,8 @@ fn stream_sink_some_drives_dispatch() {
     let outcome = futures_executor::block_on(run(
         RunArgs {
             cancel_flag: None,
-sink_policy: ferric_guard::SinkPolicy::deny(),
-taint_set: ferric_guard::TaintSet::new(),
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -121,6 +127,7 @@ taint_set: ferric_guard::TaintSet::new(),
             media: Vec::new(),
             stream_sink: Some(&on_delta),
             resume: None,
+            hooks: None,
         },
         &mut sink,
         Some("do the task"),
@@ -168,8 +175,8 @@ fn streaming_retry_does_not_replay_failed_attempt_deltas() {
     let outcome = futures_executor::block_on(run(
         RunArgs {
             cancel_flag: None,
-sink_policy: ferric_guard::SinkPolicy::deny(),
-taint_set: ferric_guard::TaintSet::new(),
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -182,6 +189,7 @@ taint_set: ferric_guard::TaintSet::new(),
             media: Vec::new(),
             stream_sink: Some(&on_delta),
             resume: None,
+            hooks: None,
         },
         &mut sink,
         Some("do the task"),

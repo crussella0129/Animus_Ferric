@@ -10,7 +10,9 @@ async fn test_background_tasks() {
     let dir = tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let workspace = Workspace::new(&root).unwrap();
-    let ctx = ToolCtx { workspace: &workspace };
+    let ctx = ToolCtx {
+        workspace: &workspace,
+    };
 
     let shell_exec = ShellExec;
     let manage_task = ManageTask;
@@ -29,7 +31,7 @@ async fn test_background_tasks() {
 
     let res = shell_exec.run(&ctx, &shell_args).unwrap();
     assert!(res.contains("Started background task"));
-    
+
     // Extract task id (e.g. "task-1234")
     let start_idx = res.find("task-").unwrap();
     let end_idx = res[start_idx..].find(".").unwrap();

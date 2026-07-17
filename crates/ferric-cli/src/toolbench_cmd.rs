@@ -379,9 +379,7 @@ fn build_request(
             "Respond with exactly one XML tool call: \
              <tool_call><name>TOOL</name><args>{\"arg\": \"value\"}</args></tool_call>."
         }
-        ActionProtocol::Plan => {
-            "Respond with exactly one Plan object: {\"plan\": \"...\"}."
-        }
+        ActionProtocol::Plan => "Respond with exactly one Plan object: {\"plan\": \"...\"}.",
     };
     let user_prompt =
         format!("Invoke the `{tool_name}` tool with dummy data that matches its schema.");

@@ -43,7 +43,9 @@ pub(crate) fn spec_from_answers(
         return Err("path must not be empty".to_string());
     }
     let pt = match project_type.map(str::trim).filter(|t| !t.is_empty()) {
-        Some(t) => t.parse::<ProjectType>().map_err(|e| format!("invalid project type: {}", e))?,
+        Some(t) => t
+            .parse::<ProjectType>()
+            .map_err(|e| format!("invalid project type: {}", e))?,
         None => ProjectType::Empty,
     };
     Ok(LaunchSpec {
@@ -114,39 +116,40 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                 report.branches.join(", ")
             );
             println!("Files: {}", report.files_created.join(", "));
-            
+
             // Increment 2: Begin Work Auto-Hand-Off
             if let Ok(ans) = prompt_line("Begin work now? (y/N)")
-                && (ans.trim().to_lowercase() == "y" || ans.trim().to_lowercase() == "yes") {
-                    println!("Handing off to ferric query...");
-                    let query_args = crate::query::QueryArgs {
-                        prompt: Some(spec.goal.clone()),
-                        files: vec![],
-                        workspace: Some(report.path.clone()),
-                        mock: false, // You could add args or let config handle backend etc.
-                        backend_opts: crate::backend::BackendOpts {
-                            backend: Some(crate::backend::BackendArg::Openai),
-                            model: None,
-                            api_base: None,
-                            api_key: None,
-                        },
-                        params_b: Some(7.0),
-                        quant: Some("q4".to_string()),
-                        family: Some("llama3".to_string()),
-                        ctx: Some(8192),
-                        temperature: Some(0.0),
-                        protocol: None,
-                        prompts_dir: None,
-                        max_ring: None,
-                        profile_dir: Some(PathBuf::from(".ferric/profiles")),
-                        stream: false,
-                        resume: None,
-                        modality: None,
-                        research: None,
-                        sink_action: "deny".to_string(),
-                    };
-                    return crate::query::run_query(query_args);
-                }
+                && (ans.trim().to_lowercase() == "y" || ans.trim().to_lowercase() == "yes")
+            {
+                println!("Handing off to ferric query...");
+                let query_args = crate::query::QueryArgs {
+                    prompt: Some(spec.goal.clone()),
+                    files: vec![],
+                    workspace: Some(report.path.clone()),
+                    mock: false, // You could add args or let config handle backend etc.
+                    backend_opts: crate::backend::BackendOpts {
+                        backend: Some(crate::backend::BackendArg::Openai),
+                        model: None,
+                        api_base: None,
+                        api_key: None,
+                    },
+                    params_b: Some(7.0),
+                    quant: Some("q4".to_string()),
+                    family: Some("llama3".to_string()),
+                    ctx: Some(8192),
+                    temperature: Some(0.0),
+                    protocol: None,
+                    prompts_dir: None,
+                    max_ring: None,
+                    profile_dir: Some(PathBuf::from(".ferric/profiles")),
+                    stream: false,
+                    resume: None,
+                    modality: None,
+                    research: None,
+                    sink_action: "deny".to_string(),
+                };
+                return crate::query::run_query(query_args);
+            }
             println!(
                 "Next: cd {} && begin work with the Loop.",
                 report.path.display()

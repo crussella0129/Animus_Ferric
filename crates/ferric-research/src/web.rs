@@ -1,7 +1,7 @@
 //! The Web Retriever plane.
+use crate::retriever::{RetrieveError, RetrievedChunk, Retriever};
+use crate::sandbox::{SandboxConfig, SandboxError, check_available, run_in_sandbox};
 use async_trait::async_trait;
-use crate::retriever::{RetrievedChunk, Retriever, RetrieveError};
-use crate::sandbox::{SandboxConfig, check_available, run_in_sandbox, SandboxError};
 
 pub struct WebRetriever {
     config: SandboxConfig,
@@ -20,7 +20,7 @@ impl WebRetriever {
                 image: "alpine:latest".to_string(),
                 enforce_runsc: false,
                 proxy_url: None,
-            }
+            },
         }
     }
 
@@ -48,12 +48,14 @@ impl Retriever for WebRetriever {
     async fn retrieve(&self, query: &str) -> Result<Vec<RetrievedChunk>, RetrieveError> {
         // Query must be a valid URL for WebRetriever
         if !query.starts_with("http://") && !query.starts_with("https://") {
-            return Err(RetrieveError::Exec("only http and https schemes allowed".into()));
+            return Err(RetrieveError::Exec(
+                "only http and https schemes allowed".into(),
+            ));
         }
 
         // We use wget inside alpine since it's built-in
         let cmd = ["wget".to_string(), "-qO-".to_string(), query.to_string()];
-        
+
         // For now, since Retriever is async, we can wrap the sync blocking call in spawn_blocking.
         let config_clone = SandboxConfig {
             image: self.config.image.clone(),

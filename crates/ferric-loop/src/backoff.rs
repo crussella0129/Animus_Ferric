@@ -21,7 +21,10 @@ pub async fn complete_with_backoff(
 ) -> Result<Completion, ProviderError> {
     let mut attempt = 0u32;
     loop {
-        match provider.complete(request.clone(), cancel_flag.clone()).await {
+        match provider
+            .complete(request.clone(), cancel_flag.clone())
+            .await
+        {
             Ok(completion) => return Ok(completion),
             Err(e) if e.is_retryable() && attempt < MAX_RETRIES => {
                 let delay = BASE_DELAY_MS << attempt; // 250, 500, 1000
@@ -49,7 +52,10 @@ pub async fn complete_streaming_with_backoff(
 ) -> Result<Completion, ProviderError> {
     let mut attempt = 0u32;
     loop {
-        match provider.complete_streaming(request.clone(), on_delta, cancel_flag.clone()).await {
+        match provider
+            .complete_streaming(request.clone(), on_delta, cancel_flag.clone())
+            .await
+        {
             Ok(completion) => return Ok(completion),
             Err(e) if e.is_retryable() && attempt < MAX_RETRIES => {
                 let delay = BASE_DELAY_MS << attempt;

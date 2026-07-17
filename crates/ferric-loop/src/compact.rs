@@ -211,8 +211,12 @@ mod tests {
     fn seed_completed_turns(projector: &mut TraceProjector, n: u32) {
         // Simulate `n` completed turns.
         for turn in 0..n {
-            projector.committed_turn_starts.push((turn, projector.messages.len()));
-            projector.messages.push(Message::assistant(format!("turn {turn} result")));
+            projector
+                .committed_turn_starts
+                .push((turn, projector.messages.len()));
+            projector
+                .messages
+                .push(Message::assistant(format!("turn {turn} result")));
         }
     }
 
@@ -229,7 +233,7 @@ mod tests {
         seed_completed_turns(&mut projector, 5);
         let before = projector.messages.clone();
         let provider = MockProvider::new(vec![]);
-        
+
         let result = block(maybe_compact(
             &projector,
             &provider,
@@ -239,7 +243,7 @@ mod tests {
             None, // far below 85% of 2800
         ))
         .unwrap();
-        
+
         assert!(result.is_none());
         assert_eq!(projector.messages, before);
         assert!(!provider_was_called(&provider));
@@ -254,7 +258,7 @@ mod tests {
         let mut projector_below = setup_projector();
         seed_completed_turns(&mut projector_below, 5);
         let provider_below = MockProvider::new(vec![]);
-        
+
         let res_below = block(maybe_compact(
             &projector_below,
             &provider_below,
@@ -269,7 +273,7 @@ mod tests {
         let mut projector_at = setup_projector();
         seed_completed_turns(&mut projector_at, 5);
         let provider_at = MockProvider::new(vec![summary_completion("did turns 0-2")]);
-        
+
         let res_at = block(maybe_compact(
             &projector_at,
             &provider_at,
@@ -279,7 +283,7 @@ mod tests {
             None, // exactly 0.85 * 2800
         ))
         .unwrap();
-        
+
         assert!(res_at.is_some(), "2380 must trigger a fold");
         assert!(provider_was_called(&provider_at));
     }
@@ -290,7 +294,7 @@ mod tests {
         // Only 2 completed turns (KEEP_LAST_TURNS == 2) — nothing foldable.
         seed_completed_turns(&mut projector, 2);
         let provider = MockProvider::new(vec![]);
-        
+
         let result = block(maybe_compact(
             &projector,
             &provider,
@@ -322,7 +326,12 @@ mod tests {
         .unwrap();
 
         let event = result.expect("should return an event");
-        if let Event::HistoryCompacted { through_turn, dropped_turns, summary } = &event {
+        if let Event::HistoryCompacted {
+            through_turn,
+            dropped_turns,
+            summary,
+        } = &event
+        {
             assert_eq!(*through_turn, 2);
             assert_eq!(*dropped_turns, 3);
             assert_eq!(summary, "did turns 0-2");
@@ -334,12 +343,18 @@ mod tests {
         projector.step(&event);
 
         // head + 1 summary message + 2 preserved turns.
-        assert_eq!(projector.messages.len(), projector.head_len + 1 + preserved_tail.len());
+        assert_eq!(
+            projector.messages.len(),
+            projector.head_len + 1 + preserved_tail.len()
+        );
         assert_eq!(
             projector.messages[projector.head_len].text.as_deref(),
             Some("[compacted history] did turns 0-2")
         );
-        assert_eq!(&projector.messages[projector.head_len + 1..], &preserved_tail[..]);
+        assert_eq!(
+            &projector.messages[projector.head_len + 1..],
+            &preserved_tail[..]
+        );
     }
 
     #[test]
@@ -376,15 +391,23 @@ mod tests {
             &nano_policy(),
             Some(2500),
             None,
-        )).unwrap().unwrap();
+        ))
+        .unwrap()
+        .unwrap();
         projector.step(&event1);
 
         // 3 more completed turns since the fold (5,6,7) — enough to fold again.
         for turn in 5..8 {
-            projector.committed_turn_starts.push((turn, projector.messages.len()));
-            projector.messages.push(Message::assistant(format!("turn {turn} result")));
+            projector
+                .committed_turn_starts
+                .push((turn, projector.messages.len()));
+            projector
+                .messages
+                .push(Message::assistant(format!("turn {turn} result")));
         }
-        projector.committed_turn_starts.push((8, projector.messages.len()));
+        projector
+            .committed_turn_starts
+            .push((8, projector.messages.len()));
 
         let provider2 = MockProvider::new(vec![summary_completion("second summary")]);
         let event2 = block(maybe_compact(
@@ -394,10 +417,13 @@ mod tests {
             &nano_policy(),
             Some(2500),
             None,
-        )).unwrap().unwrap();
+        ))
+        .unwrap()
+        .unwrap();
         projector.step(&event2);
 
-        let summary_count = projector.messages
+        let summary_count = projector
+            .messages
             .iter()
             .filter(|m| {
                 m.text

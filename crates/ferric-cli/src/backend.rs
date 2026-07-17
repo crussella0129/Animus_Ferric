@@ -58,10 +58,7 @@ pub async fn create_provider(
             #[cfg(feature = "backend-openai")]
             {
                 use ferric_provider::openai::{OpenAiConfig, OpenAiProvider};
-                let model_id = opts
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| "default".to_string());
+                let model_id = opts.model.clone().unwrap_or_else(|| "default".to_string());
                 let api_key = opts
                     .api_key
                     .clone()

@@ -440,10 +440,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         // `model` (already merged above) — a config-only-set
         // `model` must still hit the ADR-029 profile lookup, not silently
         // skip it because `model_key` was built from raw CLI args.
-        model_key: args
-            .backend_opts
-            .model
-            .clone(),
+        model_key: args.backend_opts.model.clone(),
         hooks: cfg.hooks.clone(),
     });
 
@@ -593,7 +590,9 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             ferric_guard::TaintSet::new(),
             match args.sink_action.to_lowercase().as_str() {
                 "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
-                "requireapproval" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval),
+                "requireapproval" => {
+                    ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval)
+                }
                 _ => ferric_guard::SinkPolicy::deny(),
             },
             config.hooks.clone(),
@@ -616,7 +615,9 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             ferric_guard::TaintSet::new(),
             match args.sink_action.to_lowercase().as_str() {
                 "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
-                "requireapproval" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval),
+                "requireapproval" => {
+                    ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval)
+                }
                 _ => ferric_guard::SinkPolicy::deny(),
             },
             args.research.clone(),
@@ -680,7 +681,10 @@ pub(crate) fn mock_provider(protocol: ActionProtocol) -> MockProvider {
         ],
         ActionProtocol::Plan => vec![
             json_completion("grep_search", &json!({"query": "mock", "path": "."})),
-            json_completion(ferric_loop::SUBMIT_PLAN, &json!({"plan": "mock plan complete"})),
+            json_completion(
+                ferric_loop::SUBMIT_PLAN,
+                &json!({"plan": "mock plan complete"}),
+            ),
         ],
         ActionProtocol::TextXml => vec![
             xml_completion("write_file", &write_args),
@@ -863,11 +867,15 @@ fn drive_real(
                 eprintln!("\n[Received Ctrl-C, interrupting gracefully...]");
             }
         });
-        
+
         let mut effective_prompt = prompt.map(|s| s.to_string());
         if let Some(rq) = research_query {
             // Perform research
-            let local_retriever = ferric_research::LocalFsRetriever::with_caps(workspace.root().to_path_buf(), 50, 1024 * 1024);
+            let local_retriever = ferric_research::LocalFsRetriever::with_caps(
+                workspace.root().to_path_buf(),
+                50,
+                1024 * 1024,
+            );
             let retrievers: Vec<&dyn ferric_research::Retriever> = vec![&local_retriever];
             match ferric_research::research_all(&retrievers, provider_box.as_ref(), &rq).await {
                 Ok(multi) => {
@@ -1008,6 +1016,7 @@ mod tests {
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
             None,
+            None,
         ))
         .unwrap();
 
@@ -1035,6 +1044,7 @@ mod tests {
             max_ring: None,
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
+            hooks: None,
         }
     }
 

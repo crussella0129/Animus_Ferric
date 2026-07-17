@@ -199,11 +199,8 @@ impl ChatBackend {
             }
             _ => {}
         };
-        let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if stream {
-            Some(&sink_fn)
-        } else {
-            None
-        };
+        let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
+            if stream { Some(&sink_fn) } else { None };
 
         match self {
             ChatBackend::Mock => {
@@ -219,10 +216,12 @@ impl ChatBackend {
             #[cfg(feature = "backend-openai")]
             ChatBackend::Real { provider, runtime } => {
                 if let Some(sink) = stream_sink {
-                    runtime.block_on(provider.complete_streaming(request, sink, None))
+                    runtime
+                        .block_on(provider.complete_streaming(request, sink, None))
                         .map_err(|e| format!("talk completion failed: {e}"))
                 } else {
-                    runtime.block_on(provider.complete(request, None))
+                    runtime
+                        .block_on(provider.complete(request, None))
                         .map_err(|e| format!("talk completion failed: {e}"))
                 }
             }
@@ -253,11 +252,8 @@ impl ChatBackend {
                 eprintln!("\u{25b8} calling {name}...");
             }
         };
-        let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if stream {
-            Some(&sink_fn)
-        } else {
-            None
-        };
+        let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
+            if stream { Some(&sink_fn) } else { None };
 
         match self {
             ChatBackend::Mock => {
@@ -379,9 +375,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             .clone()
             .or(cfg.profile_dir)
             .unwrap_or_else(|| PathBuf::from("benchmarks")),
-        model_key: backend_opts
-            .model
-            .clone(),
+        model_key: backend_opts.model.clone(),
         hooks: None,
     });
     for diag in &loaded_config.diagnostics {
@@ -451,8 +445,8 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     loop {
         let line = match editor.readline("you> ") {
             Ok(line) => line,
-            Err(rustyline::error::ReadlineError::Interrupted) |
-            Err(rustyline::error::ReadlineError::Eof) => break,
+            Err(rustyline::error::ReadlineError::Interrupted)
+            | Err(rustyline::error::ReadlineError::Eof) => break,
             Err(e) => {
                 eprintln!("input error: {e}");
                 break;
@@ -494,7 +488,14 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                         continue;
                     }
                 };
-                match backend.escalate(&config, &workspace, &mut esc_sink, &text, seed, !args.no_stream) {
+                match backend.escalate(
+                    &config,
+                    &workspace,
+                    &mut esc_sink,
+                    &text,
+                    seed,
+                    !args.no_stream,
+                ) {
                     Ok(outcome) => {
                         let resp = outcome.final_text.unwrap_or_default();
                         println!("{resp}");

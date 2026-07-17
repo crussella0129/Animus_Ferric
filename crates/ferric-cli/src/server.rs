@@ -322,15 +322,21 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
 
     let mut base_url = cfg.base_url();
     if cfg.tailscale {
-        println!("Exposing {} to Tailnet (tailscale serve {})...", base_url, cfg.port);
+        println!(
+            "Exposing {} to Tailnet (tailscale serve {})...",
+            base_url, cfg.port
+        );
         match Command::new("tailscale")
             .args(["serve", "--bg", &cfg.port.to_string()])
             .status()
         {
             Ok(status) if status.success() => {
                 println!("Tailscale proxy active.");
-                if let Ok(status_out) = Command::new("tailscale").args(["status", "--json"]).output()
-                    && let Ok(json) = serde_json::from_slice::<serde_json::Value>(&status_out.stdout)
+                if let Ok(status_out) = Command::new("tailscale")
+                    .args(["status", "--json"])
+                    .output()
+                    && let Ok(json) =
+                        serde_json::from_slice::<serde_json::Value>(&status_out.stdout)
                     && let Some(dns_name) = json.get("DNSName").and_then(|v| v.as_str())
                 {
                     let clean_dns = dns_name.trim_end_matches('.');
@@ -354,7 +360,7 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         base_url: base_url.clone(),
         tailscale: cfg.tailscale,
     };
-    
+
     let path = runfile_path(workspace);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -362,7 +368,7 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
     let local_res = serde_json::to_string_pretty(&runfile)
         .map_err(|_| ())
         .and_then(|s| std::fs::write(&path, &s).map_err(|_| ()));
-        
+
     let global_res = if let Some(global) = global_runfile_path() {
         if let Some(parent) = global.parent() {
             let _ = std::fs::create_dir_all(parent);

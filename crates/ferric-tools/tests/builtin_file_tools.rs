@@ -5,13 +5,28 @@ use ferric_guard::Workspace;
 use ferric_tools::{ExecuteOutcome, Registry, register_builtin_tools};
 use serde_json::json;
 
-
 trait RegistryTestExt {
-    fn execute_test(&self, ws: &ferric_guard::Workspace, name: &str, args: &serde_json::Value) -> ferric_tools::ExecuteOutcome;
+    fn execute_test(
+        &self,
+        ws: &ferric_guard::Workspace,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> ferric_tools::ExecuteOutcome;
 }
 impl RegistryTestExt for ferric_tools::Registry {
-    fn execute_test(&self, ws: &ferric_guard::Workspace, name: &str, args: &serde_json::Value) -> ferric_tools::ExecuteOutcome {
-        self.execute(ws, name, args, &ferric_guard::TaintSet::new(), &ferric_guard::SinkPolicy::deny())
+    fn execute_test(
+        &self,
+        ws: &ferric_guard::Workspace,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> ferric_tools::ExecuteOutcome {
+        self.execute(
+            ws,
+            name,
+            args,
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        )
     }
 }
 fn setup() -> (tempfile::TempDir, Workspace, Registry) {
@@ -41,8 +56,11 @@ fn write_then_read_roundtrip() {
     ));
     assert!(!write_err, "write failed: {write_out}");
 
-    let (read_out, read_err) =
-        expect_completed(registry.execute_test(&ws, "read_file", &json!({"path": "notes/today.md"})));
+    let (read_out, read_err) = expect_completed(registry.execute_test(
+        &ws,
+        "read_file",
+        &json!({"path": "notes/today.md"}),
+    ));
     assert!(!read_err, "read failed: {read_out}");
     assert_eq!(read_out, content);
 }
@@ -77,8 +95,10 @@ fn list_dir_deterministic_order() {
     }
     std::fs::create_dir(dir.path().join("subdir")).unwrap();
 
-    let (first, _) = expect_completed(registry.execute_test(&ws, "list_dir", &json!({"path": "."})));
-    let (second, _) = expect_completed(registry.execute_test(&ws, "list_dir", &json!({"path": "."})));
+    let (first, _) =
+        expect_completed(registry.execute_test(&ws, "list_dir", &json!({"path": "."})));
+    let (second, _) =
+        expect_completed(registry.execute_test(&ws, "list_dir", &json!({"path": "."})));
     assert_eq!(first, second, "two listings must be identical");
 
     let lines: Vec<&str> = first.lines().collect();
@@ -132,7 +152,7 @@ fn read_file_pagination() {
     ));
     assert!(!err3);
     assert_eq!(out3, "line 2\nline 3\nline 4");
-    
+
     // Test out of bounds (end_line > total lines)
     let (out4, err4) = expect_completed(registry.execute_test(
         &ws,
@@ -208,7 +228,8 @@ fn move_path_outside_to_denied() {
 #[test]
 fn make_dir_creates_parents_and_is_idempotent() {
     let (dir, ws, registry) = setup();
-    let (_o, err) = expect_completed(registry.execute_test(&ws, "make_dir", &json!({"path": "a/b/c"})));
+    let (_o, err) =
+        expect_completed(registry.execute_test(&ws, "make_dir", &json!({"path": "a/b/c"})));
     assert!(!err);
     assert!(dir.path().join("a").join("b").join("c").is_dir());
     // Idempotent: a second call on the existing dir succeeds.
@@ -245,8 +266,11 @@ fn search_files_finds_matches_with_relpath_and_lineno() {
 fn search_files_miss_is_empty_not_error() {
     let (dir, ws, registry) = setup();
     std::fs::write(dir.path().join("a.txt"), "nothing relevant").unwrap();
-    let (out, err) =
-        expect_completed(registry.execute_test(&ws, "search_files", &json!({"query": "ZZZ_absent"})));
+    let (out, err) = expect_completed(registry.execute_test(
+        &ws,
+        "search_files",
+        &json!({"query": "ZZZ_absent"}),
+    ));
     assert!(!err, "a miss must not be an error: {out}");
     assert!(out.is_empty(), "no matches → empty output, got {out:?}");
 }
@@ -446,7 +470,8 @@ fn delete_path_into_ferric_denied() {
     let (dir, ws, registry) = setup();
     std::fs::create_dir_all(dir.path().join(".ferric")).unwrap();
     std::fs::write(dir.path().join(".ferric").join("server.json"), "{}").unwrap();
-    let outcome = registry.execute_test(&ws, "delete_path", &json!({"path": ".ferric/server.json"}));
+    let outcome =
+        registry.execute_test(&ws, "delete_path", &json!({"path": ".ferric/server.json"}));
     assert!(
         matches!(outcome, ExecuteOutcome::Denied { .. }),
         "deleting under .ferric must be denied, got {outcome:?}"
@@ -607,7 +632,9 @@ fn rings_gate_builtins_by_tier() {
     );
     // Ring-2 tools are still above the Small ceiling.
     assert!(
-        !small_names.contains(&"multi_edit") && !small_names.contains(&"apply_patch") && !small_names.contains(&"git_write"),
+        !small_names.contains(&"multi_edit")
+            && !small_names.contains(&"apply_patch")
+            && !small_names.contains(&"git_write"),
         "Ring-2 tools absent at Small"
     );
 
@@ -616,7 +643,7 @@ fn rings_gate_builtins_by_tier() {
     let medium_names: Vec<&str> = medium.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
         medium.len(),
-        15,
+        16,
         "Medium adds the 4-tool Ring 2 (multi_edit + apply_patch + git_write + shell_exec): {medium_names:?}"
     );
     for ring2 in ["multi_edit", "apply_patch", "git_write", "shell_exec"] {
@@ -773,8 +800,8 @@ fn multi_edit_empty_edits_and_empty_old_error() {
 
 #[test]
 fn git_read_extracts_paths_from_args() {
-    use ferric_tools::builtin::GitRead;
     use ferric_tools::Tool;
+    use ferric_tools::builtin::GitRead;
     let tool = GitRead;
     let paths = tool.target_paths(&serde_json::json!({
         "subcommand": "diff",
@@ -785,8 +812,8 @@ fn git_read_extracts_paths_from_args() {
 
 #[test]
 fn git_write_extracts_paths_from_args() {
-    use ferric_tools::builtin::GitWrite;
     use ferric_tools::Tool;
+    use ferric_tools::builtin::GitWrite;
     let tool = GitWrite;
     let paths = tool.target_paths(&serde_json::json!({
         "subcommand": "commit",

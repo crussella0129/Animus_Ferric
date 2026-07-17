@@ -40,3 +40,9 @@
 
 ## ferric-research
 - [ ] Define a `Retriever` trait in `retriever.rs` to implement a plugin architecture for external system integration.
+
+## General Architecture & Observability
+- [ ] **Observability:** Integrate `tracing` and `tracing-subscriber` crates to provide robust, leveled debug logging across all crates (distinct from the LLM trace JSONL).
+- [ ] **Tool Registration Macros:** Refactor `ferric-tools` to use a procedural macro (e.g., `#[ferric_tool]`) or `typetag` to automatically discover and register tools, reducing boilerplate in `builtin/mod.rs`.
+- [ ] **Parallel Tool Execution:** Extend the `Tool` trait in `ferric-core` to declare read/write side-effects, allowing `ferric-loop` to safely dispatch parallelizable tool calls (like multiple `read_file`s) concurrently.
+- [ ] **Provider Expansion:** Add native support for Anthropic (`Claude 3.5`) and Gemini (`Gemini 1.5 Pro`) backends in `ferric-provider`, expanding beyond the current OpenAI-compatible implementation.

@@ -10,11 +10,27 @@ use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
 use serde_json::json;
 
 trait RegistryTestExt {
-    fn execute_test(&self, ws: &ferric_guard::Workspace, name: &str, args: &serde_json::Value) -> ferric_tools::ExecuteOutcome;
+    fn execute_test(
+        &self,
+        ws: &ferric_guard::Workspace,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> ferric_tools::ExecuteOutcome;
 }
 impl RegistryTestExt for ferric_tools::Registry {
-    fn execute_test(&self, ws: &ferric_guard::Workspace, name: &str, args: &serde_json::Value) -> ferric_tools::ExecuteOutcome {
-        self.execute(ws, name, args, &ferric_guard::TaintSet::new(), &ferric_guard::SinkPolicy::deny())
+    fn execute_test(
+        &self,
+        ws: &ferric_guard::Workspace,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> ferric_tools::ExecuteOutcome {
+        self.execute(
+            ws,
+            name,
+            args,
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        )
     }
 }
 #[test]

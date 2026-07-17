@@ -520,8 +520,7 @@ fn config_only_model_still_resolves_profile() {
         })
         .unwrap_or_default();
     assert!(
-        !offered.contains(&"find_files".to_string())
-            && offered.contains(&"write_file".to_string()),
+        !offered.contains(&"find_files".to_string()) && offered.contains(&"write_file".to_string()),
         "a config-only `model` must still hit the persisted calibrated_ring 0 profile: {offered:?}"
     );
 }
@@ -568,8 +567,7 @@ fn config_only_max_ring_caps_the_offered_tools() {
         })
         .unwrap_or_default();
     assert!(
-        !offered.contains(&"find_files".to_string())
-            && offered.contains(&"write_file".to_string()),
+        !offered.contains(&"find_files".to_string()) && offered.contains(&"write_file".to_string()),
         "a config-only `max_ring = 0` must cap to the core, same as `--max-ring 0`: {offered:?}"
     );
 }
@@ -1350,7 +1348,11 @@ fn launch_refuses_to_clobber_nonempty() {
 
 // ---- T-5501 (sprint 55): `ferric mcp --resume` subprocess tests ----------------
 
-fn run_mcp_mock(ws: &std::path::Path, extra_args: &[&str], input: &str) -> (String, String, std::process::ExitStatus) {
+fn run_mcp_mock(
+    ws: &std::path::Path,
+    extra_args: &[&str],
+    input: &str,
+) -> (String, String, std::process::ExitStatus) {
     use std::io::Write;
     use std::process::Stdio;
     let mut child = ferric()
@@ -1378,14 +1380,18 @@ fn run_mcp_mock(ws: &std::path::Path, extra_args: &[&str], input: &str) -> (Stri
 fn mcp_resume_continues_an_interrupted_session() {
     let ws = tempfile::tempdir().unwrap();
     let path = write_interrupted_trace_fixture(ws.path(), "res-1");
-    
+
     // The MCP server expects a JSON-RPC request for `ferric_query`
     let input = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ferric_query","arguments":{"prompt":"finish it"}}}"#;
-    let (stdout, stderr, status) = run_mcp_mock(ws.path(), &["--resume", path.to_str().unwrap()], input);
-    
+    let (stdout, stderr, status) =
+        run_mcp_mock(ws.path(), &["--resume", path.to_str().unwrap()], input);
+
     assert!(status.success(), "mcp should succeed; stderr: {stderr}");
-    assert!(stdout.contains("mock run complete"), "stdout should contain the mock's output, got: {stdout}");
-    
+    assert!(
+        stdout.contains("mock run complete"),
+        "stdout should contain the mock's output, got: {stdout}"
+    );
+
     // There should be a new trace file for this MCP session.
     // The new trace file should contain the original 2 turns PLUS the new turn.
     let trace_dir = ws.path().join(".ferric").join("trace");
@@ -1396,7 +1402,7 @@ fn mcp_resume_continues_an_interrupted_session() {
         .collect();
     assert_eq!(new_traces.len(), 1, "exactly one mcp- trace file expected");
     let content = std::fs::read_to_string(new_traces[0].path()).unwrap();
-    
+
     let is_resumed = content
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
@@ -1418,7 +1424,8 @@ fn mcp_resume_rejects_already_stopped() {
     ];
     std::fs::write(&path, lines.join("\n") + "\n").unwrap();
 
-    let (_stdout, stderr, status) = run_mcp_mock(ws.path(), &["--resume", path.to_str().unwrap()], "");
+    let (_stdout, stderr, status) =
+        run_mcp_mock(ws.path(), &["--resume", path.to_str().unwrap()], "");
     assert!(!status.success());
     assert!(stderr.contains("cannot resume"), "stderr: {stderr}");
     assert!(stderr.contains("already ended (done)"), "stderr: {stderr}");

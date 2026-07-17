@@ -40,7 +40,9 @@ impl Tool for WriteFile {
             .resolve(path)
             .map_err(|e| format!("boundary: {e}"))?;
         if resolved.is_dir() {
-            return Err(format!("write {path} failed: path is already a directory. If you intended to write a file here, you MUST use delete_path to remove the directory first, or choose a different file name."));
+            return Err(format!(
+                "write {path} failed: path is already a directory. If you intended to write a file here, you MUST use delete_path to remove the directory first, or choose a different file name."
+            ));
         }
         if let Some(parent) = resolved.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for {path}: {e}"))?;
