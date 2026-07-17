@@ -245,4 +245,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 66 — Time Travel (Revert)** (2026-07-17). Delivered full workspace-and-trace reversion using a lightweight Git orchestration crate (`ferric-vcs`). During every `TurnEnd` trace event, `ferric-loop` sequentially stashes the entire workspace tree as an orphaned, detached commit (ignoring local branch history) tagged strictly to the current trace session (`refs/ferric/<session>/<turn>`). Users can invoke `ferric revert <trace_file> <turn_id>` via the CLI, triggering an immediate and exact restoration (`git restore --worktree --staged --source=<tag> .`) combined with complete untracked file deletion (`git clean -fd`), while automatically truncating future traces in the source `.jsonl` file to reset the agent's contextual memory precisely.
 
-> **Next — TBD.** Open: operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images.
+- **Sprint 67 — Configurable Hooks** (2026-07-17). Introduced a lightweight hooks system allowing custom scripts to execute on deterministic boundaries within the agentic loop (`pre_turn`, `post_turn`, and `on_error`). Bound through `.ferric/config.toml`, hooks are executed via the host's native shell environment (`cmd /C` or `sh -c`) using `std::process::Command`, securely injecting synchronous logic immediately prior to tool execution or after failure outcomes without disturbing the core trace flow.
+
+> **Next — TBD.** Background Task Management / "Dream Mode" background task consolidation.

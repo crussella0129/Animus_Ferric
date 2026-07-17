@@ -29,6 +29,8 @@ pub enum StopReason {
     TruncatedAction,
     /// The user gracefully aborted execution (e.g. via Ctrl-C).
     Interrupted,
+    /// A required hook script failed.
+    HookFailed,
 }
 
 impl StopReason {
@@ -45,6 +47,7 @@ impl StopReason {
             StopReason::EmptyCompletion => "empty_completion",
             StopReason::TruncatedAction => "truncated_action",
             StopReason::Interrupted => "interrupted",
+            StopReason::HookFailed => "hook_failed",
         }
     }
 }

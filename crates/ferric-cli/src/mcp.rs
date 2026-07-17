@@ -448,6 +448,7 @@ impl McpServer {
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
             None,
+            self.config.hooks.clone(),
         );
         match &self.executor {
             Executor::Mock => futures_executor::block_on(fut),

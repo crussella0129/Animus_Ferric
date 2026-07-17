@@ -48,6 +48,7 @@ pub struct RunArgs<'a> {
     pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub taint_set: ferric_guard::TaintSet,
     pub sink_policy: ferric_guard::SinkPolicy,
+    pub hooks: Option<ferric_core::HooksConfig>,
 }
 
 pub enum TurnOutcome {
@@ -82,6 +83,20 @@ impl<'a> LoopState<'a> {
         if self.turns >= u32::from(self.args.policy.max_turns) {
             return Ok(TurnOutcome::Stop(StopReason::MaxTurns));
         }
+
+        if let Some(hooks) = &self.args.hooks {
+            if let Some(cmd) = &hooks.pre_turn {
+                if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
+                    let note = Event::Note {
+                        text: format!("pre_turn hook failed: {e}"),
+                    };
+                    self.sink.write_event(note.clone())?;
+                    self.projector.step(&note);
+                    return Ok(TurnOutcome::Stop(StopReason::HookFailed));
+                }
+            }
+        }
+
         let turn = self.turns;
         self.turns += 1;
         let start_event = Event::TurnStart { turn };
@@ -233,6 +248,15 @@ impl<'a> LoopState<'a> {
                     .as_deref()
                     .is_some_and(|t| !t.trim().is_empty());
             if is_native_final {
+                if let Some(hooks) = &self.args.hooks {
+                    if let Some(cmd) = &hooks.post_turn {
+                        if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
+                            let note = Event::Note { text: format!("post_turn hook failed: {e}") };
+                            self.sink.write_event(note.clone())?;
+                            self.projector.step(&note);
+                        }
+                    }
+                }
                 return Ok(TurnOutcome::Stop(StopReason::FinalText));
             }
             if self.nudged_for_no_action {
@@ -346,12 +370,34 @@ impl<'a> LoopState<'a> {
         if let Some(summary) = terminate_with {
             self.projector.commit_pending();
             self.projector.last_text = Some(summary);
+            
+            if let Some(hooks) = &self.args.hooks {
+                if let Some(cmd) = &hooks.post_turn {
+                    if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
+                        let note = Event::Note { text: format!("post_turn hook failed: {e}") };
+                        self.sink.write_event(note.clone())?;
+                        self.projector.step(&note);
+                    }
+                }
+            }
+
             return Ok(TurnOutcome::Stop(StopReason::TaskComplete));
         }
         
         if let Some(plan) = plan_terminate_with {
             self.projector.commit_pending();
             self.projector.last_text = Some(plan);
+
+            if let Some(hooks) = &self.args.hooks {
+                if let Some(cmd) = &hooks.post_turn {
+                    if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
+                        let note = Event::Note { text: format!("post_turn hook failed: {e}") };
+                        self.sink.write_event(note.clone())?;
+                        self.projector.step(&note);
+                    }
+                }
+            }
+
             return Ok(TurnOutcome::Stop(StopReason::PlanSubmitted));
         }
 
@@ -375,7 +421,16 @@ impl<'a> LoopState<'a> {
                 }
             }
         }
-        
+        if let Some(hooks) = &self.args.hooks {
+            if let Some(cmd) = &hooks.post_turn {
+                if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
+                    let note = Event::Note { text: format!("post_turn hook failed: {e}") };
+                    self.sink.write_event(note.clone())?;
+                    self.projector.step(&note);
+                }
+            }
+        }
+
         Ok(TurnOutcome::Continue)
     }
 }
@@ -505,6 +560,24 @@ pub async fn run(
     state.projector.step(&session_end);
     
     state.projector.commit_pending();
+
+    let is_error = !matches!(
+        stop,
+        StopReason::TaskComplete | StopReason::PlanSubmitted | StopReason::FinalText
+    );
+    if is_error {
+        if let Some(hooks) = &state.args.hooks {
+            if let Some(cmd) = &hooks.on_error {
+                if let Err(e) = crate::hooks_exec::run_hook(cmd, state.args.workspace.root()) {
+                    let note = Event::Note {
+                        text: format!("on_error hook failed: {e}"),
+                    };
+                    let _ = state.sink.write_event(note.clone());
+                    state.projector.step(&note);
+                }
+            }
+        }
+    }
 
     Ok(LoopOutcome {
         final_text: state.projector.last_text,

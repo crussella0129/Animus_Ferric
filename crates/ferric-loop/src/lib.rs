@@ -14,6 +14,7 @@ mod backoff;
 mod compact;
 mod failure;
 mod grammar;
+mod hooks_exec;
 mod outcome;
 mod progress;
 mod protocol;

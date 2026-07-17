@@ -176,10 +176,10 @@ pub(crate) struct RunConfigArgs {
     pub prompts_dir: Option<PathBuf>,
     pub max_ring: Option<u8>,
     pub profile_dir: PathBuf,
-    /// `--model` (openai backend) — the key
     /// used to look up a persisted profile record (ADR-029). `None` skips the
     /// lookup entirely (matches today's behavior when neither flag is set).
     pub model_key: Option<String>,
+    pub hooks: Option<ferric_core::HooksConfig>,
 }
 
 /// Everything derived from `RunConfigArgs` that a loop execution needs, minus
@@ -198,6 +198,7 @@ pub(crate) struct RunConfig {
     /// (which owns the trace sink, not yet open when this is built) is
     /// responsible for recording it as a `Note` once a sink exists.
     pub prompt_composition_error: Option<String>,
+    pub hooks: Option<ferric_core::HooksConfig>,
 }
 
 pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
@@ -323,6 +324,7 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
         system_prompt,
         lineage,
         prompt_composition_error,
+        hooks: a.hooks.clone(),
     }
 }
 
@@ -442,6 +444,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             .backend_opts
             .model
             .clone(),
+        hooks: cfg.hooks.clone(),
     });
 
     // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
@@ -758,6 +761,7 @@ pub(crate) async fn run_with_provider(
     taint_set: ferric_guard::TaintSet,
     sink_policy: ferric_guard::SinkPolicy,
     cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    hooks: Option<ferric_core::HooksConfig>,
 ) -> Result<LoopOutcome, String> {
     run(
         RunArgs {
@@ -776,6 +780,7 @@ pub(crate) async fn run_with_provider(
             resume,
             taint_set,
             sink_policy,
+            hooks,
         },
         sink,
         prompt,
@@ -819,6 +824,7 @@ fn drive_mock(
         taint_set,
         sink_policy,
         None,
+        config.hooks,
     ))
 }
 
@@ -897,6 +903,7 @@ fn drive_real(
             taint_set,
             sink_policy,
             Some(cancel_flag),
+            config.hooks,
         )
         .await
     })
