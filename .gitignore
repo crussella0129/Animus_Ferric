@@ -9,6 +9,16 @@ sprints/
 # Rust
 target/
 
+# Stray build artifacts / scratch outputs (sprint 72 cleanup). Compiled
+# binaries and debug symbols never belong in source; the *.txt/*.json below
+# are one-off manual-test scratch. `confidence.txt` is protocol state and is
+# force-kept via the sprint-loops allowlist above, so it is unaffected.
+*.exe
+*.pdb
+/payload.json
+/result.txt
+/ferric-mock.txt
+
 # JetBrains IDE project config (local to each dev's machine).
 .idea/
 

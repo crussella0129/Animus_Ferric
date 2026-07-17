@@ -7,6 +7,7 @@
 use std::time::Duration;
 
 use ferric_provider::{Completion, CompletionRequest, Provider, ProviderError, StreamDelta};
+use tracing::warn;
 
 use crate::run::Sleeper;
 
@@ -28,6 +29,13 @@ pub async fn complete_with_backoff(
             Ok(completion) => return Ok(completion),
             Err(e) if e.is_retryable() && attempt < MAX_RETRIES => {
                 let delay = BASE_DELAY_MS << attempt; // 250, 500, 1000
+                warn!(
+                    error = %e,
+                    attempt = attempt + 1,
+                    max_retries = MAX_RETRIES,
+                    delay_ms = delay,
+                    "retryable provider error; backing off"
+                );
                 sleeper.sleep(Duration::from_millis(delay));
                 attempt += 1;
             }
@@ -59,6 +67,13 @@ pub async fn complete_streaming_with_backoff(
             Ok(completion) => return Ok(completion),
             Err(e) if e.is_retryable() && attempt < MAX_RETRIES => {
                 let delay = BASE_DELAY_MS << attempt;
+                warn!(
+                    error = %e,
+                    attempt = attempt + 1,
+                    max_retries = MAX_RETRIES,
+                    delay_ms = delay,
+                    "retryable provider error mid-stream; backing off (full retry)"
+                );
                 sleeper.sleep(Duration::from_millis(delay));
                 attempt += 1;
             }

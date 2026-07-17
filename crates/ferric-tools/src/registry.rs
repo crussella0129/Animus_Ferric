@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use ferric_core::{RunPolicy, ring_for_tier};
 use ferric_guard::{Decision, Workspace, check};
+use tracing::{debug, warn};
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
@@ -143,6 +144,7 @@ impl Registry {
             let resolved = match workspace.resolve(&target) {
                 Ok(path) => path,
                 Err(e) => {
+                    warn!(tool = name, target = %target, error = %e, "guard denied: outside workspace boundary");
                     checks.push(CheckRecord::deny(target.into(), "boundary", e.to_string()));
                     return ExecuteOutcome::Denied {
                         reason: format!("boundary: {e}"),
@@ -151,6 +153,7 @@ impl Registry {
                 }
             };
             if let Decision::Deny(reason) = check(spec.permission, &resolved) {
+                warn!(tool = name, path = %resolved.display(), rule = %reason.rule, matched = %reason.matched, "guard denied: permission check");
                 let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
                 checks.push(CheckRecord::deny(resolved, reason.rule, &reason.matched));
                 return ExecuteOutcome::Denied {
@@ -163,6 +166,7 @@ impl Registry {
 
         for cmd in tool.target_commands(args) {
             if let Decision::Deny(reason) = ferric_guard::check_command(&cmd) {
+                warn!(tool = name, command = %cmd, rule = %reason.rule, matched = %reason.matched, "guard denied: command denylist");
                 let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
                 checks.push(CheckRecord::deny(
                     std::path::PathBuf::from(&cmd),
@@ -181,16 +185,23 @@ impl Registry {
         match sink_policy.decide(spec.permission, is_tainted) {
             ferric_guard::SinkDecision::Allow => {}
             ferric_guard::SinkDecision::Warn => {
-                // Future: log a warning
+                warn!(
+                    tool = name,
+                    permission = ?spec.permission,
+                    "sink policy: tainted data reaching a {:?} sink (warn mode; proceeding)",
+                    spec.permission
+                );
             }
             ferric_guard::SinkDecision::RequireApproval => {
                 // Fall back to deny since human approval is not wired
+                warn!(tool = name, permission = ?spec.permission, "sink policy: tainted data at sink; require-approval not wired, denying");
                 return ExecuteOutcome::Denied {
                     reason: "sink policy: require approval not implemented".to_string(),
                     checks,
                 };
             }
             ferric_guard::SinkDecision::Deny => {
+                warn!(tool = name, permission = ?spec.permission, "sink policy: tainted data denied at sink");
                 return ExecuteOutcome::Denied {
                     reason: "sink policy: tainted data denied at sink".to_string(),
                     checks,
@@ -207,6 +218,7 @@ impl Registry {
             Ok(output) => (output, false),
             Err(error) => (error, true),
         };
+        debug!(tool = name, is_error, duration_ms, "tool handler returned");
         let for_model = truncate_chars(&full, self.truncation_limit);
         ExecuteOutcome::Completed {
             output: ToolOutput {

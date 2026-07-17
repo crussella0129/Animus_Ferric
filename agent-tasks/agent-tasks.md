@@ -21,7 +21,7 @@
 - [x] Decouple Driver from Logic by breaking down the monolithic `while` loop into a `step(&mut LoopState) -> Result<TurnOutcome>` function.
 
 ## ferric-prompt
-- [ ] Implement a templating engine (`minijinja` or `askama`) to replace manual `format!()` strings in `src/lib.rs`.
+- [x] Implement a templating engine to replace manual `format!()` strings in `src/lib.rs`. *(Done: superseded by `oovra` element composition, ADR-016 — `recipe_for`/`compose` render prompt atoms, not `format!()`.)*
 
 ## Advanced Harness Features (Plan, Stop, Revert, Dream)
 - [x] **Plan Mode**: Implement an `ActionProtocol::Plan` that strips write-permissions and provides a `submit_plan` terminator, effectively utilizing the robust constraint and tool-call mechanics to safely enforce an initial planning phase.
@@ -39,10 +39,10 @@
 - [ ] Optimize SSE streaming in `src/stream_scan.rs` using `bytes::BytesMut` and `serde_json::StreamDeserializer` instead of `String` buffering.
 
 ## ferric-research
-- [ ] Define a `Retriever` trait in `retriever.rs` to implement a plugin architecture for external system integration.
+- [x] Define a `Retriever` trait in `retriever.rs` to implement a plugin architecture for external system integration. *(Done: `retriever.rs:49`, ADR-041 — Local-FS / Tailnet-FS / Web planes implement it.)*
 
 ## General Architecture & Observability
-- [ ] **Observability:** Integrate `tracing` and `tracing-subscriber` crates to provide robust, leveled debug logging across all crates (distinct from the LLM trace JSONL).
+- [x] **Observability:** Integrate `tracing` and `tracing-subscriber` crates to provide robust, leveled debug logging across all crates (distinct from the LLM trace JSONL). *(Sprint 72, ADR-063: `ferric-cli` owns a stderr, quiet-by-default subscriber (`-v`/`FERRIC_LOG`); `ferric-loop`/`ferric-tools`/`ferric-provider` emit spans + leveled events. Guard stays pure — its denials are logged at the registry chokepoint.)*
 - [ ] **Tool Registration Macros:** Refactor `ferric-tools` to use a procedural macro (e.g., `#[ferric_tool]`) or `typetag` to automatically discover and register tools, reducing boilerplate in `builtin/mod.rs`.
 - [ ] **Parallel Tool Execution:** Extend the `Tool` trait in `ferric-core` to declare read/write side-effects, allowing `ferric-loop` to safely dispatch parallelizable tool calls (like multiple `read_file`s) concurrently.
 - [ ] **Provider Expansion:** Add native support for Anthropic (`Claude 3.5`) and Gemini (`Gemini 1.5 Pro`) backends in `ferric-provider`, expanding beyond the current OpenAI-compatible implementation.

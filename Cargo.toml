@@ -52,6 +52,15 @@ rustyline = "14"
 axum = "0.8"
 tokio-stream = "0.1"
 
+# Observability (sprint 72, ADR-063): leveled, structured harness-internal
+# logging, DISTINCT from the LLM JSONL trajectory (ADR-002). `tracing` is the
+# emit-side facade (pure Rust, no C deps — edge/ARM-clean); only the binary
+# (`ferric-cli`) links `tracing-subscriber` and installs a stderr subscriber,
+# so libraries stay subscriber-agnostic. With no subscriber the macros are
+# near-zero-cost, so it ships always-on rather than feature-gated.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
 ferric-core = { path = "crates/ferric-core" }
 ferric-trace = { path = "crates/ferric-trace" }
 ferric-provider = { path = "crates/ferric-provider" }

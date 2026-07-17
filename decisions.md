@@ -699,3 +699,68 @@ scaffolder and the interactive interview in increment 1. Full research/plan/crit
 - **Explicit deferrals (inc 2+):** the full GECK-style project-type *profile library* (inc 1 has a
   bare `--type` passthrough or none); the "begin work?" **Loop auto-hand-off** that actually launches
   a first sprint; environment detection; richer goal→task NLP; a fancy TUI.
+
+## ADR-063 — 2026-07-17 (sprint 72): harness-internal observability via `tracing` (a second, orthogonal channel to the JSONL trace)
+The codebase had grown to 12 crates and a multi-guard async loop (compaction,
+hooks, background tasks, VCS snapshots, retries) with **zero structured
+logging** — `tracing` was not even a dependency. The JSONL trajectory (ADR-002)
+is the source of truth for *what the model did*, but it is the wrong tool for
+*why the harness did what it did* (a hook failed, a retry fired, a guard tripped,
+a tool took 4s): those are not model actions and do not belong in the replayable
+trajectory. This ADR adds the diagnostic channel — deliberately **distinct from,
+not folded into,** the trace.
+- **Two channels, never conflated.** JSONL trace = LLM trajectory, flush-per-event
+  to its sink file, replayable/diffable (unchanged). `tracing` = harness-internal
+  diagnostics, to **stderr**, ephemeral, level-filtered. A given fact lives in one
+  or the other by its nature (a `ToolCall` is trajectory → trace; "tool handler
+  returned in 4ms" is diagnostics → tracing). Nothing was moved out of the trace.
+- **Libraries emit; the binary subscribes.** `ferric-loop`, `ferric-tools`, and
+  the `ferric-provider` openai valve link only the `tracing` facade and emit
+  spans/events. **Only `ferric-cli`** links `tracing-subscriber` and installs the
+  process-wide subscriber once, in `main()`, before any subcommand runs — so every
+  surface (`query`/`mcp`/`chat`/`api`/`bench`/…) inherits one configured sink for
+  free. Idiomatic, and it keeps the libraries subscriber-agnostic.
+- **stderr, quiet by default.** Several surfaces treat **stdout as a machine
+  channel** (`ferric mcp` speaks JSON-RPC there; `query`/`launch` write their
+  report there). Diagnostics therefore go to **stderr**, and the default floor is
+  **WARN**, so an ordinary run prints nothing extra. Verified end-to-end: at `-vv`,
+  stdout stays byte-for-byte clean while stderr carries the span-scoped debug feed.
+- **`-v` count + `FERRIC_LOG`/`RUST_LOG` override.** A global `-v/--verbose`
+  clap flag (`-v` info, `-vv` debug, `-vvv` trace) sets the floor; a non-empty
+  `FERRIC_LOG` (preferred) or `RUST_LOG` env filter overrides it entirely, so
+  per-crate targeting (`FERRIC_LOG=ferric_loop=debug`) needs no rebuild. The
+  decision logic is a pure, unit-tested function; a malformed filter falls back
+  to WARN rather than aborting the run.
+- **Always-on, not feature-gated.** With no subscriber the macros are near
+  zero-cost, so gating them across crates would buy no measurable edge/ARM win
+  for real maintenance cost. Exception: `ferric-provider` only instruments the
+  openai valve, so its `tracing` dep rides the existing `backend-openai` feature —
+  the default library build and the aarch64 check gate never compile it.
+- **`ferric-guard` stays pure (a deliberate non-change).** Guard is a hardcoded,
+  side-effect-free decision crate (ADR-005). Its `check`/`check_command` flow
+  **only** through the `Registry::execute` chokepoint in production, which now
+  logs every denial at WARN *with the tool-name context guard itself lacks*.
+  Instrumenting guard directly would double-log with less context and give a
+  security-critical primitive a logging side effect — so guard was left untouched
+  and its `tracing` dep dropped.
+- **Level discipline.** WARN is reserved for rare, genuinely-actionable events
+  (guard-trip stops, provider errors after retries, each backoff retry, guard
+  denials at the chokepoint). Per-turn conditions that recur in a common degraded
+  setup (a VCS snapshot failing in a non-git workspace, once per turn) are **debug**,
+  not warn, so quiet-by-default survives that case; the failure is still recorded
+  as a trace `Note`. A buffer-writer capture test asserts a guard trip emits its
+  WARN *and* that a clean run emits nothing at WARN.
+- **Scope / deferrals (named, not dropped):** `ferric-research` (Ornstein),
+  `ferric-vcs`, and `animus-launch` are not instrumented this increment — Ornstein
+  already emits provenance via its digests, vcs/launch are short deterministic
+  subprocess sequences; they slot into the same facade later with no design change.
+  No JSON/OTel subscriber, no `#[instrument]` on tool handlers, no per-request
+  body logging (only shape: model, message count, constrained-or-not).
+
+## Documentation note (sprint 72)
+`decisions.md` physically ended at ADR-053 (sprint 43) while the README timeline
+cites ADR-055…062 (sprints 45–54): the full ADR prose for that span was kept in
+per-sprint working memory (`sprints/`, gitignored) and summarized in the README,
+but not appended here. This is a known ledger drift, recorded so a future sprint
+can backfill 054–062 from the README bullets if the full prose is wanted. ADR-063
+is numbered past the highest README-referenced ADR to stay globally unique.
