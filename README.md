@@ -247,4 +247,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 67 — Configurable Hooks** (2026-07-17). Introduced a lightweight hooks system allowing custom scripts to execute on deterministic boundaries within the agentic loop (`pre_turn`, `post_turn`, and `on_error`). Bound through `.ferric/config.toml`, hooks are executed via the host's native shell environment (`cmd /C` or `sh -c`) using `std::process::Command`, securely injecting synchronous logic immediately prior to tool execution or after failure outcomes without disturbing the core trace flow.
 
-> **Next — TBD.** Background Task Management / "Dream Mode" background task consolidation.
+- **Sprint 68 — Background Task Management** (2026-07-17). Added detached `tokio` process management to `shell_exec` and exposed a `manage_task` built-in tool. This allows the agent to spin up long-running tasks in the background with automatic OS-level file redirection for stdout/stderr into `.ferric/tasks/`. The agent can then use `manage_task` (list, status, kill, send_input) to interact with these asynchronous processes without blocking the execution loop.
+
+> **Next — TBD.** Dream Mode / Background task consolidation.

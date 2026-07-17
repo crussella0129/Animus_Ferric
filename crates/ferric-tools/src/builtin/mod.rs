@@ -15,7 +15,9 @@ mod search_files;
 mod write_file;
 mod git_read;
 mod git_write;
+mod manage_task;
 mod shell_exec;
+pub mod task_registry;
 
 pub use apply_patch::ApplyPatch;
 pub use copy_file::CopyFile;
@@ -24,6 +26,7 @@ pub use edit_file::EditFile;
 pub use find_files::FindFiles;
 pub use list_dir::ListDir;
 pub use make_dir::MakeDir;
+pub use manage_task::ManageTask;
 pub use move_path::MovePath;
 pub use multi_edit::MultiEdit;
 pub use read_file::ReadFile;
@@ -52,6 +55,7 @@ pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(GitRead));
     registry.register(Box::new(GitWrite));
     registry.register(Box::new(ShellExec));
+    registry.register(Box::new(ManageTask));
 }
 
 /// Shared helper: the required string `path` argument.
