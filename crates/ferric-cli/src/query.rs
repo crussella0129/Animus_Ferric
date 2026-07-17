@@ -596,6 +596,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
                 "requireapproval" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval),
                 _ => ferric_guard::SinkPolicy::deny(),
             },
+            config.hooks.clone(),
         )
     } else {
         drive_real(
@@ -619,6 +620,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
                 _ => ferric_guard::SinkPolicy::deny(),
             },
             args.research.clone(),
+            config.hooks.clone(),
         )
     };
 
@@ -806,6 +808,7 @@ fn drive_mock(
     resume: Option<ferric_loop::ReplayedState>,
     taint_set: ferric_guard::TaintSet,
     sink_policy: ferric_guard::SinkPolicy,
+    hooks: Option<ferric_core::HooksConfig>,
 ) -> Result<LoopOutcome, String> {
     futures_executor::block_on(run_with_provider(
         provider,
@@ -824,7 +827,7 @@ fn drive_mock(
         taint_set,
         sink_policy,
         None,
-        config.hooks,
+        hooks,
     ))
 }
 
@@ -847,6 +850,7 @@ fn drive_real(
     mut taint_set: ferric_guard::TaintSet,
     sink_policy: ferric_guard::SinkPolicy,
     research_query: Option<String>,
+    hooks: Option<ferric_core::HooksConfig>,
 ) -> Result<LoopOutcome, String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
@@ -903,7 +907,7 @@ fn drive_real(
             taint_set,
             sink_policy,
             Some(cancel_flag),
-            config.hooks,
+            hooks,
         )
         .await
     })
@@ -928,6 +932,7 @@ fn drive_real(
     _taint_set: ferric_guard::TaintSet,
     _sink_policy: ferric_guard::SinkPolicy,
     _research_query: Option<String>,
+    _hooks: Option<ferric_core::HooksConfig>,
 ) -> Result<LoopOutcome, String> {
     Err("this binary was built without backend features; \
          rebuild with `cargo build --features backend-openai`, or use --mock"

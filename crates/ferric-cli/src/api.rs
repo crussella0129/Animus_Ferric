@@ -232,6 +232,7 @@ pub mod server {
                 .or(cfg.profile_dir)
                 .unwrap_or_else(|| PathBuf::from("benchmarks")),
             model_key: backend_opts.model.clone(),
+            hooks: None,
         });
 
         let ts = now_ms();
@@ -260,6 +261,7 @@ pub mod server {
             None,
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
+            None,
             None,
         )
         .await

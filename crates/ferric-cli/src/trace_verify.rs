@@ -143,6 +143,7 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
         resume: None,
         taint_set: ferric_guard::TaintSet::new(),
         sink_policy: ferric_guard::SinkPolicy::deny(),
+        hooks: None,
     };
 
     let outcome = futures_executor::block_on(ferric_loop::run(

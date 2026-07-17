@@ -20,6 +20,7 @@ mod backend;
 mod bench_cmd;
 mod chat;
 mod config;
+mod dream_cmd;
 mod launch;
 mod mcp;
 mod query;
@@ -66,6 +67,8 @@ enum Command {
     Api(Box<api::server::ApiArgs>),
     /// Revert the workspace and trace to a specific turn snapshot
     Revert(Box<revert_cmd::RevertArgs>),
+    /// Dream Mode: Asynchronously parse historical traces and extract knowledge
+    Dream(Box<dream_cmd::DreamArgs>),
     /// Launch and manage the OpenAI-compatible inference server (the HTTP valve)
     Server {
         #[command(subcommand)]
@@ -99,6 +102,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Query(args) => query::run_query(*args),
         Command::Revert(args) => revert_cmd::run_revert(*args),
+        Command::Dream(args) => dream_cmd::run_dream(*args),
         Command::Bench { command } => match command {
             BenchCommand::Ltd(args) => toolbench_cmd::run_toolbench(*args),
             BenchCommand::Full(args) => bench_cmd::run_bench(*args),

@@ -279,6 +279,7 @@ impl ChatBackend {
                     ferric_guard::TaintSet::new(),
                     ferric_guard::SinkPolicy::deny(),
                     None,
+                    None,
                 ))
             }
             #[cfg(feature = "backend-openai")]
@@ -298,6 +299,7 @@ impl ChatBackend {
                 Some(seed),
                 ferric_guard::TaintSet::new(),
                 ferric_guard::SinkPolicy::deny(),
+                None,
                 None,
             )),
         }
@@ -380,6 +382,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         model_key: backend_opts
             .model
             .clone(),
+        hooks: None,
     });
     for diag in &loaded_config.diagnostics {
         eprintln!("{diag}");
@@ -601,6 +604,7 @@ mod tests {
             max_ring: None,
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
+            hooks: None,
         });
         let seed = escalation_seed(&history, &config, "chat-123");
         assert_eq!(
