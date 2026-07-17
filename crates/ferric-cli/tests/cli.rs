@@ -1430,3 +1430,72 @@ fn mcp_resume_rejects_already_stopped() {
     assert!(stderr.contains("cannot resume"), "stderr: {stderr}");
     assert!(stderr.contains("already ended (done)"), "stderr: {stderr}");
 }
+
+// ── ICM agent delegation (sprint 73, ADR-064) ──────────────────────────────
+
+#[test]
+fn icm_init_scaffolds_and_plan_shows_the_pipeline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+
+    // init scaffolds a three-stage workspace.
+    let out = ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    assert!(out.status.success(), "icm init must succeed");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Scaffolded ICM workspace"));
+    assert!(ws.join("stages/01_research/CONTEXT.md").exists());
+    assert!(ws.join("Animus.md").exists());
+
+    // plan discovers the stages in numeric order and reports layers.
+    let out = ferric().args(["icm", "plan"]).arg(&ws).output().unwrap();
+    assert!(out.status.success(), "icm plan must succeed");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("01_research"));
+    assert!(stdout.contains("02_script"));
+    assert!(stdout.contains("03_production"));
+    // Layer 0/1/2 are always present for a scaffolded workspace.
+    assert!(stdout.contains("Layer 0 (identity)"));
+    assert!(stdout.contains("Layer 2 (contract)"));
+}
+
+#[test]
+fn icm_plan_wires_prior_stage_output_as_layer4() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+
+    // Simulate stage 1 having produced output and a shared voice file.
+    std::fs::write(
+        ws.join("stages/01_research/output/research.md"),
+        "finding: constraint beats native.",
+    )
+    .unwrap();
+    std::fs::write(ws.join("_config/voice.md"), "terse.").unwrap();
+
+    let out = ferric().args(["icm", "plan"]).arg(&ws).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    // Stage 2 pulls stage 1's output as a present Layer 4 input.
+    assert!(
+        stdout.contains("01_research/output/research.md"),
+        "plan must wire the upstream output as Layer 4; got:\n{stdout}"
+    );
+    assert!(stdout.contains("_config/voice.md"));
+}
+
+#[test]
+fn icm_init_refuses_to_clobber() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("keep.txt"), "mine").unwrap();
+
+    let out = ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    assert!(!out.status.success(), "init must refuse a non-empty dir");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("refuse to clobber"), "stderr: {stderr}");
+    // The pre-existing file is untouched.
+    assert_eq!(
+        std::fs::read_to_string(ws.join("keep.txt")).unwrap(),
+        "mine"
+    );
+}
