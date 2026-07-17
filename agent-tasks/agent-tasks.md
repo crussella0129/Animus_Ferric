@@ -10,15 +10,15 @@
 - [ ] Consolidate configuration precedence by merging `config.rs` and `backend.rs` into a unified `ConfigManager`.
 
 ## ferric-core
-- [ ] Isolate base64 encoding from `media.rs` into an optional module or crate feature (`media-encoding`).
-- [ ] Standardize errors in `error.rs` to derive `thiserror::Error`.
+- [x] Isolate base64 encoding from `media.rs` into an optional module or crate feature (`media-encoding`).
+- [x] Standardize errors in `error.rs` to derive `thiserror::Error`.
 
 ## ferric-guard
 - [ ] Implement Dynamic Denylist Configuration in `src/denylist.rs` to read from a `.ferricignore` file.
 
 ## ferric-loop
-- [ ] Extract Loop State from `run.rs` into a dedicated `LoopState` struct.
-- [ ] Decouple Driver from Logic by breaking down the monolithic `while` loop into a `step(&mut LoopState) -> Result<TurnOutcome>` function.
+- [x] Extract Loop State from `run.rs` into a dedicated `LoopState` struct.
+- [x] Decouple Driver from Logic by breaking down the monolithic `while` loop into a `step(&mut LoopState) -> Result<TurnOutcome>` function.
 
 ## ferric-prompt
 - [ ] Implement a templating engine (`minijinja` or `askama`) to replace manual `format!()` strings in `src/lib.rs`.
@@ -28,9 +28,3 @@
 
 ## ferric-research
 - [ ] Define a `Retriever` trait in `retriever.rs` to implement a plugin architecture for external system integration.
-
-## ferric-tools
-- [ ] Refactor `shell_exec.rs` to use `tokio::process::Command` with asynchronous piping for stdout/stderr and fixed-size buffers.
-
-## ferric-trace
-- [ ] Implement a Streaming JSONL Reader in `src/reader.rs` yielding an `impl Iterator<Item = Result<Event>>` instead of loading the entire trace into memory.
