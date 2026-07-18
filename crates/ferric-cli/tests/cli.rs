@@ -1787,3 +1787,31 @@ fn cron_add_accepts_a_cron_expression() {
             .contains("cron(0 2 * * *)")
     );
 }
+
+// ── Direct terminal passthrough (sprint 78, ADR-069) ───────────────────────
+
+#[test]
+fn chat_bang_runs_a_command_directly() {
+    let ws = tempfile::tempdir().unwrap();
+    // `!echo` executes with no LLM roundtrip; its output prints to stdout.
+    let (stdout, _stderr) = run_chat_mock(ws.path(), "!echo passthrough-marker\n/exit\n");
+    assert!(
+        stdout.contains("passthrough-marker"),
+        "the command output should print; stdout: {stdout}"
+    );
+    // No LLM talk response for a `!` line (it's a side-channel, not conversation).
+    assert!(
+        !stdout.contains("[mock chat]"),
+        "a `!` passthrough must not trigger a talk completion; stdout: {stdout}"
+    );
+}
+
+#[test]
+fn chat_passthrough_still_enforces_the_command_denylist() {
+    let ws = tempfile::tempdir().unwrap();
+    let (_stdout, stderr) = run_chat_mock(ws.path(), "!rm -rf /\n/exit\n");
+    assert!(
+        stderr.contains("blocked"),
+        "a denylisted command must be refused even in direct passthrough; stderr: {stderr}"
+    );
+}
