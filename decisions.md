@@ -997,3 +997,36 @@ to security policy, so it is scoped tightly against ADR-005.
   additive-only invariant and is unnecessary — the file only ever adds); no `?`/`[]`
   glob metacharacters (only `*`); `.gitignore` is NOT auto-consumed (an explicit,
   security-reviewed file, not an incidental one).
+
+## ADR-069 — 2026-07-17 (sprint 78): direct terminal passthrough in chat (`!cmd` / `/run cmd`)
+`ferric chat` gains a third turn kind alongside talk and `/do` escalate: a line
+prefixed `!` (or `/run `) runs a shell command **directly, with no LLM
+roundtrip**. Motivated by the interactive workflow — checking `ls`/`git status`
+mid-conversation without asking the model to do it.
+- **Human-initiated, guard-screened, no LLM — the security shape.** The command
+  runs through the SAME `shell_exec` registry chokepoint the agent uses, so
+  `ferric-guard::check_command` (the ADR-005 command denylist) still fires — a
+  test drives `!rm -rf /` and asserts it is blocked. Crucially, there is **no LLM
+  in this path**: the human typed the command, so ADR-005 ("the LLM is never
+  consulted on a security decision") is satisfied trivially — the model neither
+  proposes nor sees it. This slots cleanly into the chat security model: talk (no
+  action channel), `/do` (LLM-driven constrained action), `!cmd` (human-driven
+  direct action). The one that touches the LLM (`/do`) stays fully constrained;
+  the one that acts without constraint (`!cmd`) has no LLM.
+- **Not folded into the conversation.** A `!cmd` line and its output are a
+  terminal side-channel, printed and logged as a chat `Note`, but NOT appended to
+  the talk history — running a command is not saying something to the model. (A
+  future increment could optionally surface output into context on request.)
+- **Parsing is exact.** `!<cmd>` and `/run <cmd>` map to `ChatInput::Run`; a bare
+  `!` or `/run` (no command) is *talked*, not run, and `/running late` is talked
+  (the `/run ` boundary is required) — so the passthrough never silently
+  swallows ordinary text. Pure and unit-tested, matching the existing
+  `parse_chat_input` discipline.
+- **Runtime wiring.** `shell_exec` runs on tokio (`block_in_place`, sprint 67),
+  but the chat REPL is synchronous with no ambient runtime — so the passthrough
+  lazily creates a multi-thread `tokio::runtime::Runtime` on first `!cmd` and
+  reuses it. (The escalate path already had a runtime via the backend; talk-only
+  and passthrough-free sessions never pay for one.)
+- **Deferred:** streaming a long command's output live (currently printed after
+  it completes); a way to fold command output into the model's context on demand;
+  `!` passthrough in the non-REPL surfaces (it is chat-only by design).

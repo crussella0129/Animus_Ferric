@@ -104,6 +104,8 @@ pub(crate) enum ChatInput {
     Talk(String),
     /// `/do <request>` → escalate into the constrained agentic loop.
     Escalate(String),
+    /// `!<cmd>` or `/run <cmd>` → run a shell command directly, no LLM (ADR-069).
+    Run(String),
     /// `/help` → print the command list.
     Help,
     /// `/exit`, `/quit`, or EOF → end the session.
@@ -126,6 +128,28 @@ pub(crate) fn parse_chat_input(line: &str) -> ChatInput {
             return ChatInput::Talk(trimmed.to_string());
         }
         return ChatInput::Escalate(req.to_string());
+    }
+    // Direct terminal passthrough (ADR-069): `!<cmd>` or `/run <cmd>` runs a
+    // shell command through the guarded `shell_exec` path with NO LLM. A bare
+    // `!` or `/run` (no command) is talked, not run.
+    if let Some(rest) = trimmed.strip_prefix('!') {
+        let cmd = rest.trim();
+        return if cmd.is_empty() {
+            ChatInput::Talk(trimmed.to_string())
+        } else {
+            ChatInput::Run(cmd.to_string())
+        };
+    }
+    if trimmed == "/run" {
+        return ChatInput::Talk(trimmed.to_string());
+    }
+    if let Some(rest) = trimmed.strip_prefix("/run ") {
+        let cmd = rest.trim();
+        return if cmd.is_empty() {
+            ChatInput::Talk(trimmed.to_string())
+        } else {
+            ChatInput::Run(cmd.to_string())
+        };
     }
     match trimmed {
         "/help" => ChatInput::Help,
@@ -321,6 +345,8 @@ Commands:
   /do <request>   escalate this turn into the constrained agentic loop (it can
                   act on the workspace, through the same guarded/traced path as
                   `ferric query`)
+  !<cmd>          run a shell command directly (no LLM), through the guarded
+  /run <cmd>      `shell_exec` path — the same command denylist applies
   /help           show this help
   /exit, /quit    end the session
   <anything else> talk mode — the model responds as text only (no tools, no
@@ -442,6 +468,9 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     // (implausible for human typing, but real for scripted/piped chat;
     // test-critic C-001).
     let mut esc_count: u32 = 0;
+    // `shell_exec` runs on tokio (sprint 67); the sync REPL has no ambient
+    // runtime, so `!cmd` passthrough gets its own, created on first use.
+    let mut shell_rt: Option<tokio::runtime::Runtime> = None;
     loop {
         let line = match editor.readline("you> ") {
             Ok(line) => line,
@@ -508,6 +537,48 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                     Err(e) => eprintln!("escalation error: {e}"),
                 }
             }
+            ChatInput::Run(cmd) => {
+                if shell_rt.is_none() {
+                    shell_rt = tokio::runtime::Runtime::new().ok();
+                }
+                let Some(rt) = &shell_rt else {
+                    eprintln!("cannot start shell runtime for passthrough");
+                    continue;
+                };
+                // Human-initiated, no LLM: run through the SAME guarded
+                // `shell_exec` chokepoint the agent uses, so the command
+                // denylist (ADR-005) still applies. Not folded into the talk
+                // history — it is a terminal side-channel, not conversation.
+                let outcome = rt.block_on(async {
+                    config.registry.execute(
+                        &workspace,
+                        "shell_exec",
+                        &serde_json::json!({ "command": cmd }),
+                        &ferric_guard::TaintSet::new(),
+                        &ferric_guard::SinkPolicy::deny(),
+                    )
+                });
+                match outcome {
+                    ferric_tools::ExecuteOutcome::Completed { output, .. } => {
+                        print!("{}", output.full);
+                        if !output.full.ends_with('\n') {
+                            println!();
+                        }
+                        let _ = log.write_event(Event::Note {
+                            text: format!("chat !run ({} output chars)", output.full.len()),
+                        });
+                    }
+                    ferric_tools::ExecuteOutcome::Denied { reason, .. } => {
+                        eprintln!("blocked: {reason}");
+                        let _ = log.write_event(Event::Note {
+                            text: format!("chat !run blocked: {reason}"),
+                        });
+                    }
+                    ferric_tools::ExecuteOutcome::UnknownTool { .. } => {
+                        eprintln!("shell_exec is unavailable in this build");
+                    }
+                }
+            }
         }
     }
 
@@ -565,6 +636,33 @@ mod tests {
         );
         // `/do` with no request is talked, not a no-op escalation.
         assert_eq!(parse_chat_input("/do"), ChatInput::Talk("/do".to_string()));
+    }
+
+    #[test]
+    fn parse_chat_input_bang_and_run_are_passthrough() {
+        assert_eq!(
+            parse_chat_input("!echo hi"),
+            ChatInput::Run("echo hi".to_string())
+        );
+        assert_eq!(
+            parse_chat_input("  !ls -la  "),
+            ChatInput::Run("ls -la".to_string())
+        );
+        assert_eq!(
+            parse_chat_input("/run pwd"),
+            ChatInput::Run("pwd".to_string())
+        );
+        // A bare `!` or `/run` (no command) is talked, not run.
+        assert_eq!(parse_chat_input("!"), ChatInput::Talk("!".to_string()));
+        assert_eq!(
+            parse_chat_input("/run"),
+            ChatInput::Talk("/run".to_string())
+        );
+        // `/running` is NOT a passthrough (needs the `/run ` boundary) — talked.
+        assert_eq!(
+            parse_chat_input("/running late"),
+            ChatInput::Talk("/running late".to_string())
+        );
     }
 
     /// The load-bearing structural-safety proof (ADR-052): the talk request has

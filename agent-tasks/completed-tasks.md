@@ -865,3 +865,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-18
 - **Files modified:** crates/ferric-guard/src/{lib.rs,ignore.rs,checker.rs,denylist.rs,workspace.rs}, crates/ferric-tools/src/registry.rs, crates/ferric-tools/tests/builtin_file_tools.rs, decisions.md, agent-tasks/agent-tasks.md, README.md
 - **Commit:** pending
+
+
+## T-7801 (sprint 78)
+- **Description:** Direct terminal passthrough in `ferric chat`. Added `ChatInput::Run(String)`; `parse_chat_input` maps `!<cmd>` and `/run <cmd>` to it (bare `!`/`/run` and `/running...` are talked — exact boundary). The REPL runs the command through `config.registry.execute("shell_exec", ...)` — the same guarded chokepoint the agent uses, so `check_command` denylist still applies — human-initiated with NO LLM, output printed + logged as a Note, not folded into talk history. A lazily-created multi-thread tokio runtime backs shell_exec (block_in_place, sprint 67) since the sync REPL has none. Updated /help. 3 tests (1 parse unit incl. boundary cases; 2 CLI black-box: `!echo` runs with no talk response, `!rm -rf /` blocked by denylist). Docs: ADR-069, README timeline.
+- **Completed:** 2026-07-18
+- **Files modified:** crates/ferric-cli/src/chat.rs, crates/ferric-cli/tests/cli.rs, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending
