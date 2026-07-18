@@ -44,34 +44,62 @@ pub enum CronError {
     },
 }
 
-/// A recurrence interval, stored in milliseconds. Minimum one second.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Schedule {
-    ms: u64,
+/// A job's schedule: either a fixed recurrence interval, or a **calendar cron
+/// expression** (5-field, evaluated in **UTC**).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Schedule {
+    /// A fixed interval in milliseconds (minimum one second).
+    Interval(u64),
+    /// A 5-field cron expression: minute hour day-of-month month day-of-week.
+    Cron(CronExpr),
 }
 
 impl Schedule {
-    pub fn as_ms(self) -> u64 {
-        self.ms
+    /// The interval in ms for an interval schedule, or `None` for a cron one.
+    pub fn interval_ms(&self) -> Option<u64> {
+        match self {
+            Schedule::Interval(ms) => Some(*ms),
+            Schedule::Cron(_) => None,
+        }
     }
-    /// Render back to the compact form (`90m` stays `90m`, not `1h30m`).
-    pub fn describe(self) -> String {
-        let s = self.ms / 1000;
-        if s.is_multiple_of(86_400) {
-            format!("{}d", s / 86_400)
-        } else if s.is_multiple_of(3_600) {
-            format!("{}h", s / 3_600)
-        } else if s.is_multiple_of(60) {
-            format!("{}m", s / 60)
-        } else {
-            format!("{s}s")
+    /// A compact, round-trippable description (`12h`, or `cron(0 2 * * *)`).
+    pub fn describe(&self) -> String {
+        match self {
+            Schedule::Interval(ms) => describe_interval(*ms),
+            Schedule::Cron(expr) => format!("cron({})", expr.source),
         }
     }
 }
 
-/// Parse a schedule string: a number + unit (`s`/`m`/`h`/`d`), or one of the
-/// aliases `hourly` / `daily` / `weekly`. Zero and malformed inputs are refused.
+fn describe_interval(ms: u64) -> String {
+    let s = ms / 1000;
+    if s.is_multiple_of(86_400) {
+        format!("{}d", s / 86_400)
+    } else if s.is_multiple_of(3_600) {
+        format!("{}h", s / 3_600)
+    } else if s.is_multiple_of(60) {
+        format!("{}m", s / 60)
+    } else {
+        format!("{s}s")
+    }
+}
+
+/// Parse a job schedule. A string with five whitespace-separated fields is a
+/// cron expression (`0 2 * * *`); anything else is a recurrence interval
+/// (`12h`, `daily`, …).
 pub fn parse_schedule(input: &str) -> Result<Schedule, CronError> {
+    let trimmed = input.trim();
+    if trimmed.split_whitespace().count() == 5 {
+        Ok(Schedule::Cron(CronExpr::parse(trimmed)?))
+    } else {
+        Ok(Schedule::Interval(parse_interval_ms(trimmed)?))
+    }
+}
+
+/// Parse a recurrence interval (`30s`/`15m`/`12h`/`2d`, or
+/// `hourly`/`daily`/`weekly`) to milliseconds. Also used for the `cron watch`
+/// tick interval, which is always an interval (never a cron expression).
+pub fn parse_interval_ms(input: &str) -> Result<u64, CronError> {
     let s = input.trim().to_ascii_lowercase();
     let ms = match s.as_str() {
         "hourly" => 3_600_000,
@@ -99,7 +127,129 @@ pub fn parse_schedule(input: &str) -> Result<Schedule, CronError> {
     if ms == 0 {
         return Err(CronError::BadSchedule(input.to_string()));
     }
-    Ok(Schedule { ms })
+    Ok(ms)
+}
+
+/// A parsed 5-field cron expression, evaluated in **UTC**. Fields: minute
+/// (0–59), hour (0–23), day-of-month (1–31), month (1–12), and day-of-week
+/// (0–6, 0 = Sunday; `7` is accepted as Sunday too). Each field supports `*`,
+/// a number, a range (`1-5`), a list (`1,3,5`), and a step (`*/15`, `0-30/10`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CronExpr {
+    source: String,
+    minute: Vec<u32>,
+    hour: Vec<u32>,
+    dom: Vec<u32>,
+    month: Vec<u32>,
+    dow: Vec<u32>,
+    dom_restricted: bool,
+    dow_restricted: bool,
+}
+
+impl CronExpr {
+    pub fn parse(input: &str) -> Result<CronExpr, CronError> {
+        let f: Vec<&str> = input.split_whitespace().collect();
+        if f.len() != 5 {
+            return Err(CronError::BadSchedule(input.to_string()));
+        }
+        let bad = || CronError::BadSchedule(input.to_string());
+        let minute = parse_field(f[0], 0, 59).ok_or_else(bad)?;
+        let hour = parse_field(f[1], 0, 23).ok_or_else(bad)?;
+        let dom = parse_field(f[2], 1, 31).ok_or_else(bad)?;
+        let month = parse_field(f[3], 1, 12).ok_or_else(bad)?;
+        // Day-of-week allows 0–7 (both 0 and 7 mean Sunday); normalize 7 → 0.
+        let mut dow = parse_field(f[4], 0, 7).ok_or_else(bad)?;
+        for v in &mut dow {
+            if *v == 7 {
+                *v = 0;
+            }
+        }
+        dow.sort_unstable();
+        dow.dedup();
+        Ok(CronExpr {
+            source: input.to_string(),
+            minute,
+            hour,
+            dom,
+            month,
+            dow,
+            dom_restricted: f[2] != "*",
+            dow_restricted: f[4] != "*",
+        })
+    }
+
+    /// Does the expression fire at this UTC civil time?
+    fn matches(&self, min: u32, hour: u32, dom: u32, month: u32, dow: u32) -> bool {
+        if !self.minute.contains(&min) || !self.hour.contains(&hour) || !self.month.contains(&month)
+        {
+            return false;
+        }
+        let dom_ok = self.dom.contains(&dom);
+        let dow_ok = self.dow.contains(&dow);
+        // Vixie-cron rule: when BOTH day-of-month and day-of-week are restricted,
+        // the job fires when EITHER matches; otherwise both must match.
+        if self.dom_restricted && self.dow_restricted {
+            dom_ok || dow_ok
+        } else {
+            dom_ok && dow_ok
+        }
+    }
+
+    fn matches_ms(&self, now_ms: u64) -> bool {
+        let (min, hour, dom, month, dow) = civil_utc(now_ms);
+        self.matches(min, hour, dom, month, dow)
+    }
+}
+
+/// Decompose an epoch-ms instant into UTC (minute, hour, day-of-month, month,
+/// day-of-week) with day-of-week 0 = Sunday.
+fn civil_utc(now_ms: u64) -> (u32, u32, u32, u32, u32) {
+    use chrono::{DateTime, Datelike, Timelike, Utc};
+    let dt = DateTime::<Utc>::from_timestamp_millis(now_ms as i64)
+        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+    (
+        dt.minute(),
+        dt.hour(),
+        dt.day(),
+        dt.month(),
+        dt.weekday().num_days_from_sunday(),
+    )
+}
+
+/// Parse one cron field into the explicit set of values it allows, bounded to
+/// `[lo, hi]`. Returns `None` on any malformed or out-of-range input.
+fn parse_field(spec: &str, lo: u32, hi: u32) -> Option<Vec<u32>> {
+    let mut out: Vec<u32> = Vec::new();
+    for part in spec.split(',') {
+        // Optional `/step` suffix.
+        let (range_part, step) = match part.split_once('/') {
+            Some((r, s)) => (r, Some(s.parse::<u32>().ok().filter(|n| *n >= 1)?)),
+            None => (part, None),
+        };
+        let (start, end) = if range_part == "*" {
+            (lo, hi)
+        } else if let Some((a, b)) = range_part.split_once('-') {
+            (a.parse().ok()?, b.parse().ok()?)
+        } else {
+            let n: u32 = range_part.parse().ok()?;
+            (n, n)
+        };
+        if start > end || start < lo || end > hi {
+            return None;
+        }
+        let step = step.unwrap_or(1);
+        let mut v = start;
+        while v <= end {
+            out.push(v);
+            v += step;
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    out.sort_unstable();
+    out.dedup();
+    Some(out)
 }
 
 /// What a job runs — one of Ferric's own contained operations. Not an arbitrary
@@ -264,23 +414,54 @@ impl CronState {
     }
 }
 
-/// Is `job` due at `now_ms`, given its `last_run`? A disabled job is never due;
-/// a never-run job is due immediately; otherwise it is due once a full interval
-/// has elapsed since the last run.
+/// Minutes to scan forward when computing a cron job's next fire (≈ 366 days),
+/// so an annual expression still resolves.
+const CRON_SCAN_MINUTES: u64 = 366 * 24 * 60;
+
+/// Is `job` due at `now_ms`, given its `last_run`? A disabled job is never due.
+/// For an **interval** schedule: due once a full interval has elapsed (a
+/// never-run job is due immediately). For a **cron** schedule: due when the
+/// current UTC minute matches the expression and the job has not already fired
+/// during this minute.
 pub fn is_due(job: &CronJob, last_run: Option<u64>, now_ms: u64) -> bool {
     if !job.enabled {
         return false;
     }
-    match last_run {
-        None => true,
-        Some(t) => now_ms.saturating_sub(t) >= job.schedule.as_ms(),
+    match &job.schedule {
+        Schedule::Interval(ms) => match last_run {
+            None => true,
+            Some(t) => now_ms.saturating_sub(t) >= *ms,
+        },
+        Schedule::Cron(expr) => {
+            if !expr.matches_ms(now_ms) {
+                return false;
+            }
+            // Fire at most once per matching minute: skip if we already ran
+            // within the current minute window.
+            let minute_start = now_ms - (now_ms % 60_000);
+            last_run.is_none_or(|t| t < minute_start)
+        }
     }
 }
 
-/// The epoch-ms instant a job next becomes due (`last_run + interval`), or
-/// `None` if it has never run (due now).
-pub fn next_due_ms(job: &CronJob, last_run: Option<u64>) -> Option<u64> {
-    last_run.map(|t| t.saturating_add(job.schedule.as_ms()))
+/// The epoch-ms instant a job next becomes due. For an interval schedule this is
+/// `last_run + interval` (`None` if never run — i.e. due now). For a cron
+/// schedule it is the next matching UTC minute after `now_ms` (bounded scan;
+/// `None` if none within ~366 days).
+pub fn next_due_ms(job: &CronJob, last_run: Option<u64>, now_ms: u64) -> Option<u64> {
+    match &job.schedule {
+        Schedule::Interval(ms) => last_run.map(|t| t.saturating_add(*ms)),
+        Schedule::Cron(expr) => {
+            let mut t = (now_ms / 60_000 + 1) * 60_000; // next minute boundary
+            for _ in 0..CRON_SCAN_MINUTES {
+                if expr.matches_ms(t) {
+                    return Some(t);
+                }
+                t += 60_000;
+            }
+            None
+        }
+    }
 }
 
 /// All currently-due jobs, in the given order.
@@ -326,13 +507,28 @@ mod tests {
 
     #[test]
     fn schedule_units_and_aliases() {
-        assert_eq!(parse_schedule("30s").unwrap().as_ms(), 30_000);
-        assert_eq!(parse_schedule("15m").unwrap().as_ms(), 900_000);
-        assert_eq!(parse_schedule("12h").unwrap().as_ms(), 43_200_000);
-        assert_eq!(parse_schedule("2d").unwrap().as_ms(), 172_800_000);
-        assert_eq!(parse_schedule("hourly").unwrap().as_ms(), 3_600_000);
-        assert_eq!(parse_schedule("DAILY").unwrap().as_ms(), 86_400_000);
-        assert_eq!(parse_schedule("weekly").unwrap().as_ms(), 604_800_000);
+        assert_eq!(parse_schedule("30s").unwrap().interval_ms(), Some(30_000));
+        assert_eq!(parse_schedule("15m").unwrap().interval_ms(), Some(900_000));
+        assert_eq!(
+            parse_schedule("12h").unwrap().interval_ms(),
+            Some(43_200_000)
+        );
+        assert_eq!(
+            parse_schedule("2d").unwrap().interval_ms(),
+            Some(172_800_000)
+        );
+        assert_eq!(
+            parse_schedule("hourly").unwrap().interval_ms(),
+            Some(3_600_000)
+        );
+        assert_eq!(
+            parse_schedule("DAILY").unwrap().interval_ms(),
+            Some(86_400_000)
+        );
+        assert_eq!(
+            parse_schedule("weekly").unwrap().interval_ms(),
+            Some(604_800_000)
+        );
     }
 
     #[test]
@@ -369,8 +565,91 @@ mod tests {
     #[test]
     fn next_due_is_last_plus_interval() {
         let j = job("d", "1h", true);
-        assert_eq!(next_due_ms(&j, Some(1_000)), Some(3_601_000));
-        assert_eq!(next_due_ms(&j, None), None);
+        assert_eq!(next_due_ms(&j, Some(1_000), 0), Some(3_601_000));
+        assert_eq!(next_due_ms(&j, None, 0), None);
+    }
+
+    // ── Calendar cron expressions (sprint 76) ──────────────────────────────
+
+    /// 2026-07-01 00:00:00 UTC (a Wednesday) in epoch ms — the anchor for the
+    /// cron tests below.
+    const WED_2026_07_01_0000: u64 = 1_782_864_000_000;
+
+    fn cron(expr: &str) -> CronJob {
+        CronJob {
+            name: "c".into(),
+            schedule: parse_schedule(expr).unwrap(),
+            command: JobCommand::Dream,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn cron_expression_is_detected_and_described() {
+        let s = parse_schedule("0 2 * * *").unwrap();
+        assert!(matches!(s, Schedule::Cron(_)));
+        assert_eq!(s.interval_ms(), None);
+        assert_eq!(s.describe(), "cron(0 2 * * *)");
+    }
+
+    #[test]
+    fn cron_fields_reject_bad_input() {
+        assert!(parse_schedule("60 * * * *").is_err()); // minute out of range
+        assert!(parse_schedule("* 24 * * *").is_err()); // hour out of range
+        assert!(parse_schedule("* * 0 * *").is_err()); // day-of-month < 1
+        assert!(parse_schedule("* * * 13 *").is_err()); // month > 12
+        assert!(parse_schedule("* * * * 8").is_err()); // dow > 7
+        assert!(parse_schedule("a b c d e").is_err()); // non-numeric
+    }
+
+    #[test]
+    fn cron_daily_at_0200_fires_only_in_that_minute() {
+        let j = cron("0 2 * * *"); // 02:00 UTC daily
+        let base = WED_2026_07_01_0000;
+        let at_0200 = base + 2 * 3_600_000;
+        // Fires at exactly 02:00, having never run.
+        assert!(is_due(&j, None, at_0200));
+        // Not at 01:59 or 02:01.
+        assert!(!is_due(&j, None, at_0200 - 60_000));
+        assert!(!is_due(&j, None, at_0200 + 60_000));
+        // Once fired at 02:00:00, it will not re-fire later in the same minute.
+        assert!(!is_due(&j, Some(at_0200), at_0200 + 30_000));
+        // But it is due again the next day at 02:00.
+        assert!(is_due(&j, Some(at_0200), at_0200 + 86_400_000));
+    }
+
+    #[test]
+    fn cron_weekday_range_matches_only_mon_to_fri() {
+        let j = cron("0 9 * * 1-5"); // 09:00 UTC, Mon–Fri
+        let wed_0900 = WED_2026_07_01_0000 + 9 * 3_600_000; // Wed
+        assert!(is_due(&j, None, wed_0900));
+        // Two days later is Friday 09:00 → due.
+        assert!(is_due(&j, None, wed_0900 + 2 * 86_400_000));
+        // Three days later is Saturday 09:00 → NOT due.
+        assert!(!is_due(&j, None, wed_0900 + 3 * 86_400_000));
+    }
+
+    #[test]
+    fn cron_step_and_list_fields() {
+        // Every 15 minutes.
+        let j = cron("*/15 * * * *");
+        let base = WED_2026_07_01_0000;
+        assert!(is_due(&j, None, base)); // :00
+        assert!(is_due(&j, None, base + 15 * 60_000)); // :15
+        assert!(!is_due(&j, None, base + 7 * 60_000)); // :07
+        // A comma list of hours.
+        let h = cron("0 0,12 * * *");
+        assert!(is_due(&h, None, base)); // 00:00
+        assert!(is_due(&h, None, base + 12 * 3_600_000)); // 12:00
+        assert!(!is_due(&h, None, base + 6 * 3_600_000)); // 06:00
+    }
+
+    #[test]
+    fn cron_next_due_finds_the_following_fire() {
+        let j = cron("0 2 * * *");
+        let base = WED_2026_07_01_0000; // 00:00
+        // Next fire after midnight is 02:00 the same day.
+        assert_eq!(next_due_ms(&j, None, base), Some(base + 2 * 3_600_000));
     }
 
     #[test]

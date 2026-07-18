@@ -851,3 +851,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-17
 - **Files modified:** Cargo.toml, crates/ferric-cron/{Cargo.toml,src/lib.rs}, crates/ferric-cli/{Cargo.toml,src/main.rs,src/cron.rs,tests/cli.rs}, docs/cron.md, decisions.md, agent-tasks/agent-tasks.md, README.md
 - **Commit:** pending
+
+
+## T-7601 (sprint 76)
+- **Description:** Calendar cron expressions for agentic cron (extends ADR-066). `Schedule` refactored to an enum (`Interval(ms)` | `Cron(CronExpr)`); `parse_schedule` dispatches on shape (5 whitespace fields = cron, else interval); added `parse_interval_ms` for the watch tick. New `CronExpr` parses standard 5-field expressions (min/hour/dom/month/dow) with `*`/number/range/list/step and the Vixie dom-OR-dow rule; evaluated in UTC via chrono (epoch->civil), so due-ness stays a pure function of (expr, epoch-ms). Fire-once-per-minute semantics; `is_due`/`next_due_ms` handle both variants (`next_due_ms` gained a `now` param + bounded ~366d forward scan for cron). Added chrono to the allowlist (already in-tree via oovra, zero new build cost). 7 new tests (cron detect/describe, field bounds rejection, daily-at-time fire window, weekday range, step/list, next-due scan; + 1 CLI). Docs: docs/cron.md updated, ADR-067.
+- **Completed:** 2026-07-18
+- **Files modified:** Cargo.toml, crates/ferric-cron/{Cargo.toml,src/lib.rs}, crates/ferric-cli/{src/cron.rs,tests/cli.rs}, docs/cron.md, decisions.md, README.md
+- **Commit:** pending

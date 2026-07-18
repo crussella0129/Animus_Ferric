@@ -923,3 +923,39 @@ Full guide in `docs/cron.md`.
   backgroundable by the shell or the sprint-68 task machinery); catch-up/misfire
   policy for a watcher that was down across a due window; more job command kinds
   (e.g. an ICM pipeline run) as the enum grows.
+
+## ADR-067 — 2026-07-17 (sprint 76): calendar cron expressions for agentic cron
+Extends sprint 75's `ferric-cron` (ADR-066): a job's `schedule` now accepts a
+standard 5-field **cron expression** (`0 2 * * *`, `0 9 * * 1-5`, `*/15 * * * *`)
+alongside the existing recurrence intervals, so calendar-anchored tasks ("every
+day at 02:00", "weekdays at 09:00") are expressible, not just "every N hours".
+- **`Schedule` becomes an enum** — `Interval(ms)` or `Cron(CronExpr)`.
+  `parse_schedule` dispatches on shape: a five-whitespace-field string is a cron
+  expression, anything else an interval. The `cron watch` **tick** interval stays
+  interval-only (`parse_interval_ms`) — it is "how often to check", never a
+  calendar rule.
+- **Evaluated in UTC — a deliberate correctness-for-testability trade.** Cron
+  matching decomposes `now_ms` into UTC civil time and matches the fields, so
+  due-ness stays a **pure, deterministic function of (expression, epoch-ms)** with
+  no dependence on the host timezone. That keeps the whole scheduler unit-testable
+  with an injected `now` (the sprint-75 property) and avoids flaky,
+  environment-dependent tests. Local-timezone expressions — which would make the
+  function OS-dependent — are a named deferral.
+- **Fire-once-per-minute semantics.** A cron job is due when the current UTC
+  minute matches AND it has not already fired within that minute (`last_run <
+  minute_floor(now)`). With the default 60s watch tick, each matching minute fires
+  exactly once; a job that runs at 02:00:05 will not re-fire at 02:00:55.
+- **Standard field grammar + the Vixie day rule.** Each field supports `*`, a
+  number, a range (`1-5`), a list (`1,3,5`), and a step (`*/15`, `0-30/10`), bounds-
+  checked per field; day-of-week is `0-6` with `7` also Sunday. When BOTH
+  day-of-month and day-of-week are restricted the job fires when EITHER matches
+  (the de-facto Vixie-cron behavior), else both must match — matched by a test.
+- **`chrono` added to the allowlist (ADR-004) at zero new cost.** It is used only
+  for the epoch→UTC-civil decomposition; it was already in the dependency tree via
+  `oovra` → `ferric-prompt` → `ferric-cli` (and already CI-gated on aarch64), so
+  adding it as a direct dep of `ferric-cron` compiles nothing new. `next_due_ms`
+  for a cron schedule is a bounded forward minute-scan (~366 days) for the `list`
+  display; a job that never matches within a year reports no next-due rather than
+  scanning unboundedly.
+- **Deferred:** local-timezone cron; a detached watcher daemon + runfile;
+  misfire/catch-up for a watcher down across a due window.

@@ -11,10 +11,29 @@ the job name.
 
 ```toml
 # .ferric/cron/nightly.toml
-schedule = "12h"          # interval: 30s / 15m / 12h / 2d, or hourly/daily/weekly
+schedule = "12h"          # interval, OR a cron expression (see below)
 command  = "dream"        # a Ferric subcommand: "dream" or "query"
 enabled  = true           # optional (default true)
 ```
+
+A `schedule` is either a **recurrence interval** or a **cron expression**:
+
+- **Interval** — `30s` / `15m` / `12h` / `2d`, or the aliases `hourly` / `daily` /
+  `weekly`. Due once a full interval has elapsed since the last run.
+- **Cron expression** — a standard 5-field expression `minute hour day-of-month
+  month day-of-week`, **evaluated in UTC**. Fields support `*`, a number, a range
+  (`1-5`), a list (`1,3,5`), and a step (`*/15`). Day-of-week is `0-6` (0 =
+  Sunday; `7` also means Sunday). Examples:
+
+  | Expression | Fires |
+  |---|---|
+  | `0 2 * * *` | every day at 02:00 UTC |
+  | `0 9 * * 1-5` | 09:00 UTC on weekdays (Mon–Fri) |
+  | `*/15 * * * *` | every 15 minutes |
+  | `0 0,12 1 * *` | midnight & noon on the 1st of each month |
+
+  As in Vixie cron, when **both** day-of-month and day-of-week are restricted, the
+  job fires when **either** matches.
 
 A `query` job carries a prompt (and may run offline against the mock):
 
@@ -60,18 +79,22 @@ to a shell.
 
 ## Scheduling semantics
 
-- Schedules are **recurrence intervals**, not calendar/crontab expressions. A job
-  is due when a full interval has elapsed since its last run (a never-run job is
-  due immediately).
+- An **interval** job is due when a full interval has elapsed since its last run
+  (a never-run job is due immediately). A **cron** job is due when the current UTC
+  minute matches its expression and it has not already fired during that minute.
 - Last-run timestamps live in `.ferric/cron/.state.json` — a runtime cache kept
   out of the user-authored job files. A missing or corrupt state file is treated
   as "nothing has run yet".
 - State advances on **attempt**, not success: a job that fails still records its
-  run time, so it reschedules to the next interval instead of firing every tick.
+  run time, so it reschedules instead of firing every tick.
+- Cron expressions are UTC to keep due-computation a deterministic function of the
+  clock (no dependence on the host timezone). Run `ferric cron watch` often enough
+  that a matching minute is not skipped — the default 60s tick catches every
+  minute.
 
 ## Deferred
 
-Calendar/crontab expressions (e.g. "weekdays at 09:00"); a detached watcher daemon
-with a runfile and lifecycle management; misfire/catch-up policy for a watcher that
-was down across a due window; more job command kinds (e.g. an ICM pipeline run) as
-the set grows.
+Local-timezone cron expressions (UTC-only today); a detached watcher daemon with a
+runfile and lifecycle management; misfire/catch-up policy for a watcher that was
+down across a due window; more job command kinds (e.g. an ICM pipeline run) as the
+set grows.
