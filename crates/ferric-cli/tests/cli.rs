@@ -1748,3 +1748,42 @@ fn cron_add_rejects_bad_input() {
             .success()
     );
 }
+
+#[test]
+fn cron_add_accepts_a_cron_expression() {
+    let ws = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args([
+            "add",
+            "nightly",
+            "--schedule",
+            "0 2 * * *",
+            "--command",
+            "dream",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "cron add must accept a cron expression"
+    );
+    assert!(
+        std::fs::read_to_string(ws.path().join(".ferric/cron/nightly.toml"))
+            .unwrap()
+            .contains("0 2 * * *")
+    );
+
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .arg("list")
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .contains("cron(0 2 * * *)")
+    );
+}

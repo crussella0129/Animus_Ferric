@@ -21,7 +21,8 @@ use std::time::Duration;
 
 use clap::{Args, Subcommand};
 use ferric_cron::{
-    CronState, JobCommand, due_jobs, job_toml, load_jobs, next_due_ms, parse_schedule,
+    CronState, JobCommand, due_jobs, job_toml, load_jobs, next_due_ms, parse_interval_ms,
+    parse_schedule,
 };
 
 use crate::query::now_ms;
@@ -175,14 +176,14 @@ fn run_list(cron_dir: &Path, state_path: &Path) -> ExitCode {
             Some(t) => format!("{} ago", human_ms(now.saturating_sub(t))),
             None => "never".to_string(),
         };
-        let next_str = match next_due_ms(job, last) {
+        let next_str = match next_due_ms(job, last, now) {
             _ if !job.enabled => "disabled".to_string(),
             None => "now".to_string(),
             Some(t) if t <= now => "now".to_string(),
             Some(t) => format!("in {}", human_ms(t.saturating_sub(now))),
         };
         println!(
-            "  {:<16} {:<8} {:<7} last: {:<14} next: {}",
+            "  {:<16} {:<18} {:<7} last: {:<14} next: {}",
             job.name,
             job.schedule.describe(),
             job.command.kind(),
@@ -239,8 +240,8 @@ fn run_due_once(
 }
 
 fn run_watch(workspace: &Path, cron_dir: &Path, state_path: &Path, interval: &str) -> ExitCode {
-    let interval = match parse_schedule(interval) {
-        Ok(s) => Duration::from_millis(s.as_ms()),
+    let interval = match parse_interval_ms(interval) {
+        Ok(ms) => Duration::from_millis(ms),
         Err(e) => {
             eprintln!("cron watch: {e}");
             return ExitCode::FAILURE;
