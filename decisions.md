@@ -959,3 +959,41 @@ day at 02:00", "weekdays at 09:00") are expressible, not just "every N hours".
   scanning unboundedly.
 - **Deferred:** local-timezone cron; a detached watcher daemon + runfile;
   misfire/catch-up for a watcher down across a due window.
+
+## ADR-068 — 2026-07-17 (sprint 77): `.ferricignore` — user-authored, additive-only path denials
+The backlog's "Dynamic Denylist Configuration" is delivered as `.ferricignore`: a
+gitignore-flavored file in the workspace root listing paths the agent must not
+touch (`secrets/`, `*.pem`, vendored trees). This is the FIRST config-driven input
+to security policy, so it is scoped tightly against ADR-005.
+- **Additive-only — the load-bearing invariant.** ADR-005 makes security hardcoded
+  with "no config override". `.ferricignore` does not override it: a pattern can
+  only ADD a denial, never turn a hardcoded `Deny` into an `Allow`.
+  `check_with_ignore` evaluates the compile-time floor FIRST and short-circuits on
+  a hardcoded `Deny`; only a path the floor already ALLOWS is then tested against
+  the ignore patterns. So the file strictly narrows what the agent may reach — the
+  exact property that keeps it consistent with ADR-005's spirit (the hardcoded
+  minimum is immutable; the LLM is never consulted) while relaxing only its letter
+  ("no config override" → "config can only further restrict"). This is distinct
+  from ADR-048's general config, which still may NOT touch security/denylist policy
+  — `.ferricignore` is a dedicated, security-specific, additive channel.
+- **User-authored, model-immutable.** Like `Animus.md`/`.ferric/config.toml`, the
+  file is written by the human, never the LLM. To stop the agent disabling its own
+  restrictions, `.ferricignore` is added to `DENIED_WRITE_FILES` — the model cannot
+  edit or delete the policy that constrains it (symmetric with the `.ferric` trace
+  protection).
+- **Ignored ⇒ off-limits at every level.** A matched path is denied for Read,
+  Write, AND Execute — the intent is "keep the agent away from this entirely", not
+  a per-permission rule. Denials surface with `rule: "ferricignore"` and the
+  matched source line, traced like any guard decision.
+- **Placement + wiring.** A pure `IgnoreList` (`ferric-guard/src/ignore.rs`) parses
+  the file (blank/`#` lines skipped) into three matcher kinds — a bare **segment**
+  (`secrets`, matches that component anywhere), a basename **glob** (`*.pem`, simple
+  `*`-only, no new dependency), and a **path prefix** (`data/private`, anchored at
+  root). `Workspace::new` loads `<root>/.ferricignore` once (absent → empty no-op);
+  the registry chokepoint calls `check_with_ignore(perm, resolved, root, ws.ignore())`
+  — the single security decision point stays single. Matching is case-sensitive
+  (POSIX/gitignore convention).
+- **Scope / deferrals:** no negation (`!pattern`) un-ignore syntax (would risk the
+  additive-only invariant and is unnecessary — the file only ever adds); no `?`/`[]`
+  glob metacharacters (only `*`); `.gitignore` is NOT auto-consumed (an explicit,
+  security-reviewed file, not an incidental one).

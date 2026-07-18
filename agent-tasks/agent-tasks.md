@@ -14,7 +14,7 @@
 - [x] Standardize errors in `error.rs` to derive `thiserror::Error`.
 
 ## ferric-guard
-- [ ] Implement Dynamic Denylist Configuration in `src/denylist.rs` to read from a `.ferricignore` file.
+- [x] Implement Dynamic Denylist Configuration in `src/denylist.rs` to read from a `.ferricignore` file. *(Sprint 77, ADR-068 — `IgnoreList` (`ignore.rs`) parses a gitignore-flavored `.ferricignore` from the workspace root; `check_with_ignore` folds it into the registry chokepoint as **additive-only** denials (never relaxes the hardcoded ADR-005 floor). The policy file is itself write-denied.)*
 
 ## ferric-loop
 - [x] Extract Loop State from `run.rs` into a dedicated `LoopState` struct.

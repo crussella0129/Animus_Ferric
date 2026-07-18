@@ -858,3 +858,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-18
 - **Files modified:** Cargo.toml, crates/ferric-cron/{Cargo.toml,src/lib.rs}, crates/ferric-cli/{src/cron.rs,tests/cli.rs}, docs/cron.md, decisions.md, README.md
 - **Commit:** pending
+
+
+## T-7701 (sprint 77)
+- **Description:** `.ferricignore` dynamic denylist (ferric-guard). New pure `IgnoreList` (`ignore.rs`) parses a gitignore-flavored `.ferricignore` (blank/`#` skipped) into segment / basename-glob (simple `*`, no dep) / path-prefix matchers. `Workspace::new` loads `<root>/.ferricignore` once (absent = empty no-op) and exposes `ignore()`. New `check_with_ignore(perm, path, root, ignore)` folds it into the guard as **additive-only** denials: the hardcoded ADR-005 floor is evaluated first and short-circuits, so a pattern can only add a denial, never relax one; an ignored path is off-limits at read/write/execute. Wired at the single registry chokepoint. Added `.ferricignore` to `DENIED_WRITE_FILES` so the model cannot edit its own policy. 8 tests (6 unit: parse/segment/glob/path-prefix/empty/reason; 2 registry integration: ignored paths denied read+write + non-ignored unaffected, policy file write-protected). Docs: ADR-068, README security note.
+- **Completed:** 2026-07-18
+- **Files modified:** crates/ferric-guard/src/{lib.rs,ignore.rs,checker.rs,denylist.rs,workspace.rs}, crates/ferric-tools/src/registry.rs, crates/ferric-tools/tests/builtin_file_tools.rs, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending
