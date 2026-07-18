@@ -821,3 +821,74 @@ fn git_write_extracts_paths_from_args() {
     }));
     assert_eq!(paths, vec!["msg", "src/lib.rs"]);
 }
+
+// ── .ferricignore additive denials (sprint 77, ADR-068) ────────────────────
+
+/// A `.ferricignore` in the workspace root blocks the agent from reading,
+/// writing, or deleting the ignored paths — enforced at the registry chokepoint
+/// exactly as the loop drives it.
+#[test]
+fn ferricignore_blocks_ignored_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    // Author the ignore policy + seed files BEFORE the workspace loads it.
+    std::fs::write(dir.path().join(".ferricignore"), "secrets/\n*.pem\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("secrets")).unwrap();
+    std::fs::write(dir.path().join("secrets/key.txt"), "top secret").unwrap();
+    std::fs::write(dir.path().join("server.pem"), "-----BEGIN-----").unwrap();
+    std::fs::write(dir.path().join("README.md"), "hello").unwrap();
+
+    let ws = Workspace::new(dir.path()).unwrap();
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+
+    // Reading an ignored file (by segment) is denied.
+    let out = registry.execute_test(&ws, "read_file", &json!({"path": "secrets/key.txt"}));
+    assert!(
+        matches!(out, ExecuteOutcome::Denied { ref reason, .. } if reason.contains("ferricignore")),
+        "reading secrets/ must be denied by .ferricignore, got {out:?}"
+    );
+
+    // Reading an ignored file (by glob) is denied.
+    let out = registry.execute_test(&ws, "read_file", &json!({"path": "server.pem"}));
+    assert!(
+        matches!(out, ExecuteOutcome::Denied { .. }),
+        "reading *.pem must be denied, got {out:?}"
+    );
+
+    // Writing into an ignored dir is denied too (additive at every level).
+    let out = registry.execute_test(
+        &ws,
+        "write_file",
+        &json!({"path": "secrets/new.txt", "content": "x"}),
+    );
+    assert!(
+        matches!(out, ExecuteOutcome::Denied { .. }),
+        "write into secrets/ denied"
+    );
+
+    // A non-ignored file is unaffected.
+    let (content, is_err) =
+        expect_completed(registry.execute_test(&ws, "read_file", &json!({"path": "README.md"})));
+    assert!(!is_err);
+    assert!(content.contains("hello"));
+}
+
+/// The agent cannot edit or delete the `.ferricignore` policy itself.
+#[test]
+fn ferricignore_policy_file_is_write_protected() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".ferricignore"), "secrets/\n").unwrap();
+    let ws = Workspace::new(dir.path()).unwrap();
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+
+    let out = registry.execute_test(
+        &ws,
+        "write_file",
+        &json!({"path": ".ferricignore", "content": "# emptied\n"}),
+    );
+    assert!(
+        matches!(out, ExecuteOutcome::Denied { .. }),
+        "the model must not be able to rewrite .ferricignore, got {out:?}"
+    );
+}

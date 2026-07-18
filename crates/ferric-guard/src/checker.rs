@@ -50,6 +50,30 @@ pub fn check(level: PermissionLevel, path: &Path) -> Decision {
     }
 }
 
+/// Like [`check`], plus the workspace's `.ferricignore` **additive** denials
+/// (ADR-068). The hardcoded floor is checked first and is authoritative — a
+/// `.ferricignore` can only ADD a denial, never turn a hardcoded `Deny` into an
+/// `Allow`. An ignored path is off-limits at every permission level.
+pub fn check_with_ignore(
+    level: PermissionLevel,
+    path: &Path,
+    root: &Path,
+    ignore: &crate::ignore::IgnoreList,
+) -> Decision {
+    // The compile-time floor wins and short-circuits.
+    let base = check(level, path);
+    if let Decision::Deny(_) = base {
+        return base;
+    }
+    if let Some(matched) = ignore.matches(path, root) {
+        return Decision::Deny(DenyReason {
+            rule: "ferricignore",
+            matched,
+        });
+    }
+    base
+}
+
 fn check_read_target(path: &Path) -> Decision {
     for component in path.components() {
         if let Component::Normal(name) = component

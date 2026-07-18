@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use ferric_core::{RunPolicy, ring_for_tier};
-use ferric_guard::{Decision, Workspace, check};
+use ferric_guard::{Decision, Workspace, check_with_ignore};
 use tracing::{debug, warn};
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
@@ -152,7 +152,12 @@ impl Registry {
                     };
                 }
             };
-            if let Decision::Deny(reason) = check(spec.permission, &resolved) {
+            if let Decision::Deny(reason) = check_with_ignore(
+                spec.permission,
+                &resolved,
+                workspace.root(),
+                workspace.ignore(),
+            ) {
                 warn!(tool = name, path = %resolved.display(), rule = %reason.rule, matched = %reason.matched, "guard denied: permission check");
                 let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
                 checks.push(CheckRecord::deny(resolved, reason.rule, &reason.matched));
