@@ -39,8 +39,11 @@ pub enum CronError {
     #[error("parsing {path}: {source}")]
     Toml {
         path: std::path::PathBuf,
+        // Boxed: `toml::de::Error` is large (>128 bytes on some targets), which
+        // otherwise trips clippy's `result_large_err` on every `Result<_,
+        // CronError>` (a Windows-CI-only failure — the type is smaller on Linux).
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 }
 
@@ -308,7 +311,7 @@ fn default_true() -> bool {
 pub fn parse_job(name: &str, toml_str: &str) -> Result<CronJob, CronError> {
     let raw: RawJob = toml::from_str(toml_str).map_err(|source| CronError::Toml {
         path: std::path::PathBuf::from(format!("{name}.toml")),
-        source,
+        source: Box::new(source),
     })?;
     let schedule = parse_schedule(&raw.schedule)?;
     let command = match raw.command.trim().to_ascii_lowercase().as_str() {
@@ -718,6 +721,20 @@ mod tests {
                 prompt: "say \"hi\"".into(),
                 mock: false
             }
+        );
+    }
+}
+
+#[cfg(test)]
+mod size_guard {
+    /// Regression guard for the Windows-CI `result_large_err` failure (sprint 76):
+    /// keep `CronError` comfortably under clippy's 128-byte threshold.
+    #[test]
+    fn cron_error_stays_small() {
+        assert!(
+            std::mem::size_of::<super::CronError>() <= 96,
+            "CronError grew to {} bytes; box a large field to stay under clippy's result_large_err threshold",
+            std::mem::size_of::<super::CronError>()
         );
     }
 }
