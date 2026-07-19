@@ -6,6 +6,8 @@
 
 A local-first agentic coding harness written in Rust, purpose-built for **small local models (1B–14B GGUF)**.
 
+**Licensing information for all Animus Project components held at https://github.com/crussella0129/Animus/blob/main/LICENSE**
+
 Ferric is the Rust synthesis of the Animus lineage — [Animus](https://github.com/crussella0129/Animus) (Python), [Animus_Prion](https://github.com/crussella0129/Animus_Prion) (Go), and [fev](https://github.com/crussella0129/fev) (Go) — built on three convictions:
 
 1. **The harness should own decoding.** Constrained generation (JSON-Schema / regex / CFG grammars) is driven end-to-end in the agent loop, so malformed tool calls are *impossible* rather than repairable.
