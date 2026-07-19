@@ -158,6 +158,13 @@ pub struct QueryArgs {
     /// Defaults to Deny.
     #[arg(long, default_value = "deny")]
     pub sink_action: String,
+
+    /// Accept-edits mode (ADR-070): pause before each mutating tool call
+    /// (write/edit/delete/exec), show a preview, and require `y` to apply it.
+    /// A rejected edit is reported to the model, which can adapt. Requires an
+    /// interactive stdin; not for `--stream` or piped batch runs.
+    #[arg(long)]
+    pub accept_edits: bool,
 }
 
 /// The shared subset of `QueryArgs` (everything except `prompt`/`files`) that
@@ -571,6 +578,34 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         None
     };
 
+    // Accept-edits (ADR-070): an interactive approver that previews each mutating
+    // call and requires an explicit `y` (empty/`n`/EOF reject — conservative).
+    // `None` unless --accept-edits, so default behavior is unchanged.
+    let approver = |preview: &ferric_loop::EditPreview| -> bool {
+        eprintln!(
+            "\n\u{2500}\u{2500} proposed: {} \u{2500}\u{2500}",
+            preview.tool
+        );
+        for t in &preview.targets {
+            eprintln!("   target: {t}");
+        }
+        let detail: String = preview.detail.chars().take(2000).collect();
+        eprintln!("{detail}");
+        eprint!("apply this edit? [y/N] ");
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        let mut line = String::new();
+        match std::io::stdin().read_line(&mut line) {
+            Ok(0) => false,
+            Ok(_) => matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+            Err(_) => false,
+        }
+    };
+    let approver_ref: Option<ferric_loop::EditApprover<'_>> = if args.accept_edits {
+        Some(&approver)
+    } else {
+        None
+    };
+
     let outcome = if args.mock {
         let provider = mock_provider(config.protocol);
         drive_mock(
@@ -596,6 +631,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
                 _ => ferric_guard::SinkPolicy::deny(),
             },
             config.hooks.clone(),
+            approver_ref,
         )
     } else {
         drive_real(
@@ -622,6 +658,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             },
             args.research.clone(),
             config.hooks.clone(),
+            approver_ref,
         )
     };
 
@@ -768,6 +805,7 @@ pub(crate) async fn run_with_provider(
     sink_policy: ferric_guard::SinkPolicy,
     cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     hooks: Option<ferric_core::HooksConfig>,
+    edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     run(
         RunArgs {
@@ -787,6 +825,7 @@ pub(crate) async fn run_with_provider(
             taint_set,
             sink_policy,
             hooks,
+            edit_approver,
         },
         sink,
         prompt,
@@ -813,6 +852,7 @@ fn drive_mock(
     taint_set: ferric_guard::TaintSet,
     sink_policy: ferric_guard::SinkPolicy,
     hooks: Option<ferric_core::HooksConfig>,
+    edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     futures_executor::block_on(run_with_provider(
         provider,
@@ -832,6 +872,7 @@ fn drive_mock(
         sink_policy,
         None,
         hooks,
+        edit_approver,
     ))
 }
 
@@ -855,6 +896,7 @@ fn drive_real(
     sink_policy: ferric_guard::SinkPolicy,
     research_query: Option<String>,
     hooks: Option<ferric_core::HooksConfig>,
+    edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
@@ -916,6 +958,7 @@ fn drive_real(
             sink_policy,
             Some(cancel_flag),
             hooks,
+            edit_approver,
         )
         .await
     })
@@ -941,6 +984,7 @@ fn drive_real(
     _sink_policy: ferric_guard::SinkPolicy,
     _research_query: Option<String>,
     _hooks: Option<ferric_core::HooksConfig>,
+    _edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     Err("this binary was built without backend features; \
          rebuild with `cargo build --features backend-openai`, or use --mock"
@@ -1015,6 +1059,7 @@ mod tests {
             None,
             ferric_guard::TaintSet::new(),
             ferric_guard::SinkPolicy::deny(),
+            None,
             None,
             None,
         ))

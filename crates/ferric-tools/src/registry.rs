@@ -95,6 +95,13 @@ impl Registry {
         self.tools.insert(tool.spec().name.clone(), tool);
     }
 
+    /// The permission level a registered tool declares, or `None` if unknown.
+    /// Used by the loop's accept-edits gate (ADR-070) to decide which calls to
+    /// preview to the human (only `Write`/`Execute` — mutating ones).
+    pub fn permission_of(&self, name: &str) -> Option<ferric_guard::PermissionLevel> {
+        self.tools.get(name).map(|t| t.spec().permission)
+    }
+
     /// The specs a given run policy may use (the rings model): keep tools whose
     /// `ring <= ring_for_tier(policy.tier)`, and when over `policy.max_tools`
     /// **trim from the outer ring first** (priority by `(ring asc, name)`) so the

@@ -33,6 +33,25 @@ Never describe a tool call in prose - actually call the tool.";
 
 pub type PromptLineage = (String, String, Vec<(String, String)>);
 
+/// A mutating tool call surfaced to the human for approval before it runs
+/// (accept-edits mode, ADR-070). Carries what the model wants to do so the
+/// caller's approver can render a preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditPreview {
+    /// The tool being called, e.g. `write_file`.
+    pub tool: String,
+    /// The declared target path(s), if the call names any.
+    pub targets: Vec<String>,
+    /// A human-readable rendering of the call's arguments (the content to be
+    /// written, the diff, …).
+    pub detail: String,
+}
+
+/// Approves or rejects a pending mutating call. Returns `true` to let it run.
+/// `Sync` so it can be held across the loop's `await` points, mirroring
+/// `stream_sink`.
+pub type EditApprover<'a> = &'a (dyn Fn(&EditPreview) -> bool + Sync);
+
 pub struct RunArgs<'a> {
     pub provider: &'a dyn Provider,
     pub registry: &'a Registry,
@@ -50,6 +69,11 @@ pub struct RunArgs<'a> {
     pub taint_set: ferric_guard::TaintSet,
     pub sink_policy: ferric_guard::SinkPolicy,
     pub hooks: Option<ferric_core::HooksConfig>,
+    /// Accept-edits mode (ADR-070): when set, each mutating (`Write`/`Execute`)
+    /// tool call is previewed to this approver before it runs; a `false` verdict
+    /// skips the call and reports a rejection to the model. `None` = run all
+    /// (the default, unchanged behavior).
+    pub edit_approver: Option<EditApprover<'a>>,
 }
 
 pub enum TurnOutcome {
@@ -383,6 +407,32 @@ impl<'a> LoopState<'a> {
             self.sink.write_event(tc.clone())?;
             self.projector.step(&tc);
 
+            // Accept-edits gate (ADR-070): a mutating call is previewed to the
+            // human, who may reject it before it touches disk. Non-mutating
+            // (Read) calls, and runs with no approver, are never gated.
+            if let Some(approver) = self.args.edit_approver {
+                let mutating = matches!(
+                    self.args.registry.permission_of(&call.name),
+                    Some(ferric_guard::PermissionLevel::Write)
+                        | Some(ferric_guard::PermissionLevel::Execute)
+                );
+                if mutating && !approver(&edit_preview(&call.name, &call.args)) {
+                    warn!(tool = %call.name, "edit rejected by user (accept-edits)");
+                    let tr = Event::ToolResult {
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        output: "edit rejected by user".to_string(),
+                        is_error: true,
+                        duration_ms: 0,
+                    };
+                    self.sink.write_event(tr.clone())?;
+                    self.projector.step(&tr);
+                    dispatched += 1;
+                    errored += 1;
+                    continue;
+                }
+            }
+
             debug!(tool = %call.name, "dispatching tool call");
             let (result_text, is_error, duration_ms, checks) = dispatch(
                 self.args.registry,
@@ -669,6 +719,23 @@ fn registry_tools(
             input_schema: spec.input_schema,
         })
         .collect()
+}
+
+/// Build an [`EditPreview`] from a pending call: pull the target `path` (if the
+/// call names one) and render the arguments for the human to inspect.
+fn edit_preview(name: &str, args: &serde_json::Value) -> EditPreview {
+    let mut targets = Vec::new();
+    for key in ["path", "from", "to", "src", "dest"] {
+        if let Some(s) = args.get(key).and_then(|v| v.as_str()) {
+            targets.push(s.to_string());
+        }
+    }
+    let detail = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
+    EditPreview {
+        tool: name.to_string(),
+        targets,
+        detail,
+    }
 }
 
 struct DispatchText {

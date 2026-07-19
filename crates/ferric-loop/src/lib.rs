@@ -29,5 +29,8 @@ pub use grammar::{ActionParseError, action_schema, parse_action, parse_json_acti
 pub use outcome::{LoopOutcome, StopReason};
 pub use protocol::select_protocol;
 pub use replay::{ReplayError, ReplayedState, replay};
-pub use run::{DEFAULT_SYSTEM_PROMPT, PromptLineage, RunArgs, Sleeper, ThreadSleeper, run};
+pub use run::{
+    DEFAULT_SYSTEM_PROMPT, EditApprover, EditPreview, PromptLineage, RunArgs, Sleeper,
+    ThreadSleeper, run,
+};
 pub use terminator::{SUBMIT_PLAN, TASK_COMPLETE};

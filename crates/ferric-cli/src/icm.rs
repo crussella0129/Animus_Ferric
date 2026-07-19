@@ -333,6 +333,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
                     ferric_guard::SinkPolicy::deny(),
                     None,
                     config.hooks.clone(),
+                    None,
                 )
             };
         }

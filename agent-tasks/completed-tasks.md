@@ -872,3 +872,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-18
 - **Files modified:** crates/ferric-cli/src/chat.rs, crates/ferric-cli/tests/cli.rs, decisions.md, agent-tasks/agent-tasks.md, README.md
 - **Commit:** pending
+
+
+## T-7901 (sprint 79)
+- **Description:** Interactive "Accept Edits" mode (`ferric query --accept-edits`). Added `RunArgs.edit_approver: Option<EditApprover>` (a `&(dyn Fn(&EditPreview) -> bool + Sync)` callback, mirroring the `stream_sink` injection pattern) and gated it at the loop's single dispatch chokepoint in `step()` — after the `ToolCall` event is traced, before `registry.dispatch()`. "Mutating" is decided by the new `Registry::permission_of(name)` against the guard's permission ladder (`Write`/`Execute` gated, `Read` flows through), not a tool-name list. A rejected call is first-class: the loop synthesizes an error `ToolResult` ("edit rejected by user", is_error) fed back to the model, and the run continues (not an abort). `EditPreview` carries tool + targets (from `path`/`from`/`to`/`src`/`dest`) + pretty-printed args. The CLI `--accept-edits` flag injects a stdin y/N approver printing to stderr (2000-char detail cap; empty/`n`/EOF reject). Every non-query surface (chat/api/mcp/icm + all loop tests) passes `None` so behavior is byte-for-byte unchanged. 3 new integration tests (reject blocks the write + tells the model, approve lets it through, preview carries tool + target); test harness gained `run_scripted_with_approver` + a pre-teardown `check_dir` closure. Docs: ADR-070, README timeline, docs/commands.md + docs/demo-guide.md.
+- **Completed:** 2026-07-19
+- **Files modified:** crates/ferric-loop/src/{run.rs,lib.rs}, crates/ferric-tools/src/registry.rs, crates/ferric-cli/src/{query.rs,mcp.rs,chat.rs,api.rs,icm.rs,launch.rs,trace_verify.rs}, crates/ferric-loop/tests/{accept_edits.rs,common/mod.rs,streaming_tests.rs,hooks_tests.rs,backoff_tests.rs,compaction_tests.rs,resume_tests.rs}, decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md, README.md, docs/commands.md, docs/demo-guide.md
+- **Commit:** pending

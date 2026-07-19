@@ -14,6 +14,15 @@ Ferric is the Rust synthesis of the Animus lineage — [Animus](https://github.c
 
 Rust is not an implementation detail: the visible, demonstrable chain of ownership over state and execution is part of how you verify you control the agent.
 
+## Documentation
+
+Full docs live in **[`docs/`](docs/README.md)**:
+
+- **[Getting Started](docs/getting-started.md)** — install, prerequisites, and the external steps (engine install, `ferric server`) before your first run. Includes a no-model `--mock` quickstart.
+- **[Demo Guide](docs/demo-guide.md)** — a copy-paste walkthrough of every feature, each marked *offline* or *needs a model*.
+- **[Command Reference](docs/commands.md)** · **[Configuration](docs/configuration.md)** — every command/flag; `.ferric/config.toml`, `Animus.md`, `.ferricignore`, hooks.
+- Deep dives: [llama.cpp engine](docs/llama-cpp.md) · [testbench](docs/testbench.md) · [ICM delegation](docs/icm.md) · [agentic cron](docs/cron.md) · [Ornstein research](docs/ornstein.md) · [multimodal](docs/multimodal.md).
+
 ## Workspace
 
 | Crate | Responsibility |
@@ -144,10 +153,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 14 — formalize the rings** (2026-06-24). Made the tool-rings model real: every tool declares a `ring` (0 = the navigate/mutate core), `ring_for_tier` sets the capability ceiling (and honours `measured_level`, so reliability — not size — widens the set), and `tools_for_policy` **trims from the outer ring first** so the core is never dropped. Fixes the latent alphabetical `max_tools` cap. The active rings literally *are* the constrained grammar. *ADR-028.*
 
-- **Sprint 15 — `--max-ring` override** (2026-06-24). The explicit "control exactly which rings" lever: `ferric query`/`toolbench --max-ring N` caps the active rings independent of tier (`--max-ring 0` = the core-only grammar). Restrict-only — widening past a model's capability stays earned via `measured_level`. Proven end-to-end via the trace's offered-tools. *ADR-028 (amended).*
-
-- **Sprint 16 — ring calibration** (2026-06-24). `toolbench --calibrate-rings` sweeps a model ring-by-ring and reports the highest ring it reliably drives — the recommended `--max-ring`. Closes the rings loop: a model *earns* a wider grammar by proving it on the bench (the demonstrated-reliability promotion). *ADR-028.*
-
 - **Sprint 15 — `--max-ring` override** (2026-06-24). The explicit "control exactly which rings" lever: `ferric query`/`bench ltd --max-ring N` caps the active rings independent of tier (`--max-ring 0` = the core-only grammar). Restrict-only — widening past a model's capability stays earned via `measured_level`. Proven end-to-end via the trace's offered-tools. *ADR-028 (amended).*
 
 - **Sprint 16 — ring calibration** (2026-06-24). `bench ltd --calibrate-rings` sweeps a model ring-by-ring and reports the highest ring it reliably drives — the recommended `--max-ring`. Closes the rings loop: a model *earns* a wider grammar by proving it on the bench (the demonstrated-reliability promotion). *ADR-028.*
@@ -163,11 +168,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 - **Sprint 21 — fleet agentic capability map** (2026-06-26). `bench full --models` runs the full L0–L6 loop across the fleet and prints a `measured_level` leaderboard. The map: **qwen2.5-coder:7b → 6 (Large); llama3.1:8b → 5 (Medium); llama3.2:1b → none (fails L0)**. The honest finding: a 1B fires single tool calls at 100% but **can't complete a multi-turn task** — single-shot reliability ≠ agentic capability; and the code-tuned 7B beats the larger general 8B. *ADR-030 (amended).*
 
 - **Sprint 22 — why the 1B isn't an agent** (2026-06-26). Diagnosed (from the trace) *why* `llama3.2:1b` fails L0: **repeat-not-terminate** (it re-calls `list_dir` instead of `task_complete`) and **semantic flailing** (15 `make_dir`s, no progress). Sharpened the repetition nudge into a direct imperative — but it **didn't move the 1B** (still `measured_level: none`), so the ceiling is a real capability limit, not wording. The nudge ships anyway (helps mid-tier models, can't regress capable ones). *ADR-031.*
-- **Sprint 64 — HTTP API & IDE Chat** (2026-07-16). Delivered Ferric HTTP API (`/v1/query/stream`) and `animus-ferric` VS Code extension.
-- **Sprint 65 — Multi-arch container & CLI consolidation** (2026-07-16). Consolidated the `bench` and `toolbench` commands into subcommands under `ferric bench ltd` and `ferric bench full`. Operationalized the `ferric-core` container by modifying the Dockerfile for multi-arch builds (`amd64` and `arm64`) with dynamic `llama-server` asset resolution.
-- **Sprint 68 — Plan Mode** (2026-07-16). Added `ActionProtocol::Plan` that acts as a read-only grammar-constrained protocol using a new `submit_plan` terminator instead of `task_complete`.
-- **Sprint 67 — Async shell_exec Refactor** (2026-07-16). Refactored `ferric-tools`'s `shell_exec` command to use `tokio::process::Command` under `tokio::task::block_in_place`, ensuring runaway processes no longer block the async executor thread or cause disk/OOM thrashing via unbounded pipes.
-- **Sprint 67 — Loop Decoupling** (2026-07-16). Decoupled the monolithic 400-line driver loop inside `ferric-loop/src/run.rs` into a highly-testable `LoopState` structure with a distinct asynchronous `step()` function returning a `TurnOutcome`.
 
 - **Sprint 23 — llama.cpp first-class** (2026-06-26). Validated Ferric on full **llama.cpp** (`llama-server`) for the first time — we have now fully removed inference from ollama and switched exclusively to `llama.cpp` due to speed. The constrained loop runs on it at **100% Ring-0 tool-call fire rate**, with a context window as wide as you want (`-c`), the multimodal path (`--mmproj`), and a single edge-ready binary (Jetson / Pi). Guide: [docs/llama-cpp.md](docs/llama-cpp.md). *ADR-032.*
 
@@ -237,6 +237,8 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 59 — `shell_exec` tool & CaMeL wiring** (2026-07-15). Delivered the `shell_exec` tool (Ring 2) and addressed ADR-045's deferred requirements. Extended the `Tool` trait with `target_commands()` and added `ferric-guard::check_command` to screen commands against static denylists prior to child process execution. Wired the CaMeL sink policy `TaintSet` into the `Registry::execute` chokepoint to govern `Write` and `Execute` tool calls according to the user's `--sink-action` flag.
 
+- **Mid-July engine hardening** (2026-07-16). A cluster of foundational improvements that landed in this window (their internal sprint numbers were reused later, so they're grouped here in chronological order): **CLI consolidation** — the `bench` and `toolbench` commands merged into `ferric bench ltd` / `ferric bench full`; a **multi-arch `ferric-core` container** (amd64 + arm64, dynamic `llama-server` asset resolution); **Plan Mode** — `ActionProtocol::Plan`, a read-only grammar-constrained protocol with a `submit_plan` terminator instead of `task_complete`; an **async `shell_exec` refactor** — `tokio::process::Command` under `block_in_place`, so runaway processes no longer block the executor thread or OOM on unbounded pipes; and **loop decoupling** — the monolithic ~400-line driver in `ferric-loop/src/run.rs` split into a testable `LoopState` with an async `step() -> TurnOutcome`.
+
 - **Sprint 62 — Schema-Enforced Chain of Thought** (2026-07-16). Replaced the nested JSON schema representation for `action` with a flattened, highly stable wrapper that explicitly forces the `thought` field *before* tool parameters. Fixed a critical agent hallucination where the missing JSON schema `description` metadata (stripped by `llama-server`) caused the LLM to misuse `make_dir` repeatedly for file creation; explicitly injected `registry_tools` descriptions into the system prompt for constrained environments.
 
 - **Sprint 63 — Real-Time Thought Streaming** (2026-07-16). Added real-time streaming of the model's scratchpad reasoning (the `thought` field). Expanded `StreamDelta` to include `Thought(String)` and added a state machine to `ConstrainedJsonScanner` to incrementally stream the field as text arrives. Rendered live thought outputs in dim ANSI gray (`\x1b[90m`) in `ferric query`, `ferric chat`, and `ferric mcp` to visually distinguish the agent's internal planning from standard tool output.
@@ -271,4 +273,6 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 78 — direct terminal passthrough in chat** (2026-07-18). `ferric chat` gains a third turn kind: a line prefixed `!` (or `/run `) runs a shell command **directly, with no LLM roundtrip** — for checking `ls`/`git status` mid-conversation without asking the model. It runs through the same guarded `shell_exec` chokepoint the agent uses, so the command denylist still fires (a test drives `!rm -rf /` → blocked). The security shape is clean: the human typed the command, so there is *no LLM in the path* (ADR-005 satisfied trivially) — talk has no action channel, `/do` is LLM-driven-but-constrained, `!cmd` acts without constraint but without an LLM. The command + output are a terminal side-channel (printed + logged as a `Note`), never folded into the talk history. Parsing is exact (bare `!`/`/run` are talked; `/running late` is talked). A lazily-created tokio runtime backs the sync REPL. 3 new tests. *ADR-069.*
 
-> **Next — TBD.** Local-timezone cron, a detached cron daemon, or an Ornstein-quarantined ICM web-research stage.
+- **Sprint 79 — interactive "accept edits" mode** (2026-07-19). `ferric query --accept-edits` pauses before every mutating tool call, previews it, and waits for a human y/N before it touches disk — supervised runs where you can veto a bad write without killing the session. The gate lives at the loop's single dispatch chokepoint and keys on the guard's own permission model (`Registry::permission_of` — `Write`/`Execute` gated, `Read` untouched), not a hand-kept list of tool names. The approver is an injected callback (`RunArgs.edit_approver`, mirroring `stream_sink`), so the loop stays pure: tests inject reject/approve/capture closures, the CLI injects a stdin prompt, and every other surface passes `None` so behavior is unchanged. A rejection is first-class, not an abort — the loop feeds the model an error `ToolResult` (`"edit rejected by user"`) it can adapt to, and the run continues. Preview is v1 (tool + targets + pretty-printed args, to stderr so piped stdout stays clean; empty/`n`/EOF all reject). 3 new tests (reject blocks the write + tells the model, approve lets it through, the preview carries tool + target). *ADR-070.*
+
+> **Next — TBD.** Unified-diff previews for accept-edits, local-timezone cron, a detached cron daemon, or an Ornstein-quarantined ICM web-research stage.
