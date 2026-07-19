@@ -34,6 +34,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--file <PATH>` | attach a file (repeatable); text folds into the prompt |
 | `--modality image,audio,video` | declare media modalities for `--file` attachments |
 | `--stream` | stream text + thought live to stdout |
+| `--accept-edits` | pause before every mutating (`Write`/`Execute`) tool call and preview it; approve/reject from stdin (y/N) before it touches disk |
 | `--resume <TRACE>` | continue an interrupted, incomplete session |
 | `--research <QUERY>` | run the Ornstein research phase first (quarantined) |
 | `--sink-action deny\|warn\|requireapproval` | CaMeL sink policy for tainted data (default deny) |

@@ -300,6 +300,7 @@ impl ChatBackend {
                     ferric_guard::SinkPolicy::deny(),
                     None,
                     None,
+                    None,
                 ))
             }
             #[cfg(feature = "backend-openai")]
@@ -319,6 +320,7 @@ impl ChatBackend {
                 Some(seed),
                 ferric_guard::TaintSet::new(),
                 ferric_guard::SinkPolicy::deny(),
+                None,
                 None,
                 None,
             )),

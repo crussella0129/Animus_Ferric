@@ -263,6 +263,7 @@ pub mod server {
             ferric_guard::SinkPolicy::deny(),
             None,
             None,
+            None,
         )
         .await
         .map_err(|e| format!("query failed: {e}"))?;

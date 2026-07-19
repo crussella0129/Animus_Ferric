@@ -65,6 +65,7 @@ fn test_hooks_success() {
     let mut sink = JsonlSink::open(&trace_path, "session1").unwrap();
 
     let args = RunArgs {
+        edit_approver: None,
         cancel_flag: None,
         provider: &provider,
         registry: &registry,
@@ -123,6 +124,7 @@ fn test_hooks_error() {
     let mut sink = JsonlSink::open(&trace_path, "session2").unwrap();
 
     let args = RunArgs {
+        edit_approver: None,
         cancel_flag: None,
         provider: &provider,
         registry: &registry,

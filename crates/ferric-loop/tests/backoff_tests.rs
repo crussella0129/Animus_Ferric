@@ -77,6 +77,7 @@ fn run_flaky(script: Vec<Result<Completion, ProviderError>>) -> FlakyRun {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
+            edit_approver: None,
             cancel_flag: None,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             taint_set: ferric_guard::TaintSet::new(),

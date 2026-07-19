@@ -147,6 +147,7 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                     modality: None,
                     research: None,
                     sink_action: "deny".to_string(),
+                    accept_edits: false,
                 };
                 return crate::query::run_query(query_args);
             }

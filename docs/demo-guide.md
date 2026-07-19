@@ -384,6 +384,38 @@ Edge tuning knobs for Jetson/RPi: `--threads`, `--gpu-layers`, `--batch-size`.
 
 ---
 
+## 21. Accept-edits — supervise every write 🟢/🔵
+
+Pause before each mutating tool call, look at what the model wants to do, and
+approve or reject it — without aborting the session.
+
+```sh
+ferric query --accept-edits --mock "create a file"
+```
+
+For every `Write`/`Execute` call the run stops and prints a preview to **stderr**:
+
+```
+── proposed: write_file ──
+   target: out.txt
+{
+  "content": "hi",
+  "path": "out.txt"
+}
+apply this edit? [y/N]
+```
+
+- `y` / `yes` → the call runs normally.
+- anything else (`n`, empty line, EOF) → the call is **rejected**. Nothing touches
+  disk, and the model is handed an `edit rejected by user` error result it can adapt
+  to — the run keeps going, it does not abort.
+
+Read-only calls (`read_file`, `list_dir`, …) are never gated, so you only get
+prompted for things that actually change the workspace. The preview goes to stderr,
+so `--stream` / piped stdout stays clean. *(Sprint 79, ADR-070.)*
+
+---
+
 ## Quick reference: what needs a model?
 
 | Offline (🟢) | Needs a model (🔵) |
@@ -392,5 +424,6 @@ Edge tuning knobs for Jetson/RPi: `--threads`, `--gpu-layers`, `--batch-size`.
 | `chat --mock` (talk / `/do` / `!cmd`) | `chat` (real talk/escalate) |
 | `launch`, `icm init`/`plan`/`run --mock`, `cron` (with mock jobs) | `icm run` (real), `dream`, `bench` |
 | `.ferricignore`, hooks, config, `Animus.md` (mechanism) | `revert` (real run), `mcp`/`api` (real), `server` |
+| `query --accept-edits --mock` (supervise writes) | `query --accept-edits` (real) |
 
 See the [Command Reference](commands.md) for every flag.

@@ -1030,3 +1030,41 @@ mid-conversation without asking the model to do it.
 - **Deferred:** streaming a long command's output live (currently printed after
   it completes); a way to fold command output into the model's context on demand;
   `!` passthrough in the non-REPL surfaces (it is chat-only by design).
+
+## ADR-070 — 2026-07-19 (sprint 79): interactive "accept edits" mode (`--accept-edits`)
+`ferric query --accept-edits` pauses before every **mutating** tool call, previews
+it, and lets a human approve or reject it before it touches disk. Motivated by the
+supervised-run workflow — watching a small model work and vetoing a bad write
+without aborting the whole session.
+- **Gated at the single dispatch chokepoint, keyed on permission — not tool name.**
+  The loop already routes every tool call through one dispatch point in `step()`;
+  the gate lives there, immediately after the `ToolCall` event is traced and before
+  `registry.dispatch()`. Whether a call is "mutating" is asked of the guard's own
+  permission model via the new `Registry::permission_of(name)` — `Write` and
+  `Execute` are gated, `Read` calls flow through untouched. This keeps the notion of
+  "an edit" defined by the same permission ladder ADR-005 uses, not a hand-kept list
+  of tool names that would drift as tools are added.
+- **The approver is an injected callback, mirroring `stream_sink`.** `RunArgs` gains
+  `edit_approver: Option<EditApprover>` — a `&(dyn Fn(&EditPreview) -> bool + Sync)`.
+  The loop stays pure and testable: tests inject a closure that always rejects,
+  always approves, or captures the preview; the CLI injects a stdin y/N prompt.
+  `None` (the default everywhere else — chat/api/mcp/icm all pass `None`) means the
+  gate is inert, so existing behavior is byte-for-byte unchanged.
+- **Rejection is a first-class result the model can adapt to.** A vetoed call is
+  *not* an abort and *not* silent — the loop synthesizes an error `ToolResult`
+  (`"edit rejected by user"`, `is_error: true`) and feeds it back, exactly as if the
+  tool had failed. The model sees the rejection in-context and can try a different
+  approach; the run continues. This reuses the existing error-result plumbing rather
+  than inventing a new control-flow path, so loop guards (no-progress, repetition)
+  still see a coherent trace.
+- **Preview is v1 (tool + targets + pretty args), diffs deferred.** `EditPreview`
+  carries the tool name, the touched targets (pulled from the well-known arg keys —
+  `path`/`from`/`to`/`src`/`dest`), and a pretty-printed JSON of the full args. The
+  CLI approver prints this to **stderr** (so piped stdout stays clean), truncates the
+  detail to 2000 chars, and reads y/N from stdin — empty, `n`, or EOF all reject
+  (conservative default: if in doubt, don't write). A full unified-diff preview
+  (rendering the before/after of a `write_file`/`edit_file`) is the natural next
+  increment and is deferred.
+- **Deferred:** unified-diff previews; an "approve all remaining" / session-sticky
+  choice; accept-edits in the `chat` REPL (`/do` escalate path) — this increment is
+  `query`-only.
