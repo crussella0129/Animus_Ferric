@@ -110,10 +110,14 @@ pub struct Completion {
 /// sink as it becomes available (ADR-047). `Text` is human-readable prose worth
 /// displaying live; `ToolNamed` is a cheap early "which tool is being called"
 /// activity signal, available before the tool's `args` finish streaming.
+/// `ToolCompleted` fires after a tool has been dispatched, carrying the result
+/// summary — a harness-level signal, not from the provider.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamDelta {
     Text(String),
     ToolNamed(String),
+    /// Fired by the agent loop (not the provider) after a tool is dispatched.
+    ToolCompleted { name: String, summary: String },
 }
 
 #[derive(Debug, Error)]

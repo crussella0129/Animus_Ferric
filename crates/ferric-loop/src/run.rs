@@ -435,6 +435,19 @@ pub async fn run(
                 is_error,
                 duration_ms,
             })?;
+            if let Some(stream_sink) = args.stream_sink {
+                // Determine a short summary (first line) for the stream display.
+                let summary_line = result_text.full.lines().next().unwrap_or("").to_string();
+                let summary = if is_error {
+                    format!("Error: {}", summary_line)
+                } else {
+                    summary_line
+                };
+                stream_sink(StreamDelta::ToolCompleted {
+                    name: call.name.clone(),
+                    summary,
+                });
+            }
             messages.push(result_message(
                 args.protocol,
                 &call.id,

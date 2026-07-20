@@ -1,12 +1,13 @@
 //! `ConstrainedJsonScanner` — the incremental `ConstrainedJson` action-object
-//! scanner (ADR-047). Every turn's completion under `ConstrainedJson` is ONE
-//! opaque JSON object (`{"tool":...,"args":...}`), including the final
-//! `task_complete` answer — raw token deltas of that are not human-readable.
-//! This scanner extracts exactly two useful signals from the accumulated raw
-//! text as it streams in: the tool name (an early "which tool" activity
-//! signal, available well before `args` finishes) and, only when the tool is
-//! `task_complete`, the live-decoded characters of `args.summary` — the one
-//! field that IS human-readable prose.
+//! scanner (ADR-047, extended sprint 63). Every turn's completion under
+//! `ConstrainedJson` is ONE opaque JSON object
+//! (`{"thought":...,"tool":...,"args":...}`), including the final
+//! `task_complete` answer — raw token deltas of that are not human-readable
+//! except for three fields:
+//!
+//! 1. `thought` — the model's step-by-step reasoning (always streamed)
+//! 2. `tool` — the tool being called (emitted as a `ToolNamed` signal)
+//! 3. `args.summary` — only for `task_complete` (the final prose answer)
 //!
 //! Fed with the FULL accumulated text on each `scan()` call (not a diff);
 //! internally tracks what it has already emitted so repeated calls only
@@ -19,6 +20,11 @@ const TASK_COMPLETE: &str = "task_complete";
 /// Stateful, pure (no I/O) scanner. One instance per streaming turn.
 #[derive(Debug, Default)]
 pub struct ConstrainedJsonScanner {
+    /// Byte offset where the `thought` field's string value begins.
+    thought_value_start: Option<usize>,
+    /// How many bytes of decoded thought text have already been emitted.
+    thought_emitted_len: usize,
+    thought_done: bool,
     tool_name: Option<String>,
     /// Byte offset into the accumulated text where `args.summary`'s string
     /// value begins (right after the opening `"`), once found.
@@ -39,6 +45,27 @@ impl ConstrainedJsonScanner {
     pub fn scan(&mut self, accumulated: &str) -> Vec<StreamDelta> {
         let mut deltas = Vec::new();
 
+        // Phase 1: stream the thought field (available before tool name).
+        if !self.thought_done {
+            if self.thought_value_start.is_none() {
+                self.thought_value_start = find_field_value_start(accumulated, "thought");
+            }
+            if let Some(start) = self.thought_value_start {
+                if start <= accumulated.len() {
+                    let (decoded, complete) = decode_json_string_prefix(&accumulated[start..]);
+                    if decoded.len() > self.thought_emitted_len {
+                        let new_part = decoded[self.thought_emitted_len..].to_string();
+                        self.thought_emitted_len = decoded.len();
+                        deltas.push(StreamDelta::Text(new_part));
+                    }
+                    if complete {
+                        self.thought_done = true;
+                    }
+                }
+            }
+        }
+
+        // Phase 2: extract tool name (fires ToolNamed once).
         if self.tool_name.is_none() {
             match extract_tool_name(accumulated) {
                 Some(name) => {
@@ -49,12 +76,13 @@ impl ConstrainedJsonScanner {
             }
         }
 
+        // Phase 3: for task_complete only, stream the summary.
         if self.tool_name.as_deref() != Some(TASK_COMPLETE) || self.summary_done {
             return deltas;
         }
 
         if self.summary_value_start.is_none() {
-            self.summary_value_start = find_summary_value_start(accumulated);
+            self.summary_value_start = find_field_value_start(accumulated, "summary");
         }
         let Some(start) = self.summary_value_start else {
             return deltas;
@@ -92,12 +120,11 @@ fn extract_tool_name(accumulated: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// Find where `args.summary`'s string value begins (the byte offset right
-/// after the opening `"`). `task_complete`'s schema has exactly one string
-/// field (`summary`), so a plain substring search is unambiguous.
-fn find_summary_value_start(accumulated: &str) -> Option<usize> {
-    const KEY: &str = "\"summary\":\"";
-    Some(accumulated.find(KEY)? + KEY.len())
+/// Find where a named JSON string field's value begins (the byte offset right
+/// after the opening `"`). Used for both `thought` and `args.summary`.
+fn find_field_value_start(accumulated: &str, field: &str) -> Option<usize> {
+    let key = format!("\"{}\":\"", field);
+    Some(accumulated.find(&key)? + key.len())
 }
 
 /// Decode as much of a JSON string's raw content (the bytes after the
@@ -255,10 +282,11 @@ mod tests {
         assert_eq!(collected, "Hello, world!");
     }
 
-    /// A non-`task_complete` tool (e.g. `write_file`) never emits `Text` for
-    /// its args — only the `ToolNamed` activity signal fires.
+    /// A non-`task_complete` tool (e.g. `write_file`) without a `thought`
+    /// field never emits `Text` for its args — only the `ToolNamed` activity
+    /// signal fires.
     #[test]
-    fn non_task_complete_tool_never_emits_text() {
+    fn non_task_complete_tool_without_thought_never_emits_text() {
         let full = r#"{"tool":"write_file","args":{"path":"a.txt","content":"secret data"}}"#;
         let mut scanner = ConstrainedJsonScanner::new();
         let mut texts = Vec::new();
@@ -268,14 +296,65 @@ mod tests {
                 match delta {
                     StreamDelta::Text(t) => texts.push(t),
                     StreamDelta::ToolNamed(n) => tool_named.push(n),
+                    _ => {}
                 }
             }
         }
         assert!(
             texts.is_empty(),
-            "no Text deltas for a non-task_complete tool"
+            "no Text deltas for a non-task_complete tool without thought"
         );
         assert_eq!(tool_named, vec!["write_file".to_string()]);
+    }
+
+    /// The `thought` field streams as `Text` deltas for ALL tools, including
+    /// non-`task_complete` tools — this is the decoupled reasoning display.
+    #[test]
+    fn thought_streams_for_any_tool() {
+        let full =
+            r#"{"thought":"I will create file a.txt","tool":"write_file","args":{"path":"a.txt","content":"hi"}}"#;
+        let mut scanner = ConstrainedJsonScanner::new();
+        let mut collected_text = String::new();
+        let mut tool_named = Vec::new();
+        for end in 1..=full.len() {
+            if !full.is_char_boundary(end) {
+                continue;
+            }
+            for delta in scanner.scan(&full[..end]) {
+                match delta {
+                    StreamDelta::Text(t) => collected_text.push_str(&t),
+                    StreamDelta::ToolNamed(n) => tool_named.push(n),
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(collected_text, "I will create file a.txt");
+        assert_eq!(tool_named, vec!["write_file".to_string()]);
+    }
+
+    /// For `task_complete` with a thought field, the scanner streams both
+    /// the thought AND the summary as Text deltas.
+    #[test]
+    fn thought_and_summary_stream_for_task_complete() {
+        let full = r#"{"thought":"Task is done.","tool":"task_complete","args":{"summary":"Created file."}}"#;
+        let mut scanner = ConstrainedJsonScanner::new();
+        let mut collected_text = String::new();
+        let mut tool_named = Vec::new();
+        for end in 1..=full.len() {
+            if !full.is_char_boundary(end) {
+                continue;
+            }
+            for delta in scanner.scan(&full[..end]) {
+                match delta {
+                    StreamDelta::Text(t) => collected_text.push_str(&t),
+                    StreamDelta::ToolNamed(n) => tool_named.push(n),
+                    _ => {}
+                }
+            }
+        }
+        // Both thought + summary appear as concatenated Text.
+        assert_eq!(collected_text, "Task is done.Created file.");
+        assert_eq!(tool_named, vec!["task_complete".to_string()]);
     }
 
     /// Regression pinning the false-positive-safety argument itself (plan
@@ -299,6 +378,7 @@ mod tests {
             match delta {
                 StreamDelta::ToolNamed(n) => tool_named.push(n),
                 StreamDelta::Text(t) => texts.push(t),
+                _ => {}
             }
         }
         assert_eq!(tool_named, vec!["write_file".to_string()]);

@@ -43,6 +43,12 @@ impl Tool for WriteFile {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for {path}: {e}"))?;
         }
         std::fs::write(&resolved, content).map_err(|e| format!("write {path}: {e}"))?;
-        Ok(format!("wrote {} bytes to {path}", content.len()))
+        let mut result = format!("wrote {} bytes to {path}", content.len());
+        // Best-effort syntax check: append a warning if the written code has
+        // obvious syntax errors, so the model can self-correct.
+        if let Some(warning) = super::check_syntax::check_syntax(&resolved) {
+            result.push_str(&format!("\n⚠ {warning}"));
+        }
+        Ok(result)
     }
 }

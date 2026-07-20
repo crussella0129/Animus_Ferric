@@ -553,7 +553,10 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             streamed_anything.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         ferric_provider::StreamDelta::ToolNamed(name) => {
-            eprintln!("\u{25b8} calling {name}...");
+            eprintln!("\n\u{25b8} calling {name}...");
+        }
+        ferric_provider::StreamDelta::ToolCompleted { name, summary } => {
+            println!("✓ {name}: {summary}");
         }
     };
     let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if resolved_stream {

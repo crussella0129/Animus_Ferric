@@ -2,6 +2,7 @@
 //! get 100% right are exactly the ones every tier needs available.
 
 mod apply_patch;
+pub(crate) mod check_syntax;
 mod copy_file;
 mod delete_path;
 mod edit_file;

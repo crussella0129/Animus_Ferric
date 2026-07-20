@@ -51,17 +51,17 @@ pub fn load_library(dir: &Path) -> Result<Library, PromptError> {
 /// the same atoms across the band; per-tier wording variants slot in here
 /// without changing callers.
 pub fn recipe_for(_tier: Tier, protocol: ActionProtocol) -> Vec<(String, Option<String>)> {
-    let protocol_atom = match protocol {
-        ActionProtocol::NativeTools => "protocol-native-tools",
-        ActionProtocol::ConstrainedJson => "protocol-constrained-json",
+    let (protocol_atom, protocol_version) = match protocol {
+        ActionProtocol::NativeTools => ("protocol-native-tools", "1.0.0"),
+        ActionProtocol::ConstrainedJson => ("protocol-constrained-json", "1.1.0"),
         // The legacy "unified-grammar" atom teaches the `<tool_call>` XML
         // format — exactly the TextXml fallback's wire shape.
-        ActionProtocol::TextXml => "protocol-unified-grammar",
+        ActionProtocol::TextXml => ("protocol-unified-grammar", "1.0.0"),
     };
     vec![
         ("role-declaration".to_string(), Some("1.0.0".to_string())),
-        ("workspace-rules".to_string(), Some("1.0.0".to_string())),
-        (protocol_atom.to_string(), Some("1.0.0".to_string())),
+        ("workspace-rules".to_string(), Some("1.1.0".to_string())),
+        (protocol_atom.to_string(), Some(protocol_version.to_string())),
         ("terminator-teaching".to_string(), Some("1.0.0".to_string())),
     ]
 }
@@ -171,7 +171,17 @@ mod tests {
                     .map(|(id, _)| id.clone())
                     .collect();
                 assert_eq!(lineage_ids, recipe_ids);
-                assert!(composed.composed_of.iter().all(|(_, v)| v == "1.0.0"));
+                // Each element's version matches its recipe pin.
+                let recipe_versions: Vec<String> = recipe_for(tier, protocol)
+                    .into_iter()
+                    .map(|(_, v)| v.unwrap())
+                    .collect();
+                let lineage_versions: Vec<String> = composed
+                    .composed_of
+                    .iter()
+                    .map(|(_, v)| v.clone())
+                    .collect();
+                assert_eq!(lineage_versions, recipe_versions);
             }
         }
     }

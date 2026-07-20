@@ -68,10 +68,11 @@ fn branch_for(tool: &ToolDescriptor) -> Value {
     json!({
         "type": "object",
         "properties": {
+            "thought": { "type": "string" },
             "tool": { "const": tool.name },
             "args": tool.input_schema,
         },
-        "required": ["tool", "args"],
+        "required": ["thought", "tool", "args"],
         "additionalProperties": false,
     })
 }
@@ -141,14 +142,15 @@ mod tests {
     #[test]
     fn action_schema_branch_count() {
         // N tools → N+1 branches (each tool + task_complete), each a
-        // const-discriminated {tool,args} object with additionalProperties:false.
+        // const-discriminated {thought,tool,args} object with additionalProperties:false.
         let schema = action_schema(&[tool("read_file"), tool("write_file")]);
         let branches = schema["anyOf"].as_array().unwrap();
         assert_eq!(branches.len(), 3);
         for b in branches {
             assert!(b["properties"]["tool"]["const"].is_string());
+            assert!(b["properties"]["thought"]["type"].is_string());
             assert_eq!(b["additionalProperties"], json!(false));
-            assert_eq!(b["required"], json!(["tool", "args"]));
+            assert_eq!(b["required"], json!(["thought", "tool", "args"]));
         }
     }
 
@@ -169,6 +171,32 @@ mod tests {
         assert_eq!(call.name, "read_file");
         assert_eq!(call.id, "g-2-0");
         assert_eq!(call.args["path"], json!("x"));
+    }
+
+    #[test]
+    fn parse_json_action_with_thought() {
+        // The model includes a thought field — it must parse cleanly and not
+        // leak into the ToolCall's args.
+        let call = parse_json_action(
+            0,
+            r#"{"thought":"I need to read file x","tool":"read_file","args":{"path":"x"}}"#,
+        )
+        .unwrap();
+        assert_eq!(call.name, "read_file");
+        assert_eq!(call.args["path"], json!("x"));
+        assert!(call.args.get("thought").is_none());
+    }
+
+    #[test]
+    fn action_schema_includes_thought() {
+        let schema = action_schema(&[tool("read_file")]);
+        let branches = schema["anyOf"].as_array().unwrap();
+        for b in branches {
+            assert_eq!(b["properties"]["thought"]["type"], json!("string"));
+            // thought is required so the model is forced to reason
+            let req = b["required"].as_array().unwrap();
+            assert!(req.contains(&json!("thought")));
+        }
     }
 
     #[test]
