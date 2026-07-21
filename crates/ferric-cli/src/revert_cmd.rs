@@ -42,8 +42,10 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
             session_id = record.session.clone();
         }
 
-        if let ferric_trace::ParsedEvent::Known(ferric_trace::Event::SessionStart { workspace, .. }) =
-            &record.event
+        if let ferric_trace::ParsedEvent::Known(ferric_trace::Event::SessionStart {
+            workspace,
+            ..
+        }) = &record.event
         {
             if trace_workspace.is_none() {
                 let clean_ws = workspace.strip_prefix(r"\\?\").unwrap_or(workspace);
@@ -65,9 +67,8 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
         return Err(format!("turn {} not found in trace", args.turn));
     }
 
-    let workspace_root = trace_workspace.unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    });
+    let workspace_root = trace_workspace
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let vcs = ferric_vcs::Vcs::new(workspace_root);
 
     println!(
