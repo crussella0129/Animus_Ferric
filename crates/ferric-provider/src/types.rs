@@ -117,7 +117,10 @@ pub enum StreamDelta {
     Text(String),
     ToolNamed(String),
     /// Fired by the agent loop (not the provider) after a tool is dispatched.
-    ToolCompleted { name: String, summary: String },
+    ToolCompleted {
+        name: String,
+        summary: String,
+    },
     Thought(String),
 }
 

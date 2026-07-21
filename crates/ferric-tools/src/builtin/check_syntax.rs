@@ -39,8 +39,7 @@ fn check_python(path: &Path) -> Option<String> {
                 // Extract just the last line (the actual error), not the full traceback.
                 let error_line = stderr
                     .lines()
-                    .filter(|l| !l.trim().is_empty())
-                    .last()
+                    .rfind(|l| !l.trim().is_empty())
                     .unwrap_or("syntax error");
                 return Some(format!("syntax check: {}", error_line.trim()));
             }

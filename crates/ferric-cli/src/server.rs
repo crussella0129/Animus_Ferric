@@ -197,7 +197,10 @@ pub fn global_runfile_path() -> Option<PathBuf> {
     global_runfile_path_from(&|k| std::env::var(k).ok())
 }
 
-pub fn read_runfile_from(workspace: &Path, env: &impl Fn(&str) -> Option<String>) -> Option<ServerRunfile> {
+pub fn read_runfile_from(
+    workspace: &Path,
+    env: &impl Fn(&str) -> Option<String>,
+) -> Option<ServerRunfile> {
     let local = runfile_path(workspace);
     if let Ok(text) = std::fs::read_to_string(&local)
         && let Ok(rf) = serde_json::from_str(&text)
