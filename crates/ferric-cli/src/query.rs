@@ -140,13 +140,9 @@ pub struct QueryArgs {
     #[arg(long)]
     pub profile_dir: Option<PathBuf>,
 
-    /// Stream text live to stdout as it's generated, instead of waiting for
-    /// the whole multi-turn loop to finish (ADR-047). Opt-in this increment.
-    /// Under `ConstrainedJson`, only `task_complete`'s summary streams (an
-    /// activity line naming each intermediate tool call goes to stderr);
-    /// under `NativeTools`/`TextXml`, assistant prose streams directly.
+    /// Suppress live streaming of text and tool activity (default: streaming is ON).
     #[arg(long)]
-    pub stream: bool,
+    pub no_stream: bool,
 }
 
 /// The shared subset of `QueryArgs` (everything except `prompt`/`files`) that
@@ -415,7 +411,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         .clone()
         .or(cfg.profile_dir)
         .unwrap_or_else(|| PathBuf::from("benchmarks"));
-    let resolved_stream = args.stream || cfg.stream.unwrap_or(false);
+    let resolved_stream = !args.no_stream && cfg.stream.unwrap_or(true);
 
     let mut config = build_run_config(&RunConfigArgs {
         mock: args.mock,

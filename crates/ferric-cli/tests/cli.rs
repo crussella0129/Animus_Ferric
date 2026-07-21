@@ -99,16 +99,16 @@ fn mock_query_end_to_end() {
     );
 }
 
-/// T-3705: `--stream` must not duplicate output. The `--mock` script's
-/// completions are native tool calls with no `message.text` (`text: None`),
-/// so the default `complete_streaming` impl fires zero deltas for either
-/// turn — the final echo is the ONLY place the text appears, exactly as
-/// without `--stream` (the EARS "no duplication, no missing text" clause).
+/// T-3705: streaming (now default-on) must not duplicate output. The `--mock`
+/// script's completions are native tool calls with no `message.text`
+/// (`text: None`), so the default `complete_streaming` impl fires zero deltas
+/// for either turn — the final echo is the ONLY place the text appears (the
+/// EARS "no duplication, no missing text" clause).
 #[test]
 fn stream_flag_mock_no_duplication() {
     let dir = tempfile::tempdir().unwrap();
     let out = ferric()
-        .args(["query", "--mock", "--stream", "do a mock task"])
+        .args(["query", "--mock", "do a mock task"])
         .arg("--workspace")
         .arg(dir.path())
         .output()
@@ -577,19 +577,20 @@ fn config_only_max_ring_caps_the_offered_tools() {
     );
 }
 
-/// Test-critic C-002: same gap for `stream`. `--mock`'s NativeTools script has
+/// Test-critic C-002: same gap for `stream`. Streaming is now default-on, so
+/// the interesting config-only test is that `stream = false` in the project
+/// config SUPPRESSES live output. `--mock`'s NativeTools script has
 /// `text: None` (no observable streaming difference — see
 /// `stream_flag_mock_no_duplication`'s doc comment), so this uses
 /// `--protocol grammar`, where the mock's completion text IS the raw
-/// `{"tool":...}` JSON. With streaming active, the default `complete_
-/// streaming` fires ONE `Text` delta of that raw JSON (printed live), and the
-/// final echo is skipped (already-streamed) — so the raw JSON appears on
-/// stdout instead of the clean `"mock run complete"` line. That only happens
-/// if `resolved_stream` (config-only, no `--stream` flag) was actually true.
+/// `{"tool":...}` JSON. With streaming active (the default), the default
+/// `complete_streaming` fires ONE `Text` delta of that raw JSON (printed
+/// live). With `stream = false`, the final echo of the clean summary appears
+/// instead — proving the config override took effect.
 #[test]
-fn config_only_stream_enables_live_output() {
+fn config_only_stream_disables_live_output() {
     let ws = tempfile::tempdir().unwrap();
-    write_project_config(ws.path(), "stream = true\n");
+    write_project_config(ws.path(), "stream = false\n");
 
     let out = ferric()
         .args(["query", "--mock", "--protocol", "grammar", "do a task"])
@@ -603,10 +604,12 @@ fn config_only_stream_enables_live_output() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8(out.stdout).unwrap();
+    // With streaming disabled, the clean task_complete summary appears, NOT
+    // the raw streamed JSON.
     assert!(
-        stdout.contains("\"tool\":\"task_complete\""),
-        "expected the raw streamed JSON (proving config-only `stream` took \
-         effect), got: {stdout:?}"
+        !stdout.contains("\"tool\":\"task_complete\""),
+        "expected config `stream = false` to suppress live streaming, \
+         but got raw JSON on stdout: {stdout:?}"
     );
 }
 
