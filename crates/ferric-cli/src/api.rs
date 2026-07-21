@@ -165,6 +165,9 @@ pub mod server {
                     StreamDelta::Text(t) => Event::default()
                         .event("summary")
                         .data(serde_json::json!({"text": t}).to_string()),
+                    StreamDelta::ToolCompleted { name, summary } => Event::default()
+                        .event("tool_completed")
+                        .data(serde_json::json!({"name": name, "summary": summary}).to_string()),
                 };
                 let _ = tx_clone.try_send(Ok(event));
             };
