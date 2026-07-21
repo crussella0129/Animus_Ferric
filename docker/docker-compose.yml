@@ -22,8 +22,13 @@ services:
     # The workspace the harness acts on (ferric-guard + ADR-005 remain the real
     # containment boundary inside the container; the mount is just what `ferric
     # query` operates against).
+    command: tail -f /dev/null
     volumes:
       - ../workspace:/workspace
+      - ${MODELS_PATH:-../models}:/models
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - proxy-net
     # Reachability for future sibling services is intentionally a COMMENT, not a
     # live `ports:`/`networks:` directive (ADR-051): the Dockerfile publishes no
     # port and binds llama-server to loopback INSIDE the container only. When
@@ -32,15 +37,19 @@ services:
     # decided in the sprint that operationalizes them, not here.
     restart: unless-stopped
 
-  # STUB — Ornstein quarantined-research service. Today Ornstein runs in-process
-  # within ferric-core (ferric-research crate). Whether it becomes its OWN
-  # container process, and whether its "airlock" is a microVM-class sandbox
-  # layer (Docker Sandboxes / gVisor, ADR-051), is a future increment
-  # (Ornstein inc 4 — the Web retriever + hardened container). No real image yet.
-  # ornstein-search:
-  #   image: TODO  # sprint TBD, ADR-051 airlock design
-  #   depends_on: [ferric-core]
+  # The Ornstein Web Retriever uses Docker to launch isolated microVMs.
+  # The proxy service enforces the outbound allowlist for these fetchers.
+  allowlist-proxy:
+    image: ubuntu/squid:latest
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+    networks:
+      - proxy-net
+    restart: unless-stopped
 
+networks:
+  proxy-net:
+    driver: bridge
   # STUB — the raw chat surface (ADR-011 revision's unbuilt half). Its own build
   # + dedicated security-boundary ADR are sprint 42, deferred by the user's
   # explicit sprint-41 scope choice. No real image yet.

@@ -7,12 +7,17 @@ mod copy_file;
 mod delete_path;
 mod edit_file;
 mod find_files;
+mod git_read;
+mod git_write;
 mod list_dir;
 mod make_dir;
+mod manage_task;
 mod move_path;
 mod multi_edit;
 mod read_file;
 mod search_files;
+mod shell_exec;
+pub mod task_registry;
 mod write_file;
 
 pub use apply_patch::ApplyPatch;
@@ -20,12 +25,16 @@ pub use copy_file::CopyFile;
 pub use delete_path::DeletePath;
 pub use edit_file::EditFile;
 pub use find_files::FindFiles;
+pub use git_read::GitRead;
+pub use git_write::GitWrite;
 pub use list_dir::ListDir;
 pub use make_dir::MakeDir;
+pub use manage_task::ManageTask;
 pub use move_path::MovePath;
 pub use multi_edit::MultiEdit;
 pub use read_file::ReadFile;
 pub use search_files::SearchFiles;
+pub use shell_exec::ShellExec;
 pub use write_file::WriteFile;
 
 use crate::registry::Registry;
@@ -44,6 +53,10 @@ pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(CopyFile));
     registry.register(Box::new(MultiEdit));
     registry.register(Box::new(ApplyPatch));
+    registry.register(Box::new(GitRead));
+    registry.register(Box::new(GitWrite));
+    registry.register(Box::new(ShellExec));
+    registry.register(Box::new(ManageTask));
 }
 
 /// Shared helper: the required string `path` argument.

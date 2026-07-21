@@ -59,8 +59,7 @@ pub fn parse_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseError>
 /// `ConstrainedJson` path; a constraint-honoring backend enforces it so the
 /// completion can only be a well-formed action.
 pub fn action_schema(tools: &[ToolDescriptor]) -> Value {
-    let mut branches: Vec<Value> = tools.iter().map(branch_for).collect();
-    branches.push(branch_for(&crate::terminator::descriptor()));
+    let branches: Vec<Value> = tools.iter().map(branch_for).collect();
     json!({ "type": "object", "anyOf": branches })
 }
 
@@ -68,9 +67,9 @@ fn branch_for(tool: &ToolDescriptor) -> Value {
     json!({
         "type": "object",
         "properties": {
-            "thought": { "type": "string" },
+            "thought": { "type": "string", "description": "CRITICAL: Scratchpad space. You MUST use this to draft pseudocode, consider edge cases, and plan the exact logic BEFORE picking a tool or writing code." },
             "tool": { "const": tool.name },
-            "args": tool.input_schema,
+            "args": tool.input_schema.clone(),
         },
         "required": ["thought", "tool", "args"],
         "additionalProperties": false,
@@ -84,6 +83,7 @@ fn branch_for(tool: &ToolDescriptor) -> Value {
 pub fn parse_json_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseError> {
     let value: Value =
         serde_json::from_str(text.trim()).map_err(|e| ActionParseError::NotJson(e.to_string()))?;
+
     let name = match value.get("tool").and_then(Value::as_str) {
         Some(n) if !n.is_empty() => n.to_string(),
         _ => return Err(ActionParseError::MissingTool),
@@ -93,13 +93,13 @@ pub fn parse_json_action(turn: u32, text: &str) -> Result<ToolCall, ActionParseE
         Some(_) => return Err(ActionParseError::ArgsNotAnObject),
         None => return Err(ActionParseError::MissingArgs),
     };
+
     Ok(ToolCall {
         id: format!("g-{turn}-0"),
         name,
         args,
     })
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionParseError {
     MalformedXml,
@@ -145,7 +145,7 @@ mod tests {
         // const-discriminated {thought,tool,args} object with additionalProperties:false.
         let schema = action_schema(&[tool("read_file"), tool("write_file")]);
         let branches = schema["anyOf"].as_array().unwrap();
-        assert_eq!(branches.len(), 3);
+        assert_eq!(branches.len(), 2);
         for b in branches {
             assert!(b["properties"]["tool"]["const"].is_string());
             assert!(b["properties"]["thought"]["type"].is_string());
@@ -155,8 +155,8 @@ mod tests {
     }
 
     #[test]
-    fn action_schema_includes_task_complete() {
-        let schema = action_schema(&[tool("read_file")]);
+    fn action_schema_includes_terminator_when_passed() {
+        let schema = action_schema(&[tool("read_file"), crate::terminator::descriptor()]);
         let branches = schema["anyOf"].as_array().unwrap();
         assert!(
             branches
@@ -167,10 +167,14 @@ mod tests {
 
     #[test]
     fn parse_json_action_happy() {
-        let call = parse_json_action(2, r#"{"tool":"read_file","args":{"path":"x"}}"#).unwrap();
+        let call = parse_json_action(
+            0,
+            r#"{"thought": "...", "tool":"read_file","args":{"path":"foo.txt"}}"#,
+        )
+        .unwrap();
         assert_eq!(call.name, "read_file");
-        assert_eq!(call.id, "g-2-0");
-        assert_eq!(call.args["path"], json!("x"));
+        assert_eq!(call.args, json!({"path":"foo.txt"}));
+        assert_eq!(call.id, "g-0-0");
     }
 
     #[test]
@@ -201,13 +205,16 @@ mod tests {
 
     #[test]
     fn parse_json_action_rejects_non_object() {
-        assert!(parse_json_action(0, "\"oops\"").is_err());
+        assert!(matches!(
+            parse_json_action(0, r#"["read_file"]"#),
+            Err(ActionParseError::MissingTool)
+        ));
     }
 
     #[test]
     fn parse_json_action_rejects_missing_tool() {
         assert!(matches!(
-            parse_json_action(0, r#"{"args":{}}"#),
+            parse_json_action(0, r#"{"thought": "...", "args":{}}"#),
             Err(ActionParseError::MissingTool)
         ));
     }
@@ -215,7 +222,7 @@ mod tests {
     #[test]
     fn parse_json_action_rejects_missing_args() {
         assert!(matches!(
-            parse_json_action(0, r#"{"tool":"read_file"}"#),
+            parse_json_action(0, r#"{"thought": "...", "tool":"read_file"}"#),
             Err(ActionParseError::MissingArgs)
         ));
     }

@@ -1,262 +1,48 @@
-# Agent Tasks (Persistent Backlog)
+# Refactoring Tasks (From Architecture Report)
 
-> **Direction change in s30:** began the **Animus** suite by **hardening Animus Loop**.
-> Sprint 30 shipped **Ornstein increment 1** — the quarantined summarizer (`ferric-research`):
-> untrusted content → a no-tools/no-memory model under a data-only schema → a typed,
-> provenance-tagged `ResearchDigest`. The quarantine is *structural* (reuses the constrained
-> valve), so injections can only surface as quoted data. 4 tests incl. the injection-
-> containment proof. ADR-040; `docs/ornstein.md`. PR cadence clean.
+## animus-launch
+- [ ] Migrate `std::fs` to `tokio::fs` for async filesystem operations in project scaffolding.
 
-## Animus vision (recovered from the user, 2026-06-27; expanded 2026-06-29)
-- **Animus Launch** — interactive Rust+scripts project bootstrapper (successor to GECK's launcher: `crates/geck-cli/wizard.rs` + `geck_generator`). Interview → git repo with main+dev → "begin work?". **Decision: lives as a crate in Animus_Ferric.**
-- **Animus Loop** — the sprint-loops protocol (Research→Plan→Build→Test→Loop). **First priority = harden it.**
-- **Animus Manage** — multi-agent project-management layer (least-specified).
-- **Animus Beast-Zoo** (2026-06-29, **separate future repo**) — a safetensor→GGUF customizable fine-tune/conversion pipeline (HF fine-tunes, RAG/LoRA pipelines, eventually a visual "snap modules + sliders" app). Brief seed spec at `docs/beast-zoo-spec.md`; meant to be fed through its own future agent loop, not built here. User has a mixed GGUF+safetensors model library on a NAS (`192.168.86.27`, `Y:\models`) as a future test corpus.
-- **(unnamed) native Rust inference engine** (2026-06-29, **separate future repo**) — long-term replacement for llama.cpp as Animus_Ferric's inference backend. Not started, no spec — recorded only.
-- **Animus IDE** (2026-06-29, **separate future "organ"**) — an editor/IDE that talks to Ferric. Motivated the ADR-011 revision below.
+## ferric-bench
+- [ ] Decouple Validation from Traces in `src/verify.rs` by introducing an `Assertion` trait.
 
-**Model-format decision (2026-06-29): Animus_Ferric is GGUF-only, permanently.** The user
-considered direct safetensors support in Ferric and decided against it for simplicity —
-cross-format loading is pushed to the separate Beast-Zoo repo instead. **Do not revisit
-multi-format model loading inside Ferric.**
+## ferric-cli
+- [ ] Consolidate configuration precedence by merging `config.rs` and `backend.rs` into a unified `ConfigManager`.
 
-## ADR-011 revision decided (2026-06-29, mid-sprint-35-research) — Ferric gets MCP + a genuine chat mode
-The user deliberately revisited ADR-011 ("no REPL/chat mode") based on hands-on tool
-experience since writing it — driven by **Animus IDE** needing to send one-off natural-language
-change requests conversationally. **Both** of the following, not either/or:
-1. **`ferric mcp`** — activates the already-planned ADR-012 MCP-stdio surface (deferred since
-   s2–s3, blocked on "an ADR-005 security call" — do that call as part of this work). Each MCP
-   message still runs a full constrained agentic query; no departure from "harness owns decoding."
-2. **A genuine raw chat mode** — an actual unconstrained conversational surface. This is the
-   literal reversal of ADR-011's "no REPL/chat" clause and touches the "never raw unconstrained
-   chat" security thesis directly — needs its **own dedicated ADR** (not a quiet amendment)
-   spelling out the security boundary (what a chat turn can/cannot do to the workspace).
-Distinct from two prior, DIFFERENT "chat" rejections (don't conflate): ADR-011's original
-REPL-as-alternative-to-query rejection, and the separate sprint-25 `--chat` *capability fallback*
-for models too weak to agent (dropped once Gemma 4 E4B proved unnecessary).
-**Decided (2026-06-29, s35 plan phase): deferred to sprint 36+, not built in s35** — both are
-security-sensitive enough to deserve their own focused design sprint(s) rather than a tack-on to
-the s35 audit/refactor sprint. See the s35 completion note below.
+## ferric-core
+- [x] Isolate base64 encoding from `media.rs` into an optional module or crate feature (`media-encoding`).
+- [x] Standardize errors in `error.rs` to derive `thiserror::Error`.
 
-## Ornstein = a quarantined MULTI-SOURCE research subsystem (user's expanded vision)
-One funnel (the built quarantine), many pluggable `Retriever`s (capability-probed). **Build order (user-chosen):**
-- **inc 2 — `Retriever` trait + Local FS retriever** ✅ **DONE (s31, ADR-041).** Keystone `Retriever` (plane/available/retrieve, async) + `LocalFsRetriever` + `research()` pipeline; source→funnel→digest proven.
-- **inc 3 — Tailnet/NAS FS retriever** ✅ **DONE (s32, ADR-042).** `TailnetFsRetriever` searches a remote tailnet device's FS over SSH (`SshTransport::{Tailscale, Plain{port}}`); query single-quote-escaped vs remote command injection; `parse_status_devices` for `available()`. Deterministic core tested; **live SSH E2E deferred** (no target's sshd was up — Pixel has none on :22/:8022, switchblade offline).
-- **inc 3b — live SSH E2E for the tailnet plane** ← run once a target's sshd is up (Termux `Plain{8022}` on pixel-10-pro-xl, or `Tailscale` on switchblade when back online): `research(&TailnetFsRetriever{…}, provider, query)` → quarantined `host:path` digests.
-- **research orchestrator** ✅ **DONE (s33, ADR-043).** `research_all(planes, provider, query) -> MultiResearch` runs a query across all available planes, chunk-level dedup by source (one model call per source), per-plane `PlaneResult` report; unavailable planes are recorded no-ops.
-- **inc 4 — Web retriever + hardened sandbox + allowlist proxy** ← **NEXT, now UNBLOCKED** (Docker Desktop installed 2026-07-09, `linux/x86_64` engine). The airlock is a **microVM-class sandbox** (Docker Sandboxes / gVisor, ADR-051 — NOT Docker-in-Docker, a shared-kernel anti-pattern for untrusted-content isolation). The online plane; the trifecta's exfil leg lives here, so its security layer comes last.
-- **CaMeL-lite sink-policy primitive** ✅ **DONE (s34, ADR-044, co-designed with the user).** `crates/ferric-research/src/sink.rs`: `TaintSet` (substring taint over digest summary+quotes) + `SinkPolicy::decide(permission, tainted)` keyed off `PermissionLevel`, all 3 modes (`Deny`/`RequireApproval`/`Warn`, caller picks). 8 tests incl. the end-to-end gate shape. **Pure primitive — NOT wired into dispatch yet.**
-- **inc 5 (remaining) — wire the sink policy into `registry.execute` + Loop research-phase wiring** ← run when the research→loop integration lands: populate a `TaintSet` from digests entering context; call `SinkPolicy::decide` beside the existing `check(permission, path)` at the dispatch chokepoint; route fetched content through the quarantine before the planner acts (a sprint-loops change).
-- **PR open+merge as the STANDARD final loop phase** — promote sprint-loops `06-loop-phase.md` step #6 from optional to standard (small, clear; matches one-PR-per-sprint).
-- **A testing system** — make the Loop's Test phase a real system (define first: containerized test runs? golden artifacts? coverage gates?).
-- **Animus Launch (crate in Animus_Ferric)** — the interactive bootstrapper, once loop-hardening has momentum.
-- A live small-model run measuring Ornstein summarization *quality* (safety is already structural).
+## ferric-guard
+- [x] Implement Dynamic Denylist Configuration in `src/denylist.rs` to read from a `.ferricignore` file. *(Sprint 77, ADR-068 — `IgnoreList` (`ignore.rs`) parses a gitignore-flavored `.ferricignore` from the workspace root; `check_with_ignore` folds it into the registry chokepoint as **additive-only** denials (never relaxes the hardcoded ADR-005 floor). The policy file is itself write-denied.)*
 
-## Earlier backlog (still open)
-- Multi-file `apply_patch` (ADR-039 follow-on); GPU/edge run (Jetson/Pi → maybe L6); harder bench L7+; audio on real non-TTS audio + video modality. (MCP-stdio is now covered by the ADR-011-revision section above, no longer a standalone item.)
+## ferric-loop
+- [x] Extract Loop State from `run.rs` into a dedicated `LoopState` struct.
+- [x] Decouple Driver from Logic by breaking down the monolithic `while` loop into a `step(&mut LoopState) -> Result<TurnOutcome>` function.
 
-## Sprint 35 (expert review + refactor) — DONE, ADR-045
-Full-project audit (security/efficiency/product-completeness); findings in
-`sprints/s35/sprint-research/research-report.md`. Four fixes shipped:
-- **Read-side sensitive-file guard** (`ferric-guard`) — `.env`/SSH keys/cloud credentials denied
-  on `Read`, closing a real secret-into-plaintext-trace gap; `.git` metadata reads stay allowed.
-- **`ferric server` edge-tuning flags** — `--threads`/`--gpu-layers`/`--batch-size` for
-  Jetson/RPi-class latency tuning (llama-server only).
-- **`mistralrs` rev-pinned** (was `branch = "master"`, matches the `oovra` policy).
-- **`reqwest` → `rustls-tls`** (was pulling native OpenSSL via `default-tls`, confirmed via
-  `cargo tree -e features`; edge/ARM cross-compilation win).
-Explicitly deferred (reasons in ADR-045, not silently dropped): CaMeL sink-policy wiring (no live
-taint source yet), `ferric mcp` + the new chat mode (own dedicated sprint — see above), shell/exec
-+ git tools, streaming, session resume, trace rotation. Panic-safety sub-audit came back **clean**
-(no unwrap/expect/panic! found on adversarial model/backend/file-content paths).
+## ferric-prompt
+- [x] Implement a templating engine to replace manual `format!()` strings in `src/lib.rs`. *(Done: superseded by `oovra` element composition, ADR-016 — `recipe_for`/`compose` render prompt atoms, not `format!()`.)*
 
-## Sprint 36 (ferric mcp — the ADR-005 security call) — DONE, ADR-046
-User-prioritized (2026-07-03) from the GLM-review "critical gaps" list: built `ferric mcp`
-(mistral.rs in-process hang explicitly dropped, not re-chased). MCP-stdio server exposing exactly
-ONE tool (`ferric_query`, `{prompt, files?}`) — never Ferric's individual builtins, never
-workspace/backend/model as per-call params (all launch-time-fixed → the containment guarantee is
-structural). Hand-rolled JSON-RPC (no `rmcp` dep). All 7 build tasks (T-3601–T-3607) shipped;
-research + plan in `sprints/s36/`. See completed-tasks.md for the per-task commit hashes.
+## Advanced Harness Features (Plan, Stop, Revert, Dream)
+- [x] **Plan Mode**: Implement an `ActionProtocol::Plan` that strips write-permissions and provides a `submit_plan` terminator, effectively utilizing the robust constraint and tool-call mechanics to safely enforce an initial planning phase.
+- [x] **Graceful Interrupts (Stop):** Integrate `tokio::signal::ctrl_c` handling in the CLI driver and pass a cancellation token to `LoopState` to abort execution and gracefully commit a `SessionEnd` trace.
+- [x] **Time Travel (Revert):** Implement a lightweight VCS wrapper (`ferric-vcs`) to automatically orphan/stash workspace states tied to trace `TurnEnd` events, allowing the CLI `revert <turn_id>` command to rollback both the workspace and the replay trace.
+- [x] **Dream Mode:** Create an asynchronous offline `ferric dream` worker that parses historical `.ferric/traces`, extracts high-value signals/patterns, and consolidates them into a persistent memory context (`MEMORY.md` or `.ferric/knowledge/`).
+- [x] **Configurable Hooks:** Introduce a `ferric.toml` or `hooks/` system for synchronous pre-turn, post-turn, or on-error scripts.
+- [x] **Background Task Management:** Add detached `tokio` process management to `shell_exec` and expose a `manage_task` built-in tool.
+- [x] **Agent Delegation Structure (ICM):** Build a `ferric-icm` orchestrator crate that orchestrates sub-agents entirely via sequential local folders (`01_research/`, `02_script/`) and their `CONTEXT.md` files. *(Sprint 73 ADR-064 — inc 1: `ferric-icm` crate + `ferric icm init`/`plan`. Sprint 74 ADR-065 — inc 2: `ferric icm run` executes each stage through the constrained loop, contained to its own folder, with halt-on-failure + human review gates (`--auto`/`--from`/`--to`/`--mock`). See `docs/icm.md`. Follow-ups: Ornstein-quarantined web-research stage, workspace-builder.)*
+- [x] **Interactive "Accept Edits" Mode:** Pause the driver to preview a mutating tool call, awaiting user confirmation before flushing to disk. *(Sprint 79, ADR-070 — `ferric query --accept-edits`: a `RunArgs.edit_approver` callback previews each Write/Execute call at the dispatch gate; reject skips it and reports a rejection to the model. A stdin y/N approver in the CLI. Preview-based v1; full unified diffs deferred.)*
+- [x] **Direct Terminal Passthrough:** Allow commands prefixed with `!` or `/run` in the chat UI to execute instantly via `shell_exec` without LLM roundtripping. *(Sprint 78, ADR-069 — `ferric chat` `!<cmd>`/`/run <cmd>` runs through the guarded `shell_exec` chokepoint (command denylist still enforced), human-initiated, no LLM, not folded into talk history. A lazily-created tokio runtime backs the sync REPL.)*
+- [x] **Agentic Cron Jobs:** Introduce a `.ferric/cron/` directory and background watcher to schedule periodic agent tasks (e.g., `/dream every 12 hours`). *(Sprint 75, ADR-066 — `ferric-cron` crate (schedule/due/state, pure) + `ferric cron add`/`list`/`run`/`watch`. Jobs run a bounded set of Ferric subcommands (`dream`/`query`), never arbitrary shell. See `docs/cron.md`. Deferred: crontab expressions, detached daemon w/ runfile.)*
 
-## Production-readiness roadmap (external plan doc, reviewed 2026-07-03)
-An independent "Production Ready Action Plan" (docx, dated sprint 34) was reviewed. It aligns with
-the project's safety-before-blast-radius philosophy; its concrete future-task ideas, captured here
-(NOT yet scheduled — each is its own future sprint, most already tracked above in some form):
-- **Streaming inference** — ✅ **DONE, sprint 37** (user-chosen 2026-07-03, framed as "a base
-  architectural choice"). See the Sprint 37 section below — token-by-token from the HTTP valve
-  through the provider to CLI (`ferric query --stream` this increment; MCP/mistral.rs streaming and
-  a structured/programmatic streaming mode are follow-ons, ADR-047).
-- **Session resume** — ✅ **DONE, sprint 39** (user-chosen 2026-07-04). Scoped down mid-research
-  to `--resume <path>` alone (resume an interrupted, still-incomplete task — replay history,
-  continue the SAME task with more turns, no new prompt needed); `--save-interval` dropped from this
-  sprint entirely — see the next bullet, it turned into something bigger. See the Sprint 39 section
-  below. *ADR-049.*
-- **Context-budget compaction (sprint 40, NEXT)** — user-introduced 2026-07-04 mid-sprint-39-research,
-  reframing `--save-interval`: **`RunPolicy.prompt_budget_tokens` (70% of `ModelProfile.ctx`, capped)
-  is already computed and traced (`PolicySelected`) but is NEVER enforced anywhere in `run.rs`** —
-  nothing today stops `messages` from growing past the model's real context window over a long
-  session. User-confirmed design: **model-driven summarization** — a dedicated single-shot, no-tools
-  summarizer condenses older turns into one synthetic "progress so far" message as the budget nears,
-  triggered by the model's own reported `input_tokens` (already available per turn, no new
-  estimation heuristic needed) approaching `prompt_budget_tokens`. Same MECHANISM pattern as
-  `ferric-research::summarize_quarantined` (constrained, tools-empty single completion) — but NOT a
-  literal reuse: Ornstein's summarizer is shaped for **untrusted** external content (quarantine
-  framing, `untrusted: true` stamping); compaction summarizes the agent's own **trusted** history, a
-  different trust tier needing a new, purpose-built summarizer, not a repurposed Ornstein one.
-  User-confirmed to be its OWN dedicated sprint, not bundled into sprint 39's `--resume` work.
-- **Persistent config** — ✅ **DONE, sprint 38** (user-chosen 2026-07-04, paired with `Animus.md`).
-  See the Sprint 38 section below. `ferric init-project` (a scaffolding wizard) remains a follow-on.
-- **`shell_exec` tool** — Ring 2 (Medium+); workspace cwd, command timeout, stdout/stderr capture,
-  output caps; **extend Ornstein to screen commands** for destructive/exfil/privesc patterns before
-  exec. (Needs the real permission-model extension flagged in ADR-045, not a quick add.)
-- **`git` tool** — curated subset (status/diff/add/commit/log/branch/checkout); Ring 1 read / Ring 2
-  write; reject force-push/rebase/reset unless an expert-only Ring 3 (10B+); subprocess not a git
-  lib (dep weight).
-- **Dev engine (`ferric dev`)** — the ADR-011-reserved self-modification arc (doc estimates ~3
-  sprints, matching ADR-011's "s4–s7"): separate stricter loop with a MIN tier floor, `cargo check`
-  in an isolated target dir, a distinct trajectory prefix, harness-source-protection rules in the
-  guard (block edits to `ferric-guard`/denylists/workspace containment behind an explicit escape
-  hatch), and **self-mod-specific guards** (modification-loop, scope-creep, regression).
-- **Deployment hardening** — `cargo bloat`/`cargo tree --duplicates` binary-size budget enforced in
-  CI per target (linux x86_64/aarch64, macOS aarch64, windows x86_64); **`oovra` supply-chain risk**
-  (pinned to a personal-repo git rev) → vendor or migrate to a published crate; release packaging
-  (GitHub Actions artifacts, `curl|sh`, cargo-binstall/Homebrew/AUR); docs site + cold-start
-  onboarding.
-- **Divergences from the doc, deliberately (already decided here):** (1) the doc slots MCP into its
-  Phase 2 (sprints 38–40) as a **separate `ferric-mcp` binary exposing tool rings as MCP tool
-  groups** — we shipped it EARLY (s36) as an **in-process `ferric mcp` subcommand exposing ONE
-  `ferric_query` tool**, precisely because exposing individual tools/rings over MCP would let a
-  client bypass the agent loop + guards (ADR-046's security call). Keep this divergence. (2) The doc
-  is dated s34 (says "44 ADRs"); we're at ADR-046 / s36. (3) "Single-developer bus factor" and
-  "external contribution / blog citation" success metrics are noted but out of scope for the
-  harness itself.
+## ferric-provider
+- [ ] Optimize SSE streaming in `src/stream_scan.rs` using `bytes::BytesMut` and `serde_json::StreamDeserializer` instead of `String` buffering.
 
-## Sprint 37 (streaming inference) — DONE, ADR-047
-User-chosen (2026-07-03), framed as "a base architectural choice." Fills ADR-003's reserved
-streaming extension point: `Provider::complete_streaming` (default impl = zero behavior change for
-non-overriding providers; `OpenAiProvider` gets a real SSE implementation via `Response::chunk()`,
-no new dependency), the `ConstrainedJsonScanner` (incremental `task_complete` summary extraction,
-handling JSON escapes correctly across chunk boundaries), `RunArgs.stream_sink` threaded through
-the loop (`None` = byte-identical to today), and `ferric query --stream`. All 6 build tasks
-(T-3701–T-3706) shipped; research + plan + two critique rounds in `sprints/s37/`. MCP streaming,
-mistral.rs streaming, seamless mid-stream retry, and a structured/programmatic streaming mode are
-explicit follow-ons, not built here. See completed-tasks.md for the per-task commit hashes.
+## ferric-research
+- [x] Define a `Retriever` trait in `retriever.rs` to implement a plugin architecture for external system integration. *(Done: `retriever.rs:49`, ADR-041 — Local-FS / Tailnet-FS / Web planes implement it.)*
 
-## Sprint 38 (persistent config + `Animus.md`) — DONE, ADR-048
-User-chosen (2026-07-04): "persistent config and Animus.md (much like claude.md but for Animus)".
-Layered `.ferric/config.toml` (project) + cross-platform user config, CLI flag > project > user >
-hardcoded default, for `ferric query`/`ferric mcp`'s tunables (backend, model, params_b/quant/
-family/ctx/temperature, max_ring, profile_dir, stream) — a bounded, named `Config` field list
-(never a generic key-value map), so config can't touch security/guard/denylist policy (ADR-005).
-A foreground plan-critic pass (8 concerns, `sprints/s38/sprint-plans/critique.md`) caught a real,
-non-obvious bug before it shipped: the ADR-029 profile-lookup key `model_key` would have been
-derived from raw CLI args instead of the post-merge, config-resolved values — a config-only-set
-`model` would have silently skipped its profile lookup with no error or trace. Fixing it surfaced
-a SECOND instance of the same masking-hazard class mid-build: `BackendOpts.backend` itself still
-carried a leftover clap default (unlike its 8 sibling fields), which would have made a config-only
-`backend` invisible too — fixed the same way. `Animus.md` (the user's own framing: "much like
-CLAUDE.md but for Animus") is read (no parsing) and folded into the system prompt as a distinct
-block — trusted context (the workspace owner's own words), not Ornstein-quarantined. All 7 build
-tasks (T-3801–T-3807) shipped; research + plan + critique in `sprints/s38/`. See completed-tasks.md
-for the per-task commit hashes.
-
-## Sprint 39 (session resume — `ferric query --resume <path>`) — DONE, ADR-049
-User-chosen (2026-07-04), scoped down mid-research to resuming an INTERRUPTED, still-incomplete
-task (process crashed/killed mid-loop) — not a chat-continuation feature. Two new/extended trace
-events close the reconstruction gaps: `Event::SessionPrompt` (the original system+user text was
-never recorded before) and the terminator's `ToolCall` now traced in every protocol (closes a
-pre-existing `NativeTools` audit gap). `ferric-loop::replay()` reconstructs the in-memory turn
-history from a trace file — a real design correction surfaced only during implementation: `TurnEnd`
-is written *before* dispatch in `run()`, so a turn is only safely committed once a *later*
-`TurnStart` confirms its dispatch actually finished (a stricter, superset refinement of the locked
-plan's simpler "no matching TurnEnd" wording). `ferric query --resume <path>` replays and continues;
-a trace that already reached any stop reason is rejected (`AlreadyStopped`) — that gate is the real
-ADR-011 boundary, not the mere absence of an extra-prompt flag (a resumed run MAY also carry one
-extra user-supplied nudge). A foreground plan-critic pass (12 concerns,
-`sprints/s39/sprint-plans/critique.md`) caught the single most consequential implementation risk
-before it shipped — the terminator-tracing ORDER ambiguity (C-003) — plus the session-scoped
-one-shot-flag semantics of the no-action/truncation nudges (C-004/C-006), both verified by dedicated
-tests. Test-critic C-010 added the strongest regression: a genuine round-trip through a REAL
-`run()`-produced (then truncated) trace, not another hand-built fixture. All 6 build tasks
-(T-3901–T-3906) shipped; research + plan + critique in `sprints/s39/`. See completed-tasks.md for
-the per-task commit hashes. The user's own mid-research pivot reframed the backlog's
-`--save-interval` into **context-budget compaction**, spun off as sprint 40 (see above).
-
-## Sprint 40 (context-budget compaction) — DONE, ADR-050
-Carved out of sprint 39's research when the user reframed `--save-interval`, unprompted, into
-context-budget compaction: `RunPolicy.prompt_budget_tokens` was computed and traced but never
-enforced. New `HistoryCompactor` (`crates/ferric-loop/src/compact.rs`) is an always-on, no-CLI-flag
-mechanism (mirrors the repetition/no-progress/failure guards' precedent) folding older turns into
-one model-summarized message once `input_tokens` crosses 85% of budget, always preserving the most
-recent 2 turns verbatim. A foreground plan-critic pass caught the sprint's riskiest arithmetic
-before it shipped: an originally-planned `turn_offset` re-keying scheme was replaced with direct
-absolute-turn-number tracking (`Vec<(u32, usize)>`) in both the compactor and `replay()`'s
-reconstruction — simpler, and it closed a real gap where `replay.rs` was discovered to discard the
-turn number entirely (`TurnStart{ .. }` pattern-discarded its own field). `replay()` was extended (a
-required fix, not optional) so `--resume` of a compacted-then-killed session reconstructs the
-SHRUNK history, not the full pre-compaction one — proven by a real compact→kill→replay→resume
-round-trip test mirroring sprint 39's own C-010 precedent. The summarizer reuses the SAME provider
-(no second, cheaper model exists in Ferric's one-local-model architecture); a failed summarization
-is non-fatal (logs a Note, skips the fold). Rust's dead-code analysis forced two originally-planned
-task splits back together at commit time (T-4001+T-4005: a new `Event` variant forces every
-exhaustive match site, including `trace cat`'s renderer, to be touched together; T-4002+T-4003:
-`HistoryCompactor` is deliberately `pub(crate)`, so it's flagged unused until `run.rs` actually
-calls it) — both disclosed in their commit messages rather than silently merged. All 6 build tasks
-shipped; research + plan + critique in `sprints/s40/`. See completed-tasks.md for per-task detail.
-
-## Sprint 41 (container architecture — design + live-validated) — DONE, ADR-051
-User picked chat mode, then reframed it into a platform-wide "containerize everything" question
-citing Docker-in-Docker. Research found the key correction: literal DinD is a security anti-pattern
-for isolating untrusted content specifically (2026 practice — incl. Docker's own Docker Sandboxes —
-uses microVM-class sandboxes for that use case), while ordinary sibling containers handle
-deployment flexibility (one machine → datacenter) — two different tools for two different problems
-the framing conflated. User chose "container architecture only" (chat mode → sprint 42). Shipped:
-**ADR-051** (the correction + the topology + the `ferric-core`-as-one-container recommendation,
-since `ferric server`'s ADR-005 loopback pin means splitting harness/backend across containers
-would break that guarantee); a **`ferric-core`** multi-stage Dockerfile (`ferric` built with
-`--features backend-openai` — plan-critic C-001 — + prebuilt `llama-server` b9821 Linux-x64;
-x86_64-only skeleton, no EXPOSE); a `docker-compose.yml` skeleton (`ferric-core` real, Ornstein/chat
-as marked stubs, no functional ports — plan-critic C-006). **Docker Desktop installed mid-sprint**
-→ the multi-sprint "no containerizer" blocker (stalled Ornstein inc 4 since s30) is CLEARED, and
-validation upgraded from design-only to a live `docker build` + `docker compose config`. Chat mode
-+ its dedicated security-boundary ADR = sprint 42 (deferred, not dropped). All build tasks shipped;
-research + plan + critique in `sprints/s41/`. See completed-tasks.md for per-task detail.
-
-## Sprint 42 (raw chat mode — `ferric chat`) — DONE, ADR-052
-The ADR-011-revision's second half (after `ferric mcp`, sprint 36), motivated by Animus IDE sending
-natural-language change requests conversationally. User chose the **hybrid talk + escalate** shape.
-`ferric chat` (`crates/ferric-cli/src/chat.rs`) is a REPL: **talk mode** (default) is the harness's
-FIRST unconstrained-completion path — a direct `provider.complete()` with empty tools + no
-constraint (`talk_request`), output text-only, printed + appended to history, NEVER dispatched
-(structurally safe: the talk path lives in the CLI and never touches `ferric-loop::run()`, which
-stays always-constrained). **`/do <req>`** escalates a turn into the existing constrained
-`run_with_provider` loop with the conversation as a sprint-39 `ReplayedState` resume seed;
-USER-initiated only (ADR-005 — never model-initiated). A foreground plan-critic caught two
-load-bearing issues pre-lock: a fixed mock script can't drive a stdin-length-driven REPL (→ a fresh
-per-turn `MockProvider`, C-001); `run()`'s per-call `SessionStart..SessionEnd` envelope can't be
-nested (→ each `/do` opens its OWN agentic trace file, talk turns log Notes to one chat-session
-file, mirroring `ferric mcp`, C-002); plus the mock/real provider+executor split with the
-`cfg(not(any))` fallback (C-003/C-004). Structural safety proven by a unit test
-(`talk_request_has_no_action_channel`) AND a black-box test (a talk line that *looks* like a tool
-call dispatches nothing, opens no agentic trace, touches no workspace file). 6 unit + 4 CLI
-subprocess tests (the suite's first stdin-piping harness). All 4 build tasks shipped; research +
-plan + critique in `sprints/s42/`. See completed-tasks.md for per-task detail.
-
-## Sprint 43 (Animus Launch increment 1 — `ferric launch`) — DONE, ADR-053
-The first slice of the Animus Launch suite pillar (the GECK successor). Research found GECK
-(`~/GECK`) is Python-only and does macro-prompt scaffolding but NO git bootstrapping — so Launch's
-distinct value is the deterministic, LLM-free "interview → real git repo (main+dev) + a
-sprint-loop-ready skeleton" flow. User chose "both" (scaffolder + interview together). New
-**`animus-launch`** library crate: `scaffold(&LaunchSpec)` refuses-to-clobber (safe iff the target
-is absent OR an empty dir — hidden entries count, a non-dir path is refused; plan-critic C-004),
-creates the root + nested `agent-tasks/` (create_dir_all, C-001), writes the seed skeleton, and runs
-`git` as a checked closed-subcommand sequence (init → add → commit with a fixed `-c` identity so
-CI-without-identity works → `branch -M main` → `branch dev`; each step's exit status checked, stderr
-captured, C-002/C-003). A **`ferric launch`** subcommand drives it: `spec_from_answers` (pure) +
-a hand-rolled-stdin interview (prompts to STDERR so stdout stays the report, fixed order name → path
-→ goal, only missing fields asked; C-006). **The key architectural point (ADR-053): Launch is
-user-run + LLM-free, so `ferric-guard`'s agent-containment doesn't apply — the sole safety property
-is refuse-to-clobber.** 6 unit + 5 animus-launch integration (all 3 clobber edges) + 3 CLI
-subprocess tests. All 5 build tasks shipped; research + plan + critique in `sprints/s43/`. **Deferred
-to inc 2+:** the project-type profile library, the "begin work?" Loop auto-hand-off, env detection.
-See completed-tasks.md for per-task detail.
+## General Architecture & Observability
+- [x] **Observability:** Integrate `tracing` and `tracing-subscriber` crates to provide robust, leveled debug logging across all crates (distinct from the LLM trace JSONL). *(Sprint 72, ADR-063: `ferric-cli` owns a stderr, quiet-by-default subscriber (`-v`/`FERRIC_LOG`); `ferric-loop`/`ferric-tools`/`ferric-provider` emit spans + leveled events. Guard stays pure — its denials are logged at the registry chokepoint.)*
+- [ ] **Tool Registration Macros:** Refactor `ferric-tools` to use a procedural macro (e.g., `#[ferric_tool]`) or `typetag` to automatically discover and register tools, reducing boilerplate in `builtin/mod.rs`.
+- [ ] **Parallel Tool Execution:** Extend the `Tool` trait in `ferric-core` to declare read/write side-effects, allowing `ferric-loop` to safely dispatch parallelizable tool calls (like multiple `read_file`s) concurrently.
+- [ ] **Provider Expansion:** Add native support for Anthropic (`Claude 3.5`) and Gemini (`Gemini 1.5 Pro`) backends in `ferric-provider`, expanding beyond the current OpenAI-compatible implementation.

@@ -6,6 +6,8 @@
 
 A local-first agentic coding harness written in Rust, purpose-built for **small local models (1B–14B GGUF)**.
 
+**Licensing information for all Animus Project components held at https://github.com/crussella0129/Animus/blob/main/LICENSE**
+
 Ferric is the Rust synthesis of the Animus lineage — [Animus](https://github.com/crussella0129/Animus) (Python), [Animus_Prion](https://github.com/crussella0129/Animus_Prion) (Go), and [fev](https://github.com/crussella0129/fev) (Go) — built on three convictions:
 
 1. **The harness should own decoding.** Constrained generation (JSON-Schema / regex / CFG grammars) is driven end-to-end in the agent loop, so malformed tool calls are *impossible* rather than repairable.
@@ -13,6 +15,15 @@ Ferric is the Rust synthesis of the Animus lineage — [Animus](https://github.c
 3. **The trajectory is the source of truth.** Every session writes a versioned JSONL trace — full conversation, tool calls, untruncated tool output, execution chain — replayable and diffable. If it isn't in the trace, it didn't happen.
 
 Rust is not an implementation detail: the visible, demonstrable chain of ownership over state and execution is part of how you verify you control the agent.
+
+## Documentation
+
+Full docs live in **[`docs/`](docs/README.md)**:
+
+- **[Getting Started](docs/getting-started.md)** — install, prerequisites, and the external steps (engine install, `ferric server`) before your first run. Includes a no-model `--mock` quickstart.
+- **[Demo Guide](docs/demo-guide.md)** — a copy-paste walkthrough of every feature, each marked *offline* or *needs a model*.
+- **[Command Reference](docs/commands.md)** · **[Configuration](docs/configuration.md)** — every command/flag; `.ferric/config.toml`, `Animus.md`, `.ferricignore`, hooks.
+- Deep dives: [llama.cpp engine](docs/llama-cpp.md) · [testbench](docs/testbench.md) · [ICM delegation](docs/icm.md) · [agentic cron](docs/cron.md) · [Ornstein research](docs/ornstein.md) · [multimodal](docs/multimodal.md).
 
 ## Workspace
 
@@ -36,9 +47,6 @@ cd Animus_Ferric
 # Recommended: the OpenAI-compatible HTTP valve — the constrained-decoding path.
 # Talks to llama.cpp (llama-server), Ollama, or vLLM.
 cargo build --release -p ferric-cli --features backend-openai
-
-# Optional: also the in-process mistral.rs GGUF backend (text-only TextXml path).
-cargo build --release -p ferric-cli --features backend-openai,backend-mistralrs
 ```
 
 The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built with **no** backend feature, only the trace tooling works; `query`/`toolbench` will tell you to rebuild with a feature. Examples below assume `ferric` is on your `PATH`.
@@ -50,26 +58,31 @@ The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built wit
 | `ferric server up\|status\|doctor\|down` | Launch & manage the local OpenAI-compatible inference server (the HTTP valve), bound to `127.0.0.1` only. Writes `.ferric/server.json` so other commands auto-discover it. |
 | `ferric query "<prompt>"` | Run one workspace-scoped agent turn against a local model. |
 | `ferric mcp` | Run an MCP-stdio server exposing one tool, `ferric_query`, to MCP clients (Claude Code, Cursor, an IDE). Workspace/backend/model are launch-time-fixed flags; each call runs the full constrained agent loop. *ADR-046.* |
-| `ferric toolbench` | Measure & diagnose tool-calling fire rate for a model (or a fleet — see below). |
-| `ferric bench` | Run the L0–L6 capability ladder and calibrate a model's `measured_level`. |
+| `ferric bench ltd` | Measure & diagnose tool-calling fire rate for a model (or a fleet — see below). |
+| `ferric bench full` | Run the L0–L6 capability ladder and calibrate a model's `measured_level`. |
 | `ferric trace cat <file.jsonl>` | Render a session trace as a human-readable log. |
 
 A typical loop — bring a server up, point Ferric at it, work, tear it down:
 
 ```sh
-ferric server up --engine llama-server --model your.gguf    # recommended engine; or --engine ollama --model qwen2.5-coder:7b
+ferric server up --engine llama-server --model your.gguf
 ferric server status                                        # prints base URL + health
 ferric query "list the Rust files and summarize lib.rs"     # auto-discovers the server
 ferric server down
 ```
 
-`query` and `toolbench` **auto-discover** the running server from `.ferric/server.json` — no `--api-base` needed. To target a server you didn't launch (e.g. an already-running Ollama), pass `--api-base http://localhost:11434/v1`. By default `query` runs the **constrained** path, which is the reliable one for small models.
+> [!NOTE]
+> If you run `ferric server up --tailscale` on a machine for the first time, you must authorize Tailscale Serve on your Tailnet. The command will output an authorization link that you must click to unblock the proxy and register the server globally.
+
+`query` and `toolbench` **auto-discover** the running server from `.ferric/server.json` (or your global `APPDATA` directory) — no `--api-base` needed. To target a server you didn't launch (e.g. an already-running Ollama), pass `--api-base http://localhost:11434/v1`. By default `query` runs the **constrained** path, which is the reliable one for small models.
 
 `ferric query` also takes **any file** as input with `--file` (repeatable): text/code files fold into the prompt (works on any model), while image/audio/video attach as content parts when you declare `--modality` and the model can read them (Gemma 3n on the OpenAI valve). See [docs/multimodal.md](docs/multimodal.md).
 
 Add `--stream` to see text live as it's generated instead of waiting for the whole multi-turn loop to finish (opt-in; ADR-047).
 
 **Builtin tools** (all workspace-scoped and security-checked through the guard). The always-on **core** (Ring 0) is the navigate/mutate set: `read_file`, `list_dir`, `write_file`, `make_dir`, `edit_file` (surgical first-occurrence replace — small models do targeted edits far more reliably than full rewrites), and `delete_path` (file or, with `recursive`, a directory). **Ring 1** ("find & organize") adds four: `search_files` (grep-style *content* search → `relpath:lineno:line`), `find_files` (find files by *name* → relpaths), `move_path` (move/rename), and `copy_file` — so a small model can locate code and reorganize it once it's proven the core. **Ring 2** ("plan & apply structured changes") seeds with `multi_edit` — an ordered, *atomic* batch of edits to one file (all-or-nothing; reachable once a model earns the Medium tier). Tool vocabularies are organized as **rings** that widen as a model proves it can call them reliably, with the active rings forming the constrained grammar. `ferric query --max-ring 0` pins any model to the Ring-0 core — the smallest, surest grammar — regardless of its size (restrict-only; to *widen* a small model's rings, prove it with the toolbench so `measured_level` promotes it).
+
+Beyond the hardcoded guard, a project can drop a **`.ferricignore`** in the workspace root (gitignore-flavored — `secrets/`, `*.pem`, `data/private`) to put more paths off-limits to the agent. It is *additive-only*: it can only ever add denials on top of the hardcoded floor, never relax it (ADR-068), and the file is itself write-protected so the agent can't edit away its own restrictions.
 
 ## Test it with your own models
 
@@ -78,20 +91,14 @@ Ferric works with large and small models alike, but *how well* a small model dri
 **1. Bring a model.** Any of:
 
 ```sh
-# Ollama — pull whatever you want to test:
-ollama pull qwen2.5-coder:7b
-
 # llama.cpp — point the launcher at a GGUF on disk (needs `llama-server` on PATH):
 ferric server up --engine llama-server --model /path/to/your-model.gguf [--mmproj mmproj.gguf] [--ctx 8192]
-
-# In-process GGUF (mistral.rs, text-only path) — no server needed:
-ferric toolbench --backend mistral --model-dir /path/to/models --model-file your-model.gguf
 ```
 
 **2. Benchmark it** under the constrained path, and write a report:
 
 ```sh
-ferric toolbench --backend openai --model <name> --protocol grammar --iterations 20 --report report.md
+ferric bench ltd --backend openai --model <name> --protocol grammar --iterations 20 --report report.md
 ```
 
 **3. Read the verdict.** `report.md` gives each tool a success rate, a **failure taxonomy** (`wrong_tool` / `malformed_args` / `no_action` / `parse_error`), and an acceptability band — **solid** (≥90%) / **marginal** (≥70%) / **unreliable** (<70%). Add `--protocol native` to compare the unconstrained path on the same model.
@@ -99,7 +106,7 @@ ferric toolbench --backend openai --model <name> --protocol grammar --iterations
 **4. Calibrate a whole fleet at once.** `--models <a,b,c>` benches each model and ranks them into one leaderboard, sorted best→worst — so you can pick the smallest model that's still *solid*:
 
 ```sh
-ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b --protocol grammar --report fleet.md
+ferric bench ltd --backend openai --models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b --protocol grammar --report fleet.md
 ```
 
 ```
@@ -113,7 +120,7 @@ ferric toolbench --backend openai --models qwen2.5-coder:7b,llama3.1:8b,llama3.2
 
 That run is real: the constrained path holds at **100% down to a 1B model**, where the same model's *native* tool-calling collapses to 22% — which is the whole point of harness-owned decoding.
 
-**5. Calibrate the rings.** `--calibrate-rings` benches a model **ring by ring** and reports the highest ring it reliably drives — the recommended `--max-ring` to run it at (`ferric toolbench … --calibrate-rings`). It's the demonstrated-reliability promotion: a model *earns* a wider grammar by proving it on the bench. Full walkthrough: [docs/testbench.md](docs/testbench.md).
+**5. Calibrate the rings.** `--calibrate-rings` benches a model **ring by ring** and reports the highest ring it reliably drives — the recommended `--max-ring` to run it at (`ferric bench ltd … --calibrate-rings`). It's the demonstrated-reliability promotion: a model *earns* a wider grammar by proving it on the bench. Full walkthrough: [docs/testbench.md](docs/testbench.md).
 
 ## Portability
 
@@ -121,12 +128,11 @@ CPU-first. The baseline target includes Raspberry Pi / Orange Pi class aarch64 h
 
 ## Status
 
-Active development (sprint 44). Two inference backends ship behind feature flags:
+Active development (sprint 44). The single inference backend used by Ferric:
 
-- **`backend-openai`** — an OpenAI-compatible HTTP valve (llama.cpp / Ollama / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
-- **`backend-mistralrs`** — in-process mistral.rs GGUF, driven text-only via the loop's `TextXml` protocol. Sprint 11 wired its `set_constraint` and probed it: mistralrs 0.8.15 still **hangs** llguidance on GGUF even for a trivial schema (ADR-027), so the constrained path stays off here — it remains the unconstrained fallback.
+- **`backend-openai`** — an OpenAI-compatible HTTP valve (`llama.cpp` / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 
-The action protocol (`NativeTools` / `ConstrainedJson` / `TextXml`) is chosen from each backend's real capabilities. An embedded PyO3/PyTorch backend was tried and removed (ADR-021) — external engines are reached only via the out-of-process valve. Development follows a sprint-loop protocol; see `decisions.md` for ADRs and `agent-tasks/` for the ledger.
+The action protocol (`NativeTools` / `ConstrainedJson` / `TextXml`) is chosen from the backend's real capabilities. Development follows a sprint-loop protocol; see `decisions.md` for ADRs and `agent-tasks/` for the ledger.
 
 ## Development timeline
 
@@ -138,7 +144,7 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 - **Sprints 3–6 — Exploration** (mid-June 2026). An embedded PyO3/PyTorch inference path and a first-generation toolbench. This era drifted from the *harness-owns-decoding* thesis — and set up the realignment.
 - **Sprint 7 — The realignment** (2026-06-23). The PyO3/PyTorch backend removed; external engines reached only through the out-of-process HTTP valve. The constraint reinstated, capabilities made honest, and the `NativeTools` / `ConstrainedJson` / `TextXml` trichotomy chosen from each backend's *real* capabilities; toolbench rebuilt around the active protocol. *ADR-021–023.*
 - **Sprint 8 — Launcher + testbench** (2026-06-23). The `ferric server` lifecycle manager (llama-server default, Ollama pluggable, runfile auto-discovery) and the diagnostic toolbench (failure taxonomy + verdict bands). **Thesis proven on a real model: constrained 100% vs native 0% on the same Ollama model.** *ADR-024.*
-- **Sprint 9 — Fleet calibration** (2026-06-23). `ferric toolbench --models` sweeps a fleet into one sorted leaderboard. **The constraint holds 100% down to a 1B model where native collapses to 22%** — it extends the usable model floor to 1B. A native-`content` fallback closes the "Ollama returns the call as text" gap; the mistral.rs 0.8.15 probe confirmed the hang is fixed upstream but the constraint still isn't enforced. *ADR-025.*
+- **Sprint 9 — Fleet calibration** (2026-06-23). `ferric bench ltd --models` sweeps a fleet into one sorted leaderboard. **The constraint holds 100% down to a 1B model where native collapses to 22%** — it extends the usable model floor to 1B. A native-`content` fallback closes the "Ollama returns the call as text" gap; the mistral.rs 0.8.15 probe confirmed the hang is fixed upstream but the constraint still isn't enforced. *ADR-025.*
 - **Sprint 10 — Multimodal "any file" input** (2026-06-24). `ferric query --file` takes any file: text/code folds into the prompt (any model); image/audio/video attach as OpenAI content parts, capability-gated by `--modality` + the backend's `supports_media` (the valve carries media; the in-process path doesn't). Additive `Message.media` (media-free messages serialize unchanged); a dependency-free base64 encoder. The pure pipeline is fully unit-tested; the live-media heartbeat (a real model reading a clip) is deferred until a multimodal server is stood up.
 
 - **Sprint 11 — mistral.rs constrained-decoding spike** (2026-06-24). Settled an open question: `MistralRsProvider` had been *stripping* the decoding constraint since the s3 pivot, so the sprint-9 probe (ADR-025) had measured the stripped path, not enforcement. Wired the constraint through (`set_constraint`) and re-probed — mistralrs 0.8.15 **still hangs** llguidance on GGUF even for a trivial schema (5-minute engine timeout). The ADR-020 hang is *not* fixed; the wiring was reverted (no regression), mistral.rs stays text-only, and the HTTP valve remains the sole constrained path. *ADR-027.*
@@ -149,23 +155,23 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 14 — formalize the rings** (2026-06-24). Made the tool-rings model real: every tool declares a `ring` (0 = the navigate/mutate core), `ring_for_tier` sets the capability ceiling (and honours `measured_level`, so reliability — not size — widens the set), and `tools_for_policy` **trims from the outer ring first** so the core is never dropped. Fixes the latent alphabetical `max_tools` cap. The active rings literally *are* the constrained grammar. *ADR-028.*
 
-- **Sprint 15 — `--max-ring` override** (2026-06-24). The explicit "control exactly which rings" lever: `ferric query`/`toolbench --max-ring N` caps the active rings independent of tier (`--max-ring 0` = the core-only grammar). Restrict-only — widening past a model's capability stays earned via `measured_level`. Proven end-to-end via the trace's offered-tools. *ADR-028 (amended).*
+- **Sprint 15 — `--max-ring` override** (2026-06-24). The explicit "control exactly which rings" lever: `ferric query`/`bench ltd --max-ring N` caps the active rings independent of tier (`--max-ring 0` = the core-only grammar). Restrict-only — widening past a model's capability stays earned via `measured_level`. Proven end-to-end via the trace's offered-tools. *ADR-028 (amended).*
 
-- **Sprint 16 — ring calibration** (2026-06-24). `toolbench --calibrate-rings` sweeps a model ring-by-ring and reports the highest ring it reliably drives — the recommended `--max-ring`. Closes the rings loop: a model *earns* a wider grammar by proving it on the bench (the demonstrated-reliability promotion). *ADR-028.*
+- **Sprint 16 — ring calibration** (2026-06-24). `bench ltd --calibrate-rings` sweeps a model ring-by-ring and reports the highest ring it reliably drives — the recommended `--max-ring`. Closes the rings loop: a model *earns* a wider grammar by proving it on the bench (the demonstrated-reliability promotion). *ADR-028.*
 
-- **Sprint 17 — durable promotion** (2026-06-25). Closed the profile read-back loop: `model_profiles.json` was written by `ferric bench` but never read. Now `toolbench --calibrate-rings --profile-dir` *persists* the earned ring, and `ferric query --profile-dir` *reads the profile back* — a proven model auto-runs at its earned tier (`measured_level`) and ring (`calibrated_ring`), no manual flag. Safe no-op without a profile. *ADR-029.*
+- **Sprint 17 — durable promotion** (2026-06-25). Closed the profile read-back loop: `model_profiles.json` was written by `bench full` but never read. Now `ferric bench ltd --calibrate-rings --profile-dir` *persists* the earned ring, and `ferric query --profile-dir` *reads the profile back* — a proven model auto-runs at its earned tier (`measured_level`) and ring (`calibrated_ring`), no manual flag. Safe no-op without a profile. *ADR-029.*
 
 - **Sprint 18 — round out Ring 1** (2026-06-25). Added `find_files` (find by *name*, the companion to `search_files`' content search) and `copy_file` (the organize complement to `move_path`), making Ring 1 a coherent four-tool "find & organize" set. Both fire `solid` in the re-bench — growing the ring didn't cost reliability. *ADR-028 (amended).*
 
-- **Sprint 19 — seed Ring 2** (2026-06-25). Added `multi_edit` (`ring: 2`) — an ordered, atomic batch of first-occurrence edits to one file (more than the Ring-0 `edit_file`, still reliably emittable vs a unified diff). Added `toolbench --params-b` so calibration can bench at a chosen tier and reach Ring 2 (`--params-b 20` → Medium → rings 0–2). *ADR-028 (amended).*
+- **Sprint 19 — seed Ring 2** (2026-06-25). Added `multi_edit` (`ring: 2`) — an ordered, atomic batch of first-occurrence edits to one file (more than the Ring-0 `edit_file`, still reliably emittable vs a unified diff). Added `bench ltd --params-b` so calibration can bench at a chosen tier and reach Ring 2 (`--params-b 20` → Medium → rings 0–2). *ADR-028 (amended).*
 
-- **Sprint 20 — the full agentic loop, validated on a real model** (2026-06-26). The L0–L6 ladder (`ferric bench`) tests multi-turn *task completion*, but its runner could only reach `--mock` or the mistral GGUF backend (which hangs under constraint). Wired the openai backend through (`bench --backend openai`), fixed a verification bug it surfaced (the `task_complete` terminator wasn't credited), and ran it: **qwen2.5-coder:7b passes all of L0–L6 on the constrained path → `measured_level 6` (Small→Large)**. The first end-to-end validation that the constrained multi-turn loop completes real tasks, not just single tool calls — and the demonstrated-reliability promotion now runs on real data. *ADR-030.*
+- **Sprint 20 — the full agentic loop, validated on a real model** (2026-06-26). The L0–L6 ladder (`ferric bench full`) tests multi-turn *task completion*, but its runner could only reach `--mock` or the mistral GGUF backend (which hangs under constraint). Wired the openai backend through (`ferric bench full --backend openai`), fixed a verification bug it surfaced (the `task_complete` terminator wasn't credited), and ran it: **qwen2.5-coder:7b passes all of L0–L6 on the constrained path → `measured_level 6` (Small→Large)**. The first end-to-end validation that the constrained multi-turn loop completes real tasks, not just single tool calls — and the demonstrated-reliability promotion now runs on real data. *ADR-030.*
 
-- **Sprint 21 — fleet agentic capability map** (2026-06-26). `bench --models` runs the full L0–L6 loop across the fleet and prints a `measured_level` leaderboard. The map: **qwen2.5-coder:7b → 6 (Large); llama3.1:8b → 5 (Medium); llama3.2:1b → none (fails L0)**. The honest finding: a 1B fires single tool calls at 100% but **can't complete a multi-turn task** — single-shot reliability ≠ agentic capability; and the code-tuned 7B beats the larger general 8B. *ADR-030 (amended).*
+- **Sprint 21 — fleet agentic capability map** (2026-06-26). `bench full --models` runs the full L0–L6 loop across the fleet and prints a `measured_level` leaderboard. The map: **qwen2.5-coder:7b → 6 (Large); llama3.1:8b → 5 (Medium); llama3.2:1b → none (fails L0)**. The honest finding: a 1B fires single tool calls at 100% but **can't complete a multi-turn task** — single-shot reliability ≠ agentic capability; and the code-tuned 7B beats the larger general 8B. *ADR-030 (amended).*
 
 - **Sprint 22 — why the 1B isn't an agent** (2026-06-26). Diagnosed (from the trace) *why* `llama3.2:1b` fails L0: **repeat-not-terminate** (it re-calls `list_dir` instead of `task_complete`) and **semantic flailing** (15 `make_dir`s, no progress). Sharpened the repetition nudge into a direct imperative — but it **didn't move the 1B** (still `measured_level: none`), so the ceiling is a real capability limit, not wording. The nudge ships anyway (helps mid-tier models, can't regress capable ones). *ADR-031.*
 
-- **Sprint 23 — llama.cpp first-class** (2026-06-26). Validated Ferric on full **llama.cpp** (`llama-server`) for the first time — it's now the recommended engine (ollama stays a one-flag fallback). The constrained loop runs on it at **100% Ring-0 tool-call fire rate, identical to ollama**, with a context window as wide as you want (`-c`), the multimodal path (`--mmproj`), and a single edge-ready binary (Jetson / Pi). Reuse an ollama GGUF blob to skip re-downloads. Guide: [docs/llama-cpp.md](docs/llama-cpp.md). *ADR-032.*
+- **Sprint 23 — llama.cpp first-class** (2026-06-26). Validated Ferric on full **llama.cpp** (`llama-server`) for the first time — we have now fully removed inference from ollama and switched exclusively to `llama.cpp` due to speed. The constrained loop runs on it at **100% Ring-0 tool-call fire rate**, with a context window as wide as you want (`-c`), the multimodal path (`--mmproj`), and a single edge-ready binary (Jetson / Pi). Guide: [docs/llama-cpp.md](docs/llama-cpp.md). *ADR-032.*
 
 - **Sprint 24 — multimodal goes live** (2026-06-26). Ran an image end-to-end for the first time (the marquee goal deferred since sprint 10): a generated red square → `ferric query --file --modality image` → `llama-server --mmproj` (SmolVLM-500M) → the vision encoder processed it, and the model correctly answered **"Red."** The `image_url`/base64 content-parts mapping is proven against real pixels; no Ferric code change needed. Caveat: a sub-1B VLM degrades under the JSON grammar (use a bigger VLM or an unconstrained describe). *ADR-033.*
 
@@ -207,4 +213,68 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 43 — Animus Launch increment 1** (2026-07-09). The first slice of a named Animus-suite pillar (the GECK successor): a project bootstrapper. Research found GECK (`~/GECK`) is Python-only and does macro-prompt scaffolding but **no git bootstrapping** — so Launch's distinct value is the deterministic, **LLM-free** "interview → real git repo (main+dev) + a sprint-loop-ready skeleton" flow. The user chose to build **both** the scaffolder and the interactive interview this increment. A new **`animus-launch`** library crate: `scaffold(&LaunchSpec)` refuses-to-clobber (never over a non-empty dir / non-dir path), creates the dir + a seed skeleton (README from goal, `.gitignore`, `agent-tasks/` with goal-derived tasks, `decisions.md`), and runs `git` as a checked closed-subcommand sequence (init → commit with a fixed identity so CI-without-identity works → `branch -M main` → `branch dev`). A **`ferric launch`** subcommand drives it: supplied flags skip the matching interview question, anything missing is asked on stdin (prompts to stderr so stdout stays the report). The key architectural point: Launch is user-run and LLM-free, so `ferric-guard`'s agent-containment doesn't apply — the sole safety property is refuse-to-clobber. A foreground plan-critic caught the nested-`agent-tasks/`-dir and clobber-semantics gaps pre-lock. *ADR-053.*
 
-> **Next — TBD.** Open: Animus Launch inc 2 (a project-type profile library, the "begin work?" Loop auto-hand-off); operationalize the `ferric-core` container (run it end-to-end with a mounted model) + multi-arch images; the Ornstein Web retriever + microVM-sandbox airlock (unblocked — Docker installed, ADR-051); talk-mode streaming + a fancy chat TUI; wiring chat into the Animus IDE; MCP streaming notifications; `ferric mcp --resume`; wire the CaMeL sink policy once the research→loop taint source exists; per-tier compaction tuning.
+- **Sprint 45 — Ornstein Web Retriever (Inc 4)** (2026-07-13). Built the Web Retriever plane for Ornstein. Added a highly restricted microVM-class Docker sandbox (`crates/ferric-research/src/sandbox.rs`) that drops all capabilities and routes traffic through an allowlist proxy (`docker/squid.conf`). Implemented `WebRetriever` using `wget` to safely fetch URLs into the quarantine, ensuring all untrusted external content remains isolated from Ferric's execution environment. *ADR-055.*
+
+- **Sprint 46 — Loop Research-Phase Wiring & Sink Policy (Inc 5)** (2026-07-13). The final CaMeL wiring. Moved `sink.rs` to `ferric-guard` to form a true dependency tree (`ferric-tools` → `ferric-guard` → `ferric-core`). Wired `TaintSet` and `SinkPolicy` all the way down through `ferric-cli`'s `--research` and `--sink-action` flags into `registry.execute`. A tool call attempting a Write or Execute sink with tainted arguments is now intercepted and evaluated according to the chosen sink policy (`deny`, `warn`, `requireapproval`). *ADR-056.*
+
+- **Sprint 47 — Testing System** (2026-07-13). Built the 4-tier testing system to provide regression safety for the fast-moving loop. Increment 1: **Golden Trace Testing** (`ferric trace verify`) reconstructs the `MockProvider` and checks a deterministic trace for event mismatches. Increment 2: **Containerized E2E Harness** (`tools/run-e2e.sh`) launches `ferric-core` inside Docker to execute a mock query. Increment 3: **Coverage Scripts** (`tools/run-coverage.sh`) leverages `tarpaulin` to enforce the 80% coverage threshold. *ADR-057.*
+
+- **Sprint 48 — Animus Launch Increment 2** (2026-07-13). Extended `ferric launch` to natively support generating project skeletons based on an explicit project type (`Rust`, `Python`, `Web`, or `Empty`). After scaffolding the repository, it now features an auto-hand-off mechanism that prompts the user if they'd like to immediately begin execution with the Ferric agent using their goal as the prompt, eliminating the friction between bootstrapping a repo and starting the Sprint 1 loop. *ADR-058.*
+
+- **Sprint 49 — Streamlining Streaming & Usability Assessment** (2026-07-13). Delivered `talk-mode` streaming for `ferric chat` and `ferric/streamDelta` JSON-RPC notifications for `ferric mcp` to solve laggy IDE UI feedback. Assessed project usability, concluding that it is functionally usable, natively LLM-free, and contained, but requires container operationalization and compaction tuning next. *ADR-059.*
+
+- **Sprint 50 — Native Tailscale Integration** (2026-07-13). Added a `--tailscale` flag to `ferric server up`. Ferric now natively orchestrates Zero-Trust WireGuard tunneling by shelling out to `tailscale serve <port>` immediately after the engine (llama-server/Ollama) binds to loopback. This allows secure, authenticated, off-device access to the local inference API without exposing public firewall ports. *ADR-060.*
+
+- **Sprint 51 — Skill Loader via MCP Prompts** (2026-07-13). Added dynamic Knowledge Skill loading. `ferric mcp` now scans `.ferric/skills/*/SKILL.md` and serves them via the MCP `prompts/list` and `prompts/get` protocols. Agents connected to Ferric (Cursor, Claude Code, etc.) can now discover and inject project-specific skills dynamically into their context. *ADR-061.*
+
+- **Sprint 52 — Advanced File Tooling & ICM Adaptation** (2026-07-14). Adapted the file tooling to better support the Interpretable Context Methodology (ICM) across all tiers. Promoted `copy_file`, `move_path`, and `search_files` to Ring 0 (core) so Nano models can navigate workspace hierarchies, proportionally scaling up tier tool caps (e.g., Nano: 10, Small: 14) to accommodate. Implemented `start_line` and `end_line` pagination in `read_file` to allow small-context models to read large files safely. Validated with comprehensive tests across `ferric-core`, `ferric-cli`, and `ferric-tools`. *ADR-062.*
+
+- **Sprint 54 — Ornstein Validation & IDE Integrations** (2026-07-14). Resolved `cargo clippy` warnings in `ferric-cli` and `ferric-loop` to pass CI. Validated the Ornstein `WebRetriever` using `--mock` to bypass local environment restrictions. Cloned and rebranded `Animus_IDE` to point to OpenVSX and stripped Microsoft telemetry to set up a clean, agentic-ready IDE fork.
+
+- **Sprint 55 — `ferric mcp --resume` support** (2026-07-14). Added the `--resume <path>` flag to `ferric mcp` to allow resuming an interrupted task session over MCP. The resume state is verified, stored, and passed down directly into the first `ferric_query` `tools/call`.
+
+- **Sprint 56:** Per-tier compaction tuning. `HistoryCompactor` triggers now scale natively per tier in `RunPolicy`.
+
+- **Sprint 57 — Chat Mode Refinements** (2026-07-14). Integrated `rustyline` into `ferric chat` for robust REPL history and line editing, improving interactive workflow for conversation-driven escalations.
+
+- **Sprint 59 — `shell_exec` tool & CaMeL wiring** (2026-07-15). Delivered the `shell_exec` tool (Ring 2) and addressed ADR-045's deferred requirements. Extended the `Tool` trait with `target_commands()` and added `ferric-guard::check_command` to screen commands against static denylists prior to child process execution. Wired the CaMeL sink policy `TaintSet` into the `Registry::execute` chokepoint to govern `Write` and `Execute` tool calls according to the user's `--sink-action` flag.
+
+- **Mid-July engine hardening** (2026-07-16). A cluster of foundational improvements that landed in this window (their internal sprint numbers were reused later, so they're grouped here in chronological order): **CLI consolidation** — the `bench` and `toolbench` commands merged into `ferric bench ltd` / `ferric bench full`; a **multi-arch `ferric-core` container** (amd64 + arm64, dynamic `llama-server` asset resolution); **Plan Mode** — `ActionProtocol::Plan`, a read-only grammar-constrained protocol with a `submit_plan` terminator instead of `task_complete`; an **async `shell_exec` refactor** — `tokio::process::Command` under `block_in_place`, so runaway processes no longer block the executor thread or OOM on unbounded pipes; and **loop decoupling** — the monolithic ~400-line driver in `ferric-loop/src/run.rs` split into a testable `LoopState` with an async `step() -> TurnOutcome`.
+
+- **Sprint 62 — Schema-Enforced Chain of Thought** (2026-07-16). Replaced the nested JSON schema representation for `action` with a flattened, highly stable wrapper that explicitly forces the `thought` field *before* tool parameters. Fixed a critical agent hallucination where the missing JSON schema `description` metadata (stripped by `llama-server`) caused the LLM to misuse `make_dir` repeatedly for file creation; explicitly injected `registry_tools` descriptions into the system prompt for constrained environments.
+
+- **Sprint 63 — Real-Time Thought Streaming** (2026-07-16). Added real-time streaming of the model's scratchpad reasoning (the `thought` field). Expanded `StreamDelta` to include `Thought(String)` and added a state machine to `ConstrainedJsonScanner` to incrementally stream the field as text arrives. Rendered live thought outputs in dim ANSI gray (`\x1b[90m`) in `ferric query`, `ferric chat`, and `ferric mcp` to visually distinguish the agent's internal planning from standard tool output.
+
+- **Sprint 64 — Ferric HTTP API and VS Code extension** (2026-07-16). Designed and implemented the Ferric HTTP API (`/v1/query/stream`) to securely stream Server-Sent Events (SSE) representing agentic `StreamDelta`s (thoughts, tool calls, and text summaries). Built `animus-ferric`, a lightweight, native VS Code extension tailored for `Animus_IDE`, wired to stream the agent's internal monologue and tool operations directly into the IDE's Language Model Chat interface.
+
+- **Sprint 65 — Graceful Interrupts (Stops)** (2026-07-17). Implemented `StopReason::Interrupted` logic across the harness. Passed `cancel_flag` of `Arc<AtomicBool>` securely from `ferric-cli` drivers all the way down into `ferric-loop`'s engine block and `ferric-provider` traits. Wired a `tokio::signal::ctrl_c()` handler to toggle the state of the flag and efficiently polled this state during intensive streaming network I/O operations (`tokio::select!`). This successfully establishes a safe early-termination protocol for the agent that securely flushes any trace outputs mid-flight, fully reconstructing the loop state for possible future resumption, all without destabilizing the application or generating panic unwinds.
+
+- **Sprint 66 — Time Travel (Revert)** (2026-07-17). Delivered full workspace-and-trace reversion using a lightweight Git orchestration crate (`ferric-vcs`). During every `TurnEnd` trace event, `ferric-loop` sequentially stashes the entire workspace tree as an orphaned, detached commit (ignoring local branch history) tagged strictly to the current trace session (`refs/ferric/<session>/<turn>`). Users can invoke `ferric revert <trace_file> <turn_id>` via the CLI, triggering an immediate and exact restoration (`git restore --worktree --staged --source=<tag> .`) combined with complete untracked file deletion (`git clean -fd`), while automatically truncating future traces in the source `.jsonl` file to reset the agent's contextual memory precisely.
+
+- **Sprint 67 — Configurable Hooks** (2026-07-17). Introduced a lightweight hooks system allowing custom scripts to execute on deterministic boundaries within the agentic loop (`pre_turn`, `post_turn`, and `on_error`). Bound through `.ferric/config.toml`, hooks are executed via the host's native shell environment (`cmd /C` or `sh -c`) using `std::process::Command`, securely injecting synchronous logic immediately prior to tool execution or after failure outcomes without disturbing the core trace flow.
+
+- **Sprint 68 — Background Task Management** (2026-07-17). Added detached `tokio` process management to `shell_exec` and exposed a `manage_task` built-in tool. This allows the agent to spin up long-running tasks in the background with automatic OS-level file redirection for stdout/stderr into `.ferric/tasks/`. The agent can then use `manage_task` (list, status, kill, send_input) to interact with these asynchronous processes without blocking the execution loop.
+
+- **Sprint 69 — Dream Mode** (2026-07-17). Introduced `ferric dream`, an offline knowledge extraction command that asynchronously parses historical JSONL traces from `.ferric/traces/`. It consolidates previous agent activity (user requests, structural discoveries, recurring bugs) into a synthesized `MEMORY.md` persistent knowledge base using the configured LLM backend.
+
+- **Sprint 70 — CI Stability & Architectural Review** (2026-07-17). Fixed lingering GitHub Actions CI failures caused by strict `-D warnings` enforcement for `clippy::collapsible_if` nested conditions in `ferric-loop` and `ferric-provider`, alongside miscellaneous cleanup in `ferric-cli`. Conducted a comprehensive codebase review, seeding `agent-tasks.md` with forward-looking architectural priorities including `tracing` observability, procedural macro tool registration, and parallel execution for side-effect-free tool capabilities.
+
+- **Sprint 71 — Windows CI Robustness** (2026-07-17). Identified and resolved two persistent GitHub Actions `windows-latest` integration test failures. First, replaced `timeout /t 5` with `powershell -Command "Start-Sleep -Seconds 5"` in `test_background_tasks` to bypass immediate exit errors triggered by the CI runner's detached `stdin`. Second, skipped `ferric-research`'s `alpine:latest` Docker retrieval tests on Windows via `#[cfg_attr(windows, ignore)]`, as GitHub's default Windows runners do not support Linux containers (LCOW/WSL2) out-of-the-box. The CI is now fully green across all platforms.
+
+- **Sprint 72 — Observability via `tracing`** (2026-07-17). Added the harness's first structured-logging channel — deliberately **orthogonal** to the JSONL trajectory (ADR-002): the trace answers *what the model did*; `tracing` answers *why the harness did what it did* (guard trips, retries, compaction, hook failures, tool timing). Libraries emit only the facade; **`ferric-cli` alone** installs one process-wide subscriber (in `main()`, so every subcommand inherits it) that writes to **stderr** — stdout stays a clean machine channel for `mcp` JSON-RPC and `query`/`launch` reports — and is **quiet by default** (WARN), opened up by a global `-v/-vv/-vvv` flag or a `FERRIC_LOG`/`RUST_LOG` env filter. `ferric-loop`/`ferric-tools` and the `ferric-provider` openai valve are instrumented (the provider's dep rides the `backend-openai` feature; the default + aarch64 builds never compile it). `ferric-guard` was left **pure** — its denials log at the registry chokepoint, which has the tool context guard lacks. A buffer-writer capture test asserts a guard trip emits its WARN and a clean run stays silent. Also cleared ~4.3 MB of accidentally-committed Windows build artifacts from the repo root and reconciled two stale ledger items (`ferric-prompt` templating → `oovra`; the `Retriever` trait already shipped). *ADR-063.*
+
+- **Sprint 73 — Agent Delegation via ICM, increment 1** (2026-07-17). Answered "agent delegation" not with a multi-agent framework but with **Interpretable Context Methodology** (Van Clief & McDermott, 2026): the **filesystem is the orchestrator**. Numbered stage folders (`stages/01_research/` → `02_script/` → `03_production/`) encode execution order; each stage's `CONTEXT.md` is an Inputs/Process/Outputs contract; a five-layer context hierarchy (L0 identity → L1 routing → L2 contract → L3 reference/factory → L4 working/product) scopes exactly what each stage-agent sees, so context stays small and focused instead of a monolithic lost-in-the-middle prompt. New **`ferric-icm`** crate (pure: `parse_contract`, `IcmWorkspace::discover` with numeric — not lexical — ordering, guard-checked layered composition → `OrchestrationPlan`, refuse-to-clobber scaffolder); `ferric icm init` scaffolds a runnable 3-stage workspace and `ferric icm plan` prints each stage's scoped context + provenance (which file at which layer, missing inputs flagged) with **no model in the loop** — the delegation made inspectable. The Ferric-native adaptation: each stage is a **workspace-scoped run**, so `ferric-guard`'s containment holds — every contract-referenced path resolves through the workspace boundary, and an escaping input (`../../etc/passwd`) is refused, proven by test. Live per-stage loop execution with human review gates is increment 2 (the plan produced here is exactly its input). 16 new tests; full guide in [docs/icm.md](docs/icm.md). *ADR-064.*
+
+- **Sprint 74 — ICM increment 2: the delegation runs** (2026-07-17). Made ICM *execute*. `ferric icm run` feeds each stage's composed context into the same constrained agent loop `ferric query` drives (`run_with_provider` — guard, loop guards, compaction, hooks, JSONL trace all inherited), in numeric order, with human **review gates** between stages (`--auto` runs straight through; `--from`/`--to` run a sub-range; `--mock` for an offline dry-run). The load-bearing security choice: each stage runs **contained to its own `stages/NN_*/` folder**, stronger than the paper's by-convention model — a stage can only write inside its own directory, which works because inc 1 already folds the prior stage's output into the context as Layer 4 (no cross-stage filesystem reads needed). A stage that doesn't reach a successful terminator **halts** the pipeline (a downstream stage must not read untrustworthy output) — which needed the loop *outcome*, not just an exit code. Config+provider built once and reused; the single-use mock is rebuilt fresh per stage. `compose_stage` gained an Outputs directive so a live agent knows where to write. 4 new tests (full pipeline, review-gate stop, stage range, output directive); proven end-to-end in `--mock`. *ADR-065.*
+
+- **Sprint 75 — Agentic Cron** (2026-07-17). Scheduled periodic *agent* tasks — the motivating case being `/dream every 12h` (consolidate traces into memory on a timer). A workspace's `.ferric/cron/*.toml` holds one job per file (a `schedule` interval + a `command`); `ferric cron` manages them: `add`, `list` (schedule + last-run/next-due), `run [--dry-run]` (one tick), and `watch [--interval]` (loop until Ctrl-C). The **security boundary**: a job's command is an *enum* (`dream`, or a `query` with a prompt), **never an arbitrary shell string** — so cron can only trigger operations Ferric already contains (a `query` is a guard-checked workspace-scoped run), deliberately narrower than the arbitrary-script hooks system. Pure scheduling/due/state logic lives in a new `ferric-cron` crate (reads no clock — `now` is injected, so it's fully unit-tested); the CLI drives it and executes by shelling out to the same `ferric` binary. State advances on *attempt*, so a failing job reschedules instead of hammering every tick; a `query` job can set `mock = true` to run offline. 14 new tests; proven end-to-end (`cron run` fires a mock query and advances state). Full guide in [docs/cron.md](docs/cron.md). *ADR-066.*
+
+- **Sprint 76 — Calendar cron expressions** (2026-07-18). Extended sprint 75's cron so a job's `schedule` accepts a standard 5-field **cron expression** (`0 2 * * *` = 02:00 daily; `0 9 * * 1-5` = 09:00 weekdays; `*/15 * * * *`) alongside the recurrence intervals — calendar-anchored tasks, not just "every N hours". `Schedule` became an `Interval | Cron` enum; `parse_schedule` dispatches on shape. Cron matching is **evaluated in UTC** so due-ness stays a pure, deterministic function of `(expression, epoch-ms)` — no host-timezone dependence, the whole scheduler still unit-testable with an injected `now`. Fire-once-per-minute semantics (a job at 02:00:05 won't re-fire at 02:00:55); standard field grammar (`*`, ranges, lists, `*/step`) with the Vixie day-of-month/day-of-week OR rule. `chrono` (already in the tree via oovra, already aarch64-gated) does the epoch→civil decomposition at zero new build cost. 7 new tests. Guide: [docs/cron.md](docs/cron.md). *ADR-067.*
+
+- **Sprint 77 — `.ferricignore` (project denylist)** (2026-07-18). The first config-driven input to security policy: a gitignore-flavored `.ferricignore` in the workspace root lists paths the agent must not touch (`secrets/`, `*.pem`, vendored trees). Scoped tightly against ADR-005's "security is hardcoded, no config override": it is **additive-only** — `check_with_ignore` evaluates the compile-time floor first and short-circuits on a hardcoded deny, so a pattern can only ever *add* a denial, never turn a hardcoded `Deny` into an `Allow`. An ignored path is off-limits at every level (read/write/execute). The file is user-authored (never the LLM), and `.ferricignore` is itself write-denied so the agent can't edit away its own restrictions. Pure `IgnoreList` matcher (segment / basename-glob / path-prefix, no new dependency) loaded once by `Workspace::new`; enforced at the single registry chokepoint. 8 new tests incl. an end-to-end registry proof and the policy-file write-protection. *ADR-068.*
+
+- **Sprint 78 — direct terminal passthrough in chat** (2026-07-18). `ferric chat` gains a third turn kind: a line prefixed `!` (or `/run `) runs a shell command **directly, with no LLM roundtrip** — for checking `ls`/`git status` mid-conversation without asking the model. It runs through the same guarded `shell_exec` chokepoint the agent uses, so the command denylist still fires (a test drives `!rm -rf /` → blocked). The security shape is clean: the human typed the command, so there is *no LLM in the path* (ADR-005 satisfied trivially) — talk has no action channel, `/do` is LLM-driven-but-constrained, `!cmd` acts without constraint but without an LLM. The command + output are a terminal side-channel (printed + logged as a `Note`), never folded into the talk history. Parsing is exact (bare `!`/`/run` are talked; `/running late` is talked). A lazily-created tokio runtime backs the sync REPL. 3 new tests. *ADR-069.*
+
+- **Sprint 79 — interactive "accept edits" mode** (2026-07-19). `ferric query --accept-edits` pauses before every mutating tool call, previews it, and waits for a human y/N before it touches disk — supervised runs where you can veto a bad write without killing the session. The gate lives at the loop's single dispatch chokepoint and keys on the guard's own permission model (`Registry::permission_of` — `Write`/`Execute` gated, `Read` untouched), not a hand-kept list of tool names. The approver is an injected callback (`RunArgs.edit_approver`, mirroring `stream_sink`), so the loop stays pure: tests inject reject/approve/capture closures, the CLI injects a stdin prompt, and every other surface passes `None` so behavior is unchanged. A rejection is first-class, not an abort — the loop feeds the model an error `ToolResult` (`"edit rejected by user"`) it can adapt to, and the run continues. Preview is v1 (tool + targets + pretty-printed args, to stderr so piped stdout stays clean; empty/`n`/EOF all reject). 3 new tests (reject blocks the write + tells the model, approve lets it through, the preview carries tool + target). *ADR-070.*
+
+> **Next — TBD.** Unified-diff previews for accept-edits, local-timezone cron, a detached cron daemon, or an Ornstein-quarantined ICM web-research stage.

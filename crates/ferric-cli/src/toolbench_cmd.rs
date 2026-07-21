@@ -16,14 +16,14 @@ use crate::query::ProtocolArg;
 
 // Used by `extract_action` (and its tests); excluded from the backend-free,
 // non-test bin build so it stays unused-import-clean under `-D warnings`.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 use ferric_core::{ActionProtocol, ToolCall};
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 use ferric_provider::Completion;
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 use {
-    crate::backend::{BackendArg, create_provider},
+    crate::backend::create_provider,
     ferric_core::{Message, ModelProfile, policy_for},
     ferric_loop::{action_schema, select_protocol},
     ferric_provider::{CompletionRequest, Constraint, SamplingParams, ToolDescriptor},
@@ -78,7 +78,7 @@ pub struct ToolbenchArgs {
 /// The classified outcome of one toolbench iteration. This is what turns the
 /// bench from a pass/fail counter into a diagnostic: it says *why* a model
 /// missed, so a user can judge whether a smaller model is still good enough.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// Called the target tool with every schema-required arg present.
@@ -93,7 +93,7 @@ pub enum Outcome {
     ParseError,
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 impl Outcome {
     pub fn is_success(&self) -> bool {
         matches!(self, Outcome::Success)
@@ -117,7 +117,7 @@ impl Outcome {
 /// different tool" (WrongTool), and "right tool, missing a required arg"
 /// (MalformedArgs). The arg check is a lightweight required-keys check against
 /// `schema.required`, not full JSON-Schema validation.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 pub fn classify(
     protocol: ActionProtocol,
     completion: &Completion,
@@ -127,7 +127,7 @@ pub fn classify(
     let text = completion.message.text.as_deref().unwrap_or_default();
     let parsed: Result<Option<ToolCall>, ()> = match protocol {
         ActionProtocol::NativeTools => Ok(completion.message.tool_calls.first().cloned()),
-        ActionProtocol::ConstrainedJson => {
+        ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
             if text.trim().is_empty() {
                 Ok(None)
             } else {
@@ -164,7 +164,7 @@ pub fn classify(
 
 /// One tool's diagnostic stats. `histogram` is `(outcome label, count)` sorted
 /// by label (ADR-008 deterministic ordering).
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 pub struct ToolStat {
     pub name: String,
     pub fires: u32,
@@ -172,7 +172,7 @@ pub struct ToolStat {
     pub histogram: Vec<(String, u32)>,
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 impl ToolStat {
     pub fn rate(&self) -> f64 {
         if self.fires == 0 {
@@ -184,7 +184,7 @@ impl ToolStat {
 }
 
 /// The whole bench's diagnostic summary — the input to the report writers.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 pub struct BenchSummary {
     pub model: String,
     pub backend: String,
@@ -193,7 +193,7 @@ pub struct BenchSummary {
     pub per_tool: Vec<ToolStat>,
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 impl BenchSummary {
     pub fn overall(&self) -> (u32, u32) {
         let success = self.per_tool.iter().map(|t| t.success).sum();
@@ -213,7 +213,7 @@ impl BenchSummary {
 
 /// Acceptability band for a success rate in `0.0..=1.0`. This is the readout
 /// that answers "is this model good enough" as you dial it down.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 pub fn verdict(rate: f64) -> &'static str {
     if rate >= 0.90 {
         "solid"
@@ -227,7 +227,7 @@ pub fn verdict(rate: f64) -> &'static str {
 /// The recommended `--max-ring` from a ring-by-ring calibration: the highest
 /// ring with an unbroken `solid` prefix from ring 0. `None` means even ring 0
 /// is not solid — the model can't reliably drive the core (ADR-028/019).
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 pub fn recommend_max_ring(ring_solid: &[bool]) -> Option<u8> {
     if ring_solid.first() != Some(&true) {
         return None;
@@ -243,7 +243,7 @@ pub fn recommend_max_ring(ring_solid: &[bool]) -> Option<u8> {
 }
 
 /// Render the human-facing Markdown report.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 pub fn render_report(s: &BenchSummary) -> String {
     use std::fmt::Write;
     let mut out = String::new();
@@ -290,7 +290,7 @@ pub fn render_report(s: &BenchSummary) -> String {
 }
 
 /// Machine-readable rows: one per tool, plus a trailing `__overall__` row.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 pub fn summary_rows(s: &BenchSummary) -> Vec<serde_json::Value> {
     let mut rows: Vec<serde_json::Value> = s
         .per_tool
@@ -329,7 +329,7 @@ pub fn summary_rows(s: &BenchSummary) -> Vec<serde_json::Value> {
 /// Render a cross-model **leaderboard** (the fleet-calibration headline):
 /// `model | protocol | success | rate | verdict`, sorted best→worst. This is
 /// the "which model is good enough" readout as you dial down the fleet.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai", test))]
+#[cfg(any(feature = "backend-openai", test))]
 pub fn render_leaderboard(summaries: &[BenchSummary]) -> String {
     use std::fmt::Write;
     let mut ranked: Vec<&BenchSummary> = summaries.iter().collect();
@@ -359,7 +359,7 @@ pub fn render_leaderboard(summaries: &[BenchSummary]) -> String {
     out
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 fn build_request(
     protocol: ActionProtocol,
     all_tools: &[ToolDescriptor],
@@ -379,6 +379,7 @@ fn build_request(
             "Respond with exactly one XML tool call: \
              <tool_call><name>TOOL</name><args>{\"arg\": \"value\"}</args></tool_call>."
         }
+        ActionProtocol::Plan => "Respond with exactly one Plan object: {\"plan\": \"...\"}.",
     };
     let user_prompt =
         format!("Invoke the `{tool_name}` tool with dummy data that matches its schema.");
@@ -388,6 +389,7 @@ fn build_request(
         ActionProtocol::ConstrainedJson => {
             (Vec::new(), Some(Constraint::JsonSchema(schema.clone())))
         }
+        ActionProtocol::Plan => (Vec::new(), None),
         ActionProtocol::TextXml => (Vec::new(), None),
     };
     CompletionRequest {
@@ -405,7 +407,7 @@ fn build_request(
 /// Bench one model: run every tool `iterations` times, classify each outcome,
 /// print live progress, and return its `BenchSummary`. Shared by the
 /// single-model report and the fleet leaderboard.
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 async fn bench_model(
     provider: &(dyn ferric_provider::Provider + Send + Sync),
     protocol: ActionProtocol,
@@ -422,7 +424,7 @@ async fn bench_model(
         for _ in 0..iterations {
             let request = build_request(protocol, all_tools, schema, &tool.name);
             let completion = provider
-                .complete(request)
+                .complete(request, None)
                 .await
                 .map_err(|e| format!("provider error: {e}"))?;
             let outcome = classify(protocol, &completion, &tool.name, &tool.input_schema);
@@ -458,7 +460,7 @@ async fn bench_model(
     })
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
@@ -526,7 +528,6 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                     args.backend_opts
                         .model
                         .clone()
-                        .or_else(|| args.backend_opts.model_file.clone())
                         .unwrap_or_else(|| "model".to_string()),
                 ],
             };
@@ -535,10 +536,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                 println!("\n=== calibrating {model} ===");
                 let mut opts = args.backend_opts.clone();
                 if args.models.is_some() {
-                    match opts.backend.unwrap_or(BackendArg::Mistral) {
-                        BackendArg::Openai => opts.model = Some(model.clone()),
-                        BackendArg::Mistral => opts.model_file = Some(model.clone()),
-                    }
+                    opts.model = Some(model.clone());
                 }
                 let provider_box = match create_provider(&opts).await {
                     Ok(p) => p,
@@ -640,10 +638,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             for model in &model_list {
                 println!("\n=== {model} ===");
                 let mut opts = args.backend_opts.clone();
-                match opts.backend.unwrap_or(BackendArg::Mistral) {
-                    BackendArg::Openai => opts.model = Some(model.clone()),
-                    BackendArg::Mistral => opts.model_file = Some(model.clone()),
-                }
+                opts.model = Some(model.clone());
                 let provider_box = match create_provider(&opts).await {
                     Ok(p) => p,
                     Err(e) => {
@@ -685,7 +680,6 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                 .backend_opts
                 .model
                 .clone()
-                .or_else(|| args.backend_opts.model_file.clone())
                 .unwrap_or_else(|| provider.id().to_string());
             println!(
                 "Toolbench: {} tools x {} iterations | backend={} protocol={:?}",
@@ -721,11 +715,11 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
     }
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
+#[cfg(not(feature = "backend-openai"))]
 pub fn run_toolbench(_args: ToolbenchArgs) -> ExitCode {
     eprintln!(
         "this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai`"
+         rebuild with `cargo build --features backend-openai`"
     );
     ExitCode::FAILURE
 }

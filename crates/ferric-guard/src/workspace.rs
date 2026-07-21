@@ -21,19 +21,26 @@ pub enum GuardError {
 /// an in-workspace link pointing outside is rejected.
 pub struct Workspace {
     root: PathBuf,
+    ignore: crate::ignore::IgnoreList,
 }
 
 impl Workspace {
-    /// Create a boundary rooted at `root` (which must exist).
+    /// Create a boundary rooted at `root` (which must exist). Also loads the
+    /// workspace's `.ferricignore` (ADR-068) — an absent file is a no-op.
     pub fn new(root: impl AsRef<Path>) -> Result<Self, GuardError> {
-        Ok(Self {
-            root: std::fs::canonicalize(root.as_ref())?,
-        })
+        let root = std::fs::canonicalize(root.as_ref())?;
+        let ignore = crate::ignore::IgnoreList::load(&root);
+        Ok(Self { root, ignore })
     }
 
     /// The canonical workspace root.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The workspace's additive `.ferricignore` denials (ADR-068).
+    pub fn ignore(&self) -> &crate::ignore::IgnoreList {
+        &self.ignore
     }
 
     /// Resolve `candidate` (absolute, or relative to the root) to a canonical

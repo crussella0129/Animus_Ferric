@@ -11,7 +11,7 @@ fn spec(path: std::path::PathBuf) -> LaunchSpec {
         name: "demo".to_string(),
         path,
         goal: "build a tiny parser; add tests".to_string(),
-        project_type: None,
+        project_type: animus_launch::ProjectType::Empty,
     }
 }
 

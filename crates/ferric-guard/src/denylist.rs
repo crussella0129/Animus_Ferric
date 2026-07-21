@@ -8,7 +8,9 @@
 pub const DENIED_WRITE_SEGMENTS: &[&str] =
     &[".git", ".ferric", ".ssh", ".gnupg", ".aws", ".kube", ".gpg"];
 
-/// File names that are never writable, wherever they live.
+/// File names that are never writable, wherever they live. `.ferricignore`
+/// (ADR-068) is here so the agent cannot edit or delete the user's own denial
+/// policy to unlock a path — the policy file is immutable to the model.
 pub const DENIED_WRITE_FILES: &[&str] = &[
     "id_rsa",
     "id_ecdsa",
@@ -16,6 +18,7 @@ pub const DENIED_WRITE_FILES: &[&str] = &[
     "authorized_keys",
     "known_hosts",
     "credentials",
+    ".ferricignore",
 ];
 
 /// Command patterns reserved for the future exec tool (s1+). Present now so

@@ -12,25 +12,34 @@ path = "src/main.rs"
 
 [features]
 default = []
-backend-mistralrs = ["ferric-provider/backend-mistralrs", "dep:tokio"]
-backend-openai = ["ferric-provider/backend-openai", "dep:tokio"]
+
+backend-openai = ["ferric-provider/backend-openai", "dep:axum", "dep:tokio-stream"]
 
 [dependencies]
 animus-launch = { workspace = true }
 ferric-bench = { workspace = true }
+ferric-icm = { workspace = true }
 ferric-core = { workspace = true }
+ferric-cron = { workspace = true }
 ferric-guard = { workspace = true }
 ferric-loop = { workspace = true }
 ferric-prompt = { workspace = true }
 ferric-provider = { workspace = true }
+ferric-research = { workspace = true }
 ferric-tools = { workspace = true }
 ferric-trace = { workspace = true }
+ferric-vcs = { workspace = true }
 clap = { workspace = true }
+tokio = { workspace = true }
 futures-executor = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, optional = true }
 toml = { workspace = true }
+rustyline = { workspace = true }
+axum = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

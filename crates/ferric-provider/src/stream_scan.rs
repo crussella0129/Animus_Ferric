@@ -1,13 +1,12 @@
 //! `ConstrainedJsonScanner` — the incremental `ConstrainedJson` action-object
-//! scanner (ADR-047, extended sprint 63). Every turn's completion under
-//! `ConstrainedJson` is ONE opaque JSON object
-//! (`{"thought":...,"tool":...,"args":...}`), including the final
-//! `task_complete` answer — raw token deltas of that are not human-readable
-//! except for three fields:
-//!
-//! 1. `thought` — the model's step-by-step reasoning (always streamed)
-//! 2. `tool` — the tool being called (emitted as a `ToolNamed` signal)
-//! 3. `args.summary` — only for `task_complete` (the final prose answer)
+//! scanner (ADR-047). Every turn's completion under `ConstrainedJson` is ONE
+//! opaque JSON object (`{"tool":...,"args":...}`), including the final
+//! `task_complete` answer — raw token deltas of that are not human-readable.
+//! This scanner extracts exactly two useful signals from the accumulated raw
+//! text as it streams in: the tool name (an early "which tool" activity
+//! signal, available well before `args` finishes) and, only when the tool is
+//! `task_complete`, the live-decoded characters of `args.summary` — the one
+//! field that IS human-readable prose.
 //!
 //! Fed with the FULL accumulated text on each `scan()` call (not a diff);
 //! internally tracks what it has already emitted so repeated calls only
@@ -20,16 +19,13 @@ const TASK_COMPLETE: &str = "task_complete";
 /// Stateful, pure (no I/O) scanner. One instance per streaming turn.
 #[derive(Debug, Default)]
 pub struct ConstrainedJsonScanner {
-    /// Byte offset where the `thought` field's string value begins.
     thought_value_start: Option<usize>,
-    /// How many bytes of decoded thought text have already been emitted.
     thought_emitted_len: usize,
     thought_done: bool,
+    thought_value_end: Option<usize>,
+
     tool_name: Option<String>,
-    /// Byte offset into the accumulated text where `args.summary`'s string
-    /// value begins (right after the opening `"`), once found.
     summary_value_start: Option<usize>,
-    /// How many bytes of decoded summary text have already been emitted.
     summary_emitted_len: usize,
     summary_done: bool,
 }
@@ -39,35 +35,48 @@ impl ConstrainedJsonScanner {
         Self::default()
     }
 
-    /// Scan the full accumulated raw JSON text so far. Returns any deltas
-    /// newly available since the last call (never re-emits the same
-    /// characters twice).
     pub fn scan(&mut self, accumulated: &str) -> Vec<StreamDelta> {
         let mut deltas = Vec::new();
 
-        // Phase 1: stream the thought field (available before tool name).
         if !self.thought_done {
             if self.thought_value_start.is_none() {
-                self.thought_value_start = find_field_value_start(accumulated, "thought");
-            }
-            if let Some(start) = self.thought_value_start {
-                if start <= accumulated.len() {
-                    let (decoded, complete) = decode_json_string_prefix(&accumulated[start..]);
-                    if decoded.len() > self.thought_emitted_len {
-                        let new_part = decoded[self.thought_emitted_len..].to_string();
-                        self.thought_emitted_len = decoded.len();
-                        deltas.push(StreamDelta::Text(new_part));
-                    }
-                    if complete {
+                let tool_idx = accumulated.find("\"tool\"");
+                let thought_idx = accumulated.find("\"thought\"");
+                if let Some(ti) = tool_idx {
+                    if thought_idx.is_none() || thought_idx.unwrap() > ti {
                         self.thought_done = true;
+                    } else {
+                        self.thought_value_start = find_thought_value_start(accumulated);
                     }
+                } else {
+                    self.thought_value_start = find_thought_value_start(accumulated);
+                }
+            }
+            if let Some(start) = self.thought_value_start
+                && start <= accumulated.len()
+            {
+                let (decoded, complete, consumed_bytes) =
+                    decode_json_string_prefix(&accumulated[start..]);
+                if decoded.len() > self.thought_emitted_len {
+                    let new_part = decoded[self.thought_emitted_len..].to_string();
+                    self.thought_emitted_len = decoded.len();
+                    deltas.push(StreamDelta::Thought(new_part));
+                }
+                if complete {
+                    self.thought_done = true;
+                    self.thought_value_end = Some(start + consumed_bytes);
                 }
             }
         }
 
-        // Phase 2: extract tool name (fires ToolNamed once).
+        // Must wait for thought to finish so we don't falsely match "tool":"..." inside the thought string.
+        let search_start_after_thought = self.thought_value_end.unwrap_or(0);
+        if !self.thought_done {
+            return deltas;
+        }
+
         if self.tool_name.is_none() {
-            match extract_tool_name(accumulated) {
+            match extract_tool_name(accumulated, search_start_after_thought) {
                 Some(name) => {
                     deltas.push(StreamDelta::ToolNamed(name.clone()));
                     self.tool_name = Some(name);
@@ -76,13 +85,13 @@ impl ConstrainedJsonScanner {
             }
         }
 
-        // Phase 3: for task_complete only, stream the summary.
         if self.tool_name.as_deref() != Some(TASK_COMPLETE) || self.summary_done {
             return deltas;
         }
 
         if self.summary_value_start.is_none() {
-            self.summary_value_start = find_field_value_start(accumulated, "summary");
+            self.summary_value_start =
+                find_summary_value_start(accumulated, search_start_after_thought);
         }
         let Some(start) = self.summary_value_start else {
             return deltas;
@@ -91,7 +100,7 @@ impl ConstrainedJsonScanner {
             return deltas;
         }
 
-        let (decoded, complete) = decode_json_string_prefix(&accumulated[start..]);
+        let (decoded, complete, _) = decode_json_string_prefix(&accumulated[start..]);
         if decoded.len() > self.summary_emitted_len {
             let new_part = decoded[self.summary_emitted_len..].to_string();
             self.summary_emitted_len = decoded.len();
@@ -105,48 +114,57 @@ impl ConstrainedJsonScanner {
     }
 }
 
-/// Find `"tool":"<name>"` and extract `<name>`. Safe against a false-positive
-/// match inside an unrelated string value: the text `scan()` receives is
-/// always the bare top-level action object itself (never nested inside
-/// another field), and `action_schema` (`ferric-loop`'s `grammar.rs`) always
-/// emits `tool` as the object's FIRST property (ADR-016's `preserve_order`
-/// field-ordering discipline) — so `"tool":"..."` is always the first
-/// key-value pair seen; no `args` string value can precede it.
-fn extract_tool_name(accumulated: &str) -> Option<String> {
-    const KEY: &str = "\"tool\":\"";
-    let start = accumulated.find(KEY)? + KEY.len();
+fn extract_tool_name(accumulated: &str, start_offset: usize) -> Option<String> {
+    let start = find_key_value_start(accumulated, start_offset, "\"tool\"")?;
     let rest = &accumulated[start..];
     let end = rest.find('"')?;
     Some(rest[..end].to_string())
 }
 
-/// Find where a named JSON string field's value begins (the byte offset right
-/// after the opening `"`). Used for both `thought` and `args.summary`.
-fn find_field_value_start(accumulated: &str, field: &str) -> Option<usize> {
-    let key = format!("\"{}\":\"", field);
-    Some(accumulated.find(&key)? + key.len())
+fn find_thought_value_start(accumulated: &str) -> Option<usize> {
+    find_key_value_start(accumulated, 0, "\"thought\"")
 }
 
-/// Decode as much of a JSON string's raw content (the bytes after the
-/// opening `"`, possibly including trailing bytes beyond the string's end)
-/// as is unambiguously safe. Returns `(decoded_prefix, reached_closing_quote)`.
-///
-/// Escape-boundary rule: holds back from the START of any incomplete escape
-/// sequence at the end of the available text — one character for a lone
-/// trailing `\`, and up to five for a `\uXXXX` split at any of its six
-/// characters (`\`, `\u`, `\u0`, `\u00`, `\u000` are all incomplete; only a
-/// `\uXXXX` with all 4 hex digits present decodes). This is pure and
-/// stateless — the previously-decoded prefix is always a strict prefix of
-/// any later call's decode over a superset of the same input, so a caller
-/// can safely diff by length across calls.
-fn decode_json_string_prefix(raw: &str) -> (String, bool) {
+fn find_summary_value_start(accumulated: &str, start_offset: usize) -> Option<usize> {
+    find_key_value_start(accumulated, start_offset, "\"summary\"")
+}
+
+/// Finds a key like `"tool"`, then skips any spaces, tabs, newlines, and the colon,
+/// until it finds the opening `"` of the string value. Returns the offset immediately
+/// AFTER that opening `"`.
+fn find_key_value_start(accumulated: &str, start_offset: usize, key: &str) -> Option<usize> {
+    if start_offset >= accumulated.len() {
+        return None;
+    }
+    let key_idx = accumulated[start_offset..].find(key)? + start_offset;
+    let chars = accumulated[key_idx + key.len()..].char_indices();
+
+    let mut found_colon = false;
+    for (i, c) in chars {
+        if c.is_whitespace() {
+            continue;
+        }
+        if c == ':' && !found_colon {
+            found_colon = true;
+            continue;
+        }
+        if c == '"' && found_colon {
+            return Some(key_idx + key.len() + i + 1);
+        }
+        // If we hit anything else before the quote (e.g. invalid json), bail out
+        return None;
+    }
+    None
+}
+
+fn decode_json_string_prefix(raw: &str) -> (String, bool, usize) {
     let mut out = String::new();
     let mut chars = raw.char_indices().peekable();
-    while let Some((_, c)) = chars.next() {
+    while let Some((i, c)) = chars.next() {
         match c {
-            '"' => return (out, true),
+            '"' => return (out, true, i + 1),
             '\\' => match chars.peek().copied() {
-                None => return (out, false),
+                None => return (out, false, 0),
                 Some((_, next)) => match next {
                     '"' => {
                         out.push('"');
@@ -211,14 +229,14 @@ fn decode_json_string_prefix(raw: &str) -> (String, bool) {
                         if incomplete {
                             // Hold back everything from the backslash
                             // onward; wait for more text.
-                            return (out, false);
+                            return (out, false, 0);
                         }
                         if malformed {
                             // Not valid JSON (shouldn't occur under
                             // strict-schema enforcement) — stop decoding
                             // this field cleanly rather than stalling
                             // forever; treat it as if the string ended here.
-                            return (out, true);
+                            return (out, true, i);
                         }
                         if let Ok(cp) = u32::from_str_radix(&hex, 16)
                             && let Some(ch) = char::from_u32(cp)
@@ -233,7 +251,7 @@ fn decode_json_string_prefix(raw: &str) -> (String, bool) {
             other => out.push(other),
         }
     }
-    (out, false)
+    (out, false, 0)
 }
 
 #[cfg(test)]
@@ -245,7 +263,7 @@ mod tests {
     #[test]
     fn tool_named_fires_once() {
         let mut scanner = ConstrainedJsonScanner::new();
-        let full = r#"{"tool":"task_complete","args":{"summary":"done"}}"#;
+        let full = r#"{"thought":"","tool":"task_complete","args":{"summary":"done"}}"#;
         let mut all_tool_named = Vec::new();
         for end in [10, 20, 30, full.len()] {
             let deltas = scanner.scan(&full[..end.min(full.len())]);
@@ -266,7 +284,7 @@ mod tests {
     /// equals the full summary, with no repeated characters.
     #[test]
     fn summary_streams_incrementally() {
-        let full = r#"{"tool":"task_complete","args":{"summary":"Hello, world!"}}"#;
+        let full = r#"{"thought":"","tool":"task_complete","args":{"summary":"Hello, world!"}}"#;
         let mut scanner = ConstrainedJsonScanner::new();
         let mut collected = String::new();
         for end in 1..=full.len() {
@@ -282,12 +300,12 @@ mod tests {
         assert_eq!(collected, "Hello, world!");
     }
 
-    /// A non-`task_complete` tool (e.g. `write_file`) without a `thought`
-    /// field never emits `Text` for its args — only the `ToolNamed` activity
-    /// signal fires.
+    /// A non-`task_complete` tool (e.g. `write_file`) never emits `Text` for
+    /// its args — only the `ToolNamed` activity signal fires.
     #[test]
-    fn non_task_complete_tool_without_thought_never_emits_text() {
-        let full = r#"{"tool":"write_file","args":{"path":"a.txt","content":"secret data"}}"#;
+    fn non_task_complete_tool_never_emits_text() {
+        let full =
+            r#"{"thought":"","tool":"write_file","args":{"path":"a.txt","content":"secret data"}}"#;
         let mut scanner = ConstrainedJsonScanner::new();
         let mut texts = Vec::new();
         let mut tool_named = Vec::new();
@@ -296,65 +314,15 @@ mod tests {
                 match delta {
                     StreamDelta::Text(t) => texts.push(t),
                     StreamDelta::ToolNamed(n) => tool_named.push(n),
-                    _ => {}
+                    StreamDelta::Thought(_) => {}
                 }
             }
         }
         assert!(
             texts.is_empty(),
-            "no Text deltas for a non-task_complete tool without thought"
+            "no Text deltas for a non-task_complete tool"
         );
         assert_eq!(tool_named, vec!["write_file".to_string()]);
-    }
-
-    /// The `thought` field streams as `Text` deltas for ALL tools, including
-    /// non-`task_complete` tools — this is the decoupled reasoning display.
-    #[test]
-    fn thought_streams_for_any_tool() {
-        let full =
-            r#"{"thought":"I will create file a.txt","tool":"write_file","args":{"path":"a.txt","content":"hi"}}"#;
-        let mut scanner = ConstrainedJsonScanner::new();
-        let mut collected_text = String::new();
-        let mut tool_named = Vec::new();
-        for end in 1..=full.len() {
-            if !full.is_char_boundary(end) {
-                continue;
-            }
-            for delta in scanner.scan(&full[..end]) {
-                match delta {
-                    StreamDelta::Text(t) => collected_text.push_str(&t),
-                    StreamDelta::ToolNamed(n) => tool_named.push(n),
-                    _ => {}
-                }
-            }
-        }
-        assert_eq!(collected_text, "I will create file a.txt");
-        assert_eq!(tool_named, vec!["write_file".to_string()]);
-    }
-
-    /// For `task_complete` with a thought field, the scanner streams both
-    /// the thought AND the summary as Text deltas.
-    #[test]
-    fn thought_and_summary_stream_for_task_complete() {
-        let full = r#"{"thought":"Task is done.","tool":"task_complete","args":{"summary":"Created file."}}"#;
-        let mut scanner = ConstrainedJsonScanner::new();
-        let mut collected_text = String::new();
-        let mut tool_named = Vec::new();
-        for end in 1..=full.len() {
-            if !full.is_char_boundary(end) {
-                continue;
-            }
-            for delta in scanner.scan(&full[..end]) {
-                match delta {
-                    StreamDelta::Text(t) => collected_text.push_str(&t),
-                    StreamDelta::ToolNamed(n) => tool_named.push(n),
-                    _ => {}
-                }
-            }
-        }
-        // Both thought + summary appear as concatenated Text.
-        assert_eq!(collected_text, "Task is done.Created file.");
-        assert_eq!(tool_named, vec!["task_complete".to_string()]);
     }
 
     /// Regression pinning the false-positive-safety argument itself (plan
@@ -370,7 +338,7 @@ mod tests {
     /// guaranteeing the real key is seen first regardless.
     #[test]
     fn tool_field_always_precedes_args_content() {
-        let full = r#"{"tool":"write_file","args":{"path":"my_task_complete_file.txt","content":"summary text unrelated"}}"#;
+        let full = r#"{"thought":"","tool":"write_file","args":{"path":"my_task_complete_file.txt","content":"summary text unrelated"}}"#;
         let mut scanner = ConstrainedJsonScanner::new();
         let mut tool_named = Vec::new();
         let mut texts = Vec::new();
@@ -378,7 +346,7 @@ mod tests {
             match delta {
                 StreamDelta::ToolNamed(n) => tool_named.push(n),
                 StreamDelta::Text(t) => texts.push(t),
-                _ => {}
+                StreamDelta::Thought(_) => {}
             }
         }
         assert_eq!(tool_named, vec!["write_file".to_string()]);
@@ -392,7 +360,7 @@ mod tests {
     /// literal characters.
     #[test]
     fn escaped_characters_decode_correctly() {
-        let full = r#"{"tool":"task_complete","args":{"summary":"a \"quote\", a \\backslash, a\nline, a\ttab"}}"#;
+        let full = r#"{"thought":"","tool":"task_complete","args":{"summary":"a \"quote\", a \\backslash, a\nline, a\ttab"}}"#;
         let mut scanner = ConstrainedJsonScanner::new();
         let mut collected = String::new();
         for delta in scanner.scan(full) {
@@ -408,7 +376,7 @@ mod tests {
     #[test]
     fn ambiguous_trailing_escape_is_held_back() {
         let mut scanner = ConstrainedJsonScanner::new();
-        let partial = r#"{"tool":"task_complete","args":{"summary":"back\"#;
+        let partial = r#"{"thought":"","tool":"task_complete","args":{"summary":"back\"#;
         let deltas = scanner.scan(partial);
         let text: String = deltas
             .into_iter()
@@ -423,7 +391,7 @@ mod tests {
         );
 
         // Resolve it: the backslash was actually escaping a quote.
-        let resolved = r#"{"tool":"task_complete","args":{"summary":"back\"slash""#;
+        let resolved = r#"{"thought":"","tool":"task_complete","args":{"summary":"back\"slash""#;
         let more: String = scanner
             .scan(resolved)
             .into_iter()
@@ -440,7 +408,7 @@ mod tests {
     /// hex digits are present.
     #[test]
     fn ambiguous_trailing_unicode_escape_is_held_back() {
-        let prefix = r#"{"tool":"task_complete","args":{"summary":"x"#;
+        let prefix = r#"{"thought":"","tool":"task_complete","args":{"summary":"x"#;
         // A == 'A'
         let cuts = ["\\", "\\u", "\\u0", "\\u00", "\\u004"];
         for cut in cuts {
@@ -480,7 +448,8 @@ mod tests {
     /// than stalling forever waiting for a resolution that can never come.
     #[test]
     fn malformed_unicode_escape_stops_gracefully() {
-        let full = r#"{"tool":"task_complete","args":{"summary":"x\u12XY more text"}}"#;
+        let full =
+            r#"{"thought":"","tool":"task_complete","args":{"summary":"x\u12XY more text"}}"#;
         let mut scanner = ConstrainedJsonScanner::new();
         let text: String = scanner
             .scan(full)
@@ -509,7 +478,7 @@ mod tests {
     /// more accumulated text (the rest of the JSON object) follows.
     #[test]
     fn closing_quote_stops_emission() {
-        let full = r#"{"tool":"task_complete","args":{"summary":"done"}}"#;
+        let full = r#"{"thought":"","tool":"task_complete","args":{"summary":"done"}}"#;
         let mut scanner = ConstrainedJsonScanner::new();
         let text: String = scanner
             .scan(full)

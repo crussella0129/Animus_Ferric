@@ -9,19 +9,22 @@ use std::time::Duration;
 
 use ferric_core::{ActionProtocol, Message, ModelProfile, Role, RunPolicy, ToolCall, policy_for};
 use ferric_guard::Workspace;
-use ferric_loop::{LoopOutcome, RunArgs, Sleeper, run};
+use ferric_loop::{EditApprover, LoopOutcome, RunArgs, Sleeper, run};
 use ferric_provider::{Completion, MockProvider, SamplingParams};
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, ParsedEvent, TraceReader, TraceRecord};
 
 pub fn nano_policy() -> RunPolicy {
-    policy_for(&ModelProfile {
+    let mut p = policy_for(&ModelProfile {
         params_b: 1.0,
         quant: "Q4_K_M".to_string(),
         ctx: 4096,
         family: "test".to_string(),
         measured_level: None,
-    })
+    });
+    p.compact_trigger_fraction = 0.85;
+    p.compact_keep_last_turns = 2;
+    p
 }
 
 pub fn text_completion(text: &str) -> Completion {
@@ -163,7 +166,65 @@ pub fn run_scripted_protocol(
     protocol: ActionProtocol,
     inspect: impl FnOnce(&MockProvider),
 ) -> RunResult {
+    run_scripted_full(script, policy, protocol, None, inspect, |_| {})
+}
+
+/// Like `run_scripted` but with an accept-edits approver installed (ADR-070).
+/// `check_dir` runs against the run's workspace path *before* it is torn down,
+/// so a test can assert which files were (not) written.
+pub fn run_scripted_with_approver(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    approver: EditApprover<'_>,
+    check_dir: impl FnOnce(&std::path::Path),
+) -> RunResult {
+    run_scripted_full(
+        script,
+        policy,
+        ActionProtocol::NativeTools,
+        Some(approver),
+        |_| {},
+        check_dir,
+    )
+}
+
+fn run_scripted_full(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    protocol: ActionProtocol,
+    approver: Option<EditApprover<'_>>,
+    inspect: impl FnOnce(&MockProvider),
+    check_dir: impl FnOnce(&std::path::Path),
+) -> RunResult {
     let dir = tempfile::tempdir().unwrap();
+    // Initialize a dummy git repo so vcs.snapshot() doesn't fail and emit Note events.
+    std::process::Command::new("git")
+        .arg("init")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    std::fs::write(dir.path().join("init.txt"), "init").unwrap();
+    std::process::Command::new("git")
+        .args(["add", "init.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
     let workspace = Workspace::new(dir.path()).unwrap();
     let mut registry = Registry::new();
     register_builtin_tools(&mut registry);
@@ -174,6 +235,10 @@ pub fn run_scripted_protocol(
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
+            edit_approver: approver,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -186,12 +251,15 @@ pub fn run_scripted_protocol(
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            hooks: None,
         },
         &mut sink,
         Some("do the task"),
     ))
     .unwrap();
     inspect(&provider);
+    // Inspect the workspace before the tempdir is dropped and deleted.
+    check_dir(dir.path());
 
     let records: Vec<TraceRecord> = TraceReader::open(&trace_path)
         .unwrap()

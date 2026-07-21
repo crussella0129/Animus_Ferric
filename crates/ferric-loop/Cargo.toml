@@ -12,11 +12,16 @@ ferric-provider = { workspace = true }
 ferric-guard = { workspace = true }
 ferric-tools = { workspace = true }
 ferric-trace = { workspace = true }
+ferric-vcs = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 regex.workspace = true
+tracing = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
 futures-executor = { workspace = true }
 tempfile = { workspace = true }
+# Sprint 72 (ADR-063): a buffer-writer subscriber lets the guard-trip test
+# assert the harness actually emits the diagnostic WARN. Dev-only.
+tracing-subscriber = { workspace = true }

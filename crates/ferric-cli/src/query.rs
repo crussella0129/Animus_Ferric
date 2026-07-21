@@ -22,7 +22,7 @@ use ferric_provider::{Capabilities, Completion, MockProvider, Provider, Sampling
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink};
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 use crate::backend::create_provider;
 use crate::backend::{BackendArg, BackendOpts};
 
@@ -143,6 +143,24 @@ pub struct QueryArgs {
     /// Suppress live streaming of text and tool activity (default: streaming is ON).
     #[arg(long)]
     pub no_stream: bool,
+
+    /// Execute the research phase before the planner loop begins.
+    /// Queries the Web and Local FS to populate the context with quarantined
+    /// digests, gating sink access based on the TaintSet.
+    #[arg(long)]
+    pub research: Option<String>,
+
+    /// The SinkAction for the CaMeL sink policy. Deny | RequireApproval | Warn.
+    /// Defaults to Deny.
+    #[arg(long, default_value = "deny")]
+    pub sink_action: String,
+
+    /// Accept-edits mode (ADR-070): pause before each mutating tool call
+    /// (write/edit/delete/exec), show a preview, and require `y` to apply it.
+    /// A rejected edit is reported to the model, which can adapt. Requires an
+    /// interactive stdin; not for `--stream` or piped batch runs.
+    #[arg(long)]
+    pub accept_edits: bool,
 }
 
 /// The shared subset of `QueryArgs` (everything except `prompt`/`files`) that
@@ -161,10 +179,10 @@ pub(crate) struct RunConfigArgs {
     pub prompts_dir: Option<PathBuf>,
     pub max_ring: Option<u8>,
     pub profile_dir: PathBuf,
-    /// `--model` (openai backend) or `--model-file` (mistral backend) — the key
     /// used to look up a persisted profile record (ADR-029). `None` skips the
     /// lookup entirely (matches today's behavior when neither flag is set).
     pub model_key: Option<String>,
+    pub hooks: Option<ferric_core::HooksConfig>,
 }
 
 /// Everything derived from `RunConfigArgs` that a loop execution needs, minus
@@ -183,6 +201,7 @@ pub(crate) struct RunConfig {
     /// (which owns the trace sink, not yet open when this is built) is
     /// responsible for recording it as a `Note` once a sink exists.
     pub prompt_composition_error: Option<String>,
+    pub hooks: Option<ferric_core::HooksConfig>,
 }
 
 pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
@@ -210,12 +229,6 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
                 supports_constraint: true,
                 exposes_logits: false,
                 supports_media: true,
-            },
-            BackendArg::Mistral => Capabilities {
-                supports_native_tool_calls: false,
-                supports_constraint: false,
-                exposes_logits: false,
-                supports_media: false,
             },
         }
     };
@@ -314,6 +327,7 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
         system_prompt,
         lineage,
         prompt_composition_error,
+        hooks: a.hooks.clone(),
     }
 }
 
@@ -415,7 +429,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
 
     let mut config = build_run_config(&RunConfigArgs {
         mock: args.mock,
-        backend: args.backend_opts.backend.unwrap_or(BackendArg::Mistral),
+        backend: args.backend_opts.backend.unwrap_or(BackendArg::Openai),
         params_b: resolved_params_b,
         quant: resolved_quant,
         family: resolved_family,
@@ -426,14 +440,11 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         max_ring: resolved_max_ring,
         profile_dir: resolved_profile_dir,
         // C-001 (plan-critic): derived from the POST-merge, config-resolved
-        // `model`/`model_file` (already merged above) — a config-only-set
+        // `model` (already merged above) — a config-only-set
         // `model` must still hit the ADR-029 profile lookup, not silently
         // skip it because `model_key` was built from raw CLI args.
-        model_key: args
-            .backend_opts
-            .model
-            .clone()
-            .or_else(|| args.backend_opts.model_file.clone()),
+        model_key: args.backend_opts.model.clone(),
+        hooks: cfg.hooks.clone(),
     });
 
     // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
@@ -554,9 +565,42 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         ferric_provider::StreamDelta::ToolCompleted { name, summary } => {
             println!("✓ {name}: {summary}");
         }
+        ferric_provider::StreamDelta::Thought(t) => {
+            print!("\x1b[90m{t}\x1b[0m"); // Dim ANSI color
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            streamed_anything.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     };
     let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if resolved_stream {
         Some(&sink_fn)
+    } else {
+        None
+    };
+
+    // Accept-edits (ADR-070): an interactive approver that previews each mutating
+    // call and requires an explicit `y` (empty/`n`/EOF reject — conservative).
+    // `None` unless --accept-edits, so default behavior is unchanged.
+    let approver = |preview: &ferric_loop::EditPreview| -> bool {
+        eprintln!(
+            "\n\u{2500}\u{2500} proposed: {} \u{2500}\u{2500}",
+            preview.tool
+        );
+        for t in &preview.targets {
+            eprintln!("   target: {t}");
+        }
+        let detail: String = preview.detail.chars().take(2000).collect();
+        eprintln!("{detail}");
+        eprint!("apply this edit? [y/N] ");
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        let mut line = String::new();
+        match std::io::stdin().read_line(&mut line) {
+            Ok(0) => false,
+            Ok(_) => matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+            Err(_) => false,
+        }
+    };
+    let approver_ref: Option<ferric_loop::EditApprover<'_>> = if args.accept_edits {
+        Some(&approver)
     } else {
         None
     };
@@ -577,6 +621,16 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             media_parts,
             stream_sink,
             resume,
+            ferric_guard::TaintSet::new(),
+            match args.sink_action.to_lowercase().as_str() {
+                "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
+                "requireapproval" => {
+                    ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval)
+                }
+                _ => ferric_guard::SinkPolicy::deny(),
+            },
+            config.hooks.clone(),
+            approver_ref,
         )
     } else {
         drive_real(
@@ -593,6 +647,17 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             media_parts,
             stream_sink,
             resume,
+            ferric_guard::TaintSet::new(),
+            match args.sink_action.to_lowercase().as_str() {
+                "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
+                "requireapproval" => {
+                    ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval)
+                }
+                _ => ferric_guard::SinkPolicy::deny(),
+            },
+            args.research.clone(),
+            config.hooks.clone(),
+            approver_ref,
         )
     };
 
@@ -649,6 +714,13 @@ pub(crate) fn mock_provider(protocol: ActionProtocol) -> MockProvider {
         ActionProtocol::ConstrainedJson => vec![
             json_completion("write_file", &write_args),
             json_completion(ferric_loop::TASK_COMPLETE, &done_args),
+        ],
+        ActionProtocol::Plan => vec![
+            json_completion("grep_search", &json!({"query": "mock", "path": "."})),
+            json_completion(
+                ferric_loop::SUBMIT_PLAN,
+                &json!({"plan": "mock plan complete"}),
+            ),
         ],
         ActionProtocol::TextXml => vec![
             xml_completion("write_file", &write_args),
@@ -728,9 +800,15 @@ pub(crate) async fn run_with_provider(
     media: Vec<MediaPart>,
     stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     resume: Option<ferric_loop::ReplayedState>,
+    taint_set: ferric_guard::TaintSet,
+    sink_policy: ferric_guard::SinkPolicy,
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    hooks: Option<ferric_core::HooksConfig>,
+    edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     run(
         RunArgs {
+            cancel_flag,
             provider,
             registry,
             workspace,
@@ -743,6 +821,10 @@ pub(crate) async fn run_with_provider(
             media,
             stream_sink,
             resume,
+            taint_set,
+            sink_policy,
+            hooks,
+            edit_approver,
         },
         sink,
         prompt,
@@ -766,6 +848,10 @@ fn drive_mock(
     media: Vec<MediaPart>,
     stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     resume: Option<ferric_loop::ReplayedState>,
+    taint_set: ferric_guard::TaintSet,
+    sink_policy: ferric_guard::SinkPolicy,
+    hooks: Option<ferric_core::HooksConfig>,
+    edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     futures_executor::block_on(run_with_provider(
         provider,
@@ -781,10 +867,15 @@ fn drive_mock(
         media,
         stream_sink,
         resume,
+        taint_set,
+        sink_policy,
+        None,
+        hooks,
+        edit_approver,
     ))
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     args: &QueryArgs,
@@ -800,10 +891,54 @@ fn drive_real(
     media: Vec<MediaPart>,
     stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     resume: Option<ferric_loop::ReplayedState>,
+    mut taint_set: ferric_guard::TaintSet,
+    sink_policy: ferric_guard::SinkPolicy,
+    research_query: Option<String>,
+    hooks: Option<ferric_core::HooksConfig>,
+    edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
         let provider_box = create_provider(&args.backend_opts).await?;
+        let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_flag_clone = cancel_flag.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                cancel_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                eprintln!("\n[Received Ctrl-C, interrupting gracefully...]");
+            }
+        });
+
+        let mut effective_prompt = prompt.map(|s| s.to_string());
+        if let Some(rq) = research_query {
+            // Perform research
+            let local_retriever = ferric_research::LocalFsRetriever::with_caps(
+                workspace.root().to_path_buf(),
+                50,
+                1024 * 1024,
+            );
+            let retrievers: Vec<&dyn ferric_research::Retriever> = vec![&local_retriever];
+            match ferric_research::research_all(&retrievers, provider_box.as_ref(), &rq).await {
+                Ok(multi) => {
+                    if !multi.digests.is_empty() {
+                        let mut cx = String::new();
+                        cx.push_str("\n\n<research_context>\n");
+                        for d in multi.digests {
+                            taint_set.taint_str(&d.source);
+                            cx.push_str(&d.summary);
+                            cx.push_str("\n---\n");
+                        }
+                        cx.push_str("</research_context>\n");
+                        let p = effective_prompt.unwrap_or_default();
+                        effective_prompt = Some(format!("{}{}", p, cx));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("research failed: {e}");
+                }
+            }
+        }
+
         run_with_provider(
             provider_box.as_ref(),
             registry,
@@ -814,16 +949,21 @@ fn drive_real(
             system_prompt,
             lineage,
             sink,
-            prompt,
+            effective_prompt.as_deref(),
             media,
             stream_sink,
             resume,
+            taint_set,
+            sink_policy,
+            Some(cancel_flag),
+            hooks,
+            edit_approver,
         )
         .await
     })
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
+#[cfg(not(feature = "backend-openai"))]
 #[allow(clippy::too_many_arguments)]
 fn drive_real(
     _args: &QueryArgs,
@@ -839,9 +979,14 @@ fn drive_real(
     _media: Vec<MediaPart>,
     _stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     _resume: Option<ferric_loop::ReplayedState>,
+    _taint_set: ferric_guard::TaintSet,
+    _sink_policy: ferric_guard::SinkPolicy,
+    _research_query: Option<String>,
+    _hooks: Option<ferric_core::HooksConfig>,
+    _edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
+         rebuild with `cargo build --features backend-openai`, or use --mock"
         .to_string())
 }
 
@@ -911,6 +1056,11 @@ mod tests {
             Vec::new(),
             None,
             None,
+            ferric_guard::TaintSet::new(),
+            ferric_guard::SinkPolicy::deny(),
+            None,
+            None,
+            None,
         ))
         .unwrap();
 
@@ -924,7 +1074,7 @@ mod tests {
     fn base_run_config_args() -> RunConfigArgs {
         RunConfigArgs {
             mock: true,
-            backend: BackendArg::Mistral,
+            backend: BackendArg::Openai,
             params_b: 8.0,
             quant: "Q4_K_M".to_string(),
             family: "unknown".to_string(),
@@ -938,6 +1088,7 @@ mod tests {
             max_ring: None,
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
+            hooks: None,
         }
     }
 

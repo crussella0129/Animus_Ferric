@@ -24,7 +24,7 @@ use crate::query::{
     run_with_provider,
 };
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 use tokio::runtime::Runtime;
 
 /// One incoming line, parsed. A request expects a response (`id` present,
@@ -52,6 +52,13 @@ pub struct RpcResponse {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<RpcError>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RpcNotification {
+    pub jsonrpc: &'static str,
+    pub method: String,
+    pub params: Value,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,7 +126,7 @@ pub fn handle_initialize(id: Value) -> RpcResponse {
         id,
         serde_json::json!({
             "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {"tools": {}},
+            "capabilities": {"tools": {}, "prompts": {}},
             "serverInfo": {"name": "ferric", "version": env!("CARGO_PKG_VERSION")},
         }),
     )
@@ -230,6 +237,12 @@ pub struct McpArgs {
     /// nor a config file's `profile_dir` is set (T-3805).
     #[arg(long)]
     pub profile_dir: Option<PathBuf>,
+
+    /// Resume an interrupted, still-incomplete session by replaying its
+    /// trace (sprint 55). Same semantics as `ferric query --resume`: the
+    /// first `ferric_query` call to this server will continue the task.
+    #[arg(long)]
+    pub resume: Option<PathBuf>,
 }
 
 /// How `McpServer` drives a loop turn. `Mock` needs no ambient async runtime
@@ -239,7 +252,7 @@ pub struct McpArgs {
 /// too — see `run_with_provider`'s doc comment).
 pub(crate) enum Executor {
     Mock,
-    #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+    #[cfg(feature = "backend-openai")]
     Real(Runtime),
 }
 
@@ -253,6 +266,7 @@ pub(crate) struct McpServer {
     pub executor: Executor,
     pub declared: Vec<Modality>,
     pub trace_dir: PathBuf,
+    pub resume: std::sync::Mutex<Option<ferric_loop::ReplayedState>>,
 }
 
 fn tool_content(text: String, is_error: bool) -> Value {
@@ -274,8 +288,50 @@ impl McpServer {
             "initialize" => handle_initialize(id),
             "tools/list" => handle_tools_list(id),
             "tools/call" => self.handle_tools_call(id, &req.params),
+            "prompts/list" => self.handle_prompts_list(id),
+            "prompts/get" => self.handle_prompts_get(id, &req.params),
             other => RpcResponse::error(id, METHOD_NOT_FOUND, format!("unknown method: {other}")),
         })
+    }
+
+    fn handle_prompts_list(&self, id: Value) -> RpcResponse {
+        let skills = crate::skills::load_skills(self.workspace.root());
+        let prompts: Vec<Value> = skills
+            .into_iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "arguments": []
+                })
+            })
+            .collect();
+        RpcResponse::success(id, serde_json::json!({ "prompts": prompts }))
+    }
+
+    fn handle_prompts_get(&self, id: Value, params: &Value) -> RpcResponse {
+        let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+        let skills = crate::skills::load_skills(self.workspace.root());
+
+        if let Some(skill) = skills.into_iter().find(|s| s.name == name) {
+            RpcResponse::success(
+                id,
+                serde_json::json!({
+                    "description": skill.description,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": skill.content
+                            }
+                        }
+                    ]
+                }),
+            )
+        } else {
+            RpcResponse::error(id, INVALID_PARAMS, format!("unknown prompt: {name}"))
+        }
     }
 
     fn handle_tools_call(&self, id: Value, params: &Value) -> RpcResponse {
@@ -325,12 +381,14 @@ impl McpServer {
             }
         };
 
+        let resume_state = self.resume.lock().unwrap().take();
+
         // A `ProviderError` stop is the only failure mode surfaced as
         // `isError:true` — the same convention `ferric query`'s CLI already
         // uses (`StopReason::ProviderError` ⇒ `ExitCode::FAILURE`, every other
         // stop reason ⇒ success). This keeps the two surfaces' semantics
         // aligned rather than inventing a second failure taxonomy.
-        match self.run_one(&mut sink, &effective_prompt, media_parts) {
+        match self.run_one(&mut sink, &effective_prompt, media_parts, resume_state) {
             Ok(outcome) if outcome.stop != StopReason::ProviderError => RpcResponse::success(
                 id,
                 tool_content(outcome.final_text.unwrap_or_default(), false),
@@ -353,10 +411,26 @@ impl McpServer {
         sink: &mut JsonlSink,
         prompt: &str,
         media: Vec<ferric_core::MediaPart>,
+        resume: Option<ferric_loop::ReplayedState>,
     ) -> Result<ferric_loop::LoopOutcome, String> {
-        // MCP does not stream this sprint (ADR-046: stdout is reserved
-        // exclusively for JSON-RPC frames; partial-text needs MCP's own
-        // notification mechanism, a separate future increment).
+        // MCP streams partial text via custom JSON-RPC notification.
+        let sink_fn = |d: ferric_provider::StreamDelta| match d {
+            ferric_provider::StreamDelta::Text(t) | ferric_provider::StreamDelta::Thought(t) => {
+                let note = RpcNotification {
+                    jsonrpc: "2.0",
+                    method: "ferric/streamDelta".to_string(),
+                    params: serde_json::json!({ "text": t }),
+                };
+                if let Ok(line) = serde_json::to_string(&note) {
+                    let mut stdout = std::io::stdout().lock();
+                    let _ = std::io::Write::write_all(&mut stdout, line.as_bytes());
+                    let _ = std::io::Write::write_all(&mut stdout, b"\n");
+                    let _ = std::io::Write::flush(&mut stdout);
+                }
+            }
+            _ => {}
+        };
+
         let fut = run_with_provider(
             self.provider.as_ref(),
             &self.config.registry,
@@ -369,15 +443,17 @@ impl McpServer {
             sink,
             Some(prompt),
             media,
+            Some(&sink_fn),
+            resume,
+            ferric_guard::TaintSet::new(),
+            ferric_guard::SinkPolicy::deny(),
             None,
-            // ADR-046: McpServer's launch-time-fixed design has no per-call
-            // trace-file selection — `ferric mcp --resume` is out of scope
-            // (T-3906, sprint 39).
+            self.config.hooks.clone(),
             None,
         );
         match &self.executor {
             Executor::Mock => futures_executor::block_on(fut),
-            #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+            #[cfg(feature = "backend-openai")]
             Executor::Real(rt) => rt.block_on(fut),
         }
     }
@@ -428,7 +504,7 @@ impl McpServer {
             mock: args.mock,
             backend: backend_opts
                 .backend
-                .unwrap_or(crate::backend::BackendArg::Mistral),
+                .unwrap_or(crate::backend::BackendArg::Openai),
             params_b: resolved_params_b,
             quant: resolved_quant,
             family: resolved_family,
@@ -441,11 +517,31 @@ impl McpServer {
             // C-001 (plan-critic): derived from the POST-merge, config-
             // resolved `model`/`model_file` (already merged above into
             // `backend_opts`).
-            model_key: backend_opts
-                .model
-                .clone()
-                .or_else(|| backend_opts.model_file.clone()),
+            model_key: backend_opts.model.clone(),
+            hooks: None,
         });
+
+        // T-3905 (sprint 39 / 55): `--resume <path>` replays an interrupted, still-
+        // incomplete session. Resolved here and passed to the first `ferric_query` call.
+        let resume_state = match &args.resume {
+            Some(path) => match ferric_loop::replay(path) {
+                Ok(replayed) => {
+                    if replayed.protocol != config.protocol {
+                        return Err(format!(
+                            "cannot resume {}: recorded protocol {:?} does not match this \
+                             invocation's resolved protocol {:?}",
+                            path.display(),
+                            replayed.protocol,
+                            config.protocol
+                        ));
+                    }
+                    Some(replayed)
+                }
+                Err(e) => return Err(format!("cannot resume {}: {e}", path.display())),
+            },
+            None => None,
+        };
+
         // No trace sink exists yet at launch (each tools/call opens its own),
         // so a composition failure — and any malformed-config diagnostic
         // (C-004) — is surfaced once here rather than dropped, or (unlike
@@ -470,6 +566,17 @@ impl McpServer {
             eprintln!("Animus.md applied ({} chars)", content.len());
         }
 
+        if resume_state.is_some()
+            && (config.lineage.is_some()
+                || config.prompt_composition_error.is_some()
+                || animus_md.is_some())
+        {
+            eprintln!(
+                "note: --resume ignores --prompts-dir/Animus.md for the system message \
+                 (frozen from the replayed session)"
+            );
+        }
+
         let trace_dir = workspace_root.join(".ferric").join("trace");
         std::fs::create_dir_all(&trace_dir)
             .map_err(|e| format!("cannot create trace dir {}: {e}", trace_dir.display()))?;
@@ -488,6 +595,7 @@ impl McpServer {
             executor,
             declared,
             trace_dir,
+            resume: std::sync::Mutex::new(resume_state),
         })
     }
 
@@ -516,7 +624,7 @@ impl McpServer {
     }
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 fn build_real_provider(
     backend_opts: &BackendOpts,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
@@ -525,12 +633,12 @@ fn build_real_provider(
     Ok((provider, Executor::Real(runtime)))
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
+#[cfg(not(feature = "backend-openai"))]
 fn build_real_provider(
     _backend_opts: &BackendOpts,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
     Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
+         rebuild with `cargo build --features backend-openai`, or use --mock"
         .to_string())
 }
 
@@ -574,14 +682,9 @@ mod tests {
             workspace: Some(ws.to_path_buf()),
             backend_opts: crate::backend::BackendOpts {
                 backend: None,
-                model_dir: None,
-                model_file: None,
                 model: None,
                 api_base: None,
                 api_key: None,
-                chat_template: None,
-                tokenizer_json: None,
-                tok_model_id: None,
             },
             params_b: None,
             quant: None,
@@ -594,6 +697,7 @@ mod tests {
             modality: None,
             max_ring: None,
             profile_dir: None,
+            resume: None,
         }
     }
 
@@ -730,7 +834,7 @@ mod tests {
         let workspace = Workspace::new(dir).unwrap();
         let config = crate::query::build_run_config(&crate::query::RunConfigArgs {
             mock: true,
-            backend: crate::backend::BackendArg::Mistral,
+            backend: crate::backend::BackendArg::Openai,
             params_b: 1.2,
             quant: "Q4_K_M".to_string(),
             family: "unknown".to_string(),
@@ -741,6 +845,7 @@ mod tests {
             max_ring: None,
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
+            hooks: None,
         });
         let trace_dir = dir.join(".ferric").join("trace");
         std::fs::create_dir_all(&trace_dir).unwrap();
@@ -751,6 +856,7 @@ mod tests {
             executor: Executor::Mock,
             declared: Vec::new(),
             trace_dir,
+            resume: std::sync::Mutex::new(None),
         }
     }
 
@@ -956,6 +1062,7 @@ mod tests {
         async fn complete(
             &self,
             _request: ferric_provider::CompletionRequest,
+            _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         ) -> Result<ferric_provider::Completion, ferric_provider::ProviderError> {
             use ferric_core::{Role, ToolCall};
             let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);

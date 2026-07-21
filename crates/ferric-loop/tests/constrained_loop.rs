@@ -20,9 +20,11 @@ fn constrained_json_dispatches_tool() {
     let result = run_scripted_protocol(
         vec![
             json_completion(
-                json!({"tool": "write_file", "args": {"path": "out.txt", "content": "hi"}}),
+                json!({"thought": "...", "tool": "write_file", "args": {"path": "out.txt", "content": "hi"}}),
             ),
-            json_completion(json!({"tool": "task_complete", "args": {"summary": "wrote out.txt"}})),
+            json_completion(
+                json!({"thought": "...", "tool": "task_complete", "args": {"summary": "wrote out.txt"}}),
+            ),
         ],
         &nano_policy(),
         ActionProtocol::ConstrainedJson,
@@ -62,7 +64,7 @@ fn constrained_json_carries_action_schema() {
     // tools + task_complete.
     run_scripted_protocol(
         vec![json_completion(
-            json!({"tool": "task_complete", "args": {"summary": "done"}}),
+            json!({"thought": "...", "tool": "task_complete", "args": {"summary": "done"}}),
         )],
         &nano_policy(),
         ActionProtocol::ConstrainedJson,
@@ -82,4 +84,54 @@ fn constrained_json_carries_action_schema() {
             }
         },
     );
+}
+
+#[test]
+fn plan_mode_dispatches_read_tools_and_terminates() {
+    let result = run_scripted_protocol(
+        vec![
+            json_completion(
+                json!({"thought": "...", "tool": "search_files", "args": {"query": "foo", "path": "."}}),
+            ),
+            json_completion(
+                json!({"thought": "...", "tool": "submit_plan", "args": {"plan": "found foo"}}),
+            ),
+        ],
+        &nano_policy(),
+        ActionProtocol::Plan,
+        |provider| {
+            for req in provider.requests() {
+                assert!(req.tools.is_empty(), "plan requests carry no tools block");
+                let c = req.constraint.as_ref().unwrap();
+                match c {
+                    Constraint::JsonSchema(schema) => {
+                        let text = schema.to_string();
+                        assert!(text.contains("search_files"));
+                        assert!(text.contains("submit_plan"));
+                        assert!(
+                            !text.contains("write_file"),
+                            "write_file should be excluded from plan mode"
+                        );
+                    }
+                    _ => panic!("Expected JsonSchema constraint"),
+                }
+            }
+            let second = &provider.requests()[1];
+            assert!(second.messages.iter().any(|m| {
+                m.role == Role::User
+                    && m.text
+                        .as_deref()
+                        .unwrap_or_default()
+                        .starts_with("[tool_result for search_files]")
+            }));
+        },
+    );
+    assert_eq!(result.outcome.stop, StopReason::PlanSubmitted);
+    assert_eq!(result.outcome.final_text.as_deref(), Some("found foo"));
+
+    let ks = kinds(&result.records);
+    assert!(ks.contains(&"constraint_applied"));
+    assert!(ks.contains(&"tool_call"));
+    assert!(ks.contains(&"tool_result"));
+    assert_eq!(session_end_reason(&result.records), "plan_submitted");
 }

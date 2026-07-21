@@ -762,7 +762,13 @@
 - **Commit:** `b0e0b88`
 
 ## T-4204 (sprint 42)
-- **Description:** **ADR-052 docs wrap-up.** `main.rs`'s surface doc updated (chat mode is no longer "future/unbuilt" — `ferric chat` now listed alongside `query`/`mcp`, with the hybrid talk/`/do`-escalate boundary + ADR-052 reference). README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid shape, the two plan-critic load-bearing catches, the dual structural-safety proof); the stale "Next" line replaced with a fresh backlog preview. The Sprint 42 backlog section rewritten from its in-progress checklist to a completed summary (matching sprints 38–41's precedent), the ADR-011-revision chat item marked built.
+- **Description:** **ADR-052 docs wrap-up.** `main.rs`'s surface doc updated. 
+- **Description:** **ADR-053 — Animus Launch inc 1 (scaffolder + interview).** Records the architectural shift: Launch is LLM-free and user-run, so `ferric-guard`'s containment does not apply (the only safety property is refuse-to-clobber). Covers the `animus-launch` crate (`scaffold()` refuses non-empty dirs, creates root/`agent-tasks/`, runs `git init` → `commit` → branches) and the `ferric launch` CLI (flags > stdin interview). Mentions the 14 new tests (6 unit, 5 integration for clobber edges, 3 CLI).
+
+- **Description:** **ADR-054 — Event-Sourced Projector Refactor (Sprint 44).** Records the decoupling of protocol formatting from state reconstruction. A new pure `TraceProjector` struct (`crates/ferric-loop/src/projector.rs`) centralizes all message generation (`repetition_warn_message`, `truncation_retry_message`, etc.) from raw `Event` streams. `run.rs` now drives the projector during live execution, and `replay.rs` streams its parsed events through the same projector to hydrate state for `--resume`. Fixes a trailing-turn numbering bug in `compact.rs` caused by relying on uncommitted pending turns. Ensures 100% byte-for-byte fidelity across trace generation and replay.
+
+- **Description:** **ADR-055 — Ornstein Web Retriever (Sprint 45).** Implemented the online research plane (Increment 4). A new `WebRetriever` fetches URLs via `wget` running in a hardened microVM-class Docker sandbox. The sandbox (`crates/ferric-research/src/sandbox.rs`) applies `--cap-drop=ALL` and `--security-opt no-new-privileges`, optionally using `--runtime=runsc` if available. Outbound traffic is restricted via a new `allowlist-proxy` (Squid) service in `docker-compose.yml`, completing the "lethal trifecta" defense by preventing network pivoting or exfiltration of untrusted data.
+README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid shape, the two plan-critic load-bearing catches, the dual structural-safety proof); the stale "Next" line replaced with a fresh backlog preview. The Sprint 42 backlog section rewritten from its in-progress checklist to a completed summary (matching sprints 38–41's precedent), the ADR-011-revision chat item marked built.
 - **Completed:** 2026-07-09 (build phase)
 - **Files modified:** README.md, crates/ferric-cli/src/main.rs, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
 - **Commit:** `2ef9f4c`
@@ -796,3 +802,80 @@
 - **Completed:** 2026-07-09 (build phase)
 - **Files modified:** README.md, crates/ferric-cli/src/main.rs, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
 - **Commit:** `676d155`
+
+## T-5801 (sprint 58)
+- **Description:** Implement `GitRead` (Ring 1) and `GitWrite` (Ring 2) built-in tools. Curated subset of git commands via subprocess with safe argument extraction for workspace constraints.
+- **Completed:** 2026-07-15
+- **Files modified:** crates/ferric-tools/src/builtin/mod.rs, crates/ferric-tools/src/builtin/git_read.rs, crates/ferric-tools/src/builtin/git_write.rs, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** `023edb3`
+## T-5901 (sprint 59)
+- **Description:** Implemented the `shell_exec` builtin tool and extended the `ferric-guard` permission model to enforce command string static screening (ADR-045). Wired `SinkPolicy` into `Registry::execute` for CaMeL taint validation. All unit tests pass, verifying the timeout execution capability, output cap string truncation, and security checks.
+- **Completed:** 2026-07-15 (build phase)
+- **Files modified:** crates/ferric-guard/src/{checker.rs,lib.rs}, crates/ferric-tools/src/spec.rs, crates/ferric-tools/src/registry.rs, crates/ferric-tools/src/builtin/{shell_exec.rs,mod.rs}, crates/ferric-tools/tests/builtin_file_tools.rs
+- **Commit:** (see git log)
+
+## T-6001 (sprint 60)
+- **Description:** Remove mistralrs backend and relax --model requirement for container usage.
+- **Completed:** 2026-07-15
+- **Files modified:** crates/ferric-cli/src/backend.rs, README.md, demo_commands_cheatsheet.md
+- **Commit:** pending
+
+-   [ x ]   E d i t   c r a t e s / f e r r i c - l o o p / s r c / g r a m m a r . r s   t o   a d d   t h o u g h t   f i e l d  
+ -   [ x ]   E d i t   c r a t e s / f e r r i c - l o o p / s r c / r u n . r s   t o   u p d a t e   D E F A U L T _ S Y S T E M _ P R O M P T  
+ -   [ x ]   E d i t   c r a t e s / f e r r i c - t o o l s / s r c / b u i l t i n / w r i t e _ f i l e . r s   t o   c h e c k   i s _ d i r  
+ 
+
+## T-7201 (sprint 72)
+- **Description:** Observability via `tracing`. Added workspace `tracing`/`tracing-subscriber` deps; `ferric-cli` owns a stderr, quiet-by-default (WARN) subscriber with a global `-v/-vv/-vvv` flag and `FERRIC_LOG`/`RUST_LOG` override (pure, unit-tested level resolution). Instrumented `ferric-loop` (turn span, guard-trip/hook/provider/retry WARNs, tool-dispatch DEBUGs, loop-finished INFO), `ferric-tools` registry chokepoint (guard-denial WARNs incl. the previously-TODO sink Warn path, handler-timing DEBUG), and the `ferric-provider` openai valve (request shape + network/HTTP-error, dep gated on `backend-openai`). Left `ferric-guard` pure by design. Added a buffer-writer capture test (guard trip emits WARN; clean run stays silent) and CLI level-resolution unit tests. Bundled: removed ~4.3MB of committed Windows build artifacts (`fix_*.exe/.pdb`, `payload.json`, `result.txt`, `ferric-mock.txt`) + extended `.gitignore`; reconciled two stale ledger items (ferric-prompt templating -> oovra; Retriever trait already shipped).
+- **Completed:** 2026-07-17
+- **Files modified:** Cargo.toml, .gitignore, crates/ferric-cli/src/{main.rs,logging.rs}, crates/ferric-cli/Cargo.toml, crates/ferric-loop/src/{run.rs,backoff.rs}, crates/ferric-loop/Cargo.toml, crates/ferric-loop/tests/tracing_capture.rs, crates/ferric-tools/src/registry.rs, crates/ferric-tools/Cargo.toml, crates/ferric-provider/src/openai.rs, crates/ferric-provider/Cargo.toml, README.md, decisions.md, agent-tasks/agent-tasks.md
+- **Commit:** pending
+
+
+## T-7301 (sprint 73)
+- **Description:** Agent Delegation via ICM (Interpretable Context Methodology), increment 1. New `ferric-icm` library crate: `StageContract`/`parse_contract` (tolerant Inputs/Process/Outputs markdown parser), `IcmWorkspace::discover` (numeric stage ordering, Layer 0/1 pickup), guard-checked `compose_stage`/`plan` (five-layer scoped context -> `OrchestrationPlan` with provenance; every referenced path resolved through `ferric-guard::Workspace` so contracts cannot escape the workspace), and LLM-free refuse-to-clobber `scaffold_workspace`. New `ferric icm` subcommand (`init` scaffolds a runnable 3-stage workspace; `plan [--show-context]` prints the delegation plan with no model). 16 tests (4 inline parser, 9 workspace integration incl. boundary-escape refusal, 3 CLI black-box). Docs: docs/icm.md, ADR-064. Increment 2 (live per-stage loop execution + review gates) deferred.
+- **Completed:** 2026-07-17
+- **Files modified:** Cargo.toml, crates/ferric-icm/{Cargo.toml,src/lib.rs,tests/workspace.rs}, crates/ferric-cli/{Cargo.toml,src/main.rs,src/icm.rs,tests/cli.rs}, docs/icm.md, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending
+
+
+## T-7401 (sprint 74)
+- **Description:** ICM increment 2 — live per-stage execution. Added `ferric icm run <workspace>`: drives each stage's composed context through the constrained loop via `run_with_provider` (reusing guard/loop-guards/compaction/hooks/trace), in numeric order, each stage contained to its OWN `stages/NN_*/` folder (enforced containment, stronger than the paper). Halt-on-failure (inspects the LoopOutcome terminator), human review gates between stages (`--auto` skips; `--from`/`--to` range; `--mock` offline), fresh mock per stage (single-use scripted provider), config+real-provider built once and reused. Enhanced `ferric-icm::compose_stage` to append the contract Outputs directive so a live agent knows where to write. Traces land centrally at `<ws>/.ferric/trace/`. 4 new tests (full pipeline in-order + containment, review-gate `q` stop, stage range, compose outputs directive). Docs: docs/icm.md updated, ADR-065.
+- **Completed:** 2026-07-17
+- **Files modified:** crates/ferric-icm/src/lib.rs, crates/ferric-icm/tests/workspace.rs, crates/ferric-cli/src/icm.rs, crates/ferric-cli/tests/cli.rs, docs/icm.md, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending
+
+
+## T-7501 (sprint 75)
+- **Description:** Agentic Cron Jobs. New `ferric-cron` pure crate: `parse_schedule` (Ns/Nm/Nh/Nd + hourly/daily/weekly), `parse_job`/`load_jobs` (`.ferric/cron/*.toml`), `CronState` (last-run JSON), `is_due`/`due_jobs`/`next_due_ms` (clock injected, fully unit-testable). New `ferric cron` subcommand: `add` (scaffold a job file, refuse-to-overwrite), `list` (schedule + last-run/next-due), `run [--dry-run]` (one tick — run due jobs, state advances on attempt), `watch [--interval]` (foreground loop until Ctrl-C, reusing the sprint-65 tokio ctrl_c pattern). Jobs run a bounded enum of Ferric subcommands (`dream`/`query`, `query` supports `mock`), executed by shelling out to `current_exe()` in the workspace — never arbitrary shell (narrower than hooks). 14 tests (10 pure: schedule units/aliases/errors, due logic, state round-trip, job parse/reject; 4 CLI: add+list, run executes mock query + advances state, dry-run, add rejects bad input). Docs: docs/cron.md, ADR-066.
+- **Completed:** 2026-07-17
+- **Files modified:** Cargo.toml, crates/ferric-cron/{Cargo.toml,src/lib.rs}, crates/ferric-cli/{Cargo.toml,src/main.rs,src/cron.rs,tests/cli.rs}, docs/cron.md, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending
+
+
+## T-7601 (sprint 76)
+- **Description:** Calendar cron expressions for agentic cron (extends ADR-066). `Schedule` refactored to an enum (`Interval(ms)` | `Cron(CronExpr)`); `parse_schedule` dispatches on shape (5 whitespace fields = cron, else interval); added `parse_interval_ms` for the watch tick. New `CronExpr` parses standard 5-field expressions (min/hour/dom/month/dow) with `*`/number/range/list/step and the Vixie dom-OR-dow rule; evaluated in UTC via chrono (epoch->civil), so due-ness stays a pure function of (expr, epoch-ms). Fire-once-per-minute semantics; `is_due`/`next_due_ms` handle both variants (`next_due_ms` gained a `now` param + bounded ~366d forward scan for cron). Added chrono to the allowlist (already in-tree via oovra, zero new build cost). 7 new tests (cron detect/describe, field bounds rejection, daily-at-time fire window, weekday range, step/list, next-due scan; + 1 CLI). Docs: docs/cron.md updated, ADR-067.
+- **Completed:** 2026-07-18
+- **Files modified:** Cargo.toml, crates/ferric-cron/{Cargo.toml,src/lib.rs}, crates/ferric-cli/{src/cron.rs,tests/cli.rs}, docs/cron.md, decisions.md, README.md
+- **Commit:** pending
+
+
+## T-7701 (sprint 77)
+- **Description:** `.ferricignore` dynamic denylist (ferric-guard). New pure `IgnoreList` (`ignore.rs`) parses a gitignore-flavored `.ferricignore` (blank/`#` skipped) into segment / basename-glob (simple `*`, no dep) / path-prefix matchers. `Workspace::new` loads `<root>/.ferricignore` once (absent = empty no-op) and exposes `ignore()`. New `check_with_ignore(perm, path, root, ignore)` folds it into the guard as **additive-only** denials: the hardcoded ADR-005 floor is evaluated first and short-circuits, so a pattern can only add a denial, never relax one; an ignored path is off-limits at read/write/execute. Wired at the single registry chokepoint. Added `.ferricignore` to `DENIED_WRITE_FILES` so the model cannot edit its own policy. 8 tests (6 unit: parse/segment/glob/path-prefix/empty/reason; 2 registry integration: ignored paths denied read+write + non-ignored unaffected, policy file write-protected). Docs: ADR-068, README security note.
+- **Completed:** 2026-07-18
+- **Files modified:** crates/ferric-guard/src/{lib.rs,ignore.rs,checker.rs,denylist.rs,workspace.rs}, crates/ferric-tools/src/registry.rs, crates/ferric-tools/tests/builtin_file_tools.rs, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending
+
+
+## T-7801 (sprint 78)
+- **Description:** Direct terminal passthrough in `ferric chat`. Added `ChatInput::Run(String)`; `parse_chat_input` maps `!<cmd>` and `/run <cmd>` to it (bare `!`/`/run` and `/running...` are talked — exact boundary). The REPL runs the command through `config.registry.execute("shell_exec", ...)` — the same guarded chokepoint the agent uses, so `check_command` denylist still applies — human-initiated with NO LLM, output printed + logged as a Note, not folded into talk history. A lazily-created multi-thread tokio runtime backs shell_exec (block_in_place, sprint 67) since the sync REPL has none. Updated /help. 3 tests (1 parse unit incl. boundary cases; 2 CLI black-box: `!echo` runs with no talk response, `!rm -rf /` blocked by denylist). Docs: ADR-069, README timeline.
+- **Completed:** 2026-07-18
+- **Files modified:** crates/ferric-cli/src/chat.rs, crates/ferric-cli/tests/cli.rs, decisions.md, agent-tasks/agent-tasks.md, README.md
+- **Commit:** pending
+
+
+## T-7901 (sprint 79)
+- **Description:** Interactive "Accept Edits" mode (`ferric query --accept-edits`). Added `RunArgs.edit_approver: Option<EditApprover>` (a `&(dyn Fn(&EditPreview) -> bool + Sync)` callback, mirroring the `stream_sink` injection pattern) and gated it at the loop's single dispatch chokepoint in `step()` — after the `ToolCall` event is traced, before `registry.dispatch()`. "Mutating" is decided by the new `Registry::permission_of(name)` against the guard's permission ladder (`Write`/`Execute` gated, `Read` flows through), not a tool-name list. A rejected call is first-class: the loop synthesizes an error `ToolResult` ("edit rejected by user", is_error) fed back to the model, and the run continues (not an abort). `EditPreview` carries tool + targets (from `path`/`from`/`to`/`src`/`dest`) + pretty-printed args. The CLI `--accept-edits` flag injects a stdin y/N approver printing to stderr (2000-char detail cap; empty/`n`/EOF reject). Every non-query surface (chat/api/mcp/icm + all loop tests) passes `None` so behavior is byte-for-byte unchanged. 3 new integration tests (reject blocks the write + tells the model, approve lets it through, preview carries tool + target); test harness gained `run_scripted_with_approver` + a pre-teardown `check_dir` closure. Docs: ADR-070, README timeline, docs/commands.md + docs/demo-guide.md.
+- **Completed:** 2026-07-19
+- **Files modified:** crates/ferric-loop/src/{run.rs,lib.rs}, crates/ferric-tools/src/registry.rs, crates/ferric-cli/src/{query.rs,mcp.rs,chat.rs,api.rs,icm.rs,launch.rs,trace_verify.rs}, crates/ferric-loop/tests/{accept_edits.rs,common/mod.rs,streaming_tests.rs,hooks_tests.rs,backoff_tests.rs,compaction_tests.rs,resume_tests.rs}, decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md, README.md, docs/commands.md, docs/demo-guide.md
+- **Commit:** pending

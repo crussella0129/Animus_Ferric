@@ -19,14 +19,11 @@
 
 use std::path::Path;
 
-use ferric_core::{ActionProtocol, FerricError, Message, Role, ToolCall};
+use ferric_core::{ActionProtocol, FerricError, Message};
 use ferric_trace::{Event, ParsedEvent, TraceReader};
 use thiserror::Error;
 
-use crate::run::{
-    failure_warn_message, no_action_nudge, no_progress_warn_message, repetition_warn_message,
-    result_message, truncation_retry_message,
-};
+use crate::projector::TraceProjector;
 
 /// Everything `run()` needs to seed a continuing turn loop.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,79 +50,6 @@ pub enum ReplayError {
     AlreadyStopped(String),
 }
 
-/// One turn's data, buffered until a later `TurnStart` (or EOF) decides
-/// whether it's confirmed complete or dangling.
-#[derive(Default)]
-struct PendingTurn {
-    /// The absolute turn number that opened this buffer (from the
-    /// `TurnStart{turn}` event) — sprint 40, needed by `HistoryCompacted`
-    /// reconstruction to know which committed turns a fold covers.
-    turn: u32,
-    /// `(text, truncated)` from this turn's `TurnEnd`, once seen.
-    turn_end: Option<(Option<String>, bool)>,
-    /// `ToolCall` events for this turn, in trace order (includes the
-    /// terminator's, per T-3902 — never actually reachable here in practice,
-    /// since a turn that truly terminated would have written `SessionEnd`
-    /// and been rejected before reconstruction ever starts).
-    tool_calls: Vec<ToolCall>,
-    /// `(id, name, output)` from this turn's `ToolResult` events, in order.
-    tool_results: Vec<(String, String, String)>,
-    repetition_warned: bool,
-    no_progress_warned: bool,
-    failure_warned: bool,
-}
-
-impl PendingTurn {
-    /// Turn this buffer into the messages `run()` would have pushed for it,
-    /// or `None` if it never received a `TurnEnd` at all (defensively treated
-    /// the same as a dangling turn).
-    fn finalize(self, protocol: ActionProtocol) -> Option<Vec<Message>> {
-        let (text, truncated) = self.turn_end?;
-
-        // Truncation handling is ConstrainedJson-only (run.rs mirrors this
-        // exact gate) — other protocols ignore the flag and proceed normally.
-        if truncated && protocol == ActionProtocol::ConstrainedJson {
-            return Some(vec![truncation_retry_message()]);
-        }
-
-        let assistant = match protocol {
-            ActionProtocol::NativeTools => Message {
-                role: Role::Assistant,
-                text,
-                tool_calls: self.tool_calls.clone(),
-                tool_call_id: None,
-                media: Vec::new(),
-            },
-            ActionProtocol::ConstrainedJson | ActionProtocol::TextXml => {
-                Message::assistant(text.unwrap_or_default())
-            }
-        };
-
-        if self.tool_calls.is_empty() {
-            // No traced ToolCall events this turn: run() would have hit the
-            // no-action nudge and `continue`d — no guards, no dispatch.
-            return Some(vec![assistant, Message::user(no_action_nudge(protocol))]);
-        }
-
-        let mut out = vec![assistant];
-        let names: Vec<&str> = self.tool_calls.iter().map(|c| c.name.as_str()).collect();
-        if self.repetition_warned {
-            out.push(repetition_warn_message(&names));
-        }
-        if self.no_progress_warned {
-            out.push(no_progress_warn_message(&names));
-        }
-        for (id, name, output) in &self.tool_results {
-            out.push(result_message(protocol, id, name, output));
-        }
-        if self.failure_warned {
-            out.push(failure_warn_message());
-        }
-        Some(out)
-    }
-}
-
-/// Reconstruct a `ReplayedState` from the trace at `path`.
 pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     // Pass 1: any SessionEnd at all means this session isn't "interrupted."
     for record in TraceReader::open(path)? {
@@ -136,147 +60,32 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
 
     // Pass 2: reconstruct.
     let mut source_session: Option<String> = None;
-    let mut protocol: Option<ActionProtocol> = None;
-    let mut messages: Vec<Message> = Vec::new();
-    let mut turns: u32 = 0;
-    let mut last_text: Option<String> = None;
-    let mut pending: Option<PendingTurn> = None;
-    let mut session_prompt_seen = false;
-    // Sprint 40 (ADR-050): the fixed index a fold never crosses (right after
-    // `[system, user]` is pushed), and (absolute turn number, start index in
-    // `messages`) for every COMMITTED turn — needed to reconstruct a
-    // `HistoryCompacted` fold retroactively.
-    let mut head_len: usize = 0;
-    let mut committed_turn_starts: Vec<(u32, usize)> = Vec::new();
-
-    // Commits the currently-open pending turn (a later TurnStart confirms it
-    // finished dispatching) and starts a fresh one.
-    macro_rules! commit_and_reset {
-        () => {
-            if let Some(p) = pending.take() {
-                let proto = protocol.ok_or(ReplayError::MissingSessionPrompt)?;
-                let turn_num = p.turn;
-                if let Some(msgs) = p.finalize(proto) {
-                    // Track NativeTools' "best-effort final text" the same way
-                    // run() does: last non-empty text across committed turns.
-                    if proto == ActionProtocol::NativeTools
-                        && let Some(assistant) = msgs.first()
-                        && let Some(t) = &assistant.text
-                        && !t.is_empty()
-                    {
-                        last_text = Some(t.clone());
-                    }
-                    committed_turn_starts.push((turn_num, messages.len()));
-                    messages.extend(msgs);
-                    turns += 1;
-                }
-            }
-        };
-    }
+    let mut projector = TraceProjector::new();
 
     for record in TraceReader::open(path)? {
         let record = record?;
         if source_session.is_none() {
             source_session = Some(record.session.clone());
         }
-        match record.event {
-            ParsedEvent::Known(Event::PolicySelected { protocol: p, .. }) => {
-                protocol = Some(p);
-            }
-            ParsedEvent::Known(Event::SessionPrompt {
-                system,
-                user,
-                media,
-            }) => {
-                messages.push(Message::system(system));
-                messages.push(Message::user_with_media(user, media));
-                session_prompt_seen = true;
-                head_len = messages.len();
-            }
-            ParsedEvent::Known(Event::TurnStart { turn }) => {
-                commit_and_reset!();
-                pending = Some(PendingTurn {
-                    turn,
-                    ..Default::default()
-                });
-            }
-            ParsedEvent::Known(Event::HistoryCompacted {
-                through_turn,
-                summary,
-                ..
-            }) => {
-                // Safe by construction: `HistoryCompacted` is always traced
-                // AFTER `TurnStart(current)` (run.rs's wiring), which already
-                // ran `commit_and_reset!()` above for the previous turn — so
-                // every turn numbered `<= through_turn` is already committed.
-                let split_at = committed_turn_starts.partition_point(|&(t, _)| t <= through_turn);
-                if split_at > 0 {
-                    let preserve_from_idx = committed_turn_starts
-                        .get(split_at)
-                        .map(|&(_, idx)| idx)
-                        .unwrap_or(messages.len());
-                    let preserved_tail: Vec<Message> = messages[preserve_from_idx..].to_vec();
-                    messages.truncate(head_len);
-                    messages.push(Message::user(format!("[compacted history] {summary}")));
-                    let new_base = messages.len();
-                    messages.extend(preserved_tail);
-                    let shift = preserve_from_idx - new_base;
-                    committed_turn_starts = committed_turn_starts[split_at..]
-                        .iter()
-                        .map(|&(t, idx)| (t, idx - shift))
-                        .collect();
-                }
-            }
-            ParsedEvent::Known(Event::TurnEnd {
-                text, truncated, ..
-            }) => {
-                if let Some(p) = &mut pending {
-                    p.turn_end = Some((text, truncated));
-                }
-            }
-            ParsedEvent::Known(Event::ToolCall { id, name, args }) => {
-                if let Some(p) = &mut pending {
-                    p.tool_calls.push(ToolCall { id, name, args });
-                }
-            }
-            ParsedEvent::Known(Event::ToolResult {
-                id, name, output, ..
-            }) => {
-                if let Some(p) = &mut pending {
-                    p.tool_results.push((id, name, output));
-                }
-            }
-            ParsedEvent::Known(Event::RepetitionGuard { action }) if action == "warned" => {
-                if let Some(p) = &mut pending {
-                    p.repetition_warned = true;
-                }
-            }
-            ParsedEvent::Known(Event::NoProgressGuard { action }) if action == "warned" => {
-                if let Some(p) = &mut pending {
-                    p.no_progress_warned = true;
-                }
-            }
-            ParsedEvent::Known(Event::FailureGuard { action }) if action == "warned" => {
-                if let Some(p) = &mut pending {
-                    p.failure_warned = true;
-                }
-            }
-            _ => {}
+        if let ParsedEvent::Known(event) = record.event {
+            projector.step(&event);
         }
     }
     // EOF: the still-open `pending` turn (if any) never saw a confirming
     // next `TurnStart` — dangling, discarded, never committed or counted.
 
-    if !session_prompt_seen {
+    if projector.head_len == 0 {
         return Err(ReplayError::MissingSessionPrompt);
     }
-    let protocol = protocol.ok_or(ReplayError::MissingSessionPrompt)?;
+    let protocol = projector
+        .protocol
+        .ok_or(ReplayError::MissingSessionPrompt)?;
     let source_session = source_session.ok_or(ReplayError::MissingSessionPrompt)?;
 
     Ok(ReplayedState {
-        messages,
-        turns,
-        last_text,
+        messages: projector.messages,
+        turns: projector.turns,
+        last_text: projector.last_text,
         protocol,
         source_session,
     })
@@ -289,6 +98,7 @@ mod tests {
     //! `tests/` integration tests compile against the crate as an external
     //! dependency and can't see `pub(crate)` items.
     use super::*;
+    use crate::projector::*;
     use ferric_trace::JsonlSink;
     use serde_json::json;
 
@@ -307,7 +117,7 @@ mod tests {
             tier: ferric_core::Tier::Nano,
             protocol,
             max_turns: 15,
-            max_tools: 6,
+            max_tools: 10,
             prompt_budget_tokens: 2_800,
             max_output_tokens: 512,
         }

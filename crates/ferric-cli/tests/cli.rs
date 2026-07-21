@@ -128,9 +128,9 @@ fn stream_flag_mock_no_duplication() {
 
 #[test]
 fn query_without_backend_errors() {
-    // Default build lacks backend-mistralrs: a non-mock query must fail with
+    // Default build lacks backend-openai: a non-mock query must fail with
     // a message naming the missing feature.
-    #[cfg(not(feature = "backend-mistralrs"))]
+    #[cfg(not(feature = "backend-openai"))]
     {
         let dir = tempfile::tempdir().unwrap();
         let out = ferric()
@@ -141,11 +141,8 @@ fn query_without_backend_errors() {
             .unwrap();
         assert!(!out.status.success());
         let stderr = String::from_utf8(out.stderr).unwrap();
-        // Names the missing backend. The no-backend build's stub says
-        // "...--features backend-mistralrs..."; a backend-openai-only build
-        // reaches create_provider and says "built without mistralrs backend".
-        // Both name `mistralrs`.
-        assert!(stderr.contains("mistralrs"));
+        // Names the missing backend.
+        assert!(stderr.contains("backend-openai"));
     }
 }
 
@@ -260,7 +257,7 @@ fn max_ring_caps_the_offered_tools() {
     let d1 = tempfile::tempdir().unwrap();
     let full = offered(&[], d1.path());
     assert!(
-        full.contains(&"search_files".to_string()) && full.contains(&"move_path".to_string()),
+        full.contains(&"find_files".to_string()),
         "Small offers Ring 1 too: {full:?}"
     );
 
@@ -268,7 +265,7 @@ fn max_ring_caps_the_offered_tools() {
     let d2 = tempfile::tempdir().unwrap();
     let core = offered(&["--max-ring", "0"], d2.path());
     assert!(
-        !core.contains(&"search_files".to_string()) && !core.contains(&"move_path".to_string()),
+        !core.contains(&"find_files".to_string()),
         "--max-ring 0 drops Ring 1: {core:?}"
     );
     assert!(
@@ -339,7 +336,7 @@ fn persisted_calibrated_ring_caps_the_offered_tools() {
     let ws1 = tempfile::tempdir().unwrap();
     let capped = offered("mockmodel", pdir.path(), ws1.path());
     assert!(
-        !capped.contains(&"search_files".to_string()) && capped.contains(&"write_file".to_string()),
+        !capped.contains(&"find_files".to_string()) && capped.contains(&"write_file".to_string()),
         "persisted calibrated_ring 0 caps to the core: {capped:?}"
     );
 
@@ -523,8 +520,7 @@ fn config_only_model_still_resolves_profile() {
         })
         .unwrap_or_default();
     assert!(
-        !offered.contains(&"search_files".to_string())
-            && offered.contains(&"write_file".to_string()),
+        !offered.contains(&"find_files".to_string()) && offered.contains(&"write_file".to_string()),
         "a config-only `model` must still hit the persisted calibrated_ring 0 profile: {offered:?}"
     );
 }
@@ -571,8 +567,7 @@ fn config_only_max_ring_caps_the_offered_tools() {
         })
         .unwrap_or_default();
     assert!(
-        !offered.contains(&"search_files".to_string())
-            && offered.contains(&"write_file".to_string()),
+        !offered.contains(&"find_files".to_string()) && offered.contains(&"write_file".to_string()),
         "a config-only `max_ring = 0` must cap to the core, same as `--max-ring 0`: {offered:?}"
     );
 }
@@ -763,7 +758,7 @@ fn write_interrupted_trace_fixture(ws: &std::path::Path, session: &str) -> std::
             r#"{{"v":1,"ts_ms":1,"session":"{session}","seq":0,"event":{{"type":"session_start","workspace":"/ws"}}}}"#
         ),
         format!(
-            r#"{{"v":1,"ts_ms":2,"session":"{session}","seq":1,"event":{{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512}}}}"#
+            r#"{{"v":1,"ts_ms":2,"session":"{session}","seq":1,"event":{{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512}}}}"#
         ),
         format!(
             r#"{{"v":1,"ts_ms":3,"session":"{session}","seq":2,"event":{{"type":"session_prompt","system":"You are Ferric.","user":"do a mock task"}}}}"#
@@ -919,7 +914,7 @@ fn resume_already_stopped_is_a_clear_error() {
     let path = trace_dir.join("stopped.jsonl");
     let lines = [
         r#"{"v":1,"ts_ms":1,"session":"stopped-1","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#.to_string(),
-        r#"{"v":1,"ts_ms":2,"session":"stopped-1","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#.to_string(),
+        r#"{"v":1,"ts_ms":2,"session":"stopped-1","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#.to_string(),
         r#"{"v":1,"ts_ms":3,"session":"stopped-1","seq":2,"event":{"type":"session_prompt","system":"You are Ferric.","user":"do a mock task"}}"#.to_string(),
         r#"{"v":1,"ts_ms":4,"session":"stopped-1","seq":3,"event":{"type":"session_end","reason":"final_text"}}"#.to_string(),
     ];
@@ -1352,4 +1347,474 @@ fn launch_refuses_to_clobber_nonempty() {
         "mine"
     );
     assert!(!target.join(".git").exists());
+}
+
+// ---- T-5501 (sprint 55): `ferric mcp --resume` subprocess tests ----------------
+
+fn run_mcp_mock(
+    ws: &std::path::Path,
+    extra_args: &[&str],
+    input: &str,
+) -> (String, String, std::process::ExitStatus) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = ferric()
+        .args(["mcp", "--mock", "--workspace"])
+        .arg(ws)
+        .args(extra_args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input.as_bytes()).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    (
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+        out.status,
+    )
+}
+
+#[test]
+fn mcp_resume_continues_an_interrupted_session() {
+    let ws = tempfile::tempdir().unwrap();
+    let path = write_interrupted_trace_fixture(ws.path(), "res-1");
+
+    // The MCP server expects a JSON-RPC request for `ferric_query`
+    let input = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ferric_query","arguments":{"prompt":"finish it"}}}"#;
+    let (stdout, stderr, status) =
+        run_mcp_mock(ws.path(), &["--resume", path.to_str().unwrap()], input);
+
+    assert!(status.success(), "mcp should succeed; stderr: {stderr}");
+    assert!(
+        stdout.contains("mock run complete"),
+        "stdout should contain the mock's output, got: {stdout}"
+    );
+
+    // There should be a new trace file for this MCP session.
+    // The new trace file should contain the original 2 turns PLUS the new turn.
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    let new_traces: Vec<_> = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("mcp-"))
+        .collect();
+    assert_eq!(new_traces.len(), 1, "exactly one mcp- trace file expected");
+    let content = std::fs::read_to_string(new_traces[0].path()).unwrap();
+
+    let is_resumed = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .any(|v| v["event"]["type"] == "session_start" && v["event"]["resumed_from"] == "res-1");
+    assert!(is_resumed, "trace must show it was resumed from res-1");
+}
+
+#[test]
+fn mcp_resume_rejects_already_stopped() {
+    let ws = tempfile::tempdir().unwrap();
+    let trace_dir = ws.path().join(".ferric").join("trace");
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let path = trace_dir.join("stopped.jsonl");
+    let lines = [
+        r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#,
+        r#"{"v":1,"ts_ms":2,"session":"s","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#,
+        r#"{"v":1,"ts_ms":3,"session":"s","seq":2,"event":{"type":"session_prompt","system":"s","user":"u"}}"#,
+        r#"{"v":1,"ts_ms":4,"session":"s","seq":3,"event":{"type":"session_end","reason":"done"}}"#,
+    ];
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+    let (_stdout, stderr, status) =
+        run_mcp_mock(ws.path(), &["--resume", path.to_str().unwrap()], "");
+    assert!(!status.success());
+    assert!(stderr.contains("cannot resume"), "stderr: {stderr}");
+    assert!(stderr.contains("already ended (done)"), "stderr: {stderr}");
+}
+
+// ── ICM agent delegation (sprint 73, ADR-064) ──────────────────────────────
+
+#[test]
+fn icm_init_scaffolds_and_plan_shows_the_pipeline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+
+    // init scaffolds a three-stage workspace.
+    let out = ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    assert!(out.status.success(), "icm init must succeed");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Scaffolded ICM workspace"));
+    assert!(ws.join("stages/01_research/CONTEXT.md").exists());
+    assert!(ws.join("Animus.md").exists());
+
+    // plan discovers the stages in numeric order and reports layers.
+    let out = ferric().args(["icm", "plan"]).arg(&ws).output().unwrap();
+    assert!(out.status.success(), "icm plan must succeed");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("01_research"));
+    assert!(stdout.contains("02_script"));
+    assert!(stdout.contains("03_production"));
+    // Layer 0/1/2 are always present for a scaffolded workspace.
+    assert!(stdout.contains("Layer 0 (identity)"));
+    assert!(stdout.contains("Layer 2 (contract)"));
+}
+
+#[test]
+fn icm_plan_wires_prior_stage_output_as_layer4() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+
+    // Simulate stage 1 having produced output and a shared voice file.
+    std::fs::write(
+        ws.join("stages/01_research/output/research.md"),
+        "finding: constraint beats native.",
+    )
+    .unwrap();
+    std::fs::write(ws.join("_config/voice.md"), "terse.").unwrap();
+
+    let out = ferric().args(["icm", "plan"]).arg(&ws).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    // Stage 2 pulls stage 1's output as a present Layer 4 input.
+    assert!(
+        stdout.contains("01_research/output/research.md"),
+        "plan must wire the upstream output as Layer 4; got:\n{stdout}"
+    );
+    assert!(stdout.contains("_config/voice.md"));
+}
+
+#[test]
+fn icm_init_refuses_to_clobber() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("keep.txt"), "mine").unwrap();
+
+    let out = ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    assert!(!out.status.success(), "init must refuse a non-empty dir");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("refuse to clobber"), "stderr: {stderr}");
+    // The pre-existing file is untouched.
+    assert_eq!(
+        std::fs::read_to_string(ws.join("keep.txt")).unwrap(),
+        "mine"
+    );
+}
+
+// ── ICM live execution (sprint 74, ADR-065) ────────────────────────────────
+
+#[test]
+fn icm_run_executes_every_stage_in_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+
+    let out = ferric()
+        .args(["icm", "run", "--auto", "--mock"])
+        .arg(&ws)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "pipeline must succeed");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    // All three stages ran and completed.
+    assert!(stderr.contains("01_research"), "stderr: {stderr}");
+    assert!(stderr.contains("02_script"));
+    assert!(stderr.contains("03_production"));
+    assert_eq!(stderr.matches("✔ Stage").count(), 3, "stderr: {stderr}");
+
+    // One trace per stage landed at the ICM root.
+    let traces: Vec<_> = std::fs::read_dir(ws.join(".ferric/trace"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert_eq!(traces.len(), 3, "one trace per stage");
+
+    // Containment: each stage's mock artifact stayed inside its OWN folder.
+    for stage in ["01_research", "02_script", "03_production"] {
+        assert!(
+            ws.join("stages")
+                .join(stage)
+                .join("ferric-mock.txt")
+                .exists(),
+            "stage {stage} ran contained to its own workspace"
+        );
+    }
+}
+
+#[test]
+fn icm_run_stops_at_review_gate_on_q() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+
+    // No --auto: a review gate follows stage 1. Feeding 'q' stops the pipeline.
+    let mut child = ferric()
+        .args(["icm", "run", "--mock"])
+        .arg(&ws)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"q\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("stopped at stage 01"), "stderr: {stderr}");
+    // Stage 2 never ran.
+    assert!(
+        !ws.join("stages/02_script/ferric-mock.txt").exists(),
+        "stage 2 must not run after the user stops at the gate"
+    );
+}
+
+#[test]
+fn icm_run_honors_a_stage_range() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("deck");
+    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+
+    let out = ferric()
+        .args(["icm", "run", "--auto", "--mock", "--from", "2", "--to", "2"])
+        .arg(&ws)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    // Only stage 2 ran.
+    assert!(ws.join("stages/02_script/ferric-mock.txt").exists());
+    assert!(!ws.join("stages/01_research/ferric-mock.txt").exists());
+    assert!(!ws.join("stages/03_production/ferric-mock.txt").exists());
+}
+
+// ── Agentic cron (sprint 75, ADR-066) ──────────────────────────────────────
+
+#[test]
+fn cron_add_then_list_shows_the_job() {
+    let ws = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args(["add", "nightly", "--schedule", "12h", "--command", "dream"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "cron add must succeed");
+    assert!(ws.path().join(".ferric/cron/nightly.toml").exists());
+
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .arg("list")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("nightly"), "list: {stdout}");
+    assert!(stdout.contains("12h"));
+    assert!(
+        stdout.contains("never"),
+        "an un-run job's last-run is 'never'"
+    );
+}
+
+#[test]
+fn cron_run_executes_a_due_mock_job_and_advances_state() {
+    let ws = tempfile::tempdir().unwrap();
+    // A mock query job runs offline (fast, no server) — proves execution.
+    ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args([
+            "add",
+            "summary",
+            "--schedule",
+            "1h",
+            "--command",
+            "query",
+            "--prompt",
+            "do a task",
+            "--mock",
+        ])
+        .output()
+        .unwrap();
+
+    // First run: the job is due (never run) → it executes.
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .arg("run")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(
+        ws.path().join("ferric-mock.txt").exists(),
+        "the mock query job must actually run"
+    );
+
+    // Second run immediately after: state advanced → nothing is due.
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .arg("run")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("No jobs due"),
+        "state must advance; got: {stdout}"
+    );
+}
+
+#[test]
+fn cron_dry_run_reports_without_executing() {
+    let ws = tempfile::tempdir().unwrap();
+    ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args([
+            "add",
+            "summary",
+            "--schedule",
+            "1h",
+            "--command",
+            "query",
+            "--prompt",
+            "x",
+            "--mock",
+        ])
+        .output()
+        .unwrap();
+
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args(["run", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("DUE (dry-run): summary"),
+        "dry-run: {stdout}"
+    );
+    // Nothing executed, state untouched → a subsequent dry-run still reports it.
+    assert!(!ws.path().join("ferric-mock.txt").exists());
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args(["run", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .contains("DUE (dry-run): summary")
+    );
+}
+
+#[test]
+fn cron_add_rejects_bad_input() {
+    let ws = tempfile::tempdir().unwrap();
+    let base = || {
+        let mut c = ferric();
+        c.args(["cron", "--workspace"]).arg(ws.path());
+        c
+    };
+    // query with no prompt
+    assert!(
+        !base()
+            .args(["add", "q", "--schedule", "1h", "--command", "query"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    // unknown command (not an arbitrary shell string)
+    assert!(
+        !base()
+            .args(["add", "q", "--schedule", "1h", "--command", "rm -rf /"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    // bad schedule
+    assert!(
+        !base()
+            .args(["add", "q", "--schedule", "soon", "--command", "dream"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn cron_add_accepts_a_cron_expression() {
+    let ws = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .args([
+            "add",
+            "nightly",
+            "--schedule",
+            "0 2 * * *",
+            "--command",
+            "dream",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "cron add must accept a cron expression"
+    );
+    assert!(
+        std::fs::read_to_string(ws.path().join(".ferric/cron/nightly.toml"))
+            .unwrap()
+            .contains("0 2 * * *")
+    );
+
+    let out = ferric()
+        .args(["cron", "--workspace"])
+        .arg(ws.path())
+        .arg("list")
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .contains("cron(0 2 * * *)")
+    );
+}
+
+// ── Direct terminal passthrough (sprint 78, ADR-069) ───────────────────────
+
+#[test]
+fn chat_bang_runs_a_command_directly() {
+    let ws = tempfile::tempdir().unwrap();
+    // `!echo` executes with no LLM roundtrip; its output prints to stdout.
+    let (stdout, _stderr) = run_chat_mock(ws.path(), "!echo passthrough-marker\n/exit\n");
+    assert!(
+        stdout.contains("passthrough-marker"),
+        "the command output should print; stdout: {stdout}"
+    );
+    // No LLM talk response for a `!` line (it's a side-channel, not conversation).
+    assert!(
+        !stdout.contains("[mock chat]"),
+        "a `!` passthrough must not trigger a talk completion; stdout: {stdout}"
+    );
+}
+
+#[test]
+fn chat_passthrough_still_enforces_the_command_denylist() {
+    let ws = tempfile::tempdir().unwrap();
+    let (_stdout, stderr) = run_chat_mock(ws.path(), "!rm -rf /\n/exit\n");
+    assert!(
+        stderr.contains("blocked"),
+        "a denylisted command must be refused even in direct passthrough; stderr: {stderr}"
+    );
 }

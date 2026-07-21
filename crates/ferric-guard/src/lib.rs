@@ -3,9 +3,13 @@
 //! The LLM is never consulted on a security decision. Everything here is
 //! compile-time policy with no runtime mutation API.
 
-mod checker;
+pub mod checker;
 pub mod denylist;
-mod workspace;
+pub mod ignore;
+pub mod sink;
+pub mod workspace;
 
-pub use checker::{Decision, DenyReason, PermissionLevel, check};
+pub use checker::{Decision, DenyReason, PermissionLevel, check, check_command, check_with_ignore};
+pub use ignore::IgnoreList;
+pub use sink::{SinkAction, SinkDecision, SinkPolicy, TaintSet};
 pub use workspace::{GuardError, Workspace};

@@ -17,6 +17,12 @@ sprints/
 **/*.swp
 .DS_Store
 
+# Workspace data
+e2e_workspace*/
+e2e_log_*.txt
+e2e_test_log*.txt
+models/
+
 # The docker artifacts themselves don't belong in their own build context.
 docker/
 

@@ -37,6 +37,10 @@ fn resume_some_continues_from_replayed_state() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -49,6 +53,7 @@ fn resume_some_continues_from_replayed_state() {
             media: Vec::new(),
             stream_sink: None,
             resume: Some(base_replayed(5)),
+            hooks: None,
         },
         &mut sink,
         None,
@@ -94,6 +99,10 @@ fn resume_some_with_extra_prompt_appends_one_user_message() {
     let sleeper = RecordingSleeper::new();
     futures_executor::block_on(run(
         RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -106,6 +115,7 @@ fn resume_some_with_extra_prompt_appends_one_user_message() {
             media: Vec::new(),
             stream_sink: None,
             resume: Some(base_replayed(0)),
+            hooks: None,
         },
         &mut sink,
         Some("actually, also check b.txt"),
@@ -137,6 +147,10 @@ fn resume_none_prompt_none_is_an_error_not_a_panic() {
     let sleeper = RecordingSleeper::new();
     let result = futures_executor::block_on(run(
         RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -149,6 +163,7 @@ fn resume_none_prompt_none_is_an_error_not_a_panic() {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            hooks: None,
         },
         &mut sink,
         None,
@@ -186,6 +201,10 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
     let sleeper1 = RecordingSleeper::new();
     let first = futures_executor::block_on(run(
         RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider1,
             registry: &registry1,
             workspace: &workspace1,
@@ -198,6 +217,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            hooks: None,
         },
         &mut sink1,
         Some("write a.txt"),
@@ -233,6 +253,10 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
     let sleeper2 = RecordingSleeper::new();
     let second = futures_executor::block_on(run(
         RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            taint_set: ferric_guard::TaintSet::new(),
             provider: &provider2,
             registry: &registry2,
             workspace: &workspace2,
@@ -245,6 +269,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
             media: Vec::new(),
             stream_sink: None,
             resume: Some(replayed),
+            hooks: None,
         },
         &mut sink2,
         None,

@@ -16,7 +16,9 @@ fn truncated_once_then_recovers() {
     let result = run_scripted_protocol(
         vec![
             truncated_completion(),
-            json_completion(json!({"tool": "task_complete", "args": {"summary": "done"}})),
+            json_completion(
+                json!({"thought": "...", "tool": "task_complete", "args": {"summary": "done"}}),
+            ),
         ],
         &nano_policy(),
         ActionProtocol::ConstrainedJson,

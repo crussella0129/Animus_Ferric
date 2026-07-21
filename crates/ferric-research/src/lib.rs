@@ -29,8 +29,9 @@ pub use retriever::{
     SshTransport, TailnetDevice, TailnetFsRetriever, research, research_all,
 };
 
-pub mod sink;
-pub use sink::{SinkAction, SinkDecision, SinkPolicy, TaintSet};
+pub mod sandbox;
+pub mod web;
+pub use web::WebRetriever;
 
 /// One provenance-tagged claim extracted from untrusted content. Data only —
 /// there is deliberately no field that can carry a tool name or an action.
@@ -134,7 +135,7 @@ pub async fn summarize_quarantined(
     };
 
     let completion = provider
-        .complete(request)
+        .complete(request, None)
         .await
         .map_err(|e| ResearchError::Provider(e.to_string()))?;
 

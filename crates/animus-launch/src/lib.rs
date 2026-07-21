@@ -13,8 +13,32 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 
 use thiserror::Error;
+
+/// Supported project profiles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectType {
+    Rust,
+    Python,
+    Web,
+    Empty,
+}
+
+impl FromStr for ProjectType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "rust" => Ok(ProjectType::Rust),
+            "python" | "py" => Ok(ProjectType::Python),
+            "web" | "html" => Ok(ProjectType::Web),
+            "empty" | "none" | "" => Ok(ProjectType::Empty),
+            _ => Err(format!("Unknown project type: {}", s)),
+        }
+    }
+}
 
 /// Everything Launch needs to bootstrap a project. Built by the CLI (from flags
 /// and/or an interview) and handed to [`scaffold`].
@@ -23,9 +47,8 @@ pub struct LaunchSpec {
     pub name: String,
     pub path: PathBuf,
     pub goal: String,
-    /// An optional free-form project-type hint (a full profile library is a
-    /// deferred increment, ADR-053) — passed through to the README for now.
-    pub project_type: Option<String>,
+    /// A defined project-type profile to scaffold. Defaults to Empty.
+    pub project_type: ProjectType,
 }
 
 /// What `scaffold` created.
@@ -142,9 +165,9 @@ pub fn scaffold(spec: &LaunchSpec) -> Result<ScaffoldReport, LaunchError> {
     std::fs::create_dir_all(spec.path.join("agent-tasks"))?;
 
     // 4. Seed skeleton.
-    let type_line = match &spec.project_type {
-        Some(t) if !t.trim().is_empty() => format!("\n\n**Type:** {}", t.trim()),
-        _ => String::new(),
+    let type_line = match spec.project_type {
+        ProjectType::Empty => String::new(),
+        _ => format!("\n\n**Type:** {:?}", spec.project_type),
     };
     let readme = format!(
         "# {}\n\n{}{}\n",
@@ -154,8 +177,65 @@ pub fn scaffold(spec: &LaunchSpec) -> Result<ScaffoldReport, LaunchError> {
     );
     std::fs::write(spec.path.join("README.md"), readme)?;
 
-    let gitignore =
-        "# Sprint-loop working memory (ephemeral) + build output.\nsprints/\ntarget/\n*.tmp\n";
+    let mut gitignore = String::from(
+        "# Sprint-loop working memory (ephemeral) + build output.\nsprints/\ntarget/\n*.tmp\n",
+    );
+    let mut files_created = vec![
+        "README.md".to_string(),
+        ".gitignore".to_string(),
+        "agent-tasks/agent-tasks.md".to_string(),
+        "decisions.md".to_string(),
+    ];
+
+    // Scaffold based on project profile
+    match spec.project_type {
+        ProjectType::Rust => {
+            let cargo_toml = format!(
+                "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n",
+                spec.name.to_lowercase().replace(" ", "_")
+            );
+            std::fs::write(spec.path.join("Cargo.toml"), cargo_toml)?;
+            files_created.push("Cargo.toml".to_string());
+
+            std::fs::create_dir_all(spec.path.join("src"))?;
+            std::fs::write(
+                spec.path.join("src").join("main.rs"),
+                "fn main() {\n    println!(\"Hello, world!\");\n}\n",
+            )?;
+            files_created.push("src/main.rs".to_string());
+        }
+        ProjectType::Python => {
+            std::fs::write(spec.path.join("requirements.txt"), "")?;
+            files_created.push("requirements.txt".to_string());
+
+            std::fs::create_dir_all(spec.path.join("src"))?;
+            std::fs::write(
+                spec.path.join("src").join("main.py"),
+                "def main():\n    print(\"Hello, world!\")\n\nif __name__ == \"__main__\":\n    main()\n",
+            )?;
+            files_created.push("src/main.py".to_string());
+            gitignore.push_str("__pycache__/\n*.pyc\n.venv/\nvenv/\n");
+        }
+        ProjectType::Web => {
+            std::fs::write(
+                spec.path.join("index.html"),
+                "<!DOCTYPE html>\n<html>\n<head>\n    <title>App</title>\n    <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n    <h1>App</h1>\n    <script src=\"app.js\"></script>\n</body>\n</html>\n",
+            )?;
+            files_created.push("index.html".to_string());
+            std::fs::write(
+                spec.path.join("style.css"),
+                "body {\n    font-family: sans-serif;\n}\n",
+            )?;
+            files_created.push("style.css".to_string());
+            std::fs::write(
+                spec.path.join("app.js"),
+                "console.log(\"Hello, world!\");\n",
+            )?;
+            files_created.push("app.js".to_string());
+        }
+        ProjectType::Empty => {}
+    }
+
     std::fs::write(spec.path.join(".gitignore"), gitignore)?;
 
     let tasks = derive_initial_tasks(&spec.goal);
@@ -195,12 +275,7 @@ pub fn scaffold(spec: &LaunchSpec) -> Result<ScaffoldReport, LaunchError> {
     Ok(ScaffoldReport {
         path: spec.path.clone(),
         branches: vec!["main".to_string(), "dev".to_string()],
-        files_created: vec![
-            "README.md".to_string(),
-            ".gitignore".to_string(),
-            "agent-tasks/agent-tasks.md".to_string(),
-            "decisions.md".to_string(),
-        ],
+        files_created,
     })
 }
 

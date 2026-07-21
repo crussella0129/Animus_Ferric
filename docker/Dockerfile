@@ -7,9 +7,8 @@
 # network-namespace plumbing. Keeping them in one container preserves today's
 # guarantee unchanged.
 #
-# Scope-limits (deliberate, ADR-051): x86_64/Linux only for this skeleton
-# (multi-arch via `buildx --platform` is the deferred future path); no EXPOSE /
-# published port (loopback-only preserved structurally). Ornstein and any
+# Scope-limits (deliberate, ADR-051):
+# No EXPOSE / published port (loopback-only preserved structurally). Ornstein and any
 # future chat/MCP surfaces are SEPARATE sibling services, never nested here.
 
 # ---- Stage 1: build the `ferric` binary --------------------------------------
@@ -21,6 +20,7 @@
 # by actually RUNNING the image (T-4105 live validation), not by `docker build`
 # succeeding.
 FROM rust:1.96-slim-bookworm AS build
+ARG TARGETARCH
 
 # --features backend-openai is MANDATORY: ferric-cli's `default = []`, so a
 # plain release build produces a `ferric` that CANNOT drive the co-located
@@ -33,6 +33,7 @@ RUN cargo build --release --features backend-openai -p ferric-cli
 # ---- Stage 2: runtime — `ferric` + a prebuilt `llama-server` -----------------
 # Slim Debian; only what's needed to run the two binaries.
 FROM debian:bookworm-slim AS runtime
+ARG TARGETARCH
 
 # curl to fetch the prebuilt llama-server release; ca-certificates for TLS (the
 # OpenAI valve talks HTTPS to remote servers when not using the local one).
@@ -41,15 +42,21 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Prebuilt llama-server (docs/llama-cpp.md §1 — asset-selection-by-hardware; the
-# Linux x64 CPU asset here, matching this skeleton's x86_64 scope-limit). Pinned
+# Prebuilt llama-server (docs/llama-cpp.md §1). Pinned
 # to the b9821 release validated live in sprints 23–26. No build-from-source: a
 # single minimal binary + its ggml/llama shared libs, all flat in one dir (the
 # whole point of the llama.cpp engine, ADR-032). LD_LIBRARY_PATH lets
 # llama-server find its co-located .so files.
 ARG LLAMA_RELEASE=b9821
-RUN curl -fsSL -o /tmp/llama.tar.gz \
-      "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}/llama-${LLAMA_RELEASE}-bin-ubuntu-x64.tar.gz" \
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+      export LLAMA_ASSET="ubuntu-x64"; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+      export LLAMA_ASSET="ubuntu-aarch64"; \
+    else \
+      echo "Unsupported architecture: $TARGETARCH"; exit 1; \
+    fi \
+    && curl -fsSL -o /tmp/llama.tar.gz \
+      "https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_RELEASE}/llama-${LLAMA_RELEASE}-bin-${LLAMA_ASSET}.tar.gz" \
     && tar -xzf /tmp/llama.tar.gz -C /opt \
     && rm /tmp/llama.tar.gz
 ENV PATH="/opt/llama-${LLAMA_RELEASE}:${PATH}" \

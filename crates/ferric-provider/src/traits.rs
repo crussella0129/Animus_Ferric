@@ -5,19 +5,23 @@ use crate::types::{Capabilities, Completion, CompletionRequest, ProviderError, S
 /// An inference backend.
 ///
 /// Async and dyn-compatible from day one (ADR-003): the s1 backends are
-/// tokio-async (mistral.rs) and reqwest-async (OpenAI-compatible HTTP), and a
-/// sync trait here would force a breaking redesign.
+/// reqwest-async (OpenAI-compatible HTTP), and a deterministic synchronous
+/// mock for testing.
 ///
 /// Backends own their heavy state (loaded model, HTTP pool) internally; the
 /// trait itself is stateless per request.
 #[async_trait]
 pub trait Provider: Send + Sync {
-    /// Stable identifier, e.g. `"mock"`, `"mistralrs"`, `"openai-http"`.
+    /// Stable identifier, e.g. `"mock"`, `"openai-http"`.
     fn id(&self) -> &str;
 
     fn capabilities(&self) -> Capabilities;
 
-    async fn complete(&self, request: CompletionRequest) -> Result<Completion, ProviderError>;
+    async fn complete(
+        &self,
+        request: CompletionRequest,
+        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Completion, ProviderError>;
 
     /// Streaming variant (ADR-047, filling ADR-003's reserved extension
     /// point): identical contract to `complete()` — same return type, same
@@ -42,8 +46,9 @@ pub trait Provider: Send + Sync {
         &self,
         request: CompletionRequest,
         on_delta: &(dyn Fn(StreamDelta) + Sync),
+        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Completion, ProviderError> {
-        let completion = self.complete(request).await?;
+        let completion = self.complete(request, cancel_flag).await?;
         if let Some(text) = &completion.message.text {
             on_delta(StreamDelta::Text(text.clone()));
         }
@@ -109,9 +114,10 @@ mod tests {
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
         let streamed =
-            futures_executor::block_on(provider.complete_streaming(request(), &sink)).unwrap();
+            futures_executor::block_on(provider.complete_streaming(request(), &sink, None))
+                .unwrap();
         let plain = futures_executor::block_on(
-            MockProvider::new(vec![text_completion("hello there")]).complete(request()),
+            MockProvider::new(vec![text_completion("hello there")]).complete(request(), None),
         )
         .unwrap();
 
@@ -132,7 +138,7 @@ mod tests {
         let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
-        futures_executor::block_on(provider.complete_streaming(request(), &sink)).unwrap();
+        futures_executor::block_on(provider.complete_streaming(request(), &sink, None)).unwrap();
 
         assert!(deltas.into_inner().unwrap().is_empty());
     }
@@ -145,7 +151,7 @@ mod tests {
         let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
-        futures_executor::block_on(provider.complete_streaming(request(), &sink)).unwrap();
+        futures_executor::block_on(provider.complete_streaming(request(), &sink, None)).unwrap();
 
         assert!(
             !deltas

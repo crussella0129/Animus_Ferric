@@ -14,7 +14,7 @@ impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "write_file".to_string(),
-            description: "Write a UTF-8 text file (creates parents). Args: {\"path\": string, \"content\": string}"
+            description: "Create a new file or overwrite an existing file with UTF-8 text. Automatically creates parent directories. DO NOT call make_dir for files. Args: {\"path\": string, \"content\": string}"
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -39,6 +39,11 @@ impl Tool for WriteFile {
             .workspace
             .resolve(path)
             .map_err(|e| format!("boundary: {e}"))?;
+        if resolved.is_dir() {
+            return Err(format!(
+                "write {path} failed: path is already a directory. If you intended to write a file here, you MUST use delete_path to remove the directory first, or choose a different file name."
+            ));
+        }
         if let Some(parent) = resolved.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for {path}: {e}"))?;
         }

@@ -7,6 +7,7 @@
 use std::time::Duration;
 
 use ferric_provider::{Completion, CompletionRequest, Provider, ProviderError, StreamDelta};
+use tracing::warn;
 
 use crate::run::Sleeper;
 
@@ -17,13 +18,24 @@ pub async fn complete_with_backoff(
     provider: &dyn Provider,
     request: CompletionRequest,
     sleeper: &dyn Sleeper,
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<Completion, ProviderError> {
     let mut attempt = 0u32;
     loop {
-        match provider.complete(request.clone()).await {
+        match provider
+            .complete(request.clone(), cancel_flag.clone())
+            .await
+        {
             Ok(completion) => return Ok(completion),
             Err(e) if e.is_retryable() && attempt < MAX_RETRIES => {
                 let delay = BASE_DELAY_MS << attempt; // 250, 500, 1000
+                warn!(
+                    error = %e,
+                    attempt = attempt + 1,
+                    max_retries = MAX_RETRIES,
+                    delay_ms = delay,
+                    "retryable provider error; backing off"
+                );
                 sleeper.sleep(Duration::from_millis(delay));
                 attempt += 1;
             }
@@ -44,13 +56,24 @@ pub async fn complete_streaming_with_backoff(
     request: CompletionRequest,
     sleeper: &dyn Sleeper,
     on_delta: &(dyn Fn(StreamDelta) + Sync),
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<Completion, ProviderError> {
     let mut attempt = 0u32;
     loop {
-        match provider.complete_streaming(request.clone(), on_delta).await {
+        match provider
+            .complete_streaming(request.clone(), on_delta, cancel_flag.clone())
+            .await
+        {
             Ok(completion) => return Ok(completion),
             Err(e) if e.is_retryable() && attempt < MAX_RETRIES => {
                 let delay = BASE_DELAY_MS << attempt;
+                warn!(
+                    error = %e,
+                    attempt = attempt + 1,
+                    max_retries = MAX_RETRIES,
+                    delay_ms = delay,
+                    "retryable provider error mid-stream; backing off (full retry)"
+                );
                 sleeper.sleep(Duration::from_millis(delay));
                 attempt += 1;
             }

@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use ferric_core::{RunPolicy, ring_for_tier};
-use ferric_guard::{Decision, Workspace, check};
+use ferric_guard::{Decision, Workspace, check_with_ignore};
+use tracing::{debug, warn};
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
@@ -94,6 +95,13 @@ impl Registry {
         self.tools.insert(tool.spec().name.clone(), tool);
     }
 
+    /// The permission level a registered tool declares, or `None` if unknown.
+    /// Used by the loop's accept-edits gate (ADR-070) to decide which calls to
+    /// preview to the human (only `Write`/`Execute` — mutating ones).
+    pub fn permission_of(&self, name: &str) -> Option<ferric_guard::PermissionLevel> {
+        self.tools.get(name).map(|t| t.spec().permission)
+    }
+
     /// The specs a given run policy may use (the rings model): keep tools whose
     /// `ring <= ring_for_tier(policy.tier)`, and when over `policy.max_tools`
     /// **trim from the outer ring first** (priority by `(ring asc, name)`) so the
@@ -128,6 +136,8 @@ impl Registry {
         workspace: &Workspace,
         name: &str,
         args: &serde_json::Value,
+        taint_set: &ferric_guard::TaintSet,
+        sink_policy: &ferric_guard::SinkPolicy,
     ) -> ExecuteOutcome {
         let Some(tool) = self.tools.get(name) else {
             return ExecuteOutcome::UnknownTool {
@@ -141,6 +151,7 @@ impl Registry {
             let resolved = match workspace.resolve(&target) {
                 Ok(path) => path,
                 Err(e) => {
+                    warn!(tool = name, target = %target, error = %e, "guard denied: outside workspace boundary");
                     checks.push(CheckRecord::deny(target.into(), "boundary", e.to_string()));
                     return ExecuteOutcome::Denied {
                         reason: format!("boundary: {e}"),
@@ -148,15 +159,66 @@ impl Registry {
                     };
                 }
             };
-            if let Decision::Deny(reason) = check(spec.permission, &resolved) {
+            if let Decision::Deny(reason) = check_with_ignore(
+                spec.permission,
+                &resolved,
+                workspace.root(),
+                workspace.ignore(),
+            ) {
+                warn!(tool = name, path = %resolved.display(), rule = %reason.rule, matched = %reason.matched, "guard denied: permission check");
                 let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
-                checks.push(CheckRecord::deny(resolved, reason.rule, reason.matched));
+                checks.push(CheckRecord::deny(resolved, reason.rule, &reason.matched));
                 return ExecuteOutcome::Denied {
                     reason: detail,
                     checks,
                 };
             }
             checks.push(CheckRecord::allow(resolved));
+        }
+
+        for cmd in tool.target_commands(args) {
+            if let Decision::Deny(reason) = ferric_guard::check_command(&cmd) {
+                warn!(tool = name, command = %cmd, rule = %reason.rule, matched = %reason.matched, "guard denied: command denylist");
+                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
+                checks.push(CheckRecord::deny(
+                    std::path::PathBuf::from(&cmd),
+                    reason.rule,
+                    &reason.matched,
+                ));
+                return ExecuteOutcome::Denied {
+                    reason: detail,
+                    checks,
+                };
+            }
+            checks.push(CheckRecord::allow(std::path::PathBuf::from(&cmd)));
+        }
+
+        let is_tainted = taint_set.args_tainted(args);
+        match sink_policy.decide(spec.permission, is_tainted) {
+            ferric_guard::SinkDecision::Allow => {}
+            ferric_guard::SinkDecision::Warn => {
+                warn!(
+                    tool = name,
+                    permission = ?spec.permission,
+                    "sink policy: tainted data reaching a {:?} sink (warn mode; proceeding)",
+                    spec.permission
+                );
+            }
+            ferric_guard::SinkDecision::RequireApproval => {
+                // Fall back to deny since human approval is not wired
+                warn!(tool = name, permission = ?spec.permission, "sink policy: tainted data at sink; require-approval not wired, denying");
+                return ExecuteOutcome::Denied {
+                    reason: "sink policy: require approval not implemented".to_string(),
+                    checks,
+                };
+            }
+            ferric_guard::SinkDecision::Deny => {
+                warn!(tool = name, permission = ?spec.permission, "sink policy: tainted data denied at sink");
+                return ExecuteOutcome::Denied {
+                    reason: "sink policy: tainted data denied at sink".to_string(),
+                    checks,
+                };
+            }
         }
 
         let ctx = ToolCtx { workspace };
@@ -168,6 +230,7 @@ impl Registry {
             Ok(output) => (output, false),
             Err(error) => (error, true),
         };
+        debug!(tool = name, is_error, duration_ms, "tool handler returned");
         let for_model = truncate_chars(&full, self.truncation_limit);
         ExecuteOutcome::Completed {
             output: ToolOutput {
@@ -270,7 +333,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        let outcome = registry.execute(&ws, "writer", &json!({"path": ".git/config"}));
+        let outcome = registry.execute(
+            &ws,
+            "writer",
+            &json!({"path": ".git/config"}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        );
         assert!(
             matches!(outcome, ExecuteOutcome::Denied { ref reason, .. } if reason.contains(".git")),
             "expected Denied, got {outcome:?}"
@@ -285,7 +354,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        match registry.execute(&ws, "writer", &json!({"path": "notes.md"})) {
+        match registry.execute(
+            &ws,
+            "writer",
+            &json!({"path": "notes.md"}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        ) {
             ExecuteOutcome::Completed { checks, .. } => {
                 assert_eq!(checks.len(), 1);
                 assert_eq!(checks[0].decision, "allow");
@@ -303,7 +378,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        match registry.execute(&ws, "writer", &json!({"path": ".git/config"})) {
+        match registry.execute(
+            &ws,
+            "writer",
+            &json!({"path": ".git/config"}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        ) {
             ExecuteOutcome::Denied { checks, .. } => {
                 assert_eq!(checks.len(), 1);
                 assert_eq!(checks[0].decision, "deny");
@@ -321,7 +402,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        let outcome = registry.execute(&ws, "writer", &json!({"path": ".ferric/trace/x.jsonl"}));
+        let outcome = registry.execute(
+            &ws,
+            "writer",
+            &json!({"path": ".ferric/trace/x.jsonl"}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        );
         match outcome {
             ExecuteOutcome::Denied { checks, .. } => {
                 assert_eq!(checks[0].rule.as_deref(), Some("denied_write_segment"));
@@ -339,7 +426,13 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(Box::new(tool));
 
-        match registry.execute(&ws, "bigout", &json!({})) {
+        match registry.execute(
+            &ws,
+            "bigout",
+            &json!({}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        ) {
             ExecuteOutcome::Completed { output, .. } => {
                 assert_eq!(output.full.len(), 1_000_000);
                 assert!(output.for_model.chars().count() <= DEFAULT_TRUNCATION_LIMIT + 100);
@@ -384,14 +477,14 @@ mod tests {
     #[test]
     fn tools_for_policy_trims_outer_ring_first() {
         let mut registry = Registry::new();
-        let core: Vec<String> = (0..8).map(|i| format!("core_{i}")).collect();
+        let core: Vec<String> = (0..10).map(|i| format!("core_{i}")).collect();
         for n in &core {
             registry.register(Box::new(dummy_ring(n, 0)));
         }
-        for i in 0..5 {
+        for i in 0..10 {
             registry.register(Box::new(dummy_ring(&format!("outer_{i}"), 1)));
         }
-        // Small: ring ceiling 1 (admits both rings), max_tools 10 < 13 → must trim.
+        // Small: ring ceiling 1 (admits both rings), max_tools 14 < 20 → must trim.
         let small = policy_for(&ModelProfile {
             params_b: 8.0,
             quant: "Q4_K_M".to_string(),
@@ -488,7 +581,13 @@ mod tests {
     fn unknown_tool_outcome() {
         let (_dir, ws) = temp_workspace();
         let registry = Registry::new();
-        let outcome = registry.execute(&ws, "nope", &json!({}));
+        let outcome = registry.execute(
+            &ws,
+            "nope",
+            &json!({}),
+            &ferric_guard::TaintSet::new(),
+            &ferric_guard::SinkPolicy::deny(),
+        );
         assert!(matches!(outcome, ExecuteOutcome::UnknownTool { ref name } if name == "nope"));
     }
 }

@@ -56,7 +56,11 @@ impl Provider for MockProvider {
         }
     }
 
-    async fn complete(&self, request: CompletionRequest) -> Result<Completion, ProviderError> {
+    async fn complete(
+        &self,
+        request: CompletionRequest,
+        _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Completion, ProviderError> {
         let mut state = self.state.lock().unwrap();
         state.requests.push(request);
         match state.script.pop_front() {
@@ -97,11 +101,11 @@ mod tests {
     #[test]
     fn mock_replays_script_in_order() {
         let mock = MockProvider::new(vec![completion("a"), completion("b")]);
-        let a = futures_executor::block_on(mock.complete(request())).unwrap();
-        let b = futures_executor::block_on(mock.complete(request())).unwrap();
+        let a = futures_executor::block_on(mock.complete(request(), None)).unwrap();
+        let b = futures_executor::block_on(mock.complete(request(), None)).unwrap();
         assert_eq!(a.message.text.as_deref(), Some("a"));
         assert_eq!(b.message.text.as_deref(), Some("b"));
-        let err = futures_executor::block_on(mock.complete(request())).unwrap_err();
+        let err = futures_executor::block_on(mock.complete(request(), None)).unwrap_err();
         assert!(matches!(err, ProviderError::ScriptExhausted(2)));
     }
 
@@ -109,7 +113,7 @@ mod tests {
     fn provider_is_dyn_compatible() {
         let boxed: Box<dyn Provider> = Box::new(MockProvider::new(vec![completion("dyn")]));
         assert_eq!(boxed.id(), "mock");
-        let done = futures_executor::block_on(boxed.complete(request())).unwrap();
+        let done = futures_executor::block_on(boxed.complete(request(), None)).unwrap();
         assert_eq!(done.message.text.as_deref(), Some("dyn"));
     }
 }

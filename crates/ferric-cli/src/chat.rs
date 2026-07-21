@@ -19,7 +19,6 @@
 //! (mirroring `ferric mcp`, since `run()` emits a whole `SessionStart..SessionEnd`
 //! envelope per call and cannot be nested).
 
-use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -37,7 +36,7 @@ use crate::query::{
     run_with_provider,
 };
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 use tokio::runtime::Runtime;
 
 /// `ferric chat`'s CLI surface: `QueryArgs` minus `prompt`/`resume`/`files` —
@@ -48,6 +47,10 @@ pub struct ChatArgs {
     /// Workspace root (containment boundary). Default: current directory.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
+
+    /// Disable token-streaming to stdout. (By default, streaming is ON in chat mode).
+    #[arg(long)]
+    pub no_stream: bool,
 
     #[command(flatten)]
     pub backend_opts: BackendOpts,
@@ -101,6 +104,8 @@ pub(crate) enum ChatInput {
     Talk(String),
     /// `/do <request>` → escalate into the constrained agentic loop.
     Escalate(String),
+    /// `!<cmd>` or `/run <cmd>` → run a shell command directly, no LLM (ADR-069).
+    Run(String),
     /// `/help` → print the command list.
     Help,
     /// `/exit`, `/quit`, or EOF → end the session.
@@ -123,6 +128,28 @@ pub(crate) fn parse_chat_input(line: &str) -> ChatInput {
             return ChatInput::Talk(trimmed.to_string());
         }
         return ChatInput::Escalate(req.to_string());
+    }
+    // Direct terminal passthrough (ADR-069): `!<cmd>` or `/run <cmd>` runs a
+    // shell command through the guarded `shell_exec` path with NO LLM. A bare
+    // `!` or `/run` (no command) is talked, not run.
+    if let Some(rest) = trimmed.strip_prefix('!') {
+        let cmd = rest.trim();
+        return if cmd.is_empty() {
+            ChatInput::Talk(trimmed.to_string())
+        } else {
+            ChatInput::Run(cmd.to_string())
+        };
+    }
+    if trimmed == "/run" {
+        return ChatInput::Talk(trimmed.to_string());
+    }
+    if let Some(rest) = trimmed.strip_prefix("/run ") {
+        let cmd = rest.trim();
+        return if cmd.is_empty() {
+            ChatInput::Talk(trimmed.to_string())
+        } else {
+            ChatInput::Run(cmd.to_string())
+        };
     }
     match trimmed {
         "/help" => ChatInput::Help,
@@ -179,7 +206,7 @@ fn mock_talk_completion() -> Completion {
 /// `Real` holds the ONE provider + `tokio::runtime::Runtime` for the session.
 enum ChatBackend {
     Mock,
-    #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+    #[cfg(feature = "backend-openai")]
     Real {
         provider: Box<dyn Provider + Send + Sync>,
         runtime: Runtime,
@@ -188,17 +215,40 @@ enum ChatBackend {
 
 impl ChatBackend {
     /// Run one talk completion (unconstrained, no tools).
-    fn talk(&self, request: CompletionRequest) -> Result<Completion, String> {
+    fn talk(&self, request: CompletionRequest, stream: bool) -> Result<Completion, String> {
+        let sink_fn = |d: ferric_provider::StreamDelta| match d {
+            ferric_provider::StreamDelta::Text(t) | ferric_provider::StreamDelta::Thought(t) => {
+                print!("{t}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            _ => {}
+        };
+        let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
+            if stream { Some(&sink_fn) } else { None };
+
         match self {
             ChatBackend::Mock => {
                 let provider = MockProvider::new(vec![mock_talk_completion()]);
-                futures_executor::block_on(provider.complete(request))
-                    .map_err(|e| format!("talk completion failed: {e}"))
+                if let Some(sink) = stream_sink {
+                    futures_executor::block_on(provider.complete_streaming(request, sink, None))
+                        .map_err(|e| format!("talk completion failed: {e}"))
+                } else {
+                    futures_executor::block_on(provider.complete(request, None))
+                        .map_err(|e| format!("talk completion failed: {e}"))
+                }
             }
-            #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
-            ChatBackend::Real { provider, runtime } => runtime
-                .block_on(provider.complete(request))
-                .map_err(|e| format!("talk completion failed: {e}")),
+            #[cfg(feature = "backend-openai")]
+            ChatBackend::Real { provider, runtime } => {
+                if let Some(sink) = stream_sink {
+                    runtime
+                        .block_on(provider.complete_streaming(request, sink, None))
+                        .map_err(|e| format!("talk completion failed: {e}"))
+                } else {
+                    runtime
+                        .block_on(provider.complete(request, None))
+                        .map_err(|e| format!("talk completion failed: {e}"))
+                }
+            }
         }
     }
 
@@ -211,7 +261,27 @@ impl ChatBackend {
         sink: &mut JsonlSink,
         prompt: &str,
         seed: ReplayedState,
+        stream: bool,
     ) -> Result<ferric_loop::LoopOutcome, String> {
+        let sink_fn = |d: ferric_provider::StreamDelta| match d {
+            ferric_provider::StreamDelta::Text(t) => {
+                print!("{t}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            ferric_provider::StreamDelta::Thought(t) => {
+                print!("\x1b[90m{t}\x1b[0m"); // Dim ANSI color
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+            ferric_provider::StreamDelta::ToolNamed(name) => {
+                eprintln!("\u{25b8} calling {name}...");
+            }
+            ferric_provider::StreamDelta::ToolCompleted { name, summary } => {
+                eprintln!("\u{2713} {name}: {summary}");
+            }
+        };
+        let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
+            if stream { Some(&sink_fn) } else { None };
+
         match self {
             ChatBackend::Mock => {
                 let provider = mock_provider(config.protocol);
@@ -227,11 +297,16 @@ impl ChatBackend {
                     sink,
                     Some(prompt),
                     Vec::new(),
-                    None,
+                    stream_sink,
                     Some(seed),
+                    ferric_guard::TaintSet::new(),
+                    ferric_guard::SinkPolicy::deny(),
+                    None,
+                    None,
+                    None,
                 ))
             }
-            #[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+            #[cfg(feature = "backend-openai")]
             ChatBackend::Real { provider, runtime } => runtime.block_on(run_with_provider(
                 provider.as_ref(),
                 &config.registry,
@@ -244,24 +319,29 @@ impl ChatBackend {
                 sink,
                 Some(prompt),
                 Vec::new(),
-                None,
+                stream_sink,
                 Some(seed),
+                ferric_guard::TaintSet::new(),
+                ferric_guard::SinkPolicy::deny(),
+                None,
+                None,
+                None,
             )),
         }
     }
 }
 
-#[cfg(any(feature = "backend-mistralrs", feature = "backend-openai"))]
+#[cfg(feature = "backend-openai")]
 fn build_real_backend(backend_opts: &BackendOpts) -> Result<ChatBackend, String> {
     let runtime = Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     let provider = runtime.block_on(crate::backend::create_provider(backend_opts))?;
     Ok(ChatBackend::Real { provider, runtime })
 }
 
-#[cfg(not(any(feature = "backend-mistralrs", feature = "backend-openai")))]
+#[cfg(not(feature = "backend-openai"))]
 fn build_real_backend(_backend_opts: &BackendOpts) -> Result<ChatBackend, String> {
     Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-mistralrs,backend-openai`, or use --mock"
+         rebuild with `cargo build --features backend-openai`, or use --mock"
         .to_string())
 }
 
@@ -270,6 +350,8 @@ Commands:
   /do <request>   escalate this turn into the constrained agentic loop (it can
                   act on the workspace, through the same guarded/traced path as
                   `ferric query`)
+  !<cmd>          run a shell command directly (no LLM), through the guarded
+  /run <cmd>      `shell_exec` path — the same command denylist applies
   /help           show this help
   /exit, /quit    end the session
   <anything else> talk mode — the model responds as text only (no tools, no
@@ -302,7 +384,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         mock: args.mock,
         backend: backend_opts
             .backend
-            .unwrap_or(crate::backend::BackendArg::Mistral),
+            .unwrap_or(crate::backend::BackendArg::Openai),
         params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
         quant: args
             .quant
@@ -324,10 +406,8 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             .clone()
             .or(cfg.profile_dir)
             .unwrap_or_else(|| PathBuf::from("benchmarks")),
-        model_key: backend_opts
-            .model
-            .clone()
-            .or_else(|| backend_opts.model_file.clone()),
+        model_key: backend_opts.model.clone(),
+        hooks: None,
     });
     for diag in &loaded_config.diagnostics {
         eprintln!("{diag}");
@@ -378,26 +458,35 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     }
 
     println!("Ferric chat — /help for commands, /exit to quit.");
-    let stdin = std::io::stdin();
-    let mut handle = stdin.lock();
-    let mut line = String::new();
+    let mut editor = match rustyline::DefaultEditor::new() {
+        Ok(ed) => ed,
+        Err(e) => {
+            eprintln!("failed to initialize rustyline: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let history_path = workspace_root.join(".ferric").join("chat_history.txt");
+    let _ = editor.load_history(&history_path);
+
     // Per-session monotonic counter for escalation trace filenames — `now_ms()`
     // alone can collide when two `/do` turns land in the same millisecond
     // (implausible for human typing, but real for scripted/piped chat;
     // test-critic C-001).
     let mut esc_count: u32 = 0;
+    // `shell_exec` runs on tokio (sprint 67); the sync REPL has no ambient
+    // runtime, so `!cmd` passthrough gets its own, created on first use.
+    let mut shell_rt: Option<tokio::runtime::Runtime> = None;
     loop {
-        eprint!("you> ");
-        let _ = std::io::stderr().flush();
-        line.clear();
-        match handle.read_line(&mut line) {
-            Ok(0) => break, // EOF
-            Ok(_) => {}
+        let line = match editor.readline("you> ") {
+            Ok(line) => line,
+            Err(rustyline::error::ReadlineError::Interrupted)
+            | Err(rustyline::error::ReadlineError::Eof) => break,
             Err(e) => {
                 eprintln!("input error: {e}");
                 break;
             }
-        }
+        };
+        let _ = editor.add_history_entry(line.as_str());
         match parse_chat_input(&line) {
             ChatInput::Exit => break,
             ChatInput::Empty => {}
@@ -405,10 +494,14 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             ChatInput::Talk(text) => {
                 history.push(Message::user(text));
                 let request = talk_request(&history, &config.sampling);
-                match backend.talk(request) {
+                match backend.talk(request, !args.no_stream) {
                     Ok(completion) => {
                         let resp = completion.message.text.unwrap_or_default();
-                        println!("{resp}");
+                        if args.no_stream {
+                            println!("{resp}");
+                        } else {
+                            println!(); // ensure newline after stream
+                        }
                         let _ = log.write_event(Event::Note {
                             text: format!("chat talk turn ({} response chars)", resp.len()),
                         });
@@ -429,7 +522,14 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                         continue;
                     }
                 };
-                match backend.escalate(&config, &workspace, &mut esc_sink, &text, seed) {
+                match backend.escalate(
+                    &config,
+                    &workspace,
+                    &mut esc_sink,
+                    &text,
+                    seed,
+                    !args.no_stream,
+                ) {
                     Ok(outcome) => {
                         let resp = outcome.final_text.unwrap_or_default();
                         println!("{resp}");
@@ -442,8 +542,52 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                     Err(e) => eprintln!("escalation error: {e}"),
                 }
             }
+            ChatInput::Run(cmd) => {
+                if shell_rt.is_none() {
+                    shell_rt = tokio::runtime::Runtime::new().ok();
+                }
+                let Some(rt) = &shell_rt else {
+                    eprintln!("cannot start shell runtime for passthrough");
+                    continue;
+                };
+                // Human-initiated, no LLM: run through the SAME guarded
+                // `shell_exec` chokepoint the agent uses, so the command
+                // denylist (ADR-005) still applies. Not folded into the talk
+                // history — it is a terminal side-channel, not conversation.
+                let outcome = rt.block_on(async {
+                    config.registry.execute(
+                        &workspace,
+                        "shell_exec",
+                        &serde_json::json!({ "command": cmd }),
+                        &ferric_guard::TaintSet::new(),
+                        &ferric_guard::SinkPolicy::deny(),
+                    )
+                });
+                match outcome {
+                    ferric_tools::ExecuteOutcome::Completed { output, .. } => {
+                        print!("{}", output.full);
+                        if !output.full.ends_with('\n') {
+                            println!();
+                        }
+                        let _ = log.write_event(Event::Note {
+                            text: format!("chat !run ({} output chars)", output.full.len()),
+                        });
+                    }
+                    ferric_tools::ExecuteOutcome::Denied { reason, .. } => {
+                        eprintln!("blocked: {reason}");
+                        let _ = log.write_event(Event::Note {
+                            text: format!("chat !run blocked: {reason}"),
+                        });
+                    }
+                    ferric_tools::ExecuteOutcome::UnknownTool { .. } => {
+                        eprintln!("shell_exec is unavailable in this build");
+                    }
+                }
+            }
         }
     }
+
+    let _ = editor.save_history(&history_path);
 
     let _ = log.write_event(Event::SessionEnd {
         reason: "chat session ended".to_string(),
@@ -499,6 +643,33 @@ mod tests {
         assert_eq!(parse_chat_input("/do"), ChatInput::Talk("/do".to_string()));
     }
 
+    #[test]
+    fn parse_chat_input_bang_and_run_are_passthrough() {
+        assert_eq!(
+            parse_chat_input("!echo hi"),
+            ChatInput::Run("echo hi".to_string())
+        );
+        assert_eq!(
+            parse_chat_input("  !ls -la  "),
+            ChatInput::Run("ls -la".to_string())
+        );
+        assert_eq!(
+            parse_chat_input("/run pwd"),
+            ChatInput::Run("pwd".to_string())
+        );
+        // A bare `!` or `/run` (no command) is talked, not run.
+        assert_eq!(parse_chat_input("!"), ChatInput::Talk("!".to_string()));
+        assert_eq!(
+            parse_chat_input("/run"),
+            ChatInput::Talk("/run".to_string())
+        );
+        // `/running` is NOT a passthrough (needs the `/run ` boundary) — talked.
+        assert_eq!(
+            parse_chat_input("/running late"),
+            ChatInput::Talk("/running late".to_string())
+        );
+    }
+
     /// The load-bearing structural-safety proof (ADR-052): the talk request has
     /// NO action channel — empty tools AND no constraint — so a talk completion
     /// can never carry a tool call.
@@ -526,7 +697,7 @@ mod tests {
         ];
         let config = build_run_config(&RunConfigArgs {
             mock: true,
-            backend: crate::backend::BackendArg::Mistral,
+            backend: crate::backend::BackendArg::Openai,
             params_b: 1.0,
             quant: "Q4_K_M".to_string(),
             family: "test".to_string(),
@@ -537,6 +708,7 @@ mod tests {
             max_ring: None,
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
+            hooks: None,
         });
         let seed = escalation_seed(&history, &config, "chat-123");
         assert_eq!(

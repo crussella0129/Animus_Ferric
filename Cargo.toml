@@ -11,7 +11,10 @@ members = [
     "crates/ferric-bench",
     "crates/ferric-research",
     "crates/animus-launch",
+    "crates/ferric-icm",
+    "crates/ferric-cron",
     "crates/ferric-cli",
+    "crates/ferric-vcs",
 ]
 
 [workspace.package]
@@ -21,8 +24,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/crussella0129/Animus_Ferric"
 
 # Dependency allowlist (ADR-004, amended s1): the s0 set plus — clap (the CLI
-# surface is real now), and feature-gated mistralrs + tokio (default OFF: the
-# default workspace build and the aarch64 check gate never compile them).
+# surface is real now), rustyline (for the chat REPL), and feature-gated 
+# mistralrs + tokio (default OFF: the default workspace build and the aarch64 
+# check gate never compile them).
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 # preserve_order is LOAD-BEARING (ADR-016): llguidance emits JSON-schema
@@ -33,24 +37,37 @@ serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
-# mistral.rs (sprint 35, ADR-045): rev-pinned, not a floating branch --
-# `branch = "master"` let every fresh backend-mistralrs build silently pull a
-# different commit. Immutable until a deliberate, reviewed bump (matching the
-# oovra policy below).
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", rev = "15986c037bbe3ee31085d1c73abd2ea3cb11f094" }
+
 # rustls-tls (sprint 35, ADR-045): default-tls pulls native OpenSSL bindings on
 # non-Windows targets -- a native dependency + cross-toolchain burden for ARM
 # edge cross-compilation (Jetson/RPi). rustls is pure Rust; Ferric only ever
 # talks to 127.0.0.1 (ADR-005) so TLS itself is barely exercised regardless.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "time", "macros", "signal"] }
 # Prompt composition (ADR-016): rev-pinned to oovra main; immutable until a
-# deliberate, reviewed bump. Swap to crates.io at oovra v0.3.
 oovra = { git = "https://github.com/crussella0129/oovra", rev = "378abea6552f74ee7a8e4d9ce74418d6457ad002" }
 toml = "0.8"
 regex = "1"
 tempfile = "3"
 futures-executor = "0.3"
+rustyline = "14"
+axum = "0.8"
+tokio-stream = "0.1"
+
+# Observability (sprint 72, ADR-063): leveled, structured harness-internal
+# logging, DISTINCT from the LLM JSONL trajectory (ADR-002). `tracing` is the
+# emit-side facade (pure Rust, no C deps — edge/ARM-clean); only the binary
+# (`ferric-cli`) links `tracing-subscriber` and installs a stderr subscriber,
+# so libraries stay subscriber-agnostic. With no subscriber the macros are
+# near-zero-cost, so it ships always-on rather than feature-gated.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Calendar cron expressions (sprint 76, ADR-067): epoch→UTC civil-time
+# decomposition for evaluating 5-field cron schedules. Already in the tree via
+# oovra (and CI-gated on aarch64 through ferric-cli), so this is a zero-new-cost
+# allowlist addition; used only by `ferric-cron`.
+chrono = "0.4"
 
 ferric-core = { path = "crates/ferric-core" }
 ferric-trace = { path = "crates/ferric-trace" }
@@ -62,3 +79,6 @@ ferric-prompt = { path = "crates/ferric-prompt" }
 ferric-bench = { path = "crates/ferric-bench" }
 ferric-research = { path = "crates/ferric-research" }
 animus-launch = { path = "crates/animus-launch" }
+ferric-icm = { path = "crates/ferric-icm" }
+ferric-cron = { path = "crates/ferric-cron" }
+ferric-vcs = { path = "crates/ferric-vcs" }

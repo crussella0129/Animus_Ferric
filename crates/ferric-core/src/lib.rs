@@ -1,11 +1,13 @@
 //! Shared vocabulary types and the deterministic scale function for Animus Ferric.
 
 mod error;
+pub mod hooks;
 mod media;
 mod message;
 mod scale;
 
 pub use error::FerricError;
+pub use hooks::HooksConfig;
 pub use media::{
     Attachment, FileKind, MediaPart, Modality, base64_encode, classify_path, decide_attachment,
     modality_flag, parse_modalities,

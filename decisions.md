@@ -55,7 +55,7 @@ The OpenAI-compatible HTTP backend (llama-server/Ollama) moves from s2 to s3. It
 `RunPolicy.max_output_tokens` is a per-tier snapshot-pinned seed (NANO 512 / SMALL 768 / MEDIUM 1024 / LARGE 1536 / XL 2048 / ULTRA 2048) driving `SamplingParams.max_tokens` in query and bench. Budgets leave headroom over the largest expected single action (~450-token write_file through L4) while capping a 1B's worst-case turn; they are recalibrated from bench `truncated_action` data, not folklore.
 
 ## ADR-019 — 2026-06-13 (sprint 2): Calibration pipeline (bench is the sole producer of measured_level)
-`ferric bench` — embedded TOML L0–L6 specs, spawn-self release runner (`current_exe`, child always `query` so recursion is structurally impossible), trace-derived verification (completed = !timeout ∧ exit0 ∧ expectations ∧ tools ∧ clean terminator; `plan_steps` null — no planner yet, flagged not faked) — is the sole producer of `measured_level`. Results append-only to `results.jsonl`; `model_profiles.json` records measured_level + tier_from_params vs tier_from_measured, feeding `ModelProfile.measured_level` (ADR-006's bidirectional override). Tier assignments change only with a committed measurement diff.
+`ferric bench full` — embedded TOML L0–L6 specs, spawn-self release runner (`current_exe`, child always `query` so recursion is structurally impossible), trace-derived verification (completed = !timeout ∧ exit0 ∧ expectations ∧ tools ∧ clean terminator; `plan_steps` null — no planner yet, flagged not faked) — is the sole producer of `measured_level`. Results append-only to `results.jsonl`; `model_profiles.json` records measured_level + tier_from_params vs tier_from_measured, feeding `ModelProfile.measured_level` (ADR-006's bidirectional override). Tier assignments change only with a committed measurement diff.
 
 ## ADR-020 — 2026-06-15 (sprint 2): UnifiedGrammar is opt-in pending an engine-level hang root-cause
 The s2 real-GGUF gate found that `mistralrs::send_chat_request` with a `Constraint::JsonSchema` attached HANGS on Llama-3.2-1B: the call never returns (the smoke trace stops exactly at `constraint_applied`, no `turn_end`), pegging ~20 cores for 4+ hours with zero output. Every model-free grammar test passes (MockProvider bypasses the real engine), so Ferric's loop/schema-generation/parse logic is correct — the pathology is downstream in llguidance grammar compilation or per-token masking over the generated schema on the GGUF tokenizer. This is exactly the false-green ADR-009 exists to catch. Decision (amends ADR-015's "default UnifiedGrammar for small models"): `select_protocol` auto-default is now `NativeTools` so `ferric query` never hangs by default; UnifiedGrammar is opt-in via `--protocol grammar`. The grammar machinery ships fully built and model-free-verified. Root-cause (minimal llguidance/mistralrs repro; suspect schema features — anyOf breadth, unbounded string args, or toktrie build cost; consider maxLength caps and a hard per-request inference timeout) is a tracked s3 task; the standalone `ferric query` path also gains a wall-clock kill so an engine hang can never run unbounded again.
@@ -84,7 +84,7 @@ The sprint-8 real-model E2E (full report: `sprints/s8/sprint-tests/findings-repo
 
 ## ADR-025 — 2026-06-23 (sprint 9): Fleet calibration proves the constraint extends the floor to 1B; native fallback fixes ADR-024; mistral.rs 0.8.15 no longer hangs but still doesn't enforce
 Sprint 9 cashed in the testbench. Full report: `sprints/s9/sprint-tests/test-report.md`. Decisions now load-bearing:
-- **`ferric toolbench --models <a,b,c>` (fleet sweep) is the calibration tool.** One command benches each model and emits a `render_leaderboard` table sorted best→worst (+ combined `.jsonl`, every row tagged by `model`). It is a **human-facing readout only — it does NOT write `measured_level`** (that stays `ferric bench`'s job, ADR-019). Boundary preserved.
+- **`ferric bench ltd --models <a,b,c>` (fleet sweep) is the calibration tool.** One command benches each model and emits a `render_leaderboard` table sorted best→worst (+ combined `.jsonl`, every row tagged by `model`). It is a **human-facing readout only — it does NOT write `measured_level`** (that stays `ferric bench full`'s job, ADR-019). Boundary preserved.
 - **The constraint extends the usable model floor down to 1B — the thesis, demonstrated.** Real fleet run (qwen2.5-coder:7b, llama3.1:8b, llama3.2:1b; 5 tools × 10 iters): **ConstrainedJson = 100% solid on ALL three, including `llama3.2:1b`**, exactly where **NativeTools collapses to 22% unreliable** on the 1B. The 1B native failures are `malformed_args` (right tool, missing required args), not `no_action` — so the constraint wins precisely because it *forces* the `required` args the tiny model drops unaided.
 - **T-902 native-`content` fallback fixes the ADR-024 gap.** OpenAI backend now recovers a tool call from `content` when `tool_calls` is null (ollama quirk). Native went **0% (s8) → 100%** on the 7–8B models, and the 1B's residual failures became a *diagnosable* `malformed_args` 22% instead of a silent zero. ConstrainedJson remains the default for the valve regardless; this only hardens the explicit-native path.
 - **mistral.rs 0.8.15 viability — RESOLVED (the ADR-020/023 gate).** `grammar_probe` on Llama-3.2-1B: both `trivial` and `unified` (the exact schema that hung unboundedly in s2) **RETURN in ~10s — the ADR-020 hang is fixed upstream.** BUT both return the *identical* freeform JSON regardless of schema → **the `JsonSchema` constraint is not enforced** (zero effect on generation). **Verdict: mistral.rs stays the unconstrained TextXml fallback; it is NOT a constrained pure-Rust backend.** The constrained thesis stays on the HTTP valve (ADR-001/023), which the calibration just proved at 100% to 1B. Whether the non-enforcement is upstream or in our `MistralRsProvider` wiring is a future investigation, not a blocker. This closes the sprint-8 "mistral.rs viability" research item.
@@ -118,14 +118,14 @@ The user's tool-design north star, now the architecture. Tool sets are **concent
 - **Amendment (sprint 19):** **Ring 2 seeded.** Added `multi_edit` (`ring: 2`) — an ordered, *atomic* batch of first-occurrence edits to one file (read-once / apply to a working copy / write-once-if-all-validate). It's the right Ring-2 tool for small models: more than the Ring-0 `edit_file`, yet still reliably emittable (a JSON array of `{old,new}` strings) unlike a line-numbered unified diff. Reachable once a model earns Medium (`ring_for_tier(Medium)=2`). The bench could not previously *reach* Ring 2 (its profile was hardcoded to Small) — added `toolbench --params-b <f32>` (default 8.0) so `--calibrate-rings --params-b 20` benches at the Medium ceiling and sweeps rings 0–2, measuring live whether a given model can drive the new ring.
 
 ## ADR-029 — 2026-06-25 (sprint 17): The model profile is a real input to `query` — durable promotion (read-back of `measured_level` + `calibrated_ring`)
-`model_profiles.json` was **written but never read**: `ferric bench` calibrated `measured_level` and `write_profile`'d it, but every `ModelProfile{}` (including `query`) hardcoded `measured_level: None`. The ADR-019 override was computed, stored, and ignored at run time. This closes the loop so a *proven* model automatically runs at its earned capability.
+`model_profiles.json` was **written but never read**: `ferric bench full` calibrated `measured_level` and `write_profile`'d it, but every `ModelProfile{}` (including `query`) hardcoded `measured_level: None`. The ADR-019 override was computed, stored, and ignored at run time. This closes the loop so a *proven* model automatically runs at its earned capability.
 - **Persist.** `ModelProfileRecord` gains `calibrated_ring: Option<u8>` (additive `#[serde(default)]`). `toolbench --calibrate-rings` writes each model's recommended ring via `write_calibrated_ring` (a load-or-create merge that **preserves** any `measured_level`) to `--profile-dir` (default `benchmarks`).
 - **Read back.** `ferric query --profile-dir` (default `benchmarks`) resolves (model name, protocol label) and, if a record exists, seeds `ModelProfile.measured_level` (→ tier via `policy_for`) **and** defaults `policy.max_ring` to `calibrated_ring`. `read_profile` is the sole consumer.
 - **Composition.** `measured_level` *raises* the tier (capability earned); `calibrated_ring` *caps* `max_ring` at the proven ring (restrict-to-proven). A model promoted to a higher tier still only gets rings it demonstrated — earned, not assumed.
-- **Safety.** Operator `--max-ring` still wins; a missing file / un-keyed model / `--mock`-without-`--model` ⇒ `read_profile` returns `None` ⇒ **byte-identical to an un-calibrated run**. Proven by a `--mock` CLI test (a written `calibrated_ring: 0` caps the trace's `offered_tools` to the core; no file leaves Ring 1 intact). The (model, protocol) key is derived the same way on both sides; a mismatch is a missed optimization, never a regression. `ferric bench` remains the SOLE producer of `measured_level` (ADR-019 unchanged).
+- **Safety.** Operator `--max-ring` still wins; a missing file / un-keyed model / `--mock`-without-`--model` ⇒ `read_profile` returns `None` ⇒ **byte-identical to an un-calibrated run**. Proven by a `--mock` CLI test (a written `calibrated_ring: 0` caps the trace's `offered_tools` to the core; no file leaves Ring 1 intact). The (model, protocol) key is derived the same way on both sides; a mismatch is a missed optimization, never a regression. `ferric bench full` remains the SOLE producer of `measured_level` (ADR-019 unchanged).
 
 ## ADR-030 — 2026-06-26 (sprint 20): The full agentic loop runs the constrained path on a real model (`bench --backend openai`); the L0–L6 ladder validated end-to-end
-Every prior sprint measured **single-shot tool-call fire rate** (the toolbench). The product is a **multi-turn agent**, validated by the L0–L6 ladder (`ferric bench`) — but its runner (`runner.rs:run_spec`) spawned the child `query` with only `--mock` or the **mistral GGUF** flags, and mistral constrained decoding **hangs** (ADR-027). So the full loop had **never** exercised the constrained path on a real model.
+Every prior sprint measured **single-shot tool-call fire rate** (the toolbench). The product is a **multi-turn agent**, validated by the L0–L6 ladder (`ferric bench full`) — but its runner (`runner.rs:run_spec`) spawned the child `query` with only `--mock` or the **mistral GGUF** flags, and mistral constrained decoding **hangs** (ADR-027). So the full loop had **never** exercised the constrained path on a real model.
 - **Wiring.** Additive `Invocation.openai: Option<OpenAiArgs>` + a pure `query_args(prompt, inv, ws)` (precedence openai → mistral → mock, unit-tested) + `bench --backend {mistral|openai}` (`--api-base`, `--model`). No new `query` surface — it already takes `--backend openai`. mistral/mock byte-identical.
 - **Bug fixed (found by running it).** `task_complete` is a structured *terminator* (SessionEnd), not a dispatched ToolCall, so `parse_trace` never credited it and no spec's `expected_tools=["task_complete"]` could verify → every level falsely FAILED. `parse_trace` now credits the `task_complete` terminator as a called tool. (The loop's tracing was correct; the bench's accounting was not.)
 - **Result.** `qwen2.5-coder:7b` (ollama, ConstrainedJson) **passes all L0–L6** — readonly tool → file rename → multi-step → construction → multi-file-with-test → mini-cli → full-todo-app (L6, 5 turns, 1110 tok) → **`measured_level 6`**, promoting Small→**Large** (the ADR-019 bidirectional override on real data). The sprint-17 read-back then auto-applies it (`query` prints `measured_level Some(6)`). The constrained multi-turn agentic loop is validated end-to-end, and the demonstrated-reliability promotion now runs on real bench data.
@@ -297,7 +297,7 @@ ADR-020/027 — the HTTP valve remains the only backend that matters). Full rese
   (resources/prompts, or the eventual Development Engine's multi-tool needs).
 - **Launch-time-fixed profile is a deliberate divergence from `ferric query`.** The persisted
   profile (`measured_level`/`calibrated_ring`, ADR-029) is read ONCE at server launch and held for
-  the process lifetime; a `ferric bench --calibrate-rings` run against a *running* server is picked
+  the process lifetime; a `ferric bench ltd --calibrate-rings` run against a *running* server is picked
   up only on restart. `ferric query` re-reads per invocation. Accepted, matching the same
   launch-time-fixed philosophy applied to workspace/backend/model.
 - **Errors never crash the server.** A loop/provider failure on one `tools/call` returns
@@ -381,7 +381,7 @@ research/plan/critique in `sprints/s38/`.
   map: `backend`, `model_dir`, `model_file`, `model`, `api_base`, `api_key`, `params_b`, `quant`,
   `family`, `ctx`, `temperature`, `max_ring`, `profile_dir`, `stream` — this makes "config never
   touches security/guard/denylist policy" (ADR-005) a structural fact, not a review-time hope.
-  `ferric server`/`ferric bench`/`ferric toolbench` are NOT config-defaulted this sprint (scoped to
+  `ferric server`/`ferric bench full`/`ferric bench ltd` are NOT config-defaulted this sprint (scoped to
   `ferric query`/`ferric mcp` only).
 - **A field losing a clap default is a masking hazard, not a cosmetic detail.** Several
   `QueryArgs`/`McpArgs` fields (`params_b`, `quant`, `family`, `ctx`, `temperature`, `profile_dir`)
@@ -422,7 +422,7 @@ research/plan/critique in `sprints/s38/`.
   constraint/native-tools mutual exclusion has no config-awareness dependency to get wrong.
 - **Explicit deferrals:** `ferric init-project` (a wizard to scaffold `config.toml`/`Animus.md` — v1
   only reads an existing, hand-authored file, same as `CLAUDE.md` needs no wizard); config-defaulting
-  `ferric server`/`ferric bench`/`ferric toolbench`; an MCP-side `Animus.md`/config-diagnostic
+  `ferric server`/`ferric bench full`/`ferric bench ltd`; an MCP-side `Animus.md`/config-diagnostic
   `Note`-equivalent once MCP grows a launch-time trace mechanism.
 
 ## ADR-049 — 2026-07-04 (sprint 39): session resume — `ferric query --resume <path>`
@@ -699,3 +699,372 @@ scaffolder and the interactive interview in increment 1. Full research/plan/crit
 - **Explicit deferrals (inc 2+):** the full GECK-style project-type *profile library* (inc 1 has a
   bare `--type` passthrough or none); the "begin work?" **Loop auto-hand-off** that actually launches
   a first sprint; environment detection; richer goal→task NLP; a fancy TUI.
+
+## ADR-063 — 2026-07-17 (sprint 72): harness-internal observability via `tracing` (a second, orthogonal channel to the JSONL trace)
+The codebase had grown to 12 crates and a multi-guard async loop (compaction,
+hooks, background tasks, VCS snapshots, retries) with **zero structured
+logging** — `tracing` was not even a dependency. The JSONL trajectory (ADR-002)
+is the source of truth for *what the model did*, but it is the wrong tool for
+*why the harness did what it did* (a hook failed, a retry fired, a guard tripped,
+a tool took 4s): those are not model actions and do not belong in the replayable
+trajectory. This ADR adds the diagnostic channel — deliberately **distinct from,
+not folded into,** the trace.
+- **Two channels, never conflated.** JSONL trace = LLM trajectory, flush-per-event
+  to its sink file, replayable/diffable (unchanged). `tracing` = harness-internal
+  diagnostics, to **stderr**, ephemeral, level-filtered. A given fact lives in one
+  or the other by its nature (a `ToolCall` is trajectory → trace; "tool handler
+  returned in 4ms" is diagnostics → tracing). Nothing was moved out of the trace.
+- **Libraries emit; the binary subscribes.** `ferric-loop`, `ferric-tools`, and
+  the `ferric-provider` openai valve link only the `tracing` facade and emit
+  spans/events. **Only `ferric-cli`** links `tracing-subscriber` and installs the
+  process-wide subscriber once, in `main()`, before any subcommand runs — so every
+  surface (`query`/`mcp`/`chat`/`api`/`bench`/…) inherits one configured sink for
+  free. Idiomatic, and it keeps the libraries subscriber-agnostic.
+- **stderr, quiet by default.** Several surfaces treat **stdout as a machine
+  channel** (`ferric mcp` speaks JSON-RPC there; `query`/`launch` write their
+  report there). Diagnostics therefore go to **stderr**, and the default floor is
+  **WARN**, so an ordinary run prints nothing extra. Verified end-to-end: at `-vv`,
+  stdout stays byte-for-byte clean while stderr carries the span-scoped debug feed.
+- **`-v` count + `FERRIC_LOG`/`RUST_LOG` override.** A global `-v/--verbose`
+  clap flag (`-v` info, `-vv` debug, `-vvv` trace) sets the floor; a non-empty
+  `FERRIC_LOG` (preferred) or `RUST_LOG` env filter overrides it entirely, so
+  per-crate targeting (`FERRIC_LOG=ferric_loop=debug`) needs no rebuild. The
+  decision logic is a pure, unit-tested function; a malformed filter falls back
+  to WARN rather than aborting the run.
+- **Always-on, not feature-gated.** With no subscriber the macros are near
+  zero-cost, so gating them across crates would buy no measurable edge/ARM win
+  for real maintenance cost. Exception: `ferric-provider` only instruments the
+  openai valve, so its `tracing` dep rides the existing `backend-openai` feature —
+  the default library build and the aarch64 check gate never compile it.
+- **`ferric-guard` stays pure (a deliberate non-change).** Guard is a hardcoded,
+  side-effect-free decision crate (ADR-005). Its `check`/`check_command` flow
+  **only** through the `Registry::execute` chokepoint in production, which now
+  logs every denial at WARN *with the tool-name context guard itself lacks*.
+  Instrumenting guard directly would double-log with less context and give a
+  security-critical primitive a logging side effect — so guard was left untouched
+  and its `tracing` dep dropped.
+- **Level discipline.** WARN is reserved for rare, genuinely-actionable events
+  (guard-trip stops, provider errors after retries, each backoff retry, guard
+  denials at the chokepoint). Per-turn conditions that recur in a common degraded
+  setup (a VCS snapshot failing in a non-git workspace, once per turn) are **debug**,
+  not warn, so quiet-by-default survives that case; the failure is still recorded
+  as a trace `Note`. A buffer-writer capture test asserts a guard trip emits its
+  WARN *and* that a clean run emits nothing at WARN.
+- **Scope / deferrals (named, not dropped):** `ferric-research` (Ornstein),
+  `ferric-vcs`, and `animus-launch` are not instrumented this increment — Ornstein
+  already emits provenance via its digests, vcs/launch are short deterministic
+  subprocess sequences; they slot into the same facade later with no design change.
+  No JSON/OTel subscriber, no `#[instrument]` on tool handlers, no per-request
+  body logging (only shape: model, message count, constrained-or-not).
+
+## Documentation note (sprint 72)
+`decisions.md` physically ended at ADR-053 (sprint 43) while the README timeline
+cites ADR-055…062 (sprints 45–54): the full ADR prose for that span was kept in
+per-sprint working memory (`sprints/`, gitignored) and summarized in the README,
+but not appended here. This is a known ledger drift, recorded so a future sprint
+can backfill 054–062 from the README bullets if the full prose is wanted. ADR-063
+is numbered past the highest README-referenced ADR to stay globally unique.
+
+## ADR-064 — 2026-07-17 (sprint 73): Agent delegation via ICM (Interpretable Context Methodology) — the filesystem IS the orchestrator
+The backlog's "Agent Delegation Structure (ICM)" is answered by adopting
+**Interpretable Context Methodology** (Van Clief & McDermott, 2026, provided by
+the user) rather than a code-level multi-agent framework. The decision: for
+Ferric's target — sequential, human-reviewed workflows on small local models —
+orchestration belongs in **folder structure**, not in a coordination framework.
+Numbered stage folders encode execution order; each stage's `CONTEXT.md` is a
+contract; a five-layer context hierarchy scopes what each stage-agent sees. One
+agent runs every stage; the folder structure IS the delegation logic. Full guide
+in `docs/icm.md`.
+- **Why ICM over CrewAI/LangChain/AutoGen.** Those frameworks solve a
+  coordination problem that a *sequential, human-in-the-loop* pipeline does not
+  have. ICM's control surface is plain files: reorder folders to change stage
+  order, edit a markdown file to change a prompt, add/delete a folder to add/drop
+  a stage, open the folder to inspect state. It also keeps each stage's context
+  small and focused — the "lost in the middle" degradation of a monolithic
+  40k-token prompt never occurs because the folder structure loads only the
+  current stage's files. This matches Ferric's whole thesis (small models, small
+  focused steps) far better than a general agent-team framework.
+- **The five layers.** L0 identity (`Animus.md`/`CLAUDE.md`), L1 workspace
+  routing (`CONTEXT.md`), L2 the stage contract (`stages/NN_*/CONTEXT.md`), L3
+  reference material (`references/`, `_config/`) — stable across runs, the
+  *factory*, internalized as constraints — and L4 working artifacts (a prior
+  stage's `output/`) — per-run, the *product*, processed as input. Separating L3
+  from L4 in the filesystem hands the model already-organized context.
+- **Ferric-native security — the load-bearing adaptation.** ICM as published
+  treats the workspace as trusted. Ferric does not weaken its guarantees: each
+  stage is a **workspace-scoped run**, so `ferric-guard`'s containment (ADR-005)
+  applies unchanged. `compose_stage` resolves EVERY contract-referenced path
+  through `Workspace::resolve`, so a contract **cannot pull context from outside
+  the workspace** — an `../../../../etc/passwd` input is refused at the boundary,
+  proven by a test. Externally-*sourced* L4 content (a research stage fetching the
+  web) routes through Ornstein's quarantine (ADR-040) — that composition is a
+  later increment, named not silently assumed.
+- **Placement mirrors `animus-launch`.** A new **`ferric-icm`** library crate
+  holds the pure model (`parse_contract`, `IcmWorkspace::discover`,
+  `compose_stage`, `plan`, `scaffold_workspace`); a `ferric icm` subcommand
+  drives it. `ferric-icm` depends only on `ferric-guard` (for the boundary) and
+  `thiserror` — deliberately light, no loop/provider deps, so it stays pure and
+  fully unit-testable.
+- **Increment 1 scope (this sprint) — the model, inspection, and scaffold; NOT
+  live execution.** Following the project's increment discipline (Ornstein inc 1
+  built the quarantine primitive before wiring; CaMeL inc 1 shipped the sink
+  primitive with a "would-deny once wired" test; Launch inc 1 scaffolded before
+  the loop hand-off), inc 1 delivers: contract parsing, workspace discovery
+  (numeric — not lexical — stage ordering, so `10` sorts after `2`), guard-checked
+  layered composition into an `OrchestrationPlan`, and an LLM-free
+  refuse-to-clobber scaffolder. `ferric icm init` creates a runnable 3-stage
+  skeleton whose contracts round-trip through the parser; `ferric icm plan` prints
+  each stage's scoped context + provenance (which file at which layer, missing
+  inputs flagged) with NO model in the loop — the delegation made inspectable.
+- **Increment 2 (deferred, named).** `ferric icm run` feeds each composed stage
+  prompt into `ferric-loop::run` (guard-contained, traced, constrained) in numeric
+  order, with human review gates between stages (`--auto` to run straight through,
+  each stage a fresh trace file like `ferric mcp`). The `OrchestrationPlan` inc 1
+  produces is exactly its input. Also deferred: the GECK-style workspace-builder,
+  Ornstein-quarantining of externally-sourced L4 content, and conditional/branch
+  routing (ICM is sequential by design).
+- **A missing input is data, not an error.** A declared L4 input from an
+  upstream stage that has not run yet is recorded in provenance (`present: false`)
+  rather than failing the plan, so a scaffolded-but-not-run workspace still plans
+  cleanly. Scaffold `.gitkeep` placeholders are skipped when reading a working
+  dir (a git placeholder is not an artifact).
+
+## ADR-065 — 2026-07-17 (sprint 74): ICM increment 2 — live per-stage execution through the constrained loop
+Increment 1 (ADR-064) built the ICM model and made the delegation *plan*
+inspectable. This increment makes it *run*: `ferric icm run` executes each
+stage's composed context through the same constrained agent loop `ferric query`
+drives, in numeric order, with human review gates. Full guide in `docs/icm.md`.
+- **Reuse the constrained path, don't reinvent it.** Each stage is driven by the
+  existing `run_with_provider` (query.rs, `pub(crate)`) — the exact loop `ferric
+  query`/`ferric mcp` use, so a stage inherits `ferric-guard`, the loop guards
+  (repetition/no-progress/failure), context compaction, hooks, and per-session
+  JSONL tracing for free. Config + provider are built once from the ICM root
+  (mirroring `ferric mcp`'s launch) and reused across stages; only the workspace
+  changes per stage. The one exception is the **mock**: it is a single-use
+  scripted provider, so a FRESH mock is built per stage (each stage is its own
+  agent session — the same reason sprint 42's chat REPL builds a per-turn mock).
+  A real backend is stateless per request and its provider + the one tokio
+  runtime are reused.
+- **Per-stage containment is stronger than the paper — the load-bearing security
+  decision.** Each stage executes bounded to its OWN `stages/NN_*/` folder
+  (`Workspace::new(stage_dir)`), NOT the whole workspace. So a stage can only
+  write inside its own directory — it cannot clobber a sibling stage's output or
+  the shared `_config/`. This is possible precisely because inc 1's `compose_stage`
+  already folds the prior stage's output into the context as Layer 4: a stage
+  never needs cross-stage filesystem *reads*, so cross-stage data flows only
+  through the composed context and the human review gate. The paper's model
+  (one agent, whole-workspace access, writes-to-current-output by convention) is
+  replaced by enforced containment — the Ferric way (ADR-005).
+- **Halt on failure.** A stage's terminator is inspected: a successful stop
+  (`task_complete`/`submit_plan`/final text) continues the pipeline; any other
+  stop (max turns, provider error, guard trip) halts it, because a downstream
+  stage reading an incomplete/untrustworthy output would compound the error. This
+  needed the outcome, not just an exit code — hence `run_with_provider`'s
+  `Result<LoopOutcome, String>` return (not the ExitCode-shaped `run_query`).
+- **Review gates = ICM's "every output is an edit surface."** Without `--auto`,
+  the run pauses on stderr after each stage (except the last in range); the human
+  edits the output on disk, then continues (Enter) or stops (`q`). EOF/closed
+  stdin proceeds, so a non-interactive run without `--auto` does not hang. `--from
+  N`/`--to N` run a stage sub-range (re-run one stage after editing its input).
+- **The composed prompt gained an Outputs directive (a small inc-1 refinement).**
+  `compose_stage` now appends the contract's `## Outputs` as a "write your
+  deliverables here" block, so a live agent knows where to write — data the plan
+  had but the composed prompt didn't. Traces are harness-written (not
+  agent-written), so they land centrally at `<workspace>/.ferric/trace/`, outside
+  the per-stage boundary, one file per stage.
+- **Deferred (unchanged from ADR-064):** Ornstein-quarantining of
+  externally-sourced Layer 4 content, the GECK-style workspace-builder, and
+  conditional/branch routing (ICM is sequential by design).
+
+## ADR-066 — 2026-07-17 (sprint 75): Agentic cron — scheduled periodic agent tasks, bounded to Ferric's own operations
+The backlog's "Agentic Cron Jobs" is delivered: a `.ferric/cron/` directory of
+TOML job definitions and a `ferric cron` watcher that runs due jobs. The canonical
+use case is `/dream every 12h` — periodically consolidating traces into memory.
+Full guide in `docs/cron.md`.
+- **A job runs a Ferric subcommand, NOT an arbitrary shell command — the security
+  boundary.** A job's `command` is an *enum* (`dream`, or `query` with a prompt),
+  not a free string. So cron can only ever trigger operations Ferric already
+  contains (a `query` is a workspace-scoped, guard-checked agent run; `dream` reads
+  traces and writes MEMORY.md). This is deliberately **narrower than the hooks
+  system** (ADR, sprint 67), which runs arbitrary user scripts on loop boundaries:
+  a hook is a per-workspace escape hatch the user writes; a cron job is a scheduled
+  trigger, and an unbounded scheduled shell command is a materially larger standing
+  surface. Bounding cron to Ferric's own verbs keeps the standing surface small
+  and every scheduled action guard-contained. New commands extend the enum, not a
+  shell.
+- **Pure core, CLI driver — the `ferric-icm`/`animus-launch` pattern.** A new
+  `ferric-cron` crate holds the pure, fully-unit-tested logic: parse a schedule
+  (`30s`/`15m`/`12h`/`2d` + `hourly`/`daily`/`weekly`), parse+validate a job TOML,
+  compute due-ness against an **injected** `now` (reads no clock itself), and
+  read/write last-run state. The `ferric cron` CLI drives it and performs
+  execution by shelling out to the same `ferric` binary (`current_exe()`), running
+  each job in the workspace — the same self-invocation pattern used elsewhere.
+  `ferric-cron` depends only on serde/toml/thiserror.
+- **Interval schedules, not full cron expressions (a deliberate scope choice).**
+  The use case is "every N hours", so schedules are simple recurrence intervals,
+  not five-field crontab syntax (no "every weekday at 09:00"). Interval + a last-run
+  timestamp is enough, far simpler to reason about, and covers `/dream every 12h`.
+  Calendar-anchored cron expressions are a named later extension.
+- **State advances on ATTEMPT, not success.** After a due job runs (whatever its
+  exit), its `last_run` is set to now, so a persistently-failing job reschedules to
+  its next interval instead of firing every single tick. State
+  (`.ferric/cron/.state.json`) is a runtime cache kept OUT of the user-authored job
+  files, and a missing/corrupt state file degrades to empty (never a hard failure).
+- **Surfaces:** `cron add` (scaffold a job file, refuse to overwrite),
+  `cron list` (schedule + last-run/next-due), `cron run [--dry-run]` (one tick —
+  run due jobs, or just report them; the tick an external scheduler could also
+  drive), and `cron watch [--interval]` (the loop — a foreground daemon that ticks
+  and runs due jobs until Ctrl-C, reusing the sprint-65 graceful-interrupt
+  `tokio::signal::ctrl_c` pattern). A `query` job may set `mock = true` to run
+  offline — useful for testing a schedule without a live model, and the hook that
+  makes `cron run` fully E2E-testable.
+- **Deferred (named):** calendar/crontab expressions; a detached watcher daemon
+  with a runfile + lifecycle management (`ferric cron watch` is foreground for v1,
+  backgroundable by the shell or the sprint-68 task machinery); catch-up/misfire
+  policy for a watcher that was down across a due window; more job command kinds
+  (e.g. an ICM pipeline run) as the enum grows.
+
+## ADR-067 — 2026-07-17 (sprint 76): calendar cron expressions for agentic cron
+Extends sprint 75's `ferric-cron` (ADR-066): a job's `schedule` now accepts a
+standard 5-field **cron expression** (`0 2 * * *`, `0 9 * * 1-5`, `*/15 * * * *`)
+alongside the existing recurrence intervals, so calendar-anchored tasks ("every
+day at 02:00", "weekdays at 09:00") are expressible, not just "every N hours".
+- **`Schedule` becomes an enum** — `Interval(ms)` or `Cron(CronExpr)`.
+  `parse_schedule` dispatches on shape: a five-whitespace-field string is a cron
+  expression, anything else an interval. The `cron watch` **tick** interval stays
+  interval-only (`parse_interval_ms`) — it is "how often to check", never a
+  calendar rule.
+- **Evaluated in UTC — a deliberate correctness-for-testability trade.** Cron
+  matching decomposes `now_ms` into UTC civil time and matches the fields, so
+  due-ness stays a **pure, deterministic function of (expression, epoch-ms)** with
+  no dependence on the host timezone. That keeps the whole scheduler unit-testable
+  with an injected `now` (the sprint-75 property) and avoids flaky,
+  environment-dependent tests. Local-timezone expressions — which would make the
+  function OS-dependent — are a named deferral.
+- **Fire-once-per-minute semantics.** A cron job is due when the current UTC
+  minute matches AND it has not already fired within that minute (`last_run <
+  minute_floor(now)`). With the default 60s watch tick, each matching minute fires
+  exactly once; a job that runs at 02:00:05 will not re-fire at 02:00:55.
+- **Standard field grammar + the Vixie day rule.** Each field supports `*`, a
+  number, a range (`1-5`), a list (`1,3,5`), and a step (`*/15`, `0-30/10`), bounds-
+  checked per field; day-of-week is `0-6` with `7` also Sunday. When BOTH
+  day-of-month and day-of-week are restricted the job fires when EITHER matches
+  (the de-facto Vixie-cron behavior), else both must match — matched by a test.
+- **`chrono` added to the allowlist (ADR-004) at zero new cost.** It is used only
+  for the epoch→UTC-civil decomposition; it was already in the dependency tree via
+  `oovra` → `ferric-prompt` → `ferric-cli` (and already CI-gated on aarch64), so
+  adding it as a direct dep of `ferric-cron` compiles nothing new. `next_due_ms`
+  for a cron schedule is a bounded forward minute-scan (~366 days) for the `list`
+  display; a job that never matches within a year reports no next-due rather than
+  scanning unboundedly.
+- **Deferred:** local-timezone cron; a detached watcher daemon + runfile;
+  misfire/catch-up for a watcher down across a due window.
+
+## ADR-068 — 2026-07-17 (sprint 77): `.ferricignore` — user-authored, additive-only path denials
+The backlog's "Dynamic Denylist Configuration" is delivered as `.ferricignore`: a
+gitignore-flavored file in the workspace root listing paths the agent must not
+touch (`secrets/`, `*.pem`, vendored trees). This is the FIRST config-driven input
+to security policy, so it is scoped tightly against ADR-005.
+- **Additive-only — the load-bearing invariant.** ADR-005 makes security hardcoded
+  with "no config override". `.ferricignore` does not override it: a pattern can
+  only ADD a denial, never turn a hardcoded `Deny` into an `Allow`.
+  `check_with_ignore` evaluates the compile-time floor FIRST and short-circuits on
+  a hardcoded `Deny`; only a path the floor already ALLOWS is then tested against
+  the ignore patterns. So the file strictly narrows what the agent may reach — the
+  exact property that keeps it consistent with ADR-005's spirit (the hardcoded
+  minimum is immutable; the LLM is never consulted) while relaxing only its letter
+  ("no config override" → "config can only further restrict"). This is distinct
+  from ADR-048's general config, which still may NOT touch security/denylist policy
+  — `.ferricignore` is a dedicated, security-specific, additive channel.
+- **User-authored, model-immutable.** Like `Animus.md`/`.ferric/config.toml`, the
+  file is written by the human, never the LLM. To stop the agent disabling its own
+  restrictions, `.ferricignore` is added to `DENIED_WRITE_FILES` — the model cannot
+  edit or delete the policy that constrains it (symmetric with the `.ferric` trace
+  protection).
+- **Ignored ⇒ off-limits at every level.** A matched path is denied for Read,
+  Write, AND Execute — the intent is "keep the agent away from this entirely", not
+  a per-permission rule. Denials surface with `rule: "ferricignore"` and the
+  matched source line, traced like any guard decision.
+- **Placement + wiring.** A pure `IgnoreList` (`ferric-guard/src/ignore.rs`) parses
+  the file (blank/`#` lines skipped) into three matcher kinds — a bare **segment**
+  (`secrets`, matches that component anywhere), a basename **glob** (`*.pem`, simple
+  `*`-only, no new dependency), and a **path prefix** (`data/private`, anchored at
+  root). `Workspace::new` loads `<root>/.ferricignore` once (absent → empty no-op);
+  the registry chokepoint calls `check_with_ignore(perm, resolved, root, ws.ignore())`
+  — the single security decision point stays single. Matching is case-sensitive
+  (POSIX/gitignore convention).
+- **Scope / deferrals:** no negation (`!pattern`) un-ignore syntax (would risk the
+  additive-only invariant and is unnecessary — the file only ever adds); no `?`/`[]`
+  glob metacharacters (only `*`); `.gitignore` is NOT auto-consumed (an explicit,
+  security-reviewed file, not an incidental one).
+
+## ADR-069 — 2026-07-17 (sprint 78): direct terminal passthrough in chat (`!cmd` / `/run cmd`)
+`ferric chat` gains a third turn kind alongside talk and `/do` escalate: a line
+prefixed `!` (or `/run `) runs a shell command **directly, with no LLM
+roundtrip**. Motivated by the interactive workflow — checking `ls`/`git status`
+mid-conversation without asking the model to do it.
+- **Human-initiated, guard-screened, no LLM — the security shape.** The command
+  runs through the SAME `shell_exec` registry chokepoint the agent uses, so
+  `ferric-guard::check_command` (the ADR-005 command denylist) still fires — a
+  test drives `!rm -rf /` and asserts it is blocked. Crucially, there is **no LLM
+  in this path**: the human typed the command, so ADR-005 ("the LLM is never
+  consulted on a security decision") is satisfied trivially — the model neither
+  proposes nor sees it. This slots cleanly into the chat security model: talk (no
+  action channel), `/do` (LLM-driven constrained action), `!cmd` (human-driven
+  direct action). The one that touches the LLM (`/do`) stays fully constrained;
+  the one that acts without constraint (`!cmd`) has no LLM.
+- **Not folded into the conversation.** A `!cmd` line and its output are a
+  terminal side-channel, printed and logged as a chat `Note`, but NOT appended to
+  the talk history — running a command is not saying something to the model. (A
+  future increment could optionally surface output into context on request.)
+- **Parsing is exact.** `!<cmd>` and `/run <cmd>` map to `ChatInput::Run`; a bare
+  `!` or `/run` (no command) is *talked*, not run, and `/running late` is talked
+  (the `/run ` boundary is required) — so the passthrough never silently
+  swallows ordinary text. Pure and unit-tested, matching the existing
+  `parse_chat_input` discipline.
+- **Runtime wiring.** `shell_exec` runs on tokio (`block_in_place`, sprint 67),
+  but the chat REPL is synchronous with no ambient runtime — so the passthrough
+  lazily creates a multi-thread `tokio::runtime::Runtime` on first `!cmd` and
+  reuses it. (The escalate path already had a runtime via the backend; talk-only
+  and passthrough-free sessions never pay for one.)
+- **Deferred:** streaming a long command's output live (currently printed after
+  it completes); a way to fold command output into the model's context on demand;
+  `!` passthrough in the non-REPL surfaces (it is chat-only by design).
+
+## ADR-070 — 2026-07-19 (sprint 79): interactive "accept edits" mode (`--accept-edits`)
+`ferric query --accept-edits` pauses before every **mutating** tool call, previews
+it, and lets a human approve or reject it before it touches disk. Motivated by the
+supervised-run workflow — watching a small model work and vetoing a bad write
+without aborting the whole session.
+- **Gated at the single dispatch chokepoint, keyed on permission — not tool name.**
+  The loop already routes every tool call through one dispatch point in `step()`;
+  the gate lives there, immediately after the `ToolCall` event is traced and before
+  `registry.dispatch()`. Whether a call is "mutating" is asked of the guard's own
+  permission model via the new `Registry::permission_of(name)` — `Write` and
+  `Execute` are gated, `Read` calls flow through untouched. This keeps the notion of
+  "an edit" defined by the same permission ladder ADR-005 uses, not a hand-kept list
+  of tool names that would drift as tools are added.
+- **The approver is an injected callback, mirroring `stream_sink`.** `RunArgs` gains
+  `edit_approver: Option<EditApprover>` — a `&(dyn Fn(&EditPreview) -> bool + Sync)`.
+  The loop stays pure and testable: tests inject a closure that always rejects,
+  always approves, or captures the preview; the CLI injects a stdin y/N prompt.
+  `None` (the default everywhere else — chat/api/mcp/icm all pass `None`) means the
+  gate is inert, so existing behavior is byte-for-byte unchanged.
+- **Rejection is a first-class result the model can adapt to.** A vetoed call is
+  *not* an abort and *not* silent — the loop synthesizes an error `ToolResult`
+  (`"edit rejected by user"`, `is_error: true`) and feeds it back, exactly as if the
+  tool had failed. The model sees the rejection in-context and can try a different
+  approach; the run continues. This reuses the existing error-result plumbing rather
+  than inventing a new control-flow path, so loop guards (no-progress, repetition)
+  still see a coherent trace.
+- **Preview is v1 (tool + targets + pretty args), diffs deferred.** `EditPreview`
+  carries the tool name, the touched targets (pulled from the well-known arg keys —
+  `path`/`from`/`to`/`src`/`dest`), and a pretty-printed JSON of the full args. The
+  CLI approver prints this to **stderr** (so piped stdout stays clean), truncates the
+  detail to 2000 chars, and reads y/N from stdin — empty, `n`, or EOF all reject
+  (conservative default: if in doubt, don't write). A full unified-diff preview
+  (rendering the before/after of a `write_file`/`edit_file`) is the natural next
+  increment and is deferred.
+- **Deferred:** unified-diff previews; an "approve all remaining" / session-sticky
+  choice; accept-edits in the `chat` REPL (`/do` escalate path) — this increment is
+  `query`-only.

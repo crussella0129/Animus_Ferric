@@ -14,7 +14,7 @@ impl Tool for MakeDir {
         ToolSpec {
             name: "make_dir".to_string(),
             description:
-                "Create a directory and any missing parents (idempotent). Args: {\"path\": string}"
+                "Create a directory and any missing parents. DO NOT use this to create files! Args: {\"path\": string}"
                     .to_string(),
             input_schema: json!({
                 "type": "object",

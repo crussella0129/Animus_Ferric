@@ -81,6 +81,7 @@ pub enum ActionProtocol {
     #[serde(alias = "unified_grammar")]
     ConstrainedJson,
     TextXml,
+    Plan,
 }
 
 /// Everything the agent loop needs to know about how to run a given model.
@@ -104,6 +105,17 @@ pub struct RunPolicy {
     /// CLI `--max-ring` sets it; `policy_for` leaves it `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_ring: Option<u8>,
+    #[serde(default = "default_compact_trigger_fraction")]
+    pub compact_trigger_fraction: f32,
+    #[serde(default = "default_compact_keep_last_turns")]
+    pub compact_keep_last_turns: u8,
+}
+
+fn default_compact_trigger_fraction() -> f32 {
+    0.85
+}
+fn default_compact_keep_last_turns() -> u8 {
+    2
 }
 
 /// Tier from parameter count. Boundaries follow Animus `tiers.py`:
@@ -153,16 +165,17 @@ pub fn ring_for_tier(tier: Tier) -> u8 {
 }
 
 /// Per-tier seed row: (uses_planner, max_plan_steps, max_turns_per_step,
-/// max_turns, max_tools, prompt_budget_cap, max_output_tokens, allows_subagents).
+/// max_turns, max_tools, prompt_budget_cap, max_output_tokens, allows_subagents,
+/// compact_trigger_fraction, compact_keep_last_turns).
 #[allow(clippy::type_complexity)]
-fn tier_row(tier: Tier) -> (bool, u8, u8, u8, u8, u32, u32, bool) {
+fn tier_row(tier: Tier) -> (bool, u8, u8, u8, u8, u32, u32, bool, f32, u8) {
     match tier {
-        Tier::Nano => (true, 3, 5, 15, 6, 2_800, 512, false),
-        Tier::Small => (true, 5, 4, 20, 10, 5_600, 768, false),
-        Tier::Medium => (false, 1, 25, 25, 16, 11_200, 1_024, false),
-        Tier::Large => (false, 1, 40, 40, 24, 22_400, 1_536, true),
-        Tier::Xl => (false, 1, 60, 60, 32, 44_800, 2_048, true),
-        Tier::Ultra => (false, 1, 80, 80, 48, 89_600, 2_048, true),
+        Tier::Nano => (true, 3, 5, 15, 10, 2_800, 512, false, 0.75, 1),
+        Tier::Small => (true, 5, 4, 20, 14, 5_600, 768, false, 0.80, 2),
+        Tier::Medium => (false, 1, 25, 25, 20, 11_200, 1_024, false, 0.85, 2),
+        Tier::Large => (false, 1, 40, 40, 28, 22_400, 1_536, true, 0.85, 3),
+        Tier::Xl => (false, 1, 60, 60, 36, 44_800, 2_048, true, 0.85, 3),
+        Tier::Ultra => (false, 1, 80, 80, 52, 89_600, 2_048, true, 0.90, 4),
     }
 }
 
@@ -182,6 +195,8 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
         budget_cap,
         max_output_tokens,
         subagents,
+        compact_trigger_fraction,
+        compact_keep_last_turns,
     ) = tier_row(tier);
     // 70% of the context window is available as prompt budget (the rest is
     // reserved for generation), capped by the tier's ceiling.
@@ -198,6 +213,8 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
         max_output_tokens,
         allows_subagents: subagents,
         max_ring: None,
+        compact_trigger_fraction,
+        compact_keep_last_turns,
     }
 }
 
@@ -245,7 +262,7 @@ mod tests {
         assert_eq!(policy.tier, Tier::Nano);
         assert_eq!(policy.protocol, Protocol::ConstrainedJson);
         assert!(policy.uses_planner);
-        assert!(policy.max_tools <= 6);
+        assert!(policy.max_tools <= 10);
         assert_eq!(policy.prompt_budget_tokens, 2_800);
         assert!(!policy.allows_subagents);
     }

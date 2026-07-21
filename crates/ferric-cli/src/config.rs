@@ -13,8 +13,6 @@ use crate::backend::{BackendArg, BackendOpts};
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct Config {
     pub backend: Option<BackendArg>,
-    pub model_dir: Option<PathBuf>,
-    pub model_file: Option<String>,
     pub model: Option<String>,
     pub api_base: Option<String>,
     pub api_key: Option<String>,
@@ -26,6 +24,7 @@ pub struct Config {
     pub max_ring: Option<u8>,
     pub profile_dir: Option<PathBuf>,
     pub stream: Option<bool>,
+    pub hooks: Option<ferric_core::HooksConfig>,
 }
 
 impl Config {
@@ -33,8 +32,6 @@ impl Config {
     fn merged_over(self, user: Config) -> Config {
         Config {
             backend: self.backend.or(user.backend),
-            model_dir: self.model_dir.or(user.model_dir),
-            model_file: self.model_file.or(user.model_file),
             model: self.model.or(user.model),
             api_base: self.api_base.or(user.api_base),
             api_key: self.api_key.or(user.api_key),
@@ -46,6 +43,7 @@ impl Config {
             max_ring: self.max_ring.or(user.max_ring),
             profile_dir: self.profile_dir.or(user.profile_dir),
             stream: self.stream.or(user.stream),
+            hooks: self.hooks.or(user.hooks),
         }
     }
 }
@@ -143,8 +141,6 @@ pub fn load_layered(workspace: &Path) -> LoadedConfig {
 /// being inlined at each of the two (previously duplicated) launch sites.
 pub fn merge_backend_opts(mut opts: BackendOpts, cfg: &Config) -> BackendOpts {
     opts.backend = opts.backend.take().or(cfg.backend);
-    opts.model_dir = opts.model_dir.take().or_else(|| cfg.model_dir.clone());
-    opts.model_file = opts.model_file.take().or_else(|| cfg.model_file.clone());
     opts.model = opts.model.take().or_else(|| cfg.model.clone());
     opts.api_base = opts.api_base.take().or_else(|| cfg.api_base.clone());
     opts.api_key = opts.api_key.take().or_else(|| cfg.api_key.clone());
@@ -284,14 +280,9 @@ mod tests {
     fn no_backend_opts() -> BackendOpts {
         BackendOpts {
             backend: None,
-            model_dir: None,
-            model_file: None,
             model: None,
             api_base: None,
             api_key: None,
-            chat_template: None,
-            tokenizer_json: None,
-            tok_model_id: None,
         }
     }
 
@@ -316,9 +307,9 @@ mod tests {
             ..Config::default()
         };
         let mut opts = no_backend_opts();
-        opts.backend = Some(BackendArg::Mistral);
+        opts.backend = Some(BackendArg::Openai);
         let merged = merge_backend_opts(opts, &cfg);
-        assert_eq!(merged.backend, Some(BackendArg::Mistral));
+        assert_eq!(merged.backend, Some(BackendArg::Openai));
     }
 
     /// The remaining five `BackendOpts` fields get the same config-only
@@ -327,16 +318,12 @@ mod tests {
     #[test]
     fn merge_backend_opts_config_only_remaining_fields_are_applied() {
         let cfg = Config {
-            model_dir: Some(PathBuf::from("/models")),
-            model_file: Some("m.gguf".to_string()),
             model: Some("mockmodel".to_string()),
             api_base: Some("http://example/v1".to_string()),
             api_key: Some("key123".to_string()),
             ..Config::default()
         };
         let merged = merge_backend_opts(no_backend_opts(), &cfg);
-        assert_eq!(merged.model_dir, Some(PathBuf::from("/models")));
-        assert_eq!(merged.model_file, Some("m.gguf".to_string()));
         assert_eq!(merged.model, Some("mockmodel".to_string()));
         assert_eq!(merged.api_base, Some("http://example/v1".to_string()));
         assert_eq!(merged.api_key, Some("key123".to_string()));
