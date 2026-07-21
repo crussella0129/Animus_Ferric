@@ -187,7 +187,8 @@ ferric revert <TRACE> <TURN>
 ```
 
 Restores the workspace to turn `<TURN>`'s snapshot and truncates the trace so the
-agent's memory resets there. Needs a git workspace with per-turn snapshots.
+agent's memory resets there. Workspace root is automatically resolved from the trace's
+`SessionStart` event (falling back to CWD). Needs a git workspace with per-turn snapshots.
 
 ---
 

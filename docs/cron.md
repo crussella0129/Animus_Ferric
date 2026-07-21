@@ -60,7 +60,9 @@ ferric cron watch --interval 5m  # check every 5 minutes (default 60s)
 ```
 
 All commands take `--workspace <path>` (default: current directory); the cron
-directory is always `<workspace>/.ferric/cron/`.
+directory is always `<workspace>/.ferric/cron/`. Workspace paths are resolved
+to canonical absolute paths before spawning child job subprocesses (`query`/`dream`),
+guaranteeing clean execution regardless of whether relative paths (e.g. `--workspace ./app`) are provided.
 
 `cron run` is a single tick — run it from an external scheduler, or use
 `cron watch` as a standalone foreground daemon (background it with your shell if

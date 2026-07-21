@@ -509,11 +509,29 @@ fn section(prompt: &mut String, header: &str, body: &str) {
     prompt.push('\n');
 }
 
+fn strip_unc_prefix(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else if let Some(stripped) = s.strip_prefix(r"//?/") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 fn rel_to_root(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
+    let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let clean_root = strip_unc_prefix(&canon_root);
+    let clean_path = strip_unc_prefix(path);
+
+    if let Ok(rel) = clean_path.strip_prefix(&clean_root) {
+        rel.to_string_lossy().replace('\\', "/")
+    } else if let Ok(rel) = path.strip_prefix(root) {
+        rel.to_string_lossy().replace('\\', "/")
+    } else {
+        clean_path.to_string_lossy().replace('\\', "/")
+    }
 }
 
 fn read_if_present(path: &Path) -> Option<String> {

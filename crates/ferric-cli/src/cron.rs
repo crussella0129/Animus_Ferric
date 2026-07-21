@@ -283,15 +283,24 @@ fn run_watch(workspace: &Path, cron_dir: &Path, state_path: &Path, interval: &st
 /// exits. Returns whether it exited successfully. The command is one of Ferric's
 /// own subcommands — never an arbitrary shell string.
 fn spawn_job(workspace: &Path, command: &JobCommand) -> Result<bool, String> {
+    let abs_workspace = std::fs::canonicalize(workspace).unwrap_or_else(|_| {
+        if workspace.is_absolute() {
+            workspace.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(workspace))
+                .unwrap_or_else(|_| workspace.to_path_buf())
+        }
+    });
     let exe = std::env::current_exe().map_err(|e| format!("locating ferric: {e}"))?;
     let mut cmd = Command::new(exe);
-    cmd.current_dir(workspace);
+    cmd.current_dir(&abs_workspace);
     match command {
         JobCommand::Dream => {
             cmd.arg("dream");
         }
         JobCommand::Query { prompt, mock } => {
-            cmd.arg("query").arg("--workspace").arg(workspace);
+            cmd.arg("query").arg("--workspace").arg(&abs_workspace);
             if *mock {
                 cmd.arg("--mock");
             }

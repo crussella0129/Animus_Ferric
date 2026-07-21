@@ -33,6 +33,7 @@ pub fn run_revert(args: RevertArgs) -> ExitCode {
 async fn revert_inner(args: RevertArgs) -> Result<(), String> {
     let reader = TraceReader::open(&args.trace).map_err(|e| format!("cannot open trace: {e}"))?;
     let mut session_id = String::new();
+    let mut trace_workspace: Option<PathBuf> = None;
     let mut target_turn_found = false;
 
     for record_res in reader {
@@ -41,7 +42,16 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
             session_id = record.session.clone();
         }
 
-        // Let's see if we need to do this or if we just want to execute the VCS revert.
+        if let ferric_trace::ParsedEvent::Known(ferric_trace::Event::SessionStart { workspace, .. }) =
+            &record.event
+        {
+            if trace_workspace.is_none() {
+                let clean_ws = workspace.strip_prefix(r"\\?\").unwrap_or(workspace);
+                let clean_ws = clean_ws.strip_prefix(r"//?/").unwrap_or(clean_ws);
+                trace_workspace = Some(PathBuf::from(clean_ws));
+            }
+        }
+
         if let ferric_trace::ParsedEvent::Known(ferric_trace::Event::TurnEnd { turn, .. }) =
             record.event
         {
@@ -55,9 +65,9 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
         return Err(format!("turn {} not found in trace", args.turn));
     }
 
-    // Call VCS revert
-    // Assuming the workspace root is the current directory for now, or we can find it via the trace
-    let workspace_root = std::env::current_dir().map_err(|e| format!("io error: {e}"))?;
+    let workspace_root = trace_workspace.unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    });
     let vcs = ferric_vcs::Vcs::new(workspace_root);
 
     println!(
