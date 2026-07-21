@@ -189,25 +189,33 @@ pub fn runfile_path(workspace: &Path) -> PathBuf {
     workspace.join(".ferric").join("server.json")
 }
 
-pub fn global_runfile_path() -> Option<PathBuf> {
-    crate::config::user_config_path().map(|p| p.with_file_name("server.json"))
+pub fn global_runfile_path_from(env: &impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    crate::config::user_config_path_from(env).map(|p| p.with_file_name("server.json"))
 }
 
-/// Read the registered server, if any (local first, global fallback).
-pub fn read_runfile(workspace: &Path) -> Option<ServerRunfile> {
+pub fn global_runfile_path() -> Option<PathBuf> {
+    global_runfile_path_from(&|k| std::env::var(k).ok())
+}
+
+pub fn read_runfile_from(workspace: &Path, env: &impl Fn(&str) -> Option<String>) -> Option<ServerRunfile> {
     let local = runfile_path(workspace);
     if let Ok(text) = std::fs::read_to_string(&local)
         && let Ok(rf) = serde_json::from_str(&text)
     {
         return Some(rf);
     }
-    if let Some(global) = global_runfile_path()
+    if let Some(global) = global_runfile_path_from(env)
         && let Ok(text) = std::fs::read_to_string(&global)
         && let Ok(rf) = serde_json::from_str(&text)
     {
         return Some(rf);
     }
     None
+}
+
+/// Read the registered server, if any (local first, global fallback).
+pub fn read_runfile(workspace: &Path) -> Option<ServerRunfile> {
+    read_runfile_from(workspace, &|k| std::env::var(k).ok())
 }
 
 /// Poll a TCP connect to `(host, port)` until it succeeds or `timeout` elapses.
@@ -621,6 +629,6 @@ mod tests {
     #[test]
     fn read_runfile_absent_is_none() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(read_runfile(dir.path()).is_none());
+        assert!(read_runfile_from(dir.path(), &|_| None).is_none());
     }
 }

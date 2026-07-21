@@ -314,7 +314,7 @@ mod tests {
                 match delta {
                     StreamDelta::Text(t) => texts.push(t),
                     StreamDelta::ToolNamed(n) => tool_named.push(n),
-                    StreamDelta::Thought(_) => {}
+                    _ => {}
                 }
             }
         }
@@ -346,7 +346,7 @@ mod tests {
             match delta {
                 StreamDelta::ToolNamed(n) => tool_named.push(n),
                 StreamDelta::Text(t) => texts.push(t),
-                StreamDelta::Thought(_) => {}
+                _ => {}
             }
         }
         assert_eq!(tool_named, vec!["write_file".to_string()]);
