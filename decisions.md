@@ -1235,3 +1235,78 @@ failures**, clippy and fmt clean.
   contract decision. A5 and A7 both touch `WebRetriever`/sink wiring that is still
   unreachable from the binary (D1/D2); doing them properly means wiring, not
   patching, and that deserves its own sprint.
+
+## ADR-074 — 2026-07-24 (sprint 84): finishing the audit — panics, argument lists, and defaults that were the wrong way round
+Sprint 83 fixed the four defects the audit had *demonstrated*. This sprint clears
+what it deferred: A4, A5, A7, C1–C5, and the Dark Matter contract. Workspace
+487 → **503 tests, 0 failures**, clippy and fmt clean. Two defects that were in no
+report surfaced along the way, both found by testing something adjacent.
+- **A4 — the one model-invokable tool that could kill the harness.** `manage_task`
+  held 12 lock `.unwrap()`s; one panicking task thread poisons a lock and every
+  later call aborts the process. All 12 gone: accessors recover a poisoned guard
+  with `into_inner()`, which is safe because the guarded data (a status enum, a
+  `Child` handle) has no invariant a panicking writer could half-break. The two
+  runtime panics (`Handle::current()` with no runtime, `block_in_place` on a
+  current-thread runtime — while ferric-loop is deliberately executor-agnostic)
+  become ordinary tool errors via a new `builtin::blocking::block_on_ambient`.
+- **A4's spread: `shell_exec` had the same bug, and it matters more.** Writing the
+  test for `manage_task` found the identical `block_in_place` +
+  `Handle::current()` pair in a **Ring-0** tool reachable from far more paths.
+  Checked the blast radius before changing it: every in-process tool path builds
+  `Runtime::new()` (multi-thread), and `cron` only *looks* current-thread because
+  it spawns jobs as subprocesses. Nothing that worked before changed.
+- **A NEW defect, not in any report: background-task ids collided.**
+  `format!("task-{millis}")` is not unique; two tasks started in the same
+  millisecond got the same id, and since the registry is keyed by id the second
+  **silently evicted the first** — losing its `Child` handle, leaving the task
+  unlistable, uninspectable, unkillable. It surfaced as two tests in
+  `background_tasks.rs` flaking against each other, which I had earlier written
+  off as harmless cross-test interference. **That write-off was the mistake**; the
+  flake was the bug reporting itself. Ids now carry a monotonic counter.
+- **A7 — two human-approval systems, introduced at last.** `RequireApproval`
+  degraded to a flat denial commenting "human approval is not wired", while
+  ADR-070's `EditApprover` had been sitting at the very dispatch site that calls
+  `execute` for four sprints. Wired through a callback `ferric-tools` owns
+  (`ApprovalRequest`/`SinkApprover`), so the chokepoint can ask a human without
+  depending on the loop. With no approver it still denies — the safe reading of
+  "require approval" when nobody can approve — but now says so.
+- **A5 — the airlock is opt-out, not opt-in.** `SandboxConfig::default()` paired
+  `--network bridge` with no proxy and no gVisor: dropped capabilities and
+  **unrestricted egress**, for the component whose job is running untrusted
+  retrieval. Default is now no network + gVisor required (a missing `runsc` fails
+  closed, the correct direction), and `Option<proxy_url>` becomes a
+  `NetworkPolicy` enum so unrestricted egress is a variant someone must *write*
+  and a reviewer can grep for. Docker is absent on this machine, so rather than
+  ship it untested the argv construction — the security-relevant part — is split
+  into a pure `docker_args()` and tested directly.
+- **C1 — 18 positional parameters, gone.** `run_with_provider` re-packed its 18
+  arguments into `RunArgs`, a struct that already existed, behind five
+  `too_many_arguments` allows (now 1, on an unrelated function). A `LoopSetup`
+  carries everything except the provider — the one thing `drive_real` can only
+  build inside its own runtime. Knock-on: `icm.rs` had a `macro_rules!` whose
+  comment says outright it existed because the argument list had to be written
+  twice; it is gone.
+- **C2/C3/C4/C5 —** the `post_turn` block (copy-pasted at all four turn exits) is
+  one method; `ferric-vcs` is honestly synchronous instead of `async fn` with no
+  `.await` (which under tokio silently blocked a reactor thread per turn while
+  looking like it didn't), dropping its last tokio dependency; the task registry
+  gains the removal path it never had; the duplicated status match is one method.
+- **Dark Matter: the call shape agrees now; the return shape is still a decision.**
+  Ferric accepts `target` and no longer requires `query`, so the call written in
+  DM's own INTEGRATION.md works. Silent `k`-capping now reports how many chunks
+  were withheld. **Deliberately not changed:** DM SPEC §6.2's
+  `{chunks:[{uri,text,score}], truncated}` envelope vs Ferric's markdown —
+  flipping that changes what every small model sees and would invalidate
+  ADR-071's measured 97.5% reduction, so it wants a measurement behind it.
+- **DM's verifier can see the seam now.** `test_ferric_citations_resolve` asserted
+  only that two files exist, **neither of them `fetch_reference.rs`** — it would
+  have passed if the tool had never been written, and it did pass throughout the
+  divergence. A new check reads the actual descriptor. Testing the check itself
+  caught two ways it lied: a `"required": ["query"]` grep false-positives on the
+  legitimate `anyOf` branch, and a whole-file grep false-negatives because a test
+  mentions the field name. Verified with a negative control in both directions.
+  Also, a check that cannot run now reports `skip` rather than calling `pass`.
+- **The through-line of sprints 82–84:** a green suite is evidence about what is
+  tested, not about what works. Every defect in this ADR was invisible to 487
+  passing tests, and two of them were found only by writing a test for something
+  *next to* the known bug.
