@@ -233,3 +233,50 @@ async fn finished_tasks_can_be_removed() {
         "removed task must be gone, got: {after}"
     );
 }
+
+/// Regression (ADR-074): background-task ids were `task-{millis}`, so two tasks
+/// started inside the same millisecond collided. The registry is keyed by id, so
+/// the second silently evicted the first — its `Child` handle gone, the task
+/// unlistable, uninspectable, unkillable. Found because it made two tests in
+/// this file flake against each other.
+#[tokio::test(flavor = "multi_thread")]
+async fn back_to_back_tasks_get_distinct_ids() {
+    let dir = tempdir().unwrap();
+    let workspace = Workspace::new(dir.path()).unwrap();
+    let ctx = ToolCtx {
+        workspace: &workspace,
+    };
+
+    let command = if cfg!(windows) {
+        "powershell -Command \"Start-Sleep -Seconds 5\""
+    } else {
+        "sleep 5"
+    };
+
+    let mut ids = Vec::new();
+    for _ in 0..5 {
+        let res = ShellExec
+            .run(&ctx, &json!({ "command": command, "background": true }))
+            .unwrap();
+        let start = res.find("task-").unwrap();
+        let end = res[start..].find('.').unwrap();
+        ids.push(res[start..start + end].to_string());
+    }
+
+    let mut unique = ids.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        ids.len(),
+        "ids must be unique even started back-to-back, got: {ids:?}"
+    );
+
+    // Every one of them is really in the registry — the point of uniqueness.
+    let listed = ManageTask.run(&ctx, &json!({ "action": "list" })).unwrap();
+    for id in &ids {
+        assert!(listed.contains(id.as_str()), "{id} missing from: {listed}");
+        let _ = ManageTask.run(&ctx, &json!({ "action": "kill", "task_id": id }));
+        let _ = ManageTask.run(&ctx, &json!({ "action": "remove", "task_id": id }));
+    }
+}

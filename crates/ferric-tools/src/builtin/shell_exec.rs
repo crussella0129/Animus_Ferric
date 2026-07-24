@@ -10,6 +10,24 @@ use crate::spec::{Tool, ToolCtx, ToolSpec};
 const OUTPUT_LIMIT: usize = 10_000;
 const TIMEOUT_SECS: u64 = 60;
 
+/// A unique id for a background task.
+///
+/// This was `format!("task-{}", millis)` (ADR-074). Millisecond timestamps are
+/// not unique: two background tasks started in the same millisecond got the same
+/// id, and since the registry is keyed by id, the second **silently evicted the
+/// first** — losing the `Child` handle, so the task could never be listed,
+/// inspected, or killed again. A monotonic counter makes collision impossible;
+/// the timestamp stays because it is useful to a human reading a task list.
+fn next_task_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("task-{millis}-{}", SEQ.fetch_add(1, Ordering::Relaxed))
+}
+
 /// Execute a shell command inside the workspace.
 pub struct ShellExec;
 
@@ -82,13 +100,7 @@ impl Tool for ShellExec {
                     let _ = std::fs::create_dir_all(&tasks_dir);
                 }
 
-                let id = format!(
-                    "task-{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()
-                );
+                let id = next_task_id();
                 let log_path = tasks_dir.join(format!("{}.log", id));
 
                 let log_file = std::fs::File::create(&log_path)
