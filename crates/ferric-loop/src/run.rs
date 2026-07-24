@@ -252,7 +252,7 @@ impl<'a> LoopState<'a> {
         self.projector.step(&turn_end);
 
         let vcs = ferric_vcs::Vcs::new(self.args.workspace.root());
-        if let Err(e) = vcs.snapshot(self.sink.session(), turn).await {
+        if let Err(e) = vcs.snapshot(self.sink.session(), turn) {
             // debug, not warn: in a non-git workspace this fires every turn, so
             // a WARN would break quiet-by-default. The failure is still recorded
             // as a trace Note below (the durable record); revert is simply
@@ -318,18 +318,7 @@ impl<'a> LoopState<'a> {
                     .as_deref()
                     .is_some_and(|t| !t.trim().is_empty());
             if is_native_final {
-                if let Some(hooks) = &self.args.hooks {
-                    if let Some(cmd) = &hooks.post_turn {
-                        if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root())
-                        {
-                            let note = Event::Note {
-                                text: format!("post_turn hook failed: {e}"),
-                            };
-                            self.sink.write_event(note.clone())?;
-                            self.projector.step(&note);
-                        }
-                    }
-                }
+                self.fire_post_turn()?;
                 return Ok(TurnOutcome::Stop(StopReason::FinalText));
             }
             if self.nudged_for_no_action {
@@ -490,17 +479,7 @@ impl<'a> LoopState<'a> {
             self.projector.commit_pending();
             self.projector.last_text = Some(summary);
 
-            if let Some(hooks) = &self.args.hooks {
-                if let Some(cmd) = &hooks.post_turn {
-                    if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                        let note = Event::Note {
-                            text: format!("post_turn hook failed: {e}"),
-                        };
-                        self.sink.write_event(note.clone())?;
-                        self.projector.step(&note);
-                    }
-                }
-            }
+            self.fire_post_turn()?;
 
             return Ok(TurnOutcome::Stop(StopReason::TaskComplete));
         }
@@ -509,17 +488,7 @@ impl<'a> LoopState<'a> {
             self.projector.commit_pending();
             self.projector.last_text = Some(plan);
 
-            if let Some(hooks) = &self.args.hooks {
-                if let Some(cmd) = &hooks.post_turn {
-                    if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                        let note = Event::Note {
-                            text: format!("post_turn hook failed: {e}"),
-                        };
-                        self.sink.write_event(note.clone())?;
-                        self.projector.step(&note);
-                    }
-                }
-            }
+            self.fire_post_turn()?;
 
             return Ok(TurnOutcome::Stop(StopReason::PlanSubmitted));
         }
@@ -548,19 +517,32 @@ impl<'a> LoopState<'a> {
                 }
             }
         }
-        if let Some(hooks) = &self.args.hooks {
-            if let Some(cmd) = &hooks.post_turn {
-                if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                    let note = Event::Note {
-                        text: format!("post_turn hook failed: {e}"),
-                    };
-                    self.sink.write_event(note.clone())?;
-                    self.projector.step(&note);
-                }
-            }
-        }
+        self.fire_post_turn()?;
 
         Ok(TurnOutcome::Continue)
+    }
+
+    /// Run the configured `post_turn` hook, if any.
+    ///
+    /// A hook failure is recorded as a trace `Note` and does **not** stop the
+    /// loop — unlike `pre_turn`, which does. This body was copy-pasted at all
+    /// four turn-exit points; keeping one copy is what stops those four from
+    /// drifting apart (ADR-074).
+    fn fire_post_turn(&mut self) -> Result<(), FerricError> {
+        let Some(hooks) = &self.args.hooks else {
+            return Ok(());
+        };
+        let Some(cmd) = &hooks.post_turn else {
+            return Ok(());
+        };
+        if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
+            let note = Event::Note {
+                text: format!("post_turn hook failed: {e}"),
+            };
+            self.sink.write_event(note.clone())?;
+            self.projector.step(&note);
+        }
+        Ok(())
     }
 }
 

@@ -119,7 +119,6 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
         session_id, args.turn
     );
     vcs.revert(&session_id, args.turn)
-        .await
         .map_err(|e| format!("vcs error: {e}"))?;
 
     println!("Workspace reverted successfully.");
