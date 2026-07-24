@@ -352,7 +352,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
  "toml",
 ]
 
@@ -413,7 +412,6 @@ dependencies = [
 name = "ferric-guard"
 version = "0.1.0"
 dependencies = [
- "ferric-core",
  "serde",
  "serde_json",
  "tempfile",
@@ -484,7 +482,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "ferric-core",
- "ferric-guard",
  "ferric-provider",
  "futures-executor",
  "serde",
@@ -504,7 +501,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -517,7 +513,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
 ]
 
 [[package]]

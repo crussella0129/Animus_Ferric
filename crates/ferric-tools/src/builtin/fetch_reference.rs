@@ -197,19 +197,44 @@ fn chunk_markdown(content: &str) -> Vec<(String, String)> {
     chunks
 }
 
-/// Lowercase alphanumeric tokens longer than two chars.
+/// Shortest query term matched as a substring. At or below this length a
+/// substring match is mostly noise — `"go"` occurs inside `"algorithm"` — so
+/// short terms are matched as whole words instead of being discarded (ADR-073).
+const MIN_SUBSTRING_TERM_CHARS: usize = 3;
+
+/// Lowercase alphanumeric tokens. Short tokens are KEPT: dropping them made
+/// `"Go"`, `"AI"`, `"C"` and `"k8"` return nothing at all over a vault full of
+/// matches. They are scored differently rather than thrown away — see `score`.
 fn tokenize(s: &str) -> Vec<String> {
     s.to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
-        .filter(|t| t.len() > 2)
+        .filter(|t| !t.is_empty())
         .map(|t| t.to_string())
         .collect()
 }
 
 /// Count how many distinct query terms appear in the chunk (heading + body).
+///
+/// Longer terms match as substrings, which is what lets `"concurren"` find
+/// "concurrency". Short terms (< [`MIN_SUBSTRING_TERM_CHARS`]) must match a
+/// whole word, so `"go"` finds the language and not `"algorithm"`.
 fn score(terms: &[String], c: &RefChunk) -> usize {
     let hay = format!("{} {}", c.heading, c.text).to_lowercase();
-    terms.iter().filter(|t| hay.contains(t.as_str())).count()
+    let words: Vec<&str> = hay
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    terms
+        .iter()
+        .filter(|t| {
+            if t.chars().count() < MIN_SUBSTRING_TERM_CHARS {
+                words.contains(&t.as_str())
+            } else {
+                hay.contains(t.as_str())
+            }
+        })
+        .count()
 }
 
 #[cfg(test)]
@@ -320,5 +345,49 @@ mod tests {
     fn missing_query_is_error() {
         let (_d, ws) = ws_with_refs(&[("a.md", "# T\nx\n")]);
         assert!(run(&ws, json!({})).is_err());
+    }
+
+    // --- ADR-073: short-token queries ---
+
+    #[test]
+    fn short_token_query_matches() {
+        // Regression: `tokenize` dropped tokens of <= 2 chars, so "Go" produced
+        // an empty term list, every chunk scored 0, and the tool reported "no
+        // match" over a vault entirely about Go.
+        let (_d, ws) = ws_with_refs(&[(
+            "langs.md",
+            "# Go concurrency\n\nGo uses goroutines and channels.\n",
+        )]);
+        for q in ["Go", "go"] {
+            let out = run(&ws, json!({ "query": q })).unwrap();
+            assert!(
+                out.contains("Go concurrency"),
+                "query {q:?} must match a vault about Go, got: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn short_token_matches_whole_words_only() {
+        // Why short tokens were dropped in the first place: substring matching
+        // makes "go" hit "algorithm". Word matching keeps them usable without
+        // reintroducing that noise.
+        let (_d, ws) = ws_with_refs(&[(
+            "algo.md",
+            "# Sorting\n\nThis algorithm is a mergesort. Nothing else here.\n",
+        )]);
+        let out = run(&ws, json!({ "query": "Go" })).unwrap();
+        assert!(
+            out.starts_with("No reference chunk matched"),
+            "\"Go\" must not match \"algorithm\", got: {out}"
+        );
+    }
+
+    #[test]
+    fn longer_terms_still_match_as_substrings() {
+        // Stem matching is load-bearing for normal queries and must survive.
+        let (_d, ws) = ws_with_refs(&[("r.md", "# Runtime\n\nconcurrency model\n")]);
+        let out = run(&ws, json!({ "query": "concurren" })).unwrap();
+        assert!(out.contains("Runtime"), "got: {out}");
     }
 }

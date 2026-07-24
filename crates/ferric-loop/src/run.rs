@@ -88,8 +88,6 @@ pub struct LoopState<'a> {
     pub turns: u32,
     pub offered_names: Vec<String>,
     pub native_tools: Vec<ToolDescriptor>,
-    #[allow(dead_code)]
-    pub registry_tools: Vec<ToolDescriptor>,
     pub repetition: crate::repetition::RepetitionGuard,
     pub progress: crate::progress::ProgressGuard,
     pub failure: crate::failure::FailureGuard,
@@ -278,7 +276,7 @@ impl<'a> LoopState<'a> {
             return Ok(TurnOutcome::Continue);
         }
 
-        let (actions, _parse_error) = match self.args.protocol {
+        let (actions, parse_error) = match self.args.protocol {
             ActionProtocol::NativeTools => (completion.message.tool_calls.clone(), None),
             ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
                 match crate::grammar::parse_json_action(
@@ -301,6 +299,18 @@ impl<'a> LoopState<'a> {
         };
 
         if actions.is_empty() {
+            // Record WHY there was no action. Without this a grammar failure and
+            // a genuinely empty completion are indistinguishable in the trace,
+            // which makes post-hoc analysis of small-model behaviour guesswork.
+            if let Some(e) = &parse_error {
+                debug!(error = %e, "action parse failed");
+                let note = Event::Note {
+                    text: format!("action parse failed: {e}"),
+                };
+                self.sink.write_event(note.clone())?;
+                self.projector.step(&note);
+            }
+
             let is_native_final = self.args.protocol == ActionProtocol::NativeTools
                 && completion
                     .message
@@ -560,7 +570,11 @@ pub async fn run(
     sink: &mut JsonlSink,
     prompt: Option<&str>,
 ) -> Result<LoopOutcome, FerricError> {
-    let mut projector = TraceProjector::new();
+    // Keep the projector's model-facing cap in step with the registry's, so a
+    // caller-configured `Registry::with_truncation_limit` actually reaches the
+    // context window.
+    let mut projector =
+        TraceProjector::new().with_truncation_limit(args.registry.truncation_limit());
 
     let session_start = Event::SessionStart {
         workspace: args.workspace.root().display().to_string(),
@@ -660,7 +674,6 @@ pub async fn run(
         turns,
         offered_names,
         native_tools,
-        registry_tools,
         repetition: crate::repetition::RepetitionGuard::new(),
         progress: crate::progress::ProgressGuard::new(),
         failure: crate::failure::FailureGuard::new(),
@@ -751,9 +764,11 @@ fn edit_preview(name: &str, args: &serde_json::Value) -> EditPreview {
     }
 }
 
+/// The full, untruncated tool output. It goes to the trace verbatim (ADR-002
+/// durability); the model-facing truncation is applied by the projector, which
+/// is the single place the context window is assembled.
 struct DispatchText {
     full: String,
-    _for_model: String,
 }
 
 fn dispatch(
@@ -770,37 +785,18 @@ fn dispatch(
             duration_ms,
             checks,
         } => (
-            DispatchText {
-                full: output.full,
-                _for_model: output.for_model,
-            },
+            DispatchText { full: output.full },
             output.is_error,
             duration_ms,
             checks,
         ),
         ExecuteOutcome::Denied { reason, checks } => {
             let text = format!("DENIED: {reason}");
-            (
-                DispatchText {
-                    full: text.clone(),
-                    _for_model: text,
-                },
-                true,
-                0,
-                checks,
-            )
+            (DispatchText { full: text }, true, 0, checks)
         }
         ExecuteOutcome::UnknownTool { name } => {
             let text = format!("unknown tool: {name}");
-            (
-                DispatchText {
-                    full: text.clone(),
-                    _for_model: text,
-                },
-                true,
-                0,
-                Vec::new(),
-            )
+            (DispatchText { full: text }, true, 0, Vec::new())
         }
     }
 }

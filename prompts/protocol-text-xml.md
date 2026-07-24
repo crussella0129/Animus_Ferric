@@ -1,7 +1,7 @@
 +++
 name = "Protocol: XML Regex Tool Calling"
 kind = "atom"
-id = "protocol-unified-grammar"
+id = "protocol-text-xml"
 version = "1.0.0"
 meta = "Teaches the XML tool-calling and thought format for regex extraction"
 +++
