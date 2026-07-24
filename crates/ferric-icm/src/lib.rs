@@ -352,13 +352,39 @@ pub struct OrchestrationPlan {
     pub stages: Vec<ComposedStage>,
 }
 
-/// Compose the scoped context for a single stage (0-based `index`). Assembles
-/// Layers 0–2 (identity, routing, contract) followed by the contract's declared
-/// Layer 3/4 inputs, each resolved through the workspace boundary so nothing
-/// outside the workspace can be pulled in. A declared input that is missing is
-/// recorded in provenance (`present: false`) rather than erroring, so a
-/// scaffolded-but-not-yet-run workspace still plans cleanly.
+/// How reference (Layer 3) material is delivered to a stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ComposeMode {
+    /// Fold every declared reference file's content into the composed prompt
+    /// (the original ICM behavior).
+    #[default]
+    FoldReferences,
+    /// Do not fold the stage's own `references/` — expose them for on-demand
+    /// retrieval via the `fetch_reference` tool (token-minimality). Cross-stage
+    /// (Layer 4) inputs and references *outside* the stage folder are still
+    /// folded: a stage-contained tool cannot reach them.
+    FetchReferences,
+}
+
+/// Compose the scoped context for a single stage, folding references
+/// ([`ComposeMode::FoldReferences`]).
 pub fn compose_stage(ws: &IcmWorkspace, index: usize) -> Result<ComposedStage, IcmError> {
+    compose_stage_with_mode(ws, index, ComposeMode::FoldReferences)
+}
+
+/// Compose the scoped context for a single stage (0-based `index`) under `mode`.
+/// Assembles Layers 0–2 (identity, routing, contract) followed by the contract's
+/// declared Layer 3/4 inputs, each resolved through the workspace boundary so
+/// nothing outside the workspace can be pulled in. A declared input that is
+/// missing is recorded in provenance (`present: false`) rather than erroring, so
+/// a scaffolded-but-not-yet-run workspace still plans cleanly. Under
+/// [`ComposeMode::FetchReferences`] the stage's own `references/` are listed for
+/// on-demand `fetch_reference` retrieval instead of being folded in.
+pub fn compose_stage_with_mode(
+    ws: &IcmWorkspace,
+    index: usize,
+    mode: ComposeMode,
+) -> Result<ComposedStage, IcmError> {
     let stage = ws
         .stages
         .get(index)
@@ -367,6 +393,9 @@ pub fn compose_stage(ws: &IcmWorkspace, index: usize) -> Result<ComposedStage, I
 
     let mut prompt = String::new();
     let mut provenance = Vec::new();
+    // Under FetchReferences: references we deliberately did NOT fold, surfaced to
+    // the model as fetchable sources after the input loop.
+    let mut fetch_sources: Vec<String> = Vec::new();
 
     prompt.push_str(&format!("# ICM stage {}: {}\n", stage.index, stage.name));
 
@@ -419,6 +448,27 @@ pub fn compose_stage(ws: &IcmWorkspace, index: usize) -> Result<ComposedStage, I
             Ok(p) => p,
             Err(_) => return Err(IcmError::Boundary(input.path.clone())),
         };
+
+        // FetchReferences: the stage's own `references/` are pulled on demand via
+        // the fetch_reference tool, not folded here. Only these are fetchable — a
+        // stage-contained tool cannot reach cross-stage (L4) or external L3
+        // inputs, so those still fold below.
+        if matches!(mode, ComposeMode::FetchReferences)
+            && input.layer == Layer::Reference
+            && is_stage_reference(&input.path)
+        {
+            let rel = rel_to_root(&ws.root, &resolved);
+            fetch_sources.push(rel.clone());
+            provenance.push(Provenance {
+                layer: input.layer.number(),
+                label: "Layer 3 (reference, fetch-on-demand)".into(),
+                source: rel,
+                bytes: 0,
+                present: resolved.exists(),
+            });
+            continue;
+        }
+
         for (src, content, present) in read_input(&resolved)? {
             let rel = rel_to_root(&ws.root, &src);
             let header = format!("{}: {}", input.layer.label(), rel);
@@ -433,6 +483,21 @@ pub fn compose_stage(ws: &IcmWorkspace, index: usize) -> Result<ComposedStage, I
                 present,
             });
         }
+    }
+
+    // FetchReferences: tell the model what it can pull and how.
+    if !fetch_sources.is_empty() {
+        let mut note = String::from(
+            "These reference sources are available but NOT loaded into this prompt. \
+             Call the `fetch_reference` tool with a focused `query` to pull only the \
+             chunk(s) you need:\n",
+        );
+        for s in &fetch_sources {
+            note.push_str("- ");
+            note.push_str(s);
+            note.push('\n');
+        }
+        section(&mut prompt, "Available references (fetch on demand)", &note);
     }
 
     // The output contract: tell the agent exactly where to write its
@@ -455,12 +520,26 @@ pub fn compose_stage(ws: &IcmWorkspace, index: usize) -> Result<ComposedStage, I
     })
 }
 
-/// Compose every stage in execution order into a full [`OrchestrationPlan`].
+/// Compose every stage in execution order into a full [`OrchestrationPlan`],
+/// folding references ([`ComposeMode::FoldReferences`]).
 pub fn plan(ws: &IcmWorkspace) -> Result<OrchestrationPlan, IcmError> {
+    plan_with_mode(ws, ComposeMode::FoldReferences)
+}
+
+/// Compose every stage in execution order under `mode`.
+pub fn plan_with_mode(ws: &IcmWorkspace, mode: ComposeMode) -> Result<OrchestrationPlan, IcmError> {
     let stages = (0..ws.stages.len())
-        .map(|i| compose_stage(ws, i))
+        .map(|i| compose_stage_with_mode(ws, i, mode))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(OrchestrationPlan { stages })
+}
+
+/// True when a declared input path points at the stage's own `references/`
+/// subtree (so a stage-contained `fetch_reference` can retrieve it). Paths that
+/// escape the stage folder (`../…`, e.g. shared `_config`) return false.
+fn is_stage_reference(path: &str) -> bool {
+    let p = path.trim_start_matches("./").replace('\\', "/");
+    p == "references" || p.starts_with("references/")
 }
 
 /// Read a resolved input path into `(source, content, present)` tuples. A file
@@ -732,5 +811,54 @@ mod tests {
             assert_eq!(c.outputs.len(), 1, "each stage declares one output");
         }
         assert_eq!(parse_contract(SCRIPT_CONTRACT).inputs.len(), 2);
+    }
+
+    #[test]
+    fn fetch_mode_unfolds_stage_references_but_notes_them() {
+        // WHEN composing a stage under FetchReferences THEN its own references/
+        // SHALL NOT be folded in, but SHALL be listed for fetch_reference.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("ws");
+        scaffold_workspace(&root).unwrap();
+        std::fs::write(
+            root.join("stages/01_research/references/facts.md"),
+            "# Facts\nBIGREFERENCECONTENT here\n",
+        )
+        .unwrap();
+        let ws = IcmWorkspace::discover(&root).unwrap();
+
+        // Fold mode: the reference content is present in the prompt.
+        let folded = compose_stage_with_mode(&ws, 0, ComposeMode::FoldReferences).unwrap();
+        assert!(
+            folded.prompt.contains("BIGREFERENCECONTENT"),
+            "fold mode should include reference content"
+        );
+
+        // Fetch mode: content is withheld; a fetch note replaces it.
+        let fetched = compose_stage_with_mode(&ws, 0, ComposeMode::FetchReferences).unwrap();
+        assert!(
+            !fetched.prompt.contains("BIGREFERENCECONTENT"),
+            "fetch mode must not fold the stage's own references: {}",
+            fetched.prompt
+        );
+        assert!(fetched.prompt.contains("fetch_reference"));
+        assert!(fetched.prompt.contains("Available references"));
+        assert!(
+            fetched
+                .provenance
+                .iter()
+                .any(|p| p.layer == 3 && p.bytes == 0 && p.label.contains("fetch-on-demand")),
+            "provenance should record the reference as fetch-on-demand"
+        );
+    }
+
+    #[test]
+    fn is_stage_reference_only_matches_local_references() {
+        assert!(is_stage_reference("references/"));
+        assert!(is_stage_reference("references/api.md"));
+        assert!(is_stage_reference("./references/api.md"));
+        assert!(!is_stage_reference("../../_config/voice.md")); // external L3 → stays folded
+        assert!(!is_stage_reference("../01_research/output/")); // L4 working → stays folded
+        assert!(!is_stage_reference("notes.md"));
     }
 }

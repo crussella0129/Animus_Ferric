@@ -30,7 +30,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use ferric_guard::Workspace;
-use ferric_icm::{IcmWorkspace, plan, scaffold_workspace};
+use ferric_icm::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_workspace};
 use ferric_loop::StopReason;
 // Only the feature-gated real backend names the `Provider` trait object.
 #[cfg(feature = "backend-openai")]
@@ -101,6 +101,12 @@ pub struct IcmRunArgs {
     /// Cap the active tool ring (ADR-028). Restrict-only.
     #[arg(long)]
     max_ring: Option<u8>,
+
+    /// Serve Layer-3 references on demand via the `fetch_reference` tool instead
+    /// of folding whole reference files into each stage's prompt (Dark Matter
+    /// knowledge layer, ADR-071). Default: fold (the original behavior).
+    #[arg(long)]
+    fetch_references: bool,
 }
 
 pub fn run_icm(args: IcmArgs) -> ExitCode {
@@ -211,7 +217,12 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let plan = match plan(&ws) {
+    let mode = if args.fetch_references {
+        ComposeMode::FetchReferences
+    } else {
+        ComposeMode::FoldReferences
+    };
+    let plan = match plan_with_mode(&ws, mode) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("icm run failed: {e}");
@@ -237,7 +248,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
     for diag in &loaded.diagnostics {
         eprintln!("{diag}");
     }
-    let config = build_run_config(&RunConfigArgs {
+    let mut config = build_run_config(&RunConfigArgs {
         mock: args.mock,
         backend: backend_opts.backend.unwrap_or(BackendArg::Openai),
         params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
@@ -255,6 +266,15 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         model_key: backend_opts.model.clone(),
         hooks: cfg.hooks.clone(),
     });
+
+    // ICM-only: `fetch_reference` is not part of the global builtin set, so it
+    // never costs a normal `ferric query` run a tool-budget slot. It joins the
+    // ring only when references are served on demand (ADR-071).
+    if args.fetch_references {
+        config
+            .registry
+            .register(Box::new(ferric_tools::builtin::FetchReference));
+    }
 
     let backend = if args.mock {
         Backend::Mock

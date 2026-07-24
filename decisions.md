@@ -1068,3 +1068,43 @@ without aborting the whole session.
 - **Deferred:** unified-diff previews; an "approve all remaining" / session-sticky
   choice; accept-edits in the `chat` REPL (`/do` escalate path) — this increment is
   `query`-only.
+
+## ADR-071 — 2026-07-23 (sprint 80): `fetch_reference` tool + ICM compose fetch mode — the Dark Matter knowledge-layer seam
+The sibling project **Animus Dark Matter** (`crussella0129/Animus_Dark_Matter`)
+formalized the ICM's Layer-3 reference plane as an on-demand, cached **knowledge
+layer** rather than a pile of files folded whole into each stage's prompt (its
+`SPEC.md` §6 / §11, `INTEGRATION.md`). This ADR is the Ferric side of that seam:
+`ferric-icm` today reads a stage's `references/` and folds every file's full
+content into the composed prompt (ADR-064) — for a large reference set that
+dominates the context window and defeats the point of scoping. We add on-demand
+retrieval so a stage pulls only the slice it needs.
+- **A new `fetch_reference` tool, registered ONLY for ICM runs.** It reads the
+  stage's own `references/`, chunks by ATX heading, keyword-scores against a
+  `query`, and returns the top-k clean-markdown chunks (each headed by a `ref://`
+  URI). It is `Read`/ring-0, but it is **not** in `register_builtin_tools` — `ferric
+  icm run --fetch-references` registers it into that run's `config.registry`, so a
+  normal `ferric query` never pays a tool-budget slot for it (ADR-028 rings).
+- **Stage-contained scoping decides what is fetchable, not a heuristic.** A running
+  stage is boundary-contained to `stages/NN_*` (ADR-065), so a tool can only reach
+  that stage's own `references/`. Compose therefore un-folds **only** L3 inputs under
+  the stage's `references/`; cross-stage L4 inputs (`../NN/output/`) and external L3
+  (shared `../../_config`) are unreachable by the tool and so **stay folded**. The
+  guard model, not a rule, defines the fetchable set.
+- **Flag-gated (`ComposeMode`), default unchanged.** `compose_stage` keeps its exact
+  behavior; `compose_stage_with_mode(.., FetchReferences)` is the new path, reached
+  only via `--fetch-references`. Existing `ferric icm run` / `plan` are byte-for-byte
+  unchanged. The flag also gives the SPEC-§9 validation its two arms for free
+  (fold baseline vs fetch) — the plan is to A/B → tune → flip the default once proven.
+- **Simple in-tree backend now; the DM MCP server is a drop-in later.** Retrieval is
+  a recursive read + heading chunk + keyword score — deliberately dumb. A future Dark
+  Matter stdio **MCP knowledge server** (semantic search, `ttlMs`/`cacheScope`
+  caching, mirrored ingestion) replaces the backend behind the *same* `fetch_reference`
+  contract; the model's grammar does not change. (Ferric has no MCP *client* yet, so
+  a built-in tool is the cheaper seam than teaching the loop to consume an MCP server.)
+- **Measured.** On a 133 KB reference vault, stage-1's assembled prompt dropped from
+  136,162 chars (fold) to 3,355 chars (fetch) — **97.5% smaller** — with the model
+  handed an "available references → `fetch_reference`" note instead. 10 new tests
+  (8 tool, 2 compose-mode).
+- **Deferred:** real-small-model iteration on fetch precision + task success (needs a
+  live model), then flipping the default to fetch (the hard replace); wiring the DM
+  MCP-server backend; a `--fetch-references` preview on `ferric icm plan`.
