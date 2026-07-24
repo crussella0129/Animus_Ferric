@@ -924,7 +924,19 @@ fn drive_real(
                         let mut cx = String::new();
                         cx.push_str("\n\n<research_context>\n");
                         for d in multi.digests {
-                            taint_set.taint_str(&d.source);
+                            // Taint what is actually UNTRUSTED — the model-authored
+                            // summary and quotes derived from untrusted content —
+                            // not `source`, which is a harness-stamped provenance
+                            // path and is trusted (ADR-073). Tainting `source`
+                            // inverted ADR-044 against its own threat model: an
+                            // injection living in `summary` never matched, so the
+                            // sink gate opened, while a legitimate write to the
+                            // researched file tripped Deny.
+                            taint_set.taint_text(&d.summary);
+                            for c in &d.claims {
+                                taint_set.taint_text(&c.claim);
+                                taint_set.taint_text(&c.quote);
+                            }
                             cx.push_str(&d.summary);
                             cx.push_str("\n---\n");
                         }
