@@ -2,6 +2,12 @@
 //! actions. A token-budget truncation cannot be a valid action, so the loop
 //! must not parse it — it nudges once, then stops with `TruncatedAction`,
 //! distinct from a parse failure's `EmptyCompletion`.
+//!
+//! NOTE: this is truncation of a **model completion** (the model's output ran
+//! out of tokens mid-action). Truncation of a **tool result** before it enters
+//! the context window is a different mechanism entirely, covered in
+//! `tool_output_truncation_tests.rs`. Reading this file's name as coverage of
+//! that is what let ADR-073's defect survive; keep the two distinct.
 
 mod common;
 

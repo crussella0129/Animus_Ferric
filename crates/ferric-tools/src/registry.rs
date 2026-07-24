@@ -91,6 +91,12 @@ impl Registry {
         }
     }
 
+    /// The configured model-facing output cap. The loop reads this to keep its
+    /// projector's truncation in step with the registry's.
+    pub fn truncation_limit(&self) -> usize {
+        self.truncation_limit
+    }
+
     pub fn register(&mut self, tool: Box<dyn Tool>) {
         self.tools.insert(tool.spec().name.clone(), tool);
     }
@@ -248,6 +254,18 @@ impl Default for Registry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The model-facing view of a tool result: at most `limit` chars, with an
+/// explicit marker so the model knows it is looking at a prefix.
+///
+/// Public because the loop's `TraceProjector` — not the registry — is what
+/// actually assembles the context window (sprint 44). The projector rebuilds
+/// messages from trace events, and the trace deliberately stores the *full*
+/// output, so the projector has to apply this itself. Both callers must use the
+/// same function or the two views drift.
+pub fn truncate_for_model(text: &str, limit: usize) -> String {
+    truncate_chars(text, limit)
 }
 
 fn truncate_chars(text: &str, limit: usize) -> String {

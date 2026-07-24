@@ -560,7 +560,11 @@ pub async fn run(
     sink: &mut JsonlSink,
     prompt: Option<&str>,
 ) -> Result<LoopOutcome, FerricError> {
-    let mut projector = TraceProjector::new();
+    // Keep the projector's model-facing cap in step with the registry's, so a
+    // caller-configured `Registry::with_truncation_limit` actually reaches the
+    // context window.
+    let mut projector =
+        TraceProjector::new().with_truncation_limit(args.registry.truncation_limit());
 
     let session_start = Event::SessionStart {
         workspace: args.workspace.root().display().to_string(),
@@ -751,9 +755,11 @@ fn edit_preview(name: &str, args: &serde_json::Value) -> EditPreview {
     }
 }
 
+/// The full, untruncated tool output. It goes to the trace verbatim (ADR-002
+/// durability); the model-facing truncation is applied by the projector, which
+/// is the single place the context window is assembled.
 struct DispatchText {
     full: String,
-    _for_model: String,
 }
 
 fn dispatch(
@@ -770,37 +776,18 @@ fn dispatch(
             duration_ms,
             checks,
         } => (
-            DispatchText {
-                full: output.full,
-                _for_model: output.for_model,
-            },
+            DispatchText { full: output.full },
             output.is_error,
             duration_ms,
             checks,
         ),
         ExecuteOutcome::Denied { reason, checks } => {
             let text = format!("DENIED: {reason}");
-            (
-                DispatchText {
-                    full: text.clone(),
-                    _for_model: text,
-                },
-                true,
-                0,
-                checks,
-            )
+            (DispatchText { full: text }, true, 0, checks)
         }
         ExecuteOutcome::UnknownTool { name } => {
             let text = format!("unknown tool: {name}");
-            (
-                DispatchText {
-                    full: text.clone(),
-                    _for_model: text,
-                },
-                true,
-                0,
-                Vec::new(),
-            )
+            (DispatchText { full: text }, true, 0, Vec::new())
         }
     }
 }
