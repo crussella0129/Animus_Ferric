@@ -1108,3 +1108,61 @@ retrieval so a stage pulls only the slice it needs.
 - **Deferred:** real-small-model iteration on fetch precision + task success (needs a
   live model), then flipping the default to fetch (the hard replace); wiring the DM
   MCP-server backend; a `--fetch-references` preview on `ferric icm plan`.
+
+## ADR-072 — 2026-07-24 (sprint 82): verification is a boundary problem — four defects live inside a green suite
+Sprint 81 audited all 14 crates by inspection and could not run one check: `C:`
+was at 100% and `cargo test` wedged mid-link. It deliberately declined to write
+an ADR, on the grounds that `decisions.md` is the durable record and should not
+assert conclusions no test had confirmed. That was the right call, and this ADR
+is what it deferred to. The user cleared `target/` (49 GB); every blocked check
+ran; the findings are now verified rather than inferred. Full report:
+`docs/verification-2026-07.md`.
+- **The toolchain is green and that is real.** Cold `cargo build --workspace
+  --all-targets`: clean, **0 warnings**, 31s. `cargo test --workspace`: **463
+  passed / 0 failed** across 52 suites. `cargo clippy --all-targets`: **0
+  warnings**. `cargo fmt --check`: clean. Dark Matter's `verify-spec.sh`: **PASS
+  61 / FAIL 0**. The core is genuinely good — `ferric-guard/workspace.rs`,
+  `ferric-core/scale.rs`, `ferric-tools/registry.rs`, the three loop guards.
+- **And four defects live inside that green suite.** Each was made to fail a
+  written test on current `main`: **A1** — ADR-002's 4,000-char tool-output
+  truncation never reaches the model (`_for_model` is discarded at `run.rs:756`;
+  the `ToolResult` event carries `full`). Measured: **20,028 chars** entered the
+  context window on one `read_file`, a 5× budget overrun on every tier. **A3** —
+  `Vcs::snapshot` runs `git add -A; git reset` **once per turn**, destroying the
+  user's staged index (`staged.txt` → `""`). **A6** — `fetch_reference` drops
+  tokens ≤ 2 chars, so `"Go"` finds nothing in a vault entirely about Go. **A2**
+  — the taint set marks `digest.source` (harness-stamped provenance) while the
+  untrusted `digest.summary` is what enters the prompt, inverting ADR-044's
+  CaMeL-lite policy against its own threat model.
+- **The structural lesson: each defect is covered up to a boundary and not
+  across it.** `registry.rs:423` tests that the Registry *computes* the truncated
+  view — and passes, because that end is correct; nothing tests that the loop
+  *uses* it. `truncation_tests.rs` reads like coverage of A1 and is not (it tests
+  cut-off model completions, an unrelated mechanism). `background_tasks.rs`
+  covers `manage_task`'s happy path while every panic path stays untested. **Test
+  strategy should follow the value across the crate seam, not stop at it.**
+- **A code comment is not a design decision, and s81's endorsement of one was
+  wrong.** `ferric-vcs/src/lib.rs:49` ships unresolved think-aloud ("Wait, `add
+  -A` pollutes the staging area… we can use `git read-tree HEAD`"). Sprint 81
+  repeated that suggestion as the fix. Measured in a scratch repo, `git read-tree
+  HEAD` destroys the staged set **identically** to `git reset` — both reset the
+  index to HEAD. The correct fix is a temporary `GIT_INDEX_FILE`, verified to
+  preserve the user's index while still capturing untracked files in the tree.
+- **The Dark Matter seam is two incompatible contracts sharing a name.** DM's
+  `INTEGRATION.md` declares `required: ["target"]` with `query` optional; Ferric
+  declares `required: ["query"]` and has no `target`. The DM-legal call from
+  DM's own docs returns `Err("missing required string argument: query")`, and
+  Ferric returns markdown where DM specifies `{chunks:[{uri,text,score}],
+  truncated}`. DM's `test_ferric_citations_resolve` cannot see this: it checks
+  only that two files *exist*, **neither of which is `fetch_reference.rs`**, and
+  it `pass`es on skip when the Ferric repo is absent. **Decide `target` before
+  DM's s2 build hardens the other side.**
+- **Vestigial, proven not asserted.** The 6 unused dependencies (B3) were
+  actually removed and `cargo check --workspace --all-targets` exited 0, then
+  reverted. `Protocol::{FencedCode,EditFormat}` are never constructed;
+  `LoopState.registry_tools` is never read; `SandboxConfig::default()` is never
+  called. `TailnetFsRetriever` and `WebRetriever` remain unreachable from the
+  binary (D1/D2), and with A2 unfixed the sink policy is inert on **every** path.
+- **Scope: audit only, no remediation.** The tree is unmodified — probe tests
+  were run, recorded, and removed. Remediation order is `docs/verification-2026-07.md`
+  §8, led by A3 (silent data loss) then A1 (live context cost).
