@@ -196,15 +196,24 @@ impl Provider for OpenAiProvider {
         );
 
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+        // Build the request future ONCE and pin it. A non-streaming completion can
+        // take seconds; re-creating the `send()` future inside the `select!` on
+        // every iteration would cancel the in-flight request each time the 50 ms
+        // cancel-poll interval ticks, so it could never finish (the request keeps
+        // reconnecting and never gets a response). Polling the *same* pinned future
+        // across ticks preserves its progress. (`complete_streaming` already sends
+        // once before its read loop, which is why the streaming path is unaffected.)
+        let send_fut = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send();
+        tokio::pin!(send_fut);
         let response = loop {
             tokio::select! {
-                res = self
-                    .client
-                    .post(&url)
-                    .header("Authorization", format!("Bearer {}", self.config.api_key))
-                    .header("Content-Type", "application/json")
-                    .json(&body)
-                    .send() => {
+                res = &mut send_fut => {
                     break res;
                 }
                 _ = interval.tick() => {
