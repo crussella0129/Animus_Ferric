@@ -1166,3 +1166,72 @@ ran; the findings are now verified rather than inferred. Full report:
 - **Scope: audit only, no remediation.** The tree is unmodified — probe tests
   were run, recorded, and removed. Remediation order is `docs/verification-2026-07.md`
   §8, led by A3 (silent data loss) then A1 (live context cost).
+
+## ADR-073 — 2026-07-24 (sprint 83): remediating the sprint-82 audit — and what a fix has to prove
+Sprint 82 verified the codebase and left four demonstrated defects plus a
+vestigial list. This sprint fixes them. The rule applied throughout: a fix is not
+done when the code looks right, it is done when the test that failed before
+passes and the reason it failed is written down. Two of these fixes would have
+been wrong if that rule had been relaxed. Workspace went 463 → **478 tests, 0
+failures**, clippy and fmt clean.
+- **A3 — the snapshot no longer touches the user's index, and no longer escapes
+  the workspace.** `Vcs::snapshot` staged with `git add -A` then `git reset`,
+  once per turn, destroying a staged index on turn 1 and every turn after. It now
+  stages into a private `GIT_INDEX_FILE` seeded from the real index (so `add -A`
+  keeps its stat cache). **Sprint 82's recommended fix was wrong and measuring it
+  is what caught that:** `git read-tree HEAD`, which the shipped source comment
+  proposed, resets the index to HEAD exactly like `git reset`. Not touching the
+  real index is the only correct answer.
+- **A3, second half — a containment bug the audit missed entirely.** Git
+  discovery walks *upward*, so a workspace that is not itself a repo resolves to
+  the nearest ancestor repo. On this machine `~` **is** a git repo, so a plain
+  temp dir resolves to toplevel `C:/Users/charl` — meaning the per-turn
+  `git add -A` targeted the user's entire home directory, and `revert` would have
+  run `git clean -fd` across it. `snapshot`/`revert`/`untracked_to_be_removed`
+  now refuse unless the workspace root *is* the worktree root
+  (`VcsError::NotWorkspaceRoot`, which `run.rs` already degrades gracefully).
+  Empirically this took `cargo test -p ferric-cli` from wedging past 10 minutes to
+  1 second. **Found by writing a test for something adjacent to the known bug** —
+  the "no temp index left behind" test used an awkward session id, which
+  surfaced the unsanitized ref name, which led here.
+- **A3, third half — `revert` now confirms.** It deletes untracked files and
+  truncates the trace; neither was announced. The prompt lists the actual doomed
+  paths from a `git clean -nd` dry run (`--yes` to skip).
+- **A1 — truncation restored where the context window is actually built.** The
+  4,000-char view was computed by the Registry and dropped by the loop; 20,028
+  chars reached the model on one `read_file`. The **projector** now applies it,
+  which keeps run and replay identical by construction rather than by parallel
+  maintenance, and the projector's limit is seeded from
+  `Registry::truncation_limit()` — making `with_truncation_limit` reach the model
+  for the first time. 4 tests covering **both** halves of the contract, because
+  testing one half is how this was lost.
+- **A2 — taint the content, and at a granularity that can match.** The live path
+  tainted `digest.source` (harness-stamped, trusted) while injecting
+  `digest.summary` (untrusted), inverting ADR-044 in both directions at once.
+  **Correcting only the value would have produced a fix that never fires:**
+  `is_tainted` needs the needle *inside* the argument, so tainting the whole
+  summary misses the realistic attack — the model lifting one injected sentence
+  into a `write_file`. New `TaintSet::taint_text` tags the block plus each line
+  and sentence, with a 12-char floor (below it, needles match everything and the
+  policy denies everything). Still inert everywhere except
+  `ferric query --research`, which remains the only taint source (D3).
+- **A6 — short query terms work, without reintroducing the noise they were
+  dropped for.** `"Go"` returned nothing over a vault entirely about Go. Deleting
+  the length filter alone would have been wrong: scoring is substring-based, so
+  `"go"` matches `"algorithm"` — which is *why* the filter existed. Terms under 3
+  chars now match whole words; longer terms keep substring matching, preserving
+  stem search. Also fixes a byte-vs-char length bug in the same predicate.
+- **Vestigial code cleared, verified unreachable first.** Six unused deps removed
+  (proven by building without them), `LoopState.registry_tools` and its
+  `#[allow(dead_code)]` deleted, the duplicate `test-sweep-prompt.txt` removed,
+  `protocol-unified-grammar.md` renamed to `protocol-text-xml.md`. Two were
+  resolved by **use** rather than deletion, which was the better answer:
+  `SandboxConfig::default()` is now called by `WebRetriever::new` instead of
+  duplicated, and `_parse_error` is surfaced as a `Note` so a grammar failure
+  stops being indistinguishable from an empty completion in the trace.
+- **Deferred, deliberately:** A5 (invert the sandbox airlock to opt-out), A7
+  (wire `RequireApproval` to the `EditApprover` shipped in ADR-070), A4 (de-panic
+  `manage_task`), C1 (`run_with_provider(RunArgs)`), and the Dark Matter `target`
+  contract decision. A5 and A7 both touch `WebRetriever`/sink wiring that is still
+  unreachable from the binary (D1/D2); doing them properly means wiring, not
+  patching, and that deserves its own sprint.
