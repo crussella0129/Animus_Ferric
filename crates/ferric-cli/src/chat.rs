@@ -549,6 +549,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                         &serde_json::json!({ "command": cmd }),
                         &ferric_guard::TaintSet::new(),
                         &ferric_guard::SinkPolicy::deny(),
+                        None,
                     )
                 });
                 match outcome {

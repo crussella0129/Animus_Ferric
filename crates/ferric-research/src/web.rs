@@ -1,6 +1,6 @@
 //! The Web Retriever plane.
 use crate::retriever::{RetrieveError, RetrievedChunk, Retriever};
-use crate::sandbox::{SandboxConfig, SandboxError, check_available, run_in_sandbox};
+use crate::sandbox::{NetworkPolicy, SandboxConfig, SandboxError, check_available, run_in_sandbox};
 use async_trait::async_trait;
 
 pub struct WebRetriever {
@@ -28,8 +28,19 @@ impl WebRetriever {
         self
     }
 
-    pub fn with_proxy(mut self, proxy_url: Option<String>) -> Self {
-        self.config.proxy_url = proxy_url;
+    /// Route egress through an allowlist proxy. Without this the retriever has
+    /// **no network at all** (ADR-074) — which is deliberate: a web retriever
+    /// that silently gets unrestricted egress by default is the failure this
+    /// guards against. To opt out entirely, see [`Self::with_network`].
+    pub fn with_proxy(mut self, proxy_url: impl Into<String>) -> Self {
+        self.config.network = NetworkPolicy::Proxy(proxy_url.into());
+        self
+    }
+
+    /// Set the network policy directly, including
+    /// [`NetworkPolicy::Unrestricted`].
+    pub fn with_network(mut self, network: NetworkPolicy) -> Self {
+        self.config.network = network;
         self
     }
 }
@@ -56,11 +67,7 @@ impl Retriever for WebRetriever {
         let cmd = ["wget".to_string(), "-qO-".to_string(), query.to_string()];
 
         // For now, since Retriever is async, we can wrap the sync blocking call in spawn_blocking.
-        let config_clone = SandboxConfig {
-            image: self.config.image.clone(),
-            enforce_runsc: self.config.enforce_runsc,
-            proxy_url: self.config.proxy_url.clone(),
-        };
+        let config_clone = self.config.clone();
         let query_clone = query.to_string();
 
         let content = tokio::task::spawn_blocking(move || {
@@ -85,10 +92,20 @@ impl Retriever for WebRetriever {
 mod tests {
     use super::*;
 
+    /// A retriever configured for a live fetch. Since ADR-074 the default has
+    /// **no network and requires gVisor**, so a test that actually reaches the
+    /// internet has to opt out of both — which is the point: reaching the
+    /// network is now something you can see in the code.
+    fn live_fetch_retriever() -> WebRetriever {
+        WebRetriever::new()
+            .with_runsc(false)
+            .with_network(NetworkPolicy::Unrestricted)
+    }
+
     #[test]
     #[cfg_attr(windows, ignore)]
     fn retrieve_valid_url_downloads_content() {
-        let retriever = WebRetriever::new();
+        let retriever = live_fetch_retriever();
         if !retriever.available() {
             return;
         }
@@ -112,7 +129,7 @@ mod tests {
     #[test]
     #[cfg_attr(windows, ignore)]
     fn retrieve_non_existent_domain_fails() {
-        let retriever = WebRetriever::new();
+        let retriever = live_fetch_retriever();
         if !retriever.available() {
             return;
         }

@@ -440,6 +440,7 @@ impl<'a> LoopState<'a> {
                 &call.args,
                 &self.args.taint_set,
                 &self.args.sink_policy,
+                self.args.edit_approver,
             );
             debug!(tool = %call.name, is_error, duration_ms, "tool call finished");
             dispatched += 1;
@@ -732,18 +733,22 @@ fn registry_tools(
 /// Build an [`EditPreview`] from a pending call: pull the target `path` (if the
 /// call names one) and render the arguments for the human to inspect.
 fn edit_preview(name: &str, args: &serde_json::Value) -> EditPreview {
-    let mut targets = Vec::new();
-    for key in ["path", "from", "to", "src", "dest"] {
-        if let Some(s) = args.get(key).and_then(|v| v.as_str()) {
-            targets.push(s.to_string());
-        }
-    }
     let detail = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
     EditPreview {
         tool: name.to_string(),
-        targets,
+        targets: preview_targets(args),
         detail,
     }
+}
+
+/// The target path(s) a call names, if any — for showing a human what a call is
+/// about to touch.
+fn preview_targets(args: &serde_json::Value) -> Vec<String> {
+    ["path", "from", "to", "src", "dest"]
+        .iter()
+        .filter_map(|key| args.get(key).and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .collect()
 }
 
 /// The full, untruncated tool output. It goes to the trace verbatim (ADR-002
@@ -760,8 +765,40 @@ fn dispatch(
     args: &serde_json::Value,
     taint_set: &ferric_guard::TaintSet,
     sink_policy: &ferric_guard::SinkPolicy,
+    edit_approver: Option<EditApprover<'_>>,
 ) -> (DispatchText, bool, u64, Vec<CheckRecord>) {
-    match registry.execute(workspace, name, args, taint_set, sink_policy) {
+    // ADR-074: `SinkAction::RequireApproval` used to degrade to a flat denial
+    // because "human approval is not wired" — while ADR-070's `EditApprover` was
+    // already sitting at this very dispatch site. Adapt one to the other: the
+    // sink policy asks a question, accept-edits mode is the thing that can
+    // answer it.
+    let sink_approver = edit_approver.map(|approve| {
+        move |request: &ferric_tools::ApprovalRequest<'_>| {
+            approve(&EditPreview {
+                tool: request.tool.to_string(),
+                targets: preview_targets(request.args),
+                detail: format!(
+                    "SINK POLICY: this call carries data derived from untrusted \
+                     research content, reaching a {:?} tool.\n{}",
+                    request.permission,
+                    serde_json::to_string_pretty(request.args)
+                        .unwrap_or_else(|_| request.args.to_string())
+                ),
+            })
+        }
+    });
+    let sink_approver_ref: Option<ferric_tools::SinkApprover<'_>> = sink_approver
+        .as_ref()
+        .map(|f| f as ferric_tools::SinkApprover<'_>);
+
+    match registry.execute(
+        workspace,
+        name,
+        args,
+        taint_set,
+        sink_policy,
+        sink_approver_ref,
+    ) {
         ExecuteOutcome::Completed {
             output,
             duration_ms,
