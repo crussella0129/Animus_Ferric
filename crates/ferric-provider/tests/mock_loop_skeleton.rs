@@ -117,6 +117,7 @@ fn mock_loop_skeleton() {
                 &call.args,
                 &ferric_guard::TaintSet::new(),
                 &ferric_guard::SinkPolicy::deny(),
+                None,
             ) {
                 ExecuteOutcome::Completed {
                     output,

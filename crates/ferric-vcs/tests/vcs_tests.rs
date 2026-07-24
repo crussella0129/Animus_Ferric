@@ -3,8 +3,8 @@ use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
 
-#[tokio::test]
-async fn test_snapshot_and_revert() {
+#[test]
+fn test_snapshot_and_revert() {
     let dir = tempdir().unwrap();
     let root = dir.path();
 
@@ -34,9 +34,7 @@ async fn test_snapshot_and_revert() {
     fs::write(&test_file, "initial").unwrap();
 
     // Take snapshot at turn 1
-    vcs.snapshot("test-session", 1)
-        .await
-        .expect("Failed to snapshot");
+    vcs.snapshot("test-session", 1).expect("Failed to snapshot");
 
     // Modify state
     fs::write(&test_file, "modified").unwrap();
@@ -44,14 +42,10 @@ async fn test_snapshot_and_revert() {
     fs::write(&other_file, "hello").unwrap();
 
     // Take snapshot at turn 2
-    vcs.snapshot("test-session", 2)
-        .await
-        .expect("Failed to snapshot");
+    vcs.snapshot("test-session", 2).expect("Failed to snapshot");
 
     // Revert to turn 1
-    vcs.revert("test-session", 1)
-        .await
-        .expect("Failed to revert");
+    vcs.revert("test-session", 1).expect("Failed to revert");
 
     // Check state is back to turn 1
     assert_eq!(fs::read_to_string(&test_file).unwrap(), "initial");
@@ -59,7 +53,6 @@ async fn test_snapshot_and_revert() {
 
     // Revert to turn 2
     vcs.revert("test-session", 2)
-        .await
         .expect("Failed to revert to turn 2");
 
     // Check state is back to turn 2
@@ -71,8 +64,8 @@ async fn test_snapshot_and_revert() {
 /// repository index at all, a user who has carefully staged part of their work
 /// loses it on turn 1 and every turn after. Both `git reset` and
 /// `git read-tree HEAD` fail this test — they reset the index to HEAD.
-#[tokio::test]
-async fn snapshot_preserves_the_users_staged_index() {
+#[test]
+fn snapshot_preserves_the_users_staged_index() {
     let dir = tempdir().unwrap();
     let root = dir.path();
 
@@ -100,7 +93,7 @@ async fn snapshot_preserves_the_users_staged_index() {
     let before = git(&["diff", "--cached", "--name-only"]);
     assert_eq!(before, "staged.txt", "precondition");
 
-    Vcs::new(root).snapshot("probe-session", 1).await.unwrap();
+    Vcs::new(root).snapshot("probe-session", 1).unwrap();
 
     assert_eq!(
         git(&["diff", "--cached", "--name-only"]),
@@ -116,8 +109,8 @@ async fn snapshot_preserves_the_users_staged_index() {
 
 /// The private index must not cost the snapshot any content: untracked files
 /// still have to make it into the tree, or `revert` silently loses them.
-#[tokio::test]
-async fn snapshot_still_captures_untracked_files() {
+#[test]
+fn snapshot_still_captures_untracked_files() {
     let dir = tempdir().unwrap();
     let root = dir.path();
 
@@ -139,7 +132,7 @@ async fn snapshot_still_captures_untracked_files() {
 
     fs::write(root.join("never-added.txt"), "untracked").unwrap();
 
-    let commit = Vcs::new(root).snapshot("s", 7).await.unwrap();
+    let commit = Vcs::new(root).snapshot("s", 7).unwrap();
     let listed = git(&["ls-tree", "--name-only", &commit]);
 
     assert!(
@@ -153,8 +146,8 @@ async fn snapshot_still_captures_untracked_files() {
 /// `~` is a git repo, that is the user's entire home directory. `snapshot` must
 /// refuse rather than stage (and `revert` rather than `git clean -fd`) a
 /// repository the user never pointed Ferric at.
-#[tokio::test]
-async fn refuses_to_operate_on_an_ancestor_repo() {
+#[test]
+fn refuses_to_operate_on_an_ancestor_repo() {
     let outer = tempdir().unwrap();
 
     // An ancestor repo...
@@ -173,7 +166,6 @@ async fn refuses_to_operate_on_an_ancestor_repo() {
 
     let err = vcs
         .snapshot("s", 1)
-        .await
         .expect_err("snapshot must refuse a workspace that is not the repo root");
     assert!(
         matches!(err, ferric_vcs::VcsError::NotWorkspaceRoot { .. }),
@@ -182,7 +174,6 @@ async fn refuses_to_operate_on_an_ancestor_repo() {
 
     let err = vcs
         .revert("s", 1)
-        .await
         .expect_err("revert must refuse too — it runs `git clean -fd`");
     assert!(matches!(err, ferric_vcs::VcsError::NotWorkspaceRoot { .. }));
 
@@ -200,8 +191,8 @@ async fn refuses_to_operate_on_an_ancestor_repo() {
 }
 
 /// The temp index is an implementation detail and must not survive the call.
-#[tokio::test]
-async fn snapshot_leaves_no_temp_index_behind() {
+#[test]
+fn snapshot_leaves_no_temp_index_behind() {
     let dir = tempdir().unwrap();
     let root = dir.path();
 
@@ -222,10 +213,7 @@ async fn snapshot_leaves_no_temp_index_behind() {
         .unwrap();
     fs::write(root.join("a.txt"), "a").unwrap();
 
-    Vcs::new(root)
-        .snapshot("sess/with:odd chars", 3)
-        .await
-        .unwrap();
+    Vcs::new(root).snapshot("sess/with:odd chars", 3).unwrap();
 
     let leftovers: Vec<_> = fs::read_dir(root.join(".git"))
         .unwrap()

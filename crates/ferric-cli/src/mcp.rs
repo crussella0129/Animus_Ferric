@@ -431,25 +431,26 @@ impl McpServer {
             _ => {}
         };
 
+        let setup = crate::query::LoopSetup {
+            registry: &self.config.registry,
+            workspace: &self.workspace,
+            policy: &self.config.policy,
+            protocol: self.config.protocol,
+            sampling: self.config.sampling.clone(),
+            system_prompt: self.config.system_prompt.as_deref(),
+            lineage: self.config.lineage.clone(),
+            media,
+            stream_sink: Some(&sink_fn),
+            resume,
+            taint_set: ferric_guard::TaintSet::new(),
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: self.config.hooks.clone(),
+            edit_approver: None,
+        };
         let fut = run_with_provider(
-            self.provider.as_ref(),
-            &self.config.registry,
-            &self.workspace,
-            &self.config.policy,
-            self.config.protocol,
-            self.config.sampling.clone(),
-            self.config.system_prompt.as_deref(),
-            self.config.lineage.clone(),
+            setup.into_run_args(self.provider.as_ref(), None),
             sink,
             Some(prompt),
-            media,
-            Some(&sink_fn),
-            resume,
-            ferric_guard::TaintSet::new(),
-            ferric_guard::SinkPolicy::deny(),
-            None,
-            self.config.hooks.clone(),
-            None,
         );
         match &self.executor {
             Executor::Mock => futures_executor::block_on(fut),

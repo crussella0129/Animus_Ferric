@@ -605,59 +605,42 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         None
     };
 
+    // Built once and handed to whichever driver runs. Previously both branches
+    // repeated the same 16-odd positional arguments, including this `match`
+    // inline, twice.
+    let setup = LoopSetup {
+        registry: &config.registry,
+        workspace: &workspace,
+        policy: &config.policy,
+        protocol: config.protocol,
+        sampling: config.sampling,
+        system_prompt: config.system_prompt.as_deref(),
+        lineage: config.lineage.clone(),
+        media: media_parts,
+        stream_sink,
+        resume,
+        taint_set: ferric_guard::TaintSet::new(),
+        sink_policy: match args.sink_action.to_lowercase().as_str() {
+            "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
+            "requireapproval" => {
+                ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval)
+            }
+            _ => ferric_guard::SinkPolicy::deny(),
+        },
+        hooks: config.hooks.clone(),
+        edit_approver: approver_ref,
+    };
+
     let outcome = if args.mock {
         let provider = mock_provider(config.protocol);
-        drive_mock(
-            &provider,
-            &config.registry,
-            &workspace,
-            &config.policy,
-            config.protocol,
-            config.sampling,
-            config.system_prompt.as_deref(),
-            config.lineage.clone(),
-            &mut sink,
-            effective_prompt.as_deref(),
-            media_parts,
-            stream_sink,
-            resume,
-            ferric_guard::TaintSet::new(),
-            match args.sink_action.to_lowercase().as_str() {
-                "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
-                "requireapproval" => {
-                    ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval)
-                }
-                _ => ferric_guard::SinkPolicy::deny(),
-            },
-            config.hooks.clone(),
-            approver_ref,
-        )
+        drive_mock(setup, &provider, &mut sink, effective_prompt.as_deref())
     } else {
         drive_real(
+            setup,
             &args,
-            &config.registry,
-            &workspace,
-            &config.policy,
-            config.protocol,
-            config.sampling,
-            config.system_prompt.as_deref(),
-            config.lineage.clone(),
             &mut sink,
             effective_prompt.as_deref(),
-            media_parts,
-            stream_sink,
-            resume,
-            ferric_guard::TaintSet::new(),
-            match args.sink_action.to_lowercase().as_str() {
-                "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
-                "requireapproval" => {
-                    ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval)
-                }
-                _ => ferric_guard::SinkPolicy::deny(),
-            },
             args.research.clone(),
-            config.hooks.clone(),
-            approver_ref,
         )
     };
 
@@ -785,118 +768,101 @@ fn xml_completion(name: &str, args: &serde_json::Value) -> Completion {
 /// separate so a caller can build a provider once and call this many times.
 /// Unconditionally compiled (no backend feature needed): it only requires a
 /// `&dyn Provider`, which `MockProvider` already satisfies.
-#[allow(clippy::too_many_arguments)]
+/// Drive the agent loop and map its error into the CLI's `String` error type.
+///
+/// Takes `RunArgs` directly. It used to take **18 positional parameters** and
+/// immediately re-pack them into this very struct, which meant six call sites
+/// each threading 18 unlabelled arguments past each other — the exact shape
+/// argument-order bugs live in — behind four
+/// `#[allow(clippy::too_many_arguments)]` suppressions (ADR-074).
 pub(crate) async fn run_with_provider(
-    provider: &dyn Provider,
-    registry: &Registry,
-    workspace: &Workspace,
-    policy: &RunPolicy,
-    protocol: ActionProtocol,
-    sampling: SamplingParams,
-    system_prompt: Option<&str>,
-    lineage: Option<PromptLineage>,
+    args: RunArgs<'_>,
     sink: &mut JsonlSink,
     prompt: Option<&str>,
-    media: Vec<MediaPart>,
-    stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
-    resume: Option<ferric_loop::ReplayedState>,
-    taint_set: ferric_guard::TaintSet,
-    sink_policy: ferric_guard::SinkPolicy,
-    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    hooks: Option<ferric_core::HooksConfig>,
-    edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
-    run(
-        RunArgs {
-            cancel_flag,
-            provider,
-            registry,
-            workspace,
-            policy,
-            protocol,
-            sampling,
-            sleeper: &ThreadSleeper,
-            system_prompt,
-            prompt_lineage: lineage,
-            media,
-            stream_sink,
-            resume,
-            taint_set,
-            sink_policy,
-            hooks,
-            edit_approver,
-        },
-        sink,
-        prompt,
-    )
-    .await
-    .map_err(|e| format!("loop error: {e}"))
+    run(args, sink, prompt)
+        .await
+        .map_err(|e| format!("loop error: {e}"))
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Everything the loop needs **except the provider**.
+///
+/// The provider is the one thing `drive_real` cannot supply up front — it has to
+/// build it with `create_provider` inside its own tokio runtime — which is why
+/// this exists as a separate struct rather than callers just constructing
+/// `RunArgs`. Everything else is named at the call site instead of riding along
+/// as the 11th positional argument.
+pub(crate) struct LoopSetup<'a> {
+    pub registry: &'a Registry,
+    pub workspace: &'a Workspace,
+    pub policy: &'a RunPolicy,
+    pub protocol: ActionProtocol,
+    pub sampling: SamplingParams,
+    pub system_prompt: Option<&'a str>,
+    pub lineage: Option<PromptLineage>,
+    pub media: Vec<MediaPart>,
+    pub stream_sink: Option<&'a (dyn Fn(ferric_provider::StreamDelta) + Sync)>,
+    pub resume: Option<ferric_loop::ReplayedState>,
+    pub taint_set: ferric_guard::TaintSet,
+    pub sink_policy: ferric_guard::SinkPolicy,
+    pub hooks: Option<ferric_core::HooksConfig>,
+    pub edit_approver: Option<ferric_loop::EditApprover<'a>>,
+}
+
+impl<'a> LoopSetup<'a> {
+    /// Complete the setup with the provider (and, for the real path, the
+    /// interrupt flag) into the loop's own argument struct.
+    pub(crate) fn into_run_args(
+        self,
+        provider: &'a dyn Provider,
+        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> RunArgs<'a> {
+        RunArgs {
+            provider,
+            registry: self.registry,
+            workspace: self.workspace,
+            policy: self.policy,
+            protocol: self.protocol,
+            sampling: self.sampling,
+            sleeper: &ThreadSleeper,
+            system_prompt: self.system_prompt,
+            prompt_lineage: self.lineage,
+            media: self.media,
+            stream_sink: self.stream_sink,
+            resume: self.resume,
+            cancel_flag,
+            taint_set: self.taint_set,
+            sink_policy: self.sink_policy,
+            hooks: self.hooks,
+            edit_approver: self.edit_approver,
+        }
+    }
+}
+
+/// The mock path has no ambient runtime by design (ADR-010 keeps the loop
+/// executor-agnostic), so it drives the future on `futures_executor`.
 fn drive_mock(
+    setup: LoopSetup<'_>,
     provider: &dyn Provider,
-    registry: &Registry,
-    workspace: &Workspace,
-    policy: &RunPolicy,
-    protocol: ActionProtocol,
-    sampling: SamplingParams,
-    system_prompt: Option<&str>,
-    lineage: Option<PromptLineage>,
     sink: &mut JsonlSink,
     prompt: Option<&str>,
-    media: Vec<MediaPart>,
-    stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
-    resume: Option<ferric_loop::ReplayedState>,
-    taint_set: ferric_guard::TaintSet,
-    sink_policy: ferric_guard::SinkPolicy,
-    hooks: Option<ferric_core::HooksConfig>,
-    edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     futures_executor::block_on(run_with_provider(
-        provider,
-        registry,
-        workspace,
-        policy,
-        protocol,
-        sampling,
-        system_prompt,
-        lineage,
+        setup.into_run_args(provider, None),
         sink,
         prompt,
-        media,
-        stream_sink,
-        resume,
-        taint_set,
-        sink_policy,
-        None,
-        hooks,
-        edit_approver,
     ))
 }
 
 #[cfg(feature = "backend-openai")]
-#[allow(clippy::too_many_arguments)]
 fn drive_real(
+    mut setup: LoopSetup<'_>,
     args: &QueryArgs,
-    registry: &Registry,
-    workspace: &Workspace,
-    policy: &RunPolicy,
-    protocol: ActionProtocol,
-    sampling: SamplingParams,
-    system_prompt: Option<&str>,
-    lineage: Option<PromptLineage>,
     sink: &mut JsonlSink,
     prompt: Option<&str>,
-    media: Vec<MediaPart>,
-    stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
-    resume: Option<ferric_loop::ReplayedState>,
-    mut taint_set: ferric_guard::TaintSet,
-    sink_policy: ferric_guard::SinkPolicy,
     research_query: Option<String>,
-    hooks: Option<ferric_core::HooksConfig>,
-    edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
+    let workspace = setup.workspace;
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
         let provider_box = create_provider(&args.backend_opts).await?;
@@ -932,10 +898,10 @@ fn drive_real(
                             // injection living in `summary` never matched, so the
                             // sink gate opened, while a legitimate write to the
                             // researched file tripped Deny.
-                            taint_set.taint_text(&d.summary);
+                            setup.taint_set.taint_text(&d.summary);
                             for c in &d.claims {
-                                taint_set.taint_text(&c.claim);
-                                taint_set.taint_text(&c.quote);
+                                setup.taint_set.taint_text(&c.claim);
+                                setup.taint_set.taint_text(&c.quote);
                             }
                             cx.push_str(&d.summary);
                             cx.push_str("\n---\n");
@@ -952,50 +918,21 @@ fn drive_real(
         }
 
         run_with_provider(
-            provider_box.as_ref(),
-            registry,
-            workspace,
-            policy,
-            protocol,
-            sampling,
-            system_prompt,
-            lineage,
+            setup.into_run_args(provider_box.as_ref(), Some(cancel_flag)),
             sink,
             effective_prompt.as_deref(),
-            media,
-            stream_sink,
-            resume,
-            taint_set,
-            sink_policy,
-            Some(cancel_flag),
-            hooks,
-            edit_approver,
         )
         .await
     })
 }
 
 #[cfg(not(feature = "backend-openai"))]
-#[allow(clippy::too_many_arguments)]
 fn drive_real(
+    _setup: LoopSetup<'_>,
     _args: &QueryArgs,
-    _registry: &Registry,
-    _workspace: &Workspace,
-    _policy: &RunPolicy,
-    _protocol: ActionProtocol,
-    _sampling: SamplingParams,
-    _system_prompt: Option<&str>,
-    _lineage: Option<PromptLineage>,
     _sink: &mut JsonlSink,
     _prompt: Option<&str>,
-    _media: Vec<MediaPart>,
-    _stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)>,
-    _resume: Option<ferric_loop::ReplayedState>,
-    _taint_set: ferric_guard::TaintSet,
-    _sink_policy: ferric_guard::SinkPolicy,
     _research_query: Option<String>,
-    _hooks: Option<ferric_core::HooksConfig>,
-    _edit_approver: Option<ferric_loop::EditApprover<'_>>,
 ) -> Result<LoopOutcome, String> {
     Err("this binary was built without backend features; \
          rebuild with `cargo build --features backend-openai`, or use --mock"
@@ -1054,25 +991,26 @@ mod tests {
         let trace_path = dir.path().join("trace.jsonl");
         let mut sink = JsonlSink::open(&trace_path, "test").unwrap();
 
-        let outcome = futures_executor::block_on(run_with_provider(
-            &provider,
-            &registry,
-            &workspace,
-            &policy,
+        let setup = LoopSetup {
+            registry: &registry,
+            workspace: &workspace,
+            policy: &policy,
             protocol,
             sampling,
-            None,
-            None,
+            system_prompt: None,
+            lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+            taint_set: ferric_guard::TaintSet::new(),
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: None,
+            edit_approver: None,
+        };
+        let outcome = futures_executor::block_on(run_with_provider(
+            setup.into_run_args(&provider, None),
             &mut sink,
             Some("do a mock task"),
-            Vec::new(),
-            None,
-            None,
-            ferric_guard::TaintSet::new(),
-            ferric_guard::SinkPolicy::deny(),
-            None,
-            None,
-            None,
         ))
         .unwrap();
 

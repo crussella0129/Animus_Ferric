@@ -331,39 +331,41 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
 
         eprintln!("▶ Stage {:02} · {} — running…", stage.index, stage.name);
 
-        // Same run for either backend — only the provider ref and executor
-        // differ, so the (long) argument list lives in one macro.
-        macro_rules! run_stage {
-            ($provider:expr) => {
-                run_with_provider(
-                    $provider,
-                    &config.registry,
-                    &stage_ws,
-                    &config.policy,
-                    config.protocol,
-                    config.sampling.clone(),
-                    config.system_prompt.as_deref(),
-                    config.lineage.clone(),
-                    &mut sink,
-                    Some(&stage.prompt),
-                    Vec::new(),
-                    None,
-                    None,
-                    ferric_guard::TaintSet::new(),
-                    ferric_guard::SinkPolicy::deny(),
-                    None,
-                    config.hooks.clone(),
-                    None,
-                )
-            };
-        }
+        // Same run for either backend — only the provider ref and the executor
+        // differ. This used to need a macro purely to avoid writing the same 18
+        // positional arguments twice; `LoopSetup` makes the macro unnecessary.
+        let setup = || crate::query::LoopSetup {
+            registry: &config.registry,
+            workspace: &stage_ws,
+            policy: &config.policy,
+            protocol: config.protocol,
+            sampling: config.sampling.clone(),
+            system_prompt: config.system_prompt.as_deref(),
+            lineage: config.lineage.clone(),
+            media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+            taint_set: ferric_guard::TaintSet::new(),
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: config.hooks.clone(),
+            edit_approver: None,
+        };
+
         let outcome = match &backend {
             Backend::Mock => {
                 let provider = mock_provider(config.protocol);
-                futures_executor::block_on(run_stage!(&provider))
+                futures_executor::block_on(run_with_provider(
+                    setup().into_run_args(&provider, None),
+                    &mut sink,
+                    Some(&stage.prompt),
+                ))
             }
             #[cfg(feature = "backend-openai")]
-            Backend::Real { provider, runtime } => runtime.block_on(run_stage!(provider.as_ref())),
+            Backend::Real { provider, runtime } => runtime.block_on(run_with_provider(
+                setup().into_run_args(provider.as_ref(), None),
+                &mut sink,
+                Some(&stage.prompt),
+            )),
         };
 
         match outcome {

@@ -21,6 +21,14 @@ pub enum VcsError {
 }
 
 /// A lightweight wrapper for Git-based workspace snapshotting.
+///
+/// Every method here is **blocking** — each shells out to `git` via
+/// `std::process::Command`. They used to be `async fn` with not a single
+/// `.await` in either body (ADR-074): the signature promised a yield point that
+/// did not exist, so under tokio it silently blocked a reactor thread once per
+/// turn while looking like it didn't. `ferric-loop` is deliberately
+/// executor-agnostic (ADR-010), so the honest fix is to be synchronous and say
+/// so; a caller that cares can offload with its own executor's blocking pool.
 pub struct Vcs {
     workspace_root: std::path::PathBuf,
 }
@@ -43,7 +51,7 @@ impl Vcs {
     /// two options the previous implementation weighed — are equally destructive:
     /// both reset the index to HEAD, discarding whatever the user had staged.
     /// Not touching the real index is the only correct answer.
-    pub async fn snapshot(&self, session_id: &str, turn_id: u32) -> Result<String, VcsError> {
+    pub fn snapshot(&self, session_id: &str, turn_id: u32) -> Result<String, VcsError> {
         self.ensure_workspace_is_repo_root()?;
         let git_dir = std::path::PathBuf::from(self.run_git(&["rev-parse", "--absolute-git-dir"])?);
         let temp_index = git_dir.join(format!(
@@ -93,7 +101,7 @@ impl Vcs {
     }
 
     /// Reverts the workspace exactly to the snapshot associated with `session_id` and `turn_id`.
-    pub async fn revert(&self, session_id: &str, turn_id: u32) -> Result<(), VcsError> {
+    pub fn revert(&self, session_id: &str, turn_id: u32) -> Result<(), VcsError> {
         // Same containment check as `snapshot`, and it matters more here: this
         // runs `git clean -fd`, so pointing it at an ancestor repo would delete
         // untracked files across the user's whole home directory.

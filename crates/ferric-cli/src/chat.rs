@@ -282,50 +282,38 @@ impl ChatBackend {
         let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
             if stream { Some(&sink_fn) } else { None };
 
+        // One setup for both backends; only the provider and the executor differ.
+        let setup = || crate::query::LoopSetup {
+            registry: &config.registry,
+            workspace,
+            policy: &config.policy,
+            protocol: config.protocol,
+            sampling: config.sampling.clone(),
+            system_prompt: config.system_prompt.as_deref(),
+            lineage: config.lineage.clone(),
+            media: Vec::new(),
+            stream_sink,
+            resume: Some(seed.clone()),
+            taint_set: ferric_guard::TaintSet::new(),
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: None,
+            edit_approver: None,
+        };
+
         match self {
             ChatBackend::Mock => {
                 let provider = mock_provider(config.protocol);
                 futures_executor::block_on(run_with_provider(
-                    &provider,
-                    &config.registry,
-                    workspace,
-                    &config.policy,
-                    config.protocol,
-                    config.sampling.clone(),
-                    config.system_prompt.as_deref(),
-                    config.lineage.clone(),
+                    setup().into_run_args(&provider, None),
                     sink,
                     Some(prompt),
-                    Vec::new(),
-                    stream_sink,
-                    Some(seed),
-                    ferric_guard::TaintSet::new(),
-                    ferric_guard::SinkPolicy::deny(),
-                    None,
-                    None,
-                    None,
                 ))
             }
             #[cfg(feature = "backend-openai")]
             ChatBackend::Real { provider, runtime } => runtime.block_on(run_with_provider(
-                provider.as_ref(),
-                &config.registry,
-                workspace,
-                &config.policy,
-                config.protocol,
-                config.sampling.clone(),
-                config.system_prompt.as_deref(),
-                config.lineage.clone(),
+                setup().into_run_args(provider.as_ref(), None),
                 sink,
                 Some(prompt),
-                Vec::new(),
-                stream_sink,
-                Some(seed),
-                ferric_guard::TaintSet::new(),
-                ferric_guard::SinkPolicy::deny(),
-                None,
-                None,
-                None,
             )),
         }
     }
@@ -561,6 +549,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                         &serde_json::json!({ "command": cmd }),
                         &ferric_guard::TaintSet::new(),
                         &ferric_guard::SinkPolicy::deny(),
+                        None,
                     )
                 });
                 match outcome {

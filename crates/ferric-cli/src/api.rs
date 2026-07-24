@@ -248,25 +248,26 @@ pub mod server {
 
         let provider = crate::backend::create_provider(&backend_opts).await?;
 
+        let setup = crate::query::LoopSetup {
+            registry: &config.registry,
+            workspace: &state.workspace,
+            policy: &config.policy,
+            protocol: config.protocol,
+            sampling: config.sampling.clone(),
+            system_prompt: config.system_prompt.as_deref(),
+            lineage: config.lineage.clone(),
+            media: Vec::new(),
+            stream_sink: sink_fn,
+            resume: None,
+            taint_set: ferric_guard::TaintSet::new(),
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: None,
+            edit_approver: None,
+        };
         let outcome = run_with_provider(
-            provider.as_ref(),
-            &config.registry,
-            &state.workspace,
-            &config.policy,
-            config.protocol,
-            config.sampling.clone(),
-            config.system_prompt.as_deref(),
-            config.lineage.clone(),
+            setup.into_run_args(provider.as_ref(), None),
             &mut sink,
             Some(prompt),
-            Vec::new(),
-            sink_fn,
-            None,
-            ferric_guard::TaintSet::new(),
-            ferric_guard::SinkPolicy::deny(),
-            None,
-            None,
-            None,
         )
         .await
         .map_err(|e| format!("query failed: {e}"))?;

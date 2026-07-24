@@ -26,6 +26,7 @@ impl RegistryTestExt for ferric_tools::Registry {
             args,
             &ferric_guard::TaintSet::new(),
             &ferric_guard::SinkPolicy::deny(),
+            None,
         )
     }
 }
