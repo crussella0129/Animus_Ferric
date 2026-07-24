@@ -56,146 +56,147 @@ impl Tool for ShellExec {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                use std::process::Stdio;
-                use tokio::io::AsyncReadExt;
+        // Was `block_in_place(|| Handle::current().block_on(..))`, which panics
+        // both without an ambient runtime and on a current-thread one — from a
+        // Ring-0, model-invokable tool (ADR-074).
+        super::blocking::block_on_ambient("shell_exec", async {
+            use std::process::Stdio;
+            use tokio::io::AsyncReadExt;
 
-                let mut cmd = if cfg!(windows) {
-                    let mut c = tokio::process::Command::new("cmd.exe");
-                    c.arg("/C").arg(command);
-                    c
-                } else {
-                    let mut c = tokio::process::Command::new("sh");
-                    c.arg("-c").arg(command);
-                    c
-                };
+            let mut cmd = if cfg!(windows) {
+                let mut c = tokio::process::Command::new("cmd.exe");
+                c.arg("/C").arg(command);
+                c
+            } else {
+                let mut c = tokio::process::Command::new("sh");
+                c.arg("-c").arg(command);
+                c
+            };
 
-                cmd.current_dir(ctx.workspace.root()).kill_on_drop(true);
+            cmd.current_dir(ctx.workspace.root()).kill_on_drop(true);
 
-                if is_background {
-                    // Create tasks dir if it doesn't exist
-                    let tasks_dir = ctx.workspace.root().join(".ferric").join("tasks");
-                    if !tasks_dir.exists() {
-                        let _ = std::fs::create_dir_all(&tasks_dir);
-                    }
-
-                    let id = format!(
-                        "task-{}",
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_millis()
-                    );
-                    let log_path = tasks_dir.join(format!("{}.log", id));
-
-                    let log_file = std::fs::File::create(&log_path)
-                        .map_err(|e| format!("failed to create log file: {e}"))?;
-                    cmd.stdout(
-                        log_file
-                            .try_clone()
-                            .map_err(|e| format!("failed to clone log file: {e}"))?,
-                    )
-                    .stderr(log_file)
-                    .stdin(Stdio::piped());
-
-                    let child = match cmd.spawn() {
-                        Ok(c) => c,
-                        Err(e) => return Err(format!("failed to spawn background command: {e}")),
-                    };
-
-                    crate::builtin::task_registry::spawn_task(
-                        id.clone(),
-                        command.to_string(),
-                        log_path.clone(),
-                        child,
-                    );
-
-                    return Ok(format!(
-                        "Started background task {}. Log file: {}. Use manage_task to interact.",
-                        id,
-                        log_path.display()
-                    ));
+            if is_background {
+                // Create tasks dir if it doesn't exist
+                let tasks_dir = ctx.workspace.root().join(".ferric").join("tasks");
+                if !tasks_dir.exists() {
+                    let _ = std::fs::create_dir_all(&tasks_dir);
                 }
 
-                cmd.stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .stdin(Stdio::null());
+                let id = format!(
+                    "task-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                );
+                let log_path = tasks_dir.join(format!("{}.log", id));
 
-                let mut child = match cmd.spawn() {
+                let log_file = std::fs::File::create(&log_path)
+                    .map_err(|e| format!("failed to create log file: {e}"))?;
+                cmd.stdout(
+                    log_file
+                        .try_clone()
+                        .map_err(|e| format!("failed to clone log file: {e}"))?,
+                )
+                .stderr(log_file)
+                .stdin(Stdio::piped());
+
+                let child = match cmd.spawn() {
                     Ok(c) => c,
-                    Err(e) => return Err(format!("failed to spawn command: {e}")),
+                    Err(e) => return Err(format!("failed to spawn background command: {e}")),
                 };
 
-                let stdout = child.stdout.take().unwrap();
-                let stderr = child.stderr.take().unwrap();
+                crate::builtin::task_registry::spawn_task(
+                    id.clone(),
+                    command.to_string(),
+                    log_path.clone(),
+                    child,
+                );
 
-                // Read from stdout and stderr concurrently, up to a reasonable cap (e.g. 500KB)
-                // before stopping, just to avoid OOM.
-                let mut out_buf = Vec::new();
-                let mut err_buf = Vec::new();
+                return Ok(format!(
+                    "Started background task {}. Log file: {}. Use manage_task to interact.",
+                    id,
+                    log_path.display()
+                ));
+            }
 
-                let timeout = Duration::from_secs(TIMEOUT_SECS);
+            cmd.stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .stdin(Stdio::null());
 
-                let mut out_take = stdout.take(500_000);
-                let mut err_take = stderr.take(500_000);
-                let read_pipes = async {
-                    let out_fut = out_take.read_to_end(&mut out_buf);
-                    let err_fut = err_take.read_to_end(&mut err_buf);
-                    let _ = tokio::join!(out_fut, err_fut);
-                };
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => return Err(format!("failed to spawn command: {e}")),
+            };
 
-                let mut timed_out = false;
-                match tokio::time::timeout(timeout, async {
-                    let _ = tokio::join!(child.wait(), read_pipes);
-                })
-                .await
-                {
-                    Ok(_) => {}
-                    Err(_) => {
-                        let _ = child.kill().await;
-                        timed_out = true;
-                    }
-                }
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
 
-                let out_str = String::from_utf8_lossy(&out_buf);
-                let err_str = String::from_utf8_lossy(&err_buf);
+            // Read from stdout and stderr concurrently, up to a reasonable cap (e.g. 500KB)
+            // before stopping, just to avoid OOM.
+            let mut out_buf = Vec::new();
+            let mut err_buf = Vec::new();
 
-                let mut full_output = String::new();
-                if !out_str.is_empty() {
-                    full_output.push_str(&out_str);
-                }
-                if !err_str.is_empty() {
-                    if !full_output.is_empty() {
-                        full_output.push('\n');
-                    }
-                    full_output.push_str(&err_str);
-                }
+            let timeout = Duration::from_secs(TIMEOUT_SECS);
 
-                let mut result_text = if timed_out {
-                    format!(
-                        "Command timed out after {} seconds.\nOutput:\n",
-                        TIMEOUT_SECS
-                    )
-                } else {
-                    String::new()
-                };
+            let mut out_take = stdout.take(500_000);
+            let mut err_take = stderr.take(500_000);
+            let read_pipes = async {
+                let out_fut = out_take.read_to_end(&mut out_buf);
+                let err_fut = err_take.read_to_end(&mut err_buf);
+                let _ = tokio::join!(out_fut, err_fut);
+            };
 
-                if full_output.chars().count() > OUTPUT_LIMIT {
-                    let truncated: String = full_output.chars().take(OUTPUT_LIMIT).collect();
-                    result_text.push_str(&truncated);
-                    result_text.push_str("\n... [TRUNCATED]");
-                } else {
-                    result_text.push_str(&full_output);
-                }
-
-                if timed_out {
-                    Err(result_text)
-                } else {
-                    Ok(result_text)
-                }
+            let mut timed_out = false;
+            match tokio::time::timeout(timeout, async {
+                let _ = tokio::join!(child.wait(), read_pipes);
             })
-        })
+            .await
+            {
+                Ok(_) => {}
+                Err(_) => {
+                    let _ = child.kill().await;
+                    timed_out = true;
+                }
+            }
+
+            let out_str = String::from_utf8_lossy(&out_buf);
+            let err_str = String::from_utf8_lossy(&err_buf);
+
+            let mut full_output = String::new();
+            if !out_str.is_empty() {
+                full_output.push_str(&out_str);
+            }
+            if !err_str.is_empty() {
+                if !full_output.is_empty() {
+                    full_output.push('\n');
+                }
+                full_output.push_str(&err_str);
+            }
+
+            let mut result_text = if timed_out {
+                format!(
+                    "Command timed out after {} seconds.\nOutput:\n",
+                    TIMEOUT_SECS
+                )
+            } else {
+                String::new()
+            };
+
+            if full_output.chars().count() > OUTPUT_LIMIT {
+                let truncated: String = full_output.chars().take(OUTPUT_LIMIT).collect();
+                result_text.push_str(&truncated);
+                result_text.push_str("\n... [TRUNCATED]");
+            } else {
+                result_text.push_str(&full_output);
+            }
+
+            if timed_out {
+                Err(result_text)
+            } else {
+                Ok(result_text)
+            }
+        })?
     }
 }
 
