@@ -88,8 +88,6 @@ pub struct LoopState<'a> {
     pub turns: u32,
     pub offered_names: Vec<String>,
     pub native_tools: Vec<ToolDescriptor>,
-    #[allow(dead_code)]
-    pub registry_tools: Vec<ToolDescriptor>,
     pub repetition: crate::repetition::RepetitionGuard,
     pub progress: crate::progress::ProgressGuard,
     pub failure: crate::failure::FailureGuard,
@@ -278,7 +276,7 @@ impl<'a> LoopState<'a> {
             return Ok(TurnOutcome::Continue);
         }
 
-        let (actions, _parse_error) = match self.args.protocol {
+        let (actions, parse_error) = match self.args.protocol {
             ActionProtocol::NativeTools => (completion.message.tool_calls.clone(), None),
             ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
                 match crate::grammar::parse_json_action(
@@ -301,6 +299,18 @@ impl<'a> LoopState<'a> {
         };
 
         if actions.is_empty() {
+            // Record WHY there was no action. Without this a grammar failure and
+            // a genuinely empty completion are indistinguishable in the trace,
+            // which makes post-hoc analysis of small-model behaviour guesswork.
+            if let Some(e) = &parse_error {
+                debug!(error = %e, "action parse failed");
+                let note = Event::Note {
+                    text: format!("action parse failed: {e}"),
+                };
+                self.sink.write_event(note.clone())?;
+                self.projector.step(&note);
+            }
+
             let is_native_final = self.args.protocol == ActionProtocol::NativeTools
                 && completion
                     .message
@@ -664,7 +674,6 @@ pub async fn run(
         turns,
         offered_names,
         native_tools,
-        registry_tools,
         repetition: crate::repetition::RepetitionGuard::new(),
         progress: crate::progress::ProgressGuard::new(),
         failure: crate::failure::FailureGuard::new(),

@@ -15,12 +15,11 @@ impl Default for WebRetriever {
 
 impl WebRetriever {
     pub fn new() -> Self {
+        // One definition of the default sandbox shape. This used to duplicate
+        // `SandboxConfig::default()`'s literal, which meant the airlock defaults
+        // could drift apart silently.
         Self {
-            config: SandboxConfig {
-                image: "alpine:latest".to_string(),
-                enforce_runsc: false,
-                proxy_url: None,
-            },
+            config: SandboxConfig::default(),
         }
     }
 
