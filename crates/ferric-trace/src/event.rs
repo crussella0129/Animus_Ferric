@@ -110,6 +110,13 @@ pub enum Event {
     FailureGuard {
         action: String,
     },
+    /// The oscillation guard fired — a small set of distinct actions repeated
+    /// across a window of turns (an A-B-A-B cycle), which every streak-based
+    /// guard misses because alternation resets them (ADR-077). `action` is
+    /// "warned" or "stopped".
+    OscillationGuard {
+        action: String,
+    },
     /// A guard decision made at the tool-dispatch chokepoint. `rule` and
     /// `matched` are present on denials.
     PermissionCheck {

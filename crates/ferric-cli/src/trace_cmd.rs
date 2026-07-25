@@ -131,6 +131,9 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
         ParsedEvent::Known(Event::FailureGuard { action }) => {
             format!("repeated-failure guard: {action}")
         }
+        ParsedEvent::Known(Event::OscillationGuard { action }) => {
+            format!("oscillation guard: {action}")
+        }
         ParsedEvent::Known(Event::PermissionCheck {
             path,
             decision,

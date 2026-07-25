@@ -1420,3 +1420,54 @@ scripts. This sprint closed that gap with `ferric server` → llama.cpp
   the real `tailscale` binary. The suite is fast and catches regressions; its
   green is simply evidence about a narrower thing than it looks like. **A live
   round belongs in the rotation, not once every sixty sprints.**
+
+## ADR-077 — 2026-07-25 (sprint 87): the fourth guard — closing the oscillation hole, and two live validations
+Sprint 86's live round found F1 (an A-B-A-B cycle defeats every guard) and F2
+(`--tailscale` never discovers the FQDN). F2 landed in ADR-076. This sprint fixes
+F1, and uses the live rig to validate two fixes that had only ever been checked
+against mocks. Workspace 507 → **518 tests, 0 failures**; clippy 0; fmt clean.
+- **A fourth guard, windowed rather than streak-based.** The existing three all
+  key on **consecutive-turn** state, so alternation resets each of them every
+  turn: `repetition` compares a turn's full signature to the previous turn's,
+  `progress` compares the sorted-unique tool names, and `failure` counts
+  all-errored turns — which never engages at all, because an oscillating model's
+  calls **succeed**. New `ferric-loop/src/oscillation.rs` asks a different
+  question: *over the last N turns, how many distinct things has the model
+  actually done?* A sustained 2-cycle answers "two" however the turns interleave.
+  Window 8, warn at 6, `MAX_DISTINCT = 2`, giving the ladder
+  **repetition 2 < failure 3 < no-progress 5 < oscillation 8** — last in the
+  chain, and comfortably under every tier's `max_turns` (Nano 15).
+- **`MAX_DISTINCT = 2` is deliberately tight.** A 3-cycle is explicitly *not*
+  caught, pinned by a named test, because raising the bound starts catching
+  legitimate short workflows that repeat with identical arguments. The
+  false-positive boundary has its own test: alternating tool **names** with fresh
+  arguments every turn is real work and must run — that is the shape a naive
+  name-based window would wrongly kill.
+- **Validated live on the exact scenario that found it.** Same model, same
+  prompt, same workspace: **20 turns / zero guard events / `max_turns`** became
+  **8 turns / warned twice / stopped with `oscillation`**. A 60% cut in wasted
+  turns and, as importantly, a diagnostic that says *why* instead of "it ran out".
+- **A1 validated live at last** (it went unexercised in sprint 86 because the
+  model paginated `read_file`). Forced with a single 19,992-char line: the trace
+  retained the **full** 19,992 chars while the model received ~4,000 — and said
+  so in its own summary, *"which has been truncated for display."* Both halves of
+  ADR-002's contract confirmed against a real model.
+- **G1 (NEW, live) — `--research` silently produced nothing and said nothing.**
+  `ferric query --research "configuration"` over a workspace whose
+  `research_notes.md` plainly contains that word injected **no**
+  `<research_context>` (verified in the trace's `session_prompt`) and printed no
+  message. `research_all` returns `Ok(MultiResearch{digests: []})` when a plane
+  yields no chunks and `query.rs` skips on `digests.is_empty()` — so a flag the
+  user explicitly passed degrades into an ordinary run with no signal. Root cause
+  not yet isolated between `LocalFsRetriever::available()` (`root.is_dir()`) and
+  `retrieve()` returning nothing; **isolating it comes first, then an empty
+  research result must say so.**
+- **Which means ADR-075's E2 is still unmeasured live**, and honestly so: no
+  digest ⇒ no taint ⇒ nothing for the false-positive finding to act on. The
+  synthetic 3/3-blocked measurement stands; its real-world frequency does not yet.
+- **Still open and still unrun:** A5's sandbox (Docker absent) and fleet
+  calibration (still sprints 25–26). A weaker second model for failure-mode work
+  was not obtainable — the ZimaBoard2 GGUF library is online on the tailnet with
+  SMB open, but has no sshd, refuses `net view` over tailscale, exposes no
+  guessable share name, and no `Y:` drive is mapped. **Needs the share name from
+  the user.**
