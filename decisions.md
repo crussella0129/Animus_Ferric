@@ -1702,3 +1702,33 @@ owns it end to end. Workspace **542 tests, 0 failures**; clippy 0; fmt clean.
 - **D2 is now unblocked but not done.** `WebRetriever` still is not reachable
   from the binary — what remains is wiring (a CLI surface, the allowlist as
   configuration), not missing mechanism.
+
+## ADR-084 — 2026-07-25 (sprint 93, amendment): availability is "can run our containers", not "is docker there"
+CI failed on `windows-latest` while passing on ubuntu, and the reason is worth
+recording because it invalidated five tests that were *passing*.
+- **GitHub's `windows-latest` runner ships a Docker daemon in Windows-container
+  mode.** It is reachable, so a "can I talk to docker?" probe answers yes — and
+  then every `alpine:latest` run dies with
+  `no matching manifest for windows(10.0.26100)/amd64`.
+- **`check_available()` now requires `OSType == linux`.** Every image this crate
+  uses is Linux, so a Windows-mode daemon is not availability. Reporting it as
+  such makes `Retriever::available()` promise a plane that cannot work — this is
+  a product fix, not a CI workaround.
+- **The serious part: 5 of the 6 sandbox tests passed for the wrong reason.**
+  They assert *failure* — denied network, dropped capabilities, absent runsc,
+  refused host — and on that runner they got a failure, just not theirs. The
+  container never started at all. Only `a_command_runs_inside_the_sandbox`, the
+  one with a **positive** assertion, caught it.
+- **So negative assertions now have to say why.** A new
+  `assert_failed_because(result, expected_reasons, what)` rejects any error
+  mentioning `no matching manifest` / `Unable to find image` outright — the
+  container never ran, so the test proves nothing — and requires the error to
+  match the reason the test is actually about (`bad address` for a denied
+  network, `Operation not permitted` for a dropped capability, `runsc` for the
+  runtime, `403` for a gateway refusal).
+- **The lesson generalises past Docker.** `assert!(result.is_err())` is a test of
+  nothing in particular: it passes for the intended reason and for every
+  unintended one, and the unintended ones are exactly what a foreign environment
+  supplies. The anti-skip guard added in ADR-081 (always keep one assertion that
+  cannot pass without the dependency genuinely working) is what surfaced this;
+  the negative-assertion rule is its counterpart.
