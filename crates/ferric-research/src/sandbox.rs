@@ -32,8 +32,21 @@ pub enum SandboxError {
 pub enum NetworkPolicy {
     /// No network. The default.
     Denied,
-    /// Egress only through an allowlist proxy.
-    Proxy(String),
+    /// Egress only through an allowlist gateway, on a docker network created
+    /// with `--internal` so the sandbox has **no route out except the gateway**.
+    ///
+    /// This replaces a `Proxy(url)` variant that set `http_proxy` on a **bridge**
+    /// network (ADR-082). That was advisory, not enforced: proxy environment
+    /// variables are a convention cooperative clients honour, and a container
+    /// could simply `unset http_proxy` and reach the internet directly —
+    /// measured, fetching example.com in full. The isolation has to come from
+    /// the network, not from the client's goodwill.
+    Airlock {
+        /// An `--internal` docker network the sandbox is attached to.
+        network: String,
+        /// The gateway's proxy URL, reachable only on that network.
+        proxy_url: String,
+    },
     /// Unrestricted egress. Deliberately verbose to write.
     Unrestricted,
 }
@@ -126,13 +139,16 @@ pub fn docker_args(config: &SandboxConfig, cmd: &[&str]) -> Vec<String> {
             args.push("--network".into());
             args.push("none".into());
         }
-        NetworkPolicy::Proxy(url) => {
+        NetworkPolicy::Airlock { network, proxy_url } => {
+            // The isolated network is what enforces this; the env vars only
+            // point cooperative clients at the gateway. Note this is NOT
+            // `bridge` — attaching to bridge would restore the bypass.
             args.push("--network".into());
-            args.push("bridge".into());
+            args.push(network.clone());
             args.push("--env".into());
-            args.push(format!("http_proxy={url}"));
+            args.push(format!("http_proxy={proxy_url}"));
             args.push("--env".into());
-            args.push(format!("https_proxy={url}"));
+            args.push(format!("https_proxy={proxy_url}"));
         }
         NetworkPolicy::Unrestricted => {
             args.push("--network".into());
@@ -219,18 +235,26 @@ mod tests {
         }
     }
 
-    /// A proxy means egress is possible but filtered — bridge plus the env vars
-    /// that force traffic through the allowlist.
+    /// The airlock attaches to the ISOLATED network and points clients at the
+    /// gateway. The critical assertion is the negative one: it must never say
+    /// `bridge`, because that is what made the old `Proxy` variant bypassable.
     #[test]
-    fn a_proxy_policy_routes_through_the_proxy() {
+    fn the_airlock_uses_the_isolated_network_not_bridge() {
         let config = SandboxConfig {
-            network: NetworkPolicy::Proxy("http://127.0.0.1:8118".into()),
+            network: NetworkPolicy::Airlock {
+                network: "ferric-airlock".into(),
+                proxy_url: "http://172.19.0.2:8888".into(),
+            },
             ..SandboxConfig::default()
         };
         let joined = args_of(&config).join(" ");
-        assert!(joined.contains("--network bridge"));
-        assert!(joined.contains("http_proxy=http://127.0.0.1:8118"));
-        assert!(joined.contains("https_proxy=http://127.0.0.1:8118"));
+        assert!(joined.contains("--network ferric-airlock"));
+        assert!(
+            !joined.contains("--network bridge"),
+            "bridge would restore the `unset http_proxy` bypass: {joined}"
+        );
+        assert!(joined.contains("http_proxy=http://172.19.0.2:8888"));
+        assert!(joined.contains("https_proxy=http://172.19.0.2:8888"));
     }
 
     /// Unrestricted egress is reachable — but only by naming it.

@@ -134,3 +134,130 @@ fn the_gvisor_default_fails_closed_when_runsc_is_absent() {
         );
     }
 }
+
+// --- ADR-082: the airlock is enforced by the network, not by client goodwill ---
+
+use std::process::Command;
+
+fn dk(args: &[&str]) -> String {
+    Command::new("docker")
+        .args(args)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Stand up the real topology: an `--internal` network with no route out, plus a
+/// gateway container attached to BOTH it and a normal network, running an
+/// allowlist filter. Returns `(network, proxy_url)`.
+fn start_airlock() -> Option<(String, String)> {
+    let net = "ferric-test-airlock";
+    let out = "ferric-test-egress";
+    let gw = "ferric-test-gw";
+
+    let _ = dk(&["network", "create", "--internal", net]);
+    let _ = dk(&["network", "create", out]);
+    let _ = dk(&["rm", "-f", gw]);
+
+    // tinyproxy with a one-host allowlist and default-deny.
+    dk(&[
+        "run",
+        "-d",
+        "--name",
+        gw,
+        "--network",
+        out,
+        "alpine:latest",
+        "sh",
+        "-c",
+        "apk add --no-cache tinyproxy >/dev/null 2>&1; \
+         printf 'example.com\n' > /etc/tinyproxy/filter; \
+         printf '\nFilter \"/etc/tinyproxy/filter\"\nFilterDefaultDeny Yes\nAllow 0.0.0.0/0\n' \
+           >> /etc/tinyproxy/tinyproxy.conf; \
+         tinyproxy -d",
+    ]);
+    // Installing tinyproxy needs a moment; poll rather than guess.
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        if dk(&["logs", gw]).contains("Accepting connections") {
+            break;
+        }
+    }
+    let _ = dk(&["network", "connect", net, gw]);
+
+    let ip = dk(&[
+        "inspect",
+        "-f",
+        &format!("{{{{(index .NetworkSettings.Networks \"{net}\").IPAddress}}}}"),
+        gw,
+    ]);
+    if ip.is_empty() {
+        stop_airlock();
+        return None;
+    }
+    Some((net.to_string(), format!("http://{ip}:8888")))
+}
+
+fn stop_airlock() {
+    let _ = dk(&["rm", "-f", "ferric-test-gw"]);
+    let _ = dk(&["network", "rm", "ferric-test-airlock"]);
+    let _ = dk(&["network", "rm", "ferric-test-egress"]);
+}
+
+/// The three properties that make this an airlock rather than a convention.
+/// Run as one test so the (slow) gateway is stood up once.
+#[test]
+fn the_airlock_enforces_the_allowlist_and_cannot_be_bypassed() {
+    if !docker_ready("the_airlock_enforces_the_allowlist_and_cannot_be_bypassed") {
+        return;
+    }
+    let Some((network, proxy_url)) = start_airlock() else {
+        println!("SKIP: could not stand up the gateway — airlock NOT validated");
+        return;
+    };
+
+    let config = SandboxConfig {
+        network: NetworkPolicy::Airlock { network, proxy_url },
+        enforce_runsc: false,
+        ..SandboxConfig::default()
+    };
+
+    // 1. An allowlisted host is reachable through the gateway.
+    let allowed = run(&config, &["wget", "-qO-", "-T", "15", "http://example.com"]);
+
+    // 2. A host that is not on the allowlist is refused BY the gateway.
+    let blocked = run(
+        &config,
+        &["wget", "-qO-", "-T", "15", "http://neverssl.com"],
+    );
+
+    // 3. The bypass that defeated the old `Proxy` variant: ignore the env vars
+    //    and go direct. The isolated network must make this impossible.
+    let bypass = run(
+        &config,
+        &[
+            "sh",
+            "-c",
+            "unset http_proxy https_proxy; wget -qO- -T 10 http://example.com",
+        ],
+    );
+
+    stop_airlock();
+
+    assert!(
+        allowed
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Example Domain"),
+        "an allowlisted host must be reachable through the gateway: {allowed:?}"
+    );
+    assert!(
+        blocked.is_err(),
+        "a non-allowlisted host must be refused: {blocked:?}"
+    );
+    assert!(
+        bypass.is_err(),
+        "unsetting the proxy env MUST NOT restore egress — that was the whole \
+         defect in the old bridge-based policy: {bypass:?}"
+    );
+}

@@ -102,4 +102,8 @@ test ever ran the real `tailscale` CLI.
 
 
 ## Sprint 91 follow-up
-- [ ] **The allowlist egress proxy — the last blocker for Ornstein's web plane.** Docker is no longer the gap (ADR-081). `NetworkPolicy::Proxy` exists and nothing constructs it, so wiring `WebRetriever` in today offers only `Denied` (a web retriever that cannot fetch) or `Unrestricted` (exactly the egress sprint 84 made opt-out). Build the proxy, then wire D2 behind it.
+- [x] **The allowlist egress proxy — the last blocker for Ornstein's web plane.** Docker is no longer the gap (ADR-081). `NetworkPolicy::Proxy` exists and nothing constructs it, so wiring `WebRetriever` in today offers only `Denied` (a web retriever that cannot fetch) or `Unrestricted` (exactly the egress sprint 84 made opt-out). Build the proxy, then wire D2 behind it. *(Partly done sprint 92, ADR-082 — debugging it found the mechanism itself was advisory: bridge + http_proxy env is bypassable with one unset, measured. Replaced by an enforced Airlock on an --internal network; topology verified end-to-end. REMAINING: the gateway lifecycle, below.)*
+
+
+## Sprint 92 follow-up
+- [ ] **Airlock lifecycle — the remaining piece before D2.** The type can now express an enforced airlock and the topology is proven live, but Ferric neither creates the `--internal` network nor runs the gateway. Needs: create/ensure the network, start an allowlist gateway container, health-check it (poll for readiness — `apk add` takes seconds), attach it to both networks, tear it down, and surface the allowlist as configuration. Only then is wiring `WebRetriever` into the binary (D2) meaningful. The working topology is captured in `crates/ferric-research/tests/sandbox_live.rs::start_airlock` — lift it from there.
