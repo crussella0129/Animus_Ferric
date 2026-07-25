@@ -180,12 +180,12 @@ impl Retriever for LocalFsRetriever {
     }
 
     async fn retrieve(&self, query: &str) -> Result<Vec<RetrievedChunk>, RetrieveError> {
-        let needle = query.to_lowercase();
+        let terms = query_terms(query);
         let mut out = Vec::new();
         walk(
             &self.root,
             &self.root,
-            &needle,
+            &terms,
             self.max_files,
             self.max_bytes_per_file,
             &mut out,
@@ -200,7 +200,7 @@ impl Retriever for LocalFsRetriever {
 fn walk(
     dir: &Path,
     root: &Path,
-    needle: &str,
+    terms: &[String],
     max_files: usize,
     max_bytes: usize,
     out: &mut Vec<RetrievedChunk>,
@@ -230,15 +230,13 @@ fn walk(
             if NOISE_DIRS.contains(&name.as_str()) {
                 continue;
             }
-            walk(&path, root, needle, max_files, max_bytes, out)?;
+            walk(&path, root, terms, max_files, max_bytes, out)?;
         } else {
             // Binary / unreadable files fall away here (non-UTF-8 → Err).
             let Ok(content) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let name_match = name.to_lowercase().contains(needle);
-            let content_match = content.to_lowercase().contains(needle);
-            if name_match || content_match {
+            if matches_all_terms(&name, &content, terms) {
                 let rel = path
                     .strip_prefix(root)
                     .unwrap_or(&path)
@@ -252,6 +250,41 @@ fn walk(
         }
     }
     Ok(())
+}
+
+/// Split a research query into lowercase search terms.
+///
+/// The query used to be matched as ONE literal lowercase substring (ADR-078), so
+/// any multi-word query — the natural way to ask for research — found nothing
+/// unless that exact phrase appeared verbatim. Measured: `"configuration"`
+/// matched a file, `"project notes configuration"` matched nothing in the same
+/// directory, and the caller reported neither.
+pub(crate) fn query_terms(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(|t| {
+            t.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// A file matches when **every** term appears in its name or its content.
+///
+/// AND rather than OR: a research query is a conjunction of things the caller
+/// wants ("tokio spawn runtime"), and OR would return most of the tree — which
+/// then all goes through the quarantine model, one inference per chunk. An empty
+/// term list matches nothing, so a blank query cannot sweep the workspace.
+fn matches_all_terms(name: &str, content: &str, terms: &[String]) -> bool {
+    if terms.is_empty() {
+        return false;
+    }
+    let name = name.to_lowercase();
+    let content = content.to_lowercase();
+    terms
+        .iter()
+        .all(|t| name.contains(t.as_str()) || content.contains(t.as_str()))
 }
 
 /// Truncate `s` to at most `max` bytes, on a char boundary.
