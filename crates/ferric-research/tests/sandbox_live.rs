@@ -27,6 +27,28 @@ fn run(config: &SandboxConfig, cmd: &[&str]) -> Result<String, String> {
     run_in_sandbox(config, cmd).map_err(|e| e.to_string())
 }
 
+/// Assert a run failed **for the stated reason**, not merely that it failed.
+///
+/// This exists because of a real CI result (ADR-084): on a Windows-container
+/// daemon every `alpine:latest` run died with `no matching manifest`, and five of
+/// these tests — all of which assert failure — passed for that reason instead of
+/// their own. A negative assertion that does not say *why* is not a test of
+/// anything.
+fn assert_failed_because(result: &Result<String, String>, expected: &[&str], what: &str) {
+    let err = match result {
+        Err(e) => e,
+        Ok(body) => panic!("{what}: expected failure, got success: {body:.120}"),
+    };
+    assert!(
+        !err.contains("no matching manifest") && !err.contains("Unable to find image"),
+        "{what}: the container never ran (image problem), so this proves nothing: {err}"
+    );
+    assert!(
+        expected.iter().any(|e| err.contains(e)),
+        "{what}: failed, but not for the expected reason (wanted one of {expected:?}): {err}"
+    );
+}
+
 /// Baseline: the sandbox can execute at all. Without this, every other result
 /// here is ambiguous.
 #[test]
@@ -59,9 +81,10 @@ fn a_denied_network_really_cannot_reach_out() {
     // `wget` on a network-less container must fail. If this ever succeeds, the
     // airlock is open and the whole sandbox is decorative.
     let result = run(&config, &["wget", "-qO-", "-T", "5", "http://example.com"]);
-    assert!(
-        result.is_err(),
-        "a Denied-network container reached the internet: {result:?}"
+    assert_failed_because(
+        &result,
+        &["bad address", "unreachable", "Network is unreachable"],
+        "a Denied-network container must fail to resolve or route",
     );
 }
 
@@ -128,9 +151,10 @@ fn the_gvisor_default_fails_closed_when_runsc_is_absent() {
             "runsc is installed, so this should run: {result:?}"
         );
     } else {
-        assert!(
-            result.is_err(),
-            "runsc is absent, so the default MUST fail closed — instead it ran: {result:?}"
+        assert_failed_because(
+            &result,
+            &["runsc", "unknown or invalid runtime"],
+            "with runsc absent the default must fail closed on the RUNTIME",
         );
     }
 }

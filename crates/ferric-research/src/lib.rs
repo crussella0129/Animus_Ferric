@@ -29,6 +29,7 @@ pub use retriever::{
     SshTransport, TailnetDevice, TailnetFsRetriever, research, research_all,
 };
 
+pub mod airlock;
 pub mod sandbox;
 pub mod web;
 pub use web::WebRetriever;

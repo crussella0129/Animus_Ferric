@@ -92,35 +92,53 @@ impl SandboxConfig {
 /// availability silently spends minutes doing nothing.
 const AVAILABILITY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Is a Docker daemon reachable right now?
+/// Is a Docker daemon reachable **and able to run Linux containers**?
 ///
-/// Bounded: an unreachable daemon must answer "no" quickly, not block the
-/// caller. `Retriever::available()` sits on the research path, so an
-/// unbounded probe here would stall a whole run over an optional dependency.
+/// The Linux part is not pedantry (ADR-084). GitHub's `windows-latest` runner
+/// ships a daemon in **Windows-container mode**: reachable, so a
+/// "can I talk to docker?" probe says yes, and then every `alpine:latest` run
+/// dies with `no matching manifest for windows/amd64`. Every image this crate
+/// uses is Linux, so a Windows-mode daemon is *not* availability — reporting it
+/// as such makes `Retriever::available()` promise a plane that cannot work.
+///
+/// Bounded, too: an unreachable daemon must answer quickly rather than block the
+/// caller, since this sits on the research path.
 pub fn check_available() -> bool {
-    let Ok(mut child) = Command::new("docker")
-        .arg("info")
-        .stdout(Stdio::null())
+    docker_os_type().as_deref() == Some("linux")
+}
+
+/// The daemon's container OS (`linux` / `windows`), or `None` if unreachable
+/// within [`AVAILABILITY_TIMEOUT`].
+fn docker_os_type() -> Option<String> {
+    let mut child = Command::new("docker")
+        .args(["info", "--format", "{{.OSType}}"])
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-    else {
-        return false; // no docker binary at all
-    };
+        .ok()?;
 
     let deadline = Instant::now() + AVAILABILITY_TIMEOUT;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut out = String::new();
+                use std::io::Read;
+                child.stdout.as_mut()?.read_to_string(&mut out).ok()?;
+                return Some(out.trim().to_lowercase());
+            }
             Ok(None) => {
                 if Instant::now() >= deadline {
                     // Half-started daemon: reap the probe so it cannot linger.
                     let _ = child.kill();
                     let _ = child.wait();
-                    return false;
+                    return None;
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
-            Err(_) => return false,
+            Err(_) => return None,
         }
     }
 }
