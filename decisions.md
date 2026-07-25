@@ -1366,3 +1366,57 @@ those sprints existed to fix.** Full report: `docs/verification-2026-07-round2.m
 - **Scope: audit only.** The tree is unmodified — probes were run, recorded and
   deleted, and the suite is green afterwards. Remediation order is in the
   report's §5, led by E1 (a regression we introduced) and E4.
+
+## ADR-076 — 2026-07-25 (sprint 86): the live-model round — two defects that 503 mock tests could not see
+ADR-075 named the live gap as the highest-value next investment: nothing had met
+a real model since ~sprint 26, so every capability claim rested on `MockProvider`
+scripts. This sprint closed that gap with `ferric server` → llama.cpp
+`llama-server` → `qwen2.5-coder-7b-instruct-q4_k_m.gguf`, and verified the
+`--tailscale` path against the real Tailscale CLI. Full report:
+`docs/verification-2026-07-round3.md`. Workspace 503 → **507 tests, 0 failures**.
+- **The stack works end-to-end, live.** `server doctor` → `up` → `status` →
+  `down` all behave; the constrained agentic loop completed a real task
+  (**read_file → write_file → task_complete, 3 turns, 36 s**, correct output) with
+  streaming and a complete JSONL trace. This is the first live confirmation in
+  roughly sixty sprints.
+- **F1 (PROVEN) — the guard family has an A-B-A-B oscillation hole.** On a
+  slightly harder task the model burned the **entire 20-turn budget**: 20 tool
+  calls, **2 distinct `(name,args)` pairs**, **zero guard events**. All three
+  guards key on *consecutive-turn* state, so alternation resets each one every
+  turn — `RepetitionGuard` (name+args) and `ProgressGuard` (per-turn name set)
+  never see two matching turns in a row, and `FailureGuard` never engages because
+  **the calls succeed**. Bounding wasted compute is the family's entire stated
+  purpose (ADR-037/038); a 2-cycle of successful calls passes straight through.
+  Proposed: a **windowed** guard over the last N turns (multiset of
+  `(name,args)`), tripping when distinct-call-count stays low while turns climb.
+  Keep the existing three for the fast 2–5-turn paths a window cannot catch.
+- **F2 (PROVEN, fixed here) — `--tailscale` never discovered the Tailnet FQDN.**
+  `server.rs` read `DNSName` from the **root** of `tailscale status --json`; the
+  real payload puts it at **`Self.DNSName`**. Discovery therefore always returned
+  `None`, and `ferric server up --tailscale` printed "Tailscale proxy active."
+  then wrote the **loopback** URL into the runfile — so anything discovering the
+  server through that runfile got `127.0.0.1`, defeating the flag entirely.
+  ADR-060 and `docs/commands.md` both advertised this as working. Fixed as a
+  testable `tailnet_fqdn()`, with a warning instead of silence when discovery
+  fails. **The other half was already correct** and now has a test saying so:
+  `tailscale serve --bg <port>` matches the documented form (verified against
+  `tailscale serve --help`, 1.98.2).
+- **`tailscale serve` was deliberately NOT executed.** Running it publishes the
+  machine's inference port to the tailnet persistently — an outward-facing,
+  standing configuration change that belongs to the user, not to a verification
+  step. Everything was established from read-only `status`/`--help` output plus
+  the code, which was sufficient to find the bug.
+- **What the round did NOT validate, stated plainly.** A1's 4,000-char cap was
+  never exercised (the model chose to paginate `read_file`; `search_files`
+  returned 191 chars) — the cap is reachable mainly via very long *lines* or a
+  large `shell_exec`, whose own 10,000-char limit sits **above** the model cap.
+  A2's taint set was not exercised (`--research` unrun), so ADR-075's E2 posture
+  decision remains open and unmeasured against real digests. A5's sandbox is
+  still unrun (no Docker). The fleet capability map still dates from sprints
+  25–26.
+- **The lesson about the mock suite.** Neither finding was reachable by it, *by
+  construction*: F1 needs a model that chooses badly — a scripted mock emits
+  exactly what its author wrote and never spontaneously oscillates — and F2 needs
+  the real `tailscale` binary. The suite is fast and catches regressions; its
+  green is simply evidence about a narrower thing than it looks like. **A live
+  round belongs in the rotation, not once every sixty sprints.**

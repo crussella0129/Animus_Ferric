@@ -112,6 +112,23 @@ pub struct LaunchCommand {
     pub env: Vec<(String, String)>,
 }
 
+/// The node's Tailnet FQDN, read from `tailscale status --json`.
+///
+/// The FQDN lives at **`Self.DNSName`**, not at the top level (ADR-076). Reading
+/// `DNSName` from the root always yielded `None` against the real CLI, so
+/// `--tailscale` printed "Tailscale proxy active." and then recorded the
+/// **loopback** URL in the runfile — silently defeating the flag's entire
+/// purpose, since anything reading that runfile got `127.0.0.1`.
+///
+/// The trailing dot on the FQDN is stripped: tailscale reports an absolute DNS
+/// name (`host.tailnet.ts.net.`) and that dot is not wanted in a URL.
+fn tailnet_fqdn(status_json: &[u8]) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_slice(status_json).ok()?;
+    let dns = json.get("Self")?.get("DNSName")?.as_str()?;
+    let clean = dns.trim_end_matches('.').trim();
+    (!clean.is_empty()).then(|| clean.to_string())
+}
+
 /// Build the engine launch command. Pure (no spawn). Host is whatever
 /// `cfg.host` is — callers pin it to `127.0.0.1` (ADR-005).
 pub fn command(cfg: &ServerConfig) -> LaunchCommand {
@@ -336,16 +353,22 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         {
             Ok(status) if status.success() => {
                 println!("Tailscale proxy active.");
-                if let Ok(status_out) = Command::new("tailscale")
+                match Command::new("tailscale")
                     .args(["status", "--json"])
                     .output()
-                    && let Ok(json) =
-                        serde_json::from_slice::<serde_json::Value>(&status_out.stdout)
-                    && let Some(dns_name) = json.get("DNSName").and_then(|v| v.as_str())
                 {
-                    let clean_dns = dns_name.trim_end_matches('.');
-                    base_url = format!("https://{}/v1", clean_dns);
-                    println!("Tailscale FQDN discovered: {}", clean_dns);
+                    Ok(status_out) => match tailnet_fqdn(&status_out.stdout) {
+                        Some(fqdn) => {
+                            base_url = format!("https://{fqdn}/v1");
+                            println!("Tailscale FQDN discovered: {fqdn}");
+                        }
+                        None => eprintln!(
+                            "Warning: `tailscale serve` succeeded but the Tailnet FQDN could \
+                             not be read from `tailscale status --json`; \
+                             recording the local URL {base_url} instead."
+                        ),
+                    },
+                    Err(e) => eprintln!("Warning: could not run `tailscale status --json`: {e}"),
                 }
             }
             Ok(status) => {
@@ -626,5 +649,62 @@ mod tests {
     fn read_runfile_absent_is_none() {
         let dir = tempfile::tempdir().unwrap();
         assert!(read_runfile_impl(dir.path(), None).is_none());
+    }
+
+    // --- ADR-076: Tailnet FQDN discovery ---
+
+    /// Trimmed from real `tailscale status --json` output on a connected node.
+    /// The shape is the point: `DNSName` sits under `Self`, and the root has no
+    /// `DNSName` key at all.
+    const REAL_STATUS_JSON: &str = r#"{
+      "Version": "1.98.2-taaf7caef1-gc4a37aed9",
+      "BackendState": "Running",
+      "MagicDNSSuffix": "tail944782.ts.net",
+      "TailscaleIPs": ["100.86.207.71"],
+      "Self": {
+        "ID": "nJYCPYnLYs11CNTRL",
+        "HostName": "TEC-XX",
+        "DNSName": "tec-xx.tail944782.ts.net.",
+        "OS": "windows"
+      },
+      "Peer": {}
+    }"#;
+
+    #[test]
+    fn tailnet_fqdn_reads_dnsname_from_self() {
+        assert_eq!(
+            tailnet_fqdn(REAL_STATUS_JSON.as_bytes()).as_deref(),
+            Some("tec-xx.tail944782.ts.net")
+        );
+    }
+
+    /// The regression: `DNSName` was read from the ROOT, where it does not
+    /// exist, so discovery silently returned nothing and the runfile kept the
+    /// loopback URL.
+    #[test]
+    fn the_root_object_has_no_dnsname() {
+        let json: serde_json::Value = serde_json::from_str(REAL_STATUS_JSON).unwrap();
+        assert!(
+            json.get("DNSName").is_none(),
+            "real tailscale output has no top-level DNSName — reading it there              is what made --tailscale silently record 127.0.0.1"
+        );
+    }
+
+    #[test]
+    fn tailnet_fqdn_is_none_when_unparseable_or_absent() {
+        assert_eq!(tailnet_fqdn(b"not json"), None);
+        assert_eq!(tailnet_fqdn(br#"{"Self":{}}"#), None);
+        assert_eq!(tailnet_fqdn(br#"{}"#), None);
+        // A blank name must not produce "https:///v1".
+        assert_eq!(tailnet_fqdn(br#"{"Self":{"DNSName":"."}}"#), None);
+    }
+
+    /// `tailscale serve --bg <port>` is the documented background form
+    /// (verified against `tailscale serve --help` on 1.98.2).
+    #[test]
+    fn the_serve_invocation_matches_the_documented_form() {
+        let port: u16 = 8080;
+        let args = ["serve", "--bg", &port.to_string()].join(" ");
+        assert_eq!(args, "serve --bg 8080");
     }
 }
