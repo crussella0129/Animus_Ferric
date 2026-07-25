@@ -258,6 +258,14 @@ fn is_listening(host: &str, port: u16) -> bool {
 
 /// Kill a process by PID, portably (TerminateProcess on Windows, SIGKILL on
 /// Unix), since `up` does not retain the `Child` handle across invocations.
+///
+/// The Unix path goes through `sh -c` **on purpose**. It used to exec `kill`
+/// directly, which assumes a `kill(1)` binary on PATH — `procps` is not
+/// installed in `debian-bookworm-slim`, so inside our own `ferric-core` image
+/// the spawn failed with "not found", `status` came back `Err`, and the server
+/// was reported unkillable while it carried on serving (sprint 96, found live).
+/// `kill` is a POSIX **shell builtin**, so routing through `sh` needs nothing
+/// installed and keeps this std-only.
 fn kill_pid(pid: u32) -> bool {
     #[cfg(windows)]
     let status = Command::new("taskkill")
@@ -266,12 +274,59 @@ fn kill_pid(pid: u32) -> bool {
         .stderr(Stdio::null())
         .status();
     #[cfg(not(windows))]
-    let status = Command::new("kill")
-        .args(["-9", &pid.to_string()])
+    let status = Command::new("sh")
+        .args(["-c", &format!("kill -9 {pid}")])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
     matches!(status, Ok(s) if s.success())
+}
+
+/// Is `pid` still running? Used to tell "the kill worked" apart from "the kill
+/// silently did nothing", which `kill_pid`'s return value alone cannot express.
+///
+/// Unix uses `kill -0` (the null signal: permission and existence check, no
+/// delivery) via the shell builtin, for the same reason as above.
+fn process_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let out = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output();
+        // tasklist prints "INFO: No tasks are running..." (exit 0) when absent,
+        // so the exit status says nothing — the PID must appear in the output.
+        matches!(out, Ok(o) if String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+    }
+    #[cfg(not(windows))]
+    {
+        // A **zombie** answers `kill -0` successfully: the process is dead, but
+        // its table entry survives until the parent reaps it. If nothing reaps
+        // — a container whose PID 1 is not an init, which is exactly what
+        // `docker/docker-compose.yml` used to produce — that entry is permanent,
+        // and treating it as alive would make `down` refuse to clean up a
+        // process that has already exited, forever.
+        //
+        // On Linux `/proc` settles it. Elsewhere, fall through to `kill -0`.
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            // Field 3 is the state, but field 2 (`comm`) is parenthesised and
+            // may itself contain spaces or ')', so scan from the LAST ')'.
+            if let Some(close) = stat.rfind(')') {
+                return !matches!(
+                    stat[close + 1..].split_whitespace().next(),
+                    Some("Z") | None
+                );
+            }
+        }
+
+        matches!(
+            Command::new("sh")
+                .args(["-c", &format!("kill -0 {pid}")])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status(),
+            Ok(s) if s.success()
+        )
+    }
 }
 
 /// Is the engine binary runnable? Tries `<program> --version`.
@@ -451,21 +506,39 @@ fn status(workspace: &Path) -> ExitCode {
 fn down(workspace: &Path) -> ExitCode {
     match read_runfile(workspace) {
         Some(rf) => {
-            let killed = kill_pid(rf.pid);
+            kill_pid(rf.pid);
+
+            // Ask the OS whether it actually died, rather than trusting the
+            // kill's exit status. SIGKILL is delivered asynchronously, so give
+            // it a moment before concluding anything.
+            let mut alive = process_alive(rf.pid);
+            for _ in 0..20 {
+                if !alive {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+                alive = process_alive(rf.pid);
+            }
+
+            if alive {
+                // Deliberately KEEP the runfile. It used to be deleted here
+                // regardless, which orphaned a still-serving process and threw
+                // away the only record of its PID — `down` reported failure
+                // while guaranteeing nobody could ever retry. Whatever is
+                // wrong, the record is what makes it recoverable.
+                eprintln!(
+                    "could not stop pid {} — it is STILL RUNNING; runfile kept so `ferric server down` can be retried",
+                    rf.pid
+                );
+                return ExitCode::FAILURE;
+            }
+
             let _ = std::fs::remove_file(runfile_path(workspace));
             if let Some(global) = global_runfile_path() {
                 let _ = std::fs::remove_file(global);
             }
-            if killed {
-                println!("stopped server pid {}", rf.pid);
-                ExitCode::SUCCESS
-            } else {
-                eprintln!(
-                    "could not kill pid {} (already gone?); runfile removed",
-                    rf.pid
-                );
-                ExitCode::FAILURE
-            }
+            println!("stopped server pid {}", rf.pid);
+            ExitCode::SUCCESS
         }
         None => {
             println!("no server registered");
@@ -706,5 +779,57 @@ mod tests {
         let port: u16 = 8080;
         let args = ["serve", "--bg", &port.to_string()].join(" ");
         assert_eq!(args, "serve --bg 8080");
+    }
+
+    /// `process_alive` must track a real process across its death. Spawned and
+    /// killed here rather than probing an arbitrary PID, because PID reuse
+    /// makes "this number is unused" a flaky assertion.
+    #[test]
+    fn process_alive_follows_a_real_process() {
+        assert!(
+            process_alive(std::process::id()),
+            "the test process itself must read as alive"
+        );
+
+        #[cfg(windows)]
+        let mut child = Command::new("cmd")
+            .args(["/C", "ping -n 30 127.0.0.1 > NUL"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn a child to observe");
+        #[cfg(not(windows))]
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn a child to observe");
+
+        let pid = child.id();
+        assert!(
+            process_alive(pid),
+            "a just-spawned child must read as alive"
+        );
+
+        // Through kill_pid, so this also covers the container defect: on Unix
+        // it used to exec `kill(1)`, absent from slim images, and silently do
+        // nothing while reporting failure.
+        assert!(
+            kill_pid(pid),
+            "kill_pid must report success on a live child"
+        );
+
+        let mut alive = true;
+        for _ in 0..30 {
+            if !process_alive(pid) {
+                alive = false;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(!alive, "the child must read as dead after kill_pid");
+
+        let _ = child.wait();
     }
 }
