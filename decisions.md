@@ -1310,3 +1310,59 @@ report surfaced along the way, both found by testing something adjacent.
   tested, not about what works. Every defect in this ADR was invisible to 487
   passing tests, and two of them were found only by writing a test for something
   *next to* the known bug.
+
+## ADR-075 — 2026-07-25 (sprint 85): round-2 verification — auditing your own recent work first
+A second full-codebase verification from a cold clean-room build, weighted
+deliberately toward sprints 83–84's own changes rather than spread evenly. That
+weighting is the finding: **three of the four new defects were introduced by the
+remediation sprints themselves, and two of those sit in the security-facing code
+those sprints existed to fix.** Full report: `docs/verification-2026-07-round2.md`.
+- **The baseline is clean-room green.** Cold `cargo build --workspace
+  --all-targets`: 0 warnings, 41s. `cargo test --workspace`: **503 passed / 0
+  failed / 2 ignored** across 53 suites. Clippy 0, fmt clean, Dark Matter
+  verifier PASS 62 / FAIL 0 / SKIP 0.
+- **E1 (PROVEN, ours) — one tool call prompts the human twice.** Sprint 84 gave
+  the sink gate the same `EditApprover` the accept-edits gate already uses, so
+  `--accept-edits` + `--sink-action requireapproval` + tainted args fires both.
+  Measured: `approver_prompt_count=2`. Worse than the annoyance: approving at one
+  gate and rejecting at the other is behaviour nobody designed.
+- **E2 (PROVEN, ours) — the taint granularity makes `--research` unusable, and no
+  threshold fixes it.** Sprint 83 chose `MIN_TAINT_SEGMENT_CHARS = 12` by
+  judgement. Measured against a realistic digest, **3 of 3 faithful restatements
+  of researched material are blocked** under the default `Deny`. The mechanism —
+  substring taint — **cannot distinguish "copied an injected instruction" from
+  "wrote a true fact it learned"**; both are literal text from the digest.
+  Lowering the floor worsens false positives, raising it readmits the lifted
+  sentence sprint 83 added `taint_text` to catch. **This is a posture decision,
+  not a tuning bug**, and it is recorded as one: default the research path to
+  `Warn`, taint only instruction-shaped fragments, or document `--research` as
+  read-mostly under `Deny`. Sprint 83's direction (taint content, not the trusted
+  provenance label) stands.
+- **E3 (CONFIRMED, ours) — run and replay disagree about the cap.** ADR-074
+  asserted the projector keeps run and replay "identical by construction".
+  `run.rs:560` seeds from `Registry::truncation_limit()`; `replay.rs:63` and
+  `compact.rs:224` use the default. Latent only because
+  `with_truncation_limit` still has no non-default caller. **The ADR-074 wording
+  was an over-claim** and is corrected here rather than left standing.
+- **E4 (CONFIRMED, not ours) — `ferric chat` discards trace-write failures** at
+  all 6 sites while `run.rs` propagates at 21. `write_event` can genuinely fail
+  on I/O, so a chat trace can be silently incomplete — in a project whose thesis
+  is "if it isn't in the trace, it didn't happen".
+- **Three defect classes are now closed, and that is worth stating.** Production
+  `unwrap`/`expect` across tools/loop/guard is down to 6 sites, all provably safe
+  idioms (constant regex; capture groups guaranteed by a successful match;
+  `take()` right after `Stdio::piped()`). No `not wired`/TODO/FIXME intent
+  comments remain. All seven pre-audit backlog entries still cite live files.
+- **The bounding gap: nothing has met a real model since ~sprint 26.** All 503
+  tests are mock-driven; A5's sandbox has never run against Docker; A2's and A6's
+  thresholds are asserted, not measured against real digests or vaults. **A suite
+  this green, this long without a live run, is measuring the mocks as much as the
+  code.** A live-model round is now the highest-value next investment — above
+  C7/C8/B1 combined.
+- **A process finding.** C7, C8 and B1 came out of sprint 82 but were never
+  entered in `agent-tasks/` — they lived only in a README "Next" line, and went
+  three sprints unpicked-up as a result. Prose is not a ledger; they are entered
+  now.
+- **Scope: audit only.** The tree is unmodified — probes were run, recorded and
+  deleted, and the suite is green afterwards. Remediation order is in the
+  report's §5, led by E1 (a regression we introduced) and E4.
