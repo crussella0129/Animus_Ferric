@@ -1811,3 +1811,76 @@ misreports. Workspace **549 tests, 0 failures**; clippy 0; fmt clean.
   finding: a value computed from partial information and then reported as if it
   were the whole picture. Neither was visible from the test suite; both needed a
   real ladder against a real model.
+
+## ADR-087 — 2026-07-25 (sprint 96): the gateway image, and the skip that hid a broken airlock
+
+**Context.** ADR-083 recorded `Airlock::start` at "≈ 10–15 s, dominated by
+`apk add tinyproxy`" and left a prebuilt image as the obvious follow-up. This
+sprint built it: `ferric-gateway:1`, produced from an inline Dockerfile on first
+use, so there is no registry dependency and nothing to trust beyond
+`alpine:latest`, which the sandbox already uses. The tag carries a version so a
+future change to the recipe cannot silently reuse a stale image.
+
+**The premise was wrong, and the measurement says so.** Timing the same
+operation on the same machine, before and after:
+
+| | `Airlock::start` |
+| --- | --- |
+| `apk add` per start (old) | **2.72 s** |
+| prebuilt image, warm | **2.08 s** |
+| prebuilt image, cold (builds it) | 4.52 s, once |
+
+**0.6 s, not 10.** The 10–15 s figure in ADR-083 was read off a test-suite run
+that included the `alpine` pull and other work, and then written down as the cost
+of `start`. That is the same error this series keeps finding — a number measured
+under one condition, reported as the general one — and it is worth noting that it
+survived three sprints inside an ADR, where it read as established fact.
+
+**What the change is actually worth.** Not the second. Before it, every airlock
+start ran `apk add` inside a fresh container, so **standing up the security
+boundary depended, at runtime, on reaching the Alpine package mirror.** A mirror
+that is slow, rate-limited, or down took the airlock with it — and the airlock is
+what stands between untrusted web content and the network. Moving the package
+into a one-off build removes an external availability dependency from a
+security-critical path. `the_gateway_image_needs_no_package_fetch` pins it by
+running the image with `--network none`, which passes only if `tinyproxy` is
+genuinely baked in.
+
+**The defect that found itself.** Planting a `tinyproxy`-less image to check that
+the new test could fail — the anti-skip discipline from ADR-079 — the suite went
+**green**. All three live tests did this:
+
+```rust
+let Ok(lock) = Airlock::start(&[...]) else {
+    println!("SKIP: could not start the airlock — NOT validated");
+    return;
+};
+```
+
+Every one of them had already called `docker_ready()`. So Docker was known to
+work, the airlock genuinely failed to start, and the tests reported a pass. **The
+availability gate belongs at the top of a test, not wrapped around its subject** —
+once past the gate, a failure of the thing under test is a failure. Replaced with
+`start_or_fail`, which panics. Re-run against the planted image: 3 failed, 1
+passed. Against the real one: 4 passed.
+
+This is a sharper version of ADR-079's rule. It is not enough for a gated suite
+to carry one assertion that cannot pass without the dependency; the *skip
+conditions themselves* must not be able to swallow a real failure. A skip that
+can trigger after the gate has passed is indistinguishable from a pass.
+
+**Incidentally verified.** Three deliberately-failed starts left zero
+`ferric-gateway-*` containers and zero `ferric-airlock-*` networks, so cleanup on
+a *partial* start holds — previously only the success path's RAII teardown had
+been shown.
+
+**C8, and what the audit miscounted.** The sprint-82 audit called the test
+runners "6 scripts, 3 locations, 2 shell dialects". Two were genuinely loose at
+the repo root and moved to `tools/`. One, `run-tool-sweep.ps1`, was **deleted**:
+a one-line `cargo run` reading `test-sweep-prompt.txt` from the CWD, but that
+file exists only in `workspace/`, so it could not run as placed. The third
+location is not sprawl — `workspace/run-e2e-sweep.sh` sits in the directory that
+is *mounted at `/workspace` inside the container*, next to the fixtures it reads
+by absolute path. Moving it to `tools/` would have put it outside the mount it
+operates on. The two dialects stay: rewriting either side means re-validating it
+against a live model, which costs more than the inconsistency.
