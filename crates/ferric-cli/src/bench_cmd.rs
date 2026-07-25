@@ -139,7 +139,12 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
                 keep_workspace: args.keep_workspace,
             };
             let (rows, _) = run_levels(&selected, &inv, protocol, &Some(model_id.clone()), &args);
-            let record = calibrate(model_id, args.params_b, &format!("{protocol:?}"), &rows);
+            let record = calibrate(
+                model_id,
+                args.params_b,
+                &ferric_core::protocol_key(protocol),
+                &rows,
+            );
             if let Err(e) = ferric_bench::write_profile(&args.results_dir, &record) {
                 eprintln!("cannot write model profile: {e}");
             }
@@ -225,7 +230,12 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
     if let Some(model_name) = &model_name
         && full_ladder
     {
-        let record = calibrate(model_name, args.params_b, &format!("{protocol:?}"), &rows);
+        let record = calibrate(
+            model_name,
+            args.params_b,
+            &ferric_core::protocol_key(protocol),
+            &rows,
+        );
         let inconsistent = ferric_bench::non_monotonic_failures(&rows);
         if !inconsistent.is_empty() {
             println!(
@@ -291,7 +301,7 @@ fn run_levels(
             level: spec.level,
             level_name: spec.name.clone(),
             variant: args.variant.clone(),
-            protocol: format!("{protocol:?}"),
+            protocol: ferric_core::protocol_key(protocol),
             model: model_name.clone(),
             completed: done,
             timed_out: record.timed_out,
