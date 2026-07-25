@@ -1,7 +1,7 @@
 use ferric_core::hooks::HooksConfig;
 use ferric_core::policy_for;
 use ferric_core::{ActionProtocol, Message, ModelProfile, Role};
-use ferric_guard::{SinkAction, SinkPolicy, TaintSet, Workspace};
+use ferric_guard::{Provenance, SinkAction, SinkPolicy, Workspace};
 use ferric_loop::{RunArgs, StopReason, run};
 use ferric_provider::Completion;
 use ferric_provider::MockProvider;
@@ -79,7 +79,7 @@ fn test_hooks_success() {
         media: vec![],
         stream_sink: None,
         resume: None,
-        taint_set: TaintSet::new(),
+        provenance: Provenance::Clean,
         sink_policy: SinkPolicy::new(SinkAction::Deny),
         hooks: Some(hooks),
     };
@@ -138,7 +138,7 @@ fn test_hooks_error() {
         media: vec![],
         stream_sink: None,
         resume: None,
-        taint_set: TaintSet::new(),
+        provenance: Provenance::Clean,
         sink_policy: SinkPolicy::new(SinkAction::Deny),
         hooks: Some(hooks),
     };

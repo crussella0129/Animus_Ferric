@@ -160,7 +160,7 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
         media: vec![],
         stream_sink: None,
         resume: None,
-        taint_set: ferric_guard::TaintSet::new(),
+        provenance: ferric_guard::Provenance::Clean,
         sink_policy: ferric_guard::SinkPolicy::deny(),
         hooks: None,
     };

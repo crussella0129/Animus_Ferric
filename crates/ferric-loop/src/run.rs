@@ -66,7 +66,7 @@ pub struct RunArgs<'a> {
     pub stream_sink: Option<&'a (dyn Fn(StreamDelta) + Sync)>,
     pub resume: Option<crate::replay::ReplayedState>,
     pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    pub taint_set: ferric_guard::TaintSet,
+    pub provenance: ferric_guard::Provenance,
     pub sink_policy: ferric_guard::SinkPolicy,
     pub hooks: Option<ferric_core::HooksConfig>,
     /// Accept-edits mode (ADR-070): when set, each mutating (`Write`/`Execute`)
@@ -453,8 +453,10 @@ impl<'a> LoopState<'a> {
             if let Some(approver) = self.args.edit_approver
                 && mutating
             {
-                let tainted = self.args.taint_set.args_tainted(&call.args);
-                if approver(&edit_preview(&call.name, &call.args, tainted)) {
+                // Disclosure now keys on the RUN, not on a guess about these
+                // arguments (ADR-080).
+                let untrusted_run = self.args.provenance.is_untrusted();
+                if approver(&edit_preview(&call.name, &call.args, untrusted_run)) {
                     human_already_approved = true;
                 } else {
                     warn!(tool = %call.name, "edit rejected by user (accept-edits)");
@@ -480,7 +482,7 @@ impl<'a> LoopState<'a> {
                 self.args.workspace,
                 &call.name,
                 &call.args,
-                &self.args.taint_set,
+                self.args.provenance,
                 &self.args.sink_policy,
             );
             debug!(tool = %call.name, is_error, duration_ms, "tool call finished");
@@ -780,7 +782,7 @@ fn edit_preview(name: &str, args: &serde_json::Value, tainted: bool) -> EditPrev
         // The sink policy's question, folded into the one prompt the human
         // already sees, instead of asked separately afterwards (ADR-079).
         detail
-            .push_str("WARNING: this call carries data derived from untrusted research content.\n");
+            .push_str("WARNING: this run has ingested untrusted research content, so every mutation is gated.\n");
     }
     detail.push_str(&serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string()));
     EditPreview {
@@ -813,7 +815,7 @@ fn dispatch(
     workspace: &Workspace,
     name: &str,
     args: &serde_json::Value,
-    taint_set: &ferric_guard::TaintSet,
+    provenance: ferric_guard::Provenance,
     sink_policy: &ferric_guard::SinkPolicy,
 ) -> (DispatchText, bool, u64, Vec<CheckRecord>) {
     // ADR-074 wired the sink gate to a human; ADR-079 stops it asking twice.
@@ -825,7 +827,14 @@ fn dispatch(
     let sink_approver: Option<ferric_tools::SinkApprover<'_>> =
         human_already_approved.then_some(&carry_through);
 
-    match registry.execute(workspace, name, args, taint_set, sink_policy, sink_approver) {
+    match registry.execute(
+        workspace,
+        name,
+        args,
+        provenance,
+        sink_policy,
+        sink_approver,
+    ) {
         ExecuteOutcome::Completed {
             output,
             duration_ms,

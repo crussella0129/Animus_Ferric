@@ -195,7 +195,7 @@ pub fn run_scripted_with_sink_policy(
     script: Vec<Completion>,
     policy: &RunPolicy,
     approver: EditApprover<'_>,
-    taint_set: ferric_guard::TaintSet,
+    provenance: ferric_guard::Provenance,
     sink_policy: ferric_guard::SinkPolicy,
 ) -> RunResult {
     run_scripted_full_cfg(
@@ -203,10 +203,32 @@ pub fn run_scripted_with_sink_policy(
         policy,
         ActionProtocol::NativeTools,
         Some(approver),
-        taint_set,
+        provenance,
         sink_policy,
         |_| {},
         |_| {},
+    )
+}
+
+/// Like `run_scripted_with_sink_policy`, but also inspects the workspace before
+/// teardown — needed to assert whether a gated write actually touched disk.
+pub fn run_scripted_with_sink_policy_dir(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    approver: EditApprover<'_>,
+    provenance: ferric_guard::Provenance,
+    sink_policy: ferric_guard::SinkPolicy,
+    check_dir: impl FnOnce(&std::path::Path),
+) -> RunResult {
+    run_scripted_full_cfg(
+        script,
+        policy,
+        ActionProtocol::NativeTools,
+        Some(approver),
+        provenance,
+        sink_policy,
+        |_| {},
+        check_dir,
     )
 }
 
@@ -214,7 +236,7 @@ pub fn run_scripted_with_sink_policy(
 pub fn run_scripted_no_approver(
     script: Vec<Completion>,
     policy: &RunPolicy,
-    taint_set: ferric_guard::TaintSet,
+    provenance: ferric_guard::Provenance,
     sink_policy: ferric_guard::SinkPolicy,
     check_dir: impl FnOnce(&std::path::Path),
 ) -> RunResult {
@@ -223,7 +245,7 @@ pub fn run_scripted_no_approver(
         policy,
         ActionProtocol::NativeTools,
         None,
-        taint_set,
+        provenance,
         sink_policy,
         |_| {},
         check_dir,
@@ -243,7 +265,7 @@ fn run_scripted_full(
         policy,
         protocol,
         approver,
-        ferric_guard::TaintSet::new(),
+        ferric_guard::Provenance::Clean,
         ferric_guard::SinkPolicy::deny(),
         inspect,
         check_dir,
@@ -256,7 +278,7 @@ fn run_scripted_full_cfg(
     policy: &RunPolicy,
     protocol: ActionProtocol,
     approver: Option<EditApprover<'_>>,
-    taint_set: ferric_guard::TaintSet,
+    provenance: ferric_guard::Provenance,
     sink_policy: ferric_guard::SinkPolicy,
     inspect: impl FnOnce(&MockProvider),
     check_dir: impl FnOnce(&std::path::Path),
@@ -303,7 +325,7 @@ fn run_scripted_full_cfg(
             edit_approver: approver,
             cancel_flag: None,
             sink_policy,
-            taint_set,
+            provenance,
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
