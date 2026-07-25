@@ -146,6 +146,8 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                     resume: None,
                     modality: None,
                     research: None,
+                    research_urls: Vec::new(),
+                    allow_standard_runtime: false,
                     sink_action: "deny".to_string(),
                     accept_edits: false,
                 };

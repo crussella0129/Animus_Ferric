@@ -144,11 +144,28 @@ pub struct QueryArgs {
     #[arg(long)]
     pub no_stream: bool,
 
-    /// Execute the research phase before the planner loop begins.
-    /// Queries the Web and Local FS to populate the context with quarantined
-    /// digests, gating sink access based on the TaintSet.
+    /// Search the workspace and fold quarantined digests into the prompt.
+    /// Keywords, not a URL — this drives the Local-FS plane.
     #[arg(long)]
     pub research: Option<String>,
+
+    /// Fetch this URL through the egress airlock and quarantine it (repeatable).
+    ///
+    /// Separate from `--research` because the two planes want different things:
+    /// Local-FS takes keywords, the Web plane takes an exact URL. The allowlist
+    /// is derived from the URLs given here and nothing else, so the sandbox may
+    /// reach precisely the hosts you named (ADR-085).
+    #[arg(long = "research-url")]
+    pub research_urls: Vec<String>,
+
+    /// Run the web fetch on the standard container runtime instead of gVisor.
+    ///
+    /// The default requires gVisor and fails closed without it (ADR-074). Network
+    /// isolation does NOT depend on this — that is enforced by the airlock's
+    /// `--internal` network either way; gVisor is defence in depth against
+    /// container escape.
+    #[arg(long)]
+    pub allow_standard_runtime: bool,
 
     /// The SinkAction for the CaMeL sink policy. Deny | RequireApproval | Warn.
     /// What to do with a MUTATION once this run has ingested untrusted content
@@ -789,6 +806,36 @@ pub(crate) async fn run_with_provider(
         .map_err(|e| format!("loop error: {e}"))
 }
 
+/// The host part of an `http(s)://` URL, for deriving the airlock allowlist.
+///
+/// Deliberately strict and dependency-free: a URL whose host we cannot read is a
+/// URL we cannot allowlist, and guessing would widen the airlock (ADR-085).
+// Only the backend-gated web-research path calls this, but its tests are
+// security tests (userinfo spoofing, injection-shaped hosts) and should run in
+// every build — so allow it to be unused rather than gating the tests away.
+#[cfg_attr(not(feature = "backend-openai"), allow(dead_code))]
+pub(crate) fn url_host(url: &str) -> Result<String, String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .ok_or_else(|| format!("{url:?}: only http and https URLs can be researched"))?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // Drop userinfo and port; neither belongs in an allowlist entry.
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or_default()
+        .split(':')
+        .next()
+        .unwrap_or_default();
+    if host.is_empty() {
+        return Err(format!("{url:?}: no host"));
+    }
+    ferric_research::airlock::validate_host(host)
+        .map_err(|e| format!("{url:?}: host {:?} {}", e.host, e.reason))?;
+    Ok(host.to_string())
+}
+
 /// Everything the loop needs **except the provider**.
 ///
 /// The provider is the one thing `drive_real` cannot supply up front — it has to
@@ -880,6 +927,72 @@ fn drive_real(
         });
 
         let mut effective_prompt = prompt.map(|s| s.to_string());
+        // --- Web plane (ADR-085): fetch named URLs through the egress airlock ---
+        //
+        // One airlock per RUN, not per URL: standing one up costs ~15s (ADR-083),
+        // and every URL in this run shares the same allowlist anyway. RAII means
+        // it is torn down even if the run below panics.
+        if !args.research_urls.is_empty() {
+            let mut hosts: Vec<String> = Vec::new();
+            for url in &args.research_urls {
+                let host = url_host(url)?;
+                if !hosts.contains(&host) {
+                    hosts.push(host);
+                }
+            }
+            eprintln!(
+                "research: opening egress airlock for {} host(s): {}",
+                hosts.len(),
+                hosts.join(", ")
+            );
+
+            let lock = ferric_research::airlock::Airlock::start(&hosts)
+                .map_err(|e| format!("could not open the egress airlock: {e}"))?;
+
+            let mut web = ferric_research::WebRetriever::new().with_network(lock.policy());
+            if args.allow_standard_runtime {
+                web = web.with_runsc(false);
+            }
+
+            let mut cx = String::new();
+            let mut fetched = 0usize;
+            for url in &args.research_urls {
+                match ferric_research::research(&web, provider_box.as_ref(), url).await {
+                    Ok(digests) if digests.is_empty() => {
+                        eprintln!("research: {url} returned nothing");
+                    }
+                    Ok(digests) => {
+                        for d in digests {
+                            cx.push_str(&d.summary);
+                            cx.push_str(
+                                "
+---
+",
+                            );
+                            fetched += 1;
+                        }
+                    }
+                    // Fail loud: a URL the user named that could not be fetched
+                    // must not vanish into a normal run (the ADR-078 lesson).
+                    Err(e) => return Err(format!("research: fetching {url} failed: {e}")),
+                }
+            }
+
+            if fetched > 0 {
+                // Untrusted content reached the prompt, so the run is
+                // contaminated and every later mutation is gated (ADR-080).
+                setup.provenance = ferric_guard::Provenance::UntrustedIngested;
+                let p = effective_prompt.unwrap_or_default();
+                effective_prompt = Some(format!(
+                    "{p}
+
+<research_context>
+{cx}</research_context>
+"
+                ));
+            }
+        }
+
         if let Some(rq) = research_query {
             // Perform research
             let local_retriever = ferric_research::LocalFsRetriever::with_caps(
@@ -1126,5 +1239,46 @@ mod tests {
         let (protocol_2, max_ring_2) = (config.protocol, config.policy.max_ring);
         assert_eq!(protocol_1, protocol_2);
         assert_eq!(max_ring_1, max_ring_2);
+    }
+
+    // --- ADR-085: the allowlist is derived from the URLs, so host parsing is a
+    // security boundary, not a convenience ---
+
+    #[test]
+    fn url_host_reads_ordinary_urls() {
+        for (url, want) in [
+            ("http://example.com", "example.com"),
+            ("https://example.com/", "example.com"),
+            ("https://sub.example.com/a/b?q=1#f", "sub.example.com"),
+            ("http://example.com:8080/x", "example.com"),
+        ] {
+            assert_eq!(url_host(url).as_deref(), Ok(want), "for {url}");
+        }
+    }
+
+    /// Userinfo is the classic way to make a URL *look* like it points somewhere
+    /// safe. The allowlist must key on the real host, never the decoration.
+    #[test]
+    fn url_host_ignores_userinfo() {
+        assert_eq!(
+            url_host("http://example.com@evil.test/x").as_deref(),
+            Ok("evil.test"),
+            "the host is what follows '@' — allowlisting example.com here would              have opened evil.test"
+        );
+    }
+
+    #[test]
+    fn url_host_rejects_what_it_cannot_allowlist() {
+        for url in [
+            "ftp://example.com",
+            "example.com",
+            "http://",
+            "file:///etc/passwd",
+            // Would be shell-injected into the gateway if it ever reached it.
+            "http://evil.test;wget",
+            "http://ev il.test",
+        ] {
+            assert!(url_host(url).is_err(), "{url:?} must be refused");
+        }
     }
 }
