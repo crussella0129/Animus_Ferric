@@ -578,7 +578,7 @@ impl McpServer {
             );
         }
 
-        let trace_dir = workspace_root.join(".ferric").join("trace");
+        let trace_dir = ferric_trace::trace_dir(&workspace_root);
         std::fs::create_dir_all(&trace_dir)
             .map_err(|e| format!("cannot create trace dir {}: {e}", trace_dir.display()))?;
         let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));

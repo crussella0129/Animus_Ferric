@@ -190,8 +190,19 @@ pub fn scaffold(spec: &LaunchSpec) -> Result<ScaffoldReport, LaunchError> {
     // Scaffold based on project profile
     match spec.project_type {
         ProjectType::Rust => {
+            // The empty `[workspace]` is load-bearing, not boilerplate. Cargo
+            // walks *upward* looking for a workspace root, so a project
+            // scaffolded anywhere inside another Rust tree gets adopted by it —
+            // and if that ancestor manifest is not a valid workspace, `cargo
+            // build` fails while naming a file this scaffold never wrote.
+            //
+            // Found by launching into a scratch dir under the home directory,
+            // which happens to contain a stray `Cargo.toml`: the fresh project
+            // failed with "no targets specified in the manifest" pointing at
+            // `C:\Users\charl\Cargo.toml`. Declaring its own workspace stops the
+            // walk, which is the standard idiom for a standalone nested project.
             let cargo_toml = format!(
-                "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n",
+                "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n\n[workspace]\n",
                 spec.name.to_lowercase().replace(" ", "_")
             );
             std::fs::write(spec.path.join("Cargo.toml"), cargo_toml)?;
@@ -329,5 +340,40 @@ mod tests {
         let file = dir.path().join("file");
         std::fs::write(&file, "x").unwrap();
         assert!(!target_is_clobber_safe(&file).unwrap());
+    }
+
+    /// A scaffolded Rust project must declare its own workspace.
+    ///
+    /// Cargo resolves the workspace root by walking **up** the directory tree,
+    /// so without this a fresh project nested anywhere inside another Rust tree
+    /// is silently adopted by it — and when that ancestor is not a valid
+    /// workspace, `cargo build` fails citing a manifest the user never wrote.
+    /// Observed live: launching under a home directory that contains a stray
+    /// `Cargo.toml` produced a project that would not compile.
+    ///
+    /// The assertion is on the emitted manifest rather than on a `cargo build`,
+    /// so it holds regardless of what happens to sit above the test's tempdir.
+    #[test]
+    fn a_scaffolded_rust_project_declares_its_own_workspace() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("proj");
+        let spec = LaunchSpec {
+            name: "proj".to_string(),
+            path: path.clone(),
+            goal: "verify the scaffold".to_string(),
+            project_type: ProjectType::Rust,
+        };
+        scaffold(&spec).expect("scaffold must succeed");
+
+        let manifest = std::fs::read_to_string(path.join("Cargo.toml")).expect("Cargo.toml");
+        assert!(
+            manifest.contains("[workspace]"),
+            "a standalone scaffold must stop cargo's upward workspace search:
+{manifest}"
+        );
+        assert!(
+            path.join("src/main.rs").is_file(),
+            "the manifest promises a binary target, so src/main.rs must exist"
+        );
     }
 }

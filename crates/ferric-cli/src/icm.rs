@@ -290,7 +290,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
 
     // Traces centralize at the ICM root (harness-written, not agent-written, so
     // not subject to the per-stage workspace boundary) — one file per stage.
-    let trace_dir = ws.root.join(".ferric").join("trace");
+    let trace_dir = ferric_trace::trace_dir(&ws.root);
     if let Err(e) = std::fs::create_dir_all(&trace_dir) {
         eprintln!(
             "icm run: cannot create trace dir {}: {e}",

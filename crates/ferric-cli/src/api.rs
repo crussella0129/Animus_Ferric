@@ -240,7 +240,7 @@ pub mod server {
 
         let ts = now_ms();
         let session = format!("api-{ts}");
-        let trace_dir = state.workspace.root().join(".ferric").join("trace");
+        let trace_dir = ferric_trace::trace_dir(state.workspace.root());
         let _ = std::fs::create_dir_all(&trace_dir);
         let trace_path = trace_dir.join(format!("{session}.jsonl"));
         let mut sink =

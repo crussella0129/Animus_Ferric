@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use clap::Args;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::backend::BackendOpts;
@@ -29,7 +29,26 @@ pub struct DreamArgs {
 pub fn run_dream(args: DreamArgs) -> ExitCode {
     #[cfg(feature = "backend-openai")]
     {
-        futures_executor::block_on(async {
+        // A real Tokio runtime, not `futures_executor::block_on`.
+        //
+        // Dream always drives a live provider, and the HTTP stack underneath it
+        // needs a Tokio reactor — without one it panics with "there is no
+        // reactor running" the moment it touches the network. `chat` and `cron`
+        // already reach for a runtime when the backend is real and only use
+        // `futures_executor` for mocks; dream used the mock path for everything.
+        //
+        // This never surfaced because the directory bug above it meant dream
+        // returned "no traces" before it ever reached a network call. Two
+        // defects stacked so the outer one hid the inner one, and the feature
+        // has not worked once (sprint 99).
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("dream: tokio runtime: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        runtime.block_on(async {
             match dream_inner(args).await {
                 Ok(_) => ExitCode::SUCCESS,
                 Err(e) => {
@@ -53,9 +72,15 @@ async fn dream_inner(args: DreamArgs) -> Result<(), String> {
     let provider = create_provider(&args.backend_opts).await?;
 
     // 2. Find traces
-    let traces_dir = PathBuf::from(".ferric/traces");
+    // Dream is CWD-relative by design (so is `--memory-file`). It read
+    // `.ferric/traces` while every writer wrote `.ferric/trace`, so it never
+    // found a trace in its life — see `ferric_trace::trace_dir`.
+    let traces_dir = ferric_trace::trace_dir(Path::new("."));
     if !traces_dir.exists() {
-        return Err("No .ferric/traces directory found.".to_string());
+        return Err(format!(
+            "no trace directory at {} — run a query first",
+            traces_dir.display()
+        ));
     }
 
     let mut entries = fs::read_dir(traces_dir)

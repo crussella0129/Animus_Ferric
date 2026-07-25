@@ -2024,3 +2024,85 @@ derives *looks* persisted) and recorded as established fact, where thirty
 seconds of looking at the actual JSON would have settled it. It sat in the
 backlog for sixteen sprints as a task nobody wanted because it was labelled a
 migration.
+
+## ADR-090 — 2026-07-25 (sprint 99): the E2E round — three dead features, found by running them
+
+**Context.** The user asked for an end-to-end verification of everything that
+currently exists, as the gate before adding agent-skill loading. So: drive every
+one of the twelve CLI subcommands, live, rather than trust the suite.
+
+556 tests pass. **Three features did not work at all**, and none of them was
+failing a test — because no test drove them end to end.
+
+**1 — `ferric launch` produced projects that would not build.** The scaffolded
+`Cargo.toml` had no `[workspace]`, and cargo resolves the workspace root by
+walking *upward*. A project launched anywhere inside another Rust tree gets
+adopted by it. Launching into a scratch dir under the home directory — which
+contains a stray `Cargo.toml` from March — produced a fresh project that failed
+with *"no targets specified in the manifest"* naming
+`C:\Users\charl\Cargo.toml`, a file the scaffold never wrote. The scaffold was
+correct; it just did not close the door behind itself.
+
+**2 — the container had no `git`, so every in-container run had no rollback
+point.** `ferric-vcs` shells out to `git` for the per-turn snapshots that
+`ferric revert` restores. `debian-bookworm-slim` ships none, and the loop
+handles that by recording `note: vcs snapshot failed: … No such file or
+directory` in the trace and carrying on. Found by *reading an actual
+container-produced trace*, not by anything failing.
+
+**3 — Dream Mode had never once run.** Two defects, stacked so the outer hid
+the inner:
+
+- It read `.ferric/traces`; every writer writes `.ferric/trace`. It reported
+  this as a tidy *"No .ferric/traces directory found."* — **a dead feature
+  wearing the face of an idle one**, on a workspace that held three traces.
+- Fixing the path revealed the real one: `run_dream` used
+  `futures_executor::block_on`, which is not a Tokio runtime, so the HTTP stack
+  panicked with *"there is no reactor running"* the instant it touched the
+  network. `chat` and `cron` already take a real runtime for live providers and
+  reserve `futures_executor` for mocks; dream used the mock path for everything.
+
+The second could not be discovered until the first was fixed. That is the
+lesson worth keeping: **a bug that returns early can hide an unbounded number of
+bugs behind it**, and the early return is exactly what makes the feature look
+merely unused.
+
+**The shared cause of 3, and the fix.** Five writers each spelled
+`.join(".ferric").join("trace")`; the one reader spelled it `traces`. Same shape
+as ADR-089's six `format!("{protocol:?}")` sites, one sprint later. Now
+`ferric_trace::trace_dir()`, with a test that writes through the public sink and
+scans the directory the way dream scans it — so the assertion is against the
+writing code, not a restatement of the constant.
+
+**What was verified working, live.** `query` (constrained loop, 2 turns);
+`server` up/status/doctor/down on Windows *and* in-container; **VCS snapshots
+end-to-end for the first time** — two snapshot commits, `revert` removing the
+agent's file and leaving the pre-existing one, and `git status` showing the
+workspace index untouched, which is ADR-072's A3 property confirmed against a
+real repo rather than a unit test; `bench ltd` 22/22 solid; `mcp` answering real
+JSON-RPC `initialize`/`tools/list`/`prompts/list`; `icm` init+plan; `cron`
+add/list/run; `trace` cat/verify; `launch`; `dream` after the fix; the Dark
+Matter `fetch_reference` seam against `INTEGRATION.md`'s declared schema; and
+10 live Docker tests (13.4 s and 14.5 s of real work — not skips).
+
+**The airlock chain, both directions.** `--research-url` opened an airlock,
+fetched, quarantined, and then the run's `write_file` was **denied** by the sink
+policy as contaminated. The control matters as much: the *same* run under
+`--sink-action warn` wrote successfully. So the denial is the policy, not a
+broken write path — the ADR-081 provenance gate holds live in both directions.
+
+**Two near-misses of my own.** I called `trace cat` broken on a trace file that
+turned out to have **zero lines**, and `ps` reported "none running" for a
+server that was serving because `ps` is not installed. Both are the ADR-088
+shape — a negative result whose reason went unverified. The rule that keeps
+earning its place: *when a check reports absence, confirm the check could have
+detected presence.*
+
+**Not driven.** `chat` is an interactive REPL and was not exercised
+non-interactively; its underlying loop is the same `run_with_provider` that
+`query` exercises, but the REPL surface itself remains unverified. Said plainly
+rather than counted as passing.
+
+**Environment note, not a Ferric defect.** `C:\Users\charl\Cargo.toml` (a stray
+`test` package, March) breaks `cargo` for any non-workspace project under the
+home directory. Surfaced to the user, not deleted — it is theirs.

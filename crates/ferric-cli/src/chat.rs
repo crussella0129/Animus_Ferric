@@ -436,7 +436,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         }
     };
 
-    let trace_dir = workspace_root.join(".ferric").join("trace");
+    let trace_dir = ferric_trace::trace_dir(&workspace_root);
     if let Err(e) = std::fs::create_dir_all(&trace_dir) {
         eprintln!("cannot create trace dir {}: {e}", trace_dir.display());
         return ExitCode::FAILURE;
