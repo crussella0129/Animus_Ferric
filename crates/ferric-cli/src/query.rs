@@ -280,7 +280,7 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
     // restart. Deliberate (ADR-046): matches the launch-time-fixed philosophy
     // already applied to workspace/backend/model.
     let profile_record = a.model_key.as_ref().and_then(|model| {
-        ferric_bench::read_profile(&a.profile_dir, model, &format!("{protocol:?}"))
+        ferric_bench::read_profile(&a.profile_dir, model, &ferric_core::protocol_key(protocol))
     });
     if let Some(rec) = &profile_record {
         eprintln!(

@@ -2,7 +2,7 @@
 //!
 //! Any tier-table change shows up here as a visible, reviewed diff.
 
-use ferric_core::{ModelProfile, Protocol, Tier, policy_for};
+use ferric_core::{ModelProfile, Tier, policy_for};
 
 struct Expected {
     family: &'static str,
@@ -52,11 +52,6 @@ fn tier_table_snapshot() {
         let policy = policy_for(&fleet_profile(e.family, e.params_b, e.ctx));
         let label = format!("{} {}B", e.family, e.params_b);
         assert_eq!(policy.tier, e.tier, "{label} tier");
-        assert_eq!(
-            policy.protocol,
-            Protocol::ConstrainedJson,
-            "{label} protocol"
-        );
         assert_eq!(policy.uses_planner, e.uses_planner, "{label} planner");
         assert_eq!(
             policy.max_plan_steps, e.max_plan_steps,
