@@ -1,0 +1,20 @@
+[
+  {
+    "model": "qwen2.5-coder-3b",
+    "params_b": 3.0,
+    "protocol": "ConstrainedJson",
+    "measured_level": 4,
+    "tier_from_params": "Nano",
+    "tier_from_measured": "Small",
+    "calibrated_ring": null
+  },
+  {
+    "model": "qwen2.5-coder-7b",
+    "params_b": 7.0,
+    "protocol": "ConstrainedJson",
+    "measured_level": 6,
+    "tier_from_params": "Small",
+    "tier_from_measured": "Large",
+    "calibrated_ring": null
+  }
+]

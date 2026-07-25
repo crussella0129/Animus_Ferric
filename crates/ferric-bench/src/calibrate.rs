@@ -32,6 +32,28 @@ pub fn highest_completed_level(rows: &[ResultRow]) -> Option<u8> {
     rows.iter().filter(|r| r.completed).map(|r| r.level).max()
 }
 
+/// Levels that FAILED while some higher level passed — i.e. the ladder did not
+/// behave monotonically.
+///
+/// `measured_level` is `max(passed)`, which silently flattens this: a sweep that
+/// failed L5 and passed L6 scores 6 and looks identical to one that passed
+/// everything (ADR-086). Measured on qwen2.5-coder-7b, L5 failed once and then
+/// passed twice on repeat — one sample per level is noise-sensitive, so the
+/// disagreement is worth surfacing rather than averaging away silently.
+pub fn non_monotonic_failures(rows: &[ResultRow]) -> Vec<u8> {
+    let Some(top) = highest_completed_level(rows) else {
+        return Vec::new();
+    };
+    let mut out: Vec<u8> = rows
+        .iter()
+        .filter(|r| !r.completed && r.level < top)
+        .map(|r| r.level)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// Build a calibration record from a sweep's rows for one model.
 pub fn calibrate(
     model: &str,
@@ -257,5 +279,47 @@ mod tests {
         let recs: Vec<ModelProfileRecord> = serde_json::from_str(json).unwrap();
         assert_eq!(recs[0].calibrated_ring, None);
         assert_eq!(recs[0].measured_level, Some(2));
+    }
+
+    // --- ADR-086: the ladder is not always monotonic, and a partial sweep is
+    // not a calibration ---
+
+    /// The measured case: qwen2.5-coder-7b failed L5 and passed L6 in one full
+    /// sweep, then passed L5 twice on repeat. `measured_level` is `max(passed)`,
+    /// so that sweep scored 6 and looked identical to a clean one.
+    #[test]
+    fn a_failure_below_the_highest_pass_is_reported() {
+        let rows = vec![row(0, true), row(4, true), row(5, false), row(6, true)];
+        assert_eq!(highest_completed_level(&rows), Some(6));
+        assert_eq!(
+            non_monotonic_failures(&rows),
+            vec![5],
+            "L5 failed below the highest pass and must be surfaced"
+        );
+    }
+
+    #[test]
+    fn a_clean_ladder_reports_nothing() {
+        let rows = vec![row(0, true), row(1, true), row(2, true)];
+        assert!(non_monotonic_failures(&rows).is_empty());
+    }
+
+    /// Failures ABOVE the highest pass are the normal shape of a ceiling, not an
+    /// inconsistency — they must not be reported as one.
+    #[test]
+    fn failures_above_the_ceiling_are_not_inconsistent() {
+        let rows = vec![row(0, true), row(4, true), row(5, false), row(6, false)];
+        assert_eq!(highest_completed_level(&rows), Some(4));
+        assert!(
+            non_monotonic_failures(&rows).is_empty(),
+            "a plain ceiling at L4 is expected, not a contradiction"
+        );
+    }
+
+    #[test]
+    fn nothing_passed_means_nothing_to_report() {
+        let rows = vec![row(0, false), row(1, false)];
+        assert_eq!(highest_completed_level(&rows), None);
+        assert!(non_monotonic_failures(&rows).is_empty());
     }
 }

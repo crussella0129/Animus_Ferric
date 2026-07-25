@@ -11,8 +11,8 @@ pub mod spec;
 pub mod verify;
 
 pub use calibrate::{
-    ModelProfileRecord, calibrate, highest_completed_level, read_profile, write_calibrated_ring,
-    write_profile,
+    ModelProfileRecord, calibrate, highest_completed_level, non_monotonic_failures, read_profile,
+    write_calibrated_ring, write_profile,
 };
 
 pub use results::{ResultRow, append_row, read_rows};
