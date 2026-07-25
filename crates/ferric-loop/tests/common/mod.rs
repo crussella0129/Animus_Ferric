@@ -188,11 +188,76 @@ pub fn run_scripted_with_approver(
     )
 }
 
+/// Like `run_scripted_with_approver`, but lets a test set the taint set and sink
+/// policy — the combination ADR-079 is about (accept-edits AND a sink policy
+/// that asks for approval both live at once).
+pub fn run_scripted_with_sink_policy(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    approver: EditApprover<'_>,
+    taint_set: ferric_guard::TaintSet,
+    sink_policy: ferric_guard::SinkPolicy,
+) -> RunResult {
+    run_scripted_full_cfg(
+        script,
+        policy,
+        ActionProtocol::NativeTools,
+        Some(approver),
+        taint_set,
+        sink_policy,
+        |_| {},
+        |_| {},
+    )
+}
+
+/// The same, with NO approver — so `RequireApproval` has nobody to ask.
+pub fn run_scripted_no_approver(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    taint_set: ferric_guard::TaintSet,
+    sink_policy: ferric_guard::SinkPolicy,
+    check_dir: impl FnOnce(&std::path::Path),
+) -> RunResult {
+    run_scripted_full_cfg(
+        script,
+        policy,
+        ActionProtocol::NativeTools,
+        None,
+        taint_set,
+        sink_policy,
+        |_| {},
+        check_dir,
+    )
+}
+
 fn run_scripted_full(
     script: Vec<Completion>,
     policy: &RunPolicy,
     protocol: ActionProtocol,
     approver: Option<EditApprover<'_>>,
+    inspect: impl FnOnce(&MockProvider),
+    check_dir: impl FnOnce(&std::path::Path),
+) -> RunResult {
+    run_scripted_full_cfg(
+        script,
+        policy,
+        protocol,
+        approver,
+        ferric_guard::TaintSet::new(),
+        ferric_guard::SinkPolicy::deny(),
+        inspect,
+        check_dir,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_scripted_full_cfg(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    protocol: ActionProtocol,
+    approver: Option<EditApprover<'_>>,
+    taint_set: ferric_guard::TaintSet,
+    sink_policy: ferric_guard::SinkPolicy,
     inspect: impl FnOnce(&MockProvider),
     check_dir: impl FnOnce(&std::path::Path),
 ) -> RunResult {
@@ -237,8 +302,8 @@ fn run_scripted_full(
         RunArgs {
             edit_approver: approver,
             cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            taint_set: ferric_guard::TaintSet::new(),
+            sink_policy,
+            taint_set,
             provider: &provider,
             registry: &registry,
             workspace: &workspace,

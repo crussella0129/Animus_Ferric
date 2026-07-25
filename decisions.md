@@ -1514,3 +1514,34 @@ That measurement **corrects ADR-075's E2 finding in both directions**. Workspace
   ungated, same family as the 7B so size is the only variable). Downloaded rather
   than mounted — the ZimaBoard2 share was unreachable (no sshd, `net view` RPC
   failure over tailscale, no mapped drive, no guessable share name).
+
+## ADR-079 — 2026-07-25 (sprint 89): one call, one prompt; and a chat trace that admits when it fails
+Clears the two small, unambiguous items ADR-075 left open. Workspace 524 →
+**529 tests, 0 failures**; clippy 0; fmt clean.
+- **E1 — the human was asked twice about one tool call.** ADR-074 wired the sink
+  policy's `RequireApproval` to ADR-070's `EditApprover`, which was the right
+  mechanism — but the two gates cover **exactly the same calls**: accept-edits
+  fires only on `Write`/`Execute`, and a tainted `Read` is always allowed at the
+  sink, so every call reaching the sink's approval branch had already been
+  approved upstream. Measured in sprint 85: `approver_prompt_count=2`.
+- **Fixed by merging the question, not suppressing the second ask.** The
+  accept-edits preview now discloses taint (*"this call carries data derived from
+  untrusted research content"*), and an approval there carries through to the
+  sink gate. One prompt, strictly more information than either gate had alone.
+  Suppressing the sink prompt while leaving the preview unchanged would have
+  silently dropped the sink's reason for asking.
+- **With no approver, `RequireApproval` still denies.** Unchanged, and now
+  pinned by a test: there is nobody to ask, so denial remains the safe reading.
+- **E4 — `ferric chat` discarded trace-write failures at all 6 sites** while
+  `run.rs` propagates at 21. `run_chat` returns `ExitCode`, so `?` is unavailable
+  — but that is an argument for reporting, not for discarding. A `log_event`
+  helper now warns, **latched to once per session** so a persistent cause is
+  visible without flooding. For a harness whose premise is "if it isn't in the
+  trace, it didn't happen", a silently truncated trace is the wrong failure mode.
+- **5 new tests**, including the two that matter most: an approved tainted write
+  actually *happens* (the carry-through is real, not just a suppressed prompt),
+  and an untainted preview gains no taint warning (the disclosure is conditional,
+  not boilerplate).
+- **`dispatch` shed a parameter.** With approval carried as a bool, its
+  `edit_approver` argument became dead — removing it also took the function back
+  under the arity limit rather than suppressing the warning.
