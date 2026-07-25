@@ -345,6 +345,26 @@ Commands:
   <anything else> talk mode — the model responds as text only (no tools, no
                   workspace changes)";
 
+/// Write a chat-session trace event, reporting a failure instead of discarding it.
+///
+/// `run_chat` returns `ExitCode`, so `?` is not available here — but silently
+/// dropping the result is the wrong answer (ADR-079). `JsonlSink::write_event`
+/// can genuinely fail on I/O, `run.rs` propagates it at 21 sites, and this file
+/// was dropping it at all 6 — so a full disk or a locked file left a chat trace
+/// silently incomplete, in a harness whose premise is "if it isn't in the trace,
+/// it didn't happen".
+///
+/// Latched to one warning per session: the failure is visible without a
+/// per-event flood when the underlying cause is persistent.
+fn log_event(log: &mut JsonlSink, warned: &mut bool, event: Event) {
+    if let Err(e) = log.write_event(event)
+        && !*warned
+    {
+        eprintln!("warning: chat trace write failed ({e}); this session's trace is incomplete");
+        *warned = true;
+    }
+}
+
 pub fn run_chat(args: ChatArgs) -> ExitCode {
     let workspace_root = match &args.workspace {
         Some(path) => path.clone(),
@@ -434,10 +454,15 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let _ = log.write_event(Event::SessionStart {
-        workspace: workspace_root.display().to_string(),
-        resumed_from: None,
-    });
+    let mut trace_warned = false;
+    log_event(
+        &mut log,
+        &mut trace_warned,
+        Event::SessionStart {
+            workspace: workspace_root.display().to_string(),
+            resumed_from: None,
+        },
+    );
 
     // History seed: the system prompt (empty if none composed).
     let mut history: Vec<Message> = Vec::new();
@@ -490,9 +515,13 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                         } else {
                             println!(); // ensure newline after stream
                         }
-                        let _ = log.write_event(Event::Note {
-                            text: format!("chat talk turn ({} response chars)", resp.len()),
-                        });
+                        log_event(
+                            &mut log,
+                            &mut trace_warned,
+                            Event::Note {
+                                text: format!("chat talk turn ({} response chars)", resp.len()),
+                            },
+                        );
                         history.push(Message::assistant(resp));
                     }
                     Err(e) => eprintln!("{e}"),
@@ -521,9 +550,13 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                     Ok(outcome) => {
                         let resp = outcome.final_text.unwrap_or_default();
                         println!("{resp}");
-                        let _ = log.write_event(Event::Note {
-                            text: format!("chat escalation → {esc_session}"),
-                        });
+                        log_event(
+                            &mut log,
+                            &mut trace_warned,
+                            Event::Note {
+                                text: format!("chat escalation → {esc_session}"),
+                            },
+                        );
                         history.push(Message::user(text));
                         history.push(Message::assistant(resp));
                     }
@@ -558,15 +591,23 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                         if !output.full.ends_with('\n') {
                             println!();
                         }
-                        let _ = log.write_event(Event::Note {
-                            text: format!("chat !run ({} output chars)", output.full.len()),
-                        });
+                        log_event(
+                            &mut log,
+                            &mut trace_warned,
+                            Event::Note {
+                                text: format!("chat !run ({} output chars)", output.full.len()),
+                            },
+                        );
                     }
                     ferric_tools::ExecuteOutcome::Denied { reason, .. } => {
                         eprintln!("blocked: {reason}");
-                        let _ = log.write_event(Event::Note {
-                            text: format!("chat !run blocked: {reason}"),
-                        });
+                        log_event(
+                            &mut log,
+                            &mut trace_warned,
+                            Event::Note {
+                                text: format!("chat !run blocked: {reason}"),
+                            },
+                        );
                     }
                     ferric_tools::ExecuteOutcome::UnknownTool { .. } => {
                         eprintln!("shell_exec is unavailable in this build");
@@ -578,9 +619,13 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
 
     let _ = editor.save_history(&history_path);
 
-    let _ = log.write_event(Event::SessionEnd {
-        reason: "chat session ended".to_string(),
-    });
+    log_event(
+        &mut log,
+        &mut trace_warned,
+        Event::SessionEnd {
+            reason: "chat session ended".to_string(),
+        },
+    );
     ExitCode::SUCCESS
 }
 

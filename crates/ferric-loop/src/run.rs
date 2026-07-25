@@ -437,13 +437,26 @@ impl<'a> LoopState<'a> {
             // Accept-edits gate (ADR-070): a mutating call is previewed to the
             // human, who may reject it before it touches disk. Non-mutating
             // (Read) calls, and runs with no approver, are never gated.
-            if let Some(approver) = self.args.edit_approver {
-                let mutating = matches!(
-                    self.args.registry.permission_of(&call.name),
-                    Some(ferric_guard::PermissionLevel::Write)
-                        | Some(ferric_guard::PermissionLevel::Execute)
-                );
-                if mutating && !approver(&edit_preview(&call.name, &call.args)) {
+            //
+            // This gate and the sink gate inside `Registry::execute` cover the
+            // SAME calls — both only ever fire on `Write`/`Execute`, since a
+            // tainted `Read` is always allowed. So with accept-edits on, the
+            // human was being asked twice about one call (ADR-079). Now they are
+            // asked once, here, with the taint disclosed in the preview; an
+            // approval here carries through to the sink gate below.
+            let mutating = matches!(
+                self.args.registry.permission_of(&call.name),
+                Some(ferric_guard::PermissionLevel::Write)
+                    | Some(ferric_guard::PermissionLevel::Execute)
+            );
+            let mut human_already_approved = false;
+            if let Some(approver) = self.args.edit_approver
+                && mutating
+            {
+                let tainted = self.args.taint_set.args_tainted(&call.args);
+                if approver(&edit_preview(&call.name, &call.args, tainted)) {
+                    human_already_approved = true;
+                } else {
                     warn!(tool = %call.name, "edit rejected by user (accept-edits)");
                     let tr = Event::ToolResult {
                         id: call.id.clone(),
@@ -462,13 +475,13 @@ impl<'a> LoopState<'a> {
 
             debug!(tool = %call.name, "dispatching tool call");
             let (result_text, is_error, duration_ms, checks) = dispatch(
+                human_already_approved,
                 self.args.registry,
                 self.args.workspace,
                 &call.name,
                 &call.args,
                 &self.args.taint_set,
                 &self.args.sink_policy,
-                self.args.edit_approver,
             );
             debug!(tool = %call.name, is_error, duration_ms, "tool call finished");
             dispatched += 1;
@@ -761,8 +774,15 @@ fn registry_tools(
 
 /// Build an [`EditPreview`] from a pending call: pull the target `path` (if the
 /// call names one) and render the arguments for the human to inspect.
-fn edit_preview(name: &str, args: &serde_json::Value) -> EditPreview {
-    let detail = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
+fn edit_preview(name: &str, args: &serde_json::Value, tainted: bool) -> EditPreview {
+    let mut detail = String::new();
+    if tainted {
+        // The sink policy's question, folded into the one prompt the human
+        // already sees, instead of asked separately afterwards (ADR-079).
+        detail
+            .push_str("WARNING: this call carries data derived from untrusted research content.\n");
+    }
+    detail.push_str(&serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string()));
     EditPreview {
         tool: name.to_string(),
         targets: preview_targets(args),
@@ -788,46 +808,24 @@ struct DispatchText {
 }
 
 fn dispatch(
+    human_already_approved: bool,
     registry: &Registry,
     workspace: &Workspace,
     name: &str,
     args: &serde_json::Value,
     taint_set: &ferric_guard::TaintSet,
     sink_policy: &ferric_guard::SinkPolicy,
-    edit_approver: Option<EditApprover<'_>>,
 ) -> (DispatchText, bool, u64, Vec<CheckRecord>) {
-    // ADR-074: `SinkAction::RequireApproval` used to degrade to a flat denial
-    // because "human approval is not wired" — while ADR-070's `EditApprover` was
-    // already sitting at this very dispatch site. Adapt one to the other: the
-    // sink policy asks a question, accept-edits mode is the thing that can
-    // answer it.
-    let sink_approver = edit_approver.map(|approve| {
-        move |request: &ferric_tools::ApprovalRequest<'_>| {
-            approve(&EditPreview {
-                tool: request.tool.to_string(),
-                targets: preview_targets(request.args),
-                detail: format!(
-                    "SINK POLICY: this call carries data derived from untrusted \
-                     research content, reaching a {:?} tool.\n{}",
-                    request.permission,
-                    serde_json::to_string_pretty(request.args)
-                        .unwrap_or_else(|_| request.args.to_string())
-                ),
-            })
-        }
-    });
-    let sink_approver_ref: Option<ferric_tools::SinkApprover<'_>> = sink_approver
-        .as_ref()
-        .map(|f| f as ferric_tools::SinkApprover<'_>);
+    // ADR-074 wired the sink gate to a human; ADR-079 stops it asking twice.
+    // When accept-edits already previewed this exact call (taint disclosed) the
+    // human has answered, so the sink honours that answer rather than
+    // re-prompting. With no accept-edits approver there is nobody to ask, and
+    // `RequireApproval` still denies — the safe reading.
+    let carry_through = |_r: &ferric_tools::ApprovalRequest<'_>| true;
+    let sink_approver: Option<ferric_tools::SinkApprover<'_>> =
+        human_already_approved.then_some(&carry_through);
 
-    match registry.execute(
-        workspace,
-        name,
-        args,
-        taint_set,
-        sink_policy,
-        sink_approver_ref,
-    ) {
+    match registry.execute(workspace, name, args, taint_set, sink_policy, sink_approver) {
         ExecuteOutcome::Completed {
             output,
             duration_ms,
