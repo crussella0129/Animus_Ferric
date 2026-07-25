@@ -151,8 +151,14 @@ pub struct QueryArgs {
     pub research: Option<String>,
 
     /// The SinkAction for the CaMeL sink policy. Deny | RequireApproval | Warn.
-    /// Defaults to Deny.
-    #[arg(long, default_value = "deny")]
+    /// What to do with a MUTATION once this run has ingested untrusted content
+    /// (ADR-080): `requireapproval` (default) | `deny` | `warn`.
+    ///
+    /// This only ever applies to a contaminated run — an ordinary run is never
+    /// gated. `requireapproval` asks a human once per mutation (via
+    /// `--accept-edits`); with no approver available there is nobody to ask, so
+    /// it denies.
+    #[arg(long, default_value = "requireapproval")]
     pub sink_action: String,
 
     /// Accept-edits mode (ADR-070): pause before each mutating tool call
@@ -619,13 +625,11 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         media: media_parts,
         stream_sink,
         resume,
-        taint_set: ferric_guard::TaintSet::new(),
+        provenance: ferric_guard::Provenance::Clean,
         sink_policy: match args.sink_action.to_lowercase().as_str() {
             "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
-            "requireapproval" => {
-                ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval)
-            }
-            _ => ferric_guard::SinkPolicy::deny(),
+            "deny" => ferric_guard::SinkPolicy::deny(),
+            _ => ferric_guard::SinkPolicy::require_approval(),
         },
         hooks: config.hooks.clone(),
         edit_approver: approver_ref,
@@ -803,7 +807,7 @@ pub(crate) struct LoopSetup<'a> {
     pub media: Vec<MediaPart>,
     pub stream_sink: Option<&'a (dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     pub resume: Option<ferric_loop::ReplayedState>,
-    pub taint_set: ferric_guard::TaintSet,
+    pub provenance: ferric_guard::Provenance,
     pub sink_policy: ferric_guard::SinkPolicy,
     pub hooks: Option<ferric_core::HooksConfig>,
     pub edit_approver: Option<ferric_loop::EditApprover<'a>>,
@@ -831,7 +835,7 @@ impl<'a> LoopSetup<'a> {
             stream_sink: self.stream_sink,
             resume: self.resume,
             cancel_flag,
-            taint_set: self.taint_set,
+            provenance: self.provenance,
             sink_policy: self.sink_policy,
             hooks: self.hooks,
             edit_approver: self.edit_approver,
@@ -914,20 +918,17 @@ fn drive_real(
                     {
                         let mut cx = String::new();
                         cx.push_str("\n\n<research_context>\n");
+                        // The run is now contaminated (ADR-080). That single
+                        // fact IS the gate — there is no per-argument taint to
+                        // track, because tracking it never worked: the digests
+                        // below are already a paraphrase of their sources, and
+                        // anything the model writes paraphrases again.
+                        //
+                        // Stamped here, inside the non-empty branch: if research
+                        // returned nothing, nothing untrusted reached the prompt
+                        // and the run stays Clean.
+                        setup.provenance = ferric_guard::Provenance::UntrustedIngested;
                         for d in multi.digests {
-                            // Taint what is actually UNTRUSTED — the model-authored
-                            // summary and quotes derived from untrusted content —
-                            // not `source`, which is a harness-stamped provenance
-                            // path and is trusted (ADR-073). Tainting `source`
-                            // inverted ADR-044 against its own threat model: an
-                            // injection living in `summary` never matched, so the
-                            // sink gate opened, while a legitimate write to the
-                            // researched file tripped Deny.
-                            setup.taint_set.taint_text(&d.summary);
-                            for c in &d.claims {
-                                setup.taint_set.taint_text(&c.claim);
-                                setup.taint_set.taint_text(&c.quote);
-                            }
                             cx.push_str(&d.summary);
                             cx.push_str("\n---\n");
                         }
@@ -1027,7 +1028,7 @@ mod tests {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
-            taint_set: ferric_guard::TaintSet::new(),
+            provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: None,
             edit_approver: None,

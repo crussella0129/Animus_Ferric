@@ -294,7 +294,7 @@ impl ChatBackend {
             media: Vec::new(),
             stream_sink,
             resume: Some(seed.clone()),
-            taint_set: ferric_guard::TaintSet::new(),
+            provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: None,
             edit_approver: None,
@@ -580,7 +580,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                         &workspace,
                         "shell_exec",
                         &serde_json::json!({ "command": cmd }),
-                        &ferric_guard::TaintSet::new(),
+                        ferric_guard::Provenance::Clean,
                         &ferric_guard::SinkPolicy::deny(),
                         None,
                     )

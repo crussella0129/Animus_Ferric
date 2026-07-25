@@ -259,7 +259,7 @@ pub mod server {
             media: Vec::new(),
             stream_sink: sink_fn,
             resume: None,
-            taint_set: ferric_guard::TaintSet::new(),
+            provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: None,
             edit_approver: None,

@@ -1545,3 +1545,44 @@ Clears the two small, unambiguous items ADR-075 left open. Workspace 524 →
 - **`dispatch` shed a parameter.** With approval carried as a bool, its
   `edit_approver` argument became dead — removing it also took the function back
   under the arity limit rather than suppressing the warning.
+
+## ADR-080 — 2026-07-25 (sprint 90): E2 resolved — a structural provenance gate replaces substring taint
+The open posture decision from ADR-075/078, settled by the user: **Option 4, the
+approval form.** Substring taint is retired; the gate is now structural.
+Workspace **529 tests, 0 failures**; clippy 0; fmt clean.
+- **Why the detector had to go, not be re-tuned.** ADR-078 measured it live and
+  it failed in both directions. It detects **copying** while the threat is
+  **influence** — an injection wins by being *obeyed*, not quoted. Its only
+  tuning axis is segment length, and both ends are bad: long segments miss lifted
+  fragments, short segments match ordinary prose and deny every write. And
+  **paraphrase defeats matching at any length** — the quarantine's own summary is
+  already a paraphrase of its source, and a model restating it rewords again.
+  There is no constant that works, so tuning one was never the fix.
+- **The question changed.** Not *"do these arguments contain untrusted text?"*
+  (undecidable in practice) but *"has this run ingested untrusted content at
+  all?"* — a fact the harness stamps once and the model cannot launder, because
+  it is never asked. New `ferric_guard::Provenance { Clean, UntrustedIngested }`;
+  `SinkPolicy::decide` takes it in place of a per-call `tainted` bool.
+  **Nothing to evade, because nothing is being detected.**
+- **This restores consistency with the rest of Ornstein.** The quarantine has
+  always been structural (ADR-010/040 — empty tools is the only valid constrained
+  shape, so an injection has no action channel by construction). The sink gate
+  was the one place that reached for detection, and the one place that did not
+  hold up.
+- **Default is `RequireApproval`** (was `Deny`). A clean run is **never** gated —
+  that is what keeps this usable. A contaminated run asks a human once per
+  mutation via ADR-079's single merged prompt; with no approver there is nobody
+  to ask, so it denies. Safe unattended, usable supervised.
+- **`TaintSet` is deleted, not deprecated.** Keeping a detector that does not
+  work is worse than having none: it manufactures confidence. Its ~40 call sites
+  became `Provenance::Clean`.
+- **Validated live** (qwen2.5-coder-3B), all three cases: a clean run writes
+  normally; a contaminated non-interactive run is **denied** — the very write
+  that ADR-078 measured being *allowed* — and the model adapts to the error; a
+  contaminated `--accept-edits` run shows **one** prompt carrying the provenance
+  warning, and the approved write lands.
+- **Honest scope.** This gates *mutation on a contaminated run*. It does not
+  detect injections, cannot say which call is dangerous, and is deliberately
+  coarser than what it replaced — every mutation after research is gated,
+  including obviously fine ones. That coarseness is the price of a control that
+  cannot be worded around, and it is the trade the decision accepted.
