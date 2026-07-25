@@ -1732,3 +1732,43 @@ recording because it invalidated five tests that were *passing*.
   supplies. The anti-skip guard added in ADR-081 (always keep one assertion that
   cannot pass without the dependency genuinely working) is what surfaced this;
   the negative-assertion rule is its counterpart.
+
+## ADR-085 — 2026-07-25 (sprint 94): D2 — the web plane reaches the binary
+`WebRetriever` has been unreachable from `ferric` since ADR-045 (sprint-82
+finding D2). Sprints 91–93 removed the mechanism gaps; this is the wiring.
+Workspace **545 tests, 0 failures**; clippy 0; fmt clean.
+- **`--research-url <URL>` is a separate flag from `--research`, because the two
+  planes want different things.** `research_all` passes one `query` to every
+  retriever, but Local-FS wants keywords and `WebRetriever` requires the query to
+  *be* a URL. One parameter with two incompatible meanings would have been the
+  quiet kind of wrong; two flags say what each plane takes.
+- **The allowlist is derived from the URLs and nothing else.** No separate
+  allowlist configuration to drift out of sync — the sandbox may reach precisely
+  the hosts you named. `--research-url http://a/x --research-url http://b/y`
+  allows `a` and `b`; anything else the container tries is refused by the
+  gateway.
+- **`url_host` is therefore a security boundary.** It strips **userinfo** —
+  `http://example.com@evil.test/` allowlists `evil.test`, and keying on the
+  decoration would have opened a host the user never named — drops the port, and
+  runs the result through `airlock::validate_host`, so an injection-shaped host
+  is refused **before** the airlock opens. Tested, including the userinfo case.
+- **One airlock per RUN, not per URL.** Standing one up costs ~15 s (ADR-083) and
+  every URL in a run shares the allowlist anyway. RAII tears it down even if the
+  run panics.
+- **A failed fetch is fatal to the run, not skipped.** A URL the user explicitly
+  named that could not be fetched must not vanish into an ordinary run — the
+  ADR-078 lesson, applied before it could recur here.
+- **gVisor stays the default and `--allow-standard-runtime` is the named opt-out.**
+  The flag's documentation says the thing that matters: **network isolation does
+  not depend on it.** The airlock's `--internal` network enforces egress either
+  way; gVisor is defence in depth against container escape. Requiring it silently
+  on machines that lack it would make the feature dead on arrival, and a control
+  everyone disables reflexively is worse than a calibrated one (the E2 lesson).
+- **Verified live**, qwen2.5-coder-3B: the airlock opens for the named host, the
+  URL is fetched through it, the content is quarantined into a digest and
+  summarised correctly; the run is then **contaminated**, so `write_file` is
+  denied by the sink policy and the file is not created; and a URL whose host
+  cannot be allowlisted is refused *before* the airlock opens. The whole chain —
+  airlock, quarantine, provenance gate — composes.
+- **Ornstein's three planes are now all reachable**: Local-FS, Tailnet-FS (still
+  unexercised live), and Web.
