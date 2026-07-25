@@ -1471,3 +1471,46 @@ against mocks. Workspace 507 → **518 tests, 0 failures**; clippy 0; fmt clean.
   SMB open, but has no sshd, refuses `net view` over tailscale, exposes no
   guessable share name, and no `Y:` drive is mapped. **Needs the share name from
   the user.**
+
+## ADR-078 — 2026-07-25 (sprint 88): G1 fixed, and a live measurement that corrects our own E2 finding
+Sprint 87's G1 (`--research` silently produced nothing) is fixed, and a
+downloaded 3B model finally let the taint path be measured against a real digest.
+That measurement **corrects ADR-075's E2 finding in both directions**. Workspace
+518 → **524 tests, 0 failures**; clippy 0; fmt clean.
+- **G1a — the research query was matched as ONE literal substring.**
+  `LocalFsRetriever::retrieve` lowercased the whole query and asked
+  `content.contains(needle)`, so any **multi-word** query — the natural way to
+  ask for research — found nothing unless that exact phrase appeared verbatim.
+  Isolated by probe: `"configuration"` matched a file; `"project notes
+  configuration"` matched **nothing in the same directory**. The query is now
+  tokenized, terms ANDed (OR would return most of the tree, and every chunk costs
+  one quarantine inference). 6 tests.
+- **G1b — an empty research result was silent.** `research_all` returns `Ok` with
+  an empty digest list and the CLI skipped on `is_empty()`, so a flag the user
+  explicitly passed degraded into an ordinary run with no signal — which is what
+  hid G1a for three sprints. It now reports the query and each plane's state.
+- **Validated live:** the exact query that produced nothing now injects a real
+  quarantined digest (`research_context injected?: True`).
+- **E2 RE-MEASURED LIVE, and it is not what the synthetic probe said.** ADR-075
+  reported 3/3 faithful restatements blocked under the default `Deny`. Live, with
+  a real digest, the model copied a digest sentence into `write_file` and **it was
+  allowed**. Two reasons the synthetic probe overstated it: (1) the digest is a
+  model **paraphrase**, not the source text — needles never equal the file's
+  words; (2) `taint_text` needles are whole sentences, and the model wrote a
+  **prefix** of one, so `contains()` — which asks whether the *argument* contains
+  the *needle* — could not match.
+- **The honest reading: the mechanism is weak in BOTH directions, not
+  over-strict.** The false-positive rate is lower than ADR-075 claimed, and so is
+  the protection: an injected instruction that the model paraphrases or partially
+  quotes evades taint exactly as this benign sentence did. That strengthens
+  rather than weakens the case that **E2 is a posture decision about a mechanism**
+  — sentence-granularity substring taint is fragile either way — and it retires
+  the "unusable in practice" framing, which was an artefact of feeding whole
+  segments back verbatim.
+- **Method note.** The synthetic probe was not wrong to exist — it isolated the
+  mechanism. It was wrong to be trusted as a *rate*. A probe that constructs its
+  own worst case measures the worst case, not the field.
+- **A second model is now local:** `Qwen2.5-Coder-3B-Instruct-Q4_K_M` (1.93 GB,
+  ungated, same family as the 7B so size is the only variable). Downloaded rather
+  than mounted — the ZimaBoard2 share was unreachable (no sshd, `net view` RPC
+  failure over tailscale, no mapped drive, no guessable share name).

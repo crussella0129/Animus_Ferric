@@ -885,8 +885,33 @@ fn drive_real(
             );
             let retrievers: Vec<&dyn ferric_research::Retriever> = vec![&local_retriever];
             match ferric_research::research_all(&retrievers, provider_box.as_ref(), &rq).await {
+                Ok(multi) if multi.digests.is_empty() => {
+                    // A flag the user explicitly passed must not degrade into an
+                    // ordinary run in silence (ADR-078). This was invisible for
+                    // three sprints and hid a real retrieval bug behind it.
+                    let planes: Vec<String> = multi
+                        .planes
+                        .iter()
+                        .map(|p| {
+                            format!(
+                                "{} ({})",
+                                p.plane,
+                                if p.available {
+                                    "available, 0 matches"
+                                } else {
+                                    "unavailable"
+                                }
+                            )
+                        })
+                        .collect();
+                    eprintln!(
+                        "research: no sources matched {rq:?} — planes: {}. \
+                         Continuing without research context.",
+                        planes.join(", ")
+                    );
+                }
                 Ok(multi) => {
-                    if !multi.digests.is_empty() {
+                    {
                         let mut cx = String::new();
                         cx.push_str("\n\n<research_context>\n");
                         for d in multi.digests {
