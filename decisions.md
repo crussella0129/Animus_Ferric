@@ -1586,3 +1586,40 @@ Workspace **529 tests, 0 failures**; clippy 0; fmt clean.
   coarser than what it replaced — every mutation after research is gated,
   including obviously fine ones. That coarseness is the price of a control that
   cannot be worded around, and it is the trade the decision accepted.
+
+## ADR-081 — 2026-07-25 (sprint 91): the sandbox meets a real Docker daemon, and the web plane's true blocker
+Docker was installed on this machine, closing the containerizer gap that had
+blocked Ornstein's container work since **sprint 33**. A5's airlock — added in
+sprint 84 but only ever tested at the argv level — is now validated against a
+running daemon. Workspace **534 tests, 0 failures**; clippy 0; fmt clean.
+- **All three airlock properties confirmed live**, with direct evidence rather
+  than inference:
+  - `--network none` genuinely isolates: `wget: bad address 'example.com'`.
+  - Explicit `Unrestricted` genuinely reaches out: `Example Domain` fetched.
+  - **The gVisor default fails CLOSED.** With `runsc` absent (this host offers
+    `runc`, `nvidia`, `io.containerd.runc.v2`), the default errors with
+    `unknown or invalid runtime name: runsc` — it does **not** silently fall back
+    to `runc`. That is the property that makes the default trustworthy; a control
+    that degrades quietly is worse than none.
+  - Capabilities really drop: `chown` fails inside the container.
+- **`check_available()` had no timeout, and I hit it.** A *half-started* Docker
+  Desktop is the case that matters — the CLI is present, the daemon is not, and
+  `docker info` then **hangs** rather than failing. Measured at ~60 s per call,
+  which made a run of 5 skipped tests take 269 s and look like 5 passes. Now
+  bounded at 5 s with the probe reaped. `Retriever::available()` sits on the
+  research path, so an unbounded probe there would stall a whole run over an
+  optional dependency.
+- **A near-miss worth recording.** That first run reported "5 passed" in 269 s and
+  I almost reported it as validation. It was 5 *skips* — the suite is
+  availability-gated by design, and `--nocapture` was needed to see the SKIP
+  lines. The real run takes **12 s**. The test file's own header says a green run
+  must not be mistaken for a validated one; that warning existed because this
+  exact confusion was foreseeable, and it still nearly landed.
+- **Docker did NOT unblock D2 (wiring `WebRetriever` into the binary), and that
+  is now the interesting part.** The remaining blocker is not the containerizer —
+  it is the **allowlist proxy**, which is still unimplemented (`NetworkPolicy::Proxy`
+  exists and nothing constructs it). Wiring the web plane today offers only two
+  configurations, both wrong: the default (`Denied`) gives a web retriever that
+  cannot fetch, and `Unrestricted` gives back exactly the unrestricted egress
+  sprint 84 made opt-out. **The proxy is the whole remaining gap for Ornstein's
+  web plane**, and it is now the only one.

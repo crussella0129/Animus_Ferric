@@ -11,7 +11,8 @@
 //! unfiltered requires naming [`NetworkPolicy::Unrestricted`]. A reviewer
 //! grepping for that name finds every place egress is possible.
 
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -69,12 +70,46 @@ impl SandboxConfig {
     }
 }
 
+/// How long to wait for `docker info` before calling the daemon unavailable.
+///
+/// A *half-started* Docker Desktop is the case that matters: the CLI is present
+/// and the daemon is not, and `docker info` then **hangs** rather than failing.
+/// Observed on this machine at ~60 s per call (ADR-081) — long enough that a
+/// caller looks wedged, and long enough that a test suite gating on
+/// availability silently spends minutes doing nothing.
+const AVAILABILITY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Is a Docker daemon reachable right now?
+///
+/// Bounded: an unreachable daemon must answer "no" quickly, not block the
+/// caller. `Retriever::available()` sits on the research path, so an
+/// unbounded probe here would stall a whole run over an optional dependency.
 pub fn check_available() -> bool {
-    Command::new("docker")
+    let Ok(mut child) = Command::new("docker")
         .arg("info")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false; // no docker binary at all
+    };
+
+    let deadline = Instant::now() + AVAILABILITY_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    // Half-started daemon: reap the probe so it cannot linger.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => return false,
+        }
+    }
 }
 
 /// Build the full `docker` argument vector for a sandboxed run.
