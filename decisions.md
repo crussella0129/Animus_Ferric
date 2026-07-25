@@ -1772,3 +1772,42 @@ Workspace **545 tests, 0 failures**; clippy 0; fmt clean.
   airlock, quarantine, provenance gate — composes.
 - **Ornstein's three planes are now all reachable**: Local-FS, Tailnet-FS (still
   unexercised live), and Web.
+
+## ADR-086 — 2026-07-25 (sprint 95): fleet re-calibration, and two defects it exposed in the calibrator
+The fleet map had not been touched since sprints 25–26. Re-running it produced a
+new data point, confirmed an old one — and found two ways the calibrator
+misreports. Workspace **549 tests, 0 failures**; clippy 0; fmt clean.
+- **The refreshed map** (llama.cpp, `--protocol grammar`, release build):
+  | model | measured_level | tier |
+  |---|---|---|
+  | `qwen2.5-coder-3b` | **4** | Small |
+  | `qwen2.5-coder-7b` | **6** | Large |
+  Same family, so this isolates **size**: 3B tops out at L4 (multi-file with
+  test), 7B completes the full L0–L6 ladder cleanly. The 7B's 6 matches its
+  sprint-20 figure — 75 sprints and a great deal of harness change later, the
+  number holds.
+- **H1 — a partial `--level` sweep silently DOWNGRADED a stored profile.**
+  `calibrate()` runs on only the current sweep's rows, so
+  `bench full --level 5` rewrote the 7B's record from `measured_level 6 (Large)`
+  to `5 (Medium)`. `ferric query` reads that profile to size its RunPolicy
+  (ADR-029) — so **investigating one rung shrank the model's tier**: fewer tools,
+  fewer turns, no subagents. A profile is now written only from a full ladder;
+  a partial sweep says so and leaves the record alone.
+- **H2 — the ladder is not always monotonic, and `max(passed)` hid it.** The 7B's
+  first sweep **failed L5 and passed L6**, scoring 6 — indistinguishable in the
+  output from a clean sweep. Re-running L5 alone passed **three times**, and a
+  second full sweep passed all seven levels, so the failure was noise. But with
+  one sample per level, luck only ever inflates `measured_level`. The calibrator
+  now reports levels that failed *below* the highest pass, with the caveat that
+  the figure is `max(passed)` and should be re-run before it is trusted.
+  Failures *above* the top pass are an ordinary ceiling and are not flagged.
+- **A note for anyone benchmarking here.** `cargo test --workspace` rebuilds
+  `ferric.exe` **without** `--features backend-openai`, so a bench run started
+  after one silently loses its backend and every level fails in ~200 ms with
+  0 turns. That is what the first attempt this sprint did. Rebuild with the
+  feature (and `--release` — the harness warns that debug runs at ~1 tok/s)
+  before a sweep.
+- **The pattern, again.** Both defects are the same shape this series keeps
+  finding: a value computed from partial information and then reported as if it
+  were the whole picture. Neither was visible from the test suite; both needed a
+  real ladder against a real model.
