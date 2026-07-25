@@ -18,6 +18,11 @@ pub enum StopReason {
     /// The repeated-failure guard stopped a model whose tool calls all errored
     /// for several turns in a row (ADR-038).
     RepeatedFailure,
+    /// The oscillation guard stopped an A-B-A-B cycle — a small set of distinct
+    /// actions repeated across a window of turns. The mode all three
+    /// streak-based guards miss, because alternation resets each of them
+    /// (ADR-077).
+    Oscillation,
     /// The provider failed permanently (or retries were exhausted).
     ProviderError,
     /// Two consecutive completions carried neither text nor tool calls
@@ -43,6 +48,7 @@ impl StopReason {
             StopReason::RepetitionGuard => "repetition_guard",
             StopReason::NoProgress => "no_progress",
             StopReason::RepeatedFailure => "repeated_failure",
+            StopReason::Oscillation => "oscillation",
             StopReason::ProviderError => "provider_error",
             StopReason::EmptyCompletion => "empty_completion",
             StopReason::TruncatedAction => "truncated_action",

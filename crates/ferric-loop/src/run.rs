@@ -91,6 +91,7 @@ pub struct LoopState<'a> {
     pub repetition: crate::repetition::RepetitionGuard,
     pub progress: crate::progress::ProgressGuard,
     pub failure: crate::failure::FailureGuard,
+    pub oscillation: crate::oscillation::OscillationGuard,
     pub nudged_for_no_action: bool,
     pub truncated_once: bool,
     pub last_input_tokens: Option<u32>,
@@ -368,6 +369,33 @@ impl<'a> LoopState<'a> {
                 self.sink.write_event(evt.clone())?;
                 self.projector.step(&evt);
                 return Ok(TurnOutcome::Stop(StopReason::NoProgress));
+            }
+        }
+
+        // Last in the chain (ADR-077): the three above are streak-based and all
+        // reset on alternation, so an A-B-A-B cycle passes every one of them.
+        // This one is windowed, and deliberately the loosest — it only fires
+        // once the sharper guards have had their chance.
+        match self.oscillation.observe(&actions) {
+            crate::repetition::Verdict::Proceed => {}
+            crate::repetition::Verdict::Warn => {
+                let evt = Event::OscillationGuard {
+                    action: "warned".to_string(),
+                };
+                self.sink.write_event(evt.clone())?;
+                self.projector.step(&evt);
+            }
+            crate::repetition::Verdict::Stop => {
+                warn!(
+                    guard = "oscillation",
+                    "cycling between a few actions; stopping"
+                );
+                let evt = Event::OscillationGuard {
+                    action: "stopped".to_string(),
+                };
+                self.sink.write_event(evt.clone())?;
+                self.projector.step(&evt);
+                return Ok(TurnOutcome::Stop(StopReason::Oscillation));
             }
         }
 
@@ -660,6 +688,7 @@ pub async fn run(
         repetition: crate::repetition::RepetitionGuard::new(),
         progress: crate::progress::ProgressGuard::new(),
         failure: crate::failure::FailureGuard::new(),
+        oscillation: crate::oscillation::OscillationGuard::new(),
         nudged_for_no_action: false,
         truncated_once: false,
         last_input_tokens: None,

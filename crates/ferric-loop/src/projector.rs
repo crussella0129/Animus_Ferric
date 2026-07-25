@@ -35,6 +35,12 @@ pub(crate) fn no_progress_warn_message(repeated: &[&str]) -> Message {
     ))
 }
 
+pub(crate) fn oscillation_warn_message() -> Message {
+    Message::user(
+        "You are cycling between the same few tool calls without making          progress. Their results will not change if you repeat them. Use what          you already have to take a DIFFERENT next step, or call task_complete          if the task is done.",
+    )
+}
+
 pub(crate) fn failure_warn_message() -> Message {
     Message::user(
         "Your last tool call(s) failed. Read the error message and try a \
@@ -75,6 +81,7 @@ pub struct PendingTurn {
     pub repetition_warned: bool,
     pub no_progress_warned: bool,
     pub failure_warned: bool,
+    pub oscillation_warned: bool,
 }
 
 impl PendingTurn {
@@ -118,6 +125,9 @@ impl PendingTurn {
         }
         if self.no_progress_warned {
             out.push(no_progress_warn_message(&names));
+        }
+        if self.oscillation_warned {
+            out.push(oscillation_warn_message());
         }
         for (id, name, output) in &self.tool_results {
             out.push(result_message(protocol, id, name, output, truncation_limit));
@@ -225,6 +235,11 @@ impl TraceProjector {
             Event::FailureGuard { action } if action == "warned" => {
                 if let Some(p) = &mut self.pending {
                     p.failure_warned = true;
+                }
+            }
+            Event::OscillationGuard { action } if action == "warned" => {
+                if let Some(p) = &mut self.pending {
+                    p.oscillation_warned = true;
                 }
             }
             Event::HistoryCompacted {
