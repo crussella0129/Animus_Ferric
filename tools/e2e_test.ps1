@@ -30,7 +30,7 @@ if ($Mock) {
 } else {
     if (-not $Model) {
         Write-Host "ERROR: You must provide -Model when not using -Mock." -ForegroundColor Red
-        Write-Host "Example: .\e2e_test.ps1 -Model `"gpt-4o`"" -ForegroundColor Red
+        Write-Host "Example: .\tools\e2e_test.ps1 -Model `"gpt-4o`"" -ForegroundColor Red
         exit 1
     }
     Write-Host "Running with REAL model: $Model" -ForegroundColor Cyan

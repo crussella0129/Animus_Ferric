@@ -16,6 +16,21 @@ fn docker_ready(test: &str) -> bool {
     false
 }
 
+/// Start an airlock, treating failure as a **defect rather than a skip**.
+///
+/// Every caller has already passed `docker_ready`, so by this point Docker is
+/// known to work and a failed start is a real one. The tests originally logged
+/// `SKIP` here and returned — which meant a genuinely broken airlock reported as
+/// a pass. Found by planting a `tinyproxy`-less gateway image: `start` failed,
+/// the skip swallowed it, and the suite went green (ADR-087). The availability
+/// gate belongs at the top of a test, not around its subject.
+fn start_or_fail(allowlist: &[String]) -> Airlock {
+    match Airlock::start(allowlist) {
+        Ok(lock) => lock,
+        Err(e) => panic!("Docker is available, so the airlock must start: {e}"),
+    }
+}
+
 fn sandboxed(lock: &Airlock, cmd: &[&str]) -> Result<String, String> {
     let config = SandboxConfig {
         network: lock.policy(),
@@ -34,13 +49,7 @@ fn ferric_stands_up_an_enforcing_airlock() {
         return;
     }
 
-    let lock = match Airlock::start(&["example.com".to_string()]) {
-        Ok(l) => l,
-        Err(e) => {
-            println!("SKIP: could not start the airlock ({e}) — NOT validated");
-            return;
-        }
-    };
+    let lock = start_or_fail(&["example.com".to_string()]);
     assert!(
         lock.proxy_url().starts_with("http://"),
         "the gateway must have an address on the internal network: {}",
@@ -88,10 +97,7 @@ fn dropping_the_airlock_removes_its_resources() {
     if !docker_ready("dropping_the_airlock_removes_its_resources") {
         return;
     }
-    let Ok(lock) = Airlock::start(&["example.com".to_string()]) else {
-        println!("SKIP: could not start the airlock — NOT validated");
-        return;
-    };
+    let lock = start_or_fail(&["example.com".to_string()]);
 
     // Assert on THIS airlock's gateway by name, not on the shared prefix:
     // airlocks are deliberately unique per instance, and a concurrently running
@@ -145,4 +151,52 @@ fn an_injecting_allowlist_creates_nothing() {
         })
         .unwrap_or(0);
     assert_eq!(before, after, "a rejected allowlist must create nothing");
+}
+
+/// The property the prebuilt image actually buys (ADR-087).
+///
+/// Before it, every `Airlock::start` ran `apk add tinyproxy` inside a fresh
+/// container — so standing up the airlock depended, at *runtime*, on reaching
+/// the Alpine package mirror. The security-critical path had an external
+/// availability dependency, and a mirror that was slow or down took the airlock
+/// with it. Baking the package in moves that to a one-off build.
+///
+/// `--network none` is the assertion: the container cannot fetch anything, so
+/// this passes only if `tinyproxy` is genuinely present in the image.
+#[test]
+fn the_gateway_image_needs_no_package_fetch() {
+    if !docker_ready("the_gateway_image_needs_no_package_fetch") {
+        return;
+    }
+    // Starting an airlock is what ensures the image exists; drop it immediately.
+    drop(start_or_fail(&["example.com".to_string()]));
+
+    let out = std::process::Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "ferric-gateway:1",
+            "tinyproxy",
+            "-v",
+        ])
+        .output()
+        .expect("docker must be runnable — availability was just checked");
+
+    assert!(
+        out.status.success(),
+        "tinyproxy must run in the image with no network: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    let banner = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        banner.to_lowercase().contains("tinyproxy"),
+        "expected a tinyproxy version banner, got: {}",
+        banner.trim()
+    );
 }

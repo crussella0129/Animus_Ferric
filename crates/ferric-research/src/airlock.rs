@@ -30,9 +30,15 @@ use std::time::{Duration, Instant};
 
 use crate::sandbox::{NetworkPolicy, SandboxError, check_available};
 
-/// Image for the gateway. Alpine plus `tinyproxy`, which has the one feature
-/// needed here: a default-deny host filter.
-const GATEWAY_IMAGE: &str = "alpine:latest";
+/// The gateway image, built locally on first use and reused thereafter.
+///
+/// Before ADR-087 every `Airlock::start` ran `apk add tinyproxy` inside a fresh
+/// alpine container — ~10 s of the ~15 s startup, paid on every web-research run.
+/// Baking it into an image moves that cost to a one-off build. Built from an
+/// inline Dockerfile rather than pulled, so there is **no registry dependency
+/// and nothing to trust beyond `alpine:latest`**, which the sandbox already uses.
+const GATEWAY_IMAGE: &str = "ferric-gateway:1";
+const GATEWAY_BASE: &str = "alpine:latest";
 const GATEWAY_PORT: u16 = 8888;
 /// How long to wait for the gateway to accept connections. It installs
 /// `tinyproxy` on first start, so this is seconds, not milliseconds.
@@ -91,6 +97,45 @@ fn dk(args: &[&str]) -> Result<String, SandboxError> {
         )));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Ensure the gateway image exists, building it if not.
+///
+/// Idempotent and cheap on the hot path: `image inspect` is a local metadata
+/// lookup, so a warm machine pays milliseconds. The tag carries a version
+/// (`:1`) so a future change to the recipe cannot silently reuse a stale image.
+fn ensure_gateway_image() -> Result<(), SandboxError> {
+    if dk(&["image", "inspect", GATEWAY_IMAGE]).is_ok() {
+        return Ok(());
+    }
+    let dockerfile = format!("FROM {GATEWAY_BASE}\nRUN apk add --no-cache tinyproxy\n");
+    let mut child = Command::new("docker")
+        .args(["build", "-t", GATEWAY_IMAGE, "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| SandboxError::Exec(format!("docker build: {e}")))?;
+    {
+        use std::io::Write;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| SandboxError::Exec("docker build: no stdin".to_string()))?;
+        stdin
+            .write_all(dockerfile.as_bytes())
+            .map_err(|e| SandboxError::Exec(format!("docker build: {e}")))?;
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| SandboxError::Exec(format!("docker build: {e}")))?;
+    if !out.status.success() {
+        return Err(SandboxError::Exec(format!(
+            "building {GATEWAY_IMAGE}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(())
 }
 
 /// Best-effort teardown — never fails a caller, since it runs from `Drop`.
@@ -152,6 +197,7 @@ impl Airlock {
     }
 
     fn bring_up(&self, allowlist: &[String]) -> Result<String, SandboxError> {
+        ensure_gateway_image()?;
         dk(&["network", "create", "--internal", &self.internal_network])?;
         dk(&["network", "create", &self.egress_network])?;
 
@@ -160,8 +206,7 @@ impl Airlock {
         // half-configured proxy.
         let filter = allowlist.join("\\n");
         let script = format!(
-            "apk add --no-cache tinyproxy >/dev/null 2>&1; \
-             printf '{filter}\\n' > /etc/tinyproxy/filter; \
+            "printf '{filter}\\n' > /etc/tinyproxy/filter; \
              printf '\\nFilter \"/etc/tinyproxy/filter\"\\nFilterDefaultDeny Yes\\nAllow 0.0.0.0/0\\nPort {GATEWAY_PORT}\\n' \
                >> /etc/tinyproxy/tinyproxy.conf; \
              tinyproxy -d"
@@ -201,8 +246,10 @@ impl Airlock {
 
     /// Poll until the gateway reports it is accepting connections, or give up.
     ///
-    /// Deliberately not a fixed sleep: `apk add` timing varies with the network,
-    /// and a sleep that is usually long enough is a flake generator.
+    /// Deliberately not a fixed sleep: container start and `tinyproxy` init vary
+    /// with machine load, and a sleep that is usually long enough is a flake
+    /// generator. This matters *more* now that the image is prebuilt, not less —
+    /// the startup got fast enough that a fixed sleep would look like it worked.
     fn await_ready(&self) -> Result<(), SandboxError> {
         let deadline = Instant::now() + READY_TIMEOUT;
         loop {
