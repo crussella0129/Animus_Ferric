@@ -1662,3 +1662,43 @@ proxy would have plugged into did not constrain anything.** Workspace
   proven, but the lifecycle (create network, start gateway, health-check, tear
   down) is the next increment before `WebRetriever` is wired into the binary.
   Naming that plainly, because "the type supports it" is not "the binary does it".
+
+## ADR-083 — 2026-07-25 (sprint 93): Ferric owns the airlock lifecycle
+ADR-082 proved the enforced-egress topology by hand; Ferric could *describe* an
+airlock but a human had to build one. `ferric_research::airlock::Airlock` now
+owns it end to end. Workspace **542 tests, 0 failures**; clippy 0; fmt clean.
+- **`Airlock::start(allowlist)`** creates the `--internal` network and an egress
+  network, runs a default-deny gateway, polls until it accepts connections,
+  attaches it to the internal side, and hands back a `NetworkPolicy::Airlock`.
+- **Ordering is a security property, not tidiness.** The gateway starts on the
+  **egress network only** and is attached to the internal one *after* it reports
+  ready — so a sandbox can never reach a half-configured proxy that is up but has
+  not yet loaded its filter.
+- **Readiness is polled, never slept.** `apk add` timing varies with the network,
+  and a sleep that is *usually* long enough is a flake generator. The poll also
+  detects a gateway that exited and reports its last log line, rather than
+  waiting out the full timeout for something that will never be ready.
+- **Failure is closed.** If the gateway does not come up, `start` returns an
+  error; there is no path that yields a sandbox with an open network.
+- **Teardown is RAII.** `Drop` removes the gateway and both networks, because a
+  panic between `start` and an explicit `stop` would otherwise leak the one
+  container on the machine that *has* egress. Verified live.
+- **Allowlist entries are validated, and that is a boundary.** They are written
+  into a file by a shell command inside the gateway, so an entry containing `;`,
+  `$(…)`, a quote or a newline is command injection into the one container with
+  network access. Restricted to the DNS hostname charset — removing the
+  possibility rather than escaping it — and checked **before** any docker
+  resource exists, so a rejected allowlist leaves no debris. Both properties are
+  tested.
+- **Names are per-instance** (`pid`+counter). Two agents sharing one gateway
+  would be sharing one allowlist; they now cannot.
+- **A test bug worth recording, caught by parallelism.** The teardown test
+  asserted on the `ferric-gateway-` *prefix*, so a concurrently running test's
+  gateway made it fail — passing single-threaded, failing in the full suite. The
+  teardown was correct; the assertion was not. It now names its own container,
+  via a new `gateway_name()`. The unique-naming scheme existed precisely so this
+  distinction could be made, and the first test written against it did not use
+  it.
+- **D2 is now unblocked but not done.** `WebRetriever` still is not reachable
+  from the binary — what remains is wiring (a CLI surface, the allowlist as
+  configuration), not missing mechanism.
