@@ -1623,3 +1623,42 @@ running daemon. Workspace **534 tests, 0 failures**; clippy 0; fmt clean.
   cannot fetch, and `Unrestricted` gives back exactly the unrestricted egress
   sprint 84 made opt-out. **The proxy is the whole remaining gap for Ornstein's
   web plane**, and it is now the only one.
+
+## ADR-082 — 2026-07-25 (sprint 92): the proxy policy was advisory, not an airlock
+Sprint 91 concluded the allowlist proxy was the last blocker for Ornstein's web
+plane. Debugging that turned up something more important first: **the mechanism a
+proxy would have plugged into did not constrain anything.** Workspace
+**535 tests, 0 failures**; clippy 0; fmt clean.
+- **`NetworkPolicy::Proxy` was bypassable, and it is measured.** It attached the
+  sandbox to `--network bridge` and set `http_proxy`/`https_proxy`. Those
+  variables are a **convention cooperative clients honour**, not an enforcement
+  boundary. A container simply runs `unset http_proxy https_proxy` and reaches
+  the internet directly — verified, fetching example.com in full while the proxy
+  pointed at a dead port. Building an allowlist proxy behind that would have been
+  the same shape as ADR-078's substring taint: a control that looks like
+  enforcement and is not.
+- **Isolation has to come from the network.** A docker network created
+  `--internal` has no route out, and it holds against both DNS and raw IP:
+  `wget: bad address` and `Network unreachable`. That is kernel routing, not
+  client goodwill — there is nothing for a process inside to opt out of.
+- **`Proxy(url)` is replaced by `Airlock { network, proxy_url }`.** Both fields
+  are load-bearing and the type now says so: the **network** enforces, the URL
+  merely tells cooperative clients where the gateway is. The unit test's critical
+  assertion is the negative one — the argv must never contain `--network bridge`,
+  because that single word is what restored the bypass.
+- **Verified end-to-end against the real topology**, with a gateway container
+  attached to both the isolated network and an external one, running a
+  default-deny allowlist:
+  - allowlisted host through the gateway → **fetched**;
+  - non-allowlisted host → **403, refused by the gateway**;
+  - `unset http_proxy` and go direct → **unreachable**. The bypass is closed.
+- **The live test stands the whole topology up itself** (network, gateway, poll
+  for readiness, teardown) and is availability-gated like the rest. Its positive
+  assertion — that an allowlisted fetch really returns page content — is
+  deliberate: it is what stops a silently-skipped run from looking like a pass,
+  the failure mode ADR-081 nearly shipped.
+- **Still not done: D2.** Ferric does not yet *create* the isolated network or
+  *run* the gateway; the type can express an enforced airlock and the topology is
+  proven, but the lifecycle (create network, start gateway, health-check, tear
+  down) is the next increment before `WebRetriever` is wired into the binary.
+  Naming that plainly, because "the type supports it" is not "the binary does it".
