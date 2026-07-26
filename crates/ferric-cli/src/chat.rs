@@ -36,8 +36,12 @@ use crate::query::{
     run_with_provider,
 };
 
-#[cfg(feature = "backend-openai")]
-use tokio::runtime::Runtime;
+/// How chat drives the provider, shared with `ferric icm` since sprint 103
+/// (ADR-094) — both had declared this enum and its constructor identically.
+/// `Mock` builds a FRESH `MockProvider` per turn (talk-shaped vs
+/// agentic-shaped) — no ambient runtime, no script exhaustion. `Real` holds the
+/// ONE provider + `tokio::runtime::Runtime` for the session.
+use crate::backend::ResolvedBackend as ChatBackend;
 
 /// `ferric chat`'s CLI surface: `QueryArgs` minus `prompt`/`resume`/`files` —
 /// the conversation is read from stdin instead. Everything here is launch-time-
@@ -201,18 +205,6 @@ fn mock_talk_completion() -> Completion {
     }
 }
 
-/// How chat drives the provider. `Mock` builds a FRESH `MockProvider` per turn
-/// (talk-shaped vs agentic-shaped) — no ambient runtime, no script exhaustion.
-/// `Real` holds the ONE provider + `tokio::runtime::Runtime` for the session.
-enum ChatBackend {
-    Mock,
-    #[cfg(feature = "backend-openai")]
-    Real {
-        provider: Box<dyn Provider + Send + Sync>,
-        runtime: Runtime,
-    },
-}
-
 impl ChatBackend {
     /// Run one talk completion (unconstrained, no tools).
     fn talk(&self, request: CompletionRequest, stream: bool) -> Result<Completion, String> {
@@ -319,20 +311,6 @@ impl ChatBackend {
     }
 }
 
-#[cfg(feature = "backend-openai")]
-fn build_real_backend(backend_opts: &BackendOpts) -> Result<ChatBackend, String> {
-    let runtime = Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    let provider = runtime.block_on(crate::backend::create_provider(backend_opts))?;
-    Ok(ChatBackend::Real { provider, runtime })
-}
-
-#[cfg(not(feature = "backend-openai"))]
-fn build_real_backend(_backend_opts: &BackendOpts) -> Result<ChatBackend, String> {
-    Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-openai`, or use --mock"
-        .to_string())
-}
-
 const HELP: &str = "\
 Commands:
   /do <request>   escalate this turn into the constrained agentic loop (it can
@@ -433,7 +411,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     let backend = match if args.mock {
         Ok(ChatBackend::Mock)
     } else {
-        build_real_backend(&backend_opts)
+        ChatBackend::real(&backend_opts)
     } {
         Ok(b) => b,
         Err(e) => {

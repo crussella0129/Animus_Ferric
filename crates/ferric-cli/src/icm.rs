@@ -32,13 +32,18 @@ use clap::{Args, Subcommand};
 use ferric_guard::Workspace;
 use ferric_icm::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_workspace};
 use ferric_loop::StopReason;
-// Only the feature-gated real backend names the `Provider` trait object.
-#[cfg(feature = "backend-openai")]
-use ferric_provider::Provider;
 use ferric_trace::JsonlSink;
 
 use crate::backend::{BackendArg, BackendOpts};
 use crate::query::{RunConfigArgs, build_run_config, mock_provider, now_ms, run_with_provider};
+
+/// The pipeline's backend, shared with `ferric chat` since sprint 103
+/// (ADR-094) — both had declared this enum and its constructor identically.
+/// The scripted mock is single-use, so a **fresh** one is built per stage (each
+/// stage is its own agent session). A real backend is stateless per request, so
+/// its provider and the one tokio runtime are built once and reused across
+/// every stage.
+use crate::backend::ResolvedBackend as Backend;
 
 #[derive(Args)]
 pub struct IcmArgs {
@@ -195,20 +200,6 @@ fn run_plan(workspace: &Path, show_context: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The pipeline's backend. The scripted mock is single-use, so a **fresh** one
-/// is built per stage (each stage is its own agent session — mirrors `ferric
-/// query` and the chat REPL's per-turn mock). A real backend is stateless per
-/// request, so its provider and the one tokio runtime are built once and reused
-/// across every stage.
-enum Backend {
-    Mock,
-    #[cfg(feature = "backend-openai")]
-    Real {
-        provider: Box<dyn Provider + Send + Sync>,
-        runtime: tokio::runtime::Runtime,
-    },
-}
-
 fn run_pipeline(args: IcmRunArgs) -> ExitCode {
     let ws = match IcmWorkspace::discover(&args.workspace) {
         Ok(ws) => ws,
@@ -286,7 +277,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
     let backend = if args.mock {
         Backend::Mock
     } else {
-        match build_real_backend(&backend_opts) {
+        match Backend::real(&backend_opts) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("icm run failed: {e}");
@@ -440,18 +431,4 @@ fn review_gate(stage_index: u32) -> bool {
         Ok(_) => !matches!(line.trim().to_ascii_lowercase().as_str(), "q" | "quit"),
         Err(_) => true,
     }
-}
-
-#[cfg(feature = "backend-openai")]
-fn build_real_backend(backend_opts: &BackendOpts) -> Result<Backend, String> {
-    let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    let provider = runtime.block_on(crate::backend::create_provider(backend_opts))?;
-    Ok(Backend::Real { provider, runtime })
-}
-
-#[cfg(not(feature = "backend-openai"))]
-fn build_real_backend(_backend_opts: &BackendOpts) -> Result<Backend, String> {
-    Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-openai`, or use --mock"
-        .to_string())
 }
