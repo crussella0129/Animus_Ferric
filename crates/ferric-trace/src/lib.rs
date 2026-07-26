@@ -52,6 +52,10 @@ mod tests {
                 // back in. A value only the writer could have produced is what
                 // makes the assertion mean something.
                 truncation_limit: 1_234,
+                // Not the serde default ("params"), for the same reason the
+                // cap above is not 4_000: a round-trip that used the default
+                // would pass even if the field were never serialized.
+                tier_source: "measured".to_string(),
             },
             Event::PromptComposed {
                 output_id: "system-prompt-nano-unified".to_string(),

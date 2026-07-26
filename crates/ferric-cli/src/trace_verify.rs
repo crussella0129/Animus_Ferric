@@ -74,6 +74,7 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
     let mut workspace_path = String::new();
     let mut policy = ferric_core::RunPolicy {
         tier: ferric_core::Tier::Small,
+        tier_source: ferric_core::TierSource::Params,
         uses_planner: false,
         max_plan_steps: 0,
         max_turns_per_step: 0,
@@ -106,11 +107,15 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
                 prompt_budget_tokens,
                 max_output_tokens,
                 truncation_limit: cap,
+                tier_source: src,
             } => {
                 protocol = *p;
                 truncation_limit = *cap;
                 policy = ferric_core::RunPolicy {
                     tier: *tier,
+                    // Restored, not re-derived: a re-run must not silently
+                    // relabel an overridden tier as measured (ADR-098).
+                    tier_source: ferric_core::TierSource::from_label(src),
                     uses_planner: false,
                     max_plan_steps: 0,
                     max_turns_per_step: 0,

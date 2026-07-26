@@ -125,6 +125,7 @@ mod tests {
             prompt_budget_tokens: 2_800,
             max_output_tokens: 512,
             truncation_limit,
+            tier_source: ferric_core::TierSource::Params.label().to_string(),
         }
     }
 

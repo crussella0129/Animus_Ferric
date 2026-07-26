@@ -142,6 +142,7 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                     protocol: None,
                     prompts_dir: None,
                     max_ring: None,
+                    tier: None,
                     profile_dir: Some(PathBuf::from(".ferric/profiles")),
                     no_stream: false,
                     resume: None,

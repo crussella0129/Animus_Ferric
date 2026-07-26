@@ -119,6 +119,11 @@ pub fn protocol_key(protocol: ActionProtocol) -> String {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunPolicy {
     pub tier: Tier,
+    /// Why this run is at this `tier` (ADR-098). Part of the decision, not
+    /// metadata about it: an earned tier and an asked-for tier produce
+    /// identical budgets, so without this the record cannot tell them apart.
+    #[serde(default)]
+    pub tier_source: TierSource,
     pub uses_planner: bool,
     pub max_plan_steps: u8,
     pub max_turns_per_step: u8,
@@ -209,13 +214,77 @@ fn tier_row(tier: Tier) -> (bool, u8, u8, u8, u8, u32, u32, bool, f32, u8) {
     }
 }
 
+/// Why a run ended up at the tier it did (ADR-098).
+///
+/// The tier decides turn/tool budgets, prompt and output ceilings, planner use,
+/// subagents, and the tool-ring ceiling — so "which tier" is the single most
+/// consequential fact about a run. Recording only the *answer* made two very
+/// different situations identical in the record: a tier a model **earned** on
+/// the benchmark ladder, and a tier an operator simply asked for.
+/// Fieldless on purpose: it round-trips losslessly through the one-word label
+/// the trace stores, and the measured *level* itself already lives in the
+/// profile store. What the record needs is the distinction, not the number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TierSource {
+    /// From a persisted `measured_level` — the model demonstrated it (ADR-029).
+    Measured,
+    /// Derived from the declared parameter count: the prior, not a measurement.
+    #[default]
+    Params,
+    /// Asked for outright by the operator (`--tier` / config `tier`).
+    Override,
+}
+
+impl TierSource {
+    /// Stable label for traces and diagnostics.
+    pub fn label(&self) -> &'static str {
+        match self {
+            TierSource::Measured => "measured",
+            TierSource::Params => "params",
+            TierSource::Override => "override",
+        }
+    }
+
+    /// Inverse of [`label`](Self::label). An unrecognized label reads back as
+    /// `Params` — the conservative answer, and what a pre-ADR-098 trace meant.
+    pub fn from_label(s: &str) -> Self {
+        match s {
+            "measured" => TierSource::Measured,
+            "override" => TierSource::Override,
+            _ => TierSource::Params,
+        }
+    }
+}
+
+/// Resolve the tier and *why*. Precedence: an explicit operator override wins,
+/// then a measured level, then the parameter-count prior.
+///
+/// The override sits on top rather than replacing the ladder because
+/// `params_b` is a **fact about the model**, not a dial. Before ADR-098 the
+/// only manual route to a tier was to misstate that fact — claiming 30B to
+/// reach `Large` — which corrupted an input the trace and the profile store
+/// both rely on, and left "measured Large" and "claimed 30B" indistinguishable
+/// afterwards. An override is an honest, separately recorded operator decision;
+/// ADR-006 rules out runtime *heuristics*, and a config-supplied choice is not
+/// one.
+pub fn tier_decision(profile: &ModelProfile, override_tier: Option<Tier>) -> (Tier, TierSource) {
+    match (override_tier, profile.measured_level) {
+        (Some(t), _) => (t, TierSource::Override),
+        (None, Some(level)) => (tier_for_level(level), TierSource::Measured),
+        (None, None) => (tier_for_params(profile.params_b), TierSource::Params),
+    }
+}
+
 /// The scale function. Pure and total: identical profiles always produce
 /// identical policies.
 pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
-    let tier = match profile.measured_level {
-        Some(level) => tier_for_level(level),
-        None => tier_for_params(profile.params_b),
-    };
+    policy_for_with_override(profile, None)
+}
+
+/// `policy_for` with an explicit operator tier override (ADR-098).
+pub fn policy_for_with_override(profile: &ModelProfile, override_tier: Option<Tier>) -> RunPolicy {
+    let (tier, tier_source) = tier_decision(profile, override_tier);
     let (
         uses_planner,
         max_plan_steps,
@@ -233,6 +302,7 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
     let prompt_budget_tokens = ((profile.ctx as u64 * 7 / 10) as u32).min(budget_cap);
     RunPolicy {
         tier,
+        tier_source,
         uses_planner,
         max_plan_steps,
         max_turns_per_step,
@@ -265,6 +335,92 @@ mod tests {
     fn policy_for_is_deterministic() {
         let p = profile(7.0, Some(3));
         assert_eq!(policy_for(&p), policy_for(&p.clone()));
+    }
+
+    // --- ADR-098: an operator tier, and saying so ---
+
+    /// The complaint this answers: before `--tier`, the only manual route to a
+    /// tier was to misstate `params_b`. That is a *fact* about the model, so
+    /// the dishonest route corrupted an input the profile store and trace both
+    /// rely on — and afterwards nothing could tell an earned tier from a
+    /// claimed one.
+    #[test]
+    fn an_override_beats_both_measurement_and_size() {
+        // A 7B measured at level 6 would otherwise be Large.
+        let measured = profile(7.0, Some(6));
+        assert_eq!(policy_for(&measured).tier, Tier::Large);
+
+        // Held DOWN — the override works in both directions, which the
+        // params route never could without claiming the model was tiny.
+        let held = policy_for_with_override(&measured, Some(Tier::Nano));
+        assert_eq!(held.tier, Tier::Nano);
+        assert_eq!(held.tier_source, TierSource::Override);
+
+        // Lifted UP, with no lie about size.
+        let small = profile(7.0, None);
+        assert_eq!(policy_for(&small).tier, Tier::Small);
+        let lifted = policy_for_with_override(&small, Some(Tier::Large));
+        assert_eq!(lifted.tier, Tier::Large);
+        assert_eq!(lifted.tier_source, TierSource::Override);
+    }
+
+    /// The source has to distinguish the three routes, or the override just
+    /// recreates the ambiguity it was added to remove.
+    #[test]
+    fn tier_source_records_which_route_was_taken() {
+        assert_eq!(
+            tier_decision(&profile(7.0, Some(6)), None).1,
+            TierSource::Measured
+        );
+        assert_eq!(
+            tier_decision(&profile(7.0, None), None).1,
+            TierSource::Params
+        );
+        assert_eq!(
+            tier_decision(&profile(7.0, Some(6)), Some(Tier::Large)).1,
+            TierSource::Override
+        );
+    }
+
+    /// Same tier, different provenance: the budgets are identical, so the
+    /// label is the ONLY thing separating them. This is the whole argument for
+    /// recording it.
+    #[test]
+    fn an_earned_large_and_an_asked_for_large_differ_only_in_the_label() {
+        let earned = policy_for(&profile(7.0, Some(6)));
+        let asked = policy_for_with_override(&profile(7.0, None), Some(Tier::Large));
+
+        assert_eq!(earned.tier, asked.tier);
+        assert_eq!(earned.max_turns, asked.max_turns);
+        assert_eq!(earned.max_tools, asked.max_tools);
+        assert_eq!(earned.max_output_tokens, asked.max_output_tokens);
+        assert_ne!(
+            earned.tier_source, asked.tier_source,
+            "identical budgets — provenance is the only distinguishing field"
+        );
+    }
+
+    #[test]
+    fn tier_source_labels_round_trip() {
+        for s in [
+            TierSource::Measured,
+            TierSource::Params,
+            TierSource::Override,
+        ] {
+            assert_eq!(TierSource::from_label(s.label()), s);
+        }
+        // An unknown label reads back conservatively, which is also what a
+        // pre-ADR-098 trace means.
+        assert_eq!(TierSource::from_label("who knows"), TierSource::Params);
+    }
+
+    /// `policy_for` must stay exactly what it was for every existing caller.
+    #[test]
+    fn policy_for_is_unchanged_without_an_override() {
+        assert_eq!(
+            policy_for(&profile(7.0, Some(6))),
+            policy_for_with_override(&profile(7.0, Some(6)), None)
+        );
     }
 
     #[test]

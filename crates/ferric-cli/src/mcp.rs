@@ -228,6 +228,12 @@ pub struct McpArgs {
     pub modality: Option<String>,
 
     /// Cap the active tool ring (ADR-028).
+    /// Run at this tier regardless of size or measured level (ADR-098).
+    /// Recorded as `tier_source: "override"` so an asked-for tier is never
+    /// mistaken for one earned on the benchmark ladder.
+    #[arg(long, value_enum)]
+    pub tier: Option<crate::query::TierArg>,
+
     #[arg(long)]
     pub max_ring: Option<u8>,
 
@@ -516,6 +522,7 @@ impl McpServer {
         let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
         let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
         let resolved_max_ring = args.max_ring.or(cfg.max_ring);
+        let resolved_tier = args.tier.or(cfg.tier);
         let resolved_profile_dir = args
             .profile_dir
             .clone()
@@ -543,6 +550,7 @@ impl McpServer {
             protocol_override: args.protocol,
             prompts_dir: args.prompts_dir.clone(),
             max_ring: resolved_max_ring,
+            tier_override: resolved_tier.map(Into::into),
             profile_dir: resolved_profile_dir,
             // C-001 (plan-critic): derived from the POST-merge, config-
             // resolved `model`/`model_file` (already merged above into
@@ -723,6 +731,7 @@ mod tests {
             mock: true,
             modality: None,
             max_ring: None,
+            tier: None,
             profile_dir: None,
             resume: None,
         }
@@ -863,6 +872,7 @@ mod tests {
             workspace_root: std::path::PathBuf::from("."),
             requested_skills: Vec::new(),
             allowed_skills: Vec::new(),
+            tier_override: None,
             mock: true,
             backend: crate::backend::BackendArg::Openai,
             params_b: 1.2,
