@@ -879,3 +879,16 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-19
 - **Files modified:** crates/ferric-loop/src/{run.rs,lib.rs}, crates/ferric-tools/src/registry.rs, crates/ferric-cli/src/{query.rs,mcp.rs,chat.rs,api.rs,icm.rs,launch.rs,trace_verify.rs}, crates/ferric-loop/tests/{accept_edits.rs,common/mod.rs,streaming_tests.rs,hooks_tests.rs,backoff_tests.rs,compaction_tests.rs,resume_tests.rs}, decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md, README.md, docs/commands.md, docs/demo-guide.md
 - **Commit:** pending
+
+
+## T-10201 (sprint 102)
+- **Description:** The model-facing truncation cap gets one source. `PolicySelected` gains `truncation_limit` (serde-defaulted, so pre-sprint-102 traces parse to the value those runs actually used); `TraceProjector` sets its cap from that event and nowhere else (`with_truncation_limit` deleted — one field, one assignment path); `run()` emits the registry's value; `trace verify` builds its registry from the traced value instead of `Registry::new()`. `DEFAULT_TRUNCATION_LIMIT` moves to `ferric-core` so the event, the registry and the projector share one constant without depending on each other, re-exported from `ferric-tools` so every existing call site is unchanged. `trace cat` now prints the cap. **Second defect fixed, found by smoke-testing the command just edited:** `ferric trace verify` reconstructed its script by building a `Completion` at each `TurnEnd`, but `run()` writes `TurnEnd` *before* dispatch, so a turn's `ToolCall`s follow it — every turn got the previous turn's calls and the last turn's were dropped, losing the terminator. Any trace with a tool call reported drift. Now holds the turn open and closes it on the next `TurnStart`/`SessionEnd`, with an EOF flush for killed traces — `replay()`'s existing rule. 5 tests: run-vs-replay context-window equality at a non-default cap (+ a default-cap positive control), the projector taking the cap from the event, a literal pre-ADR-093 policy line reading back at the default, and an end-to-end `trace verify` against a real `run()` trace. Both fixes confirmed by reverting them and watching the tests fail.
+- **Completed:** 2026-07-26
+- **Files modified:** crates/ferric-core/src/{lib.rs,scale.rs}, crates/ferric-tools/src/registry.rs, crates/ferric-trace/src/{event.rs,lib.rs}, crates/ferric-loop/src/{projector.rs,replay.rs,run.rs}, crates/ferric-loop/tests/tool_output_truncation_tests.rs, crates/ferric-cli/src/{trace_verify.rs,trace_cmd.rs}, crates/ferric-cli/tests/cli.rs
+- **Commit:** pending
+
+## T-10202 (sprint 102)
+- **Description:** Corrected the record. ADR-074's A1 bullet claimed the projector kept run and replay "identical by construction"; the shared-formatting half stands, the word "identical" did not, and the bullet is amended in place now that the property actually holds. E3 closed in the backlog with what the entry got wrong in **both** directions: `compact.rs:224` is a `#[cfg(test)]` helper and was never a second source, while `trace_verify.rs` was a real third site the entry never named. ADR-093 written.
+- **Completed:** 2026-07-26
+- **Files modified:** decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
+- **Commit:** pending

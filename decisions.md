@@ -1205,6 +1205,12 @@ failures**, clippy and fmt clean.
   `Registry::truncation_limit()` — making `with_truncation_limit` reach the model
   for the first time. 4 tests covering **both** halves of the contract, because
   testing one half is how this was lost.
+  **Corrected sprint 102 (ADR-093):** "identical by construction" was an
+  over-claim. Sharing the *formatting* logic was real and is what this bullet
+  got right; but the projector's limit was seeded from the registry in `run()`
+  and from the default everywhere else, and a shared function fed a different
+  parameter from a different source is not identical by construction. The cap
+  now travels in the trace, so the property holds as stated.
 - **A2 — taint the content, and at a granularity that can match.** The live path
   tainted `digest.source` (harness-stamped, trusted) while injecting
   `digest.summary` (untrusted), inverting ADR-044 in both directions at once.
@@ -2247,3 +2253,80 @@ The general rule this keeps re-deriving: **when the expected result is an
 absence, an unrelated failure is indistinguishable from success.** A denial test
 needs a positive control in the same session — which is why the marker-present
 runs matter as much as the marker-absent one.
+
+## ADR-093 — 2026-07-26 (sprint 102): the truncation cap gets one source, and `trace verify` starts verifying
+
+Closes backlog **E3**, open since the sprint-84 audit. Workspace 569 → **574
+tests, 0 failures**, clippy and fmt clean.
+
+**The entry was wrong in both directions** — the same shape as B1 in ADR-089.
+It named three sites; one was not a site and one site was missing.
+
+- `compact.rs:224` is inside `#[cfg(test)]` (line 148). `maybe_compact` takes
+  `&TraceProjector` and inherits whatever `run()` built, so the compaction path
+  was never a second source of the cap.
+- **`ferric-cli/src/trace_verify.rs` was, and was not in the entry.** It
+  restores `tier`, `protocol`, `max_turns`, `max_tools` and both token budgets
+  from `PolicySelected`, then built `Registry::new()` — silently substituting a
+  default for the one knob the event does not carry.
+
+**Root cause: the cap was not in the trace.** Not three independent oversights.
+`run()` was correct only because it holds the live `Registry` — the one context
+where the trace isn't the source. `replay` and `trace verify` have only the
+file, so neither *could* know, and both assumed 4,000.
+
+So the fix is not "pass the limit to replay". `PolicySelected` now carries
+`truncation_limit`, the projector takes it from that event and from nowhere
+else (`with_truncation_limit` is deleted — one field, one assignment path), and
+`trace verify` builds its registry from the traced value.
+`DEFAULT_TRUNCATION_LIMIT` moves to `ferric-core` so the event, the registry
+and the projector share one constant without any of them depending on each
+other; `ferric-tools` re-exports it, so every existing call site is unchanged.
+Old traces have no such key and parse to the default via `#[serde(default)]` —
+which is exactly what those runs used, verified against a real pre-sprint-102
+trace on disk (`trace cat` reads `tool output cap 4000` from a line that
+genuinely lacks the field).
+
+**ADR-074's wording is corrected in place, not just here.** It claimed the
+projector keeps run and replay "identical by construction". The shared
+*formatting* half was true and stands; the word *identical* was not — a shared
+function fed a different parameter from a different source is not identical by
+construction. That property now actually holds, so the sentence is amended
+rather than deleted.
+
+**A second defect, found by driving the command I had just edited:
+`ferric trace verify` had never verified anything.** Smoke-testing the change
+produced `Mismatch in number of events: 16 vs golden 14` on a clean mock run.
+`run()` writes `TurnEnd` **before** dispatching, so a turn's own `ToolCall`
+events land *after* it — confirmed directly in a real trace (`turn_end` at #6,
+`tool_call` at #7). Building the scripted `Completion` at `TurnEnd` therefore
+paired every turn with the **previous** turn's calls and dropped the final
+turn's entirely, so **the terminator was never replayed** and the re-run always
+overran its script. Any trace carrying a tool call reported drift, which means
+a real drift and this bug were indistinguishable — a drift detector that always
+says "drift" detects nothing. Fixed with the rule `replay()` already used:
+hold the turn open, close it when a later `TurnStart`/`SessionEnd` proves
+dispatch finished, and flush at EOF for a killed trace.
+
+That defect is the sprint's theme stated twice: **`trace_verify.rs` is a
+second, hand-written reader of a format `TraceProjector` already reads
+correctly, and it drifted** — the protocol key (six copies, ADR-089), the trace
+directory (six, ADR-090), the skill parser (two, ADR-091), and now the trace
+walk itself. The cap fix and the assembly fix are the same lesson at different
+altitudes: one artifact, one reader.
+
+**Method note.** Both fixes were confirmed by reverting them and watching the
+new tests fail — and the first attempt at that was itself wrong. Disabling the
+projector's new behaviour broke run *and* replay symmetrically, so they still
+agreed and the headline equality passed; only the sanity assertion caught it.
+Reproducing the original bug faithfully meant restoring run's registry-seeded
+cap while leaving replay on the default. **A revert that breaks both sides of
+an equality does not test the equality.** This is the same rule sprint 101
+recorded from the other end: verify that the check could have detected the
+thing it is reporting absent.
+
+**Deliberately not done:** no CLI flag or config key for the cap. Making it
+configurable is what would turn this latent bug live; the plumbing had to be
+correct first. `trace verify` under a non-default cap therefore remains
+verified by construction and not by execution, and this says so rather than
+implying coverage that does not exist.

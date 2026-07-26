@@ -64,8 +64,9 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             max_tools,
             prompt_budget_tokens,
             max_output_tokens,
+            truncation_limit,
         }) => format!(
-            "policy selected: {tier:?}/{protocol:?} (turns {max_turns}, tools {max_tools}, prompt budget {prompt_budget_tokens}, output budget {max_output_tokens})"
+            "policy selected: {tier:?}/{protocol:?} (turns {max_turns}, tools {max_tools}, prompt budget {prompt_budget_tokens}, output budget {max_output_tokens}, tool output cap {truncation_limit})"
         ),
         ParsedEvent::Known(Event::PromptComposed {
             output_id,

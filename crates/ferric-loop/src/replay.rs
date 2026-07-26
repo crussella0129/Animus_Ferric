@@ -113,6 +113,10 @@ mod tests {
     }
 
     fn policy_selected(protocol: ActionProtocol) -> Event {
+        policy_selected_with_cap(protocol, ferric_core::DEFAULT_TRUNCATION_LIMIT)
+    }
+
+    fn policy_selected_with_cap(protocol: ActionProtocol, truncation_limit: usize) -> Event {
         Event::PolicySelected {
             tier: ferric_core::Tier::Nano,
             protocol,
@@ -120,6 +124,7 @@ mod tests {
             max_tools: 10,
             prompt_budget_tokens: 2_800,
             max_output_tokens: 512,
+            truncation_limit,
         }
     }
 
@@ -589,6 +594,61 @@ mod tests {
 
         assert_eq!(replayed.messages, expected_prefix());
         assert_eq!(replayed.turns, 0);
+    }
+
+    /// ADR-093: the projector takes its model-facing cap from the trace, so a
+    /// replay of a run that used a non-default cap re-truncates at that cap
+    /// rather than at the default. Before this, `replay()` built the projector
+    /// with `TraceProjector::new()` and could only ever assume 4,000.
+    #[test]
+    fn replay_takes_the_truncation_cap_from_the_trace() {
+        let long = "X".repeat(5_000);
+        let events = vec![
+            Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: None,
+            },
+            policy_selected_with_cap(ActionProtocol::ConstrainedJson, 500),
+            session_prompt(),
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: Some(r#"{"tool":"read_file","args":{"path":"a.txt"}}"#.to_string()),
+                tool_call_count: 0,
+                input_tokens: Some(50),
+                output_tokens: Some(10),
+                truncated: false,
+            },
+            Event::ToolCall {
+                id: "g-0-0".to_string(),
+                name: "read_file".to_string(),
+                args: json!({"path": "a.txt"}),
+            },
+            // The trace keeps the FULL output (ADR-002); the cap applies only
+            // when the context window is rebuilt from it.
+            Event::ToolResult {
+                id: "g-0-0".to_string(),
+                name: "read_file".to_string(),
+                output: long.clone(),
+                is_error: false,
+                duration_ms: 1,
+            },
+            Event::TurnStart { turn: 1 },
+        ];
+        let (_dir, path) = write_trace(&events);
+        let replayed = replay(&path).unwrap();
+
+        let result_msg = replayed.messages[3].text.as_deref().unwrap();
+        let len = result_msg.chars().count();
+        assert!(
+            len < 1_000,
+            "the traced cap of 500 must apply, but the rebuilt result carries \
+             {len} chars — the default of {} was used instead",
+            ferric_core::DEFAULT_TRUNCATION_LIMIT
+        );
+        // The control: without a cap in play the same shape is far longer, so
+        // the assertion above is measuring the cap and not some other clipping.
+        assert!(long.chars().count() > 4_000);
     }
 
     #[test]

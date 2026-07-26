@@ -46,6 +46,12 @@ mod tests {
                 max_tools: 6,
                 prompt_budget_tokens: 2_800,
                 max_output_tokens: 512,
+                // Deliberately NOT the default: at 4_000 this round-trip would
+                // pass even if the field were never serialized at all, because
+                // the serde default would supply the same number on the way
+                // back in. A value only the writer could have produced is what
+                // makes the assertion mean something.
+                truncation_limit: 1_234,
             },
             Event::PromptComposed {
                 output_id: "system-prompt-nano-unified".to_string(),
@@ -163,6 +169,30 @@ mod tests {
                 text: "hi".to_string()
             })
         );
+    }
+
+    /// ADR-093 added `truncation_limit` to `policy_selected`. Every trace
+    /// written before it lacks the key, and those runs all used the default —
+    /// so reading one must produce the default, not fail and not guess.
+    /// Asserted against a literal pre-ADR-093 line rather than a re-serialized
+    /// new one, because only the literal proves what is actually on disk.
+    #[test]
+    fn a_pre_adr_093_policy_line_reads_back_at_the_default_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trace.jsonl");
+        let old_line = r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"policy_selected","tier":"nano","protocol":"constrained_json","max_turns":15,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#;
+        std::fs::write(&path, format!("{old_line}\n")).unwrap();
+
+        let records: Vec<_> = TraceReader::open(&path)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        match &records[0].event {
+            ParsedEvent::Known(Event::PolicySelected {
+                truncation_limit, ..
+            }) => assert_eq!(*truncation_limit, ferric_core::DEFAULT_TRUNCATION_LIMIT),
+            other => panic!("expected a Known PolicySelected, got {other:?}"),
+        }
     }
 
     #[test]
