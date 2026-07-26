@@ -2399,3 +2399,57 @@ Not claimed: the `Real` branch against an actual model. It is the same two calls
 it was before, moved, and this sprint changes no request, prompt or policy —
 calling that live coverage would be the overstatement this project keeps
 correcting.
+
+## ADR-095 — 2026-07-26 (sprint 104): a closed port was a decision, and the record had been arguing with it
+
+No code behaviour changes. 575 tests stay green; this ADR corrects a standing
+instruction that should never have been written as one.
+
+**What happened.** Sprint 97 probed the tailnet, found ZimaBoard2 refusing port
+22, and recorded: *"Unblocking is one command on ZimaBoard2:
+`tailscale up --ssh`."* Sprint 103 carried that forward into the README's
+"Next" line. The user then said plainly: **"ssh is blocked on the zimaboard, bc
+I don't want sshing into it"** — the box online and healthy, nothing changed.
+
+**The mistake was not the probe, it was the conclusion.** `connectex: actively
+refused` is exactly what a deliberate posture looks like from outside; **a
+closed port and a broken service are indistinguishable to a scanner, and the
+difference lives entirely with the owner.** Having found the absence, the
+report inferred a gap and then prescribed the fix — which here meant a
+project's own backlog instructing its owner to open SSH on a machine they had
+deliberately closed. That is the same failure this project keeps naming from
+other angles: **a value computed from partial information, reported as the
+whole picture.** Sprint 101 put it as "when the expected result is an absence,
+an unrelated failure is indistinguishable from success"; this is its sibling —
+*an absence you did not cause is not necessarily a defect.*
+
+The rule going forward: **when a probe finds something switched off on hardware
+someone else owns, record the observation and ask; do not infer intent and
+never prescribe re-enabling it.**
+
+**The design implication is the substantive finding, and it outlives the
+correction.** `TailnetFsRetriever` offers only `SshTransport`, so the only
+*remote* filesystem plane Ornstein has cannot be exercised in the environment
+of record — not "not yet", but not at all. And its security core,
+`shell_single_quote`, exists solely because `ssh` runs its command through the
+**remote** shell: the transport creates the very injection threat the escaping
+defends against. A plane whose one live target is unreachable by design is a
+design question (generalise the transport, or retire it), not the
+test-coverage chore the backlog had been carrying for seven sprints.
+
+**And the SSH-free path needs none of that code.** Measured from tec-xx against
+`100.95.64.15` (direct connection): **445/SMB, 139, 80/HTTP, 2049/NFS open; 22,
+443, 5000 closed.** A mounted share is just a filesystem path, so
+`LocalFsRetriever` with the mount point as its confined root already serves it.
+What is missing is not a retriever — it is a mount. `net view` returns
+"System error 5 — Access is denied" (SMB is up; enumeration needs
+authentication), Windows has no `showmount` so the NFS client feature is not
+installed, and no drives are mapped. **The credentials are the user's to
+supply, in their own tooling — not something to be typed here.**
+
+**One thing to verify before claiming the local plane covers a network share:**
+`ferric-guard`'s `Workspace` canonicalizes its root, which on Windows turns a
+UNC path into a `\?\UNC\...` prefix. Whether containment still holds on that
+shape is untested and untestable here without a mount. Recording it so the
+"LocalFsRetriever already covers it" claim is not mistaken for a verified one —
+it is a design reading, and it has an open question attached.
