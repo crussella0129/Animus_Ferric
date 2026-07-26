@@ -1884,3 +1884,143 @@ is *mounted at `/workspace` inside the container*, next to the fixtures it reads
 by absolute path. Moving it to `tools/` would have put it outside the mount it
 operates on. The two dialects stay: rewriting either side means re-validating it
 against a live model, which costs more than the inconsistency.
+
+## ADR-088 — 2026-07-25 (sprint 97): the compose stack had never worked, and what that hid
+
+**Context.** `docker-ferric-core-1` had been crash-looping since **2026-07-14**,
+noticed in passing during sprint 96's leak check. Investigating it turned up
+five defects, four of which were only reachable by actually running the thing.
+
+**1 — the crash loop.** `docker/Dockerfile` sets `ENTRYPOINT ["ferric"]`;
+compose set `command: tail -f /dev/null`. Compose's `command` replaces `CMD`,
+not `ENTRYPOINT`, so the container ran **`ferric tail -f /dev/null`** →
+`unrecognized subcommand 'tail'` → exit → `restart: unless-stopped` → loop, for
+eleven days. Overriding `entrypoint` is what detaches an idle command from the
+image's binary.
+
+**2 — the docker socket mount.** `/var/run/docker.sock` was bind-mounted into
+`ferric-core` for the sprint-45 design where ferric launched sibling fetch
+containers. Measured, it was **doubly non-functional**: the image ships no
+docker CLI, and the socket is `root:root 0660` while the container runs as uid
+10001. So it did nothing — while staging a host-root-equivalent escape for
+whoever later added a docker client or ran as root. Mounting the docker socket
+into the container that handles untrusted content defeats the airlock it sits
+beside. Removed; the airlock runs on the host and needs nothing there.
+
+**3 — the squid `allowlist-proxy` was a known-defeated design.** Deleted along
+with `docker/squid.conf`. It sat on a **bridge** network, and ADR-082
+established that a proxy on a bridge is bypassable — the sandbox keeps a route
+out, so `unset http_proxy && wget …` walks past it. That bypass is now a test.
+Its allowlist was also a hardcoded `.example.com`/`.wikipedia.org` pair, where
+the airlock derives the allowlist from the URLs actually requested. Nothing in
+`crates/` referenced squid, port 3128, or `proxy-net`. Leaving it would have
+published a defeated topology as the platform's egress story.
+
+**4 — a tracked `.env` pinned to one machine's NAS.** `docker/.env` was
+**committed** with `MODELS_PATH=Y:\Models\gguf`, so it overrode the compose
+default on every checkout and `up` failed anywhere that drive was not mapped —
+which is what it did here. Untracked and gitignored, with a `.env.example`.
+The default now points at the shared suite store, `../../Animus/Models`, so one
+GGUF directory serves every Animus component instead of a copy per repo.
+
+**5 — `ferric server down` could not kill anything in a slim container, and
+threw away the evidence.** `kill_pid` exec'd `kill(1)` directly. `procps` is not
+installed in `debian-bookworm-slim`, so the spawn failed with "not found",
+`status` came back `Err`, and `down` reported *"could not kill pid 50 (already
+gone?)"* — while llama-server carried on serving. Worse, it deleted the runfile
+anyway, orphaning a live process and discarding the only record of its PID. Two
+fixes: route through `sh -c` (`kill` is a POSIX **shell builtin**, so nothing
+need be installed), and **keep the runfile when the process is still alive** so
+a retry is possible.
+
+**The zombie, which was our own doing.** Verifying the kill, `kill -0` kept
+reporting the process alive after SIGKILL. It was a **zombie** — `state=Z
+ppid=1` — because the idle `sleep` chosen in fix 1 became PID 1, and `sleep`
+does not reap. A zombie answers `kill -0` successfully, so the new "keep the
+runfile while alive" logic would have refused to clean up an already-dead
+process *forever*. Both halves fixed: `init: true` gives the container a real
+init, and `process_alive` reads `/proc/<pid>/stat` on Linux and treats `Z` as
+dead, falling back to `kill -0` elsewhere.
+
+**What this says about the method.** Every one of these needed the stack to
+actually run. The compose file reviewed as sensible, and its `command:` line is
+a plausible-looking idiom that happens to be wrong for an image with an
+`ENTRYPOINT`. The socket mount, the squid service, and the `.env` all *looked*
+like configuration; they were three different kinds of stale. And fix 1 created
+the zombie that broke fix 5 — the failure modes were coupled through the
+container's process model, which no unit test observes.
+
+**Verified live.** Stack up and stable; `ferric --version`, `llama-server`, both
+mounts, and the socket confirmed absent. Then a full constrained run **inside
+the container** against the mounted 3B — `write_file` → `task_complete` in 2
+turns — with the file landing on the host through the bind mount. That is the
+first time this stack has done any work at all.
+
+**`ps` is not installed either.** An early check ran `ps … || echo 'none
+running'` and printed "none running" while the server was serving. `ps` was
+absent, so the `||` fired. Same shape as ADR-086/087: **a negative result whose
+reason went unverified.** `/proc` settled it. When a check reports absence,
+confirm the check could have detected presence.
+
+## ADR-089 — 2026-07-25 (sprint 98): B1 was mis-scoped in both directions
+
+**Context.** The sprint-82 audit filed B1 as: *"retire
+`Protocol::{FencedCode, EditFormat}` — never constructed or matched, but
+serialized into profiles and traces, so removal is a schema change with a
+migration, not a deletion."* Both halves of that turned out to be wrong.
+
+**It is not a schema change.** The migration risk was checked rather than
+assumed:
+
+- `model_profiles.json` stores `protocol` as a **`String`**
+  (`ModelProfileRecord`), not the enum. The on-disk value is `"ConstrainedJson"`
+  — PascalCase — which `Protocol`'s `#[serde(rename_all = "snake_case")]` could
+  not even have produced.
+- Traces serialize **`ActionProtocol`**, the live four-variant enum, not
+  `Protocol`.
+- No artifact anywhere on disk contains `fenced_code` or `edit_format`, which
+  follows from the variants never being constructed.
+
+`Protocol` reached no persisted artifact at all. There was nothing to migrate.
+
+**It is bigger than two variants.** `Protocol`'s only use was the field
+`RunPolicy.protocol`, always set to `ConstrainedJson`, and *never read* — the
+only sites consulting it are two test assertions. The real protocol decision has
+been `ActionProtocol`, chosen by `select_protocol` from backend capabilities,
+since ADR-015/022. So the whole enum and the field went, not two variants: a
+constant field that nothing reads is not a schema, it is residue.
+
+**What the cleanup actually found.** Profiles are keyed on `(model, protocol)`
+where protocol is a free-form `String`. **Six** call sites — one reader in
+`ferric query`, five writers across bench and toolbench — each independently
+wrote `format!("{protocol:?}")`. They agreed only because every one of them
+happened to reach for `Debug`.
+
+That is worth more than the deletion, because the failure mode is silent. Rename
+an `ActionProtocol` variant, or switch a single site to `Display` or serde, and
+`read_profile` misses. **A miss is a deliberate, documented safe no-op**
+(ADR-029) — so the model quietly runs at its params-derived tier instead of its
+measured one, and nothing anywhere reports a problem. The 7B would drop from
+Large to Small and the only symptom would be that it got worse.
+
+Now one `protocol_key(ActionProtocol) -> String` in `ferric-core`, used by all
+six, with two tests: one pinning the exact strings as a persistence contract,
+one asserting the shared function still agrees with the `Debug` format it
+replaced — because unifying the sites *around a different string* would itself
+have been the orphaning change it was meant to prevent.
+
+Grepping caught two of the six only on a second pass, after the first
+`grep`-and-replace looked complete. A partial unification would have been worse
+than none: two key formats in one file, and profiles that resolve or not
+depending on which command wrote them.
+
+**Verified against the real file**, not a fixture: `ferric query --model
+qwen2.5-coder-7b --profile-dir benchmarks` prints `measured_level Some(6)`,
+matching ADR-086's calibration.
+
+**The pattern.** The audit's B1 entry was itself an instance of what this series
+keeps finding — a claim inferred from the shape of the code (an enum with serde
+derives *looks* persisted) and recorded as established fact, where thirty
+seconds of looking at the actual JSON would have settled it. It sat in the
+backlog for sixteen sprints as a task nobody wanted because it was labelled a
+migration.

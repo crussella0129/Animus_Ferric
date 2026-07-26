@@ -43,20 +43,6 @@ pub enum Tier {
     Ultra,
 }
 
-/// The action format the model is asked to use.
-///
-/// `ConstrainedJson` is the default everywhere because the harness owns
-/// decoding; `FencedCode` and `EditFormat` are downgrade paths for backends
-/// that cannot enforce grammars (capability-driven, selected by the loop —
-/// not by model size).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Protocol {
-    ConstrainedJson,
-    FencedCode,
-    EditFormat,
-}
-
 /// How the loop talks to the backend about actions (ADR-015/022). Selected
 /// from backend `Capabilities` by `select_protocol`:
 ///
@@ -84,11 +70,37 @@ pub enum ActionProtocol {
     Plan,
 }
 
+/// The string that identifies a protocol in `model_profiles.json`.
+///
+/// Profiles are keyed on `(model, protocol)` where protocol is a free-form
+/// `String`, and until sprint 98 four call sites — one reader in `ferric query`
+/// and three writers in bench/toolbench — each independently wrote
+/// `format!("{protocol:?}")`. They agreed only because they all happened to
+/// reach for `Debug`.
+///
+/// That is a bad thing to leave implicit, because the failure is silent:
+/// renaming a variant, or switching one site to `Display` or serde, makes
+/// `read_profile` miss, and a miss is deliberately **a safe no-op** (ADR-029) —
+/// so the model runs at its params-derived tier instead of its measured one and
+/// nothing reports a problem. `tier_table_snapshot`-style breakage would be
+/// obvious; this would not.
+///
+/// One definition, and a test pinning the exact strings, so a rename breaks
+/// loudly instead of degrading quietly.
+pub fn protocol_key(protocol: ActionProtocol) -> String {
+    match protocol {
+        ActionProtocol::NativeTools => "NativeTools",
+        ActionProtocol::ConstrainedJson => "ConstrainedJson",
+        ActionProtocol::TextXml => "TextXml",
+        ActionProtocol::Plan => "Plan",
+    }
+    .to_string()
+}
+
 /// Everything the agent loop needs to know about how to run a given model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunPolicy {
     pub tier: Tier,
-    pub protocol: Protocol,
     pub uses_planner: bool,
     pub max_plan_steps: u8,
     pub max_turns_per_step: u8,
@@ -203,7 +215,6 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
     let prompt_budget_tokens = ((profile.ctx as u64 * 7 / 10) as u32).min(budget_cap);
     RunPolicy {
         tier,
-        protocol: Protocol::ConstrainedJson,
         uses_planner,
         max_plan_steps,
         max_turns_per_step,
@@ -260,7 +271,6 @@ mod tests {
     fn nano_policy_shape() {
         let policy = policy_for(&profile(1.0, None));
         assert_eq!(policy.tier, Tier::Nano);
-        assert_eq!(policy.protocol, Protocol::ConstrainedJson);
         assert!(policy.uses_planner);
         assert!(policy.max_tools <= 10);
         assert_eq!(policy.prompt_budget_tokens, 2_800);
@@ -318,5 +328,42 @@ mod tests {
         // Nano's cap (2800) binds before 70% of context does.
         let nano = policy_for(&profile(1.0, None));
         assert_eq!(nano.prompt_budget_tokens, 2800);
+    }
+
+    /// Pins the on-disk profile keys. These strings are a **persistence
+    /// contract**: `benchmarks/model_profiles.json` already contains
+    /// `"protocol": "ConstrainedJson"`, and `ferric query` looks a record up by
+    /// this exact value. Changing one silently orphans every stored profile —
+    /// `read_profile` misses, the miss is a documented safe no-op (ADR-029), and
+    /// the model quietly drops to its params-derived tier.
+    ///
+    /// So this test is not restating the implementation. It is the thing that
+    /// makes a variant rename a visible failure instead of a silent capability
+    /// regression.
+    #[test]
+    fn protocol_keys_match_what_is_already_on_disk() {
+        assert_eq!(
+            protocol_key(ActionProtocol::ConstrainedJson),
+            "ConstrainedJson"
+        );
+        assert_eq!(protocol_key(ActionProtocol::NativeTools), "NativeTools");
+        assert_eq!(protocol_key(ActionProtocol::TextXml), "TextXml");
+        assert_eq!(protocol_key(ActionProtocol::Plan), "Plan");
+    }
+
+    /// The keys were `format!("{:?}")` at every call site before sprint 98.
+    /// Existing profiles were written that way, so the shared function must keep
+    /// producing exactly that — otherwise unifying the sites would itself have
+    /// been the orphaning change it was meant to prevent.
+    #[test]
+    fn protocol_key_still_agrees_with_the_debug_format_it_replaced() {
+        for p in [
+            ActionProtocol::ConstrainedJson,
+            ActionProtocol::NativeTools,
+            ActionProtocol::TextXml,
+            ActionProtocol::Plan,
+        ] {
+            assert_eq!(protocol_key(p), format!("{p:?}"), "key drifted for {p:?}");
+        }
     }
 }

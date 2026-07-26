@@ -44,3 +44,11 @@ e2e_log_*.txt
 /ring*.jsonl
 /calib*.md
 /calib*.jsonl
+
+# Local compose overrides. MODELS_PATH is machine-specific — this file was
+# TRACKED and pinned to a NAS drive (`Y:\Models\gguf`), so it overrode the
+# compose default on every checkout and broke `docker compose up` anywhere that
+# drive was not mapped. Found in sprint 96 as the reason the stack could not
+# start. The default now points at the shared suite store; override here only if
+# yours lives elsewhere.
+docker/.env

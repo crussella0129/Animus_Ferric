@@ -19,16 +19,41 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    # Idle so the container can be exec'd into. `command:` alone CANNOT do this:
+    # the image sets `ENTRYPOINT ["ferric"]`, so `command: tail -f /dev/null`
+    # ran `ferric tail -f /dev/null` → "unrecognized subcommand" → exit →
+    # `restart: unless-stopped` → a crash loop that ran from 2026-07-14 until
+    # sprint 96 found it. Overriding `entrypoint` is what actually detaches the
+    # idle command from the binary.
+    entrypoint: ["sleep"]
+    command: ["infinity"]
+    # Run a real init as PID 1 (docker injects tini). `sleep` does not reap, so
+    # without this every process orphaned in here becomes a permanent zombie —
+    # measured: killing the in-container llama-server left it `state=Z ppid=1`
+    # indefinitely, and a zombie still answers `kill -0`, so `ferric server
+    # down` saw a dead process as running (sprint 96).
+    init: true
     # The workspace the harness acts on (ferric-guard + ADR-005 remain the real
     # containment boundary inside the container; the mount is just what `ferric
     # query` operates against).
-    command: tail -f /dev/null
     volumes:
       - ../workspace:/workspace
-      - ${MODELS_PATH:-../models}:/models
-      - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - proxy-net
+      # The shared Animus model store: one GGUF directory for the whole suite
+      # rather than a copy per component. Sibling to this repo, so the default
+      # works on a standard checkout layout. Override with MODELS_PATH in a
+      # local `.env` (see .env.example) if yours lives elsewhere — that file is
+      # gitignored now, because it used to be tracked with an absolute NAS path
+      # that broke `up` on any machine without the drive mapped (sprint 96).
+      - ${MODELS_PATH:-../../Animus/Models}:/models
+    # NO docker socket mount. It was here for the sprint-45 design in which
+    # ferric launched sibling fetch containers, and it was **doubly
+    # non-functional**: the image ships no docker CLI, and the socket is
+    # root:root 0660 while the container runs as uid 10001 (both measured,
+    # sprint 96). What it did do is stage a host-root-equivalent escape for
+    # whoever later added a docker client or switched to root — mounting the
+    # socket into the container that handles untrusted content defeats the
+    # airlock it sits next to. The airlock runs on the HOST, from
+    # `ferric-research`, and needs nothing here.
     # Reachability for future sibling services is intentionally a COMMENT, not a
     # live `ports:`/`networks:` directive (ADR-051): the Dockerfile publishes no
     # port and binds llama-server to loopback INSIDE the container only. When
@@ -37,22 +62,26 @@ services:
     # decided in the sprint that operationalizes them, not here.
     restart: unless-stopped
 
-  # The Ornstein Web Retriever uses Docker to launch isolated microVMs.
-  # The proxy service enforces the outbound allowlist for these fetchers.
-  allowlist-proxy:
-    image: ubuntu/squid:latest
-    volumes:
-      - ./squid.conf:/etc/squid/squid.conf:ro
-    networks:
-      - proxy-net
-    restart: unless-stopped
+  # REMOVED (sprint 96): `allowlist-proxy`, a static squid on a bridge network.
+  #
+  # It was the sprint-45 egress design (ADR-055). ADR-082 superseded it, and not
+  # cosmetically: a proxy on a **bridge** network is bypassable — the sandbox
+  # keeps a route to the outside, so `unset http_proxy && wget …` walks straight
+  # past it. That bypass is now a test.
+  #
+  # Ornstein instead builds its airlock at runtime (`ferric-research::airlock`):
+  # an `--internal` network with NO route out, a tinyproxy gateway attached to
+  # both sides, and an allowlist derived from the URLs actually requested — not
+  # a hardcoded `.example.com`/`.wikipedia.org` pair that drifts from what the
+  # code fetches. It is created and torn down per run, so there is nothing for
+  # compose to hold.
+  #
+  # Leaving the service here would have published a known-defeated topology as
+  # the platform's egress story. `docker/squid.conf` is deleted with it.
 
-networks:
-  proxy-net:
-    driver: bridge
-  # STUB — the raw chat surface (ADR-011 revision's unbuilt half). Its own build
-  # + dedicated security-boundary ADR are sprint 42, deferred by the user's
-  # explicit sprint-41 scope choice. No real image yet.
-  # chat:
-  #   image: TODO  # sprint 42, chat security-boundary ADR
-  #   depends_on: [ferric-core]
+# STUB — the raw chat surface (ADR-011 revision's unbuilt half). Its own build
+# + dedicated security-boundary ADR are sprint 42, deferred by the user's
+# explicit sprint-41 scope choice. No real image yet.
+#   chat:
+#     image: TODO  # sprint 42, chat security-boundary ADR
+#     depends_on: [ferric-core]
