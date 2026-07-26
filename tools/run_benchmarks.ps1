@@ -1,7 +1,12 @@
 param (
     [string]$Iterations = "10",
     # Constrained path: a GGUF for `ferric server up` (llama-server) to load.
-    [string]$LlamaGguf = "D:\Models\gguf\Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+    # Required — there is no default, because any default would be one machine's
+    # drive layout and would fail everywhere else (sprint 105). Pass the path to
+    # a local .gguf, e.g.
+    #   .\tools\run_benchmarks.ps1 -LlamaGguf C:\models\Llama-3.2-1B-Instruct-Q4_K_M.gguf
+    [Parameter(Mandatory = $true)]
+    [string]$LlamaGguf,
     [string]$OpenAiModel = "Llama-3.2-1B-Instruct",
     # Fleet calibration: ollama models to sweep into one leaderboard (must be
     # `ollama pull`-ed). For a GGUF fleet instead, sweep `--backend mistral`

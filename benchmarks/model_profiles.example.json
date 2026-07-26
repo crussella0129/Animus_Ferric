@@ -3,18 +3,18 @@
     "model": "qwen2.5-coder-3b",
     "params_b": 3.0,
     "protocol": "ConstrainedJson",
-    "measured_level": 4,
+    "measured_level": null,
     "tier_from_params": "Nano",
-    "tier_from_measured": "Small",
+    "tier_from_measured": null,
     "calibrated_ring": null
   },
   {
     "model": "qwen2.5-coder-7b",
     "params_b": 7.0,
     "protocol": "ConstrainedJson",
-    "measured_level": 6,
+    "measured_level": null,
     "tier_from_params": "Small",
-    "tier_from_measured": "Large",
+    "tier_from_measured": null,
     "calibrated_ring": null
   }
 ]

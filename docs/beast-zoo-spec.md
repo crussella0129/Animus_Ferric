@@ -45,7 +45,7 @@ other GGUF consumers) then run.
 
 ## Test corpus / grounding for the real design work
 
-The user has a mixed GGUF + safetensors model library on a NAS: `192.168.86.27`, `Y:` drive,
+The reference setup has a mixed GGUF + safetensors model library on a LAN NAS, mounted as a drive,
 `models` folder. A real design pass should treat this as a natural starting corpus for
 scoping conversion coverage (which architectures/formats are actually present) and for
 validation once a pipeline exists.

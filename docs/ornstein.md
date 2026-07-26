@@ -103,9 +103,9 @@ searches a *remote* tailnet device's filesystem over SSH and feeds matches to th
 use ferric_research::{research, TailnetFsRetriever, SshTransport};
 
 // Linux tailnet device (keyless Tailscale SSH):
-let r = TailnetFsRetriever::new("switchblade", "/data", SshTransport::Tailscale);
+let r = TailnetFsRetriever::new("example-linux", "/data", SshTransport::Tailscale);
 // or Termux sshd on a phone:
-let r = TailnetFsRetriever::new("pixel-10-pro-xl", "/sdcard", SshTransport::Plain { port: 8022 });
+let r = TailnetFsRetriever::new("example-phone", "/sdcard", SshTransport::Plain { port: 8022 });
 let digests = research(&r, provider, "tailscale NAT traversal").await?; // source = "host:relpath"
 ```
 
@@ -121,7 +121,7 @@ let digests = research(&r, provider, "tailscale NAT traversal").await?; // sourc
 use ferric_research::{research_all, MultiResearch, LocalFsRetriever, TailnetFsRetriever, SshTransport};
 
 let local = LocalFsRetriever::new("/corpus");
-let nas = TailnetFsRetriever::new("switchblade", "/data", SshTransport::Tailscale);
+let nas = TailnetFsRetriever::new("example-linux", "/data", SshTransport::Tailscale);
 let planes: Vec<&dyn ferric_research::Retriever> = vec![&local, &nas];
 
 let MultiResearch { digests, planes: report } = research_all(&planes, provider, "NAT traversal").await?;
@@ -164,7 +164,7 @@ the existing `check(permission, path)` call, once digests enter the loop's conte
 
 ## Sequenced next (ADR-040–044) — build order: Local FS ✅ → Tailnet/NAS ✅ → orchestrator ✅ → CaMeL primitive ✅ → Web
 - **Live SSH E2E** for the tailnet plane — once a target's sshd is up (Termux `Plain{8022}` on the
-  Pixel, or `Tailscale` on switchblade when back online).
+  phone, or `Tailscale` on a Linux peer).
 - **Web `Retriever`** + a hardened **sandbox** + **allowlist egress proxy** — the online plane and
   the *code*-escape leg; its security layer lands last (the exfil leg lives here). **The airlock is
   a microVM-class sandbox** — [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (a

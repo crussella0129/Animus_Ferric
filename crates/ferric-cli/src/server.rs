@@ -726,18 +726,22 @@ mod tests {
 
     // --- ADR-076: Tailnet FQDN discovery ---
 
-    /// Trimmed from real `tailscale status --json` output on a connected node.
+    /// Shaped exactly like real `tailscale status --json` output on a connected
+    /// node, with synthetic identity (sprint 105): the addresses stay in
+    /// Tailscale's real `100.64.0.0/10` CGNAT range so the fixture is still
+    /// representative, but the tailnet, host and node id are examples.
+    ///
     /// The shape is the point: `DNSName` sits under `Self`, and the root has no
-    /// `DNSName` key at all.
+    /// `DNSName` key at all — reading it from the root is the bug this pins.
     const REAL_STATUS_JSON: &str = r#"{
       "Version": "1.98.2-taaf7caef1-gc4a37aed9",
       "BackendState": "Running",
-      "MagicDNSSuffix": "tail944782.ts.net",
-      "TailscaleIPs": ["100.86.207.71"],
+      "MagicDNSSuffix": "tailnet-example.ts.net",
+      "TailscaleIPs": ["100.64.0.1"],
       "Self": {
-        "ID": "nJYCPYnLYs11CNTRL",
-        "HostName": "TEC-XX",
-        "DNSName": "tec-xx.tail944782.ts.net.",
+        "ID": "nEXAMPLENODEIDCNTRL",
+        "HostName": "EXAMPLE-HOST",
+        "DNSName": "example-host.tailnet-example.ts.net.",
         "OS": "windows"
       },
       "Peer": {}
@@ -747,7 +751,7 @@ mod tests {
     fn tailnet_fqdn_reads_dnsname_from_self() {
         assert_eq!(
             tailnet_fqdn(REAL_STATUS_JSON.as_bytes()).as_deref(),
-            Some("tec-xx.tail944782.ts.net")
+            Some("example-host.tailnet-example.ts.net")
         );
     }
 

@@ -2453,3 +2453,93 @@ UNC path into a `\?\UNC\...` prefix. Whether containment still holds on that
 shape is untested and untestable here without a mount. Recording it so the
 "LocalFsRetriever already covers it" claim is not mistaken for a verified one —
 it is a design reading, and it has an open question attached.
+## ADR-096 — 2026-07-26 (sprint 105): detaching the repo from the machine that grew it
+
+Goal set by the user: make Ferric usable as a template — "as little of my local
+paths as possible in the code itself." 575 → **577 tests, 0 failures**, clippy
+0, fmt clean.
+
+**The repo had already learned this lesson once, and applied it to exactly one
+file.** Sprint 97 (ADR-088) found a **tracked** `docker/.env` pinning
+`MODELS_PATH` to one machine's NAS drive; because it was tracked it overrode the
+compose default on *every* checkout, and `docker compose up` failed anywhere
+that drive was not mapped. The fix was the ordinary pattern — untrack, ship
+`.env.example`, gitignore the original. This sprint applies that same pattern
+everywhere else it holds.
+
+**Untracked what the tooling itself calls ephemeral.** `sprints/` had **139
+tracked files while already being listed in `.gitignore`** — because
+`.gitignore` does not untrack what is already tracked, the rule added around
+sprint 33 silently did nothing for the files that existed when it landed. The
+ignore block states the intent outright ("ephemeral sprint working memory —
+regenerable; the real outcome lives in the per-task git commits +
+decisions.md"), so the template was shipping 139 files its own tooling
+considers disposable. Also untracked: `scratch/`, and `benchmarks/results.jsonl`
+(one machine's run log). `git rm --cached` only — every file stays on disk.
+
+**One of these was behavioural, not cosmetic: `benchmarks/model_profiles.json`.**
+ADR-029 reads a stored profile back at runtime and lets `measured_level`
+override the parameter-count prior **in both directions**. The tracked file
+carried `qwen2.5-coder-7b → 6/Large` measured *here*, so a fresh checkout using
+the same model *name* would silently inherit a tier this project measured on
+other hardware, at a quantization the record does not pin. ADR-029 established
+that a profile **miss** is a safe no-op; nobody had asked what a profile **hit
+from someone else's machine** means. For a project whose thesis is *measure,
+don't assume*, shipping unearned measurements as defaults is backwards. Now
+gitignored, with a `model_profiles.example.json` whose `measured_level` fields
+are explicitly `null` — the shape without the claim.
+
+**Machine identity out of the Rust fixtures.** The sharpest leaks were not
+paths but identity: a real tailnet IP, MagicDNS suffix, hostname and node id in
+`server.rs`; device names, tailnet IPs and **the owner's account handle** in
+`retriever.rs`. Their comments said "captured from this machine", which is why
+they were faithful — and faithful is what the tests need. But **the shape is
+what the tests assert; the identity was incidental.** Every fixture keeps its
+exact structure with documentation values, and the addresses stay inside
+Tailscale's real `100.64.0.0/10` CGNAT range so they remain representative. All
+assertions still pass, which is itself the evidence that nothing was asserting
+identity.
+
+**Defaults nobody else could satisfy** are gone: `run_benchmarks.ps1` had a
+hardcoded `D:\Models\gguf\…` GGUF default (now a required parameter — no
+default is better than one that works on one machine), and `.env.example`
+demonstrated one drive letter instead of the shape. `docker-compose.yml`'s
+`../../Animus/Models` is a *suite-layout* assumption rather than a machine path,
+so it stays, now commented as such.
+
+**A one-time cleanup decays, so it is now a test.** `template_hygiene.rs`
+fails on shapes that can only be identity — a `tail<digits>.ts.net` MagicDNS
+suffix, a concrete home directory, a `192.168.x.y` LAN address — while
+deliberately not matching *topics* (this repo's prose is full of the word
+"tailscale"; none of that is a leak). The natural way to write a parser test is
+to paste real output from the machine in front of you, which is precisely how
+every instance of this arrived.
+
+**The guard's own self-test found a hole in the guard.** The first version
+matched `\Users\name` only in single-backslash form — but the likeliest place
+for a leaked path is *inside a Rust string literal*, where `C:\Users\alice` is
+written `"C:\Users\alice"` and reaches the matcher doubled. It would have
+missed exactly the case it exists for. Backslashes are now collapsed first, and
+both forms are asserted. The scan is also shown **failing against a planted
+leak**, because a guard that has never rejected anything is not known to reject
+anything (sprint 96's skip-and-pass, sprint 101's false positive).
+
+**Deliberately not scrubbed: `decisions.md`, `agent-tasks/`, and git history.**
+The ADRs are the reasoning record; rewriting them to remove the machine that
+produced the measurements would falsify the evidence they cite. That is a
+choice with a consequence, and it belongs in the open rather than buried:
+**`decisions.md` still contains tailnet addresses and device names, and
+untracking files does not remove them from history.** If this template is ever
+published, that history goes with it. Removing it requires a history rewrite —
+a destructive force-push on a shared branch — which is the owner's call and was
+not taken unasked.
+
+**Incidental find, from the merge this sprint caused.**
+`agent-tasks/completed-tasks.md` contained **215 NUL bytes** — a UTF-16LE
+fragment appended into a UTF-8 file, the signature of a PowerShell `>>`
+redirect. Git therefore classified the project's completed-task log as
+**binary**: no line diffs, no auto-merge. That is why a conflict where both
+sides simply appended to the end of the file could not resolve itself. Found
+because rebasing this sprint onto the previous one forced the merge that
+exposed it; re-encoded to UTF-8 with the content byte-identical after decoding.
+
