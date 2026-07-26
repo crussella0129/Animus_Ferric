@@ -158,6 +158,16 @@ pub struct QueryArgs {
     #[arg(long = "research-url")]
     pub research_urls: Vec<String>,
 
+    /// Run with this installed skill's instructions in scope (repeatable).
+    ///
+    /// Naming a skill here IS the authorization — it is you asking, on this
+    /// invocation. Skills you want available without naming them go in
+    /// `allowed_skills` in `.ferric/config.toml`. Nothing else authorizes one:
+    /// a skill sitting in `.ferric/skills/` is visible to `ferric skills list`
+    /// but contributes nothing to a prompt until you say so (ADR-091).
+    #[arg(long = "skill")]
+    pub skills: Vec<String>,
+
     /// Run the web fetch on the standard container runtime instead of gVisor.
     ///
     /// The default requires gVisor and fails closed without it (ADR-074). Network
@@ -206,6 +216,12 @@ pub(crate) struct RunConfigArgs {
     /// lookup entirely (matches today's behavior when neither flag is set).
     pub model_key: Option<String>,
     pub hooks: Option<ferric_core::HooksConfig>,
+    /// Workspace root, for locating `.ferric/skills/`.
+    pub workspace_root: PathBuf,
+    /// Skills named on this invocation (`--skill`).
+    pub requested_skills: Vec<String>,
+    /// Skills standing-authorized in `.ferric/config.toml`.
+    pub allowed_skills: Vec<String>,
 }
 
 /// Everything derived from `RunConfigArgs` that a loop execution needs, minus
@@ -333,12 +349,50 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
             }
         }
     });
-    let (system_prompt, lineage) = match composed {
+    let (base_system_prompt, lineage) = match composed {
         Some(c) => (
             Some(c.text),
             Some((c.output_id, c.output_version, c.composed_of)),
         ),
         None => (None, None),
+    };
+
+    // Skills the user authorized, folded into the system prompt.
+    //
+    // `authorize` is given only user-supplied inputs — the `--skill` flags and
+    // the config allowlist — so there is no parameter through which the model
+    // could clear a skill for itself. An unknown name is surfaced rather than
+    // silently ignored: a typo that quietly runs nothing is the failure shape
+    // this codebase keeps finding (ADR-090).
+    let (discovered, skill_errors) = ferric_skills::discover(&a.workspace_root);
+    for e in &skill_errors {
+        eprintln!("skill: {e}");
+    }
+    let (authorized, unknown) =
+        ferric_skills::authorize(&discovered, &a.requested_skills, &a.allowed_skills);
+    for name in &unknown {
+        eprintln!("skill: no skill named `{name}` is installed in .ferric/skills/");
+    }
+    let system_prompt = match ferric_skills::compose(&authorized) {
+        None => base_system_prompt,
+        Some(section) => {
+            for sk in &authorized {
+                println!("skill: {} ({:?})", sk.name(), sk.authority());
+            }
+            Some(match base_system_prompt {
+                Some(base) => format!(
+                    "{base}
+
+{section}"
+                ),
+                None => format!(
+                    "{}
+
+{section}",
+                    ferric_loop::DEFAULT_SYSTEM_PROMPT
+                ),
+            })
+        }
     };
 
     RunConfig {
@@ -468,6 +522,9 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         // skip it because `model_key` was built from raw CLI args.
         model_key: args.backend_opts.model.clone(),
         hooks: cfg.hooks.clone(),
+        workspace_root: workspace_root.clone(),
+        requested_skills: args.skills.clone(),
+        allowed_skills: cfg.allowed_skills.clone().unwrap_or_default(),
     });
 
     // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
@@ -1162,6 +1219,9 @@ mod tests {
 
     fn base_run_config_args() -> RunConfigArgs {
         RunConfigArgs {
+            workspace_root: std::path::PathBuf::from("."),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
             mock: true,
             backend: BackendArg::Openai,
             params_b: 8.0,

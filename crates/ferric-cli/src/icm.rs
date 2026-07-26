@@ -249,6 +249,13 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         eprintln!("{diag}");
     }
     let mut config = build_run_config(&RunConfigArgs {
+        // ICM composes each stage's context from its OWN declared layers
+        // (L0-L4, ADR-064) and reports that composition as provenance. Folding
+        // skills in here would inject text no layer accounts for, so ICM opts
+        // out deliberately rather than by omission.
+        workspace_root: ws.root.clone(),
+        requested_skills: Vec::new(),
+        allowed_skills: Vec::new(),
         mock: args.mock,
         backend: backend_opts.backend.unwrap_or(BackendArg::Openai),
         params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),

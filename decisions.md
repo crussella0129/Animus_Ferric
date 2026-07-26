@@ -2106,3 +2106,85 @@ rather than counted as passing.
 **Environment note, not a Ferric defect.** `C:\Users\charl\Cargo.toml` (a stray
 `test` package, March) breaks `cargo` for any non-workspace project under the
 home directory. Surfaced to the user, not deleted — it is theirs.
+
+## ADR-091 — 2026-07-25 (sprint 100): agent skills — installation is consent, invocation is authority
+
+**Context.** The user asked for skill loading in the conventional format, and
+settled the trust question directly: *a skill is something the user willingly
+chooses to install, so unless they were socially engineered into it, it is a
+different surface from web content. That said, installing or even invoking a
+skill should not be automatic unless it came from the base prompt, from the
+user, or from something the user configured as allowed.*
+
+That splits cleanly into two properties, and the design is just those two made
+structural.
+
+**1 — only the user can install.** Skills live at
+`<workspace>/.ferric/skills/<name>/SKILL.md`. `.ferric` is in `ferric-guard`'s
+`DENIED_WRITE_SEGMENTS`, so the model cannot write there. **Verified live**: the
+7B, asked to create `.ferric/skills/evil/SKILL.md`, got
+`DENIED: permission: denied_write_segment matched .ferric` and nothing was
+created. The same denial covers `.ferric/config.toml`, so the model cannot edit
+the allowlist that authorizes skills either — which is *why* the allowlist lives
+in config rather than anywhere more convenient.
+
+**2 — discovery is not authorization.** `discover()` returns everything on disk;
+getting into a prompt needs an `Authority`, of which there are exactly two:
+`UserRequested` (`--skill <name>` on this invocation) and `ConfigAllowed`
+(`allowed_skills` in `.ferric/config.toml`). **There is no `Model` variant**,
+and `authorize()` takes only user-sourced inputs — there is no parameter through
+which a model could clear a skill for itself.
+
+`DiscoveredSkill` and `AuthorizedSkill` are **different types**, not one type
+with a flag, and `compose()` accepts only the latter. "Forgot to check the
+allowlist" is therefore not a reachable state — the same structural move as the
+constrained-loop valve (ADR-010) and the provenance gate (ADR-081): make the
+unsafe thing unrepresentable rather than merely checked.
+
+**Verified live, as an A/B on one model with one variable.** Same 7B, same
+prompt ("write hello into <file>"), a skill installed that requires appending
+`SKILL-MARKER-42`:
+
+| run | authority | marker in the file |
+| --- | --- | --- |
+| installed, not authorized | none | **absent** |
+| `--skill marker` | UserRequested | **present** |
+| allowlist only, no flag | ConfigAllowed | **present** |
+
+The first row is the security property and the other two are the feature. A
+first attempt at this test was *confounded* — the skill was "write in haiku" and
+the prompt was "write a note about rain", which elicits verse from any model
+regardless. Swapping to an arbitrary marker string made the signal
+unambiguous.
+
+**The 3B ignored an authorized skill**, writing the file without the marker.
+Worth separating carefully: the trace showed the skill text *was* in the system
+prompt, so that is model non-compliance at `measured_level 4`, not a wiring
+failure. Checking which it was, rather than assuming, is the ADR-090 rule
+applied to my own feature.
+
+**A duplicate implementation existed, and was the more dangerous one.**
+`ferric-cli/src/skills.rs` already loaded the same `SKILL.md` path to serve MCP
+prompts, with a permissive parser: a file with **no frontmatter at all** still
+loaded (name falling back to the directory), and a declared `name` **overrode**
+its directory — so a skill installed as `helpful/` could answer to `deploy` over
+MCP. Deleted; `mcp.rs` now goes through `ferric-skills`, which requires
+frontmatter and requires `name` to match its directory. Two parsers for one file
+format is the same defect class as ADR-089's six protocol keys and ADR-090's six
+trace paths, three sprints running.
+
+**Per-surface decisions, made rather than defaulted.** `query` gets both
+authorities. `chat` honours the standing allowlist (same user, same workspace;
+a `/skill` verb is the natural per-message surface and is deferred). `icm` opts
+out — it composes each stage's context from its own declared layers and reports
+that as provenance, so folding in text no layer accounts for would undermine the
+mechanism. `api` opts out — the HTTP caller is not necessarily the workspace
+owner, so a workspace allowlist is not evidence *this* requester authorized
+anything. `ferric_query` over MCP opts out — that client already reaches skills
+the right way, by pulling a prompt.
+
+**Deliberately not built.** Skills do not grant tools. The conventional format
+has an `allowed-tools` key, and honouring it would let an installed file widen
+the tool rings — the one thing that could turn a skill into an action channel.
+That interaction wants its own sprint and its own decision against
+[[ferric-tool-rings]], not a field quietly parsed today.

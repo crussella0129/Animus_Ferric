@@ -27,6 +27,7 @@ ferric-prompt = { workspace = true }
 ferric-provider = { workspace = true }
 ferric-research = { workspace = true }
 ferric-tools = { workspace = true }
+ferric-skills = { workspace = true }
 ferric-trace = { workspace = true }
 ferric-vcs = { workspace = true }
 clap = { workspace = true }

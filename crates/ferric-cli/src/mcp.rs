@@ -294,8 +294,21 @@ impl McpServer {
         })
     }
 
+    /// Skills offered as MCP prompts.
+    ///
+    /// Listing is safe to do unconditionally: an MCP prompt is *pulled* by the
+    /// client, so surfacing one is not the harness deciding to run it. The
+    /// authorization gate that `--skill` and the config allowlist provide
+    /// (ADR-091) governs the other direction — skills folded into a `query`
+    /// prompt by Ferric itself.
+    ///
+    /// Parsing goes through `ferric-skills` rather than a second local parser.
+    /// The one this replaced accepted a `SKILL.md` with no frontmatter at all
+    /// (falling back to the directory name) and let a declared `name` override
+    /// its directory — so a skill installed as `helpful/` could answer to
+    /// `deploy`. Names are now required to match their directory.
     fn handle_prompts_list(&self, id: Value) -> RpcResponse {
-        let skills = crate::skills::load_skills(self.workspace.root());
+        let (skills, _errors) = ferric_skills::discover(self.workspace.root());
         let prompts: Vec<Value> = skills
             .into_iter()
             .map(|s| {
@@ -311,7 +324,7 @@ impl McpServer {
 
     fn handle_prompts_get(&self, id: Value, params: &Value) -> RpcResponse {
         let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-        let skills = crate::skills::load_skills(self.workspace.root());
+        let (skills, _errors) = ferric_skills::discover(self.workspace.root());
 
         if let Some(skill) = skills.into_iter().find(|s| s.name == name) {
             RpcResponse::success(
@@ -323,7 +336,7 @@ impl McpServer {
                             "role": "user",
                             "content": {
                                 "type": "text",
-                                "text": skill.content
+                                "text": skill.instructions
                             }
                         }
                     ]
@@ -502,6 +515,14 @@ impl McpServer {
             .unwrap_or_else(|| PathBuf::from("benchmarks"));
 
         let mut config = build_run_config(&RunConfigArgs {
+            // `ferric_query` over MCP does not fold skills. The MCP client
+            // already reaches skills the right way — as *prompts* it pulls
+            // deliberately (`prompts/get`). Injecting them into the tool call
+            // as well would run a skill the client never asked for, which is
+            // exactly the automatic invocation ADR-091 rules out.
+            workspace_root: workspace_root.clone(),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
             mock: args.mock,
             backend: backend_opts
                 .backend
@@ -834,6 +855,9 @@ mod tests {
     fn test_server(dir: &std::path::Path, provider: Box<dyn Provider + Send + Sync>) -> McpServer {
         let workspace = Workspace::new(dir).unwrap();
         let config = crate::query::build_run_config(&crate::query::RunConfigArgs {
+            workspace_root: std::path::PathBuf::from("."),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
             mock: true,
             backend: crate::backend::BackendArg::Openai,
             params_b: 1.2,

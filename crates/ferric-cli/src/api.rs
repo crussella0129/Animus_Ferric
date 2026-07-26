@@ -209,6 +209,13 @@ pub mod server {
         let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
 
         let config = build_run_config(&RunConfigArgs {
+            // The HTTP caller is not necessarily the workspace owner, so a
+            // workspace-level allowlist is not evidence that *this* requester
+            // authorized anything. Skills stay off here until the API has a notion
+            // of who is asking (ADR-091).
+            workspace_root: state.workspace.root().to_path_buf(),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
             mock: args.mock,
             backend: backend_opts
                 .backend
