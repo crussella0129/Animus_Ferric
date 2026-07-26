@@ -605,6 +605,41 @@ mod tests {
     use super::*;
     use crate::types::SamplingParams;
 
+    /// `OpenAiConfig` holds the API key in plaintext and reaches an
+    /// `Authorization: Bearer` header. It is NOT `Debug` today, and that
+    /// absence is the only thing stopping a `{:?}` from putting the credential
+    /// in a log — an absence a later `#[derive(Debug)]` erases silently
+    /// (ADR-097). Detection uses inherent-impl priority: an inherent
+    /// associated const shadows the trait's, so `IS_DEBUG` is `true` only when
+    /// the type really implements `Debug`.
+    #[test]
+    fn openai_config_is_not_debug_printable() {
+        struct IsDebug<T>(std::marker::PhantomData<T>);
+
+        trait Fallback {
+            const IS_DEBUG: bool = false;
+        }
+        impl<T> Fallback for IsDebug<T> {}
+
+        impl<T: std::fmt::Debug> IsDebug<T> {
+            const IS_DEBUG: bool = true;
+        }
+
+        // Compile-time, not runtime: a `#[derive(Debug)]` here should fail the
+        // BUILD, not merely a test someone might not run. The positive control
+        // comes first — without it, a detector that always answered "not Debug"
+        // would satisfy the real check while verifying nothing.
+        const _: () = assert!(
+            <IsDebug<String>>::IS_DEBUG,
+            "the detector must recognise a type that IS Debug"
+        );
+        const _: () = assert!(
+            !<IsDebug<OpenAiConfig>>::IS_DEBUG,
+            "OpenAiConfig carries the API key; if it must become Debug, give it \
+             a redacting impl rather than a derive"
+        );
+    }
+
     fn provider() -> OpenAiProvider {
         OpenAiProvider::new(OpenAiConfig::default())
     }

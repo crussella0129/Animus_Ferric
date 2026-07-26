@@ -481,6 +481,15 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     // IN PLACE on `args` so the same merged values reach `create_provider` in
     // `drive_real` below, not just this function's own `RunConfigArgs` build.
     let loaded_config = crate::config::load_layered(&workspace_root);
+    // Hooks are the one config field that becomes arbitrary command execution
+    // (`run_hook` -> `sh -c` with the full inherited environment), and the user
+    // layer's location is chosen by environment variable. Naming the file is
+    // not a permission check — it is the difference between a hook you wrote
+    // and a hook that arrived from a config you did not know was being read
+    // (ADR-097).
+    if let (Some(src), Some(_)) = (&loaded_config.hooks_source, &loaded_config.config.hooks) {
+        eprintln!("hooks: loaded from {}", src.display());
+    }
     let cfg = loaded_config.config;
     args.backend_opts = crate::config::merge_backend_opts(args.backend_opts, &cfg);
     let resolved_params_b = args.params_b.or(cfg.params_b).unwrap_or(1.2);

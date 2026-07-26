@@ -183,8 +183,13 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
     let mut registry = ferric_tools::Registry::with_truncation_limit(truncation_limit);
     ferric_tools::register_builtin_tools(&mut registry);
 
-    // Temp file for the new trace
-    let trace_path = std::env::temp_dir().join("verify.jsonl");
+    // Temp file for the new trace. The name carries the pid rather than being
+    // the fixed `verify.jsonl` it once was: `temp_dir()` is shared and often
+    // world-writable, so a constant name in it is a path another user can
+    // pre-create or point at something else, and two concurrent verifies would
+    // also have raced each other (ADR-097).
+    let trace_path =
+        std::env::temp_dir().join(format!("ferric-verify-{}.jsonl", std::process::id()));
     if trace_path.exists() {
         std::fs::remove_file(&trace_path).unwrap();
     }
