@@ -250,6 +250,14 @@ pub struct McpArgs {
 /// `tokio::runtime::Runtime` built at launch and reused for every subsequent
 /// `tools/call` (T-3601's reusable-provider shape, applied to the executor
 /// too — see `run_with_provider`'s doc comment).
+///
+/// Deliberately **not** folded into `backend::ResolvedBackend` (sprint 103,
+/// ADR-094), which unified the identical `chat`/`icm` copies. The difference is
+/// behavioural, not stylistic: this server builds its provider **once at
+/// launch** and reuses it across every `tools/call`, while chat and icm build a
+/// fresh mock per invocation. `MockProvider` is scripted and stateful, so *when*
+/// it is constructed is observable. Only the real-backend construction is
+/// shared, via `backend::create_provider_with_runtime`.
 pub(crate) enum Executor {
     Mock,
     #[cfg(feature = "backend-openai")]
@@ -650,8 +658,7 @@ impl McpServer {
 fn build_real_provider(
     backend_opts: &BackendOpts,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
-    let runtime = Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    let provider = runtime.block_on(crate::backend::create_provider(backend_opts))?;
+    let (provider, runtime) = crate::backend::create_provider_with_runtime(backend_opts)?;
     Ok((provider, Executor::Real(runtime)))
 }
 
@@ -659,9 +666,7 @@ fn build_real_provider(
 fn build_real_provider(
     _backend_opts: &BackendOpts,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
-    Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-openai`, or use --mock"
-        .to_string())
+    Err(crate::backend::BACKEND_FEATURE_MISSING.to_string())
 }
 
 /// `ferric mcp` entrypoint.

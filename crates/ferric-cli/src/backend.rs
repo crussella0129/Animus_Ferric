@@ -78,22 +78,86 @@ pub async fn create_provider(
                 let provider = OpenAiProvider::new(config);
                 Ok(Box::new(provider))
             }
-            #[cfg(not(feature = "backend-openai"))]
-            {
-                Err("binary built without openai backend".to_string())
-            }
         }
     }
 }
 
-// No `create_provider` stub for the backend-free build: the only callers
-// (`query::drive_real`, `toolbench`) carry their own `cfg(not(any(...)))`
-// stubs that surface the "built without backends; use --mock" error directly,
-// so a stub here would be unreachable dead code.
+// No `create_provider` stub for the backend-free build: the callers carry
+// their own `cfg(not(...))` stubs that surface `BACKEND_FEATURE_MISSING`
+// directly, so a stub here would be unreachable dead code.
+//
+// There used to be a `#[cfg(not(feature = "backend-openai"))]` arm inside
+// `create_provider` returning "binary built without openai backend". The whole
+// function is already gated on that feature, so the arm could never compile in
+// and that message could never be produced — it read as a handled case while
+// contradicting the comment above. Removed sprint 103 (ADR-094).
+
+/// What a caller is told when the binary has no backend compiled in. One
+/// definition: this text lived in three byte-identical copies (`chat.rs`,
+/// `icm.rs`, `mcp.rs`), each unreachable in a normally-built binary and so
+/// each free to drift unnoticed. `ferric dream` deliberately keeps its own
+/// wording — it has no `--mock`, so pointing at one would be wrong.
+// Referenced only from `cfg(not(feature = "backend-openai"))` paths and the
+// test below, so a normal feature-on build sees no use of it. That is the
+// point — this is the message for the build that cannot reach those paths.
+#[allow(dead_code)]
+pub(crate) const BACKEND_FEATURE_MISSING: &str = "this binary was built without backend features; \
+     rebuild with `cargo build --features backend-openai`, or use --mock";
+
+/// A provider plus the runtime that drives it — the pair every real-backend
+/// caller needs, and the two lines each of them used to write.
+#[cfg(feature = "backend-openai")]
+pub(crate) fn create_provider_with_runtime(
+    opts: &BackendOpts,
+) -> Result<(Box<dyn Provider + Send + Sync>, tokio::runtime::Runtime), String> {
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
+    let provider = runtime.block_on(create_provider(opts))?;
+    Ok((provider, runtime))
+}
+
+/// A backend a command has finished resolving: either the scripted mock, or a
+/// real provider owning the ONE runtime it will be driven on.
+///
+/// `chat.rs` and `icm.rs` each declared this enum and its constructor
+/// identically before sprint 103 (ADR-094). `mcp.rs` keeps a shape of its own
+/// on purpose — see `mcp::Executor`.
+pub(crate) enum ResolvedBackend {
+    Mock,
+    #[cfg(feature = "backend-openai")]
+    Real {
+        provider: Box<dyn Provider + Send + Sync>,
+        runtime: tokio::runtime::Runtime,
+    },
+}
+
+impl ResolvedBackend {
+    /// Resolve a real backend, or explain why this binary cannot.
+    #[cfg(feature = "backend-openai")]
+    pub(crate) fn real(opts: &BackendOpts) -> Result<Self, String> {
+        let (provider, runtime) = create_provider_with_runtime(opts)?;
+        Ok(ResolvedBackend::Real { provider, runtime })
+    }
+
+    #[cfg(not(feature = "backend-openai"))]
+    pub(crate) fn real(_opts: &BackendOpts) -> Result<Self, String> {
+        Err(BACKEND_FEATURE_MISSING.to_string())
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The one place this string can be checked: it is a user-facing error in
+    /// a path a normally-built binary cannot reach, and it went three sprints
+    /// as three untested copies. It has to name the feature to rebuild with
+    /// *and* the way to proceed without one — a diagnostic that says only
+    /// "unsupported" leaves the user nowhere.
+    #[test]
+    fn the_backend_feature_diagnostic_names_the_feature_and_the_alternative() {
+        assert!(BACKEND_FEATURE_MISSING.contains("backend-openai"));
+        assert!(BACKEND_FEATURE_MISSING.contains("--mock"));
+    }
 
     #[test]
     fn api_base_precedence() {

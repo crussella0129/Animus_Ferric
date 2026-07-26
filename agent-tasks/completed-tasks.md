@@ -892,3 +892,16 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-26
 - **Files modified:** decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md
 - **Commit:** pending
+
+
+## T-10301 (sprint 103)
+- **Description:** One `ResolvedBackend` in `ferric-cli/src/backend.rs`, replacing the identical `chat::ChatBackend` and `icm::Backend` declarations and their line-for-line identical constructors; one `create_provider_with_runtime` for the runtime+provider pair written three times; one `BACKEND_FEATURE_MISSING` const for the feature-off diagnostic that existed in three byte-identical copies. `mcp::Executor` deliberately kept — it builds its provider once at launch and reuses it per `tools/call` while chat/icm build a fresh mock per invocation, and `MockProvider` is scripted and stateful, so the lifetime difference is behaviour rather than style; only the real-backend construction is shared, and the reason is now a comment on the type. Also deleted a `cfg(not(feature = "backend-openai"))` arm inside `create_provider`, whose enclosing function is already gated on that feature, so its error string could never be produced. 1 new test (the diagnostic names both the feature and `--mock`). Verified in both feature configurations (`--no-default-features` check + clippy) and by live `--mock` drives of chat, `icm run`, and `mcp` over JSON-RPC.
+- **Completed:** 2026-07-26
+- **Files modified:** crates/ferric-cli/src/{backend.rs,chat.rs,icm.rs,mcp.rs}
+- **Commit:** pending
+
+## T-10302 (sprint 103)
+- **Description:** Closed C7 in the backlog recording that **half of it was declined** — the subdirectory move changes no behaviour, finds no defect, and rewrites every `git blame` in the crate, and the entry's own sentence concedes the spine is factored. ADR-094 written; README timeline entry added.
+- **Completed:** 2026-07-26
+- **Files modified:** decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md, README.md
+- **Commit:** pending

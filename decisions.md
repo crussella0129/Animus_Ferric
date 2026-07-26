@@ -2330,3 +2330,72 @@ configurable is what would turn this latent bug live; the plumbing had to be
 correct first. `trace verify` under a non-default cap therefore remains
 verified by construction and not by execution, and this says so rather than
 implying coverage that does not exist.
+
+## ADR-094 — 2026-07-26 (sprint 103): C7, half declined — the CLI spelled "resolved backend" three times
+
+Closes backlog **C7**. Workspace 574 → **575 tests, 0 failures**; clippy 0 and
+fmt clean in **both** feature configurations.
+
+**Half of C7 is deliberately not done, and the entry says so rather than being
+quietly ticked.** The item asked to split `ferric-cli` into subdirectories. The
+crate measures 8,396 lines across 19 modules (the logged 9,674 counted tests),
+and the audit's own sentence concedes "the shared spine is correctly factored".
+Long is not the same as tangled. Moving 19 files changes no behaviour, finds no
+defect, and rewrites every `git blame` in the crate — that is churn presented as
+progress, and it is the one thing this series of sprints has consistently
+refused to ship.
+
+**The half worth doing was a real duplication, of exactly the kind this crate
+keeps producing.** `chat.rs` and `icm.rs` each declared their own backend enum,
+identical apart from the name (`ChatBackend` vs `Backend`: `Mock` | feature-gated
+`Real { provider, runtime }`), with **line-for-line identical** constructors —
+same `Runtime::new()`, same `map_err` wording, same `block_on(create_provider)`
+— and `cfg(not(feature))` stubs whose error strings were **byte-identical**.
+`mcp.rs` was the same idea taken apart: `Executor` holding only the runtime, the
+provider beside it, `build_real_provider` returning the pair, and a third copy of
+that same error string.
+
+Now: one `backend::ResolvedBackend` with one `real()` constructor, one
+`create_provider_with_runtime` for the runtime+provider pair, and one
+`BACKEND_FEATURE_MISSING` const. `chat` and `icm` alias the shared type.
+
+**`mcp::Executor` is kept, on purpose, and the reason is now in the code.** The
+difference is behavioural, not stylistic: `McpServer` builds its provider **once
+at launch** and reuses it for every `tools/call` (the documented T-3601 shape),
+while chat and icm build a **fresh** mock per invocation. `MockProvider` is
+scripted and stateful, so *when* it is constructed is observable — collapsing
+the shapes would have silently changed one of them. Only the real-backend
+construction is shared. Recognising a difference that looks cosmetic but isn't
+is the same judgement that kept `toolbench`'s deliberate non-read-back of the
+persisted profile out of this change: a calibrator must not consume the profile
+it is about to write.
+
+**A smaller find: an error message that could never be printed.**
+`create_provider` is gated `#[cfg(feature = "backend-openai")]` and contained a
+`#[cfg(not(feature = "backend-openai"))]` arm returning "binary built without
+openai backend". The outer gate makes the inner arm impossible to compile in, so
+the string was unreachable — and it read as a handled case while contradicting
+the comment directly below it, which correctly says callers own that path.
+Removed.
+
+**Why the diagnostic mattered enough to test.** The feature-off message is what
+a user meets when the binary lacks `backend-openai` — the exact condition that
+produced sprint 101's false positive, where a feature-less rebuild looked like a
+security gate working. It existed in three copies and **nothing tested any of
+them**. There is now one, with a test asserting it names both the feature to
+rebuild with and `--mock`; a diagnostic that says only "unsupported" leaves the
+user nowhere.
+
+**Verification note.** This is a behaviour-neutral refactor, so the 574 existing
+tests *are* the specification, and they stay green. Two things a compile would
+not have caught were checked directly: `cargo check`/`clippy` with
+`--no-default-features`, because the change moves `#[cfg]` boundaries and the
+feature-off build is precisely what the moved code guards; and a live `--mock`
+drive of all three rewired entry points (`chat`, `icm run`, `mcp` over
+JSON-RPC), because compiling proves the types line up, not that the wiring still
+reaches a provider.
+
+Not claimed: the `Real` branch against an actual model. It is the same two calls
+it was before, moved, and this sprint changes no request, prompt or policy —
+calling that live coverage would be the overstatement this project keeps
+correcting.
