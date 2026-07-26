@@ -372,6 +372,7 @@ dependencies = [
  "ferric-prompt",
  "ferric-provider",
  "ferric-research",
+ "ferric-skills",
  "ferric-tools",
  "ferric-trace",
  "ferric-vcs",
@@ -489,6 +490,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "ferric-skills"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

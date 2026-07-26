@@ -389,6 +389,12 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     let cfg = loaded_config.config;
     let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
     let config = build_run_config(&RunConfigArgs {
+        // Chat is the workspace owner at their own terminal, so their standing
+        // allowlist applies. There is no per-message `--skill` surface yet; a
+        // `/skill` REPL verb is the natural home for that and is deferred.
+        workspace_root: workspace_root.clone(),
+        requested_skills: Vec::new(),
+        allowed_skills: cfg.allowed_skills.clone().unwrap_or_default(),
         mock: args.mock,
         backend: backend_opts
             .backend
@@ -436,7 +442,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         }
     };
 
-    let trace_dir = workspace_root.join(".ferric").join("trace");
+    let trace_dir = ferric_trace::trace_dir(&workspace_root);
     if let Err(e) = std::fs::create_dir_all(&trace_dir) {
         eprintln!("cannot create trace dir {}: {e}", trace_dir.display());
         return ExitCode::FAILURE;
@@ -730,6 +736,9 @@ mod tests {
             Message::assistant("earlier answer"),
         ];
         let config = build_run_config(&RunConfigArgs {
+            workspace_root: std::path::PathBuf::from("."),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
             mock: true,
             backend: crate::backend::BackendArg::Openai,
             params_b: 1.0,

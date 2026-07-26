@@ -15,6 +15,7 @@ members = [
     "crates/ferric-cron",
     "crates/ferric-cli",
     "crates/ferric-vcs",
+    "crates/ferric-skills",
 ]
 
 [workspace.package]
@@ -82,3 +83,4 @@ animus-launch = { path = "crates/animus-launch" }
 ferric-icm = { path = "crates/ferric-icm" }
 ferric-cron = { path = "crates/ferric-cron" }
 ferric-vcs = { path = "crates/ferric-vcs" }
+ferric-skills = { path = "crates/ferric-skills" }

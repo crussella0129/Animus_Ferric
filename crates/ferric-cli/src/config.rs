@@ -25,6 +25,16 @@ pub struct Config {
     pub profile_dir: Option<PathBuf>,
     pub stream: Option<bool>,
     pub hooks: Option<ferric_core::HooksConfig>,
+    /// Skills the user has standing-authorized for this workspace.
+    ///
+    /// This lives in config **because config lives under `.ferric/`**, which
+    /// `ferric-guard` write-denies to the model. An allowlist the agent could
+    /// edit would authorize nothing (sprint 100, ADR-091).
+    ///
+    /// Project-over-user like every other field, but note what that means here:
+    /// a project allowlist *replaces* the user's rather than extending it, so a
+    /// repo cannot silently inherit skills the user enabled globally.
+    pub allowed_skills: Option<Vec<String>>,
 }
 
 impl Config {
@@ -44,6 +54,7 @@ impl Config {
             profile_dir: self.profile_dir.or(user.profile_dir),
             stream: self.stream.or(user.stream),
             hooks: self.hooks.or(user.hooks),
+            allowed_skills: self.allowed_skills.or(user.allowed_skills),
         }
     }
 }

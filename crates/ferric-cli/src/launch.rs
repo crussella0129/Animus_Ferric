@@ -123,6 +123,7 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
             {
                 println!("Handing off to ferric query...");
                 let query_args = crate::query::QueryArgs {
+                    skills: Vec::new(),
                     prompt: Some(spec.goal.clone()),
                     files: vec![],
                     workspace: Some(report.path.clone()),

@@ -214,7 +214,7 @@ fn query_args(prompt: &str, inv: &Invocation, workspace: &Path) -> Vec<String> {
 
 /// Find the single `q-*.jsonl` the child wrote under `<ws>/.ferric/trace/`.
 fn find_trace(workspace: &Path) -> Option<PathBuf> {
-    let trace_dir = workspace.join(".ferric").join("trace");
+    let trace_dir = ferric_trace::trace_dir(workspace);
     std::fs::read_dir(&trace_dir)
         .ok()?
         .filter_map(|e| e.ok())

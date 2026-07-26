@@ -2024,3 +2024,226 @@ derives *looks* persisted) and recorded as established fact, where thirty
 seconds of looking at the actual JSON would have settled it. It sat in the
 backlog for sixteen sprints as a task nobody wanted because it was labelled a
 migration.
+
+## ADR-090 — 2026-07-25 (sprint 99): the E2E round — three dead features, found by running them
+
+**Context.** The user asked for an end-to-end verification of everything that
+currently exists, as the gate before adding agent-skill loading. So: drive every
+one of the twelve CLI subcommands, live, rather than trust the suite.
+
+556 tests pass. **Three features did not work at all**, and none of them was
+failing a test — because no test drove them end to end.
+
+**1 — `ferric launch` produced projects that would not build.** The scaffolded
+`Cargo.toml` had no `[workspace]`, and cargo resolves the workspace root by
+walking *upward*. A project launched anywhere inside another Rust tree gets
+adopted by it. Launching into a scratch dir under the home directory — which
+contains a stray `Cargo.toml` from March — produced a fresh project that failed
+with *"no targets specified in the manifest"* naming
+`C:\Users\charl\Cargo.toml`, a file the scaffold never wrote. The scaffold was
+correct; it just did not close the door behind itself.
+
+**2 — the container had no `git`, so every in-container run had no rollback
+point.** `ferric-vcs` shells out to `git` for the per-turn snapshots that
+`ferric revert` restores. `debian-bookworm-slim` ships none, and the loop
+handles that by recording `note: vcs snapshot failed: … No such file or
+directory` in the trace and carrying on. Found by *reading an actual
+container-produced trace*, not by anything failing.
+
+**3 — Dream Mode had never once run.** Two defects, stacked so the outer hid
+the inner:
+
+- It read `.ferric/traces`; every writer writes `.ferric/trace`. It reported
+  this as a tidy *"No .ferric/traces directory found."* — **a dead feature
+  wearing the face of an idle one**, on a workspace that held three traces.
+- Fixing the path revealed the real one: `run_dream` used
+  `futures_executor::block_on`, which is not a Tokio runtime, so the HTTP stack
+  panicked with *"there is no reactor running"* the instant it touched the
+  network. `chat` and `cron` already take a real runtime for live providers and
+  reserve `futures_executor` for mocks; dream used the mock path for everything.
+
+The second could not be discovered until the first was fixed. That is the
+lesson worth keeping: **a bug that returns early can hide an unbounded number of
+bugs behind it**, and the early return is exactly what makes the feature look
+merely unused.
+
+**The shared cause of 3, and the fix.** Five writers each spelled
+`.join(".ferric").join("trace")`; the one reader spelled it `traces`. Same shape
+as ADR-089's six `format!("{protocol:?}")` sites, one sprint later. Now
+`ferric_trace::trace_dir()`, with a test that writes through the public sink and
+scans the directory the way dream scans it — so the assertion is against the
+writing code, not a restatement of the constant.
+
+**What was verified working, live.** `query` (constrained loop, 2 turns);
+`server` up/status/doctor/down on Windows *and* in-container; **VCS snapshots
+end-to-end for the first time** — two snapshot commits, `revert` removing the
+agent's file and leaving the pre-existing one, and `git status` showing the
+workspace index untouched, which is ADR-072's A3 property confirmed against a
+real repo rather than a unit test; `bench ltd` 22/22 solid; `mcp` answering real
+JSON-RPC `initialize`/`tools/list`/`prompts/list`; `icm` init+plan; `cron`
+add/list/run; `trace` cat/verify; `launch`; `dream` after the fix; the Dark
+Matter `fetch_reference` seam against `INTEGRATION.md`'s declared schema; and
+10 live Docker tests (13.4 s and 14.5 s of real work — not skips).
+
+**The airlock chain, both directions.** `--research-url` opened an airlock,
+fetched, quarantined, and then the run's `write_file` was **denied** by the sink
+policy as contaminated. The control matters as much: the *same* run under
+`--sink-action warn` wrote successfully. So the denial is the policy, not a
+broken write path — the ADR-081 provenance gate holds live in both directions.
+
+**Two near-misses of my own.** I called `trace cat` broken on a trace file that
+turned out to have **zero lines**, and `ps` reported "none running" for a
+server that was serving because `ps` is not installed. Both are the ADR-088
+shape — a negative result whose reason went unverified. The rule that keeps
+earning its place: *when a check reports absence, confirm the check could have
+detected presence.*
+
+**Not driven.** `chat` is an interactive REPL and was not exercised
+non-interactively; its underlying loop is the same `run_with_provider` that
+`query` exercises, but the REPL surface itself remains unverified. Said plainly
+rather than counted as passing.
+
+**Environment note, not a Ferric defect.** `C:\Users\charl\Cargo.toml` (a stray
+`test` package, March) breaks `cargo` for any non-workspace project under the
+home directory. Surfaced to the user, not deleted — it is theirs.
+
+## ADR-091 — 2026-07-25 (sprint 100): agent skills — installation is consent, invocation is authority
+
+**Context.** The user asked for skill loading in the conventional format, and
+settled the trust question directly: *a skill is something the user willingly
+chooses to install, so unless they were socially engineered into it, it is a
+different surface from web content. That said, installing or even invoking a
+skill should not be automatic unless it came from the base prompt, from the
+user, or from something the user configured as allowed.*
+
+That splits cleanly into two properties, and the design is just those two made
+structural.
+
+**1 — only the user can install.** Skills live at
+`<workspace>/.ferric/skills/<name>/SKILL.md`. `.ferric` is in `ferric-guard`'s
+`DENIED_WRITE_SEGMENTS`, so the model cannot write there. **Verified live**: the
+7B, asked to create `.ferric/skills/evil/SKILL.md`, got
+`DENIED: permission: denied_write_segment matched .ferric` and nothing was
+created. The same denial covers `.ferric/config.toml`, so the model cannot edit
+the allowlist that authorizes skills either — which is *why* the allowlist lives
+in config rather than anywhere more convenient.
+
+**2 — discovery is not authorization.** `discover()` returns everything on disk;
+getting into a prompt needs an `Authority`, of which there are exactly two:
+`UserRequested` (`--skill <name>` on this invocation) and `ConfigAllowed`
+(`allowed_skills` in `.ferric/config.toml`). **There is no `Model` variant**,
+and `authorize()` takes only user-sourced inputs — there is no parameter through
+which a model could clear a skill for itself.
+
+`DiscoveredSkill` and `AuthorizedSkill` are **different types**, not one type
+with a flag, and `compose()` accepts only the latter. "Forgot to check the
+allowlist" is therefore not a reachable state — the same structural move as the
+constrained-loop valve (ADR-010) and the provenance gate (ADR-081): make the
+unsafe thing unrepresentable rather than merely checked.
+
+**Verified live, as an A/B on one model with one variable.** Same 7B, same
+prompt ("write hello into <file>"), a skill installed that requires appending
+`SKILL-MARKER-42`:
+
+| run | authority | marker in the file |
+| --- | --- | --- |
+| installed, not authorized | none | **absent** |
+| `--skill marker` | UserRequested | **present** |
+| allowlist only, no flag | ConfigAllowed | **present** |
+
+The first row is the security property and the other two are the feature. A
+first attempt at this test was *confounded* — the skill was "write in haiku" and
+the prompt was "write a note about rain", which elicits verse from any model
+regardless. Swapping to an arbitrary marker string made the signal
+unambiguous.
+
+**The 3B ignored an authorized skill**, writing the file without the marker.
+Worth separating carefully: the trace showed the skill text *was* in the system
+prompt, so that is model non-compliance at `measured_level 4`, not a wiring
+failure. Checking which it was, rather than assuming, is the ADR-090 rule
+applied to my own feature.
+
+**A duplicate implementation existed, and was the more dangerous one.**
+`ferric-cli/src/skills.rs` already loaded the same `SKILL.md` path to serve MCP
+prompts, with a permissive parser: a file with **no frontmatter at all** still
+loaded (name falling back to the directory), and a declared `name` **overrode**
+its directory — so a skill installed as `helpful/` could answer to `deploy` over
+MCP. Deleted; `mcp.rs` now goes through `ferric-skills`, which requires
+frontmatter and requires `name` to match its directory. Two parsers for one file
+format is the same defect class as ADR-089's six protocol keys and ADR-090's six
+trace paths, three sprints running.
+
+**Per-surface decisions, made rather than defaulted.** `query` gets both
+authorities. `chat` honours the standing allowlist (same user, same workspace;
+a `/skill` verb is the natural per-message surface and is deferred). `icm` opts
+out — it composes each stage's context from its own declared layers and reports
+that as provenance, so folding in text no layer accounts for would undermine the
+mechanism. `api` opts out — the HTTP caller is not necessarily the workspace
+owner, so a workspace allowlist is not evidence *this* requester authorized
+anything. `ferric_query` over MCP opts out — that client already reaches skills
+the right way, by pulling a prompt.
+
+**Deliberately not built.** Skills do not grant tools. The conventional format
+has an `allowed-tools` key, and honouring it would let an installed file widen
+the tool rings — the one thing that could turn a skill into an action channel.
+That interaction wants its own sprint and its own decision against
+[[ferric-tool-rings]], not a field quietly parsed today.
+
+## ADR-092 — 2026-07-25 (sprint 101): the 7B verification round
+
+**Context.** A second `/verify` pass on a `cargo clean` tree, driven by
+qwen2.5-coder-7b rather than the 3B. The point of the stronger model: sprint
+100's round left several behaviours unproven because the 3B would not comply
+with instructions well enough to demonstrate them either way.
+
+**Cold build: zero warnings, zero errors.** 569 tests, clippy 0, fmt clean.
+
+**One defect, in the sprint-100 skill code.** `authorize()`'s `requested` loop
+deduped nothing against itself, so `--skill x --skill x` cleared the skill twice
+and `compose()` emitted its instructions twice — wasted context and a quiet
+change in emphasis for anyone who repeats a flag. The `allowed` loop had always
+had the check; the requested loop only lacked it against itself. Fixed, with a
+test asserting the body appears exactly once. A repeated *unknown* name is now
+reported once too.
+
+**A claim in ADR-091 was too weak.** I wrote that skills are protected because
+`.ferric` is in `DENIED_WRITE_SEGMENTS`. It is also in **`DENIED_READ_SEGMENTS`**
+— added in sprint 35 to keep the trace away from the model being traced, and
+inherited by skills when they landed in the same directory. Verified live: the
+7B asked to read an unauthorized `SKILL.md` got
+`denied_read_segment matched .ferric`. So the model cannot open an
+unauthorized skill and follow it of its own accord either, which means
+**authorized prompt injection is the only route from a skill to the model at
+all** — a stronger property than the one I documented. Corrected in the crate
+docs.
+
+**The composition question the 3B could not answer.** A run with *both* an
+authorized skill and ingested web content: the skill is in scope
+(`UserRequested`), the airlock opens, the content is quarantined — and
+`write_file` is still **denied** by the sink policy. An authorized skill does
+not unlock a contaminated write, because the provenance gate keys off the run's
+provenance, not off anything in the prompt. Controls on the same build: skill +
+clean run → marker written; no skill + clean run → no marker.
+
+**What the 7B demonstrated that the 3B could not.** A six-turn task
+(`make_dir` → two writes → two reads → `task_complete`) completed correctly, and
+with it **per-turn VCS granularity**: six snapshot commits, and
+`revert … 2` restored the workspace to exactly the state after the first write —
+`proj/a.txt` present, `proj/b.txt` gone, `seed.txt` untouched, and the user's
+git index still clean (ADR-072's A3 property). Sprint 99 only ever showed revert
+across a single turn. `bench ltd` 33/33 solid.
+
+**A false positive I caught in my own testing, worth recording.** The first run
+of the skill-plus-research test reported the file "not written", which reads
+exactly like the security gate working. It was not: a background
+`cargo test --workspace` had rebuilt `ferric.exe` **without**
+`--features backend-openai` mid-experiment, so the query never reached a model.
+ADR-086 warned about precisely this and it still caught me — the difference is
+that the failure mode *looks like a pass* when the thing you are testing is a
+denial. Re-running with full output rather than a filtered grep is what exposed
+it.
+
+The general rule this keeps re-deriving: **when the expected result is an
+absence, an unrelated failure is indistinguishable from success.** A denial test
+needs a positive control in the same session — which is why the marker-present
+runs matter as much as the marker-absent one.

@@ -38,8 +38,16 @@ ARG TARGETARCH
 # curl to fetch the prebuilt llama-server release; ca-certificates for TLS (the
 # OpenAI valve talks HTTPS to remote servers when not using the local one).
 # libgomp1 is llama.cpp's OpenMP runtime dependency.
+#
+# git is here because `ferric-vcs` shells out to it for the per-turn workspace
+# snapshots that `ferric revert` restores. Without it the snapshot **fails
+# quietly** — the loop records `note: vcs snapshot failed: … No such file or
+# directory` in the trace and carries on, so every in-container run silently had
+# no rollback point and `revert` had nothing to revert to. Found by reading an
+# actual container-produced trace (sprint 99); nothing failed loudly enough to
+# notice otherwise.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl libgomp1 \
+    && apt-get install -y --no-install-recommends ca-certificates curl git libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Prebuilt llama-server (docs/llama-cpp.md §1). Pinned

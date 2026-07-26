@@ -8,6 +8,22 @@ mod event;
 mod reader;
 mod sink;
 
+use std::path::{Path, PathBuf};
+
+/// The directory traces are written to, relative to a workspace root.
+///
+/// Five writers spelled `.join(".ferric").join("trace")` independently, and
+/// `ferric dream` — the one *reader* — spelled it `.ferric/traces`. Nothing
+/// caught it, because dream's only symptom was a tidy "No .ferric/traces
+/// directory found." on a workspace that in fact held traces: **the feature had
+/// never once located a trace, and said so in the voice of a clean no-op**
+/// (sprint 99).
+///
+/// One definition, so the reader and the writers cannot disagree again.
+pub fn trace_dir(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".ferric").join("trace")
+}
+
 pub use event::{Event, TRACE_SCHEMA_VERSION, TraceEvent};
 pub use reader::{ParsedEvent, TraceReader, TraceRecord};
 pub use sink::JsonlSink;
@@ -336,5 +352,58 @@ mod tests {
             }
             other => panic!("expected ToolResult, got {other:?}"),
         }
+    }
+
+    /// The reader and the writers must agree on where traces live.
+    ///
+    /// `ferric dream` read `.ferric/traces` while every writer wrote
+    /// `.ferric/trace`, so it never located a trace and reported that as a
+    /// clean "no traces found" — a dead feature that looked like an idle one.
+    /// Pinning the literal is the point: it is a path contract between crates,
+    /// and the failure it guards against is silent by nature.
+    #[test]
+    fn the_trace_directory_is_ferric_trace() {
+        let dir = trace_dir(Path::new("/ws"));
+        assert!(
+            dir.ends_with("trace"),
+            "must be `trace`, not `traces`: {}",
+            dir.display()
+        );
+        assert_eq!(
+            dir,
+            Path::new("/ws").join(".ferric").join("trace"),
+            "the on-disk contract every writer and `ferric dream` depend on"
+        );
+    }
+
+    /// A trace written through the public sink must land in `trace_dir`, so the
+    /// agreement above is with the code that actually writes, not just a
+    /// restatement of the constant.
+    #[test]
+    fn a_written_trace_lands_in_the_trace_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = trace_dir(tmp.path());
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("session.jsonl");
+        let mut sink = JsonlSink::open(&path, "s-1").unwrap();
+        sink.write_event(Event::SessionStart {
+            workspace: "/ws".to_string(),
+            resumed_from: None,
+        })
+        .unwrap();
+
+        // Scan the way `ferric dream` scans: list the directory for *.jsonl.
+        let found = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+            .count();
+        assert_eq!(
+            found,
+            1,
+            "a reader scanning {} must find the written trace",
+            dir.display()
+        );
     }
 }
