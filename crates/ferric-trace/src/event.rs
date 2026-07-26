@@ -43,6 +43,15 @@ pub enum Event {
         max_tools: u32,
         prompt_budget_tokens: u32,
         max_output_tokens: u32,
+        /// Characters of a single tool result this run showed the model
+        /// (ADR-002's cap). Recorded because everything that rebuilds a
+        /// context window from a trace — `replay`, `trace verify` — has only
+        /// the trace to work from, and without this key it had to assume the
+        /// default while `run()` used whatever the registry was configured
+        /// with. Additive: a `policy_selected` line written before ADR-093
+        /// parses as `Known` with the default, which is what those runs used.
+        #[serde(default = "ferric_core::default_truncation_limit")]
+        truncation_limit: usize,
     },
     /// Prompt-composition genealogy (oovra lineage): which versioned elements
     /// built the system prompt.

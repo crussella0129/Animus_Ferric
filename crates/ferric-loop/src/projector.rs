@@ -150,9 +150,12 @@ pub struct TraceProjector {
     pub pending: Option<PendingTurn>,
     pub head_len: usize,
     pub committed_turn_starts: Vec<(u32, usize)>,
-    /// Model-facing cap on a single tool result (ADR-002). Kept here rather than
-    /// read from the registry because the projector must also work in replay,
-    /// where there is no registry — only the trace.
+    /// Model-facing cap on a single tool result (ADR-002). Set from the
+    /// `PolicySelected` event and nowhere else, which is what makes run and
+    /// replay agree: the projector must also work in replay, where there is no
+    /// registry — only the trace — so the trace is the single source for both
+    /// (ADR-093). Until that event arrives it holds the default, which is what
+    /// pre-ADR-093 traces recorded implicitly.
     pub truncation_limit: usize,
 }
 
@@ -170,17 +173,17 @@ impl TraceProjector {
         }
     }
 
-    /// Match a registry configured with a non-default cap
-    /// (`Registry::with_truncation_limit`).
-    pub fn with_truncation_limit(mut self, limit: usize) -> Self {
-        self.truncation_limit = limit;
-        self
-    }
-
     /// Feeds an event into the projector, updating the context window.
     pub fn step(&mut self, event: &Event) {
         match event {
-            Event::PolicySelected { protocol, .. } => self.protocol = Some(*protocol),
+            Event::PolicySelected {
+                protocol,
+                truncation_limit,
+                ..
+            } => {
+                self.protocol = Some(*protocol);
+                self.truncation_limit = *truncation_limit;
+            }
             Event::SessionPrompt {
                 system,
                 user,

@@ -596,11 +596,11 @@ pub async fn run(
     sink: &mut JsonlSink,
     prompt: Option<&str>,
 ) -> Result<LoopOutcome, FerricError> {
-    // Keep the projector's model-facing cap in step with the registry's, so a
-    // caller-configured `Registry::with_truncation_limit` actually reaches the
-    // context window.
-    let mut projector =
-        TraceProjector::new().with_truncation_limit(args.registry.truncation_limit());
+    // The projector's model-facing cap is not set here: it comes from the
+    // `PolicySelected` event below, which carries the registry's value. That
+    // is the point of ADR-093 — replay and `trace verify` have only the trace,
+    // so the trace is the one source, and run reads it the same way they do.
+    let mut projector = TraceProjector::new();
 
     let session_start = Event::SessionStart {
         workspace: args.workspace.root().display().to_string(),
@@ -616,6 +616,7 @@ pub async fn run(
         max_tools: u32::from(args.policy.max_tools),
         prompt_budget_tokens: args.policy.prompt_budget_tokens,
         max_output_tokens: args.policy.max_output_tokens,
+        truncation_limit: args.registry.truncation_limit(),
     };
     sink.write_event(policy_selected.clone())?;
     projector.step(&policy_selected);

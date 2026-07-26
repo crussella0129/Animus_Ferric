@@ -53,6 +53,56 @@ fn trace_cat_renders_history_compacted() {
     assert!(stdout.contains("did a, b, c"));
 }
 
+/// Sprint 102 (ADR-093): `ferric trace verify` re-runs a trace and must find
+/// no drift against itself. It could not: `run()` writes `TurnEnd` before
+/// dispatching, so a turn's `ToolCall` events follow it, and the reconstructed
+/// script paired each turn with the *previous* turn's calls while dropping the
+/// last turn's — losing the terminator. Every trace carrying a tool call
+/// reported a mismatch, so a real drift and this bug were indistinguishable.
+///
+/// Deliberately end-to-end against a `run()`-produced trace: a hand-built
+/// fixture would have had to encode the very event order that was misread.
+#[test]
+fn trace_verify_finds_no_drift_in_a_real_trace() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["query", "--mock", "do a mock task"])
+        .arg("--workspace")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let trace_dir = dir.path().join(".ferric").join("trace");
+    let trace = std::fs::read_dir(&trace_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+        .expect("the mock run must have written a trace")
+        .path();
+
+    // The mock script calls write_file and then task_complete, so this trace
+    // exercises exactly the case that used to fail.
+    let content = std::fs::read_to_string(&trace).unwrap();
+    assert!(content.contains(r#""type":"tool_call""#));
+
+    let out = ferric()
+        .args(["trace", "verify"])
+        .arg(&trace)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        combined.contains("Trace verification successful"),
+        "verify reported drift against the trace it just replayed: {combined}"
+    );
+}
+
 #[test]
 fn no_args_fails_with_usage() {
     let out = ferric().output().unwrap();

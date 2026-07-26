@@ -7,9 +7,11 @@ use tracing::{debug, warn};
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
-/// Characters of tool output the model sees; the trace always gets the full
-/// output (ADR-002). Seeded from Animus `max_tool_output_chars`.
-pub const DEFAULT_TRUNCATION_LIMIT: usize = 4_000;
+/// Re-exported from `ferric-core`, which owns it so the trace event and the
+/// projector can share the same constant without depending on this crate
+/// (ADR-093). Kept in this namespace because every existing caller reaches
+/// for `ferric_tools::DEFAULT_TRUNCATION_LIMIT`.
+pub use ferric_core::DEFAULT_TRUNCATION_LIMIT;
 
 /// A tool's output, split at the chokepoint: `full` goes to the trace,
 /// `for_model` (truncated) goes back into the prompt.

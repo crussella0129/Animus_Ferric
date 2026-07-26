@@ -15,6 +15,24 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Characters of a single tool output the model sees; the trace always gets
+/// the full output (ADR-002). Seeded from Animus `max_tool_output_chars`.
+///
+/// It lives here, in the crate everything depends on, because three separate
+/// consumers need it and none of them may depend on each other: the registry
+/// that applies it (`ferric-tools`), the event that records it
+/// (`ferric-trace`), and the projector that reapplies it when rebuilding a
+/// context window from a trace (`ferric-loop`). ADR-093.
+pub const DEFAULT_TRUNCATION_LIMIT: usize = 4_000;
+
+/// Serde default for the cap recorded in a trace. A `policy_selected` line
+/// written before ADR-093 has no such key, and the runs that wrote those
+/// lines used exactly this value — so defaulting here reproduces them rather
+/// than guessing at them.
+pub fn default_truncation_limit() -> usize {
+    DEFAULT_TRUNCATION_LIMIT
+}
+
 /// A description of the model a run will use. Config-supplied, never inferred.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelProfile {
