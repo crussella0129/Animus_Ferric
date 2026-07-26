@@ -12,9 +12,19 @@
 //! But consent-to-install is not consent-to-run-whenever. Two properties keep
 //! those separate:
 //!
-//! 1. **Only the user can install.** Skills live under `.ferric/`, which is in
-//!    `ferric-guard`'s `DENIED_WRITE_SEGMENTS` — the model cannot write there.
-//!    So the model cannot author a skill, and cannot edit one it was given.
+//! 1. **Only the user can install — and the model cannot even read what is
+//!    installed.** Skills live under `.ferric/`, which is in *both* of
+//!    `ferric-guard`'s denylists: `DENIED_WRITE_SEGMENTS` (so the model cannot
+//!    author a skill or edit one it was given, nor edit the allowlist in
+//!    `.ferric/config.toml`) and `DENIED_READ_SEGMENTS` (so it cannot open an
+//!    unauthorized `SKILL.md` and follow it of its own accord).
+//!
+//!    The read half was a happy inheritance rather than a design: `.ferric` was
+//!    read-denied in sprint 35 to keep the trace away from the model being
+//!    traced. Skills landing there picked it up. Verified live (sprint 101):
+//!    the 7B asked to read an unauthorized `SKILL.md` got
+//!    `denied_read_segment matched .ferric`. **So the authorized prompt
+//!    injection below is the only route from a skill to the model at all.**
 //! 2. **Discovery is not authorization.** [`discover`] returns every skill on
 //!    disk. Getting one into a prompt requires an [`Authority`] — an explicit
 //!    user invocation or a user-written allowlist. **A model cannot authorize
@@ -278,12 +288,22 @@ pub fn authorize(
     let mut unknown = Vec::new();
 
     for name in requested {
+        // Dedup against what is already cleared. Repeating `--skill x` used to
+        // push a second copy, so the instructions appeared twice in the prompt
+        // — wasted context and a quiet shift in emphasis. The `allowed` loop
+        // below always had this check; the requested loop did not have it
+        // against itself.
+        if out.iter().any(|a: &AuthorizedSkill| a.name() == name) {
+            continue;
+        }
         match discovered.iter().find(|s| &s.name == name) {
             Some(s) => out.push(AuthorizedSkill {
                 skill: s.clone(),
                 authority: Authority::UserRequested,
             }),
-            None => unknown.push(name.clone()),
+            // A repeated *unknown* name is also reported once.
+            None if !unknown.contains(name) => unknown.push(name.clone()),
+            None => {}
         }
     }
 
@@ -521,5 +541,49 @@ mod tests {
     fn skills_live_under_the_model_immutable_ferric_dir() {
         let dir = skills_dir(Path::new("/ws"));
         assert_eq!(dir, Path::new("/ws").join(".ferric").join("skills"));
+    }
+
+    /// `--skill marker --skill marker` must clear it once.
+    ///
+    /// The `allowed` loop already dedups against what is cleared; the
+    /// `requested` loop did not dedup against *itself*, so repeating a flag
+    /// injected the same instructions twice — wasted context, and a silent
+    /// change in emphasis for anyone who repeats a flag out of habit.
+    #[test]
+    fn repeating_a_requested_skill_clears_it_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_skill(tmp.path(), "one", &valid("one"));
+        let (found, _) = discover(tmp.path());
+
+        let (authorized, unknown) = authorize(&found, &["one".into(), "one".into()], &[]);
+        assert_eq!(
+            authorized.len(),
+            1,
+            "a repeated --skill must not duplicate the instructions"
+        );
+        assert!(unknown.is_empty());
+
+        let text = compose(&authorized).unwrap();
+        assert_eq!(
+            text.matches("Step one.").count(),
+            1,
+            "the body must appear once:
+{text}"
+        );
+    }
+
+    /// A `--skill` value that looks like a path must simply not match. Names are
+    /// compared for equality against what was discovered, so traversal has no
+    /// route here — this pins that it stays an ordinary miss rather than
+    /// becoming a lookup.
+    #[test]
+    fn a_path_shaped_skill_name_is_just_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_skill(tmp.path(), "one", &valid("one"));
+        let (found, _) = discover(tmp.path());
+
+        let (authorized, unknown) = authorize(&found, &["../../etc/passwd".into()], &[]);
+        assert!(authorized.is_empty());
+        assert_eq!(unknown.len(), 1);
     }
 }

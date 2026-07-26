@@ -2188,3 +2188,62 @@ has an `allowed-tools` key, and honouring it would let an installed file widen
 the tool rings — the one thing that could turn a skill into an action channel.
 That interaction wants its own sprint and its own decision against
 [[ferric-tool-rings]], not a field quietly parsed today.
+
+## ADR-092 — 2026-07-25 (sprint 101): the 7B verification round
+
+**Context.** A second `/verify` pass on a `cargo clean` tree, driven by
+qwen2.5-coder-7b rather than the 3B. The point of the stronger model: sprint
+100's round left several behaviours unproven because the 3B would not comply
+with instructions well enough to demonstrate them either way.
+
+**Cold build: zero warnings, zero errors.** 569 tests, clippy 0, fmt clean.
+
+**One defect, in the sprint-100 skill code.** `authorize()`'s `requested` loop
+deduped nothing against itself, so `--skill x --skill x` cleared the skill twice
+and `compose()` emitted its instructions twice — wasted context and a quiet
+change in emphasis for anyone who repeats a flag. The `allowed` loop had always
+had the check; the requested loop only lacked it against itself. Fixed, with a
+test asserting the body appears exactly once. A repeated *unknown* name is now
+reported once too.
+
+**A claim in ADR-091 was too weak.** I wrote that skills are protected because
+`.ferric` is in `DENIED_WRITE_SEGMENTS`. It is also in **`DENIED_READ_SEGMENTS`**
+— added in sprint 35 to keep the trace away from the model being traced, and
+inherited by skills when they landed in the same directory. Verified live: the
+7B asked to read an unauthorized `SKILL.md` got
+`denied_read_segment matched .ferric`. So the model cannot open an
+unauthorized skill and follow it of its own accord either, which means
+**authorized prompt injection is the only route from a skill to the model at
+all** — a stronger property than the one I documented. Corrected in the crate
+docs.
+
+**The composition question the 3B could not answer.** A run with *both* an
+authorized skill and ingested web content: the skill is in scope
+(`UserRequested`), the airlock opens, the content is quarantined — and
+`write_file` is still **denied** by the sink policy. An authorized skill does
+not unlock a contaminated write, because the provenance gate keys off the run's
+provenance, not off anything in the prompt. Controls on the same build: skill +
+clean run → marker written; no skill + clean run → no marker.
+
+**What the 7B demonstrated that the 3B could not.** A six-turn task
+(`make_dir` → two writes → two reads → `task_complete`) completed correctly, and
+with it **per-turn VCS granularity**: six snapshot commits, and
+`revert … 2` restored the workspace to exactly the state after the first write —
+`proj/a.txt` present, `proj/b.txt` gone, `seed.txt` untouched, and the user's
+git index still clean (ADR-072's A3 property). Sprint 99 only ever showed revert
+across a single turn. `bench ltd` 33/33 solid.
+
+**A false positive I caught in my own testing, worth recording.** The first run
+of the skill-plus-research test reported the file "not written", which reads
+exactly like the security gate working. It was not: a background
+`cargo test --workspace` had rebuilt `ferric.exe` **without**
+`--features backend-openai` mid-experiment, so the query never reached a model.
+ADR-086 warned about precisely this and it still caught me — the difference is
+that the failure mode *looks like a pass* when the thing you are testing is a
+denial. Re-running with full output rather than a filtered grep is what exposed
+it.
+
+The general rule this keeps re-deriving: **when the expected result is an
+absence, an unrelated failure is indistinguishable from success.** A denial test
+needs a positive control in the same session — which is why the marker-present
+runs matter as much as the marker-absent one.
