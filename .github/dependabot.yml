@@ -1,0 +1,57 @@
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------
+  # Rust workspace. The root manifest covers every crate under crates/ —
+  # Dependabot resolves the whole workspace from it, so no per-crate entries.
+  # 17 external direct dependencies; the 248 packages in the SBOM are the
+  # transitive closure from Cargo.lock and do not each get a PR.
+  # ---------------------------------------------------------------------
+  - package-ecosystem: cargo
+    directory: "/"
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+
+  # ---------------------------------------------------------------------
+  # CI actions: actions/checkout@v4 and Swatinem/rust-cache@v2.
+  # Directory is "/" — Dependabot finds .github/workflows itself. Pointing
+  # this at the workflows directory is the usual reason it silently no-ops.
+  # ---------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci
+
+  # ---------------------------------------------------------------------
+  # docker/Dockerfile — rust:1.96-slim-bookworm (build) and
+  # debian:bookworm-slim (runtime). GitHub's dependency graph does not parse
+  # Dockerfiles, so neither appears in the SBOM; this updater reads the
+  # Dockerfile directly and is independent of the graph.
+  # ---------------------------------------------------------------------
+  - package-ecosystem: docker
+    directory: "/docker"
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: docker
+    ignore:
+      # The build image must track rust-toolchain.toml (pinned 1.96). Letting
+      # Dependabot move it independently puts the container on a different
+      # compiler than every other build. Patch bumps still come through, which
+      # is what you want for base-image CVEs.
+      - dependency-name: rust
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
