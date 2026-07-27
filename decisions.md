@@ -2752,3 +2752,97 @@ confirm the check could have reported success.
 the user config directory — which is precisely what makes a throwaway `server
 up` in a scratch folder the server that every workspace then discovers. Now
 documented, along with `--model` being optional under router-mode builds.
+
+## ADR-100 — 2026-07-27 (sprint 109): reading Codex, and what it settles
+
+Research sprint, no code change. Source: <https://github.com/openai/codex>
+(Apache-2.0, ~101.7k stars), read 2026-07-27 from crate listings and Rust source
+via the GitHub API. Full notes in the sprint research report.
+
+**The structural fact that reframes everything else: Codex contains the agent at
+the OS boundary, Ferric contains it in-process.** Codex uses macOS Seatbelt,
+Linux/WSL2 `bubblewrap`, and native Windows Sandbox, across three sandbox modes
+(`read-only` / `workspace-write` / `danger-full-access`) crossed with three
+approval policies (`untrusted` / `on-request` / `never`), network denied by
+default. Ferric's only OS-level sandbox is the Ornstein airlock (ADR-081/083/085),
+which covers the research plane and not ordinary tool dispatch.
+
+**So Codex can afford a looser default posture because the kernel is holding the
+line underneath it.** Every relaxation Ferric makes is load-bearing in a way the
+same relaxation there is not. Copying Codex's defaults without copying its
+sandbox would import the looseness and leave the backstop behind. This is the
+lens for the rest.
+
+**It settles the `allowed-tools` question ADR-091 deferred.** Codex's
+`SkillDependencies { tools: Vec<SkillToolDependency> }` carries `transport`,
+`command`, `url` — MCP server *coordinates*. A skill declares **what it needs**,
+so the host can check the precondition and report what is missing. **It is not a
+permission grant; nothing in the type widens what the agent may do.**
+
+That is the shape Ferric should adopt if it honours the key at all: an
+`allowed-tools` entry becomes a **precondition check** — refuse to compose a
+skill whose declared tools fall outside the active rings, and name them — never
+an action channel. The question stops being a security decision and becomes a
+diagnostic. Recorded as the recommended resolution; still the owner's call to
+take it.
+
+**It also validates the stricter half of ADR-091 by contrast.** Codex's
+`allows_implicit_invocation()` defaults to **true** — the model may invoke a
+skill nobody asked for. Ferric's `Authority` has no `Model` variant at all. Both
+are defensible *for their own containment model*, and the divergence should not
+be resolved by pointing at the more popular project: Codex's blast radius on a
+bad implicit invocation ends at Seatbelt, Ferric's would end at the guard.
+
+**One concrete gap, in Ferric's favour to close.** Codex's `execpolicy` is a
+declarative Starlark engine with argv-token prefix rules, three-valued decisions
+(allow/prompt/forbidden), strictest-severity-wins layering, a `justification`
+that names an alternative, and **`host_executable()`**, which pins which
+absolute paths may satisfy a basename match. Ferric's `check_command`
+(`checker.rs:130`) is `lowered.contains(pattern)` over six fixed strings. The
+substring-vs-token difference is arguably fine — Ferric's real containment is
+the path guard at the registry chokepoint — but **nothing says so**, and a
+denylist that reads like a boundary invites being trusted as one. Two things
+worth doing: describe it honestly as a footgun-catcher, and note that Ferric has
+no analogue to path pinning at all.
+
+**Independent convergence, worth recording as corroboration rather than
+novelty:** allow/prompt/forbidden ≈ `SinkAction::{Deny, RequireApproval, Warn}`
+(ADR-080), and strictest-wins layering ≈ `.ferricignore`'s additive-only rule
+(ADR-068). Two projects reached the same shapes separately. Ferric already has
+the three-valued vocabulary; it simply is not wired into `check_command`, which
+can only allow or deny and never ask.
+
+**What Ferric should not take.** Codex has **no constrained decoding** — the 12
+grammar hits in the tree are all *parsers* (`apply-patch/src/parser.rs`,
+`shell-command/src/bash.rs`, `path-uri`, syntax highlighting). It relies on
+frontier-model native tool calls, and has no capability-tier system. That is not
+an argument against ADR-010/015/022; it is a different target. Ferric's measured
+result — the constrained path holding at **100% down to 1B** where the same
+model's native tool-calling collapses to 22% — is precisely the problem Codex
+never has to solve. Their prompt shapes and turn structures are tuned for a model
+that needs no help, and are the wrong thing to copy wholesale.
+
+`code-mode` (embedded **V8**; the model writes JavaScript that composes tool
+calls) is noted and declined: it is the antithesis of the constrained
+one-action-per-turn valve, presumes a model that writes correct JS unaided, and
+puts a JS engine inside a harness whose stated baseline is Raspberry-Pi-class
+aarch64.
+
+**And a piece of outside corroboration for this project's recurring finding.**
+Verbatim from `codex-rs/skills/src/model.rs`:
+
+> `TODO: Enforce product gating in Codex skill selection/injection instead of only parsing and storing this metadata.`
+
+A policy field parsed, stored, surfaced — and enforced nowhere. That is ADR-080's
+`TaintSet` (a detector that did not detect) and ADR-093's `trace verify` (a drift
+detector that always said drift), in a repository with 101k stars. The failure
+mode is structural, not local carelessness, which is an argument for keeping the
+habit of testing that a control can actually fire.
+
+**Verification limits, stated rather than glossed.** The repo's `docs/config.md`
+and `docs/example-config.md` are now redirect stubs and `learn.chatgpt.com/docs/skills`
+404s, so the **frontmatter key names a `SKILL.md` author writes** are inferred
+from the Rust types, not read from a published schema. The Rust model is
+authoritative for structure; the YAML spellings are not confirmed, and any
+future Ferric claim of "conventional format" compatibility must check them
+first.
