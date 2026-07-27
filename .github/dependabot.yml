@@ -9,7 +9,6 @@ updates:
   # ---------------------------------------------------------------------
   - package-ecosystem: cargo
     directory: "/"
-    target-branch: dev
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -23,7 +22,6 @@ updates:
   # ---------------------------------------------------------------------
   - package-ecosystem: github-actions
     directory: "/"
-    target-branch: dev
     schedule:
       interval: weekly
     groups:
@@ -41,7 +39,6 @@ updates:
   # ---------------------------------------------------------------------
   - package-ecosystem: docker
     directory: "/docker"
-    target-branch: dev
     schedule:
       interval: weekly
     commit-message:
