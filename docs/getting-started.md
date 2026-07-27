@@ -96,6 +96,17 @@ anywhere. When you're done:
 ferric server down        # stops the engine and removes the runfile
 ```
 
+> **It also registers globally.** Alongside the local runfile, `server up`
+> writes one to your user config directory (`%APPDATA%\ferric\server.json`, or
+> the XDG equivalent), which is what lets a `ferric query` in *any* directory
+> find the server. Useful, and worth knowing before you experiment: a
+> throwaway `server up` in a scratch folder becomes the server every workspace
+> discovers until you take it down. `server down` removes both.
+
+`--model` is optional if your `llama-server` build supports router mode — it
+will then load models on demand. `server up` returns as soon as the engine is
+listening, so it is quick either way.
+
 > **Already running your own server?** (an existing Ollama, LM Studio, vLLM, or a
 > remote llama-server) — skip `ferric server` entirely and pass
 > `--api-base http://localhost:11434/v1` (and `--model <name>`) to `ferric query`.

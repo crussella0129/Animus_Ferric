@@ -930,3 +930,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-26
 - **Files modified:** crates/ferric-core/src/{scale.rs,lib.rs}, crates/ferric-trace/src/{event.rs,lib.rs}, crates/ferric-loop/src/{run.rs,replay.rs}, crates/ferric-cli/src/{query.rs,config.rs,chat.rs,mcp.rs,icm.rs,api.rs,launch.rs,trace_cmd.rs,trace_verify.rs}, docs/environment.md, decisions.md, agent-tasks/*, README.md
 - **Commit:** pending
+
+
+## T-10801 (sprint 108)
+- **Description:** Two-branch workflow adopted by owner decision: `main` + `dev` only, work on `dev`, no branch or worktree per sprint, one PR per sprint, owner approves every merge. Recorded in a new project `CLAUDE.md` so the rule survives a fresh clone. `dev` was 62 commits behind with one unique commit (the PR #40 merge, whose content is already on main) and is now content-identical to `main`. Also closed the last template-readiness item by **walking `docs/getting-started.md` end-to-end from a clean clone** — every claim held, including the no-backend-feature split (`trace`/`icm init`/`cron list`/`launch`/`--mock` work; `bench`/`dream`/`api` fail with ADR-097's single-definition message, non-zero). **Three suspected defects were my own harness** — a 10-minute "hang" that was bash command substitution holding a pipe open (the gotcha was already in my notes), an exit-127 that was a wrong relative path, an exit-2 that was a positional passed to a flags-only command — recorded in ADR-099 because each was indistinguishable from a product bug when it appeared. One real doc gap fixed: `server up` also writes a **global** runfile, which is what makes a throwaway server the one every workspace discovers.
+- **Completed:** 2026-07-27
+- **Files modified:** CLAUDE.md (new), docs/getting-started.md, decisions.md, agent-tasks/*
+- **Commit:** pending
