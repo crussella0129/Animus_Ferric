@@ -2543,3 +2543,82 @@ sides simply appended to the end of the file could not resolve itself. Found
 because rebasing this sprint onto the previous one forced the merge that
 exposed it; re-encoded to UTF-8 with the content byte-identical after decoding.
 
+
+## ADR-097 — 2026-07-26 (sprint 106): the environment surface, and a credential one `{:?}` from a log
+
+The user asked for "a thorough scrub for raw env variables that could be
+manipulated if found." 577 → **583 tests, 0 failures**, clippy 0 in both feature
+configurations, fmt clean. Full inventory in `docs/environment.md`.
+
+**There are only six runtime reads, and the model can reach none of them.**
+`.ferric/` is in both `DENIED_WRITE_SEGMENTS` and `DENIED_READ_SEGMENTS`, so the
+agent can neither read nor write the project config (verified live, ADR-092);
+the user config lives outside the workspace, so containment excludes it. There
+is no `env::set_var` anywhere, and a child cannot alter its parent's
+environment. The only child env Ferric constructs is `GIT_INDEX_FILE` (ADR-073)
+and the `llama-server` launch env — both harness-built.
+
+**The real find was not an environment variable at all.** `Config` holds
+`api_key` in plaintext **and derived `Debug`**, putting the credential one
+`{:?}` away from a log line, an `assert_eq!` failure message, or a panic
+payload. Nothing prints one today — but "nothing prints it" is a property of the
+current call sites, not of the type, and the derive is a loaded gun rather than
+a fired one. `Debug` is now hand-written, rendering the key as `<redacted>`
+while keeping *presence* visible, because knowing which layer supplied a key is
+exactly what config-precedence debugging needs. It is kept rather than removed
+because `assert_eq!` requires it.
+
+**And the sprint's own research report had claimed the opposite.** It stated
+that `Config`, `BackendOpts` and `OpenAiConfig` all lacked `Debug` — read off a
+`grep -B4` whose context stopped one line short of the derive. The error
+surfaced the moment the claim was written as a test with a **positive control**
+(does the detector recognise a type that *is* `Debug`?) instead of being trusted
+from the grep. **The grep and the compiler disagreed and the compiler was
+right**; the report is corrected in place rather than quietly fixed. This is the
+same lesson as sprint 101's false positive, arriving from the opposite
+direction: there, an absence was mistaken for success; here, a presence was
+missed by the check that went looking for it.
+
+The remaining two types carry the key and implement no `Debug`. That absence is
+now a **compile-time** assertion in each crate — `#[derive(Debug)]` on
+`BackendOpts` or `OpenAiConfig` fails the *build*, not a test someone might skip,
+and the error message names the redacting alternative. Confirmed by planting the
+derive and watching the build fail.
+
+**The env→config→hooks chain is real and is answered with disclosure, not
+lockdown.** `XDG_CONFIG_HOME`/`APPDATA`/`HOME` select the user config;
+`Config.hooks` is the one field that becomes arbitrary command execution
+(`run_hook` → `sh -c` with the full inherited environment, including the API
+key). So one environment variable selects a file that runs commands.
+
+Whether that is a *vulnerability* depends on the boundary, and saying so
+plainly matters more than the finding: on a normal desktop, setting another
+process's environment already implies running code as that user, so this grants
+nothing new. It bites where env crosses a boundary that code execution does not
+— a CI runner taking env from a PR-controlled file, a container manifest.
+Restricting config discovery would trade the XDG convention for a boundary the
+OS already owns. So `LoadedConfig` gains `hooks_source`, and a run with hooks in
+effect now prints which file supplied them. **A hook you wrote and a hook that
+arrived from a config you did not know was being read used to look identical.**
+The attribution follows the *merge* rule, not mere presence, so the file named
+is the one whose hook actually runs — reporting the wrong file would be worse
+than reporting none.
+
+**Also fixed:** `ferric trace verify` wrote `env::temp_dir().join("verify.jsonl")`
+— a constant name in a shared, often world-writable directory, which another
+user can pre-create or point elsewhere, and which made two concurrent verifies
+race. Now carries the pid.
+
+**Not changed, with reasons.** `--api-key` stays a flag (removing it would break
+existing invocations) but the docs now say to prefer the env var or config file,
+because anything on a command line is visible in `ps` and shell history.
+`FERRIC_PROMPTS_DIR` keeps its behaviour: it has the same boundary story as the
+config path, and the same answer — the run already reports its composed prompt
+source.
+
+**Scanned and clean:** no bearer credentials anywhere in the tree **or across
+all history** — `tskey-auth`/`tskey-api`, `ghp_`, `github_pat_`, `sk-…`,
+`AKIA…`, PEM private keys: zero. That class matters most because a Tailscale
+auth key or API key is a *bearer* token: it adds a node or calls the API with no
+SSO and no hardware key, which is the one way a security-key-protected tailnet
+gets bypassed.
