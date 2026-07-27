@@ -22,6 +22,20 @@ target/
 # JetBrains IDE project config (local to each dev's machine).
 .idea/
 
+# One-off scratch scripts (sprint 105). Kept on disk, not shipped.
+scratch/
+
+# Benchmark OUTPUT — one machine's run log and its measured model profiles.
+# `model_profiles.json` is not merely noise: ADR-029 reads it back at runtime
+# and a stored `measured_level` overrides the parameter-count prior in BOTH
+# directions, so a tracked copy would hand every fresh checkout a tier this
+# project measured on different hardware, at a quantization the record does not
+# pin. A miss is a documented safe no-op, so an absent file is the correct
+# default for a new user. `model_profiles.example.json` is tracked as a shape
+# reference; run `ferric bench` to produce your own.
+/benchmarks/results.jsonl
+/benchmarks/model_profiles.json
+
 # Local model weights (GGUF / safetensors) — 16 GB, never committed.
 models/
 

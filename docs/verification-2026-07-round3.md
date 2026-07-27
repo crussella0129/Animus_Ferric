@@ -84,7 +84,7 @@ top-level keys: [AuthURL, BackendState, CertDomains, ClientVersion,
                  CurrentTailnet, HaveNodeKey, Health, MagicDNSSuffix,
                  Peer, Self, TailscaleIPs, User, Version]
 top-level DNSName present?: False
-Self.DNSName: tec-xx.tail944782.ts.net.
+Self.DNSName: example-host.tailnet-example.ts.net.
 ```
 
 **`DNSName` lives under `Self`.** Reading it from the root always returned

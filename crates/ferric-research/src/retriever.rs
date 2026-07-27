@@ -665,14 +665,14 @@ mod tests {
     fn ssh_search_argv_tailscale_form() {
         let (prog, args) = ssh_search_argv(
             &SshTransport::Tailscale,
-            "switchblade",
+            "example-linux",
             "secret; rm -rf /",
             "/data",
             5,
         );
         assert_eq!(prog, "tailscale");
         assert_eq!(args[0], "ssh");
-        assert_eq!(args[1], "switchblade");
+        assert_eq!(args[1], "example-linux");
         assert_eq!(args[2], "--");
         let cmd = &args[3];
         assert!(cmd.contains("grep -rIl --"), "{cmd}");
@@ -688,7 +688,7 @@ mod tests {
     fn ssh_search_argv_plain_form() {
         let (prog, args) = ssh_search_argv(
             &SshTransport::Plain { port: 8022 },
-            "pixel-10-pro-xl",
+            "example-phone",
             "tailscale",
             "/sdcard",
             3,
@@ -697,7 +697,7 @@ mod tests {
         assert_eq!(args[0], "-p");
         assert_eq!(args[1], "8022");
         assert!(args.contains(&"BatchMode=yes".to_string()));
-        assert_eq!(args[args.len() - 3], "pixel-10-pro-xl");
+        assert_eq!(args[args.len() - 3], "example-phone");
         assert_eq!(args[args.len() - 2], "--");
         assert!(args.last().unwrap().contains("'tailscale'"));
     }
@@ -717,21 +717,26 @@ mod tests {
 
     #[test]
     fn parse_status_devices_reads_online_offline() {
-        // The captured real `tailscale status` sample from this machine.
-        let sample = "100.100.225.71   pixel-10-pro-xl  crussella0129@  android  -\n\
-                      100.98.104.44    switchblade      crussella0129@  linux    offline, last seen 1h ago\n";
+        // Shaped like real `tailscale status` output, with synthetic identity
+        // (sprint 105): the addresses stay inside Tailscale's real
+        // `100.64.0.0/10` CGNAT range so the sample is representative, but the
+        // devices and the account handle are examples. What this test actually
+        // pins is the column layout and the trailing "offline, last seen …"
+        // marker, and both are preserved verbatim.
+        let sample = "100.64.0.2   example-phone  user@  android  -\n\
+                      100.64.0.3    example-linux  user@  linux    offline, last seen 1h ago\n";
         let devs = parse_status_devices(sample);
         assert_eq!(devs.len(), 2);
-        let pixel = devs.iter().find(|d| d.name == "pixel-10-pro-xl").unwrap();
-        assert_eq!(pixel.ip, "100.100.225.71");
-        assert!(pixel.online, "pixel has no offline marker → online");
-        let sb = devs.iter().find(|d| d.name == "switchblade").unwrap();
-        assert!(!sb.online, "switchblade marked offline");
+        let phone = devs.iter().find(|d| d.name == "example-phone").unwrap();
+        assert_eq!(phone.ip, "100.64.0.2");
+        assert!(phone.online, "no offline marker → online");
+        let linux = devs.iter().find(|d| d.name == "example-linux").unwrap();
+        assert!(!linux.online, "marked offline");
     }
 
     #[test]
     fn tailnet_retriever_plane_label() {
-        let r = TailnetFsRetriever::new("switchblade", "/data", SshTransport::Tailscale);
+        let r = TailnetFsRetriever::new("example-linux", "/data", SshTransport::Tailscale);
         assert_eq!(r.plane(), "tailnet");
     }
 

@@ -196,11 +196,12 @@ pub fn scaffold(spec: &LaunchSpec) -> Result<ScaffoldReport, LaunchError> {
             // and if that ancestor manifest is not a valid workspace, `cargo
             // build` fails while naming a file this scaffold never wrote.
             //
-            // Found by launching into a scratch dir under the home directory,
-            // which happens to contain a stray `Cargo.toml`: the fresh project
-            // failed with "no targets specified in the manifest" pointing at
-            // `C:\Users\charl\Cargo.toml`. Declaring its own workspace stops the
-            // walk, which is the standard idiom for a standalone nested project.
+            // Found by launching into a scratch dir under a home directory that
+            // happened to contain a stray `Cargo.toml`: the fresh project failed
+            // with "no targets specified in the manifest", naming that ancestor
+            // manifest — a file the user had never heard of and the scaffold had
+            // never written. Declaring its own workspace stops the upward walk,
+            // which is the standard idiom for a standalone nested project.
             let cargo_toml = format!(
                 "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n\n[workspace]\n",
                 spec.name.to_lowercase().replace(" ", "_")
