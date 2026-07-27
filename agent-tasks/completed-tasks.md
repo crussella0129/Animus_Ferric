@@ -905,3 +905,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-07-26
 - **Files modified:** decisions.md, agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md, README.md
 - **Commit:** pending
+
+
+## T-10401 (sprint 104)
+- **Description:** Corrected a standing instruction the project should never have written. Sprints 97/103 recorded "unblocking is one command on ZimaBoard2: `tailscale up --ssh`" after probing port 22 as refused; the user stated it is blocked deliberately. A refused port is what a chosen posture looks like from outside — "closed" and "broken" are indistinguishable to a scanner, and the difference belongs to the owner. Corrected in all four places that carried it: the backlog entry, `README.md`'s Next line, `docs/ornstein.md`, and the `TailnetFsRetriever` doc comment. Recorded the design implication that outlives the correction: the crate's only *remote* FS plane is SSH-only, so it is unusable in the environment of record — and `shell_single_quote` exists only because SSH runs commands through the remote shell, i.e. the transport creates the threat it defends against. Also measured the SSH-free route (445/SMB, 139, 80, 2049/NFS open; 22/443/5000 closed) and recorded that a *mounted* share needs no new retriever — `LocalFsRetriever` with the mount point as its confined root covers it — with the open question of whether `Workspace` containment holds for a canonicalized UNC root. No behaviour change; 575 tests green, clippy 0, fmt clean.
+- **Completed:** 2026-07-26
+- **Files modified:** agent-tasks/agent-tasks.md, agent-tasks/completed-tasks.md, decisions.md, README.md, docs/ornstein.md, crates/ferric-research/src/retriever.rs
+- **Commit:** pending

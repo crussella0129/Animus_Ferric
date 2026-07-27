@@ -426,6 +426,20 @@ pub fn parse_status_devices(stdout: &str) -> Vec<TailnetDevice> {
 /// The Tailnet/NAS-FS source plane: search a remote tailnet device's filesystem
 /// over SSH (Tailscale SSH for Linux devices; plain `ssh -p` for Termux-style
 /// sshd). All retrieved content is untrusted → the quarantine, like any source.
+///
+/// # This plane has never run against a real host, and may never
+/// SSH is a *requirement* of this transport, not an implementation detail: the
+/// `shell_single_quote` escaping below exists because `ssh` runs its command
+/// through the **remote** shell. That requirement is also the plane's problem.
+/// The one online Linux peer on the reference tailnet has SSH blocked **by the
+/// owner's deliberate choice** (2026-07-26, ADR-095), so this transport cannot
+/// be exercised there at all — and a refused port 22 is evidence of intent, not
+/// of a gap to close.
+///
+/// Where a remote filesystem is reachable by **mount** instead (SMB, NFS), it
+/// is just a path, and [`LocalFsRetriever`] with the mount point as its
+/// confined root already serves it — no code here is involved. Generalising or
+/// retiring this transport is an open design decision; see the backlog.
 pub struct TailnetFsRetriever {
     host: String,
     remote_root: String,

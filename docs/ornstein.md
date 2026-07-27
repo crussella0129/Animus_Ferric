@@ -85,8 +85,19 @@ binary files, and **symlinks** for escape-safety), matches files by name or cont
 *local* file is untrusted (a downloaded doc, a cloned README, a NAS share), so it routes through
 the funnel like any other source.
 
-**Tailnet/NAS-FS plane** (`TailnetFsRetriever`, ✅ built; live SSH E2E deferred): searches a
-*remote* tailnet device's filesystem over SSH and feeds matches to the same quarantine.
+**Tailnet/NAS-FS plane** (`TailnetFsRetriever`, ✅ built; **never run against a real host**):
+searches a *remote* tailnet device's filesystem over SSH and feeds matches to the same quarantine.
+
+> **SSH is a requirement of this transport, and that is the plane's problem.** The
+> escaping in `shell_single_quote` exists because `ssh` runs its command through the
+> *remote* shell — the threat only exists because the transport is SSH. On the reference
+> tailnet the one online Linux peer has SSH blocked **by the owner's deliberate choice**
+> (ADR-095), so this plane cannot be exercised there at all. A refused port 22 is evidence
+> of intent, not a gap to close; do not propose enabling `tailscale up --ssh`.
+>
+> **If the remote filesystem is reachable by mount instead** (SMB, NFS), it is just a
+> path — use `LocalFsRetriever` with the mount point as its confined root. None of the
+> code below is involved. Whether to generalise or retire this transport is open.
 
 ```rust
 use ferric_research::{research, TailnetFsRetriever, SshTransport};
