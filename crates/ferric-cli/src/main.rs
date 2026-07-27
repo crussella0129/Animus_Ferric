@@ -29,7 +29,7 @@ mod mcp;
 mod query;
 mod revert_cmd;
 mod server;
-mod skills;
+mod skills_cmd;
 mod toolbench_cmd;
 mod trace_cmd;
 mod trace_verify;
@@ -87,6 +87,11 @@ enum Command {
         #[command(subcommand)]
         command: server::ServerCommand,
     },
+    /// Inspect installed agent skills
+    Skills {
+        #[command(subcommand)]
+        command: skills_cmd::SkillsCommand,
+    },
     /// Inspect session traces
     Trace {
         #[command(subcommand)]
@@ -119,6 +124,7 @@ fn main() -> ExitCode {
         Command::Query(args) => query::run_query(*args),
         Command::Revert(args) => revert_cmd::run_revert(*args),
         Command::Dream(args) => dream_cmd::run_dream(*args),
+        Command::Skills { command } => skills_cmd::run(command),
         Command::Bench { command } => match command {
             BenchCommand::Ltd(args) => toolbench_cmd::run_toolbench(*args),
             BenchCommand::Full(args) => bench_cmd::run_bench(*args),

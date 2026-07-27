@@ -80,7 +80,7 @@ fn run_flaky(script: Vec<Result<Completion, ProviderError>>) -> FlakyRun {
             edit_approver: None,
             cancel_flag: None,
             sink_policy: ferric_guard::SinkPolicy::deny(),
-            taint_set: ferric_guard::TaintSet::new(),
+            provenance: ferric_guard::Provenance::Clean,
             provider: &provider,
             registry: &registry,
             workspace: &workspace,

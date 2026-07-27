@@ -66,7 +66,7 @@ pub struct RunArgs<'a> {
     pub stream_sink: Option<&'a (dyn Fn(StreamDelta) + Sync)>,
     pub resume: Option<crate::replay::ReplayedState>,
     pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    pub taint_set: ferric_guard::TaintSet,
+    pub provenance: ferric_guard::Provenance,
     pub sink_policy: ferric_guard::SinkPolicy,
     pub hooks: Option<ferric_core::HooksConfig>,
     /// Accept-edits mode (ADR-070): when set, each mutating (`Write`/`Execute`)
@@ -88,11 +88,10 @@ pub struct LoopState<'a> {
     pub turns: u32,
     pub offered_names: Vec<String>,
     pub native_tools: Vec<ToolDescriptor>,
-    #[allow(dead_code)]
-    pub registry_tools: Vec<ToolDescriptor>,
     pub repetition: crate::repetition::RepetitionGuard,
     pub progress: crate::progress::ProgressGuard,
     pub failure: crate::failure::FailureGuard,
+    pub oscillation: crate::oscillation::OscillationGuard,
     pub nudged_for_no_action: bool,
     pub truncated_once: bool,
     pub last_input_tokens: Option<u32>,
@@ -254,7 +253,7 @@ impl<'a> LoopState<'a> {
         self.projector.step(&turn_end);
 
         let vcs = ferric_vcs::Vcs::new(self.args.workspace.root());
-        if let Err(e) = vcs.snapshot(self.sink.session(), turn).await {
+        if let Err(e) = vcs.snapshot(self.sink.session(), turn) {
             // debug, not warn: in a non-git workspace this fires every turn, so
             // a WARN would break quiet-by-default. The failure is still recorded
             // as a trace Note below (the durable record); revert is simply
@@ -278,7 +277,7 @@ impl<'a> LoopState<'a> {
             return Ok(TurnOutcome::Continue);
         }
 
-        let (actions, _parse_error) = match self.args.protocol {
+        let (actions, parse_error) = match self.args.protocol {
             ActionProtocol::NativeTools => (completion.message.tool_calls.clone(), None),
             ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
                 match crate::grammar::parse_json_action(
@@ -301,6 +300,18 @@ impl<'a> LoopState<'a> {
         };
 
         if actions.is_empty() {
+            // Record WHY there was no action. Without this a grammar failure and
+            // a genuinely empty completion are indistinguishable in the trace,
+            // which makes post-hoc analysis of small-model behaviour guesswork.
+            if let Some(e) = &parse_error {
+                debug!(error = %e, "action parse failed");
+                let note = Event::Note {
+                    text: format!("action parse failed: {e}"),
+                };
+                self.sink.write_event(note.clone())?;
+                self.projector.step(&note);
+            }
+
             let is_native_final = self.args.protocol == ActionProtocol::NativeTools
                 && completion
                     .message
@@ -308,18 +319,7 @@ impl<'a> LoopState<'a> {
                     .as_deref()
                     .is_some_and(|t| !t.trim().is_empty());
             if is_native_final {
-                if let Some(hooks) = &self.args.hooks {
-                    if let Some(cmd) = &hooks.post_turn {
-                        if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root())
-                        {
-                            let note = Event::Note {
-                                text: format!("post_turn hook failed: {e}"),
-                            };
-                            self.sink.write_event(note.clone())?;
-                            self.projector.step(&note);
-                        }
-                    }
-                }
+                self.fire_post_turn()?;
                 return Ok(TurnOutcome::Stop(StopReason::FinalText));
             }
             if self.nudged_for_no_action {
@@ -372,6 +372,33 @@ impl<'a> LoopState<'a> {
             }
         }
 
+        // Last in the chain (ADR-077): the three above are streak-based and all
+        // reset on alternation, so an A-B-A-B cycle passes every one of them.
+        // This one is windowed, and deliberately the loosest — it only fires
+        // once the sharper guards have had their chance.
+        match self.oscillation.observe(&actions) {
+            crate::repetition::Verdict::Proceed => {}
+            crate::repetition::Verdict::Warn => {
+                let evt = Event::OscillationGuard {
+                    action: "warned".to_string(),
+                };
+                self.sink.write_event(evt.clone())?;
+                self.projector.step(&evt);
+            }
+            crate::repetition::Verdict::Stop => {
+                warn!(
+                    guard = "oscillation",
+                    "cycling between a few actions; stopping"
+                );
+                let evt = Event::OscillationGuard {
+                    action: "stopped".to_string(),
+                };
+                self.sink.write_event(evt.clone())?;
+                self.projector.step(&evt);
+                return Ok(TurnOutcome::Stop(StopReason::Oscillation));
+            }
+        }
+
         let mut terminate_with: Option<String> = None;
         let mut plan_terminate_with: Option<String> = None;
         let mut dispatched = 0usize;
@@ -410,13 +437,28 @@ impl<'a> LoopState<'a> {
             // Accept-edits gate (ADR-070): a mutating call is previewed to the
             // human, who may reject it before it touches disk. Non-mutating
             // (Read) calls, and runs with no approver, are never gated.
-            if let Some(approver) = self.args.edit_approver {
-                let mutating = matches!(
-                    self.args.registry.permission_of(&call.name),
-                    Some(ferric_guard::PermissionLevel::Write)
-                        | Some(ferric_guard::PermissionLevel::Execute)
-                );
-                if mutating && !approver(&edit_preview(&call.name, &call.args)) {
+            //
+            // This gate and the sink gate inside `Registry::execute` cover the
+            // SAME calls — both only ever fire on `Write`/`Execute`, since a
+            // tainted `Read` is always allowed. So with accept-edits on, the
+            // human was being asked twice about one call (ADR-079). Now they are
+            // asked once, here, with the taint disclosed in the preview; an
+            // approval here carries through to the sink gate below.
+            let mutating = matches!(
+                self.args.registry.permission_of(&call.name),
+                Some(ferric_guard::PermissionLevel::Write)
+                    | Some(ferric_guard::PermissionLevel::Execute)
+            );
+            let mut human_already_approved = false;
+            if let Some(approver) = self.args.edit_approver
+                && mutating
+            {
+                // Disclosure now keys on the RUN, not on a guess about these
+                // arguments (ADR-080).
+                let untrusted_run = self.args.provenance.is_untrusted();
+                if approver(&edit_preview(&call.name, &call.args, untrusted_run)) {
+                    human_already_approved = true;
+                } else {
                     warn!(tool = %call.name, "edit rejected by user (accept-edits)");
                     let tr = Event::ToolResult {
                         id: call.id.clone(),
@@ -435,11 +477,12 @@ impl<'a> LoopState<'a> {
 
             debug!(tool = %call.name, "dispatching tool call");
             let (result_text, is_error, duration_ms, checks) = dispatch(
+                human_already_approved,
                 self.args.registry,
                 self.args.workspace,
                 &call.name,
                 &call.args,
-                &self.args.taint_set,
+                self.args.provenance,
                 &self.args.sink_policy,
             );
             debug!(tool = %call.name, is_error, duration_ms, "tool call finished");
@@ -480,17 +523,7 @@ impl<'a> LoopState<'a> {
             self.projector.commit_pending();
             self.projector.last_text = Some(summary);
 
-            if let Some(hooks) = &self.args.hooks {
-                if let Some(cmd) = &hooks.post_turn {
-                    if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                        let note = Event::Note {
-                            text: format!("post_turn hook failed: {e}"),
-                        };
-                        self.sink.write_event(note.clone())?;
-                        self.projector.step(&note);
-                    }
-                }
-            }
+            self.fire_post_turn()?;
 
             return Ok(TurnOutcome::Stop(StopReason::TaskComplete));
         }
@@ -499,17 +532,7 @@ impl<'a> LoopState<'a> {
             self.projector.commit_pending();
             self.projector.last_text = Some(plan);
 
-            if let Some(hooks) = &self.args.hooks {
-                if let Some(cmd) = &hooks.post_turn {
-                    if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                        let note = Event::Note {
-                            text: format!("post_turn hook failed: {e}"),
-                        };
-                        self.sink.write_event(note.clone())?;
-                        self.projector.step(&note);
-                    }
-                }
-            }
+            self.fire_post_turn()?;
 
             return Ok(TurnOutcome::Stop(StopReason::PlanSubmitted));
         }
@@ -538,19 +561,32 @@ impl<'a> LoopState<'a> {
                 }
             }
         }
-        if let Some(hooks) = &self.args.hooks {
-            if let Some(cmd) = &hooks.post_turn {
-                if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
-                    let note = Event::Note {
-                        text: format!("post_turn hook failed: {e}"),
-                    };
-                    self.sink.write_event(note.clone())?;
-                    self.projector.step(&note);
-                }
-            }
-        }
+        self.fire_post_turn()?;
 
         Ok(TurnOutcome::Continue)
+    }
+
+    /// Run the configured `post_turn` hook, if any.
+    ///
+    /// A hook failure is recorded as a trace `Note` and does **not** stop the
+    /// loop — unlike `pre_turn`, which does. This body was copy-pasted at all
+    /// four turn-exit points; keeping one copy is what stops those four from
+    /// drifting apart (ADR-074).
+    fn fire_post_turn(&mut self) -> Result<(), FerricError> {
+        let Some(hooks) = &self.args.hooks else {
+            return Ok(());
+        };
+        let Some(cmd) = &hooks.post_turn else {
+            return Ok(());
+        };
+        if let Err(e) = crate::hooks_exec::run_hook(cmd, self.args.workspace.root()) {
+            let note = Event::Note {
+                text: format!("post_turn hook failed: {e}"),
+            };
+            self.sink.write_event(note.clone())?;
+            self.projector.step(&note);
+        }
+        Ok(())
     }
 }
 
@@ -560,6 +596,10 @@ pub async fn run(
     sink: &mut JsonlSink,
     prompt: Option<&str>,
 ) -> Result<LoopOutcome, FerricError> {
+    // The projector's model-facing cap is not set here: it comes from the
+    // `PolicySelected` event below, which carries the registry's value. That
+    // is the point of ADR-093 — replay and `trace verify` have only the trace,
+    // so the trace is the one source, and run reads it the same way they do.
     let mut projector = TraceProjector::new();
 
     let session_start = Event::SessionStart {
@@ -576,6 +616,8 @@ pub async fn run(
         max_tools: u32::from(args.policy.max_tools),
         prompt_budget_tokens: args.policy.prompt_budget_tokens,
         max_output_tokens: args.policy.max_output_tokens,
+        truncation_limit: args.registry.truncation_limit(),
+        tier_source: args.policy.tier_source.label().to_string(),
     };
     sink.write_event(policy_selected.clone())?;
     projector.step(&policy_selected);
@@ -660,10 +702,10 @@ pub async fn run(
         turns,
         offered_names,
         native_tools,
-        registry_tools,
         repetition: crate::repetition::RepetitionGuard::new(),
         progress: crate::progress::ProgressGuard::new(),
         failure: crate::failure::FailureGuard::new(),
+        oscillation: crate::oscillation::OscillationGuard::new(),
         nudged_for_no_action: false,
         truncated_once: false,
         last_input_tokens: None,
@@ -736,71 +778,82 @@ fn registry_tools(
 
 /// Build an [`EditPreview`] from a pending call: pull the target `path` (if the
 /// call names one) and render the arguments for the human to inspect.
-fn edit_preview(name: &str, args: &serde_json::Value) -> EditPreview {
-    let mut targets = Vec::new();
-    for key in ["path", "from", "to", "src", "dest"] {
-        if let Some(s) = args.get(key).and_then(|v| v.as_str()) {
-            targets.push(s.to_string());
-        }
+fn edit_preview(name: &str, args: &serde_json::Value, tainted: bool) -> EditPreview {
+    let mut detail = String::new();
+    if tainted {
+        // The sink policy's question, folded into the one prompt the human
+        // already sees, instead of asked separately afterwards (ADR-079).
+        detail
+            .push_str("WARNING: this run has ingested untrusted research content, so every mutation is gated.\n");
     }
-    let detail = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
+    detail.push_str(&serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string()));
     EditPreview {
         tool: name.to_string(),
-        targets,
+        targets: preview_targets(args),
         detail,
     }
 }
 
+/// The target path(s) a call names, if any — for showing a human what a call is
+/// about to touch.
+fn preview_targets(args: &serde_json::Value) -> Vec<String> {
+    ["path", "from", "to", "src", "dest"]
+        .iter()
+        .filter_map(|key| args.get(key).and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The full, untruncated tool output. It goes to the trace verbatim (ADR-002
+/// durability); the model-facing truncation is applied by the projector, which
+/// is the single place the context window is assembled.
 struct DispatchText {
     full: String,
-    _for_model: String,
 }
 
 fn dispatch(
+    human_already_approved: bool,
     registry: &Registry,
     workspace: &Workspace,
     name: &str,
     args: &serde_json::Value,
-    taint_set: &ferric_guard::TaintSet,
+    provenance: ferric_guard::Provenance,
     sink_policy: &ferric_guard::SinkPolicy,
 ) -> (DispatchText, bool, u64, Vec<CheckRecord>) {
-    match registry.execute(workspace, name, args, taint_set, sink_policy) {
+    // ADR-074 wired the sink gate to a human; ADR-079 stops it asking twice.
+    // When accept-edits already previewed this exact call (taint disclosed) the
+    // human has answered, so the sink honours that answer rather than
+    // re-prompting. With no accept-edits approver there is nobody to ask, and
+    // `RequireApproval` still denies — the safe reading.
+    let carry_through = |_r: &ferric_tools::ApprovalRequest<'_>| true;
+    let sink_approver: Option<ferric_tools::SinkApprover<'_>> =
+        human_already_approved.then_some(&carry_through);
+
+    match registry.execute(
+        workspace,
+        name,
+        args,
+        provenance,
+        sink_policy,
+        sink_approver,
+    ) {
         ExecuteOutcome::Completed {
             output,
             duration_ms,
             checks,
         } => (
-            DispatchText {
-                full: output.full,
-                _for_model: output.for_model,
-            },
+            DispatchText { full: output.full },
             output.is_error,
             duration_ms,
             checks,
         ),
         ExecuteOutcome::Denied { reason, checks } => {
             let text = format!("DENIED: {reason}");
-            (
-                DispatchText {
-                    full: text.clone(),
-                    _for_model: text,
-                },
-                true,
-                0,
-                checks,
-            )
+            (DispatchText { full: text }, true, 0, checks)
         }
         ExecuteOutcome::UnknownTool { name } => {
             let text = format!("unknown tool: {name}");
-            (
-                DispatchText {
-                    full: text.clone(),
-                    _for_model: text,
-                },
-                true,
-                0,
-                Vec::new(),
-            )
+            (DispatchText { full: text }, true, 0, Vec::new())
         }
     }
 }

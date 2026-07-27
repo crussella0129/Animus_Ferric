@@ -56,9 +56,7 @@ pub fn recipe_for(_tier: Tier, protocol: ActionProtocol) -> Vec<(String, Option<
         ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
             ("protocol-constrained-json", "1.1.0")
         }
-        // The legacy "unified-grammar" atom teaches the `<tool_call>` XML
-        // format — exactly the TextXml fallback's wire shape.
-        ActionProtocol::TextXml => ("protocol-unified-grammar", "1.0.0"),
+        ActionProtocol::TextXml => ("protocol-text-xml", "1.0.0"),
     };
     vec![
         ("role-declaration".to_string(), Some("1.0.0".to_string())),

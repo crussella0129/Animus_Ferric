@@ -35,6 +35,12 @@ pub(crate) fn no_progress_warn_message(repeated: &[&str]) -> Message {
     ))
 }
 
+pub(crate) fn oscillation_warn_message() -> Message {
+    Message::user(
+        "You are cycling between the same few tool calls without making          progress. Their results will not change if you repeat them. Use what          you already have to take a DIFFERENT next step, or call task_complete          if the task is done.",
+    )
+}
+
 pub(crate) fn failure_warn_message() -> Message {
     Message::user(
         "Your last tool call(s) failed. Read the error message and try a \
@@ -42,12 +48,20 @@ pub(crate) fn failure_warn_message() -> Message {
     )
 }
 
+/// Build the model-facing message for one tool result.
+///
+/// `output` arrives from the trace, which stores the **full** output for
+/// durability (ADR-002). The context window gets the truncated view — applying
+/// it here, at the single point where messages are assembled, is what keeps run
+/// and replay identical.
 pub(crate) fn result_message(
     protocol: ActionProtocol,
     call_id: &str,
     name: &str,
     output: &str,
+    truncation_limit: usize,
 ) -> Message {
+    let output = &ferric_tools::truncate_for_model(output, truncation_limit);
     match protocol {
         ActionProtocol::NativeTools => Message::tool_result(call_id, output),
         ActionProtocol::ConstrainedJson | ActionProtocol::TextXml | ActionProtocol::Plan => {
@@ -67,13 +81,14 @@ pub struct PendingTurn {
     pub repetition_warned: bool,
     pub no_progress_warned: bool,
     pub failure_warned: bool,
+    pub oscillation_warned: bool,
 }
 
 impl PendingTurn {
     /// Turn this buffer into the messages `run()` would have pushed for it,
     /// or `None` if it never received a `TurnEnd` at all (defensively treated
     /// the same as a dangling turn).
-    fn finalize(self, protocol: ActionProtocol) -> Option<Vec<Message>> {
+    fn finalize(self, protocol: ActionProtocol, truncation_limit: usize) -> Option<Vec<Message>> {
         let (text, truncated) = self.turn_end?;
 
         // Truncation handling is ConstrainedJson-only (run.rs mirrors this
@@ -111,8 +126,11 @@ impl PendingTurn {
         if self.no_progress_warned {
             out.push(no_progress_warn_message(&names));
         }
+        if self.oscillation_warned {
+            out.push(oscillation_warn_message());
+        }
         for (id, name, output) in &self.tool_results {
-            out.push(result_message(protocol, id, name, output));
+            out.push(result_message(protocol, id, name, output, truncation_limit));
         }
         if self.failure_warned {
             out.push(failure_warn_message());
@@ -132,6 +150,13 @@ pub struct TraceProjector {
     pub pending: Option<PendingTurn>,
     pub head_len: usize,
     pub committed_turn_starts: Vec<(u32, usize)>,
+    /// Model-facing cap on a single tool result (ADR-002). Set from the
+    /// `PolicySelected` event and nowhere else, which is what makes run and
+    /// replay agree: the projector must also work in replay, where there is no
+    /// registry — only the trace — so the trace is the single source for both
+    /// (ADR-093). Until that event arrives it holds the default, which is what
+    /// pre-ADR-093 traces recorded implicitly.
+    pub truncation_limit: usize,
 }
 
 impl TraceProjector {
@@ -144,13 +169,21 @@ impl TraceProjector {
             pending: None,
             head_len: 0,
             committed_turn_starts: Vec::new(),
+            truncation_limit: ferric_tools::DEFAULT_TRUNCATION_LIMIT,
         }
     }
 
     /// Feeds an event into the projector, updating the context window.
     pub fn step(&mut self, event: &Event) {
         match event {
-            Event::PolicySelected { protocol, .. } => self.protocol = Some(*protocol),
+            Event::PolicySelected {
+                protocol,
+                truncation_limit,
+                ..
+            } => {
+                self.protocol = Some(*protocol);
+                self.truncation_limit = *truncation_limit;
+            }
             Event::SessionPrompt {
                 system,
                 user,
@@ -207,6 +240,11 @@ impl TraceProjector {
                     p.failure_warned = true;
                 }
             }
+            Event::OscillationGuard { action } if action == "warned" => {
+                if let Some(p) = &mut self.pending {
+                    p.oscillation_warned = true;
+                }
+            }
             Event::HistoryCompacted {
                 through_turn,
                 summary,
@@ -243,7 +281,7 @@ impl TraceProjector {
     pub fn commit_pending(&mut self) {
         if let (Some(p), Some(proto)) = (self.pending.take(), self.protocol) {
             let turn_num = p.turn;
-            if let Some(msgs) = p.finalize(proto) {
+            if let Some(msgs) = p.finalize(proto, self.truncation_limit) {
                 if proto == ActionProtocol::NativeTools
                     && let Some(assistant) = msgs.first()
                     && let Some(t) = &assistant.text

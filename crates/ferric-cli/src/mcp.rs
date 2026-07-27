@@ -228,6 +228,12 @@ pub struct McpArgs {
     pub modality: Option<String>,
 
     /// Cap the active tool ring (ADR-028).
+    /// Run at this tier regardless of size or measured level (ADR-098).
+    /// Recorded as `tier_source: "override"` so an asked-for tier is never
+    /// mistaken for one earned on the benchmark ladder.
+    #[arg(long, value_enum)]
+    pub tier: Option<crate::query::TierArg>,
+
     #[arg(long)]
     pub max_ring: Option<u8>,
 
@@ -250,6 +256,14 @@ pub struct McpArgs {
 /// `tokio::runtime::Runtime` built at launch and reused for every subsequent
 /// `tools/call` (T-3601's reusable-provider shape, applied to the executor
 /// too — see `run_with_provider`'s doc comment).
+///
+/// Deliberately **not** folded into `backend::ResolvedBackend` (sprint 103,
+/// ADR-094), which unified the identical `chat`/`icm` copies. The difference is
+/// behavioural, not stylistic: this server builds its provider **once at
+/// launch** and reuses it across every `tools/call`, while chat and icm build a
+/// fresh mock per invocation. `MockProvider` is scripted and stateful, so *when*
+/// it is constructed is observable. Only the real-backend construction is
+/// shared, via `backend::create_provider_with_runtime`.
 pub(crate) enum Executor {
     Mock,
     #[cfg(feature = "backend-openai")]
@@ -294,8 +308,21 @@ impl McpServer {
         })
     }
 
+    /// Skills offered as MCP prompts.
+    ///
+    /// Listing is safe to do unconditionally: an MCP prompt is *pulled* by the
+    /// client, so surfacing one is not the harness deciding to run it. The
+    /// authorization gate that `--skill` and the config allowlist provide
+    /// (ADR-091) governs the other direction — skills folded into a `query`
+    /// prompt by Ferric itself.
+    ///
+    /// Parsing goes through `ferric-skills` rather than a second local parser.
+    /// The one this replaced accepted a `SKILL.md` with no frontmatter at all
+    /// (falling back to the directory name) and let a declared `name` override
+    /// its directory — so a skill installed as `helpful/` could answer to
+    /// `deploy`. Names are now required to match their directory.
     fn handle_prompts_list(&self, id: Value) -> RpcResponse {
-        let skills = crate::skills::load_skills(self.workspace.root());
+        let (skills, _errors) = ferric_skills::discover(self.workspace.root());
         let prompts: Vec<Value> = skills
             .into_iter()
             .map(|s| {
@@ -311,7 +338,7 @@ impl McpServer {
 
     fn handle_prompts_get(&self, id: Value, params: &Value) -> RpcResponse {
         let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-        let skills = crate::skills::load_skills(self.workspace.root());
+        let (skills, _errors) = ferric_skills::discover(self.workspace.root());
 
         if let Some(skill) = skills.into_iter().find(|s| s.name == name) {
             RpcResponse::success(
@@ -323,7 +350,7 @@ impl McpServer {
                             "role": "user",
                             "content": {
                                 "type": "text",
-                                "text": skill.content
+                                "text": skill.instructions
                             }
                         }
                     ]
@@ -431,25 +458,26 @@ impl McpServer {
             _ => {}
         };
 
+        let setup = crate::query::LoopSetup {
+            registry: &self.config.registry,
+            workspace: &self.workspace,
+            policy: &self.config.policy,
+            protocol: self.config.protocol,
+            sampling: self.config.sampling.clone(),
+            system_prompt: self.config.system_prompt.as_deref(),
+            lineage: self.config.lineage.clone(),
+            media,
+            stream_sink: Some(&sink_fn),
+            resume,
+            provenance: ferric_guard::Provenance::Clean,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: self.config.hooks.clone(),
+            edit_approver: None,
+        };
         let fut = run_with_provider(
-            self.provider.as_ref(),
-            &self.config.registry,
-            &self.workspace,
-            &self.config.policy,
-            self.config.protocol,
-            self.config.sampling.clone(),
-            self.config.system_prompt.as_deref(),
-            self.config.lineage.clone(),
+            setup.into_run_args(self.provider.as_ref(), None),
             sink,
             Some(prompt),
-            media,
-            Some(&sink_fn),
-            resume,
-            ferric_guard::TaintSet::new(),
-            ferric_guard::SinkPolicy::deny(),
-            None,
-            self.config.hooks.clone(),
-            None,
         );
         match &self.executor {
             Executor::Mock => futures_executor::block_on(fut),
@@ -494,6 +522,7 @@ impl McpServer {
         let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
         let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
         let resolved_max_ring = args.max_ring.or(cfg.max_ring);
+        let resolved_tier = args.tier.or(cfg.tier);
         let resolved_profile_dir = args
             .profile_dir
             .clone()
@@ -501,6 +530,14 @@ impl McpServer {
             .unwrap_or_else(|| PathBuf::from("benchmarks"));
 
         let mut config = build_run_config(&RunConfigArgs {
+            // `ferric_query` over MCP does not fold skills. The MCP client
+            // already reaches skills the right way — as *prompts* it pulls
+            // deliberately (`prompts/get`). Injecting them into the tool call
+            // as well would run a skill the client never asked for, which is
+            // exactly the automatic invocation ADR-091 rules out.
+            workspace_root: workspace_root.clone(),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
             mock: args.mock,
             backend: backend_opts
                 .backend
@@ -513,6 +550,7 @@ impl McpServer {
             protocol_override: args.protocol,
             prompts_dir: args.prompts_dir.clone(),
             max_ring: resolved_max_ring,
+            tier_override: resolved_tier.map(Into::into),
             profile_dir: resolved_profile_dir,
             // C-001 (plan-critic): derived from the POST-merge, config-
             // resolved `model`/`model_file` (already merged above into
@@ -577,7 +615,7 @@ impl McpServer {
             );
         }
 
-        let trace_dir = workspace_root.join(".ferric").join("trace");
+        let trace_dir = ferric_trace::trace_dir(&workspace_root);
         std::fs::create_dir_all(&trace_dir)
             .map_err(|e| format!("cannot create trace dir {}: {e}", trace_dir.display()))?;
         let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
@@ -628,8 +666,7 @@ impl McpServer {
 fn build_real_provider(
     backend_opts: &BackendOpts,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
-    let runtime = Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    let provider = runtime.block_on(crate::backend::create_provider(backend_opts))?;
+    let (provider, runtime) = crate::backend::create_provider_with_runtime(backend_opts)?;
     Ok((provider, Executor::Real(runtime)))
 }
 
@@ -637,9 +674,7 @@ fn build_real_provider(
 fn build_real_provider(
     _backend_opts: &BackendOpts,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
-    Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-openai`, or use --mock"
-        .to_string())
+    Err(crate::backend::BACKEND_FEATURE_MISSING.to_string())
 }
 
 /// `ferric mcp` entrypoint.
@@ -696,6 +731,7 @@ mod tests {
             mock: true,
             modality: None,
             max_ring: None,
+            tier: None,
             profile_dir: None,
             resume: None,
         }
@@ -833,6 +869,10 @@ mod tests {
     fn test_server(dir: &std::path::Path, provider: Box<dyn Provider + Send + Sync>) -> McpServer {
         let workspace = Workspace::new(dir).unwrap();
         let config = crate::query::build_run_config(&crate::query::RunConfigArgs {
+            workspace_root: std::path::PathBuf::from("."),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
+            tier_override: None,
             mock: true,
             backend: crate::backend::BackendArg::Openai,
             params_b: 1.2,

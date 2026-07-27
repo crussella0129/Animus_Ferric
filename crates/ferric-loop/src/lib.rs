@@ -15,6 +15,7 @@ mod compact;
 mod failure;
 mod grammar;
 mod hooks_exec;
+mod oscillation;
 mod outcome;
 mod progress;
 mod projector;

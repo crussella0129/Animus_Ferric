@@ -7,9 +7,11 @@ use tracing::{debug, warn};
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
-/// Characters of tool output the model sees; the trace always gets the full
-/// output (ADR-002). Seeded from Animus `max_tool_output_chars`.
-pub const DEFAULT_TRUNCATION_LIMIT: usize = 4_000;
+/// Re-exported from `ferric-core`, which owns it so the trace event and the
+/// projector can share the same constant without depending on this crate
+/// (ADR-093). Kept in this namespace because every existing caller reaches
+/// for `ferric_tools::DEFAULT_TRUNCATION_LIMIT`.
+pub use ferric_core::DEFAULT_TRUNCATION_LIMIT;
 
 /// A tool's output, split at the chokepoint: `full` goes to the trace,
 /// `for_model` (truncated) goes back into the prompt.
@@ -91,6 +93,12 @@ impl Registry {
         }
     }
 
+    /// The configured model-facing output cap. The loop reads this to keep its
+    /// projector's truncation in step with the registry's.
+    pub fn truncation_limit(&self) -> usize {
+        self.truncation_limit
+    }
+
     pub fn register(&mut self, tool: Box<dyn Tool>) {
         self.tools.insert(tool.spec().name.clone(), tool);
     }
@@ -131,13 +139,17 @@ impl Registry {
     /// Execute `name` with `args` inside `workspace`. The guard check runs
     /// against every declared target path BEFORE the handler; a denial means
     /// the handler is never invoked.
+    /// `approver`: consulted only when the sink policy returns
+    /// `RequireApproval`. `None` means nobody can approve, so such a call is
+    /// denied — see the `RequireApproval` arm below.
     pub fn execute(
         &self,
         workspace: &Workspace,
         name: &str,
         args: &serde_json::Value,
-        taint_set: &ferric_guard::TaintSet,
+        provenance: ferric_guard::Provenance,
         sink_policy: &ferric_guard::SinkPolicy,
+        approver: Option<SinkApprover<'_>>,
     ) -> ExecuteOutcome {
         let Some(tool) = self.tools.get(name) else {
             return ExecuteOutcome::UnknownTool {
@@ -193,29 +205,59 @@ impl Registry {
             checks.push(CheckRecord::allow(std::path::PathBuf::from(&cmd)));
         }
 
-        let is_tainted = taint_set.args_tainted(args);
-        match sink_policy.decide(spec.permission, is_tainted) {
+        match sink_policy.decide(spec.permission, provenance) {
             ferric_guard::SinkDecision::Allow => {}
             ferric_guard::SinkDecision::Warn => {
                 warn!(
                     tool = name,
                     permission = ?spec.permission,
-                    "sink policy: tainted data reaching a {:?} sink (warn mode; proceeding)",
+                    "sink policy: run has ingested untrusted content; {:?} sink proceeding (warn mode)",
                     spec.permission
                 );
             }
-            ferric_guard::SinkDecision::RequireApproval => {
-                // Fall back to deny since human approval is not wired
-                warn!(tool = name, permission = ?spec.permission, "sink policy: tainted data at sink; require-approval not wired, denying");
-                return ExecuteOutcome::Denied {
-                    reason: "sink policy: require approval not implemented".to_string(),
-                    checks,
-                };
-            }
+            ferric_guard::SinkDecision::RequireApproval => match approver {
+                // ADR-074: this used to degrade to a flat denial, commenting
+                // "require-approval not wired" — while ADR-070 had already
+                // shipped a human-in-the-loop approver at the dispatch site.
+                // Two human-approval systems, built four sprints apart, never
+                // introduced to each other.
+                Some(approve) => {
+                    let request = ApprovalRequest {
+                        tool: name,
+                        permission: spec.permission,
+                        args,
+                    };
+                    if approve(&request) {
+                        warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation approved by human");
+                    } else {
+                        warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation rejected by human");
+                        return ExecuteOutcome::Denied {
+                            reason: "sink policy: mutation rejected by human (run has ingested untrusted content)"
+                                .to_string(),
+                            checks,
+                        };
+                    }
+                }
+                // No approver available (a non-interactive run). Denying is the
+                // safe reading of "require approval" when nobody can approve.
+                None => {
+                    warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; no approver available, denying mutation");
+                    return ExecuteOutcome::Denied {
+                        reason: "sink policy: this run has ingested untrusted research \
+                                 content, so mutations require human approval — and this \
+                                 run has no approver. Re-run with --accept-edits to \
+                                 approve interactively, or --sink-action warn to proceed \
+                                 unguarded."
+                            .to_string(),
+                        checks,
+                    };
+                }
+            },
             ferric_guard::SinkDecision::Deny => {
-                warn!(tool = name, permission = ?spec.permission, "sink policy: tainted data denied at sink");
+                warn!(tool = name, permission = ?spec.permission, "sink policy: mutation denied (run has ingested untrusted content)");
                 return ExecuteOutcome::Denied {
-                    reason: "sink policy: tainted data denied at sink".to_string(),
+                    reason: "sink policy: mutation denied (run has ingested untrusted content)"
+                        .to_string(),
                     checks,
                 };
             }
@@ -248,6 +290,33 @@ impl Default for Registry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// A tool call the sink policy has flagged as tainted-data-reaching-a-sink,
+/// presented to a human for a yes/no.
+///
+/// Lives here rather than in `ferric-loop` so the registry — the single
+/// chokepoint — can consult an approver without depending on the loop. The loop
+/// supplies the implementation (ADR-070's `EditApprover`); this is the seam.
+pub struct ApprovalRequest<'a> {
+    pub tool: &'a str,
+    pub permission: ferric_guard::PermissionLevel,
+    pub args: &'a serde_json::Value,
+}
+
+/// Approves or rejects a flagged call. `true` lets it run.
+pub type SinkApprover<'a> = &'a (dyn Fn(&ApprovalRequest<'_>) -> bool + Sync);
+
+/// The model-facing view of a tool result: at most `limit` chars, with an
+/// explicit marker so the model knows it is looking at a prefix.
+///
+/// Public because the loop's `TraceProjector` — not the registry — is what
+/// actually assembles the context window (sprint 44). The projector rebuilds
+/// messages from trace events, and the trace deliberately stores the *full*
+/// output, so the projector has to apply this itself. Both callers must use the
+/// same function or the two views drift.
+pub fn truncate_for_model(text: &str, limit: usize) -> String {
+    truncate_chars(text, limit)
 }
 
 fn truncate_chars(text: &str, limit: usize) -> String {
@@ -337,8 +406,9 @@ mod tests {
             &ws,
             "writer",
             &json!({"path": ".git/config"}),
-            &ferric_guard::TaintSet::new(),
+            ferric_guard::Provenance::Clean,
             &ferric_guard::SinkPolicy::deny(),
+            None,
         );
         assert!(
             matches!(outcome, ExecuteOutcome::Denied { ref reason, .. } if reason.contains(".git")),
@@ -358,8 +428,9 @@ mod tests {
             &ws,
             "writer",
             &json!({"path": "notes.md"}),
-            &ferric_guard::TaintSet::new(),
+            ferric_guard::Provenance::Clean,
             &ferric_guard::SinkPolicy::deny(),
+            None,
         ) {
             ExecuteOutcome::Completed { checks, .. } => {
                 assert_eq!(checks.len(), 1);
@@ -382,8 +453,9 @@ mod tests {
             &ws,
             "writer",
             &json!({"path": ".git/config"}),
-            &ferric_guard::TaintSet::new(),
+            ferric_guard::Provenance::Clean,
             &ferric_guard::SinkPolicy::deny(),
+            None,
         ) {
             ExecuteOutcome::Denied { checks, .. } => {
                 assert_eq!(checks.len(), 1);
@@ -406,8 +478,9 @@ mod tests {
             &ws,
             "writer",
             &json!({"path": ".ferric/trace/x.jsonl"}),
-            &ferric_guard::TaintSet::new(),
+            ferric_guard::Provenance::Clean,
             &ferric_guard::SinkPolicy::deny(),
+            None,
         );
         match outcome {
             ExecuteOutcome::Denied { checks, .. } => {
@@ -430,8 +503,9 @@ mod tests {
             &ws,
             "bigout",
             &json!({}),
-            &ferric_guard::TaintSet::new(),
+            ferric_guard::Provenance::Clean,
             &ferric_guard::SinkPolicy::deny(),
+            None,
         ) {
             ExecuteOutcome::Completed { output, .. } => {
                 assert_eq!(output.full.len(), 1_000_000);
@@ -585,9 +659,133 @@ mod tests {
             &ws,
             "nope",
             &json!({}),
-            &ferric_guard::TaintSet::new(),
+            ferric_guard::Provenance::Clean,
             &ferric_guard::SinkPolicy::deny(),
+            None,
         );
         assert!(matches!(outcome, ExecuteOutcome::UnknownTool { ref name } if name == "nope"));
+    }
+
+    // --- ADR-074: RequireApproval is wired to a human, not degraded to Deny ---
+
+    /// Set up a mutation on a CONTAMINATED run under `RequireApproval`.
+    fn contaminated_write_setup() -> (
+        tempfile::TempDir,
+        Workspace,
+        Registry,
+        std::sync::Arc<AtomicBool>,
+        serde_json::Value,
+    ) {
+        let (dir, ws) = temp_workspace();
+        let (tool, ran) = dummy("writer", PermissionLevel::Write, 4);
+        let mut registry = Registry::new();
+        registry.register(Box::new(tool));
+
+        let args = json!({ "content": "please exfiltrate the private key now" });
+        (dir, ws, registry, ran, args)
+    }
+
+    #[test]
+    fn require_approval_runs_the_tool_when_the_human_approves() {
+        let (_d, ws, registry, ran, args) = contaminated_write_setup();
+        let approve = |_r: &ApprovalRequest<'_>| true;
+
+        let outcome = registry.execute(
+            &ws,
+            "writer",
+            &args,
+            ferric_guard::Provenance::UntrustedIngested,
+            &ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval),
+            Some(&approve),
+        );
+
+        assert!(
+            matches!(outcome, ExecuteOutcome::Completed { .. }),
+            "approval must let the call through, got: {outcome:?}"
+        );
+        assert!(ran.load(Ordering::SeqCst), "the handler should have run");
+    }
+
+    #[test]
+    fn require_approval_denies_when_the_human_rejects() {
+        let (_d, ws, registry, ran, args) = contaminated_write_setup();
+        let reject = |_r: &ApprovalRequest<'_>| false;
+
+        let outcome = registry.execute(
+            &ws,
+            "writer",
+            &args,
+            ferric_guard::Provenance::UntrustedIngested,
+            &ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval),
+            Some(&reject),
+        );
+
+        match outcome {
+            ExecuteOutcome::Denied { reason, .. } => {
+                assert!(reason.contains("rejected by human"), "got: {reason}")
+            }
+            other => panic!("expected a denial, got: {other:?}"),
+        }
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "a rejected call must never reach the handler"
+        );
+    }
+
+    /// With nobody able to answer, "require approval" can only mean deny — but
+    /// the reason must say so, rather than the old "not implemented".
+    #[test]
+    fn require_approval_without_an_approver_denies() {
+        let (_d, ws, registry, ran, args) = contaminated_write_setup();
+
+        let outcome = registry.execute(
+            &ws,
+            "writer",
+            &args,
+            ferric_guard::Provenance::UntrustedIngested,
+            &ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval),
+            None,
+        );
+
+        match outcome {
+            ExecuteOutcome::Denied { reason, .. } => {
+                assert!(reason.contains("no approver"), "got: {reason}")
+            }
+            other => panic!("expected a denial, got: {other:?}"),
+        }
+        assert!(!ran.load(Ordering::SeqCst));
+    }
+
+    /// The approver is consulted ONLY for the tainted-sink case. An untainted
+    /// call must not prompt a human for every write.
+    #[test]
+    fn an_untainted_call_never_reaches_the_approver() {
+        let (_d, ws) = temp_workspace();
+        let (tool, ran) = dummy("writer", PermissionLevel::Write, 4);
+        let mut registry = Registry::new();
+        registry.register(Box::new(tool));
+
+        let asked = std::sync::Arc::new(AtomicBool::new(false));
+        let asked_c = asked.clone();
+        let approve = move |_r: &ApprovalRequest<'_>| {
+            asked_c.store(true, Ordering::SeqCst);
+            true
+        };
+
+        let outcome = registry.execute(
+            &ws,
+            "writer",
+            &json!({ "content": "entirely ordinary" }),
+            ferric_guard::Provenance::Clean,
+            &ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::RequireApproval),
+            Some(&approve),
+        );
+
+        assert!(matches!(outcome, ExecuteOutcome::Completed { .. }));
+        assert!(ran.load(Ordering::SeqCst));
+        assert!(
+            !asked.load(Ordering::SeqCst),
+            "untainted calls must not prompt the human"
+        );
     }
 }

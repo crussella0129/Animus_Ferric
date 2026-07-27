@@ -80,6 +80,9 @@ pub mod server {
 
         /// Cap the active tool ring.
         #[arg(long)]
+        /// Run at this tier regardless of size or measured level (ADR-098).
+        #[arg(long, value_enum)]
+        pub tier: Option<crate::query::TierArg>,
         pub max_ring: Option<u8>,
 
         /// Directory holding `model_profiles.json`.
@@ -209,6 +212,13 @@ pub mod server {
         let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
 
         let config = build_run_config(&RunConfigArgs {
+            // The HTTP caller is not necessarily the workspace owner, so a
+            // workspace-level allowlist is not evidence that *this* requester
+            // authorized anything. Skills stay off here until the API has a notion
+            // of who is asking (ADR-091).
+            workspace_root: state.workspace.root().to_path_buf(),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
             mock: args.mock,
             backend: backend_opts
                 .backend
@@ -229,6 +239,7 @@ pub mod server {
             protocol_override: args.protocol,
             prompts_dir: args.prompts_dir.clone(), // not in Config
             max_ring: args.max_ring.or(cfg.max_ring),
+            tier_override: args.tier.or(cfg.tier).map(Into::into),
             profile_dir: args
                 .profile_dir
                 .clone()
@@ -240,7 +251,7 @@ pub mod server {
 
         let ts = now_ms();
         let session = format!("api-{ts}");
-        let trace_dir = state.workspace.root().join(".ferric").join("trace");
+        let trace_dir = ferric_trace::trace_dir(state.workspace.root());
         let _ = std::fs::create_dir_all(&trace_dir);
         let trace_path = trace_dir.join(format!("{session}.jsonl"));
         let mut sink =
@@ -248,25 +259,26 @@ pub mod server {
 
         let provider = crate::backend::create_provider(&backend_opts).await?;
 
+        let setup = crate::query::LoopSetup {
+            registry: &config.registry,
+            workspace: &state.workspace,
+            policy: &config.policy,
+            protocol: config.protocol,
+            sampling: config.sampling.clone(),
+            system_prompt: config.system_prompt.as_deref(),
+            lineage: config.lineage.clone(),
+            media: Vec::new(),
+            stream_sink: sink_fn,
+            resume: None,
+            provenance: ferric_guard::Provenance::Clean,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: None,
+            edit_approver: None,
+        };
         let outcome = run_with_provider(
-            provider.as_ref(),
-            &config.registry,
-            &state.workspace,
-            &config.policy,
-            config.protocol,
-            config.sampling.clone(),
-            config.system_prompt.as_deref(),
-            config.lineage.clone(),
+            setup.into_run_args(provider.as_ref(), None),
             &mut sink,
             Some(prompt),
-            Vec::new(),
-            sink_fn,
-            None,
-            ferric_guard::TaintSet::new(),
-            ferric_guard::SinkPolicy::deny(),
-            None,
-            None,
-            None,
         )
         .await
         .map_err(|e| format!("query failed: {e}"))?;

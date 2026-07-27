@@ -352,7 +352,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
  "toml",
 ]
 
@@ -373,6 +372,7 @@ dependencies = [
  "ferric-prompt",
  "ferric-provider",
  "ferric-research",
+ "ferric-skills",
  "ferric-tools",
  "ferric-trace",
  "ferric-vcs",
@@ -413,7 +413,6 @@ dependencies = [
 name = "ferric-guard"
 version = "0.1.0"
 dependencies = [
- "ferric-core",
  "serde",
  "serde_json",
  "tempfile",
@@ -484,7 +483,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "ferric-core",
- "ferric-guard",
  "ferric-provider",
  "futures-executor",
  "serde",
@@ -492,6 +490,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "ferric-skills"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -504,7 +510,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -517,7 +522,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -526,7 +530,6 @@ version = "0.1.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]

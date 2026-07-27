@@ -1108,3 +1108,1588 @@ retrieval so a stage pulls only the slice it needs.
 - **Deferred:** real-small-model iteration on fetch precision + task success (needs a
   live model), then flipping the default to fetch (the hard replace); wiring the DM
   MCP-server backend; a `--fetch-references` preview on `ferric icm plan`.
+
+## ADR-072 — 2026-07-24 (sprint 82): verification is a boundary problem — four defects live inside a green suite
+Sprint 81 audited all 14 crates by inspection and could not run one check: `C:`
+was at 100% and `cargo test` wedged mid-link. It deliberately declined to write
+an ADR, on the grounds that `decisions.md` is the durable record and should not
+assert conclusions no test had confirmed. That was the right call, and this ADR
+is what it deferred to. The user cleared `target/` (49 GB); every blocked check
+ran; the findings are now verified rather than inferred. Full report:
+`docs/verification-2026-07.md`.
+- **The toolchain is green and that is real.** Cold `cargo build --workspace
+  --all-targets`: clean, **0 warnings**, 31s. `cargo test --workspace`: **463
+  passed / 0 failed** across 52 suites. `cargo clippy --all-targets`: **0
+  warnings**. `cargo fmt --check`: clean. Dark Matter's `verify-spec.sh`: **PASS
+  61 / FAIL 0**. The core is genuinely good — `ferric-guard/workspace.rs`,
+  `ferric-core/scale.rs`, `ferric-tools/registry.rs`, the three loop guards.
+- **And four defects live inside that green suite.** Each was made to fail a
+  written test on current `main`: **A1** — ADR-002's 4,000-char tool-output
+  truncation never reaches the model (`_for_model` is discarded at `run.rs:756`;
+  the `ToolResult` event carries `full`). Measured: **20,028 chars** entered the
+  context window on one `read_file`, a 5× budget overrun on every tier. **A3** —
+  `Vcs::snapshot` runs `git add -A; git reset` **once per turn**, destroying the
+  user's staged index (`staged.txt` → `""`). **A6** — `fetch_reference` drops
+  tokens ≤ 2 chars, so `"Go"` finds nothing in a vault entirely about Go. **A2**
+  — the taint set marks `digest.source` (harness-stamped provenance) while the
+  untrusted `digest.summary` is what enters the prompt, inverting ADR-044's
+  CaMeL-lite policy against its own threat model.
+- **The structural lesson: each defect is covered up to a boundary and not
+  across it.** `registry.rs:423` tests that the Registry *computes* the truncated
+  view — and passes, because that end is correct; nothing tests that the loop
+  *uses* it. `truncation_tests.rs` reads like coverage of A1 and is not (it tests
+  cut-off model completions, an unrelated mechanism). `background_tasks.rs`
+  covers `manage_task`'s happy path while every panic path stays untested. **Test
+  strategy should follow the value across the crate seam, not stop at it.**
+- **A code comment is not a design decision, and s81's endorsement of one was
+  wrong.** `ferric-vcs/src/lib.rs:49` ships unresolved think-aloud ("Wait, `add
+  -A` pollutes the staging area… we can use `git read-tree HEAD`"). Sprint 81
+  repeated that suggestion as the fix. Measured in a scratch repo, `git read-tree
+  HEAD` destroys the staged set **identically** to `git reset` — both reset the
+  index to HEAD. The correct fix is a temporary `GIT_INDEX_FILE`, verified to
+  preserve the user's index while still capturing untracked files in the tree.
+- **The Dark Matter seam is two incompatible contracts sharing a name.** DM's
+  `INTEGRATION.md` declares `required: ["target"]` with `query` optional; Ferric
+  declares `required: ["query"]` and has no `target`. The DM-legal call from
+  DM's own docs returns `Err("missing required string argument: query")`, and
+  Ferric returns markdown where DM specifies `{chunks:[{uri,text,score}],
+  truncated}`. DM's `test_ferric_citations_resolve` cannot see this: it checks
+  only that two files *exist*, **neither of which is `fetch_reference.rs`**, and
+  it `pass`es on skip when the Ferric repo is absent. **Decide `target` before
+  DM's s2 build hardens the other side.**
+- **Vestigial, proven not asserted.** The 6 unused dependencies (B3) were
+  actually removed and `cargo check --workspace --all-targets` exited 0, then
+  reverted. `Protocol::{FencedCode,EditFormat}` are never constructed;
+  `LoopState.registry_tools` is never read; `SandboxConfig::default()` is never
+  called. `TailnetFsRetriever` and `WebRetriever` remain unreachable from the
+  binary (D1/D2), and with A2 unfixed the sink policy is inert on **every** path.
+- **Scope: audit only, no remediation.** The tree is unmodified — probe tests
+  were run, recorded, and removed. Remediation order is `docs/verification-2026-07.md`
+  §8, led by A3 (silent data loss) then A1 (live context cost).
+
+## ADR-073 — 2026-07-24 (sprint 83): remediating the sprint-82 audit — and what a fix has to prove
+Sprint 82 verified the codebase and left four demonstrated defects plus a
+vestigial list. This sprint fixes them. The rule applied throughout: a fix is not
+done when the code looks right, it is done when the test that failed before
+passes and the reason it failed is written down. Two of these fixes would have
+been wrong if that rule had been relaxed. Workspace went 463 → **478 tests, 0
+failures**, clippy and fmt clean.
+- **A3 — the snapshot no longer touches the user's index, and no longer escapes
+  the workspace.** `Vcs::snapshot` staged with `git add -A` then `git reset`,
+  once per turn, destroying a staged index on turn 1 and every turn after. It now
+  stages into a private `GIT_INDEX_FILE` seeded from the real index (so `add -A`
+  keeps its stat cache). **Sprint 82's recommended fix was wrong and measuring it
+  is what caught that:** `git read-tree HEAD`, which the shipped source comment
+  proposed, resets the index to HEAD exactly like `git reset`. Not touching the
+  real index is the only correct answer.
+- **A3, second half — a containment bug the audit missed entirely.** Git
+  discovery walks *upward*, so a workspace that is not itself a repo resolves to
+  the nearest ancestor repo. On this machine `~` **is** a git repo, so a plain
+  temp dir resolves to toplevel `C:/Users/charl` — meaning the per-turn
+  `git add -A` targeted the user's entire home directory, and `revert` would have
+  run `git clean -fd` across it. `snapshot`/`revert`/`untracked_to_be_removed`
+  now refuse unless the workspace root *is* the worktree root
+  (`VcsError::NotWorkspaceRoot`, which `run.rs` already degrades gracefully).
+  Empirically this took `cargo test -p ferric-cli` from wedging past 10 minutes to
+  1 second. **Found by writing a test for something adjacent to the known bug** —
+  the "no temp index left behind" test used an awkward session id, which
+  surfaced the unsanitized ref name, which led here.
+- **A3, third half — `revert` now confirms.** It deletes untracked files and
+  truncates the trace; neither was announced. The prompt lists the actual doomed
+  paths from a `git clean -nd` dry run (`--yes` to skip).
+- **A1 — truncation restored where the context window is actually built.** The
+  4,000-char view was computed by the Registry and dropped by the loop; 20,028
+  chars reached the model on one `read_file`. The **projector** now applies it,
+  which keeps run and replay identical by construction rather than by parallel
+  maintenance, and the projector's limit is seeded from
+  `Registry::truncation_limit()` — making `with_truncation_limit` reach the model
+  for the first time. 4 tests covering **both** halves of the contract, because
+  testing one half is how this was lost.
+  **Corrected sprint 102 (ADR-093):** "identical by construction" was an
+  over-claim. Sharing the *formatting* logic was real and is what this bullet
+  got right; but the projector's limit was seeded from the registry in `run()`
+  and from the default everywhere else, and a shared function fed a different
+  parameter from a different source is not identical by construction. The cap
+  now travels in the trace, so the property holds as stated.
+- **A2 — taint the content, and at a granularity that can match.** The live path
+  tainted `digest.source` (harness-stamped, trusted) while injecting
+  `digest.summary` (untrusted), inverting ADR-044 in both directions at once.
+  **Correcting only the value would have produced a fix that never fires:**
+  `is_tainted` needs the needle *inside* the argument, so tainting the whole
+  summary misses the realistic attack — the model lifting one injected sentence
+  into a `write_file`. New `TaintSet::taint_text` tags the block plus each line
+  and sentence, with a 12-char floor (below it, needles match everything and the
+  policy denies everything). Still inert everywhere except
+  `ferric query --research`, which remains the only taint source (D3).
+- **A6 — short query terms work, without reintroducing the noise they were
+  dropped for.** `"Go"` returned nothing over a vault entirely about Go. Deleting
+  the length filter alone would have been wrong: scoring is substring-based, so
+  `"go"` matches `"algorithm"` — which is *why* the filter existed. Terms under 3
+  chars now match whole words; longer terms keep substring matching, preserving
+  stem search. Also fixes a byte-vs-char length bug in the same predicate.
+- **Vestigial code cleared, verified unreachable first.** Six unused deps removed
+  (proven by building without them), `LoopState.registry_tools` and its
+  `#[allow(dead_code)]` deleted, the duplicate `test-sweep-prompt.txt` removed,
+  `protocol-unified-grammar.md` renamed to `protocol-text-xml.md`. Two were
+  resolved by **use** rather than deletion, which was the better answer:
+  `SandboxConfig::default()` is now called by `WebRetriever::new` instead of
+  duplicated, and `_parse_error` is surfaced as a `Note` so a grammar failure
+  stops being indistinguishable from an empty completion in the trace.
+- **Deferred, deliberately:** A5 (invert the sandbox airlock to opt-out), A7
+  (wire `RequireApproval` to the `EditApprover` shipped in ADR-070), A4 (de-panic
+  `manage_task`), C1 (`run_with_provider(RunArgs)`), and the Dark Matter `target`
+  contract decision. A5 and A7 both touch `WebRetriever`/sink wiring that is still
+  unreachable from the binary (D1/D2); doing them properly means wiring, not
+  patching, and that deserves its own sprint.
+
+## ADR-074 — 2026-07-24 (sprint 84): finishing the audit — panics, argument lists, and defaults that were the wrong way round
+Sprint 83 fixed the four defects the audit had *demonstrated*. This sprint clears
+what it deferred: A4, A5, A7, C1–C5, and the Dark Matter contract. Workspace
+487 → **503 tests, 0 failures**, clippy and fmt clean. Two defects that were in no
+report surfaced along the way, both found by testing something adjacent.
+- **A4 — the one model-invokable tool that could kill the harness.** `manage_task`
+  held 12 lock `.unwrap()`s; one panicking task thread poisons a lock and every
+  later call aborts the process. All 12 gone: accessors recover a poisoned guard
+  with `into_inner()`, which is safe because the guarded data (a status enum, a
+  `Child` handle) has no invariant a panicking writer could half-break. The two
+  runtime panics (`Handle::current()` with no runtime, `block_in_place` on a
+  current-thread runtime — while ferric-loop is deliberately executor-agnostic)
+  become ordinary tool errors via a new `builtin::blocking::block_on_ambient`.
+- **A4's spread: `shell_exec` had the same bug, and it matters more.** Writing the
+  test for `manage_task` found the identical `block_in_place` +
+  `Handle::current()` pair in a **Ring-0** tool reachable from far more paths.
+  Checked the blast radius before changing it: every in-process tool path builds
+  `Runtime::new()` (multi-thread), and `cron` only *looks* current-thread because
+  it spawns jobs as subprocesses. Nothing that worked before changed.
+- **A NEW defect, not in any report: background-task ids collided.**
+  `format!("task-{millis}")` is not unique; two tasks started in the same
+  millisecond got the same id, and since the registry is keyed by id the second
+  **silently evicted the first** — losing its `Child` handle, leaving the task
+  unlistable, uninspectable, unkillable. It surfaced as two tests in
+  `background_tasks.rs` flaking against each other, which I had earlier written
+  off as harmless cross-test interference. **That write-off was the mistake**; the
+  flake was the bug reporting itself. Ids now carry a monotonic counter.
+- **A7 — two human-approval systems, introduced at last.** `RequireApproval`
+  degraded to a flat denial commenting "human approval is not wired", while
+  ADR-070's `EditApprover` had been sitting at the very dispatch site that calls
+  `execute` for four sprints. Wired through a callback `ferric-tools` owns
+  (`ApprovalRequest`/`SinkApprover`), so the chokepoint can ask a human without
+  depending on the loop. With no approver it still denies — the safe reading of
+  "require approval" when nobody can approve — but now says so.
+- **A5 — the airlock is opt-out, not opt-in.** `SandboxConfig::default()` paired
+  `--network bridge` with no proxy and no gVisor: dropped capabilities and
+  **unrestricted egress**, for the component whose job is running untrusted
+  retrieval. Default is now no network + gVisor required (a missing `runsc` fails
+  closed, the correct direction), and `Option<proxy_url>` becomes a
+  `NetworkPolicy` enum so unrestricted egress is a variant someone must *write*
+  and a reviewer can grep for. Docker is absent on this machine, so rather than
+  ship it untested the argv construction — the security-relevant part — is split
+  into a pure `docker_args()` and tested directly.
+- **C1 — 18 positional parameters, gone.** `run_with_provider` re-packed its 18
+  arguments into `RunArgs`, a struct that already existed, behind five
+  `too_many_arguments` allows (now 1, on an unrelated function). A `LoopSetup`
+  carries everything except the provider — the one thing `drive_real` can only
+  build inside its own runtime. Knock-on: `icm.rs` had a `macro_rules!` whose
+  comment says outright it existed because the argument list had to be written
+  twice; it is gone.
+- **C2/C3/C4/C5 —** the `post_turn` block (copy-pasted at all four turn exits) is
+  one method; `ferric-vcs` is honestly synchronous instead of `async fn` with no
+  `.await` (which under tokio silently blocked a reactor thread per turn while
+  looking like it didn't), dropping its last tokio dependency; the task registry
+  gains the removal path it never had; the duplicated status match is one method.
+- **Dark Matter: the call shape agrees now; the return shape is still a decision.**
+  Ferric accepts `target` and no longer requires `query`, so the call written in
+  DM's own INTEGRATION.md works. Silent `k`-capping now reports how many chunks
+  were withheld. **Deliberately not changed:** DM SPEC §6.2's
+  `{chunks:[{uri,text,score}], truncated}` envelope vs Ferric's markdown —
+  flipping that changes what every small model sees and would invalidate
+  ADR-071's measured 97.5% reduction, so it wants a measurement behind it.
+- **DM's verifier can see the seam now.** `test_ferric_citations_resolve` asserted
+  only that two files exist, **neither of them `fetch_reference.rs`** — it would
+  have passed if the tool had never been written, and it did pass throughout the
+  divergence. A new check reads the actual descriptor. Testing the check itself
+  caught two ways it lied: a `"required": ["query"]` grep false-positives on the
+  legitimate `anyOf` branch, and a whole-file grep false-negatives because a test
+  mentions the field name. Verified with a negative control in both directions.
+  Also, a check that cannot run now reports `skip` rather than calling `pass`.
+- **The through-line of sprints 82–84:** a green suite is evidence about what is
+  tested, not about what works. Every defect in this ADR was invisible to 487
+  passing tests, and two of them were found only by writing a test for something
+  *next to* the known bug.
+
+## ADR-075 — 2026-07-25 (sprint 85): round-2 verification — auditing your own recent work first
+A second full-codebase verification from a cold clean-room build, weighted
+deliberately toward sprints 83–84's own changes rather than spread evenly. That
+weighting is the finding: **three of the four new defects were introduced by the
+remediation sprints themselves, and two of those sit in the security-facing code
+those sprints existed to fix.** Full report: `docs/verification-2026-07-round2.md`.
+- **The baseline is clean-room green.** Cold `cargo build --workspace
+  --all-targets`: 0 warnings, 41s. `cargo test --workspace`: **503 passed / 0
+  failed / 2 ignored** across 53 suites. Clippy 0, fmt clean, Dark Matter
+  verifier PASS 62 / FAIL 0 / SKIP 0.
+- **E1 (PROVEN, ours) — one tool call prompts the human twice.** Sprint 84 gave
+  the sink gate the same `EditApprover` the accept-edits gate already uses, so
+  `--accept-edits` + `--sink-action requireapproval` + tainted args fires both.
+  Measured: `approver_prompt_count=2`. Worse than the annoyance: approving at one
+  gate and rejecting at the other is behaviour nobody designed.
+- **E2 (PROVEN, ours) — the taint granularity makes `--research` unusable, and no
+  threshold fixes it.** Sprint 83 chose `MIN_TAINT_SEGMENT_CHARS = 12` by
+  judgement. Measured against a realistic digest, **3 of 3 faithful restatements
+  of researched material are blocked** under the default `Deny`. The mechanism —
+  substring taint — **cannot distinguish "copied an injected instruction" from
+  "wrote a true fact it learned"**; both are literal text from the digest.
+  Lowering the floor worsens false positives, raising it readmits the lifted
+  sentence sprint 83 added `taint_text` to catch. **This is a posture decision,
+  not a tuning bug**, and it is recorded as one: default the research path to
+  `Warn`, taint only instruction-shaped fragments, or document `--research` as
+  read-mostly under `Deny`. Sprint 83's direction (taint content, not the trusted
+  provenance label) stands.
+- **E3 (CONFIRMED, ours) — run and replay disagree about the cap.** ADR-074
+  asserted the projector keeps run and replay "identical by construction".
+  `run.rs:560` seeds from `Registry::truncation_limit()`; `replay.rs:63` and
+  `compact.rs:224` use the default. Latent only because
+  `with_truncation_limit` still has no non-default caller. **The ADR-074 wording
+  was an over-claim** and is corrected here rather than left standing.
+- **E4 (CONFIRMED, not ours) — `ferric chat` discards trace-write failures** at
+  all 6 sites while `run.rs` propagates at 21. `write_event` can genuinely fail
+  on I/O, so a chat trace can be silently incomplete — in a project whose thesis
+  is "if it isn't in the trace, it didn't happen".
+- **Three defect classes are now closed, and that is worth stating.** Production
+  `unwrap`/`expect` across tools/loop/guard is down to 6 sites, all provably safe
+  idioms (constant regex; capture groups guaranteed by a successful match;
+  `take()` right after `Stdio::piped()`). No `not wired`/TODO/FIXME intent
+  comments remain. All seven pre-audit backlog entries still cite live files.
+- **The bounding gap: nothing has met a real model since ~sprint 26.** All 503
+  tests are mock-driven; A5's sandbox has never run against Docker; A2's and A6's
+  thresholds are asserted, not measured against real digests or vaults. **A suite
+  this green, this long without a live run, is measuring the mocks as much as the
+  code.** A live-model round is now the highest-value next investment — above
+  C7/C8/B1 combined.
+- **A process finding.** C7, C8 and B1 came out of sprint 82 but were never
+  entered in `agent-tasks/` — they lived only in a README "Next" line, and went
+  three sprints unpicked-up as a result. Prose is not a ledger; they are entered
+  now.
+- **Scope: audit only.** The tree is unmodified — probes were run, recorded and
+  deleted, and the suite is green afterwards. Remediation order is in the
+  report's §5, led by E1 (a regression we introduced) and E4.
+
+## ADR-076 — 2026-07-25 (sprint 86): the live-model round — two defects that 503 mock tests could not see
+ADR-075 named the live gap as the highest-value next investment: nothing had met
+a real model since ~sprint 26, so every capability claim rested on `MockProvider`
+scripts. This sprint closed that gap with `ferric server` → llama.cpp
+`llama-server` → `qwen2.5-coder-7b-instruct-q4_k_m.gguf`, and verified the
+`--tailscale` path against the real Tailscale CLI. Full report:
+`docs/verification-2026-07-round3.md`. Workspace 503 → **507 tests, 0 failures**.
+- **The stack works end-to-end, live.** `server doctor` → `up` → `status` →
+  `down` all behave; the constrained agentic loop completed a real task
+  (**read_file → write_file → task_complete, 3 turns, 36 s**, correct output) with
+  streaming and a complete JSONL trace. This is the first live confirmation in
+  roughly sixty sprints.
+- **F1 (PROVEN) — the guard family has an A-B-A-B oscillation hole.** On a
+  slightly harder task the model burned the **entire 20-turn budget**: 20 tool
+  calls, **2 distinct `(name,args)` pairs**, **zero guard events**. All three
+  guards key on *consecutive-turn* state, so alternation resets each one every
+  turn — `RepetitionGuard` (name+args) and `ProgressGuard` (per-turn name set)
+  never see two matching turns in a row, and `FailureGuard` never engages because
+  **the calls succeed**. Bounding wasted compute is the family's entire stated
+  purpose (ADR-037/038); a 2-cycle of successful calls passes straight through.
+  Proposed: a **windowed** guard over the last N turns (multiset of
+  `(name,args)`), tripping when distinct-call-count stays low while turns climb.
+  Keep the existing three for the fast 2–5-turn paths a window cannot catch.
+- **F2 (PROVEN, fixed here) — `--tailscale` never discovered the Tailnet FQDN.**
+  `server.rs` read `DNSName` from the **root** of `tailscale status --json`; the
+  real payload puts it at **`Self.DNSName`**. Discovery therefore always returned
+  `None`, and `ferric server up --tailscale` printed "Tailscale proxy active."
+  then wrote the **loopback** URL into the runfile — so anything discovering the
+  server through that runfile got `127.0.0.1`, defeating the flag entirely.
+  ADR-060 and `docs/commands.md` both advertised this as working. Fixed as a
+  testable `tailnet_fqdn()`, with a warning instead of silence when discovery
+  fails. **The other half was already correct** and now has a test saying so:
+  `tailscale serve --bg <port>` matches the documented form (verified against
+  `tailscale serve --help`, 1.98.2).
+- **`tailscale serve` was deliberately NOT executed.** Running it publishes the
+  machine's inference port to the tailnet persistently — an outward-facing,
+  standing configuration change that belongs to the user, not to a verification
+  step. Everything was established from read-only `status`/`--help` output plus
+  the code, which was sufficient to find the bug.
+- **What the round did NOT validate, stated plainly.** A1's 4,000-char cap was
+  never exercised (the model chose to paginate `read_file`; `search_files`
+  returned 191 chars) — the cap is reachable mainly via very long *lines* or a
+  large `shell_exec`, whose own 10,000-char limit sits **above** the model cap.
+  A2's taint set was not exercised (`--research` unrun), so ADR-075's E2 posture
+  decision remains open and unmeasured against real digests. A5's sandbox is
+  still unrun (no Docker). The fleet capability map still dates from sprints
+  25–26.
+- **The lesson about the mock suite.** Neither finding was reachable by it, *by
+  construction*: F1 needs a model that chooses badly — a scripted mock emits
+  exactly what its author wrote and never spontaneously oscillates — and F2 needs
+  the real `tailscale` binary. The suite is fast and catches regressions; its
+  green is simply evidence about a narrower thing than it looks like. **A live
+  round belongs in the rotation, not once every sixty sprints.**
+
+## ADR-077 — 2026-07-25 (sprint 87): the fourth guard — closing the oscillation hole, and two live validations
+Sprint 86's live round found F1 (an A-B-A-B cycle defeats every guard) and F2
+(`--tailscale` never discovers the FQDN). F2 landed in ADR-076. This sprint fixes
+F1, and uses the live rig to validate two fixes that had only ever been checked
+against mocks. Workspace 507 → **518 tests, 0 failures**; clippy 0; fmt clean.
+- **A fourth guard, windowed rather than streak-based.** The existing three all
+  key on **consecutive-turn** state, so alternation resets each of them every
+  turn: `repetition` compares a turn's full signature to the previous turn's,
+  `progress` compares the sorted-unique tool names, and `failure` counts
+  all-errored turns — which never engages at all, because an oscillating model's
+  calls **succeed**. New `ferric-loop/src/oscillation.rs` asks a different
+  question: *over the last N turns, how many distinct things has the model
+  actually done?* A sustained 2-cycle answers "two" however the turns interleave.
+  Window 8, warn at 6, `MAX_DISTINCT = 2`, giving the ladder
+  **repetition 2 < failure 3 < no-progress 5 < oscillation 8** — last in the
+  chain, and comfortably under every tier's `max_turns` (Nano 15).
+- **`MAX_DISTINCT = 2` is deliberately tight.** A 3-cycle is explicitly *not*
+  caught, pinned by a named test, because raising the bound starts catching
+  legitimate short workflows that repeat with identical arguments. The
+  false-positive boundary has its own test: alternating tool **names** with fresh
+  arguments every turn is real work and must run — that is the shape a naive
+  name-based window would wrongly kill.
+- **Validated live on the exact scenario that found it.** Same model, same
+  prompt, same workspace: **20 turns / zero guard events / `max_turns`** became
+  **8 turns / warned twice / stopped with `oscillation`**. A 60% cut in wasted
+  turns and, as importantly, a diagnostic that says *why* instead of "it ran out".
+- **A1 validated live at last** (it went unexercised in sprint 86 because the
+  model paginated `read_file`). Forced with a single 19,992-char line: the trace
+  retained the **full** 19,992 chars while the model received ~4,000 — and said
+  so in its own summary, *"which has been truncated for display."* Both halves of
+  ADR-002's contract confirmed against a real model.
+- **G1 (NEW, live) — `--research` silently produced nothing and said nothing.**
+  `ferric query --research "configuration"` over a workspace whose
+  `research_notes.md` plainly contains that word injected **no**
+  `<research_context>` (verified in the trace's `session_prompt`) and printed no
+  message. `research_all` returns `Ok(MultiResearch{digests: []})` when a plane
+  yields no chunks and `query.rs` skips on `digests.is_empty()` — so a flag the
+  user explicitly passed degrades into an ordinary run with no signal. Root cause
+  not yet isolated between `LocalFsRetriever::available()` (`root.is_dir()`) and
+  `retrieve()` returning nothing; **isolating it comes first, then an empty
+  research result must say so.**
+- **Which means ADR-075's E2 is still unmeasured live**, and honestly so: no
+  digest ⇒ no taint ⇒ nothing for the false-positive finding to act on. The
+  synthetic 3/3-blocked measurement stands; its real-world frequency does not yet.
+- **Still open and still unrun:** A5's sandbox (Docker absent) and fleet
+  calibration (still sprints 25–26). A weaker second model for failure-mode work
+  was not obtainable — the ZimaBoard2 GGUF library is online on the tailnet with
+  SMB open, but has no sshd, refuses `net view` over tailscale, exposes no
+  guessable share name, and no `Y:` drive is mapped. **Needs the share name from
+  the user.**
+
+## ADR-078 — 2026-07-25 (sprint 88): G1 fixed, and a live measurement that corrects our own E2 finding
+Sprint 87's G1 (`--research` silently produced nothing) is fixed, and a
+downloaded 3B model finally let the taint path be measured against a real digest.
+That measurement **corrects ADR-075's E2 finding in both directions**. Workspace
+518 → **524 tests, 0 failures**; clippy 0; fmt clean.
+- **G1a — the research query was matched as ONE literal substring.**
+  `LocalFsRetriever::retrieve` lowercased the whole query and asked
+  `content.contains(needle)`, so any **multi-word** query — the natural way to
+  ask for research — found nothing unless that exact phrase appeared verbatim.
+  Isolated by probe: `"configuration"` matched a file; `"project notes
+  configuration"` matched **nothing in the same directory**. The query is now
+  tokenized, terms ANDed (OR would return most of the tree, and every chunk costs
+  one quarantine inference). 6 tests.
+- **G1b — an empty research result was silent.** `research_all` returns `Ok` with
+  an empty digest list and the CLI skipped on `is_empty()`, so a flag the user
+  explicitly passed degraded into an ordinary run with no signal — which is what
+  hid G1a for three sprints. It now reports the query and each plane's state.
+- **Validated live:** the exact query that produced nothing now injects a real
+  quarantined digest (`research_context injected?: True`).
+- **E2 RE-MEASURED LIVE, and it is not what the synthetic probe said.** ADR-075
+  reported 3/3 faithful restatements blocked under the default `Deny`. Live, with
+  a real digest, the model copied a digest sentence into `write_file` and **it was
+  allowed**. Two reasons the synthetic probe overstated it: (1) the digest is a
+  model **paraphrase**, not the source text — needles never equal the file's
+  words; (2) `taint_text` needles are whole sentences, and the model wrote a
+  **prefix** of one, so `contains()` — which asks whether the *argument* contains
+  the *needle* — could not match.
+- **The honest reading: the mechanism is weak in BOTH directions, not
+  over-strict.** The false-positive rate is lower than ADR-075 claimed, and so is
+  the protection: an injected instruction that the model paraphrases or partially
+  quotes evades taint exactly as this benign sentence did. That strengthens
+  rather than weakens the case that **E2 is a posture decision about a mechanism**
+  — sentence-granularity substring taint is fragile either way — and it retires
+  the "unusable in practice" framing, which was an artefact of feeding whole
+  segments back verbatim.
+- **Method note.** The synthetic probe was not wrong to exist — it isolated the
+  mechanism. It was wrong to be trusted as a *rate*. A probe that constructs its
+  own worst case measures the worst case, not the field.
+- **A second model is now local:** `Qwen2.5-Coder-3B-Instruct-Q4_K_M` (1.93 GB,
+  ungated, same family as the 7B so size is the only variable). Downloaded rather
+  than mounted — the ZimaBoard2 share was unreachable (no sshd, `net view` RPC
+  failure over tailscale, no mapped drive, no guessable share name).
+
+## ADR-079 — 2026-07-25 (sprint 89): one call, one prompt; and a chat trace that admits when it fails
+Clears the two small, unambiguous items ADR-075 left open. Workspace 524 →
+**529 tests, 0 failures**; clippy 0; fmt clean.
+- **E1 — the human was asked twice about one tool call.** ADR-074 wired the sink
+  policy's `RequireApproval` to ADR-070's `EditApprover`, which was the right
+  mechanism — but the two gates cover **exactly the same calls**: accept-edits
+  fires only on `Write`/`Execute`, and a tainted `Read` is always allowed at the
+  sink, so every call reaching the sink's approval branch had already been
+  approved upstream. Measured in sprint 85: `approver_prompt_count=2`.
+- **Fixed by merging the question, not suppressing the second ask.** The
+  accept-edits preview now discloses taint (*"this call carries data derived from
+  untrusted research content"*), and an approval there carries through to the
+  sink gate. One prompt, strictly more information than either gate had alone.
+  Suppressing the sink prompt while leaving the preview unchanged would have
+  silently dropped the sink's reason for asking.
+- **With no approver, `RequireApproval` still denies.** Unchanged, and now
+  pinned by a test: there is nobody to ask, so denial remains the safe reading.
+- **E4 — `ferric chat` discarded trace-write failures at all 6 sites** while
+  `run.rs` propagates at 21. `run_chat` returns `ExitCode`, so `?` is unavailable
+  — but that is an argument for reporting, not for discarding. A `log_event`
+  helper now warns, **latched to once per session** so a persistent cause is
+  visible without flooding. For a harness whose premise is "if it isn't in the
+  trace, it didn't happen", a silently truncated trace is the wrong failure mode.
+- **5 new tests**, including the two that matter most: an approved tainted write
+  actually *happens* (the carry-through is real, not just a suppressed prompt),
+  and an untainted preview gains no taint warning (the disclosure is conditional,
+  not boilerplate).
+- **`dispatch` shed a parameter.** With approval carried as a bool, its
+  `edit_approver` argument became dead — removing it also took the function back
+  under the arity limit rather than suppressing the warning.
+
+## ADR-080 — 2026-07-25 (sprint 90): E2 resolved — a structural provenance gate replaces substring taint
+The open posture decision from ADR-075/078, settled by the user: **Option 4, the
+approval form.** Substring taint is retired; the gate is now structural.
+Workspace **529 tests, 0 failures**; clippy 0; fmt clean.
+- **Why the detector had to go, not be re-tuned.** ADR-078 measured it live and
+  it failed in both directions. It detects **copying** while the threat is
+  **influence** — an injection wins by being *obeyed*, not quoted. Its only
+  tuning axis is segment length, and both ends are bad: long segments miss lifted
+  fragments, short segments match ordinary prose and deny every write. And
+  **paraphrase defeats matching at any length** — the quarantine's own summary is
+  already a paraphrase of its source, and a model restating it rewords again.
+  There is no constant that works, so tuning one was never the fix.
+- **The question changed.** Not *"do these arguments contain untrusted text?"*
+  (undecidable in practice) but *"has this run ingested untrusted content at
+  all?"* — a fact the harness stamps once and the model cannot launder, because
+  it is never asked. New `ferric_guard::Provenance { Clean, UntrustedIngested }`;
+  `SinkPolicy::decide` takes it in place of a per-call `tainted` bool.
+  **Nothing to evade, because nothing is being detected.**
+- **This restores consistency with the rest of Ornstein.** The quarantine has
+  always been structural (ADR-010/040 — empty tools is the only valid constrained
+  shape, so an injection has no action channel by construction). The sink gate
+  was the one place that reached for detection, and the one place that did not
+  hold up.
+- **Default is `RequireApproval`** (was `Deny`). A clean run is **never** gated —
+  that is what keeps this usable. A contaminated run asks a human once per
+  mutation via ADR-079's single merged prompt; with no approver there is nobody
+  to ask, so it denies. Safe unattended, usable supervised.
+- **`TaintSet` is deleted, not deprecated.** Keeping a detector that does not
+  work is worse than having none: it manufactures confidence. Its ~40 call sites
+  became `Provenance::Clean`.
+- **Validated live** (qwen2.5-coder-3B), all three cases: a clean run writes
+  normally; a contaminated non-interactive run is **denied** — the very write
+  that ADR-078 measured being *allowed* — and the model adapts to the error; a
+  contaminated `--accept-edits` run shows **one** prompt carrying the provenance
+  warning, and the approved write lands.
+- **Honest scope.** This gates *mutation on a contaminated run*. It does not
+  detect injections, cannot say which call is dangerous, and is deliberately
+  coarser than what it replaced — every mutation after research is gated,
+  including obviously fine ones. That coarseness is the price of a control that
+  cannot be worded around, and it is the trade the decision accepted.
+
+## ADR-081 — 2026-07-25 (sprint 91): the sandbox meets a real Docker daemon, and the web plane's true blocker
+Docker was installed on this machine, closing the containerizer gap that had
+blocked Ornstein's container work since **sprint 33**. A5's airlock — added in
+sprint 84 but only ever tested at the argv level — is now validated against a
+running daemon. Workspace **534 tests, 0 failures**; clippy 0; fmt clean.
+- **All three airlock properties confirmed live**, with direct evidence rather
+  than inference:
+  - `--network none` genuinely isolates: `wget: bad address 'example.com'`.
+  - Explicit `Unrestricted` genuinely reaches out: `Example Domain` fetched.
+  - **The gVisor default fails CLOSED.** With `runsc` absent (this host offers
+    `runc`, `nvidia`, `io.containerd.runc.v2`), the default errors with
+    `unknown or invalid runtime name: runsc` — it does **not** silently fall back
+    to `runc`. That is the property that makes the default trustworthy; a control
+    that degrades quietly is worse than none.
+  - Capabilities really drop: `chown` fails inside the container.
+- **`check_available()` had no timeout, and I hit it.** A *half-started* Docker
+  Desktop is the case that matters — the CLI is present, the daemon is not, and
+  `docker info` then **hangs** rather than failing. Measured at ~60 s per call,
+  which made a run of 5 skipped tests take 269 s and look like 5 passes. Now
+  bounded at 5 s with the probe reaped. `Retriever::available()` sits on the
+  research path, so an unbounded probe there would stall a whole run over an
+  optional dependency.
+- **A near-miss worth recording.** That first run reported "5 passed" in 269 s and
+  I almost reported it as validation. It was 5 *skips* — the suite is
+  availability-gated by design, and `--nocapture` was needed to see the SKIP
+  lines. The real run takes **12 s**. The test file's own header says a green run
+  must not be mistaken for a validated one; that warning existed because this
+  exact confusion was foreseeable, and it still nearly landed.
+- **Docker did NOT unblock D2 (wiring `WebRetriever` into the binary), and that
+  is now the interesting part.** The remaining blocker is not the containerizer —
+  it is the **allowlist proxy**, which is still unimplemented (`NetworkPolicy::Proxy`
+  exists and nothing constructs it). Wiring the web plane today offers only two
+  configurations, both wrong: the default (`Denied`) gives a web retriever that
+  cannot fetch, and `Unrestricted` gives back exactly the unrestricted egress
+  sprint 84 made opt-out. **The proxy is the whole remaining gap for Ornstein's
+  web plane**, and it is now the only one.
+
+## ADR-082 — 2026-07-25 (sprint 92): the proxy policy was advisory, not an airlock
+Sprint 91 concluded the allowlist proxy was the last blocker for Ornstein's web
+plane. Debugging that turned up something more important first: **the mechanism a
+proxy would have plugged into did not constrain anything.** Workspace
+**535 tests, 0 failures**; clippy 0; fmt clean.
+- **`NetworkPolicy::Proxy` was bypassable, and it is measured.** It attached the
+  sandbox to `--network bridge` and set `http_proxy`/`https_proxy`. Those
+  variables are a **convention cooperative clients honour**, not an enforcement
+  boundary. A container simply runs `unset http_proxy https_proxy` and reaches
+  the internet directly — verified, fetching example.com in full while the proxy
+  pointed at a dead port. Building an allowlist proxy behind that would have been
+  the same shape as ADR-078's substring taint: a control that looks like
+  enforcement and is not.
+- **Isolation has to come from the network.** A docker network created
+  `--internal` has no route out, and it holds against both DNS and raw IP:
+  `wget: bad address` and `Network unreachable`. That is kernel routing, not
+  client goodwill — there is nothing for a process inside to opt out of.
+- **`Proxy(url)` is replaced by `Airlock { network, proxy_url }`.** Both fields
+  are load-bearing and the type now says so: the **network** enforces, the URL
+  merely tells cooperative clients where the gateway is. The unit test's critical
+  assertion is the negative one — the argv must never contain `--network bridge`,
+  because that single word is what restored the bypass.
+- **Verified end-to-end against the real topology**, with a gateway container
+  attached to both the isolated network and an external one, running a
+  default-deny allowlist:
+  - allowlisted host through the gateway → **fetched**;
+  - non-allowlisted host → **403, refused by the gateway**;
+  - `unset http_proxy` and go direct → **unreachable**. The bypass is closed.
+- **The live test stands the whole topology up itself** (network, gateway, poll
+  for readiness, teardown) and is availability-gated like the rest. Its positive
+  assertion — that an allowlisted fetch really returns page content — is
+  deliberate: it is what stops a silently-skipped run from looking like a pass,
+  the failure mode ADR-081 nearly shipped.
+- **Still not done: D2.** Ferric does not yet *create* the isolated network or
+  *run* the gateway; the type can express an enforced airlock and the topology is
+  proven, but the lifecycle (create network, start gateway, health-check, tear
+  down) is the next increment before `WebRetriever` is wired into the binary.
+  Naming that plainly, because "the type supports it" is not "the binary does it".
+
+## ADR-083 — 2026-07-25 (sprint 93): Ferric owns the airlock lifecycle
+ADR-082 proved the enforced-egress topology by hand; Ferric could *describe* an
+airlock but a human had to build one. `ferric_research::airlock::Airlock` now
+owns it end to end. Workspace **542 tests, 0 failures**; clippy 0; fmt clean.
+- **`Airlock::start(allowlist)`** creates the `--internal` network and an egress
+  network, runs a default-deny gateway, polls until it accepts connections,
+  attaches it to the internal side, and hands back a `NetworkPolicy::Airlock`.
+- **Ordering is a security property, not tidiness.** The gateway starts on the
+  **egress network only** and is attached to the internal one *after* it reports
+  ready — so a sandbox can never reach a half-configured proxy that is up but has
+  not yet loaded its filter.
+- **Readiness is polled, never slept.** `apk add` timing varies with the network,
+  and a sleep that is *usually* long enough is a flake generator. The poll also
+  detects a gateway that exited and reports its last log line, rather than
+  waiting out the full timeout for something that will never be ready.
+- **Failure is closed.** If the gateway does not come up, `start` returns an
+  error; there is no path that yields a sandbox with an open network.
+- **Teardown is RAII.** `Drop` removes the gateway and both networks, because a
+  panic between `start` and an explicit `stop` would otherwise leak the one
+  container on the machine that *has* egress. Verified live.
+- **Allowlist entries are validated, and that is a boundary.** They are written
+  into a file by a shell command inside the gateway, so an entry containing `;`,
+  `$(…)`, a quote or a newline is command injection into the one container with
+  network access. Restricted to the DNS hostname charset — removing the
+  possibility rather than escaping it — and checked **before** any docker
+  resource exists, so a rejected allowlist leaves no debris. Both properties are
+  tested.
+- **Names are per-instance** (`pid`+counter). Two agents sharing one gateway
+  would be sharing one allowlist; they now cannot.
+- **A test bug worth recording, caught by parallelism.** The teardown test
+  asserted on the `ferric-gateway-` *prefix*, so a concurrently running test's
+  gateway made it fail — passing single-threaded, failing in the full suite. The
+  teardown was correct; the assertion was not. It now names its own container,
+  via a new `gateway_name()`. The unique-naming scheme existed precisely so this
+  distinction could be made, and the first test written against it did not use
+  it.
+- **D2 is now unblocked but not done.** `WebRetriever` still is not reachable
+  from the binary — what remains is wiring (a CLI surface, the allowlist as
+  configuration), not missing mechanism.
+
+## ADR-084 — 2026-07-25 (sprint 93, amendment): availability is "can run our containers", not "is docker there"
+CI failed on `windows-latest` while passing on ubuntu, and the reason is worth
+recording because it invalidated five tests that were *passing*.
+- **GitHub's `windows-latest` runner ships a Docker daemon in Windows-container
+  mode.** It is reachable, so a "can I talk to docker?" probe answers yes — and
+  then every `alpine:latest` run dies with
+  `no matching manifest for windows(10.0.26100)/amd64`.
+- **`check_available()` now requires `OSType == linux`.** Every image this crate
+  uses is Linux, so a Windows-mode daemon is not availability. Reporting it as
+  such makes `Retriever::available()` promise a plane that cannot work — this is
+  a product fix, not a CI workaround.
+- **The serious part: 5 of the 6 sandbox tests passed for the wrong reason.**
+  They assert *failure* — denied network, dropped capabilities, absent runsc,
+  refused host — and on that runner they got a failure, just not theirs. The
+  container never started at all. Only `a_command_runs_inside_the_sandbox`, the
+  one with a **positive** assertion, caught it.
+- **So negative assertions now have to say why.** A new
+  `assert_failed_because(result, expected_reasons, what)` rejects any error
+  mentioning `no matching manifest` / `Unable to find image` outright — the
+  container never ran, so the test proves nothing — and requires the error to
+  match the reason the test is actually about (`bad address` for a denied
+  network, `Operation not permitted` for a dropped capability, `runsc` for the
+  runtime, `403` for a gateway refusal).
+- **The lesson generalises past Docker.** `assert!(result.is_err())` is a test of
+  nothing in particular: it passes for the intended reason and for every
+  unintended one, and the unintended ones are exactly what a foreign environment
+  supplies. The anti-skip guard added in ADR-081 (always keep one assertion that
+  cannot pass without the dependency genuinely working) is what surfaced this;
+  the negative-assertion rule is its counterpart.
+
+## ADR-085 — 2026-07-25 (sprint 94): D2 — the web plane reaches the binary
+`WebRetriever` has been unreachable from `ferric` since ADR-045 (sprint-82
+finding D2). Sprints 91–93 removed the mechanism gaps; this is the wiring.
+Workspace **545 tests, 0 failures**; clippy 0; fmt clean.
+- **`--research-url <URL>` is a separate flag from `--research`, because the two
+  planes want different things.** `research_all` passes one `query` to every
+  retriever, but Local-FS wants keywords and `WebRetriever` requires the query to
+  *be* a URL. One parameter with two incompatible meanings would have been the
+  quiet kind of wrong; two flags say what each plane takes.
+- **The allowlist is derived from the URLs and nothing else.** No separate
+  allowlist configuration to drift out of sync — the sandbox may reach precisely
+  the hosts you named. `--research-url http://a/x --research-url http://b/y`
+  allows `a` and `b`; anything else the container tries is refused by the
+  gateway.
+- **`url_host` is therefore a security boundary.** It strips **userinfo** —
+  `http://example.com@evil.test/` allowlists `evil.test`, and keying on the
+  decoration would have opened a host the user never named — drops the port, and
+  runs the result through `airlock::validate_host`, so an injection-shaped host
+  is refused **before** the airlock opens. Tested, including the userinfo case.
+- **One airlock per RUN, not per URL.** Standing one up costs ~15 s (ADR-083) and
+  every URL in a run shares the allowlist anyway. RAII tears it down even if the
+  run panics.
+- **A failed fetch is fatal to the run, not skipped.** A URL the user explicitly
+  named that could not be fetched must not vanish into an ordinary run — the
+  ADR-078 lesson, applied before it could recur here.
+- **gVisor stays the default and `--allow-standard-runtime` is the named opt-out.**
+  The flag's documentation says the thing that matters: **network isolation does
+  not depend on it.** The airlock's `--internal` network enforces egress either
+  way; gVisor is defence in depth against container escape. Requiring it silently
+  on machines that lack it would make the feature dead on arrival, and a control
+  everyone disables reflexively is worse than a calibrated one (the E2 lesson).
+- **Verified live**, qwen2.5-coder-3B: the airlock opens for the named host, the
+  URL is fetched through it, the content is quarantined into a digest and
+  summarised correctly; the run is then **contaminated**, so `write_file` is
+  denied by the sink policy and the file is not created; and a URL whose host
+  cannot be allowlisted is refused *before* the airlock opens. The whole chain —
+  airlock, quarantine, provenance gate — composes.
+- **Ornstein's three planes are now all reachable**: Local-FS, Tailnet-FS (still
+  unexercised live), and Web.
+
+## ADR-086 — 2026-07-25 (sprint 95): fleet re-calibration, and two defects it exposed in the calibrator
+The fleet map had not been touched since sprints 25–26. Re-running it produced a
+new data point, confirmed an old one — and found two ways the calibrator
+misreports. Workspace **549 tests, 0 failures**; clippy 0; fmt clean.
+- **The refreshed map** (llama.cpp, `--protocol grammar`, release build):
+  | model | measured_level | tier |
+  |---|---|---|
+  | `qwen2.5-coder-3b` | **4** | Small |
+  | `qwen2.5-coder-7b` | **6** | Large |
+  Same family, so this isolates **size**: 3B tops out at L4 (multi-file with
+  test), 7B completes the full L0–L6 ladder cleanly. The 7B's 6 matches its
+  sprint-20 figure — 75 sprints and a great deal of harness change later, the
+  number holds.
+- **H1 — a partial `--level` sweep silently DOWNGRADED a stored profile.**
+  `calibrate()` runs on only the current sweep's rows, so
+  `bench full --level 5` rewrote the 7B's record from `measured_level 6 (Large)`
+  to `5 (Medium)`. `ferric query` reads that profile to size its RunPolicy
+  (ADR-029) — so **investigating one rung shrank the model's tier**: fewer tools,
+  fewer turns, no subagents. A profile is now written only from a full ladder;
+  a partial sweep says so and leaves the record alone.
+- **H2 — the ladder is not always monotonic, and `max(passed)` hid it.** The 7B's
+  first sweep **failed L5 and passed L6**, scoring 6 — indistinguishable in the
+  output from a clean sweep. Re-running L5 alone passed **three times**, and a
+  second full sweep passed all seven levels, so the failure was noise. But with
+  one sample per level, luck only ever inflates `measured_level`. The calibrator
+  now reports levels that failed *below* the highest pass, with the caveat that
+  the figure is `max(passed)` and should be re-run before it is trusted.
+  Failures *above* the top pass are an ordinary ceiling and are not flagged.
+- **A note for anyone benchmarking here.** `cargo test --workspace` rebuilds
+  `ferric.exe` **without** `--features backend-openai`, so a bench run started
+  after one silently loses its backend and every level fails in ~200 ms with
+  0 turns. That is what the first attempt this sprint did. Rebuild with the
+  feature (and `--release` — the harness warns that debug runs at ~1 tok/s)
+  before a sweep.
+- **The pattern, again.** Both defects are the same shape this series keeps
+  finding: a value computed from partial information and then reported as if it
+  were the whole picture. Neither was visible from the test suite; both needed a
+  real ladder against a real model.
+
+## ADR-087 — 2026-07-25 (sprint 96): the gateway image, and the skip that hid a broken airlock
+
+**Context.** ADR-083 recorded `Airlock::start` at "≈ 10–15 s, dominated by
+`apk add tinyproxy`" and left a prebuilt image as the obvious follow-up. This
+sprint built it: `ferric-gateway:1`, produced from an inline Dockerfile on first
+use, so there is no registry dependency and nothing to trust beyond
+`alpine:latest`, which the sandbox already uses. The tag carries a version so a
+future change to the recipe cannot silently reuse a stale image.
+
+**The premise was wrong, and the measurement says so.** Timing the same
+operation on the same machine, before and after:
+
+| | `Airlock::start` |
+| --- | --- |
+| `apk add` per start (old) | **2.72 s** |
+| prebuilt image, warm | **2.08 s** |
+| prebuilt image, cold (builds it) | 4.52 s, once |
+
+**0.6 s, not 10.** The 10–15 s figure in ADR-083 was read off a test-suite run
+that included the `alpine` pull and other work, and then written down as the cost
+of `start`. That is the same error this series keeps finding — a number measured
+under one condition, reported as the general one — and it is worth noting that it
+survived three sprints inside an ADR, where it read as established fact.
+
+**What the change is actually worth.** Not the second. Before it, every airlock
+start ran `apk add` inside a fresh container, so **standing up the security
+boundary depended, at runtime, on reaching the Alpine package mirror.** A mirror
+that is slow, rate-limited, or down took the airlock with it — and the airlock is
+what stands between untrusted web content and the network. Moving the package
+into a one-off build removes an external availability dependency from a
+security-critical path. `the_gateway_image_needs_no_package_fetch` pins it by
+running the image with `--network none`, which passes only if `tinyproxy` is
+genuinely baked in.
+
+**The defect that found itself.** Planting a `tinyproxy`-less image to check that
+the new test could fail — the anti-skip discipline from ADR-079 — the suite went
+**green**. All three live tests did this:
+
+```rust
+let Ok(lock) = Airlock::start(&[...]) else {
+    println!("SKIP: could not start the airlock — NOT validated");
+    return;
+};
+```
+
+Every one of them had already called `docker_ready()`. So Docker was known to
+work, the airlock genuinely failed to start, and the tests reported a pass. **The
+availability gate belongs at the top of a test, not wrapped around its subject** —
+once past the gate, a failure of the thing under test is a failure. Replaced with
+`start_or_fail`, which panics. Re-run against the planted image: 3 failed, 1
+passed. Against the real one: 4 passed.
+
+This is a sharper version of ADR-079's rule. It is not enough for a gated suite
+to carry one assertion that cannot pass without the dependency; the *skip
+conditions themselves* must not be able to swallow a real failure. A skip that
+can trigger after the gate has passed is indistinguishable from a pass.
+
+**Incidentally verified.** Three deliberately-failed starts left zero
+`ferric-gateway-*` containers and zero `ferric-airlock-*` networks, so cleanup on
+a *partial* start holds — previously only the success path's RAII teardown had
+been shown.
+
+**C8, and what the audit miscounted.** The sprint-82 audit called the test
+runners "6 scripts, 3 locations, 2 shell dialects". Two were genuinely loose at
+the repo root and moved to `tools/`. One, `run-tool-sweep.ps1`, was **deleted**:
+a one-line `cargo run` reading `test-sweep-prompt.txt` from the CWD, but that
+file exists only in `workspace/`, so it could not run as placed. The third
+location is not sprawl — `workspace/run-e2e-sweep.sh` sits in the directory that
+is *mounted at `/workspace` inside the container*, next to the fixtures it reads
+by absolute path. Moving it to `tools/` would have put it outside the mount it
+operates on. The two dialects stay: rewriting either side means re-validating it
+against a live model, which costs more than the inconsistency.
+
+## ADR-088 — 2026-07-25 (sprint 97): the compose stack had never worked, and what that hid
+
+**Context.** `docker-ferric-core-1` had been crash-looping since **2026-07-14**,
+noticed in passing during sprint 96's leak check. Investigating it turned up
+five defects, four of which were only reachable by actually running the thing.
+
+**1 — the crash loop.** `docker/Dockerfile` sets `ENTRYPOINT ["ferric"]`;
+compose set `command: tail -f /dev/null`. Compose's `command` replaces `CMD`,
+not `ENTRYPOINT`, so the container ran **`ferric tail -f /dev/null`** →
+`unrecognized subcommand 'tail'` → exit → `restart: unless-stopped` → loop, for
+eleven days. Overriding `entrypoint` is what detaches an idle command from the
+image's binary.
+
+**2 — the docker socket mount.** `/var/run/docker.sock` was bind-mounted into
+`ferric-core` for the sprint-45 design where ferric launched sibling fetch
+containers. Measured, it was **doubly non-functional**: the image ships no
+docker CLI, and the socket is `root:root 0660` while the container runs as uid
+10001. So it did nothing — while staging a host-root-equivalent escape for
+whoever later added a docker client or ran as root. Mounting the docker socket
+into the container that handles untrusted content defeats the airlock it sits
+beside. Removed; the airlock runs on the host and needs nothing there.
+
+**3 — the squid `allowlist-proxy` was a known-defeated design.** Deleted along
+with `docker/squid.conf`. It sat on a **bridge** network, and ADR-082
+established that a proxy on a bridge is bypassable — the sandbox keeps a route
+out, so `unset http_proxy && wget …` walks past it. That bypass is now a test.
+Its allowlist was also a hardcoded `.example.com`/`.wikipedia.org` pair, where
+the airlock derives the allowlist from the URLs actually requested. Nothing in
+`crates/` referenced squid, port 3128, or `proxy-net`. Leaving it would have
+published a defeated topology as the platform's egress story.
+
+**4 — a tracked `.env` pinned to one machine's NAS.** `docker/.env` was
+**committed** with `MODELS_PATH=Y:\Models\gguf`, so it overrode the compose
+default on every checkout and `up` failed anywhere that drive was not mapped —
+which is what it did here. Untracked and gitignored, with a `.env.example`.
+The default now points at the shared suite store, `../../Animus/Models`, so one
+GGUF directory serves every Animus component instead of a copy per repo.
+
+**5 — `ferric server down` could not kill anything in a slim container, and
+threw away the evidence.** `kill_pid` exec'd `kill(1)` directly. `procps` is not
+installed in `debian-bookworm-slim`, so the spawn failed with "not found",
+`status` came back `Err`, and `down` reported *"could not kill pid 50 (already
+gone?)"* — while llama-server carried on serving. Worse, it deleted the runfile
+anyway, orphaning a live process and discarding the only record of its PID. Two
+fixes: route through `sh -c` (`kill` is a POSIX **shell builtin**, so nothing
+need be installed), and **keep the runfile when the process is still alive** so
+a retry is possible.
+
+**The zombie, which was our own doing.** Verifying the kill, `kill -0` kept
+reporting the process alive after SIGKILL. It was a **zombie** — `state=Z
+ppid=1` — because the idle `sleep` chosen in fix 1 became PID 1, and `sleep`
+does not reap. A zombie answers `kill -0` successfully, so the new "keep the
+runfile while alive" logic would have refused to clean up an already-dead
+process *forever*. Both halves fixed: `init: true` gives the container a real
+init, and `process_alive` reads `/proc/<pid>/stat` on Linux and treats `Z` as
+dead, falling back to `kill -0` elsewhere.
+
+**What this says about the method.** Every one of these needed the stack to
+actually run. The compose file reviewed as sensible, and its `command:` line is
+a plausible-looking idiom that happens to be wrong for an image with an
+`ENTRYPOINT`. The socket mount, the squid service, and the `.env` all *looked*
+like configuration; they were three different kinds of stale. And fix 1 created
+the zombie that broke fix 5 — the failure modes were coupled through the
+container's process model, which no unit test observes.
+
+**Verified live.** Stack up and stable; `ferric --version`, `llama-server`, both
+mounts, and the socket confirmed absent. Then a full constrained run **inside
+the container** against the mounted 3B — `write_file` → `task_complete` in 2
+turns — with the file landing on the host through the bind mount. That is the
+first time this stack has done any work at all.
+
+**`ps` is not installed either.** An early check ran `ps … || echo 'none
+running'` and printed "none running" while the server was serving. `ps` was
+absent, so the `||` fired. Same shape as ADR-086/087: **a negative result whose
+reason went unverified.** `/proc` settled it. When a check reports absence,
+confirm the check could have detected presence.
+
+## ADR-089 — 2026-07-25 (sprint 98): B1 was mis-scoped in both directions
+
+**Context.** The sprint-82 audit filed B1 as: *"retire
+`Protocol::{FencedCode, EditFormat}` — never constructed or matched, but
+serialized into profiles and traces, so removal is a schema change with a
+migration, not a deletion."* Both halves of that turned out to be wrong.
+
+**It is not a schema change.** The migration risk was checked rather than
+assumed:
+
+- `model_profiles.json` stores `protocol` as a **`String`**
+  (`ModelProfileRecord`), not the enum. The on-disk value is `"ConstrainedJson"`
+  — PascalCase — which `Protocol`'s `#[serde(rename_all = "snake_case")]` could
+  not even have produced.
+- Traces serialize **`ActionProtocol`**, the live four-variant enum, not
+  `Protocol`.
+- No artifact anywhere on disk contains `fenced_code` or `edit_format`, which
+  follows from the variants never being constructed.
+
+`Protocol` reached no persisted artifact at all. There was nothing to migrate.
+
+**It is bigger than two variants.** `Protocol`'s only use was the field
+`RunPolicy.protocol`, always set to `ConstrainedJson`, and *never read* — the
+only sites consulting it are two test assertions. The real protocol decision has
+been `ActionProtocol`, chosen by `select_protocol` from backend capabilities,
+since ADR-015/022. So the whole enum and the field went, not two variants: a
+constant field that nothing reads is not a schema, it is residue.
+
+**What the cleanup actually found.** Profiles are keyed on `(model, protocol)`
+where protocol is a free-form `String`. **Six** call sites — one reader in
+`ferric query`, five writers across bench and toolbench — each independently
+wrote `format!("{protocol:?}")`. They agreed only because every one of them
+happened to reach for `Debug`.
+
+That is worth more than the deletion, because the failure mode is silent. Rename
+an `ActionProtocol` variant, or switch a single site to `Display` or serde, and
+`read_profile` misses. **A miss is a deliberate, documented safe no-op**
+(ADR-029) — so the model quietly runs at its params-derived tier instead of its
+measured one, and nothing anywhere reports a problem. The 7B would drop from
+Large to Small and the only symptom would be that it got worse.
+
+Now one `protocol_key(ActionProtocol) -> String` in `ferric-core`, used by all
+six, with two tests: one pinning the exact strings as a persistence contract,
+one asserting the shared function still agrees with the `Debug` format it
+replaced — because unifying the sites *around a different string* would itself
+have been the orphaning change it was meant to prevent.
+
+Grepping caught two of the six only on a second pass, after the first
+`grep`-and-replace looked complete. A partial unification would have been worse
+than none: two key formats in one file, and profiles that resolve or not
+depending on which command wrote them.
+
+**Verified against the real file**, not a fixture: `ferric query --model
+qwen2.5-coder-7b --profile-dir benchmarks` prints `measured_level Some(6)`,
+matching ADR-086's calibration.
+
+**The pattern.** The audit's B1 entry was itself an instance of what this series
+keeps finding — a claim inferred from the shape of the code (an enum with serde
+derives *looks* persisted) and recorded as established fact, where thirty
+seconds of looking at the actual JSON would have settled it. It sat in the
+backlog for sixteen sprints as a task nobody wanted because it was labelled a
+migration.
+
+## ADR-090 — 2026-07-25 (sprint 99): the E2E round — three dead features, found by running them
+
+**Context.** The user asked for an end-to-end verification of everything that
+currently exists, as the gate before adding agent-skill loading. So: drive every
+one of the twelve CLI subcommands, live, rather than trust the suite.
+
+556 tests pass. **Three features did not work at all**, and none of them was
+failing a test — because no test drove them end to end.
+
+**1 — `ferric launch` produced projects that would not build.** The scaffolded
+`Cargo.toml` had no `[workspace]`, and cargo resolves the workspace root by
+walking *upward*. A project launched anywhere inside another Rust tree gets
+adopted by it. Launching into a scratch dir under the home directory — which
+contains a stray `Cargo.toml` from March — produced a fresh project that failed
+with *"no targets specified in the manifest"* naming
+`C:\Users\charl\Cargo.toml`, a file the scaffold never wrote. The scaffold was
+correct; it just did not close the door behind itself.
+
+**2 — the container had no `git`, so every in-container run had no rollback
+point.** `ferric-vcs` shells out to `git` for the per-turn snapshots that
+`ferric revert` restores. `debian-bookworm-slim` ships none, and the loop
+handles that by recording `note: vcs snapshot failed: … No such file or
+directory` in the trace and carrying on. Found by *reading an actual
+container-produced trace*, not by anything failing.
+
+**3 — Dream Mode had never once run.** Two defects, stacked so the outer hid
+the inner:
+
+- It read `.ferric/traces`; every writer writes `.ferric/trace`. It reported
+  this as a tidy *"No .ferric/traces directory found."* — **a dead feature
+  wearing the face of an idle one**, on a workspace that held three traces.
+- Fixing the path revealed the real one: `run_dream` used
+  `futures_executor::block_on`, which is not a Tokio runtime, so the HTTP stack
+  panicked with *"there is no reactor running"* the instant it touched the
+  network. `chat` and `cron` already take a real runtime for live providers and
+  reserve `futures_executor` for mocks; dream used the mock path for everything.
+
+The second could not be discovered until the first was fixed. That is the
+lesson worth keeping: **a bug that returns early can hide an unbounded number of
+bugs behind it**, and the early return is exactly what makes the feature look
+merely unused.
+
+**The shared cause of 3, and the fix.** Five writers each spelled
+`.join(".ferric").join("trace")`; the one reader spelled it `traces`. Same shape
+as ADR-089's six `format!("{protocol:?}")` sites, one sprint later. Now
+`ferric_trace::trace_dir()`, with a test that writes through the public sink and
+scans the directory the way dream scans it — so the assertion is against the
+writing code, not a restatement of the constant.
+
+**What was verified working, live.** `query` (constrained loop, 2 turns);
+`server` up/status/doctor/down on Windows *and* in-container; **VCS snapshots
+end-to-end for the first time** — two snapshot commits, `revert` removing the
+agent's file and leaving the pre-existing one, and `git status` showing the
+workspace index untouched, which is ADR-072's A3 property confirmed against a
+real repo rather than a unit test; `bench ltd` 22/22 solid; `mcp` answering real
+JSON-RPC `initialize`/`tools/list`/`prompts/list`; `icm` init+plan; `cron`
+add/list/run; `trace` cat/verify; `launch`; `dream` after the fix; the Dark
+Matter `fetch_reference` seam against `INTEGRATION.md`'s declared schema; and
+10 live Docker tests (13.4 s and 14.5 s of real work — not skips).
+
+**The airlock chain, both directions.** `--research-url` opened an airlock,
+fetched, quarantined, and then the run's `write_file` was **denied** by the sink
+policy as contaminated. The control matters as much: the *same* run under
+`--sink-action warn` wrote successfully. So the denial is the policy, not a
+broken write path — the ADR-081 provenance gate holds live in both directions.
+
+**Two near-misses of my own.** I called `trace cat` broken on a trace file that
+turned out to have **zero lines**, and `ps` reported "none running" for a
+server that was serving because `ps` is not installed. Both are the ADR-088
+shape — a negative result whose reason went unverified. The rule that keeps
+earning its place: *when a check reports absence, confirm the check could have
+detected presence.*
+
+**Not driven.** `chat` is an interactive REPL and was not exercised
+non-interactively; its underlying loop is the same `run_with_provider` that
+`query` exercises, but the REPL surface itself remains unverified. Said plainly
+rather than counted as passing.
+
+**Environment note, not a Ferric defect.** `C:\Users\charl\Cargo.toml` (a stray
+`test` package, March) breaks `cargo` for any non-workspace project under the
+home directory. Surfaced to the user, not deleted — it is theirs.
+
+## ADR-091 — 2026-07-25 (sprint 100): agent skills — installation is consent, invocation is authority
+
+**Context.** The user asked for skill loading in the conventional format, and
+settled the trust question directly: *a skill is something the user willingly
+chooses to install, so unless they were socially engineered into it, it is a
+different surface from web content. That said, installing or even invoking a
+skill should not be automatic unless it came from the base prompt, from the
+user, or from something the user configured as allowed.*
+
+That splits cleanly into two properties, and the design is just those two made
+structural.
+
+**1 — only the user can install.** Skills live at
+`<workspace>/.ferric/skills/<name>/SKILL.md`. `.ferric` is in `ferric-guard`'s
+`DENIED_WRITE_SEGMENTS`, so the model cannot write there. **Verified live**: the
+7B, asked to create `.ferric/skills/evil/SKILL.md`, got
+`DENIED: permission: denied_write_segment matched .ferric` and nothing was
+created. The same denial covers `.ferric/config.toml`, so the model cannot edit
+the allowlist that authorizes skills either — which is *why* the allowlist lives
+in config rather than anywhere more convenient.
+
+**2 — discovery is not authorization.** `discover()` returns everything on disk;
+getting into a prompt needs an `Authority`, of which there are exactly two:
+`UserRequested` (`--skill <name>` on this invocation) and `ConfigAllowed`
+(`allowed_skills` in `.ferric/config.toml`). **There is no `Model` variant**,
+and `authorize()` takes only user-sourced inputs — there is no parameter through
+which a model could clear a skill for itself.
+
+`DiscoveredSkill` and `AuthorizedSkill` are **different types**, not one type
+with a flag, and `compose()` accepts only the latter. "Forgot to check the
+allowlist" is therefore not a reachable state — the same structural move as the
+constrained-loop valve (ADR-010) and the provenance gate (ADR-081): make the
+unsafe thing unrepresentable rather than merely checked.
+
+**Verified live, as an A/B on one model with one variable.** Same 7B, same
+prompt ("write hello into <file>"), a skill installed that requires appending
+`SKILL-MARKER-42`:
+
+| run | authority | marker in the file |
+| --- | --- | --- |
+| installed, not authorized | none | **absent** |
+| `--skill marker` | UserRequested | **present** |
+| allowlist only, no flag | ConfigAllowed | **present** |
+
+The first row is the security property and the other two are the feature. A
+first attempt at this test was *confounded* — the skill was "write in haiku" and
+the prompt was "write a note about rain", which elicits verse from any model
+regardless. Swapping to an arbitrary marker string made the signal
+unambiguous.
+
+**The 3B ignored an authorized skill**, writing the file without the marker.
+Worth separating carefully: the trace showed the skill text *was* in the system
+prompt, so that is model non-compliance at `measured_level 4`, not a wiring
+failure. Checking which it was, rather than assuming, is the ADR-090 rule
+applied to my own feature.
+
+**A duplicate implementation existed, and was the more dangerous one.**
+`ferric-cli/src/skills.rs` already loaded the same `SKILL.md` path to serve MCP
+prompts, with a permissive parser: a file with **no frontmatter at all** still
+loaded (name falling back to the directory), and a declared `name` **overrode**
+its directory — so a skill installed as `helpful/` could answer to `deploy` over
+MCP. Deleted; `mcp.rs` now goes through `ferric-skills`, which requires
+frontmatter and requires `name` to match its directory. Two parsers for one file
+format is the same defect class as ADR-089's six protocol keys and ADR-090's six
+trace paths, three sprints running.
+
+**Per-surface decisions, made rather than defaulted.** `query` gets both
+authorities. `chat` honours the standing allowlist (same user, same workspace;
+a `/skill` verb is the natural per-message surface and is deferred). `icm` opts
+out — it composes each stage's context from its own declared layers and reports
+that as provenance, so folding in text no layer accounts for would undermine the
+mechanism. `api` opts out — the HTTP caller is not necessarily the workspace
+owner, so a workspace allowlist is not evidence *this* requester authorized
+anything. `ferric_query` over MCP opts out — that client already reaches skills
+the right way, by pulling a prompt.
+
+**Deliberately not built.** Skills do not grant tools. The conventional format
+has an `allowed-tools` key, and honouring it would let an installed file widen
+the tool rings — the one thing that could turn a skill into an action channel.
+That interaction wants its own sprint and its own decision against
+[[ferric-tool-rings]], not a field quietly parsed today.
+
+## ADR-092 — 2026-07-25 (sprint 101): the 7B verification round
+
+**Context.** A second `/verify` pass on a `cargo clean` tree, driven by
+qwen2.5-coder-7b rather than the 3B. The point of the stronger model: sprint
+100's round left several behaviours unproven because the 3B would not comply
+with instructions well enough to demonstrate them either way.
+
+**Cold build: zero warnings, zero errors.** 569 tests, clippy 0, fmt clean.
+
+**One defect, in the sprint-100 skill code.** `authorize()`'s `requested` loop
+deduped nothing against itself, so `--skill x --skill x` cleared the skill twice
+and `compose()` emitted its instructions twice — wasted context and a quiet
+change in emphasis for anyone who repeats a flag. The `allowed` loop had always
+had the check; the requested loop only lacked it against itself. Fixed, with a
+test asserting the body appears exactly once. A repeated *unknown* name is now
+reported once too.
+
+**A claim in ADR-091 was too weak.** I wrote that skills are protected because
+`.ferric` is in `DENIED_WRITE_SEGMENTS`. It is also in **`DENIED_READ_SEGMENTS`**
+— added in sprint 35 to keep the trace away from the model being traced, and
+inherited by skills when they landed in the same directory. Verified live: the
+7B asked to read an unauthorized `SKILL.md` got
+`denied_read_segment matched .ferric`. So the model cannot open an
+unauthorized skill and follow it of its own accord either, which means
+**authorized prompt injection is the only route from a skill to the model at
+all** — a stronger property than the one I documented. Corrected in the crate
+docs.
+
+**The composition question the 3B could not answer.** A run with *both* an
+authorized skill and ingested web content: the skill is in scope
+(`UserRequested`), the airlock opens, the content is quarantined — and
+`write_file` is still **denied** by the sink policy. An authorized skill does
+not unlock a contaminated write, because the provenance gate keys off the run's
+provenance, not off anything in the prompt. Controls on the same build: skill +
+clean run → marker written; no skill + clean run → no marker.
+
+**What the 7B demonstrated that the 3B could not.** A six-turn task
+(`make_dir` → two writes → two reads → `task_complete`) completed correctly, and
+with it **per-turn VCS granularity**: six snapshot commits, and
+`revert … 2` restored the workspace to exactly the state after the first write —
+`proj/a.txt` present, `proj/b.txt` gone, `seed.txt` untouched, and the user's
+git index still clean (ADR-072's A3 property). Sprint 99 only ever showed revert
+across a single turn. `bench ltd` 33/33 solid.
+
+**A false positive I caught in my own testing, worth recording.** The first run
+of the skill-plus-research test reported the file "not written", which reads
+exactly like the security gate working. It was not: a background
+`cargo test --workspace` had rebuilt `ferric.exe` **without**
+`--features backend-openai` mid-experiment, so the query never reached a model.
+ADR-086 warned about precisely this and it still caught me — the difference is
+that the failure mode *looks like a pass* when the thing you are testing is a
+denial. Re-running with full output rather than a filtered grep is what exposed
+it.
+
+The general rule this keeps re-deriving: **when the expected result is an
+absence, an unrelated failure is indistinguishable from success.** A denial test
+needs a positive control in the same session — which is why the marker-present
+runs matter as much as the marker-absent one.
+
+## ADR-093 — 2026-07-26 (sprint 102): the truncation cap gets one source, and `trace verify` starts verifying
+
+Closes backlog **E3**, open since the sprint-84 audit. Workspace 569 → **574
+tests, 0 failures**, clippy and fmt clean.
+
+**The entry was wrong in both directions** — the same shape as B1 in ADR-089.
+It named three sites; one was not a site and one site was missing.
+
+- `compact.rs:224` is inside `#[cfg(test)]` (line 148). `maybe_compact` takes
+  `&TraceProjector` and inherits whatever `run()` built, so the compaction path
+  was never a second source of the cap.
+- **`ferric-cli/src/trace_verify.rs` was, and was not in the entry.** It
+  restores `tier`, `protocol`, `max_turns`, `max_tools` and both token budgets
+  from `PolicySelected`, then built `Registry::new()` — silently substituting a
+  default for the one knob the event does not carry.
+
+**Root cause: the cap was not in the trace.** Not three independent oversights.
+`run()` was correct only because it holds the live `Registry` — the one context
+where the trace isn't the source. `replay` and `trace verify` have only the
+file, so neither *could* know, and both assumed 4,000.
+
+So the fix is not "pass the limit to replay". `PolicySelected` now carries
+`truncation_limit`, the projector takes it from that event and from nowhere
+else (`with_truncation_limit` is deleted — one field, one assignment path), and
+`trace verify` builds its registry from the traced value.
+`DEFAULT_TRUNCATION_LIMIT` moves to `ferric-core` so the event, the registry
+and the projector share one constant without any of them depending on each
+other; `ferric-tools` re-exports it, so every existing call site is unchanged.
+Old traces have no such key and parse to the default via `#[serde(default)]` —
+which is exactly what those runs used, verified against a real pre-sprint-102
+trace on disk (`trace cat` reads `tool output cap 4000` from a line that
+genuinely lacks the field).
+
+**ADR-074's wording is corrected in place, not just here.** It claimed the
+projector keeps run and replay "identical by construction". The shared
+*formatting* half was true and stands; the word *identical* was not — a shared
+function fed a different parameter from a different source is not identical by
+construction. That property now actually holds, so the sentence is amended
+rather than deleted.
+
+**A second defect, found by driving the command I had just edited:
+`ferric trace verify` had never verified anything.** Smoke-testing the change
+produced `Mismatch in number of events: 16 vs golden 14` on a clean mock run.
+`run()` writes `TurnEnd` **before** dispatching, so a turn's own `ToolCall`
+events land *after* it — confirmed directly in a real trace (`turn_end` at #6,
+`tool_call` at #7). Building the scripted `Completion` at `TurnEnd` therefore
+paired every turn with the **previous** turn's calls and dropped the final
+turn's entirely, so **the terminator was never replayed** and the re-run always
+overran its script. Any trace carrying a tool call reported drift, which means
+a real drift and this bug were indistinguishable — a drift detector that always
+says "drift" detects nothing. Fixed with the rule `replay()` already used:
+hold the turn open, close it when a later `TurnStart`/`SessionEnd` proves
+dispatch finished, and flush at EOF for a killed trace.
+
+That defect is the sprint's theme stated twice: **`trace_verify.rs` is a
+second, hand-written reader of a format `TraceProjector` already reads
+correctly, and it drifted** — the protocol key (six copies, ADR-089), the trace
+directory (six, ADR-090), the skill parser (two, ADR-091), and now the trace
+walk itself. The cap fix and the assembly fix are the same lesson at different
+altitudes: one artifact, one reader.
+
+**Method note.** Both fixes were confirmed by reverting them and watching the
+new tests fail — and the first attempt at that was itself wrong. Disabling the
+projector's new behaviour broke run *and* replay symmetrically, so they still
+agreed and the headline equality passed; only the sanity assertion caught it.
+Reproducing the original bug faithfully meant restoring run's registry-seeded
+cap while leaving replay on the default. **A revert that breaks both sides of
+an equality does not test the equality.** This is the same rule sprint 101
+recorded from the other end: verify that the check could have detected the
+thing it is reporting absent.
+
+**Deliberately not done:** no CLI flag or config key for the cap. Making it
+configurable is what would turn this latent bug live; the plumbing had to be
+correct first. `trace verify` under a non-default cap therefore remains
+verified by construction and not by execution, and this says so rather than
+implying coverage that does not exist.
+
+## ADR-094 — 2026-07-26 (sprint 103): C7, half declined — the CLI spelled "resolved backend" three times
+
+Closes backlog **C7**. Workspace 574 → **575 tests, 0 failures**; clippy 0 and
+fmt clean in **both** feature configurations.
+
+**Half of C7 is deliberately not done, and the entry says so rather than being
+quietly ticked.** The item asked to split `ferric-cli` into subdirectories. The
+crate measures 8,396 lines across 19 modules (the logged 9,674 counted tests),
+and the audit's own sentence concedes "the shared spine is correctly factored".
+Long is not the same as tangled. Moving 19 files changes no behaviour, finds no
+defect, and rewrites every `git blame` in the crate — that is churn presented as
+progress, and it is the one thing this series of sprints has consistently
+refused to ship.
+
+**The half worth doing was a real duplication, of exactly the kind this crate
+keeps producing.** `chat.rs` and `icm.rs` each declared their own backend enum,
+identical apart from the name (`ChatBackend` vs `Backend`: `Mock` | feature-gated
+`Real { provider, runtime }`), with **line-for-line identical** constructors —
+same `Runtime::new()`, same `map_err` wording, same `block_on(create_provider)`
+— and `cfg(not(feature))` stubs whose error strings were **byte-identical**.
+`mcp.rs` was the same idea taken apart: `Executor` holding only the runtime, the
+provider beside it, `build_real_provider` returning the pair, and a third copy of
+that same error string.
+
+Now: one `backend::ResolvedBackend` with one `real()` constructor, one
+`create_provider_with_runtime` for the runtime+provider pair, and one
+`BACKEND_FEATURE_MISSING` const. `chat` and `icm` alias the shared type.
+
+**`mcp::Executor` is kept, on purpose, and the reason is now in the code.** The
+difference is behavioural, not stylistic: `McpServer` builds its provider **once
+at launch** and reuses it for every `tools/call` (the documented T-3601 shape),
+while chat and icm build a **fresh** mock per invocation. `MockProvider` is
+scripted and stateful, so *when* it is constructed is observable — collapsing
+the shapes would have silently changed one of them. Only the real-backend
+construction is shared. Recognising a difference that looks cosmetic but isn't
+is the same judgement that kept `toolbench`'s deliberate non-read-back of the
+persisted profile out of this change: a calibrator must not consume the profile
+it is about to write.
+
+**A smaller find: an error message that could never be printed.**
+`create_provider` is gated `#[cfg(feature = "backend-openai")]` and contained a
+`#[cfg(not(feature = "backend-openai"))]` arm returning "binary built without
+openai backend". The outer gate makes the inner arm impossible to compile in, so
+the string was unreachable — and it read as a handled case while contradicting
+the comment directly below it, which correctly says callers own that path.
+Removed.
+
+**Why the diagnostic mattered enough to test.** The feature-off message is what
+a user meets when the binary lacks `backend-openai` — the exact condition that
+produced sprint 101's false positive, where a feature-less rebuild looked like a
+security gate working. It existed in three copies and **nothing tested any of
+them**. There is now one, with a test asserting it names both the feature to
+rebuild with and `--mock`; a diagnostic that says only "unsupported" leaves the
+user nowhere.
+
+**Verification note.** This is a behaviour-neutral refactor, so the 574 existing
+tests *are* the specification, and they stay green. Two things a compile would
+not have caught were checked directly: `cargo check`/`clippy` with
+`--no-default-features`, because the change moves `#[cfg]` boundaries and the
+feature-off build is precisely what the moved code guards; and a live `--mock`
+drive of all three rewired entry points (`chat`, `icm run`, `mcp` over
+JSON-RPC), because compiling proves the types line up, not that the wiring still
+reaches a provider.
+
+Not claimed: the `Real` branch against an actual model. It is the same two calls
+it was before, moved, and this sprint changes no request, prompt or policy —
+calling that live coverage would be the overstatement this project keeps
+correcting.
+
+## ADR-095 — 2026-07-26 (sprint 104): a closed port was a decision, and the record had been arguing with it
+
+No code behaviour changes. 575 tests stay green; this ADR corrects a standing
+instruction that should never have been written as one.
+
+**What happened.** Sprint 97 probed the tailnet, found ZimaBoard2 refusing port
+22, and recorded: *"Unblocking is one command on ZimaBoard2:
+`tailscale up --ssh`."* Sprint 103 carried that forward into the README's
+"Next" line. The user then said plainly: **"ssh is blocked on the zimaboard, bc
+I don't want sshing into it"** — the box online and healthy, nothing changed.
+
+**The mistake was not the probe, it was the conclusion.** `connectex: actively
+refused` is exactly what a deliberate posture looks like from outside; **a
+closed port and a broken service are indistinguishable to a scanner, and the
+difference lives entirely with the owner.** Having found the absence, the
+report inferred a gap and then prescribed the fix — which here meant a
+project's own backlog instructing its owner to open SSH on a machine they had
+deliberately closed. That is the same failure this project keeps naming from
+other angles: **a value computed from partial information, reported as the
+whole picture.** Sprint 101 put it as "when the expected result is an absence,
+an unrelated failure is indistinguishable from success"; this is its sibling —
+*an absence you did not cause is not necessarily a defect.*
+
+The rule going forward: **when a probe finds something switched off on hardware
+someone else owns, record the observation and ask; do not infer intent and
+never prescribe re-enabling it.**
+
+**The design implication is the substantive finding, and it outlives the
+correction.** `TailnetFsRetriever` offers only `SshTransport`, so the only
+*remote* filesystem plane Ornstein has cannot be exercised in the environment
+of record — not "not yet", but not at all. And its security core,
+`shell_single_quote`, exists solely because `ssh` runs its command through the
+**remote** shell: the transport creates the very injection threat the escaping
+defends against. A plane whose one live target is unreachable by design is a
+design question (generalise the transport, or retire it), not the
+test-coverage chore the backlog had been carrying for seven sprints.
+
+**And the SSH-free path needs none of that code.** Measured from tec-xx against
+`100.95.64.15` (direct connection): **445/SMB, 139, 80/HTTP, 2049/NFS open; 22,
+443, 5000 closed.** A mounted share is just a filesystem path, so
+`LocalFsRetriever` with the mount point as its confined root already serves it.
+What is missing is not a retriever — it is a mount. `net view` returns
+"System error 5 — Access is denied" (SMB is up; enumeration needs
+authentication), Windows has no `showmount` so the NFS client feature is not
+installed, and no drives are mapped. **The credentials are the user's to
+supply, in their own tooling — not something to be typed here.**
+
+**One thing to verify before claiming the local plane covers a network share:**
+`ferric-guard`'s `Workspace` canonicalizes its root, which on Windows turns a
+UNC path into a `\?\UNC\...` prefix. Whether containment still holds on that
+shape is untested and untestable here without a mount. Recording it so the
+"LocalFsRetriever already covers it" claim is not mistaken for a verified one —
+it is a design reading, and it has an open question attached.
+## ADR-096 — 2026-07-26 (sprint 105): detaching the repo from the machine that grew it
+
+Goal set by the user: make Ferric usable as a template — "as little of my local
+paths as possible in the code itself." 575 → **577 tests, 0 failures**, clippy
+0, fmt clean.
+
+**The repo had already learned this lesson once, and applied it to exactly one
+file.** Sprint 97 (ADR-088) found a **tracked** `docker/.env` pinning
+`MODELS_PATH` to one machine's NAS drive; because it was tracked it overrode the
+compose default on *every* checkout, and `docker compose up` failed anywhere
+that drive was not mapped. The fix was the ordinary pattern — untrack, ship
+`.env.example`, gitignore the original. This sprint applies that same pattern
+everywhere else it holds.
+
+**Untracked what the tooling itself calls ephemeral.** `sprints/` had **139
+tracked files while already being listed in `.gitignore`** — because
+`.gitignore` does not untrack what is already tracked, the rule added around
+sprint 33 silently did nothing for the files that existed when it landed. The
+ignore block states the intent outright ("ephemeral sprint working memory —
+regenerable; the real outcome lives in the per-task git commits +
+decisions.md"), so the template was shipping 139 files its own tooling
+considers disposable. Also untracked: `scratch/`, and `benchmarks/results.jsonl`
+(one machine's run log). `git rm --cached` only — every file stays on disk.
+
+**One of these was behavioural, not cosmetic: `benchmarks/model_profiles.json`.**
+ADR-029 reads a stored profile back at runtime and lets `measured_level`
+override the parameter-count prior **in both directions**. The tracked file
+carried `qwen2.5-coder-7b → 6/Large` measured *here*, so a fresh checkout using
+the same model *name* would silently inherit a tier this project measured on
+other hardware, at a quantization the record does not pin. ADR-029 established
+that a profile **miss** is a safe no-op; nobody had asked what a profile **hit
+from someone else's machine** means. For a project whose thesis is *measure,
+don't assume*, shipping unearned measurements as defaults is backwards. Now
+gitignored, with a `model_profiles.example.json` whose `measured_level` fields
+are explicitly `null` — the shape without the claim.
+
+**Machine identity out of the Rust fixtures.** The sharpest leaks were not
+paths but identity: a real tailnet IP, MagicDNS suffix, hostname and node id in
+`server.rs`; device names, tailnet IPs and **the owner's account handle** in
+`retriever.rs`. Their comments said "captured from this machine", which is why
+they were faithful — and faithful is what the tests need. But **the shape is
+what the tests assert; the identity was incidental.** Every fixture keeps its
+exact structure with documentation values, and the addresses stay inside
+Tailscale's real `100.64.0.0/10` CGNAT range so they remain representative. All
+assertions still pass, which is itself the evidence that nothing was asserting
+identity.
+
+**Defaults nobody else could satisfy** are gone: `run_benchmarks.ps1` had a
+hardcoded `D:\Models\gguf\…` GGUF default (now a required parameter — no
+default is better than one that works on one machine), and `.env.example`
+demonstrated one drive letter instead of the shape. `docker-compose.yml`'s
+`../../Animus/Models` is a *suite-layout* assumption rather than a machine path,
+so it stays, now commented as such.
+
+**A one-time cleanup decays, so it is now a test.** `template_hygiene.rs`
+fails on shapes that can only be identity — a `tail<digits>.ts.net` MagicDNS
+suffix, a concrete home directory, a `192.168.x.y` LAN address — while
+deliberately not matching *topics* (this repo's prose is full of the word
+"tailscale"; none of that is a leak). The natural way to write a parser test is
+to paste real output from the machine in front of you, which is precisely how
+every instance of this arrived.
+
+**The guard's own self-test found a hole in the guard.** The first version
+matched `\Users\name` only in single-backslash form — but the likeliest place
+for a leaked path is *inside a Rust string literal*, where `C:\Users\alice` is
+written `"C:\Users\alice"` and reaches the matcher doubled. It would have
+missed exactly the case it exists for. Backslashes are now collapsed first, and
+both forms are asserted. The scan is also shown **failing against a planted
+leak**, because a guard that has never rejected anything is not known to reject
+anything (sprint 96's skip-and-pass, sprint 101's false positive).
+
+**Deliberately not scrubbed: `decisions.md`, `agent-tasks/`, and git history.**
+The ADRs are the reasoning record; rewriting them to remove the machine that
+produced the measurements would falsify the evidence they cite. That is a
+choice with a consequence, and it belongs in the open rather than buried:
+**`decisions.md` still contains tailnet addresses and device names, and
+untracking files does not remove them from history.** If this template is ever
+published, that history goes with it. Removing it requires a history rewrite —
+a destructive force-push on a shared branch — which is the owner's call and was
+not taken unasked.
+
+**Incidental find, from the merge this sprint caused.**
+`agent-tasks/completed-tasks.md` contained **215 NUL bytes** — a UTF-16LE
+fragment appended into a UTF-8 file, the signature of a PowerShell `>>`
+redirect. Git therefore classified the project's completed-task log as
+**binary**: no line diffs, no auto-merge. That is why a conflict where both
+sides simply appended to the end of the file could not resolve itself. Found
+because rebasing this sprint onto the previous one forced the merge that
+exposed it; re-encoded to UTF-8 with the content byte-identical after decoding.
+
+
+## ADR-097 — 2026-07-26 (sprint 106): the environment surface, and a credential one `{:?}` from a log
+
+The user asked for "a thorough scrub for raw env variables that could be
+manipulated if found." 577 → **583 tests, 0 failures**, clippy 0 in both feature
+configurations, fmt clean. Full inventory in `docs/environment.md`.
+
+**There are only six runtime reads, and the model can reach none of them.**
+`.ferric/` is in both `DENIED_WRITE_SEGMENTS` and `DENIED_READ_SEGMENTS`, so the
+agent can neither read nor write the project config (verified live, ADR-092);
+the user config lives outside the workspace, so containment excludes it. There
+is no `env::set_var` anywhere, and a child cannot alter its parent's
+environment. The only child env Ferric constructs is `GIT_INDEX_FILE` (ADR-073)
+and the `llama-server` launch env — both harness-built.
+
+**The real find was not an environment variable at all.** `Config` holds
+`api_key` in plaintext **and derived `Debug`**, putting the credential one
+`{:?}` away from a log line, an `assert_eq!` failure message, or a panic
+payload. Nothing prints one today — but "nothing prints it" is a property of the
+current call sites, not of the type, and the derive is a loaded gun rather than
+a fired one. `Debug` is now hand-written, rendering the key as `<redacted>`
+while keeping *presence* visible, because knowing which layer supplied a key is
+exactly what config-precedence debugging needs. It is kept rather than removed
+because `assert_eq!` requires it.
+
+**And the sprint's own research report had claimed the opposite.** It stated
+that `Config`, `BackendOpts` and `OpenAiConfig` all lacked `Debug` — read off a
+`grep -B4` whose context stopped one line short of the derive. The error
+surfaced the moment the claim was written as a test with a **positive control**
+(does the detector recognise a type that *is* `Debug`?) instead of being trusted
+from the grep. **The grep and the compiler disagreed and the compiler was
+right**; the report is corrected in place rather than quietly fixed. This is the
+same lesson as sprint 101's false positive, arriving from the opposite
+direction: there, an absence was mistaken for success; here, a presence was
+missed by the check that went looking for it.
+
+The remaining two types carry the key and implement no `Debug`. That absence is
+now a **compile-time** assertion in each crate — `#[derive(Debug)]` on
+`BackendOpts` or `OpenAiConfig` fails the *build*, not a test someone might skip,
+and the error message names the redacting alternative. Confirmed by planting the
+derive and watching the build fail.
+
+**The env→config→hooks chain is real and is answered with disclosure, not
+lockdown.** `XDG_CONFIG_HOME`/`APPDATA`/`HOME` select the user config;
+`Config.hooks` is the one field that becomes arbitrary command execution
+(`run_hook` → `sh -c` with the full inherited environment, including the API
+key). So one environment variable selects a file that runs commands.
+
+Whether that is a *vulnerability* depends on the boundary, and saying so
+plainly matters more than the finding: on a normal desktop, setting another
+process's environment already implies running code as that user, so this grants
+nothing new. It bites where env crosses a boundary that code execution does not
+— a CI runner taking env from a PR-controlled file, a container manifest.
+Restricting config discovery would trade the XDG convention for a boundary the
+OS already owns. So `LoadedConfig` gains `hooks_source`, and a run with hooks in
+effect now prints which file supplied them. **A hook you wrote and a hook that
+arrived from a config you did not know was being read used to look identical.**
+The attribution follows the *merge* rule, not mere presence, so the file named
+is the one whose hook actually runs — reporting the wrong file would be worse
+than reporting none.
+
+**Also fixed:** `ferric trace verify` wrote `env::temp_dir().join("verify.jsonl")`
+— a constant name in a shared, often world-writable directory, which another
+user can pre-create or point elsewhere, and which made two concurrent verifies
+race. Now carries the pid.
+
+**Not changed, with reasons.** `--api-key` stays a flag (removing it would break
+existing invocations) but the docs now say to prefer the env var or config file,
+because anything on a command line is visible in `ps` and shell history.
+`FERRIC_PROMPTS_DIR` keeps its behaviour: it has the same boundary story as the
+config path, and the same answer — the run already reports its composed prompt
+source.
+
+**Scanned and clean:** no bearer credentials anywhere in the tree **or across
+all history** — `tskey-auth`/`tskey-api`, `ghp_`, `github_pat_`, `sk-…`,
+`AKIA…`, PEM private keys: zero. That class matters most because a Tailscale
+auth key or API key is a *bearer* token: it adds a node or calls the API with no
+SSO and no hardware key, which is the one way a security-key-protected tailnet
+gets bypassed.
+
+## ADR-098 — 2026-07-26 (sprint 107): a tier you can ask for, and a record that says you asked
+
+Raised by the user against ADR-006's design: *"this arguably should not be
+possible over just letting someone switch."* 583 → **588 tests, 0 failures**,
+clippy 0 in both feature configurations, fmt clean.
+
+**The complaint is correct, and the shape of it matters.** ADR-006 makes the
+tier a pure function of the `ModelProfile`, with no operator dial. But
+`tier_for_params` is part of that function, so the *only* manual route to a
+tier was `--params-b 30` — misstating the model's size until the threshold
+table produced the wanted answer. Two things were wrong with that:
+
+1. **`params_b` is a fact about the model, not a dial.** It is also written
+   into `model_profiles.json` and consulted by the ADR-029 read-back, so using
+   it as a tier control corrupts an input other machinery trusts.
+2. **The result was unattributable.** `PolicySelected` recorded `tier: Large`
+   and nothing else. A tier a model *earned* on the L0–L6 ladder and a tier
+   somebody *claimed* by declaring 30B were byte-identical in the record.
+
+So the design forced dishonesty and then destroyed the evidence of it. Adding
+the honest dial is the smaller change.
+
+**`--tier` (and config `tier`) is now an explicit operator override**, winning
+over both the measured read-back and the parameter prior, and working in
+**both** directions — a capable model can be held down as easily as a small one
+lifted, which the params route could never do without claiming the model was
+tiny. `policy_for` is untouched for every existing caller;
+`policy_for_with_override` is the new entry point.
+
+**This does not reopen what ADR-006 closed.** That ADR rules out runtime
+*heuristics* — filename sniffing, LLM self-report, tier misdetection. A
+config-supplied operator choice is the opposite: explicit, inspectable, and
+recorded. `params_b` remains the fact it always was.
+
+**The override is only half of it; the other half is that the record now says
+so.** `TierSource` — `Measured` | `Params` | `Override` — lands on `RunPolicy`
+itself, because *why* a tier was chosen is part of the decision rather than
+metadata about it, and it is written into `PolicySelected.tier_source`.
+`ferric trace cat` renders `Large (from override)`, and a run with an override
+prints on stderr that the tier was asked for and not measured. **A test pins
+the reason this matters:** an earned `Large` and an asked-for `Large` have
+identical budgets — same turns, tools, output cap — so the provenance label is
+the *only* field distinguishing them. Without it, the two are the same run.
+
+`TierSource` is deliberately fieldless. An earlier draft carried the measured
+level (`Measured(u8)`), which cannot round-trip through the one-word label the
+trace stores; the level already lives in the profile store, and what the record
+needs is the distinction, not the number.
+
+`trace verify` **restores** the source from the trace rather than re-deriving
+it, so re-running an overridden trace cannot silently relabel it as measured —
+the same rule ADR-093 established for the truncation cap, applied to the field
+added here.
+
+Old traces have no `tier_source` and read back as `"params"` via
+`#[serde(default)]` — verified against a real pre-sprint-107 trace on disk whose
+line genuinely lacks the key. The flag is wired on every surface that already
+exposes `--max-ring`, which was the existing precedent for an operator knob:
+`query`, `chat`, `mcp`, `icm`, `api`.
+
+**Verified live, not just compiled:** a 1.2B run defaults to `Nano` /
+`tier_source: params`; `--tier large` on the same model yields `Large`,
+`max_turns 40`, `tier_source: override`, and the stderr notice; `tier =
+"medium"` in `.ferric/config.toml` persists it.
+
+**Honest about what this does not do.** Raising the tier does not make a model
+more capable — ADR-022/031 measured a 1B failing multi-turn work regardless of
+budget, and a bigger budget just lets it fail more expensively. The loop guards
+(ADR-037/038/077) bound the waste. `ferric bench` remains the only way a tier
+is *earned*, and the stderr line says so at the moment the override is used.

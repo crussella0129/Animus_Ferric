@@ -32,13 +32,18 @@ use clap::{Args, Subcommand};
 use ferric_guard::Workspace;
 use ferric_icm::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_workspace};
 use ferric_loop::StopReason;
-// Only the feature-gated real backend names the `Provider` trait object.
-#[cfg(feature = "backend-openai")]
-use ferric_provider::Provider;
 use ferric_trace::JsonlSink;
 
 use crate::backend::{BackendArg, BackendOpts};
 use crate::query::{RunConfigArgs, build_run_config, mock_provider, now_ms, run_with_provider};
+
+/// The pipeline's backend, shared with `ferric chat` since sprint 103
+/// (ADR-094) — both had declared this enum and its constructor identically.
+/// The scripted mock is single-use, so a **fresh** one is built per stage (each
+/// stage is its own agent session). A real backend is stateless per request, so
+/// its provider and the one tokio runtime are built once and reused across
+/// every stage.
+use crate::backend::ResolvedBackend as Backend;
 
 #[derive(Args)]
 pub struct IcmArgs {
@@ -99,6 +104,10 @@ pub struct IcmRunArgs {
     ctx: Option<u32>,
 
     /// Cap the active tool ring (ADR-028). Restrict-only.
+    /// Run at this tier regardless of size or measured level (ADR-098).
+    #[arg(long, value_enum)]
+    tier: Option<crate::query::TierArg>,
+
     #[arg(long)]
     max_ring: Option<u8>,
 
@@ -195,20 +204,6 @@ fn run_plan(workspace: &Path, show_context: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The pipeline's backend. The scripted mock is single-use, so a **fresh** one
-/// is built per stage (each stage is its own agent session — mirrors `ferric
-/// query` and the chat REPL's per-turn mock). A real backend is stateless per
-/// request, so its provider and the one tokio runtime are built once and reused
-/// across every stage.
-enum Backend {
-    Mock,
-    #[cfg(feature = "backend-openai")]
-    Real {
-        provider: Box<dyn Provider + Send + Sync>,
-        runtime: tokio::runtime::Runtime,
-    },
-}
-
 fn run_pipeline(args: IcmRunArgs) -> ExitCode {
     let ws = match IcmWorkspace::discover(&args.workspace) {
         Ok(ws) => ws,
@@ -249,6 +244,13 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         eprintln!("{diag}");
     }
     let mut config = build_run_config(&RunConfigArgs {
+        // ICM composes each stage's context from its OWN declared layers
+        // (L0-L4, ADR-064) and reports that composition as provenance. Folding
+        // skills in here would inject text no layer accounts for, so ICM opts
+        // out deliberately rather than by omission.
+        workspace_root: ws.root.clone(),
+        requested_skills: Vec::new(),
+        allowed_skills: Vec::new(),
         mock: args.mock,
         backend: backend_opts.backend.unwrap_or(BackendArg::Openai),
         params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
@@ -259,6 +261,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         protocol_override: None,
         prompts_dir: None,
         max_ring: args.max_ring.or(cfg.max_ring),
+        tier_override: args.tier.or(cfg.tier).map(Into::into),
         profile_dir: cfg
             .profile_dir
             .clone()
@@ -279,7 +282,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
     let backend = if args.mock {
         Backend::Mock
     } else {
-        match build_real_backend(&backend_opts) {
+        match Backend::real(&backend_opts) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("icm run failed: {e}");
@@ -290,7 +293,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
 
     // Traces centralize at the ICM root (harness-written, not agent-written, so
     // not subject to the per-stage workspace boundary) — one file per stage.
-    let trace_dir = ws.root.join(".ferric").join("trace");
+    let trace_dir = ferric_trace::trace_dir(&ws.root);
     if let Err(e) = std::fs::create_dir_all(&trace_dir) {
         eprintln!(
             "icm run: cannot create trace dir {}: {e}",
@@ -331,39 +334,41 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
 
         eprintln!("▶ Stage {:02} · {} — running…", stage.index, stage.name);
 
-        // Same run for either backend — only the provider ref and executor
-        // differ, so the (long) argument list lives in one macro.
-        macro_rules! run_stage {
-            ($provider:expr) => {
-                run_with_provider(
-                    $provider,
-                    &config.registry,
-                    &stage_ws,
-                    &config.policy,
-                    config.protocol,
-                    config.sampling.clone(),
-                    config.system_prompt.as_deref(),
-                    config.lineage.clone(),
-                    &mut sink,
-                    Some(&stage.prompt),
-                    Vec::new(),
-                    None,
-                    None,
-                    ferric_guard::TaintSet::new(),
-                    ferric_guard::SinkPolicy::deny(),
-                    None,
-                    config.hooks.clone(),
-                    None,
-                )
-            };
-        }
+        // Same run for either backend — only the provider ref and the executor
+        // differ. This used to need a macro purely to avoid writing the same 18
+        // positional arguments twice; `LoopSetup` makes the macro unnecessary.
+        let setup = || crate::query::LoopSetup {
+            registry: &config.registry,
+            workspace: &stage_ws,
+            policy: &config.policy,
+            protocol: config.protocol,
+            sampling: config.sampling.clone(),
+            system_prompt: config.system_prompt.as_deref(),
+            lineage: config.lineage.clone(),
+            media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+            provenance: ferric_guard::Provenance::Clean,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: config.hooks.clone(),
+            edit_approver: None,
+        };
+
         let outcome = match &backend {
             Backend::Mock => {
                 let provider = mock_provider(config.protocol);
-                futures_executor::block_on(run_stage!(&provider))
+                futures_executor::block_on(run_with_provider(
+                    setup().into_run_args(&provider, None),
+                    &mut sink,
+                    Some(&stage.prompt),
+                ))
             }
             #[cfg(feature = "backend-openai")]
-            Backend::Real { provider, runtime } => runtime.block_on(run_stage!(provider.as_ref())),
+            Backend::Real { provider, runtime } => runtime.block_on(run_with_provider(
+                setup().into_run_args(provider.as_ref(), None),
+                &mut sink,
+                Some(&stage.prompt),
+            )),
         };
 
         match outcome {
@@ -431,18 +436,4 @@ fn review_gate(stage_index: u32) -> bool {
         Ok(_) => !matches!(line.trim().to_ascii_lowercase().as_str(), "q" | "quit"),
         Err(_) => true,
     }
-}
-
-#[cfg(feature = "backend-openai")]
-fn build_real_backend(backend_opts: &BackendOpts) -> Result<Backend, String> {
-    let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    let provider = runtime.block_on(crate::backend::create_provider(backend_opts))?;
-    Ok(Backend::Real { provider, runtime })
-}
-
-#[cfg(not(feature = "backend-openai"))]
-fn build_real_backend(_backend_opts: &BackendOpts) -> Result<Backend, String> {
-    Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-openai`, or use --mock"
-        .to_string())
 }

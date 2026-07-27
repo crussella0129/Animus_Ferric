@@ -180,12 +180,12 @@ impl Retriever for LocalFsRetriever {
     }
 
     async fn retrieve(&self, query: &str) -> Result<Vec<RetrievedChunk>, RetrieveError> {
-        let needle = query.to_lowercase();
+        let terms = query_terms(query);
         let mut out = Vec::new();
         walk(
             &self.root,
             &self.root,
-            &needle,
+            &terms,
             self.max_files,
             self.max_bytes_per_file,
             &mut out,
@@ -200,7 +200,7 @@ impl Retriever for LocalFsRetriever {
 fn walk(
     dir: &Path,
     root: &Path,
-    needle: &str,
+    terms: &[String],
     max_files: usize,
     max_bytes: usize,
     out: &mut Vec<RetrievedChunk>,
@@ -230,15 +230,13 @@ fn walk(
             if NOISE_DIRS.contains(&name.as_str()) {
                 continue;
             }
-            walk(&path, root, needle, max_files, max_bytes, out)?;
+            walk(&path, root, terms, max_files, max_bytes, out)?;
         } else {
             // Binary / unreadable files fall away here (non-UTF-8 → Err).
             let Ok(content) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let name_match = name.to_lowercase().contains(needle);
-            let content_match = content.to_lowercase().contains(needle);
-            if name_match || content_match {
+            if matches_all_terms(&name, &content, terms) {
                 let rel = path
                     .strip_prefix(root)
                     .unwrap_or(&path)
@@ -252,6 +250,41 @@ fn walk(
         }
     }
     Ok(())
+}
+
+/// Split a research query into lowercase search terms.
+///
+/// The query used to be matched as ONE literal lowercase substring (ADR-078), so
+/// any multi-word query — the natural way to ask for research — found nothing
+/// unless that exact phrase appeared verbatim. Measured: `"configuration"`
+/// matched a file, `"project notes configuration"` matched nothing in the same
+/// directory, and the caller reported neither.
+pub(crate) fn query_terms(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(|t| {
+            t.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// A file matches when **every** term appears in its name or its content.
+///
+/// AND rather than OR: a research query is a conjunction of things the caller
+/// wants ("tokio spawn runtime"), and OR would return most of the tree — which
+/// then all goes through the quarantine model, one inference per chunk. An empty
+/// term list matches nothing, so a blank query cannot sweep the workspace.
+fn matches_all_terms(name: &str, content: &str, terms: &[String]) -> bool {
+    if terms.is_empty() {
+        return false;
+    }
+    let name = name.to_lowercase();
+    let content = content.to_lowercase();
+    terms
+        .iter()
+        .all(|t| name.contains(t.as_str()) || content.contains(t.as_str()))
 }
 
 /// Truncate `s` to at most `max` bytes, on a char boundary.
@@ -393,6 +426,20 @@ pub fn parse_status_devices(stdout: &str) -> Vec<TailnetDevice> {
 /// The Tailnet/NAS-FS source plane: search a remote tailnet device's filesystem
 /// over SSH (Tailscale SSH for Linux devices; plain `ssh -p` for Termux-style
 /// sshd). All retrieved content is untrusted → the quarantine, like any source.
+///
+/// # This plane has never run against a real host, and may never
+/// SSH is a *requirement* of this transport, not an implementation detail: the
+/// `shell_single_quote` escaping below exists because `ssh` runs its command
+/// through the **remote** shell. That requirement is also the plane's problem.
+/// The one online Linux peer on the reference tailnet has SSH blocked **by the
+/// owner's deliberate choice** (2026-07-26, ADR-095), so this transport cannot
+/// be exercised there at all — and a refused port 22 is evidence of intent, not
+/// of a gap to close.
+///
+/// Where a remote filesystem is reachable by **mount** instead (SMB, NFS), it
+/// is just a path, and [`LocalFsRetriever`] with the mount point as its
+/// confined root already serves it — no code here is involved. Generalising or
+/// retiring this transport is an open design decision; see the backlog.
 pub struct TailnetFsRetriever {
     host: String,
     remote_root: String,
@@ -618,14 +665,14 @@ mod tests {
     fn ssh_search_argv_tailscale_form() {
         let (prog, args) = ssh_search_argv(
             &SshTransport::Tailscale,
-            "switchblade",
+            "example-linux",
             "secret; rm -rf /",
             "/data",
             5,
         );
         assert_eq!(prog, "tailscale");
         assert_eq!(args[0], "ssh");
-        assert_eq!(args[1], "switchblade");
+        assert_eq!(args[1], "example-linux");
         assert_eq!(args[2], "--");
         let cmd = &args[3];
         assert!(cmd.contains("grep -rIl --"), "{cmd}");
@@ -641,7 +688,7 @@ mod tests {
     fn ssh_search_argv_plain_form() {
         let (prog, args) = ssh_search_argv(
             &SshTransport::Plain { port: 8022 },
-            "pixel-10-pro-xl",
+            "example-phone",
             "tailscale",
             "/sdcard",
             3,
@@ -650,7 +697,7 @@ mod tests {
         assert_eq!(args[0], "-p");
         assert_eq!(args[1], "8022");
         assert!(args.contains(&"BatchMode=yes".to_string()));
-        assert_eq!(args[args.len() - 3], "pixel-10-pro-xl");
+        assert_eq!(args[args.len() - 3], "example-phone");
         assert_eq!(args[args.len() - 2], "--");
         assert!(args.last().unwrap().contains("'tailscale'"));
     }
@@ -670,21 +717,26 @@ mod tests {
 
     #[test]
     fn parse_status_devices_reads_online_offline() {
-        // The captured real `tailscale status` sample from this machine.
-        let sample = "100.100.225.71   pixel-10-pro-xl  crussella0129@  android  -\n\
-                      100.98.104.44    switchblade      crussella0129@  linux    offline, last seen 1h ago\n";
+        // Shaped like real `tailscale status` output, with synthetic identity
+        // (sprint 105): the addresses stay inside Tailscale's real
+        // `100.64.0.0/10` CGNAT range so the sample is representative, but the
+        // devices and the account handle are examples. What this test actually
+        // pins is the column layout and the trailing "offline, last seen …"
+        // marker, and both are preserved verbatim.
+        let sample = "100.64.0.2   example-phone  user@  android  -\n\
+                      100.64.0.3    example-linux  user@  linux    offline, last seen 1h ago\n";
         let devs = parse_status_devices(sample);
         assert_eq!(devs.len(), 2);
-        let pixel = devs.iter().find(|d| d.name == "pixel-10-pro-xl").unwrap();
-        assert_eq!(pixel.ip, "100.100.225.71");
-        assert!(pixel.online, "pixel has no offline marker → online");
-        let sb = devs.iter().find(|d| d.name == "switchblade").unwrap();
-        assert!(!sb.online, "switchblade marked offline");
+        let phone = devs.iter().find(|d| d.name == "example-phone").unwrap();
+        assert_eq!(phone.ip, "100.64.0.2");
+        assert!(phone.online, "no offline marker → online");
+        let linux = devs.iter().find(|d| d.name == "example-linux").unwrap();
+        assert!(!linux.online, "marked offline");
     }
 
     #[test]
     fn tailnet_retriever_plane_label() {
-        let r = TailnetFsRetriever::new("switchblade", "/data", SshTransport::Tailscale);
+        let r = TailnetFsRetriever::new("example-linux", "/data", SshTransport::Tailscale);
         assert_eq!(r.plane(), "tailnet");
     }
 

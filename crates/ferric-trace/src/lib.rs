@@ -8,6 +8,22 @@ mod event;
 mod reader;
 mod sink;
 
+use std::path::{Path, PathBuf};
+
+/// The directory traces are written to, relative to a workspace root.
+///
+/// Five writers spelled `.join(".ferric").join("trace")` independently, and
+/// `ferric dream` — the one *reader* — spelled it `.ferric/traces`. Nothing
+/// caught it, because dream's only symptom was a tidy "No .ferric/traces
+/// directory found." on a workspace that in fact held traces: **the feature had
+/// never once located a trace, and said so in the voice of a clean no-op**
+/// (sprint 99).
+///
+/// One definition, so the reader and the writers cannot disagree again.
+pub fn trace_dir(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".ferric").join("trace")
+}
+
 pub use event::{Event, TRACE_SCHEMA_VERSION, TraceEvent};
 pub use reader::{ParsedEvent, TraceReader, TraceRecord};
 pub use sink::JsonlSink;
@@ -30,6 +46,16 @@ mod tests {
                 max_tools: 6,
                 prompt_budget_tokens: 2_800,
                 max_output_tokens: 512,
+                // Deliberately NOT the default: at 4_000 this round-trip would
+                // pass even if the field were never serialized at all, because
+                // the serde default would supply the same number on the way
+                // back in. A value only the writer could have produced is what
+                // makes the assertion mean something.
+                truncation_limit: 1_234,
+                // Not the serde default ("params"), for the same reason the
+                // cap above is not 4_000: a round-trip that used the default
+                // would pass even if the field were never serialized.
+                tier_source: "measured".to_string(),
             },
             Event::PromptComposed {
                 output_id: "system-prompt-nano-unified".to_string(),
@@ -147,6 +173,30 @@ mod tests {
                 text: "hi".to_string()
             })
         );
+    }
+
+    /// ADR-093 added `truncation_limit` to `policy_selected`. Every trace
+    /// written before it lacks the key, and those runs all used the default —
+    /// so reading one must produce the default, not fail and not guess.
+    /// Asserted against a literal pre-ADR-093 line rather than a re-serialized
+    /// new one, because only the literal proves what is actually on disk.
+    #[test]
+    fn a_pre_adr_093_policy_line_reads_back_at_the_default_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trace.jsonl");
+        let old_line = r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"policy_selected","tier":"nano","protocol":"constrained_json","max_turns":15,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#;
+        std::fs::write(&path, format!("{old_line}\n")).unwrap();
+
+        let records: Vec<_> = TraceReader::open(&path)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        match &records[0].event {
+            ParsedEvent::Known(Event::PolicySelected {
+                truncation_limit, ..
+            }) => assert_eq!(*truncation_limit, ferric_core::DEFAULT_TRUNCATION_LIMIT),
+            other => panic!("expected a Known PolicySelected, got {other:?}"),
+        }
     }
 
     #[test]
@@ -336,5 +386,58 @@ mod tests {
             }
             other => panic!("expected ToolResult, got {other:?}"),
         }
+    }
+
+    /// The reader and the writers must agree on where traces live.
+    ///
+    /// `ferric dream` read `.ferric/traces` while every writer wrote
+    /// `.ferric/trace`, so it never located a trace and reported that as a
+    /// clean "no traces found" — a dead feature that looked like an idle one.
+    /// Pinning the literal is the point: it is a path contract between crates,
+    /// and the failure it guards against is silent by nature.
+    #[test]
+    fn the_trace_directory_is_ferric_trace() {
+        let dir = trace_dir(Path::new("/ws"));
+        assert!(
+            dir.ends_with("trace"),
+            "must be `trace`, not `traces`: {}",
+            dir.display()
+        );
+        assert_eq!(
+            dir,
+            Path::new("/ws").join(".ferric").join("trace"),
+            "the on-disk contract every writer and `ferric dream` depend on"
+        );
+    }
+
+    /// A trace written through the public sink must land in `trace_dir`, so the
+    /// agreement above is with the code that actually writes, not just a
+    /// restatement of the constant.
+    #[test]
+    fn a_written_trace_lands_in_the_trace_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = trace_dir(tmp.path());
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("session.jsonl");
+        let mut sink = JsonlSink::open(&path, "s-1").unwrap();
+        sink.write_event(Event::SessionStart {
+            workspace: "/ws".to_string(),
+            resumed_from: None,
+        })
+        .unwrap();
+
+        // Scan the way `ferric dream` scans: list the directory for *.jsonl.
+        let found = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+            .count();
+        assert_eq!(
+            found,
+            1,
+            "a reader scanning {} must find the written trace",
+            dir.display()
+        );
     }
 }

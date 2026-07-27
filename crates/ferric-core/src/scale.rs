@@ -15,6 +15,24 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Characters of a single tool output the model sees; the trace always gets
+/// the full output (ADR-002). Seeded from Animus `max_tool_output_chars`.
+///
+/// It lives here, in the crate everything depends on, because three separate
+/// consumers need it and none of them may depend on each other: the registry
+/// that applies it (`ferric-tools`), the event that records it
+/// (`ferric-trace`), and the projector that reapplies it when rebuilding a
+/// context window from a trace (`ferric-loop`). ADR-093.
+pub const DEFAULT_TRUNCATION_LIMIT: usize = 4_000;
+
+/// Serde default for the cap recorded in a trace. A `policy_selected` line
+/// written before ADR-093 has no such key, and the runs that wrote those
+/// lines used exactly this value — so defaulting here reproduces them rather
+/// than guessing at them.
+pub fn default_truncation_limit() -> usize {
+    DEFAULT_TRUNCATION_LIMIT
+}
+
 /// A description of the model a run will use. Config-supplied, never inferred.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelProfile {
@@ -41,20 +59,6 @@ pub enum Tier {
     Large,
     Xl,
     Ultra,
-}
-
-/// The action format the model is asked to use.
-///
-/// `ConstrainedJson` is the default everywhere because the harness owns
-/// decoding; `FencedCode` and `EditFormat` are downgrade paths for backends
-/// that cannot enforce grammars (capability-driven, selected by the loop —
-/// not by model size).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Protocol {
-    ConstrainedJson,
-    FencedCode,
-    EditFormat,
 }
 
 /// How the loop talks to the backend about actions (ADR-015/022). Selected
@@ -84,11 +88,42 @@ pub enum ActionProtocol {
     Plan,
 }
 
+/// The string that identifies a protocol in `model_profiles.json`.
+///
+/// Profiles are keyed on `(model, protocol)` where protocol is a free-form
+/// `String`, and until sprint 98 four call sites — one reader in `ferric query`
+/// and three writers in bench/toolbench — each independently wrote
+/// `format!("{protocol:?}")`. They agreed only because they all happened to
+/// reach for `Debug`.
+///
+/// That is a bad thing to leave implicit, because the failure is silent:
+/// renaming a variant, or switching one site to `Display` or serde, makes
+/// `read_profile` miss, and a miss is deliberately **a safe no-op** (ADR-029) —
+/// so the model runs at its params-derived tier instead of its measured one and
+/// nothing reports a problem. `tier_table_snapshot`-style breakage would be
+/// obvious; this would not.
+///
+/// One definition, and a test pinning the exact strings, so a rename breaks
+/// loudly instead of degrading quietly.
+pub fn protocol_key(protocol: ActionProtocol) -> String {
+    match protocol {
+        ActionProtocol::NativeTools => "NativeTools",
+        ActionProtocol::ConstrainedJson => "ConstrainedJson",
+        ActionProtocol::TextXml => "TextXml",
+        ActionProtocol::Plan => "Plan",
+    }
+    .to_string()
+}
+
 /// Everything the agent loop needs to know about how to run a given model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunPolicy {
     pub tier: Tier,
-    pub protocol: Protocol,
+    /// Why this run is at this `tier` (ADR-098). Part of the decision, not
+    /// metadata about it: an earned tier and an asked-for tier produce
+    /// identical budgets, so without this the record cannot tell them apart.
+    #[serde(default)]
+    pub tier_source: TierSource,
     pub uses_planner: bool,
     pub max_plan_steps: u8,
     pub max_turns_per_step: u8,
@@ -179,13 +214,77 @@ fn tier_row(tier: Tier) -> (bool, u8, u8, u8, u8, u32, u32, bool, f32, u8) {
     }
 }
 
+/// Why a run ended up at the tier it did (ADR-098).
+///
+/// The tier decides turn/tool budgets, prompt and output ceilings, planner use,
+/// subagents, and the tool-ring ceiling — so "which tier" is the single most
+/// consequential fact about a run. Recording only the *answer* made two very
+/// different situations identical in the record: a tier a model **earned** on
+/// the benchmark ladder, and a tier an operator simply asked for.
+/// Fieldless on purpose: it round-trips losslessly through the one-word label
+/// the trace stores, and the measured *level* itself already lives in the
+/// profile store. What the record needs is the distinction, not the number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TierSource {
+    /// From a persisted `measured_level` — the model demonstrated it (ADR-029).
+    Measured,
+    /// Derived from the declared parameter count: the prior, not a measurement.
+    #[default]
+    Params,
+    /// Asked for outright by the operator (`--tier` / config `tier`).
+    Override,
+}
+
+impl TierSource {
+    /// Stable label for traces and diagnostics.
+    pub fn label(&self) -> &'static str {
+        match self {
+            TierSource::Measured => "measured",
+            TierSource::Params => "params",
+            TierSource::Override => "override",
+        }
+    }
+
+    /// Inverse of [`label`](Self::label). An unrecognized label reads back as
+    /// `Params` — the conservative answer, and what a pre-ADR-098 trace meant.
+    pub fn from_label(s: &str) -> Self {
+        match s {
+            "measured" => TierSource::Measured,
+            "override" => TierSource::Override,
+            _ => TierSource::Params,
+        }
+    }
+}
+
+/// Resolve the tier and *why*. Precedence: an explicit operator override wins,
+/// then a measured level, then the parameter-count prior.
+///
+/// The override sits on top rather than replacing the ladder because
+/// `params_b` is a **fact about the model**, not a dial. Before ADR-098 the
+/// only manual route to a tier was to misstate that fact — claiming 30B to
+/// reach `Large` — which corrupted an input the trace and the profile store
+/// both rely on, and left "measured Large" and "claimed 30B" indistinguishable
+/// afterwards. An override is an honest, separately recorded operator decision;
+/// ADR-006 rules out runtime *heuristics*, and a config-supplied choice is not
+/// one.
+pub fn tier_decision(profile: &ModelProfile, override_tier: Option<Tier>) -> (Tier, TierSource) {
+    match (override_tier, profile.measured_level) {
+        (Some(t), _) => (t, TierSource::Override),
+        (None, Some(level)) => (tier_for_level(level), TierSource::Measured),
+        (None, None) => (tier_for_params(profile.params_b), TierSource::Params),
+    }
+}
+
 /// The scale function. Pure and total: identical profiles always produce
 /// identical policies.
 pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
-    let tier = match profile.measured_level {
-        Some(level) => tier_for_level(level),
-        None => tier_for_params(profile.params_b),
-    };
+    policy_for_with_override(profile, None)
+}
+
+/// `policy_for` with an explicit operator tier override (ADR-098).
+pub fn policy_for_with_override(profile: &ModelProfile, override_tier: Option<Tier>) -> RunPolicy {
+    let (tier, tier_source) = tier_decision(profile, override_tier);
     let (
         uses_planner,
         max_plan_steps,
@@ -203,7 +302,7 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
     let prompt_budget_tokens = ((profile.ctx as u64 * 7 / 10) as u32).min(budget_cap);
     RunPolicy {
         tier,
-        protocol: Protocol::ConstrainedJson,
+        tier_source,
         uses_planner,
         max_plan_steps,
         max_turns_per_step,
@@ -238,6 +337,92 @@ mod tests {
         assert_eq!(policy_for(&p), policy_for(&p.clone()));
     }
 
+    // --- ADR-098: an operator tier, and saying so ---
+
+    /// The complaint this answers: before `--tier`, the only manual route to a
+    /// tier was to misstate `params_b`. That is a *fact* about the model, so
+    /// the dishonest route corrupted an input the profile store and trace both
+    /// rely on — and afterwards nothing could tell an earned tier from a
+    /// claimed one.
+    #[test]
+    fn an_override_beats_both_measurement_and_size() {
+        // A 7B measured at level 6 would otherwise be Large.
+        let measured = profile(7.0, Some(6));
+        assert_eq!(policy_for(&measured).tier, Tier::Large);
+
+        // Held DOWN — the override works in both directions, which the
+        // params route never could without claiming the model was tiny.
+        let held = policy_for_with_override(&measured, Some(Tier::Nano));
+        assert_eq!(held.tier, Tier::Nano);
+        assert_eq!(held.tier_source, TierSource::Override);
+
+        // Lifted UP, with no lie about size.
+        let small = profile(7.0, None);
+        assert_eq!(policy_for(&small).tier, Tier::Small);
+        let lifted = policy_for_with_override(&small, Some(Tier::Large));
+        assert_eq!(lifted.tier, Tier::Large);
+        assert_eq!(lifted.tier_source, TierSource::Override);
+    }
+
+    /// The source has to distinguish the three routes, or the override just
+    /// recreates the ambiguity it was added to remove.
+    #[test]
+    fn tier_source_records_which_route_was_taken() {
+        assert_eq!(
+            tier_decision(&profile(7.0, Some(6)), None).1,
+            TierSource::Measured
+        );
+        assert_eq!(
+            tier_decision(&profile(7.0, None), None).1,
+            TierSource::Params
+        );
+        assert_eq!(
+            tier_decision(&profile(7.0, Some(6)), Some(Tier::Large)).1,
+            TierSource::Override
+        );
+    }
+
+    /// Same tier, different provenance: the budgets are identical, so the
+    /// label is the ONLY thing separating them. This is the whole argument for
+    /// recording it.
+    #[test]
+    fn an_earned_large_and_an_asked_for_large_differ_only_in_the_label() {
+        let earned = policy_for(&profile(7.0, Some(6)));
+        let asked = policy_for_with_override(&profile(7.0, None), Some(Tier::Large));
+
+        assert_eq!(earned.tier, asked.tier);
+        assert_eq!(earned.max_turns, asked.max_turns);
+        assert_eq!(earned.max_tools, asked.max_tools);
+        assert_eq!(earned.max_output_tokens, asked.max_output_tokens);
+        assert_ne!(
+            earned.tier_source, asked.tier_source,
+            "identical budgets — provenance is the only distinguishing field"
+        );
+    }
+
+    #[test]
+    fn tier_source_labels_round_trip() {
+        for s in [
+            TierSource::Measured,
+            TierSource::Params,
+            TierSource::Override,
+        ] {
+            assert_eq!(TierSource::from_label(s.label()), s);
+        }
+        // An unknown label reads back conservatively, which is also what a
+        // pre-ADR-098 trace means.
+        assert_eq!(TierSource::from_label("who knows"), TierSource::Params);
+    }
+
+    /// `policy_for` must stay exactly what it was for every existing caller.
+    #[test]
+    fn policy_for_is_unchanged_without_an_override() {
+        assert_eq!(
+            policy_for(&profile(7.0, Some(6))),
+            policy_for_with_override(&profile(7.0, Some(6)), None)
+        );
+    }
+
     #[test]
     fn nano_tier_boundaries() {
         assert_eq!(policy_for(&profile(0.5, None)).tier, Tier::Nano);
@@ -260,7 +445,6 @@ mod tests {
     fn nano_policy_shape() {
         let policy = policy_for(&profile(1.0, None));
         assert_eq!(policy.tier, Tier::Nano);
-        assert_eq!(policy.protocol, Protocol::ConstrainedJson);
         assert!(policy.uses_planner);
         assert!(policy.max_tools <= 10);
         assert_eq!(policy.prompt_budget_tokens, 2_800);
@@ -318,5 +502,42 @@ mod tests {
         // Nano's cap (2800) binds before 70% of context does.
         let nano = policy_for(&profile(1.0, None));
         assert_eq!(nano.prompt_budget_tokens, 2800);
+    }
+
+    /// Pins the on-disk profile keys. These strings are a **persistence
+    /// contract**: `benchmarks/model_profiles.json` already contains
+    /// `"protocol": "ConstrainedJson"`, and `ferric query` looks a record up by
+    /// this exact value. Changing one silently orphans every stored profile —
+    /// `read_profile` misses, the miss is a documented safe no-op (ADR-029), and
+    /// the model quietly drops to its params-derived tier.
+    ///
+    /// So this test is not restating the implementation. It is the thing that
+    /// makes a variant rename a visible failure instead of a silent capability
+    /// regression.
+    #[test]
+    fn protocol_keys_match_what_is_already_on_disk() {
+        assert_eq!(
+            protocol_key(ActionProtocol::ConstrainedJson),
+            "ConstrainedJson"
+        );
+        assert_eq!(protocol_key(ActionProtocol::NativeTools), "NativeTools");
+        assert_eq!(protocol_key(ActionProtocol::TextXml), "TextXml");
+        assert_eq!(protocol_key(ActionProtocol::Plan), "Plan");
+    }
+
+    /// The keys were `format!("{:?}")` at every call site before sprint 98.
+    /// Existing profiles were written that way, so the shared function must keep
+    /// producing exactly that — otherwise unifying the sites would itself have
+    /// been the orphaning change it was meant to prevent.
+    #[test]
+    fn protocol_key_still_agrees_with_the_debug_format_it_replaced() {
+        for p in [
+            ActionProtocol::ConstrainedJson,
+            ActionProtocol::NativeTools,
+            ActionProtocol::TextXml,
+            ActionProtocol::Plan,
+        ] {
+            assert_eq!(protocol_key(p), format!("{p:?}"), "key drifted for {p:?}");
+        }
     }
 }

@@ -139,7 +139,12 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
                 keep_workspace: args.keep_workspace,
             };
             let (rows, _) = run_levels(&selected, &inv, protocol, &Some(model_id.clone()), &args);
-            let record = calibrate(model_id, args.params_b, &format!("{protocol:?}"), &rows);
+            let record = calibrate(
+                model_id,
+                args.params_b,
+                &ferric_core::protocol_key(protocol),
+                &rows,
+            );
             if let Err(e) = ferric_bench::write_profile(&args.results_dir, &record) {
                 eprintln!("cannot write model profile: {e}");
             }
@@ -208,9 +213,35 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
 
     let (rows, all_passed) = run_levels(&selected, &inv, protocol, &model_name, &args);
 
-    // Calibrate from this sweep's rows.
-    if let Some(model_name) = &model_name {
-        let record = calibrate(model_name, args.params_b, &format!("{protocol:?}"), &rows);
+    // Calibrate from this sweep's rows — but ONLY from a full ladder.
+    //
+    // A partial `--level` sweep is a diagnostic, not a calibration. Writing a
+    // profile from one level silently DOWNGRADED a fuller result: investigating
+    // qwen2.5-coder-7b's L5 rewrote its record from measured_level 6 (Large) to
+    // 5 (Medium), and `ferric query` reads that profile to size its policy
+    // (ADR-029/086). Looking at one rung must not change the model's tier.
+    let full_ladder = args.level.is_empty();
+    if model_name.is_some() && !full_ladder {
+        println!(
+            "partial sweep ({} level(s)) — profile left unchanged; run without --level to recalibrate",
+            selected.len()
+        );
+    }
+    if let Some(model_name) = &model_name
+        && full_ladder
+    {
+        let record = calibrate(
+            model_name,
+            args.params_b,
+            &ferric_core::protocol_key(protocol),
+            &rows,
+        );
+        let inconsistent = ferric_bench::non_monotonic_failures(&rows);
+        if !inconsistent.is_empty() {
+            println!(
+                "warning: ladder was not monotonic — level(s) {inconsistent:?} failed below the highest pass; measured_level is max(passed), so re-run to confirm before trusting it"
+            );
+        }
         if let Err(e) = ferric_bench::write_profile(&args.results_dir, &record) {
             eprintln!("cannot write model profile: {e}");
         } else if let Some(level) = record.measured_level {
@@ -270,7 +301,7 @@ fn run_levels(
             level: spec.level,
             level_name: spec.name.clone(),
             variant: args.variant.clone(),
-            protocol: format!("{protocol:?}"),
+            protocol: ferric_core::protocol_key(protocol),
             model: model_name.clone(),
             completed: done,
             timed_out: record.timed_out,

@@ -1,0 +1,15 @@
+[package]
+name = "ferric-skills"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# No YAML dependency, on purpose. Skill frontmatter is a small fixed key-value
+# set, and this is a trust boundary: a strict hand-written parser that rejects
+# what it does not understand is easier to audit than a general YAML engine —
+# and `serde_yaml` is deprecated upstream.
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -454,7 +454,7 @@ async fn bench_model(
     Ok(BenchSummary {
         model: model.to_string(),
         backend: provider.id().to_string(),
-        protocol: format!("{protocol:?}"),
+        protocol: ferric_core::protocol_key(protocol),
         iterations,
         per_tool,
     })

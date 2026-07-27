@@ -85,16 +85,27 @@ binary files, and **symlinks** for escape-safety), matches files by name or cont
 *local* file is untrusted (a downloaded doc, a cloned README, a NAS share), so it routes through
 the funnel like any other source.
 
-**Tailnet/NAS-FS plane** (`TailnetFsRetriever`, ✅ built; live SSH E2E deferred): searches a
-*remote* tailnet device's filesystem over SSH and feeds matches to the same quarantine.
+**Tailnet/NAS-FS plane** (`TailnetFsRetriever`, ✅ built; **never run against a real host**):
+searches a *remote* tailnet device's filesystem over SSH and feeds matches to the same quarantine.
+
+> **SSH is a requirement of this transport, and that is the plane's problem.** The
+> escaping in `shell_single_quote` exists because `ssh` runs its command through the
+> *remote* shell — the threat only exists because the transport is SSH. On the reference
+> tailnet the one online Linux peer has SSH blocked **by the owner's deliberate choice**
+> (ADR-095), so this plane cannot be exercised there at all. A refused port 22 is evidence
+> of intent, not a gap to close; do not propose enabling `tailscale up --ssh`.
+>
+> **If the remote filesystem is reachable by mount instead** (SMB, NFS), it is just a
+> path — use `LocalFsRetriever` with the mount point as its confined root. None of the
+> code below is involved. Whether to generalise or retire this transport is open.
 
 ```rust
 use ferric_research::{research, TailnetFsRetriever, SshTransport};
 
 // Linux tailnet device (keyless Tailscale SSH):
-let r = TailnetFsRetriever::new("switchblade", "/data", SshTransport::Tailscale);
+let r = TailnetFsRetriever::new("example-linux", "/data", SshTransport::Tailscale);
 // or Termux sshd on a phone:
-let r = TailnetFsRetriever::new("pixel-10-pro-xl", "/sdcard", SshTransport::Plain { port: 8022 });
+let r = TailnetFsRetriever::new("example-phone", "/sdcard", SshTransport::Plain { port: 8022 });
 let digests = research(&r, provider, "tailscale NAT traversal").await?; // source = "host:relpath"
 ```
 
@@ -110,7 +121,7 @@ let digests = research(&r, provider, "tailscale NAT traversal").await?; // sourc
 use ferric_research::{research_all, MultiResearch, LocalFsRetriever, TailnetFsRetriever, SshTransport};
 
 let local = LocalFsRetriever::new("/corpus");
-let nas = TailnetFsRetriever::new("switchblade", "/data", SshTransport::Tailscale);
+let nas = TailnetFsRetriever::new("example-linux", "/data", SshTransport::Tailscale);
 let planes: Vec<&dyn ferric_research::Retriever> = vec![&local, &nas];
 
 let MultiResearch { digests, planes: report } = research_all(&planes, provider, "NAT traversal").await?;
@@ -153,7 +164,7 @@ the existing `check(permission, path)` call, once digests enter the loop's conte
 
 ## Sequenced next (ADR-040–044) — build order: Local FS ✅ → Tailnet/NAS ✅ → orchestrator ✅ → CaMeL primitive ✅ → Web
 - **Live SSH E2E** for the tailnet plane — once a target's sshd is up (Termux `Plain{8022}` on the
-  Pixel, or `Tailscale` on switchblade when back online).
+  phone, or `Tailscale` on a Linux peer).
 - **Web `Retriever`** + a hardened **sandbox** + **allowlist egress proxy** — the online plane and
   the *code*-escape leg; its security layer lands last (the exfil leg lives here). **The airlock is
   a microVM-class sandbox** — [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (a

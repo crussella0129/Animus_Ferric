@@ -196,15 +196,24 @@ impl Provider for OpenAiProvider {
         );
 
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+        // Build the request future ONCE and pin it. A non-streaming completion can
+        // take seconds; re-creating the `send()` future inside the `select!` on
+        // every iteration would cancel the in-flight request each time the 50 ms
+        // cancel-poll interval ticks, so it could never finish (the request keeps
+        // reconnecting and never gets a response). Polling the *same* pinned future
+        // across ticks preserves its progress. (`complete_streaming` already sends
+        // once before its read loop, which is why the streaming path is unaffected.)
+        let send_fut = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send();
+        tokio::pin!(send_fut);
         let response = loop {
             tokio::select! {
-                res = self
-                    .client
-                    .post(&url)
-                    .header("Authorization", format!("Bearer {}", self.config.api_key))
-                    .header("Content-Type", "application/json")
-                    .json(&body)
-                    .send() => {
+                res = &mut send_fut => {
                     break res;
                 }
                 _ = interval.tick() => {
@@ -595,6 +604,41 @@ mod tests {
 
     use super::*;
     use crate::types::SamplingParams;
+
+    /// `OpenAiConfig` holds the API key in plaintext and reaches an
+    /// `Authorization: Bearer` header. It is NOT `Debug` today, and that
+    /// absence is the only thing stopping a `{:?}` from putting the credential
+    /// in a log — an absence a later `#[derive(Debug)]` erases silently
+    /// (ADR-097). Detection uses inherent-impl priority: an inherent
+    /// associated const shadows the trait's, so `IS_DEBUG` is `true` only when
+    /// the type really implements `Debug`.
+    #[test]
+    fn openai_config_is_not_debug_printable() {
+        struct IsDebug<T>(std::marker::PhantomData<T>);
+
+        trait Fallback {
+            const IS_DEBUG: bool = false;
+        }
+        impl<T> Fallback for IsDebug<T> {}
+
+        impl<T: std::fmt::Debug> IsDebug<T> {
+            const IS_DEBUG: bool = true;
+        }
+
+        // Compile-time, not runtime: a `#[derive(Debug)]` here should fail the
+        // BUILD, not merely a test someone might not run. The positive control
+        // comes first — without it, a detector that always answered "not Debug"
+        // would satisfy the real check while verifying nothing.
+        const _: () = assert!(
+            <IsDebug<String>>::IS_DEBUG,
+            "the detector must recognise a type that IS Debug"
+        );
+        const _: () = assert!(
+            !<IsDebug<OpenAiConfig>>::IS_DEBUG,
+            "OpenAiConfig carries the API key; if it must become Debug, give it \
+             a redacting impl rather than a derive"
+        );
+    }
 
     fn provider() -> OpenAiProvider {
         OpenAiProvider::new(OpenAiConfig::default())

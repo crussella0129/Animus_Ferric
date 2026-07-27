@@ -14,6 +14,7 @@ pub use media::{
 };
 pub use message::{Message, Role, ToolCall};
 pub use scale::{
-    ActionProtocol, ModelProfile, Protocol, RunPolicy, Tier, policy_for, ring_for_tier,
-    tier_for_level, tier_for_params,
+    ActionProtocol, DEFAULT_TRUNCATION_LIMIT, ModelProfile, RunPolicy, Tier, TierSource,
+    default_truncation_limit, policy_for, policy_for_with_override, protocol_key, ring_for_tier,
+    tier_decision, tier_for_level, tier_for_params,
 };

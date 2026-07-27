@@ -10,6 +10,9 @@ pub struct RevertArgs {
     pub trace: PathBuf,
     /// The turn number to revert the workspace to
     pub turn: u32,
+    /// Skip the confirmation prompt (for scripted/non-interactive use)
+    #[arg(long)]
+    pub yes: bool,
 }
 
 pub fn run_revert(args: RevertArgs) -> ExitCode {
@@ -71,12 +74,51 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let vcs = ferric_vcs::Vcs::new(workspace_root);
 
+    // `revert` is destructive in two ways the user cannot undo: it deletes
+    // untracked files (`git clean -fd`) and it truncates the trace. Name both,
+    // and list the actual files, before doing either.
+    if !args.yes {
+        let doomed = vcs
+            .untracked_to_be_removed()
+            .map_err(|e| format!("vcs error: {e}"))?;
+
+        println!(
+            "Revert workspace to session {}, turn {}.",
+            session_id, args.turn
+        );
+        if doomed.is_empty() {
+            println!("  No untracked files will be deleted.");
+        } else {
+            println!(
+                "  {} untracked path(s) will be DELETED (gitignored paths are kept):",
+                doomed.len()
+            );
+            for p in doomed.iter().take(20) {
+                println!("    - {p}");
+            }
+            if doomed.len() > 20 {
+                println!("    ... and {} more", doomed.len() - 20);
+            }
+        }
+        println!("  The trace will be truncated to turn {}.", args.turn);
+        print!("Proceed? [y/N] ");
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+
+        let mut answer = String::new();
+        if std::io::stdin().read_line(&mut answer).is_err()
+            || !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+        {
+            println!("Aborted; nothing was changed.");
+            return Ok(());
+        }
+    }
+
     println!(
         "Reverting workspace to session {}, turn {}...",
         session_id, args.turn
     );
     vcs.revert(&session_id, args.turn)
-        .await
         .map_err(|e| format!("vcs error: {e}"))?;
 
     println!("Workspace reverted successfully.");

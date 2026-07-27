@@ -188,11 +188,98 @@ pub fn run_scripted_with_approver(
     )
 }
 
+/// Like `run_scripted_with_approver`, but lets a test set the taint set and sink
+/// policy — the combination ADR-079 is about (accept-edits AND a sink policy
+/// that asks for approval both live at once).
+pub fn run_scripted_with_sink_policy(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    approver: EditApprover<'_>,
+    provenance: ferric_guard::Provenance,
+    sink_policy: ferric_guard::SinkPolicy,
+) -> RunResult {
+    run_scripted_full_cfg(
+        script,
+        policy,
+        ActionProtocol::NativeTools,
+        Some(approver),
+        provenance,
+        sink_policy,
+        |_| {},
+        |_| {},
+    )
+}
+
+/// Like `run_scripted_with_sink_policy`, but also inspects the workspace before
+/// teardown — needed to assert whether a gated write actually touched disk.
+pub fn run_scripted_with_sink_policy_dir(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    approver: EditApprover<'_>,
+    provenance: ferric_guard::Provenance,
+    sink_policy: ferric_guard::SinkPolicy,
+    check_dir: impl FnOnce(&std::path::Path),
+) -> RunResult {
+    run_scripted_full_cfg(
+        script,
+        policy,
+        ActionProtocol::NativeTools,
+        Some(approver),
+        provenance,
+        sink_policy,
+        |_| {},
+        check_dir,
+    )
+}
+
+/// The same, with NO approver — so `RequireApproval` has nobody to ask.
+pub fn run_scripted_no_approver(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    provenance: ferric_guard::Provenance,
+    sink_policy: ferric_guard::SinkPolicy,
+    check_dir: impl FnOnce(&std::path::Path),
+) -> RunResult {
+    run_scripted_full_cfg(
+        script,
+        policy,
+        ActionProtocol::NativeTools,
+        None,
+        provenance,
+        sink_policy,
+        |_| {},
+        check_dir,
+    )
+}
+
 fn run_scripted_full(
     script: Vec<Completion>,
     policy: &RunPolicy,
     protocol: ActionProtocol,
     approver: Option<EditApprover<'_>>,
+    inspect: impl FnOnce(&MockProvider),
+    check_dir: impl FnOnce(&std::path::Path),
+) -> RunResult {
+    run_scripted_full_cfg(
+        script,
+        policy,
+        protocol,
+        approver,
+        ferric_guard::Provenance::Clean,
+        ferric_guard::SinkPolicy::deny(),
+        inspect,
+        check_dir,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_scripted_full_cfg(
+    script: Vec<Completion>,
+    policy: &RunPolicy,
+    protocol: ActionProtocol,
+    approver: Option<EditApprover<'_>>,
+    provenance: ferric_guard::Provenance,
+    sink_policy: ferric_guard::SinkPolicy,
     inspect: impl FnOnce(&MockProvider),
     check_dir: impl FnOnce(&std::path::Path),
 ) -> RunResult {
@@ -237,8 +324,8 @@ fn run_scripted_full(
         RunArgs {
             edit_approver: approver,
             cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            taint_set: ferric_guard::TaintSet::new(),
+            sink_policy,
+            provenance,
             provider: &provider,
             registry: &registry,
             workspace: &workspace,
@@ -289,6 +376,7 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
             ParsedEvent::Known(Event::RepetitionGuard { .. }) => "repetition_guard",
             ParsedEvent::Known(Event::NoProgressGuard { .. }) => "no_progress_guard",
             ParsedEvent::Known(Event::FailureGuard { .. }) => "failure_guard",
+            ParsedEvent::Known(Event::OscillationGuard { .. }) => "oscillation_guard",
             ParsedEvent::Known(Event::PermissionCheck { .. }) => "permission_check",
             ParsedEvent::Known(Event::ToolCall { .. }) => "tool_call",
             ParsedEvent::Known(Event::ToolResult { .. }) => "tool_result",

@@ -7,7 +7,6 @@ repository.workspace = true
 
 [dependencies]
 thiserror.workspace = true
-tokio.workspace = true
 
 [dev-dependencies]
 tempfile = { workspace = true }

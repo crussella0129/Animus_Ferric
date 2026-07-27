@@ -123,6 +123,7 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
             {
                 println!("Handing off to ferric query...");
                 let query_args = crate::query::QueryArgs {
+                    skills: Vec::new(),
                     prompt: Some(spec.goal.clone()),
                     files: vec![],
                     workspace: Some(report.path.clone()),
@@ -141,11 +142,14 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                     protocol: None,
                     prompts_dir: None,
                     max_ring: None,
+                    tier: None,
                     profile_dir: Some(PathBuf::from(".ferric/profiles")),
                     no_stream: false,
                     resume: None,
                     modality: None,
                     research: None,
+                    research_urls: Vec::new(),
+                    allow_standard_runtime: false,
                     sink_action: "deny".to_string(),
                     accept_edits: false,
                 };

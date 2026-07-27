@@ -25,19 +25,32 @@ impl Tool for FetchReference {
             name: "fetch_reference".to_string(),
             description: "Fetch the exact reference chunk(s) this step needs from the stage's \
                 references/ knowledge vault, instead of loading whole documents. Args: \
-                {\"query\": string, \"section\"?: string, \"k\"?: number}. `query` = \
-                keywords/topic to search for; `section` optionally restricts to a \
-                heading; `k` caps chunks returned (default 4). Returns clean-markdown \
-                chunks, each headed by its ref:// source."
+                {\"target\"?: string, \"query\"?: string, \"section\"?: string, \"k\"?: number}. \
+                `target` = a reference corpus (a file or folder under references/); \
+                `query` = keywords/topic to search for; `section` optionally restricts \
+                to a heading; `k` caps chunks returned (default 4). Give at least one \
+                of target/query/section. Returns clean-markdown chunks, each headed by \
+                its ref:// source."
                 .to_string(),
+            // Mirrors Animus Dark Matter's INTEGRATION.md descriptor: `target`
+            // names a corpus, `query` is optional (ADR-074). Neither is
+            // individually required here because Ferric's stage containment
+            // (ADR-065) already scopes the vault to one stage, so a bare `query`
+            // remains a complete request — but a DM-shaped `{"target": …}` call
+            // is now accepted rather than rejected.
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "target": { "type": "string", "description": "Optional: a reference corpus (file or folder path under references/) to search within" },
                     "query": { "type": "string", "description": "Keywords / topic to search the reference vault for" },
                     "section": { "type": "string", "description": "Optional: restrict to chunks whose heading contains this text" },
                     "k": { "type": "integer", "description": "Max chunks to return (default 4)" }
                 },
-                "required": ["query"]
+                "anyOf": [
+                    { "required": ["target"] },
+                    { "required": ["query"] },
+                    { "required": ["section"] }
+                ]
             }),
             permission: PermissionLevel::Read,
             ring: 0,
@@ -51,10 +64,8 @@ impl Tool for FetchReference {
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let query = args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required string argument: query".to_string())?;
+        let query = args.get("query").and_then(|v| v.as_str());
+        let target = args.get("target").and_then(|v| v.as_str());
         let section = args.get("section").and_then(|v| v.as_str());
         let k = args
             .get("k")
@@ -62,6 +73,19 @@ impl Tool for FetchReference {
             .map(|n| n as usize)
             .unwrap_or(DEFAULT_K)
             .max(1);
+
+        // Dark Matter's INTEGRATION.md declares `target` as the only required
+        // argument, with `query` optional; Ferric required `query` and had no
+        // `target` at all, so a call written from DM's own docs was rejected
+        // outright (ADR-074). Either identifies a fetch now — but a call naming
+        // neither has said nothing about what it wants.
+        if query.is_none() && target.is_none() && section.is_none() {
+            return Err(
+                "give at least one of: query (keywords), target (a corpus under \
+                 references/), or section (a heading)"
+                    .to_string(),
+            );
+        }
 
         let ref_root = ctx
             .workspace
@@ -75,25 +99,31 @@ impl Tool for FetchReference {
 
         let mut chunks: Vec<RefChunk> = Vec::new();
         collect_chunks(&ref_root, &ref_root, &mut chunks)?;
+        let searched = chunks.len();
 
-        let terms = tokenize(query);
+        let terms = query.map(tokenize).unwrap_or_default();
         let mut scored: Vec<(usize, &RefChunk)> = chunks
             .iter()
+            .filter(|c| target.is_none_or(|t| in_corpus(&c.uri, t)))
             .filter(|c| {
                 section.is_none_or(|s| c.heading.to_lowercase().contains(&s.to_lowercase()))
             })
             .map(|c| (score(&terms, c), c))
-            .filter(|(s, _)| *s > 0)
+            // With no query there is nothing to score against, so `target` /
+            // `section` alone select the corpus wholesale.
+            .filter(|(s, _)| terms.is_empty() || *s > 0)
             .collect();
         // Highest score first; ties broken by URI for determinism (ADR-008).
         scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.uri.cmp(&b.1.uri)));
+
+        // Capture the pre-cap count so truncation can be SIGNALLED. Silently
+        // handing back k chunks let the model read a capped result as the whole
+        // answer, with nothing to tell it otherwise.
+        let matched = scored.len();
         scored.truncate(k);
 
         if scored.is_empty() {
-            return Ok(format!(
-                "No reference chunk matched query {query:?} (searched {} chunk(s) under `{REF_DIR}/`). Try broader keywords.",
-                chunks.len()
-            ));
+            return Ok(no_match_message(query, target, section, searched));
         }
 
         let mut out = String::new();
@@ -104,8 +134,53 @@ impl Tool for FetchReference {
             out.push_str(c.text.trim());
             out.push_str("\n\n");
         }
+        if matched > scored.len() {
+            out.push_str(&format!(
+                "_[truncated: {} of {matched} matching chunk(s) shown; raise `k` or narrow the query for more]_\n",
+                scored.len()
+            ));
+        }
         Ok(out.trim_end().to_string())
     }
+}
+
+/// Does a chunk's `ref://<relpath>#<i>` URI live under corpus `target`?
+///
+/// A "corpus" is a path prefix inside `references/` — a subdirectory, or a
+/// single file. Stage containment (ADR-065) already limits what exists there, so
+/// this narrows within the stage's own vault rather than granting new reach.
+fn in_corpus(uri: &str, target: &str) -> bool {
+    let rel = uri.strip_prefix("ref://").unwrap_or(uri);
+    let target = target.trim_matches('/');
+    if target.is_empty() {
+        return true;
+    }
+    rel == target
+        || rel.starts_with(&format!("{target}/"))
+        || rel.starts_with(&format!("{target}#"))
+        || rel.starts_with(&format!("{target}."))
+}
+
+fn no_match_message(
+    query: Option<&str>,
+    target: Option<&str>,
+    section: Option<&str>,
+    searched: usize,
+) -> String {
+    let mut what = Vec::new();
+    if let Some(q) = query {
+        what.push(format!("query {q:?}"));
+    }
+    if let Some(t) = target {
+        what.push(format!("target {t:?}"));
+    }
+    if let Some(s) = section {
+        what.push(format!("section {s:?}"));
+    }
+    format!(
+        "No reference chunk matched {} (searched {searched} chunk(s) under `{REF_DIR}/`). Try broader keywords.",
+        what.join(" + ")
+    )
 }
 
 /// One retrievable slice of a reference file.
@@ -197,19 +272,44 @@ fn chunk_markdown(content: &str) -> Vec<(String, String)> {
     chunks
 }
 
-/// Lowercase alphanumeric tokens longer than two chars.
+/// Shortest query term matched as a substring. At or below this length a
+/// substring match is mostly noise — `"go"` occurs inside `"algorithm"` — so
+/// short terms are matched as whole words instead of being discarded (ADR-073).
+const MIN_SUBSTRING_TERM_CHARS: usize = 3;
+
+/// Lowercase alphanumeric tokens. Short tokens are KEPT: dropping them made
+/// `"Go"`, `"AI"`, `"C"` and `"k8"` return nothing at all over a vault full of
+/// matches. They are scored differently rather than thrown away — see `score`.
 fn tokenize(s: &str) -> Vec<String> {
     s.to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
-        .filter(|t| t.len() > 2)
+        .filter(|t| !t.is_empty())
         .map(|t| t.to_string())
         .collect()
 }
 
 /// Count how many distinct query terms appear in the chunk (heading + body).
+///
+/// Longer terms match as substrings, which is what lets `"concurren"` find
+/// "concurrency". Short terms (< [`MIN_SUBSTRING_TERM_CHARS`]) must match a
+/// whole word, so `"go"` finds the language and not `"algorithm"`.
 fn score(terms: &[String], c: &RefChunk) -> usize {
     let hay = format!("{} {}", c.heading, c.text).to_lowercase();
-    terms.iter().filter(|t| hay.contains(t.as_str())).count()
+    let words: Vec<&str> = hay
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    terms
+        .iter()
+        .filter(|t| {
+            if t.chars().count() < MIN_SUBSTRING_TERM_CHARS {
+                words.contains(&t.as_str())
+            } else {
+                hay.contains(t.as_str())
+            }
+        })
+        .count()
 }
 
 #[cfg(test)]
@@ -237,17 +337,28 @@ mod tests {
         FetchReference.run(&ToolCtx { workspace: ws }, &args)
     }
 
+    /// The declared schema is the cross-repo contract surface: Animus Dark
+    /// Matter's `INTEGRATION.md` describes this exact descriptor, so a change
+    /// here is a change to an agreement with another repo (ADR-074).
     #[test]
-    fn spec_is_read_and_names_query() {
+    fn spec_declares_the_dark_matter_argument_set() {
         let s = FetchReference.spec();
         assert_eq!(s.name, "fetch_reference");
         assert_eq!(s.permission, PermissionLevel::Read);
+
+        let props = s.input_schema["properties"].as_object().unwrap();
+        for arg in ["target", "query", "section", "k"] {
+            assert!(props.contains_key(arg), "schema must declare {arg:?}");
+        }
+
+        // No single argument is required on its own; any one of the three
+        // selectors identifies a fetch.
         assert!(
-            s.input_schema["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("query"))
+            s.input_schema.get("required").is_none(),
+            "no argument may be unconditionally required — DM's `target`-only \
+             call and Ferric's `query`-only call must both validate"
         );
+        assert!(s.input_schema["anyOf"].as_array().unwrap().len() == 3);
     }
 
     #[test]
@@ -317,8 +428,111 @@ mod tests {
     }
 
     #[test]
-    fn missing_query_is_error() {
+    fn a_call_naming_nothing_is_an_error() {
         let (_d, ws) = ws_with_refs(&[("a.md", "# T\nx\n")]);
         assert!(run(&ws, json!({})).is_err());
+    }
+
+    // --- ADR-074: the Animus Dark Matter contract ---
+
+    /// The call written in Dark Matter's own `INTEGRATION.md` — `target`
+    /// supplied, `query` omitted — used to return
+    /// `Err("missing required string argument: query")`.
+    #[test]
+    fn a_dark_matter_shaped_call_is_accepted() {
+        let (_d, ws) = ws_with_refs(&[(
+            "qwen-docs.md",
+            "# tokio spawn\n\nUse tokio::spawn to start a task.\n",
+        )]);
+        let out = run(&ws, json!({ "target": "qwen-docs.md" })).expect("DM-shaped call must work");
+        assert!(out.contains("tokio spawn"), "got: {out}");
+    }
+
+    /// `target` narrows to one corpus within the stage's vault; chunks outside
+    /// it must not come back even when they would score just as well.
+    #[test]
+    fn target_scopes_the_search_to_one_corpus() {
+        let (_d, ws) = ws_with_refs(&[
+            ("rust/async.md", "# async rust\n\nfutures and tasks\n"),
+            ("go/async.md", "# async go\n\ngoroutines and channels\n"),
+        ]);
+
+        let out = run(&ws, json!({ "target": "rust", "query": "async" })).unwrap();
+        assert!(out.contains("async rust"), "got: {out}");
+        assert!(!out.contains("async go"), "target must exclude go/: {out}");
+    }
+
+    /// A `target` naming a folder works as a prefix, not only an exact file.
+    #[test]
+    fn target_matches_a_folder_prefix() {
+        let (_d, ws) = ws_with_refs(&[("deep/nested/doc.md", "# buried\n\ncontent here\n")]);
+        let out = run(&ws, json!({ "target": "deep" })).unwrap();
+        assert!(out.contains("buried"), "got: {out}");
+    }
+
+    /// Capping at `k` used to be silent, so the model could read a truncated
+    /// result as the complete answer.
+    #[test]
+    fn a_capped_result_says_it_was_truncated() {
+        let (_d, ws) = ws_with_refs(&[
+            ("a.md", "# alpha topic\n\ntopic body\n"),
+            ("b.md", "# beta topic\n\ntopic body\n"),
+            ("c.md", "# gamma topic\n\ntopic body\n"),
+        ]);
+        let out = run(&ws, json!({ "query": "topic", "k": 1 })).unwrap();
+        assert!(out.contains("truncated"), "must signal the cap: {out}");
+        assert!(out.contains("of 3"), "must say how many matched: {out}");
+    }
+
+    /// ...and an uncapped result must NOT claim truncation.
+    #[test]
+    fn an_uncapped_result_does_not_claim_truncation() {
+        let (_d, ws) = ws_with_refs(&[("a.md", "# alpha topic\n\ntopic body\n")]);
+        let out = run(&ws, json!({ "query": "topic", "k": 4 })).unwrap();
+        assert!(!out.contains("truncated"), "got: {out}");
+    }
+
+    // --- ADR-073: short-token queries ---
+
+    #[test]
+    fn short_token_query_matches() {
+        // Regression: `tokenize` dropped tokens of <= 2 chars, so "Go" produced
+        // an empty term list, every chunk scored 0, and the tool reported "no
+        // match" over a vault entirely about Go.
+        let (_d, ws) = ws_with_refs(&[(
+            "langs.md",
+            "# Go concurrency\n\nGo uses goroutines and channels.\n",
+        )]);
+        for q in ["Go", "go"] {
+            let out = run(&ws, json!({ "query": q })).unwrap();
+            assert!(
+                out.contains("Go concurrency"),
+                "query {q:?} must match a vault about Go, got: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn short_token_matches_whole_words_only() {
+        // Why short tokens were dropped in the first place: substring matching
+        // makes "go" hit "algorithm". Word matching keeps them usable without
+        // reintroducing that noise.
+        let (_d, ws) = ws_with_refs(&[(
+            "algo.md",
+            "# Sorting\n\nThis algorithm is a mergesort. Nothing else here.\n",
+        )]);
+        let out = run(&ws, json!({ "query": "Go" })).unwrap();
+        assert!(
+            out.starts_with("No reference chunk matched"),
+            "\"Go\" must not match \"algorithm\", got: {out}"
+        );
+    }
+
+    #[test]
+    fn longer_terms_still_match_as_substrings() {
+        // Stem matching is load-bearing for normal queries and must survive.
+        let (_d, ws) = ws_with_refs(&[("r.md", "# Runtime\n\nconcurrency model\n")]);
+        let out = run(&ws, json!({ "query": "concurren" })).unwrap();
+        assert!(out.contains("Runtime"), "got: {out}");
     }
 }

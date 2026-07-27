@@ -86,7 +86,7 @@ pub fn parse_trace(path: &Path) -> std::io::Result<TraceMetrics> {
                 }
                 Event::PolicySelected { tier, protocol, .. } => {
                     m.tier = Some(format!("{tier:?}"));
-                    m.protocol = Some(format!("{protocol:?}"));
+                    m.protocol = Some(ferric_core::protocol_key(protocol));
                 }
                 Event::SessionEnd { reason } => {
                     // `task_complete` is a structured terminator (ADR-013),

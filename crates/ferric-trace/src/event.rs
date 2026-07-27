@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 /// readers must keep accepting unknown event types regardless (ADR-002).
 pub const TRACE_SCHEMA_VERSION: u32 = 1;
 
+/// Serde default for `PolicySelected.tier_source` on pre-ADR-098 traces.
+fn default_tier_source() -> String {
+    ferric_core::TierSource::Params.label().to_string()
+}
+
 /// The envelope written as one JSONL line.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TraceEvent {
@@ -43,6 +48,28 @@ pub enum Event {
         max_tools: u32,
         prompt_budget_tokens: u32,
         max_output_tokens: u32,
+        /// Characters of a single tool result this run showed the model
+        /// (ADR-002's cap). Recorded because everything that rebuilds a
+        /// context window from a trace — `replay`, `trace verify` — has only
+        /// the trace to work from, and without this key it had to assume the
+        /// default while `run()` used whatever the registry was configured
+        /// with. Additive: a `policy_selected` line written before ADR-093
+        /// parses as `Known` with the default, which is what those runs used.
+        #[serde(default = "ferric_core::default_truncation_limit")]
+        truncation_limit: usize,
+        /// Why this run is at this `tier`: `"measured"` (earned on the L0–L6
+        /// ladder), `"params"` (the parameter-count prior), or `"override"`
+        /// (the operator asked for it). ADR-098.
+        ///
+        /// The tier governs turn/tool budgets, prompt and output ceilings,
+        /// planner use, subagents and the tool-ring ceiling, so recording only
+        /// the answer left a tier a model *earned* and a tier someone *asked
+        /// for* looking identical afterwards. Additive: a `policy_selected`
+        /// line written before ADR-098 reads back as `"params"`, which is what
+        /// those runs used whenever no profile was found — and where one was,
+        /// the profile store still holds the measurement.
+        #[serde(default = "default_tier_source")]
+        tier_source: String,
     },
     /// Prompt-composition genealogy (oovra lineage): which versioned elements
     /// built the system prompt.
@@ -108,6 +135,13 @@ pub enum Event {
     /// The repeated-failure guard fired — the model's tool calls all errored for
     /// several turns in a row (ADR-038). `action` is "warned" or "stopped".
     FailureGuard {
+        action: String,
+    },
+    /// The oscillation guard fired — a small set of distinct actions repeated
+    /// across a window of turns (an A-B-A-B cycle), which every streak-based
+    /// guard misses because alternation resets them (ADR-077). `action` is
+    /// "warned" or "stopped".
+    OscillationGuard {
         action: String,
     },
     /// A guard decision made at the tool-dispatch chokepoint. `rule` and

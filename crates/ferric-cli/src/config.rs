@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use crate::backend::{BackendArg, BackendOpts};
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct Config {
     pub backend: Option<BackendArg>,
     pub model: Option<String>,
@@ -22,9 +22,56 @@ pub struct Config {
     pub ctx: Option<u32>,
     pub temperature: Option<f32>,
     pub max_ring: Option<u8>,
+    /// Persistent operator tier override (ADR-098) — the config spelling of
+    /// `--tier`. Separate from `params_b`, which stays a fact about the model.
+    pub tier: Option<crate::query::TierArg>,
     pub profile_dir: Option<PathBuf>,
     pub stream: Option<bool>,
     pub hooks: Option<ferric_core::HooksConfig>,
+    /// Skills the user has standing-authorized for this workspace.
+    ///
+    /// This lives in config **because config lives under `.ferric/`**, which
+    /// `ferric-guard` write-denies to the model. An allowlist the agent could
+    /// edit would authorize nothing (sprint 100, ADR-091).
+    ///
+    /// Project-over-user like every other field, but note what that means here:
+    /// a project allowlist *replaces* the user's rather than extending it, so a
+    /// repo cannot silently inherit skills the user enabled globally.
+    pub allowed_skills: Option<Vec<String>>,
+}
+
+/// Hand-written, not derived, so `api_key` can never be printed (ADR-097).
+///
+/// `Config` carries a credential in plaintext and previously derived `Debug`,
+/// which put the key one `{:?}` away from a log line, an `assert_eq!` failure
+/// message, or a panic payload. Nothing printed one *yet* — the derive was a
+/// loaded gun rather than a fired one — and "nothing prints it today" is a
+/// property of the current call sites, not of the type.
+///
+/// `Debug` is kept rather than removed because `assert_eq!` needs it, and a
+/// type that cannot be compared in a test failure message is its own problem.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("backend", &self.backend)
+            .field("model", &self.model)
+            .field("api_base", &self.api_base)
+            // Presence is useful for debugging config precedence; the value
+            // never is.
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("params_b", &self.params_b)
+            .field("quant", &self.quant)
+            .field("family", &self.family)
+            .field("ctx", &self.ctx)
+            .field("temperature", &self.temperature)
+            .field("max_ring", &self.max_ring)
+            .field("tier", &self.tier)
+            .field("profile_dir", &self.profile_dir)
+            .field("stream", &self.stream)
+            .field("hooks", &self.hooks)
+            .field("allowed_skills", &self.allowed_skills)
+            .finish()
+    }
 }
 
 impl Config {
@@ -41,9 +88,11 @@ impl Config {
             ctx: self.ctx.or(user.ctx),
             temperature: self.temperature.or(user.temperature),
             max_ring: self.max_ring.or(user.max_ring),
+            tier: self.tier.or(user.tier),
             profile_dir: self.profile_dir.or(user.profile_dir),
             stream: self.stream.or(user.stream),
             hooks: self.hooks.or(user.hooks),
+            allowed_skills: self.allowed_skills.or(user.allowed_skills),
         }
     }
 }
@@ -55,6 +104,20 @@ impl Config {
 pub struct LoadedConfig {
     pub config: Config,
     pub diagnostics: Vec<String>,
+    /// Which config file supplied `hooks`, if any (ADR-097).
+    ///
+    /// Hooks are the one config field that becomes **arbitrary command
+    /// execution**: `run_hook` hands the string to `sh -c` / `cmd /C` with the
+    /// full inherited environment. And the *user* layer's location is chosen by
+    /// environment variable (`XDG_CONFIG_HOME`, `APPDATA`, `HOME`), so the file
+    /// that supplies it is env-selected.
+    ///
+    /// That is not treated as a privilege boundary — setting a process's
+    /// environment normally already implies running code as that user, and the
+    /// XDG convention is worth keeping. What was missing is that a hook from an
+    /// unexpected config file looked exactly like one the user wrote. This
+    /// makes the source nameable so a caller can disclose it.
+    pub hooks_source: Option<PathBuf>,
 }
 
 /// `<workspace>/.ferric/config.toml` — mirrors `server.rs`'s `runfile_path`
@@ -118,9 +181,20 @@ pub fn load_layered_from(project_path: &Path, user_path: Option<&Path>) -> Loade
     let user = user_path
         .map(|p| read_layer(p, &mut diagnostics))
         .unwrap_or_default();
+    // Resolved with the same project-wins rule the merge uses, so the reported
+    // source is the file whose hooks actually take effect — not merely a file
+    // that happened to mention them.
+    let hooks_source = if project.hooks.is_some() {
+        Some(project_path.to_path_buf())
+    } else if user.hooks.is_some() {
+        user_path.map(Path::to_path_buf)
+    } else {
+        None
+    };
     LoadedConfig {
         config: project.merged_over(user),
         diagnostics,
+        hooks_source,
     }
 }
 
@@ -339,5 +413,134 @@ mod tests {
         opts.model = Some("cli-model".to_string());
         let merged = merge_backend_opts(opts, &cfg);
         assert_eq!(merged.model, Some("cli-model".to_string()));
+    }
+
+    // --- ADR-097: the env-selected config layer that reaches a shell ---
+
+    #[test]
+    fn hooks_source_names_the_file_that_supplied_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = write(
+            dir.path(),
+            "user.toml",
+            "[hooks]\npre_turn = \"echo from-user\"\n",
+        );
+        let project = dir.path().join("absent.toml");
+
+        let loaded = load_layered_from(&project, Some(&user));
+        assert!(loaded.config.hooks.is_some());
+        assert_eq!(
+            loaded.hooks_source.as_deref(),
+            Some(user.as_path()),
+            "a hook that takes effect must be attributable to a file"
+        );
+    }
+
+    /// The attribution has to follow the *merge*, not merely presence: the
+    /// project layer wins, so the project file is the honest answer even when
+    /// the user layer also defines hooks. Reporting the wrong file would be
+    /// worse than reporting none.
+    #[test]
+    fn hooks_source_follows_the_project_wins_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = write(
+            dir.path(),
+            "user.toml",
+            "[hooks]\npre_turn = \"echo from-user\"\n",
+        );
+        let project = write(
+            dir.path(),
+            "project.toml",
+            "[hooks]\npre_turn = \"echo from-project\"\n",
+        );
+
+        let loaded = load_layered_from(&project, Some(&user));
+        assert_eq!(loaded.hooks_source.as_deref(), Some(project.as_path()));
+        assert_eq!(
+            loaded.config.hooks.unwrap().pre_turn.as_deref(),
+            Some("echo from-project"),
+            "the reported source must be the one whose hook actually runs"
+        );
+    }
+
+    #[test]
+    fn no_hooks_means_no_source_to_disclose() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = write(dir.path(), "project.toml", "model = \"m\"\n");
+        let loaded = load_layered_from(&project, None);
+        assert!(loaded.hooks_source.is_none());
+    }
+
+    /// `Config` carries a credential in plaintext and IS `Debug` (needed for
+    /// `assert_eq!`), so the guarantee has to be about what `Debug` *prints* —
+    /// not about the impl's absence. This asserts the property directly.
+    #[test]
+    fn debug_output_never_contains_the_api_key() {
+        let cfg = Config {
+            api_key: Some("sk-supersecret-do-not-print".to_string()),
+            model: Some("some-model".to_string()),
+            ..Config::default()
+        };
+        let rendered = format!("{cfg:?}");
+
+        assert!(
+            !rendered.contains("sk-supersecret-do-not-print"),
+            "the api_key leaked into Debug output: {rendered}"
+        );
+        assert!(
+            rendered.contains("<redacted>"),
+            "presence of a key should still be visible for debugging config \
+             precedence: {rendered}"
+        );
+        // A control: the redaction must be targeted, not a blanket blank impl
+        // that hides everything and would pass the assertion above trivially.
+        assert!(
+            rendered.contains("some-model"),
+            "non-secret fields must still be printed: {rendered}"
+        );
+    }
+
+    /// A `Config` with no key must not claim to have a redacted one — the
+    /// distinction is the whole point of keeping presence visible.
+    #[test]
+    fn debug_output_distinguishes_absent_from_redacted() {
+        let rendered = format!("{:?}", Config::default());
+        assert!(rendered.contains("api_key: None"), "{rendered}");
+        assert!(!rendered.contains("<redacted>"), "{rendered}");
+    }
+
+    /// `BackendOpts` also holds `api_key` in plaintext and is NOT `Debug`
+    /// today. That absence is load-bearing, and a later `#[derive(Debug)]`
+    /// would erase it silently. Detection uses inherent-impl priority: an
+    /// inherent associated const shadows the trait's, so `IS_DEBUG` is `true`
+    /// only when the type really implements `Debug`.
+    #[test]
+    fn backend_opts_is_not_debug_printable() {
+        struct IsDebug<T>(std::marker::PhantomData<T>);
+
+        trait Fallback {
+            const IS_DEBUG: bool = false;
+        }
+        impl<T> Fallback for IsDebug<T> {}
+
+        impl<T: std::fmt::Debug> IsDebug<T> {
+            const IS_DEBUG: bool = true;
+        }
+
+        // Compile-time, not runtime: adding `#[derive(Debug)]` to `BackendOpts`
+        // should fail the BUILD, not merely a test someone might not run.
+        //
+        // The positive control comes first — without it, a detector that always
+        // answered "not Debug" would satisfy the real check while verifying
+        // nothing.
+        const _: () = assert!(
+            <IsDebug<String>>::IS_DEBUG,
+            "the detector must recognise a type that IS Debug"
+        );
+        const _: () = assert!(
+            !<IsDebug<BackendOpts>>::IS_DEBUG,
+            "BackendOpts holds api_key in plaintext; if it must become Debug, \
+             give it a redacting impl like Config's"
+        );
     }
 }

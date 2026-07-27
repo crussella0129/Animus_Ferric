@@ -7,6 +7,39 @@ use ferric_provider::{Completion, MockProvider};
 use ferric_trace::{Event, JsonlSink, TraceReader};
 use std::process::ExitCode;
 
+/// A turn whose `TurnEnd` has been seen but whose dispatched tool calls have
+/// not all arrived yet. See the `TurnEnd` arm below for why that gap exists.
+struct PendingCompletion {
+    text: Option<String>,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    truncated: bool,
+}
+
+/// Close an open turn into a scripted `Completion`, pairing it with the tool
+/// calls traced since its `TurnEnd`.
+fn close_turn(
+    pending: &mut Option<PendingCompletion>,
+    tool_calls: &mut Vec<ferric_core::ToolCall>,
+    script: &mut Vec<Completion>,
+) {
+    if let Some(p) = pending.take() {
+        script.push(Completion {
+            message: Message {
+                role: ferric_core::Role::Assistant,
+                text: p.text,
+                tool_calls: std::mem::take(tool_calls),
+                tool_call_id: None,
+                media: vec![],
+            },
+            input_tokens: p.input_tokens,
+            output_tokens: p.output_tokens,
+            truncated: p.truncated,
+        });
+    }
+    tool_calls.clear();
+}
+
 pub fn trace_verify(golden: &Path) -> ExitCode {
     let events = match TraceReader::open(golden) {
         Ok(reader) => {
@@ -34,13 +67,14 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
 
     let mut script = Vec::new();
     let mut current_tool_calls = Vec::new();
+    let mut pending_turn: Option<PendingCompletion> = None;
     let mut system_prompt = String::new();
     let mut initial_user_prompt = String::new();
 
     let mut workspace_path = String::new();
     let mut policy = ferric_core::RunPolicy {
         tier: ferric_core::Tier::Small,
-        protocol: ferric_core::Protocol::ConstrainedJson,
+        tier_source: ferric_core::TierSource::Params,
         uses_planner: false,
         max_plan_steps: 0,
         max_turns_per_step: 0,
@@ -54,6 +88,11 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
         compact_keep_last_turns: 2,
     };
     let mut protocol = ferric_core::ActionProtocol::NativeTools;
+    // Restored from the trace alongside the rest of the policy. Re-running a
+    // trace under a *different* cap than it was recorded with would rebuild a
+    // different context window and report a mismatch that belongs to the
+    // verifier, not the run (ADR-093).
+    let mut truncation_limit = ferric_core::DEFAULT_TRUNCATION_LIMIT;
 
     for event in &events {
         match event {
@@ -67,11 +106,16 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
                 max_tools,
                 prompt_budget_tokens,
                 max_output_tokens,
+                truncation_limit: cap,
+                tier_source: src,
             } => {
                 protocol = *p;
+                truncation_limit = *cap;
                 policy = ferric_core::RunPolicy {
                     tier: *tier,
-                    protocol: ferric_core::Protocol::ConstrainedJson,
+                    // Restored, not re-derived: a re-run must not silently
+                    // relabel an overridden tier as measured (ADR-098).
+                    tier_source: ferric_core::TierSource::from_label(src),
                     uses_planner: false,
                     max_plan_steps: 0,
                     max_turns_per_step: 0,
@@ -107,24 +151,32 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
                 truncated,
                 ..
             } => {
-                let message = Message {
-                    role: ferric_core::Role::Assistant,
+                // Hold the turn open rather than closing it here. `run()`
+                // writes `TurnEnd` BEFORE dispatching, so a turn's own
+                // `ToolCall` events land *after* it (confirmed in a real
+                // trace: turn_end then tool_call). Building the completion at
+                // `TurnEnd` therefore gave each turn the PREVIOUS turn's
+                // calls, and dropped the final turn's entirely — which is how
+                // the terminator went missing from every replayed script.
+                // `replay()` gets this right by committing a turn only once a
+                // later event proves dispatch finished; this now uses the same
+                // rule. ADR-093.
+                pending_turn = Some(PendingCompletion {
                     text: text.clone(),
-                    tool_calls: current_tool_calls.clone(),
-                    tool_call_id: None,
-                    media: vec![],
-                };
-                script.push(Completion {
-                    message,
                     input_tokens: *input_tokens,
                     output_tokens: *output_tokens,
                     truncated: *truncated,
                 });
-                current_tool_calls.clear();
+            }
+            Event::TurnStart { .. } | Event::SessionEnd { .. } => {
+                close_turn(&mut pending_turn, &mut current_tool_calls, &mut script);
             }
             _ => {}
         }
     }
+    // A trace cut short by a kill has no closing event; its last turn is still
+    // a completion the model produced.
+    close_turn(&mut pending_turn, &mut current_tool_calls, &mut script);
 
     let provider = MockProvider::new(script);
 
@@ -133,11 +185,16 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
     let workspace = Workspace::new(&workspace_path)
         .unwrap_or_else(|_| Workspace::new(std::env::current_dir().unwrap()).unwrap());
 
-    let mut registry = ferric_tools::Registry::new();
+    let mut registry = ferric_tools::Registry::with_truncation_limit(truncation_limit);
     ferric_tools::register_builtin_tools(&mut registry);
 
-    // Temp file for the new trace
-    let trace_path = std::env::temp_dir().join("verify.jsonl");
+    // Temp file for the new trace. The name carries the pid rather than being
+    // the fixed `verify.jsonl` it once was: `temp_dir()` is shared and often
+    // world-writable, so a constant name in it is a path another user can
+    // pre-create or point at something else, and two concurrent verifies would
+    // also have raced each other (ADR-097).
+    let trace_path =
+        std::env::temp_dir().join(format!("ferric-verify-{}.jsonl", std::process::id()));
     if trace_path.exists() {
         std::fs::remove_file(&trace_path).unwrap();
     }
@@ -160,7 +217,7 @@ pub fn trace_verify(golden: &Path) -> ExitCode {
         media: vec![],
         stream_sink: None,
         resume: None,
-        taint_set: ferric_guard::TaintSet::new(),
+        provenance: ferric_guard::Provenance::Clean,
         sink_policy: ferric_guard::SinkPolicy::deny(),
         hooks: None,
     };

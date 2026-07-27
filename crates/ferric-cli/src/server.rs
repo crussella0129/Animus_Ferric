@@ -112,6 +112,23 @@ pub struct LaunchCommand {
     pub env: Vec<(String, String)>,
 }
 
+/// The node's Tailnet FQDN, read from `tailscale status --json`.
+///
+/// The FQDN lives at **`Self.DNSName`**, not at the top level (ADR-076). Reading
+/// `DNSName` from the root always yielded `None` against the real CLI, so
+/// `--tailscale` printed "Tailscale proxy active." and then recorded the
+/// **loopback** URL in the runfile — silently defeating the flag's entire
+/// purpose, since anything reading that runfile got `127.0.0.1`.
+///
+/// The trailing dot on the FQDN is stripped: tailscale reports an absolute DNS
+/// name (`host.tailnet.ts.net.`) and that dot is not wanted in a URL.
+fn tailnet_fqdn(status_json: &[u8]) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_slice(status_json).ok()?;
+    let dns = json.get("Self")?.get("DNSName")?.as_str()?;
+    let clean = dns.trim_end_matches('.').trim();
+    (!clean.is_empty()).then(|| clean.to_string())
+}
+
 /// Build the engine launch command. Pure (no spawn). Host is whatever
 /// `cfg.host` is — callers pin it to `127.0.0.1` (ADR-005).
 pub fn command(cfg: &ServerConfig) -> LaunchCommand {
@@ -241,6 +258,14 @@ fn is_listening(host: &str, port: u16) -> bool {
 
 /// Kill a process by PID, portably (TerminateProcess on Windows, SIGKILL on
 /// Unix), since `up` does not retain the `Child` handle across invocations.
+///
+/// The Unix path goes through `sh -c` **on purpose**. It used to exec `kill`
+/// directly, which assumes a `kill(1)` binary on PATH — `procps` is not
+/// installed in `debian-bookworm-slim`, so inside our own `ferric-core` image
+/// the spawn failed with "not found", `status` came back `Err`, and the server
+/// was reported unkillable while it carried on serving (sprint 96, found live).
+/// `kill` is a POSIX **shell builtin**, so routing through `sh` needs nothing
+/// installed and keeps this std-only.
 fn kill_pid(pid: u32) -> bool {
     #[cfg(windows)]
     let status = Command::new("taskkill")
@@ -249,12 +274,59 @@ fn kill_pid(pid: u32) -> bool {
         .stderr(Stdio::null())
         .status();
     #[cfg(not(windows))]
-    let status = Command::new("kill")
-        .args(["-9", &pid.to_string()])
+    let status = Command::new("sh")
+        .args(["-c", &format!("kill -9 {pid}")])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
     matches!(status, Ok(s) if s.success())
+}
+
+/// Is `pid` still running? Used to tell "the kill worked" apart from "the kill
+/// silently did nothing", which `kill_pid`'s return value alone cannot express.
+///
+/// Unix uses `kill -0` (the null signal: permission and existence check, no
+/// delivery) via the shell builtin, for the same reason as above.
+fn process_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let out = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output();
+        // tasklist prints "INFO: No tasks are running..." (exit 0) when absent,
+        // so the exit status says nothing — the PID must appear in the output.
+        matches!(out, Ok(o) if String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+    }
+    #[cfg(not(windows))]
+    {
+        // A **zombie** answers `kill -0` successfully: the process is dead, but
+        // its table entry survives until the parent reaps it. If nothing reaps
+        // — a container whose PID 1 is not an init, which is exactly what
+        // `docker/docker-compose.yml` used to produce — that entry is permanent,
+        // and treating it as alive would make `down` refuse to clean up a
+        // process that has already exited, forever.
+        //
+        // On Linux `/proc` settles it. Elsewhere, fall through to `kill -0`.
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            // Field 3 is the state, but field 2 (`comm`) is parenthesised and
+            // may itself contain spaces or ')', so scan from the LAST ')'.
+            if let Some(close) = stat.rfind(')') {
+                return !matches!(
+                    stat[close + 1..].split_whitespace().next(),
+                    Some("Z") | None
+                );
+            }
+        }
+
+        matches!(
+            Command::new("sh")
+                .args(["-c", &format!("kill -0 {pid}")])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status(),
+            Ok(s) if s.success()
+        )
+    }
 }
 
 /// Is the engine binary runnable? Tries `<program> --version`.
@@ -336,16 +408,22 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         {
             Ok(status) if status.success() => {
                 println!("Tailscale proxy active.");
-                if let Ok(status_out) = Command::new("tailscale")
+                match Command::new("tailscale")
                     .args(["status", "--json"])
                     .output()
-                    && let Ok(json) =
-                        serde_json::from_slice::<serde_json::Value>(&status_out.stdout)
-                    && let Some(dns_name) = json.get("DNSName").and_then(|v| v.as_str())
                 {
-                    let clean_dns = dns_name.trim_end_matches('.');
-                    base_url = format!("https://{}/v1", clean_dns);
-                    println!("Tailscale FQDN discovered: {}", clean_dns);
+                    Ok(status_out) => match tailnet_fqdn(&status_out.stdout) {
+                        Some(fqdn) => {
+                            base_url = format!("https://{fqdn}/v1");
+                            println!("Tailscale FQDN discovered: {fqdn}");
+                        }
+                        None => eprintln!(
+                            "Warning: `tailscale serve` succeeded but the Tailnet FQDN could \
+                             not be read from `tailscale status --json`; \
+                             recording the local URL {base_url} instead."
+                        ),
+                    },
+                    Err(e) => eprintln!("Warning: could not run `tailscale status --json`: {e}"),
                 }
             }
             Ok(status) => {
@@ -428,21 +506,39 @@ fn status(workspace: &Path) -> ExitCode {
 fn down(workspace: &Path) -> ExitCode {
     match read_runfile(workspace) {
         Some(rf) => {
-            let killed = kill_pid(rf.pid);
+            kill_pid(rf.pid);
+
+            // Ask the OS whether it actually died, rather than trusting the
+            // kill's exit status. SIGKILL is delivered asynchronously, so give
+            // it a moment before concluding anything.
+            let mut alive = process_alive(rf.pid);
+            for _ in 0..20 {
+                if !alive {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+                alive = process_alive(rf.pid);
+            }
+
+            if alive {
+                // Deliberately KEEP the runfile. It used to be deleted here
+                // regardless, which orphaned a still-serving process and threw
+                // away the only record of its PID — `down` reported failure
+                // while guaranteeing nobody could ever retry. Whatever is
+                // wrong, the record is what makes it recoverable.
+                eprintln!(
+                    "could not stop pid {} — it is STILL RUNNING; runfile kept so `ferric server down` can be retried",
+                    rf.pid
+                );
+                return ExitCode::FAILURE;
+            }
+
             let _ = std::fs::remove_file(runfile_path(workspace));
             if let Some(global) = global_runfile_path() {
                 let _ = std::fs::remove_file(global);
             }
-            if killed {
-                println!("stopped server pid {}", rf.pid);
-                ExitCode::SUCCESS
-            } else {
-                eprintln!(
-                    "could not kill pid {} (already gone?); runfile removed",
-                    rf.pid
-                );
-                ExitCode::FAILURE
-            }
+            println!("stopped server pid {}", rf.pid);
+            ExitCode::SUCCESS
         }
         None => {
             println!("no server registered");
@@ -626,5 +722,118 @@ mod tests {
     fn read_runfile_absent_is_none() {
         let dir = tempfile::tempdir().unwrap();
         assert!(read_runfile_impl(dir.path(), None).is_none());
+    }
+
+    // --- ADR-076: Tailnet FQDN discovery ---
+
+    /// Shaped exactly like real `tailscale status --json` output on a connected
+    /// node, with synthetic identity (sprint 105): the addresses stay in
+    /// Tailscale's real `100.64.0.0/10` CGNAT range so the fixture is still
+    /// representative, but the tailnet, host and node id are examples.
+    ///
+    /// The shape is the point: `DNSName` sits under `Self`, and the root has no
+    /// `DNSName` key at all — reading it from the root is the bug this pins.
+    const REAL_STATUS_JSON: &str = r#"{
+      "Version": "1.98.2-taaf7caef1-gc4a37aed9",
+      "BackendState": "Running",
+      "MagicDNSSuffix": "tailnet-example.ts.net",
+      "TailscaleIPs": ["100.64.0.1"],
+      "Self": {
+        "ID": "nEXAMPLENODEIDCNTRL",
+        "HostName": "EXAMPLE-HOST",
+        "DNSName": "example-host.tailnet-example.ts.net.",
+        "OS": "windows"
+      },
+      "Peer": {}
+    }"#;
+
+    #[test]
+    fn tailnet_fqdn_reads_dnsname_from_self() {
+        assert_eq!(
+            tailnet_fqdn(REAL_STATUS_JSON.as_bytes()).as_deref(),
+            Some("example-host.tailnet-example.ts.net")
+        );
+    }
+
+    /// The regression: `DNSName` was read from the ROOT, where it does not
+    /// exist, so discovery silently returned nothing and the runfile kept the
+    /// loopback URL.
+    #[test]
+    fn the_root_object_has_no_dnsname() {
+        let json: serde_json::Value = serde_json::from_str(REAL_STATUS_JSON).unwrap();
+        assert!(
+            json.get("DNSName").is_none(),
+            "real tailscale output has no top-level DNSName — reading it there              is what made --tailscale silently record 127.0.0.1"
+        );
+    }
+
+    #[test]
+    fn tailnet_fqdn_is_none_when_unparseable_or_absent() {
+        assert_eq!(tailnet_fqdn(b"not json"), None);
+        assert_eq!(tailnet_fqdn(br#"{"Self":{}}"#), None);
+        assert_eq!(tailnet_fqdn(br#"{}"#), None);
+        // A blank name must not produce "https:///v1".
+        assert_eq!(tailnet_fqdn(br#"{"Self":{"DNSName":"."}}"#), None);
+    }
+
+    /// `tailscale serve --bg <port>` is the documented background form
+    /// (verified against `tailscale serve --help` on 1.98.2).
+    #[test]
+    fn the_serve_invocation_matches_the_documented_form() {
+        let port: u16 = 8080;
+        let args = ["serve", "--bg", &port.to_string()].join(" ");
+        assert_eq!(args, "serve --bg 8080");
+    }
+
+    /// `process_alive` must track a real process across its death. Spawned and
+    /// killed here rather than probing an arbitrary PID, because PID reuse
+    /// makes "this number is unused" a flaky assertion.
+    #[test]
+    fn process_alive_follows_a_real_process() {
+        assert!(
+            process_alive(std::process::id()),
+            "the test process itself must read as alive"
+        );
+
+        #[cfg(windows)]
+        let mut child = Command::new("cmd")
+            .args(["/C", "ping -n 30 127.0.0.1 > NUL"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn a child to observe");
+        #[cfg(not(windows))]
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn a child to observe");
+
+        let pid = child.id();
+        assert!(
+            process_alive(pid),
+            "a just-spawned child must read as alive"
+        );
+
+        // Through kill_pid, so this also covers the container defect: on Unix
+        // it used to exec `kill(1)`, absent from slim images, and silently do
+        // nothing while reporting failure.
+        assert!(
+            kill_pid(pid),
+            "kill_pid must report success on a live child"
+        );
+
+        let mut alive = true;
+        for _ in 0..30 {
+            if !process_alive(pid) {
+                alive = false;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(!alive, "the child must read as dead after kill_pid");
+
+        let _ = child.wait();
     }
 }
