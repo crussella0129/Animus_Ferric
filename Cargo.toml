@@ -51,7 +51,7 @@ toml = "0.8"
 regex = "1"
 tempfile = "3"
 futures-executor = "0.3"
-rustyline = "14"
+rustyline = "18"
 axum = "0.8"
 tokio-stream = "0.1"
 
