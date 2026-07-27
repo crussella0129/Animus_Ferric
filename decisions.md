@@ -2842,7 +2842,18 @@ habit of testing that a control can actually fire.
 **Verification limits, stated rather than glossed.** The repo's `docs/config.md`
 and `docs/example-config.md` are now redirect stubs and `learn.chatgpt.com/docs/skills`
 404s, so the **frontmatter key names a `SKILL.md` author writes** are inferred
-from the Rust types, not read from a published schema. The Rust model is
+from the Rust types, not read from a published schema.
+
+**Addendum — the rustyline 14 → 18 bump was checked where CI cannot reach.**
+Dependabot's five cargo PRs merged into `dev` during this sprint, one of them a
+**four-major** jump to `rustyline`, which backs `ferric chat`'s REPL. CI was
+green, but ADR-090 recorded that chat's interactive REPL is the one surface the
+test suite never drives — so green CI was not evidence about the thing that
+actually changed. Driven by hand under rustyline 18: the REPL starts, talk mode
+answers, `/help` renders, `/exit` and the **EOF path** (`ReadlineError::Eof`,
+the arm the code matches on) both exit 0, and `!`-passthrough still runs through
+the guarded `shell_exec` chokepoint. No behaviour change. Recorded because "CI
+passed" and "the changed surface works" were, here, different claims. The Rust model is
 authoritative for structure; the YAML spellings are not confirmed, and any
 future Ferric claim of "conventional format" compatibility must check them
 first.
