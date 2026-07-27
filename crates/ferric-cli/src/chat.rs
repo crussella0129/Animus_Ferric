@@ -88,6 +88,12 @@ pub struct ChatArgs {
     pub prompts_dir: Option<PathBuf>,
 
     /// Cap the active tool ring (ADR-028) for escalated turns.
+    /// Run at this tier regardless of size or measured level (ADR-098).
+    /// Recorded as `tier_source: "override"` so an asked-for tier is never
+    /// mistaken for one earned on the benchmark ladder.
+    #[arg(long, value_enum)]
+    pub tier: Option<crate::query::TierArg>,
+
     #[arg(long)]
     pub max_ring: Option<u8>,
 
@@ -393,6 +399,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         protocol_override: args.protocol,
         prompts_dir: args.prompts_dir.clone(),
         max_ring: args.max_ring.or(cfg.max_ring),
+        tier_override: args.tier.or(cfg.tier).map(Into::into),
         profile_dir: args
             .profile_dir
             .clone()
@@ -727,6 +734,7 @@ mod tests {
             protocol_override: None,
             prompts_dir: None,
             max_ring: None,
+            tier_override: None,
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
             hooks: None,

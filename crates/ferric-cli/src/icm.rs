@@ -104,6 +104,10 @@ pub struct IcmRunArgs {
     ctx: Option<u32>,
 
     /// Cap the active tool ring (ADR-028). Restrict-only.
+    /// Run at this tier regardless of size or measured level (ADR-098).
+    #[arg(long, value_enum)]
+    tier: Option<crate::query::TierArg>,
+
     #[arg(long)]
     max_ring: Option<u8>,
 
@@ -257,6 +261,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         protocol_override: None,
         prompts_dir: None,
         max_ring: args.max_ring.or(cfg.max_ring),
+        tier_override: args.tier.or(cfg.tier).map(Into::into),
         profile_dir: cfg
             .profile_dir
             .clone()

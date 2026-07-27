@@ -46,6 +46,32 @@ impl From<ProtocolArg> for ActionProtocol {
     }
 }
 
+/// CLI spelling of `Tier` for `--tier` (ADR-098). Kebab-case via `ValueEnum`,
+/// and `Deserialize` so `.ferric/config.toml` can spell it the same way.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TierArg {
+    Nano,
+    Small,
+    Medium,
+    Large,
+    Xl,
+    Ultra,
+}
+
+impl From<TierArg> for ferric_core::Tier {
+    fn from(t: TierArg) -> Self {
+        match t {
+            TierArg::Nano => ferric_core::Tier::Nano,
+            TierArg::Small => ferric_core::Tier::Small,
+            TierArg::Medium => ferric_core::Tier::Medium,
+            TierArg::Large => ferric_core::Tier::Large,
+            TierArg::Xl => ferric_core::Tier::Xl,
+            TierArg::Ultra => ferric_core::Tier::Ultra,
+        }
+    }
+}
+
 #[derive(Args)]
 pub struct QueryArgs {
     /// The task prompt. Required unless `--resume` is given (a pure
@@ -72,8 +98,28 @@ pub struct QueryArgs {
 
     /// Parameter count in billions. Default 1.2 when neither this flag nor a
     /// config file's `params_b` is set (T-3803).
+    ///
+    /// This is a **fact about the model**, not a way to pick a tier — use
+    /// `--tier` for that (ADR-098). Misstating it to reach a tier also
+    /// corrupts the profile store and the trace, and leaves no way to tell an
+    /// earned tier from a claimed one.
     #[arg(long)]
     pub params_b: Option<f32>,
+
+    /// Run at this tier regardless of size or measured level (ADR-098).
+    ///
+    /// Overrides both the `measured_level` read-back and the parameter-count
+    /// prior, in **either** direction — you can hold a capable model down as
+    /// well as lift a small one up. The run says so on stderr and the trace
+    /// records `tier_source: "override"`, so an asked-for tier is never
+    /// mistaken later for one the model earned on the ladder.
+    ///
+    /// Raising the tier widens turn/tool budgets and the tool-ring ceiling; a
+    /// model that cannot use them just fails more expensively (the loop guards
+    /// bound the waste, ADR-037/038/077). `ferric bench` is how a tier gets
+    /// *earned*.
+    #[arg(long, value_enum)]
+    pub tier: Option<TierArg>,
 
     /// Quantization label. Default "Q4_K_M" when neither this flag nor a
     /// config file's `quant` is set (T-3803).
@@ -211,6 +257,11 @@ pub(crate) struct RunConfigArgs {
     pub protocol_override: Option<ProtocolArg>,
     pub prompts_dir: Option<PathBuf>,
     pub max_ring: Option<u8>,
+    /// Explicit operator tier (ADR-098). Wins over the measured read-back and
+    /// the parameter prior, in either direction, and is recorded as an
+    /// override rather than silently becoming indistinguishable from an
+    /// earned tier.
+    pub tier_override: Option<ferric_core::Tier>,
     pub profile_dir: PathBuf,
     /// used to look up a persisted profile record (ADR-029). `None` skips the
     /// lookup entirely (matches today's behavior when neither flag is set).
@@ -315,7 +366,17 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
         family: a.family.clone(),
         measured_level: profile_record.as_ref().and_then(|r| r.measured_level),
     };
-    let mut policy = policy_for(&profile);
+    // An explicit `--tier` wins over both the measured read-back and the
+    // parameter prior, and is recorded as such (ADR-098) — the point of the
+    // flag is to make an operator decision *sayable* instead of forcing it to
+    // be smuggled through `--params-b`, which is a fact about the model.
+    let (tier, tier_source) = ferric_core::tier_decision(&profile, a.tier_override);
+    if tier_source == ferric_core::TierSource::Override {
+        eprintln!(
+            "tier: {tier:?} (operator override; not measured — `ferric bench` is how a tier is earned)"
+        );
+    }
+    let mut policy = ferric_core::policy_for_with_override(&profile, a.tier_override);
     // `--max-ring` wins; else the persisted `calibrated_ring`; else the tier
     // ceiling. Restrict-only either way (ADR-028).
     policy.max_ring = a
@@ -506,6 +567,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
     let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
     let resolved_max_ring = args.max_ring.or(cfg.max_ring);
+    let resolved_tier = args.tier.or(cfg.tier);
     let resolved_profile_dir = args
         .profile_dir
         .clone()
@@ -524,6 +586,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         protocol_override: args.protocol,
         prompts_dir: args.prompts_dir.clone(),
         max_ring: resolved_max_ring,
+        tier_override: resolved_tier.map(Into::into),
         profile_dir: resolved_profile_dir,
         // C-001 (plan-critic): derived from the POST-merge, config-resolved
         // `model` (already merged above) — a config-only-set
@@ -1244,6 +1307,7 @@ mod tests {
             protocol_override: None,
             prompts_dir: None,
             max_ring: None,
+            tier_override: None,
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
             hooks: None,

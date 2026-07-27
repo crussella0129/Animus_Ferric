@@ -80,6 +80,9 @@ pub mod server {
 
         /// Cap the active tool ring.
         #[arg(long)]
+        /// Run at this tier regardless of size or measured level (ADR-098).
+        #[arg(long, value_enum)]
+        pub tier: Option<crate::query::TierArg>,
         pub max_ring: Option<u8>,
 
         /// Directory holding `model_profiles.json`.
@@ -236,6 +239,7 @@ pub mod server {
             protocol_override: args.protocol,
             prompts_dir: args.prompts_dir.clone(), // not in Config
             max_ring: args.max_ring.or(cfg.max_ring),
+            tier_override: args.tier.or(cfg.tier).map(Into::into),
             profile_dir: args
                 .profile_dir
                 .clone()

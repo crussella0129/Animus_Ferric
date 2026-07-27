@@ -617,6 +617,7 @@ pub async fn run(
         prompt_budget_tokens: args.policy.prompt_budget_tokens,
         max_output_tokens: args.policy.max_output_tokens,
         truncation_limit: args.registry.truncation_limit(),
+        tier_source: args.policy.tier_source.label().to_string(),
     };
     sink.write_event(policy_selected.clone())?;
     projector.step(&policy_selected);

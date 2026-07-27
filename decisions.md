@@ -2622,3 +2622,74 @@ all history** — `tskey-auth`/`tskey-api`, `ghp_`, `github_pat_`, `sk-…`,
 auth key or API key is a *bearer* token: it adds a node or calls the API with no
 SSO and no hardware key, which is the one way a security-key-protected tailnet
 gets bypassed.
+
+## ADR-098 — 2026-07-26 (sprint 107): a tier you can ask for, and a record that says you asked
+
+Raised by the user against ADR-006's design: *"this arguably should not be
+possible over just letting someone switch."* 583 → **588 tests, 0 failures**,
+clippy 0 in both feature configurations, fmt clean.
+
+**The complaint is correct, and the shape of it matters.** ADR-006 makes the
+tier a pure function of the `ModelProfile`, with no operator dial. But
+`tier_for_params` is part of that function, so the *only* manual route to a
+tier was `--params-b 30` — misstating the model's size until the threshold
+table produced the wanted answer. Two things were wrong with that:
+
+1. **`params_b` is a fact about the model, not a dial.** It is also written
+   into `model_profiles.json` and consulted by the ADR-029 read-back, so using
+   it as a tier control corrupts an input other machinery trusts.
+2. **The result was unattributable.** `PolicySelected` recorded `tier: Large`
+   and nothing else. A tier a model *earned* on the L0–L6 ladder and a tier
+   somebody *claimed* by declaring 30B were byte-identical in the record.
+
+So the design forced dishonesty and then destroyed the evidence of it. Adding
+the honest dial is the smaller change.
+
+**`--tier` (and config `tier`) is now an explicit operator override**, winning
+over both the measured read-back and the parameter prior, and working in
+**both** directions — a capable model can be held down as easily as a small one
+lifted, which the params route could never do without claiming the model was
+tiny. `policy_for` is untouched for every existing caller;
+`policy_for_with_override` is the new entry point.
+
+**This does not reopen what ADR-006 closed.** That ADR rules out runtime
+*heuristics* — filename sniffing, LLM self-report, tier misdetection. A
+config-supplied operator choice is the opposite: explicit, inspectable, and
+recorded. `params_b` remains the fact it always was.
+
+**The override is only half of it; the other half is that the record now says
+so.** `TierSource` — `Measured` | `Params` | `Override` — lands on `RunPolicy`
+itself, because *why* a tier was chosen is part of the decision rather than
+metadata about it, and it is written into `PolicySelected.tier_source`.
+`ferric trace cat` renders `Large (from override)`, and a run with an override
+prints on stderr that the tier was asked for and not measured. **A test pins
+the reason this matters:** an earned `Large` and an asked-for `Large` have
+identical budgets — same turns, tools, output cap — so the provenance label is
+the *only* field distinguishing them. Without it, the two are the same run.
+
+`TierSource` is deliberately fieldless. An earlier draft carried the measured
+level (`Measured(u8)`), which cannot round-trip through the one-word label the
+trace stores; the level already lives in the profile store, and what the record
+needs is the distinction, not the number.
+
+`trace verify` **restores** the source from the trace rather than re-deriving
+it, so re-running an overridden trace cannot silently relabel it as measured —
+the same rule ADR-093 established for the truncation cap, applied to the field
+added here.
+
+Old traces have no `tier_source` and read back as `"params"` via
+`#[serde(default)]` — verified against a real pre-sprint-107 trace on disk whose
+line genuinely lacks the key. The flag is wired on every surface that already
+exposes `--max-ring`, which was the existing precedent for an operator knob:
+`query`, `chat`, `mcp`, `icm`, `api`.
+
+**Verified live, not just compiled:** a 1.2B run defaults to `Nano` /
+`tier_source: params`; `--tier large` on the same model yields `Large`,
+`max_turns 40`, `tier_source: override`, and the stderr notice; `tier =
+"medium"` in `.ferric/config.toml` persists it.
+
+**Honest about what this does not do.** Raising the tier does not make a model
+more capable — ADR-022/031 measured a 1B failing multi-turn work regardless of
+budget, and a bigger budget just lets it fail more expensively. The loop guards
+(ADR-037/038/077) bound the waste. `ferric bench` remains the only way a tier
+is *earned*, and the stderr line says so at the moment the override is used.
