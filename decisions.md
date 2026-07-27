@@ -2693,3 +2693,62 @@ more capable — ADR-022/031 measured a 1B failing multi-turn work regardless of
 budget, and a bigger budget just lets it fail more expensively. The loop guards
 (ADR-037/038/077) bound the waste. `ferric bench` remains the only way a tier
 is *earned*, and the stderr line says so at the moment the override is used.
+
+## ADR-099 — 2026-07-27 (sprint 108): two branches, and a first-run path that turned out to work
+
+Two things, one of which is a non-finding worth recording as carefully as a
+finding.
+
+**The workflow changed, by owner decision.** Animus_Ferric now has exactly two
+branches, `main` and `dev`. Work happens on `dev`; there is **no branch or
+worktree per sprint**; one PR per sprint from `dev` to `main`; the owner
+approves every merge. Written into a project `CLAUDE.md` rather than only a
+private memory, because the rule belongs to the repository and should survive a
+fresh clone or a different assistant.
+
+The old flow branched each sprint off the previous sprint's branch, and stacked
+PRs behaved badly: **GitHub only retargets a PR's base when the base branch is
+deleted, not when it is merged**, so PRs #57/#58 merged into *each other* and
+`main` received only the bottom sprint (ADR-088's era; recovered by an extra
+"land sprints N and N+1" PR). A single `dev` removes the stack — one base,
+always `main`, and a PR can only contain what is on `dev`. Bringing `dev`
+forward was safe: it was 62 commits behind with one unique commit, the PR #40
+merge, whose content is already on `main` (`fetch_reference.rs`,
+`ComposeMode::FetchReferences`, ADR-071), and `git diff origin/main dev` is now
+empty.
+
+**The last open template item is closed, and the answer was "it already
+works".** `docs/getting-started.md` was walked end-to-end from a clean clone of
+`dev`. Every testable claim held: the Rust pin (1.96), the `--version` string,
+and — the substantive one — the documented split for a build with **no** backend
+feature. `trace`, `icm init`, `cron list`, `launch` and every `--mock` path
+work; `bench`, `dream` and `api` fail with the single-definition
+`BACKEND_FEATURE_MISSING` message from ADR-097 and exit non-zero. `query --mock`
+reaches `task_complete` with no engine and no model. `server up` returns in ~1 s,
+and `server down` removes both runfiles and leaves no orphan process.
+
+**Three suspected defects were all my own test harness.** They are recorded
+because each was indistinguishable from a product bug at the moment it appeared:
+
+1. A **10-minute hang** on `ferric server up` — actually bash command
+   substitution waiting for EOF on a pipe the daemonized engine held open. The
+   gotcha was already in my own notes and I still walked into it. `server up`
+   run with file redirection exits in **1 second**.
+2. An **exit 127** across four commands, read as "the documented offline
+   commands are broken" — a wrong relative path to the binary after a `cd`.
+3. An **exit 2** from `ferric launch`, read as "the doc is wrong" — passing a
+   positional argument to a flags-only command.
+
+The pattern is the one this project keeps re-deriving from new angles: **a
+failure observed through an instrument is a claim about the instrument until
+proven otherwise.** ADR-096 caught a grep that stopped one line short;
+ADR-097 caught a `grep -B4` that missed a derive; sprint 101 caught a rebuild
+that removed a feature mid-experiment. Here the instrument was the shell. The
+discipline that caught all three was the same: when a check reports failure,
+confirm the check could have reported success.
+
+**One real gap, fixed.** getting-started documented the *local*
+`.ferric/server.json` but not the **global** runfile `server up` also writes to
+the user config directory — which is precisely what makes a throwaway `server
+up` in a scratch folder the server that every workspace then discovers. Now
+documented, along with `--model` being optional under router-mode builds.
