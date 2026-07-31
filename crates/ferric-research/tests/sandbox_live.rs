@@ -296,6 +296,22 @@ fn workspace_and_outsider() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let ws = dir.path().join("ws");
     std::fs::create_dir_all(&ws).expect("mkdir ws");
+    // The sandbox drops CAP_DAC_OVERRIDE (`--cap-drop=ALL`) and runs the
+    // container as root, so on Linux container-root is subject to ordinary DAC
+    // as "other". A freshly created dir is 0755 owned by the host user, which
+    // lets container-root read/traverse it (the read tests) but NOT create a
+    // file in it — so `a_writable_mount_persists_to_the_host` failed on native
+    // Linux CI while passing on Docker Desktop, whose file-sharing layer masks
+    // host DAC. Make the workspace world-writable so a *writable* mount can
+    // actually be written by the sandboxed process, which is the property under
+    // test. For a read-only mount this changes nothing: `:ro` still refuses the
+    // write — and now provably via the mount, not incidentally via DAC.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&ws, std::fs::Permissions::from_mode(0o777))
+            .expect("chmod workspace 0777");
+    }
     std::fs::write(ws.join("inside.txt"), "workspace-content").expect("write inside");
     // A sibling of the workspace, deliberately not mounted.
     std::fs::write(dir.path().join("outside.txt"), "HOST-SECRET").expect("write outside");
