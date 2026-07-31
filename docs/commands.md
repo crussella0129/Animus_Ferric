@@ -171,7 +171,7 @@ Bound to loopback by default. Requires the `backend-openai` build. Routes:
 ## `ferric dream` 🔵 — memory consolidation
 
 ```
-ferric dream [--recent-traces <N>] [--memory-file <PATH>] [backend/model]
+ferric dream [--recent-traces <N>] [--memory-file <PATH>] [--model <NAME>] [--api-base <URL>]
 ```
 
 Parses recent `.ferric/traces` into a synthesized `MEMORY.md` (default
@@ -197,6 +197,18 @@ agent's memory resets there. Workspace root is automatically resolved from the t
 ferric trace cat <FILE>        # render a JSONL trace as a readable log
 ferric trace verify <GOLDEN>   # replay with the mock to detect execution drift
 ```
+
+---
+
+## `ferric skills` — inspect installed skills (offline)
+
+```
+ferric skills list [--workspace <DIR>]   # list skills in .ferric/skills/ and how each authorizes
+```
+
+Skills are per-workspace instruction sets under `.ferric/skills/`. `list` shows
+each one and whether it is standing-authorized (via `allowed_skills` in config)
+or must be named per run with `ferric query --skill <name>` (ADR-091).
 
 ---
 

@@ -33,7 +33,7 @@ ferric server doctor    # checks the engine binary + model are present
 ferric server down      # stops it and clears the runfile
 ```
 
-## 2. Run the diagnostic toolbench
+## 2. Run the diagnostic bench (`ferric bench ltd`)
 
 ```sh
 ferric bench ltd --model <name> --protocol grammar --iterations 20 --report report.md
@@ -154,7 +154,7 @@ read-back is a safe no-op until you've actually measured the model.
 
 ## 6. The full agentic loop — `ferric bench full` (L0–L6)
 
-The toolbench measures whether a model fires the *right single tool call*.
+`ferric bench ltd` measures whether a model fires the *right single tool call*.
 `ferric bench full` runs the **whole multi-turn loop** against a ladder of real tasks
 (L0 single readonly call → L6 a full todo app), and sets the model's
 `measured_level` = the highest level it *completes* end-to-end:

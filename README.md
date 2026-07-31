@@ -49,7 +49,7 @@ cd Animus_Ferric
 cargo build --release -p ferric-cli --features backend-openai
 ```
 
-The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built with **no** backend feature, only the trace tooling works; `query`/`toolbench` will tell you to rebuild with a feature.
+The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built with **no** backend feature, only the trace tooling works; `query`/`bench` will tell you to rebuild with a feature.
 
 **Put `ferric` on your `PATH`** (the examples below assume it is). The portable way — identical on Windows, Linux, and macOS — is `cargo install`, which builds in release *and* drops the binary into `~/.cargo/bin` (rustup already adds that directory to your `PATH`):
 
@@ -86,13 +86,13 @@ ferric server down
 > [!NOTE]
 > If you run `ferric server up --tailscale` on a machine for the first time, you must authorize Tailscale Serve on your Tailnet. The command will output an authorization link that you must click to unblock the proxy and register the server globally.
 
-`query` and `toolbench` **auto-discover** the running server from `.ferric/server.json` (or your global `APPDATA` directory) — no `--api-base` needed. To target a server you didn't launch (e.g. an already-running Ollama), pass `--api-base http://localhost:11434/v1`. By default `query` runs the **constrained** path, which is the reliable one for small models.
+`query` and `bench` **auto-discover** the running server from `.ferric/server.json` (or your global `APPDATA` directory) — no `--api-base` needed. To target a server you didn't launch (e.g. an already-running Ollama), pass `--api-base http://localhost:11434/v1`. By default `query` runs the **constrained** path, which is the reliable one for small models.
 
 `ferric query` also takes **any file** as input with `--file` (repeatable): text/code files fold into the prompt (works on any model), while image/audio/video attach as content parts when you declare `--modality` and the model can read them (Gemma 3n on the OpenAI valve). See [docs/multimodal.md](docs/multimodal.md).
 
 Add `--stream` to see text live as it's generated instead of waiting for the whole multi-turn loop to finish (opt-in; ADR-047).
 
-**Builtin tools** (all workspace-scoped and security-checked through the guard). The always-on **core** (Ring 0) is the navigate/mutate set: `read_file`, `list_dir`, `write_file`, `make_dir`, `edit_file` (surgical first-occurrence replace — small models do targeted edits far more reliably than full rewrites), and `delete_path` (file or, with `recursive`, a directory). **Ring 1** ("find & organize") adds four: `search_files` (grep-style *content* search → `relpath:lineno:line`), `find_files` (find files by *name* → relpaths), `move_path` (move/rename), and `copy_file` — so a small model can locate code and reorganize it once it's proven the core. **Ring 2** ("plan & apply structured changes") seeds with `multi_edit` — an ordered, *atomic* batch of edits to one file (all-or-nothing; reachable once a model earns the Medium tier). Tool vocabularies are organized as **rings** that widen as a model proves it can call them reliably, with the active rings forming the constrained grammar. `ferric query --max-ring 0` pins any model to the Ring-0 core — the smallest, surest grammar — regardless of its size (restrict-only; to *widen* a small model's rings, prove it with the toolbench so `measured_level` promotes it).
+**Builtin tools** (all workspace-scoped and security-checked through the guard). The always-on **core** (Ring 0) is the navigate/mutate set: `read_file`, `list_dir`, `write_file`, `make_dir`, `edit_file` (surgical first-occurrence replace — small models do targeted edits far more reliably than full rewrites), and `delete_path` (file or, with `recursive`, a directory). **Ring 1** ("find & organize") adds four: `search_files` (grep-style *content* search → `relpath:lineno:line`), `find_files` (find files by *name* → relpaths), `move_path` (move/rename), and `copy_file` — so a small model can locate code and reorganize it once it's proven the core. **Ring 2** ("plan & apply structured changes") seeds with `multi_edit` — an ordered, *atomic* batch of edits to one file (all-or-nothing; reachable once a model earns the Medium tier). Tool vocabularies are organized as **rings** that widen as a model proves it can call them reliably, with the active rings forming the constrained grammar. `ferric query --max-ring 0` pins any model to the Ring-0 core — the smallest, surest grammar — regardless of its size (restrict-only; to *widen* a small model's rings, prove it with `ferric bench ltd` so `measured_level` promotes it).
 
 Beyond the hardcoded guard, a project can drop a **`.ferricignore`** in the workspace root (gitignore-flavored — `secrets/`, `*.pem`, `data/private`) to put more paths off-limits to the agent. It is *additive-only*: it can only ever add denials on top of the hardcoded floor, never relax it (ADR-068), and the file is itself write-protected so the agent can't edit away its own restrictions.
 
@@ -110,7 +110,7 @@ ferric server up --engine llama-server --model /path/to/your-model.gguf [--mmpro
 **2. Benchmark it** under the constrained path, and write a report:
 
 ```sh
-ferric bench ltd --backend openai --model <name> --protocol grammar --iterations 20 --report report.md
+ferric bench ltd --model <name> --protocol grammar --iterations 20 --report report.md
 ```
 
 **3. Read the verdict.** `report.md` gives each tool a success rate, a **failure taxonomy** (`wrong_tool` / `malformed_args` / `no_action` / `parse_error`), and an acceptability band — **solid** (≥90%) / **marginal** (≥70%) / **unreliable** (<70%). Add `--protocol native` to compare the unconstrained path on the same model.
@@ -118,7 +118,7 @@ ferric bench ltd --backend openai --model <name> --protocol grammar --iterations
 **4. Calibrate a whole fleet at once.** `--models <a,b,c>` benches each model and ranks them into one leaderboard, sorted best→worst — so you can pick the smallest model that's still *solid*:
 
 ```sh
-ferric bench ltd --backend openai --models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b --protocol grammar --report fleet.md
+ferric bench ltd --models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b --protocol grammar --report fleet.md
 ```
 
 ```
