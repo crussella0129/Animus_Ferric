@@ -1,0 +1,21 @@
+# The Animus Ferric Book (mdBook).
+#
+# The book source IS the existing `docs/` folder — no files were moved. `docs/`
+# stays browsable on GitHub as-is; `docs/SUMMARY.md` sequences the same files
+# into a book. Build with `mdbook build` (output in `book/`, gitignored) or live-
+# preview with `mdbook serve --open`.
+[book]
+title = "The Animus Ferric Book"
+description = "Animus Ferric: a local-first agentic coding harness for small models — install, commands, configuration, running models, and the research/delegation subsystems."
+authors = ["crussella0129"]
+src = "docs"
+language = "en"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/crussella0129/Animus_Ferric"
+edit-url-template = "https://github.com/crussella0129/Animus_Ferric/edit/dev/{path}"

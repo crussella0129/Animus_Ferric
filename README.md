@@ -18,7 +18,10 @@ Rust is not an implementation detail: the visible, demonstrable chain of ownersh
 
 ## Documentation
 
-Full docs live in **[`docs/`](docs/README.md)**:
+Full docs live in **[`docs/`](docs/README.md)**. They are also assembled into a
+book (via [mdBook](https://rust-lang.github.io/mdBook/), like *The Rust Book*) —
+run `mdbook serve --open` from the repo root, or read the same pages on GitHub
+below. The book's reading order is defined in [`docs/SUMMARY.md`](docs/SUMMARY.md).
 
 - **[Getting Started](docs/getting-started.md)** — install, prerequisites, and the external steps (engine install, `ferric server`) before your first run. Includes a no-model `--mock` quickstart.
 - **[Demo Guide](docs/demo-guide.md)** — a copy-paste walkthrough of every feature, each marked *offline* or *needs a model*.
