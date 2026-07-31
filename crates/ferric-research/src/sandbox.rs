@@ -51,6 +51,59 @@ pub enum NetworkPolicy {
     Unrestricted,
 }
 
+/// A host directory made visible inside the sandbox (ADR-101).
+///
+/// Until now the sandbox mounted **nothing** — correct for Ornstein, whose jobs
+/// fetch a URL and return text. Anything that must *act on a workspace* needs
+/// the workspace, and a mount is the point where a container stops being
+/// isolated by default: everything not mounted is unreachable, so what goes here
+/// is the entire filesystem authority the sandboxed process has.
+///
+/// `host` is deliberately an owned `PathBuf` resolved by the caller. A relative
+/// path handed to `docker -v` is interpreted by the *daemon*, not the client,
+/// which on Docker Desktop is a different filesystem namespace entirely.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceMount {
+    /// Absolute host path to expose.
+    pub host: std::path::PathBuf,
+    /// Where it appears inside the container, and the working directory.
+    pub container: String,
+    /// Mount read-only. Default for anything that does not need to write.
+    pub read_only: bool,
+}
+
+impl WorkspaceMount {
+    /// A read-only mount at `/workspace` — the safe shape, so the *writable*
+    /// one has to be asked for by name.
+    pub fn read_only(host: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            host: host.into(),
+            container: "/workspace".to_string(),
+            read_only: true,
+        }
+    }
+
+    /// A writable mount. Named separately so a reviewer grepping for write
+    /// access into a sandbox finds every one.
+    pub fn writable(host: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            host: host.into(),
+            container: "/workspace".to_string(),
+            read_only: false,
+        }
+    }
+
+    /// The `-v host:container[:ro]` value.
+    fn volume_spec(&self) -> String {
+        let host = self.host.display().to_string();
+        if self.read_only {
+            format!("{host}:{}:ro", self.container)
+        } else {
+            format!("{host}:{}", self.container)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SandboxConfig {
     pub image: String,
@@ -58,6 +111,9 @@ pub struct SandboxConfig {
     /// fails closed, which is the correct direction for a security control.
     pub enforce_runsc: bool,
     pub network: NetworkPolicy,
+    /// The only host filesystem the sandboxed process can see. `None` — the
+    /// default — means it sees none of the host at all (ADR-101).
+    pub mount: Option<WorkspaceMount>,
 }
 
 impl Default for SandboxConfig {
@@ -67,6 +123,7 @@ impl Default for SandboxConfig {
             image: "alpine:latest".to_string(),
             enforce_runsc: true,
             network: NetworkPolicy::Denied,
+            mount: None,
         }
     }
 }
@@ -79,6 +136,7 @@ impl SandboxConfig {
             image: "alpine:latest".to_string(),
             enforce_runsc: false,
             network: NetworkPolicy::Unrestricted,
+            mount: None,
         }
     }
 }
@@ -178,6 +236,18 @@ pub fn docker_args(config: &SandboxConfig, cmd: &[&str]) -> Vec<String> {
     args.push("--security-opt".into());
     args.push("no-new-privileges".into());
 
+    // The mount is the sandbox's entire filesystem authority (ADR-101): with
+    // none, the host is unreachable; with one, exactly that subtree is reachable
+    // and nothing else. `--workdir` is set to the same place so a relative
+    // command behaves the way the caller means, rather than resolving against
+    // the image's default directory.
+    if let Some(mount) = &config.mount {
+        args.push("--volume".into());
+        args.push(mount.volume_spec());
+        args.push("--workdir".into());
+        args.push(mount.container.clone());
+    }
+
     if config.enforce_runsc {
         args.push("--runtime=runsc".into());
     }
@@ -230,6 +300,64 @@ mod tests {
             !joined.contains("--network bridge"),
             "default must not attach a bridge, got: {joined}"
         );
+    }
+
+    // --- ADR-101: the mount is the sandbox's filesystem authority ---
+
+    /// The property that makes a mount safe to add at all: without one, the
+    /// sandboxed process is handed no host filesystem whatsoever. If this ever
+    /// stops holding, every other guarantee here is downstream of an accident.
+    #[test]
+    fn no_mount_means_no_host_filesystem_reaches_the_sandbox() {
+        let joined = args_of(&SandboxConfig::default()).join(" ");
+        assert!(!joined.contains("--volume"), "got: {joined}");
+        assert!(!joined.contains("--workdir"), "got: {joined}");
+    }
+
+    #[test]
+    fn a_read_only_mount_is_marked_ro_and_sets_the_workdir() {
+        let config = SandboxConfig {
+            mount: Some(WorkspaceMount::read_only("/host/ws")),
+            ..SandboxConfig::default()
+        };
+        let args = args_of(&config);
+        let joined = args.join(" ");
+        assert!(
+            joined.contains("--volume /host/ws:/workspace:ro"),
+            "{joined}"
+        );
+        assert!(joined.contains("--workdir /workspace"), "{joined}");
+    }
+
+    /// Writable is a separate constructor precisely so it cannot be reached by
+    /// leaving a field unset — the same reasoning as `NetworkPolicy`.
+    #[test]
+    fn a_writable_mount_omits_ro_and_must_be_asked_for_by_name() {
+        let config = SandboxConfig {
+            mount: Some(WorkspaceMount::writable("/host/ws")),
+            ..SandboxConfig::default()
+        };
+        let joined = args_of(&config).join(" ");
+        assert!(joined.contains("--volume /host/ws:/workspace "), "{joined}");
+        assert!(
+            !joined.contains(":ro"),
+            "writable must not be marked ro: {joined}"
+        );
+    }
+
+    /// Adding a mount must not quietly relax anything else. The mount widens
+    /// filesystem reach and *only* that.
+    #[test]
+    fn mounting_does_not_relax_the_network_or_capabilities() {
+        let config = SandboxConfig {
+            mount: Some(WorkspaceMount::writable("/host/ws")),
+            ..SandboxConfig::default()
+        };
+        let joined = args_of(&config).join(" ");
+        assert!(joined.contains("--network none"), "{joined}");
+        assert!(joined.contains("--cap-drop=ALL"), "{joined}");
+        assert!(joined.contains("no-new-privileges"), "{joined}");
+        assert!(joined.contains("--runtime=runsc"), "{joined}");
     }
 
     /// The gVisor runtime is part of the airlock, so it is on by default too.
