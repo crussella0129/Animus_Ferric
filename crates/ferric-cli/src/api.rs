@@ -220,9 +220,6 @@ pub mod server {
             requested_skills: Vec::new(),
             allowed_skills: Vec::new(),
             mock: args.mock,
-            backend: backend_opts
-                .backend
-                .unwrap_or(crate::backend::BackendArg::Openai),
             params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
             quant: args
                 .quant

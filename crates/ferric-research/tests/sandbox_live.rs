@@ -10,7 +10,9 @@
 //! people to ignore it. The skip is loud in the output so a green run is not
 //! mistaken for a validated one.
 
-use ferric_research::sandbox::{NetworkPolicy, SandboxConfig, check_available, run_in_sandbox};
+use ferric_research::sandbox::{
+    NetworkPolicy, SandboxConfig, WorkspaceMount, check_available, run_in_sandbox,
+};
 
 /// `true` when the daemon is reachable; prints a visible skip notice otherwise.
 fn docker_ready(test: &str) -> bool {
@@ -283,5 +285,136 @@ fn the_airlock_enforces_the_allowlist_and_cannot_be_bypassed() {
         bypass.is_err(),
         "unsetting the proxy env MUST NOT restore egress — that was the whole \
          defect in the old bridge-based policy: {bypass:?}"
+    );
+}
+
+// --- ADR-101: the mount is the sandbox's entire filesystem authority ---
+
+/// Build a temp workspace with a marker file, plus a sibling "secret" directory
+/// OUTSIDE it standing in for everything on the host the agent must not reach.
+fn workspace_and_outsider() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ws = dir.path().join("ws");
+    std::fs::create_dir_all(&ws).expect("mkdir ws");
+    // The sandbox drops CAP_DAC_OVERRIDE (`--cap-drop=ALL`) and runs the
+    // container as root, so on Linux container-root is subject to ordinary DAC
+    // as "other". A freshly created dir is 0755 owned by the host user, which
+    // lets container-root read/traverse it (the read tests) but NOT create a
+    // file in it — so `a_writable_mount_persists_to_the_host` failed on native
+    // Linux CI while passing on Docker Desktop, whose file-sharing layer masks
+    // host DAC. Make the workspace world-writable so a *writable* mount can
+    // actually be written by the sandboxed process, which is the property under
+    // test. For a read-only mount this changes nothing: `:ro` still refuses the
+    // write — and now provably via the mount, not incidentally via DAC.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&ws, std::fs::Permissions::from_mode(0o777))
+            .expect("chmod workspace 0777");
+    }
+    std::fs::write(ws.join("inside.txt"), "workspace-content").expect("write inside");
+    // A sibling of the workspace, deliberately not mounted.
+    std::fs::write(dir.path().join("outside.txt"), "HOST-SECRET").expect("write outside");
+    (dir, ws)
+}
+
+/// The positive half: a mounted workspace is genuinely readable. Without this,
+/// the negative test below could pass because the container reads *nothing*,
+/// which would prove the mount broken rather than the confinement working.
+#[test]
+fn a_mounted_workspace_is_readable_inside_the_sandbox() {
+    if !docker_ready("a_mounted_workspace_is_readable_inside_the_sandbox") {
+        return;
+    }
+    let (_dir, ws) = workspace_and_outsider();
+    let config = SandboxConfig {
+        network: NetworkPolicy::Denied,
+        enforce_runsc: false,
+        mount: Some(WorkspaceMount::read_only(&ws)),
+        ..SandboxConfig::default()
+    };
+    let out = run(&config, &["cat", "inside.txt"]).expect("mounted file should be readable");
+    assert!(out.contains("workspace-content"), "got: {out}");
+}
+
+/// The security property: everything not mounted is unreachable. This is the
+/// assertion that makes a sandboxed `shell_exec` worth building — on the host
+/// today, the same read succeeds.
+#[test]
+fn the_host_outside_the_mount_is_unreachable() {
+    if !docker_ready("the_host_outside_the_mount_is_unreachable") {
+        return;
+    }
+    let (dir, ws) = workspace_and_outsider();
+    let outsider = dir.path().join("outside.txt");
+    // Sanity: the file really exists on the host and really holds the marker.
+    // Without this the container's failure to read it proves nothing.
+    assert_eq!(
+        std::fs::read_to_string(&outsider).expect("host read"),
+        "HOST-SECRET"
+    );
+
+    let config = SandboxConfig {
+        network: NetworkPolicy::Denied,
+        enforce_runsc: false,
+        mount: Some(WorkspaceMount::read_only(&ws)),
+        ..SandboxConfig::default()
+    };
+    // Reach for it by absolute host path AND by traversal out of the workdir.
+    for probe in [outsider.display().to_string(), "../outside.txt".to_string()] {
+        let result = run(&config, &["cat", &probe]);
+        assert_failed_because(
+            &result,
+            &["No such file or directory", "can't open"],
+            &format!("the sandbox must not read {probe}"),
+        );
+    }
+}
+
+/// A read-only mount must actually refuse writes — otherwise `read_only` is a
+/// label rather than a control.
+#[test]
+fn a_read_only_mount_refuses_writes() {
+    if !docker_ready("a_read_only_mount_refuses_writes") {
+        return;
+    }
+    let (_dir, ws) = workspace_and_outsider();
+    let config = SandboxConfig {
+        network: NetworkPolicy::Denied,
+        enforce_runsc: false,
+        mount: Some(WorkspaceMount::read_only(&ws)),
+        ..SandboxConfig::default()
+    };
+    let result = run(&config, &["sh", "-c", "echo mutated > inside.txt"]);
+    assert_failed_because(
+        &result,
+        &["Read-only file system", "read-only"],
+        "a read-only mount must reject a write",
+    );
+    // And the host file is untouched — the control worked, not just errored.
+    assert_eq!(
+        std::fs::read_to_string(ws.join("inside.txt")).expect("host read"),
+        "workspace-content"
+    );
+}
+
+/// The writable case, which a sandboxed `shell_exec` would need: the write
+/// lands, and it lands **on the host**, so work done in the sandbox is real.
+#[test]
+fn a_writable_mount_persists_to_the_host() {
+    if !docker_ready("a_writable_mount_persists_to_the_host") {
+        return;
+    }
+    let (_dir, ws) = workspace_and_outsider();
+    let config = SandboxConfig {
+        network: NetworkPolicy::Denied,
+        enforce_runsc: false,
+        mount: Some(WorkspaceMount::writable(&ws)),
+        ..SandboxConfig::default()
+    };
+    run(&config, &["sh", "-c", "echo from-sandbox > created.txt"]).expect("write should succeed");
+    assert_eq!(
+        std::fs::read_to_string(ws.join("created.txt")).expect("host read"),
+        "from-sandbox\n"
     );
 }

@@ -9,7 +9,7 @@ ferric query --file src/lib.rs --file notes.md "explain what this code does"
 
 # Media files (image/audio/video) attach as content parts — needs a model that
 # can read them, declared with --modality:
-ferric query --backend openai --file diagram.png --modality image "describe the diagram"
+ferric query --file diagram.png --modality image "describe the diagram"
 ```
 
 ## How a file is routed
@@ -28,7 +28,7 @@ Each `--file` is classified by extension and then gated — pure logic in
 **Gating (ADR-006 / ADR-022).** Media is attached only when **(a)** you declared
 its modality with `--modality` (explicit config — Ferric never sniffs a model's
 abilities) **and (b)** the backend can carry media (`supports_media` — true for
-the OpenAI valve, false for the in-process mistral.rs path). If either is
+the OpenAI valve, false for a text-only backend). If either is
 missing, the file is **skipped with a reason printed to stderr** — never sent
 silently and never a hard failure. So `--file photo.png` with no `--modality`
 runs fine, text-only, and tells you why the image wasn't sent.
@@ -41,11 +41,11 @@ server and model behind the OpenAI valve — e.g. Gemma 3n (`gemma-4-e4b`):
 ```sh
 # llama.cpp with a projector (the surest path; supports image/audio):
 ferric server up --engine llama-server --model gemma-3n-E4B.gguf --mmproj mmproj.gguf
-ferric query --backend openai --file clip.wav --modality audio "transcribe this"
+ferric query --file clip.wav --modality audio "transcribe this"
 ferric server down
 ```
 
-(Ollama can serve some vision models too; pull one and point `--backend openai`
+(Ollama can serve some vision models too; pull one and point `--api-base`
 at it. Audio/video coverage is widest on llama.cpp's libmtmd.)
 
 ## Notes

@@ -129,7 +129,6 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                     workspace: Some(report.path.clone()),
                     mock: false, // You could add args or let config handle backend etc.
                     backend_opts: crate::backend::BackendOpts {
-                        backend: Some(crate::backend::BackendArg::Openai),
                         model: None,
                         api_base: None,
                         api_key: None,
@@ -150,7 +149,7 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                     research: None,
                     research_urls: Vec::new(),
                     allow_standard_runtime: false,
-                    sink_action: "deny".to_string(),
+                    sink_action: crate::query::SinkActionArg::Deny,
                     accept_edits: false,
                 };
                 return crate::query::run_query(query_args);

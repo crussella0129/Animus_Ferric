@@ -21,8 +21,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 |---|---|
 | `--workspace <DIR>` | containment boundary (default: current dir) |
 | `--mock` | use the built-in scripted model — **no engine needed** |
-| `--backend openai` | inference backend (default) |
-| `--model <NAME>` | model id (required for a real openai backend) |
+| `--model <NAME>` | model id (required for a real backend) |
 | `--api-base <URL>` | server URL (default: the running `ferric server`, else `http://localhost:1234/v1`) |
 | `--api-key <KEY>` | API key, if your server needs one |
 | `--params-b <N>` · `--quant <Q>` · `--family <F>` · `--ctx <N>` | model profile → run policy (defaults 1.2 / Q4_K_M / unknown / 4096) |
@@ -37,7 +36,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--accept-edits` | pause before every mutating (`Write`/`Execute`) tool call and preview it; approve/reject from stdin (y/N) before it touches disk |
 | `--resume <TRACE>` | continue an interrupted, incomplete session |
 | `--research <QUERY>` | run the Ornstein research phase first (quarantined) |
-| `--sink-action deny\|warn\|requireapproval` | CaMeL sink policy for tainted data (default deny) |
+| `--sink-action requireapproval\|deny\|warn` | CaMeL sink policy for tainted data (default requireapproval) |
 
 ---
 
@@ -172,7 +171,7 @@ Bound to loopback by default. Requires the `backend-openai` build. Routes:
 ## `ferric dream` 🔵 — memory consolidation
 
 ```
-ferric dream [--recent-traces <N>] [--memory-file <PATH>] [backend/model]
+ferric dream [--recent-traces <N>] [--memory-file <PATH>] [--model <NAME>] [--api-base <URL>]
 ```
 
 Parses recent `.ferric/traces` into a synthesized `MEMORY.md` (default
@@ -198,6 +197,18 @@ agent's memory resets there. Workspace root is automatically resolved from the t
 ferric trace cat <FILE>        # render a JSONL trace as a readable log
 ferric trace verify <GOLDEN>   # replay with the mock to detect execution drift
 ```
+
+---
+
+## `ferric skills` — inspect installed skills (offline)
+
+```
+ferric skills list [--workspace <DIR>]   # list skills in .ferric/skills/ and how each authorizes
+```
+
+Skills are per-workspace instruction sets under `.ferric/skills/`. `list` shows
+each one and whether it is standing-authorized (via `allowed_skills` in config)
+or must be named per run with `ferric query --skill <name>` (ADR-091).
 
 ---
 

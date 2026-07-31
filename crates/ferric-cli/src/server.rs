@@ -577,9 +577,7 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         Some(rf) if is_listening("127.0.0.1", rf.port) => {
             println!("[ok] server reachable at {}", rf.base_url);
             println!("     health: {}", health_url(rf.engine, &rf.base_url));
-            println!(
-                "     verify the constrained path: `ferric toolbench --backend openai --protocol grammar`"
-            );
+            println!("     verify the constrained path: `ferric bench ltd --protocol grammar`");
         }
         Some(rf) => println!("[warn] registered server {} is not reachable", rf.base_url),
         None => println!("[info] no server running — `ferric server up` to start one"),

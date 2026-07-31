@@ -37,8 +37,22 @@ cd Animus_Ferric
 cargo build --release -p ferric-cli --features backend-openai
 ```
 
-The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Put it on
-your `PATH`, or call it by path. The examples below assume `ferric` is on `PATH`.
+The binary lands at `target/release/ferric` (`ferric.exe` on Windows) — call it
+by path, or put it on your `PATH`. To install it on your `PATH` the same way on
+Windows, Linux, and macOS, use `cargo install`, which builds in release and
+copies the binary into `~/.cargo/bin` (rustup already adds that to your `PATH`):
+
+```sh
+cargo install --path crates/ferric-cli --features backend-openai --force
+# wrappers that do exactly this:
+#   Linux/macOS:  ./tools/install.sh
+#   Windows:      .\tools\install.ps1
+```
+
+Re-run that **after every `git pull` or source change**: a plain `cargo build`
+updates `target/release/` but *not* the copy on your `PATH`, so an installed
+`ferric` can silently lag the code. `--force` re-installs despite the unchanged
+`0.1.0` version. The examples below assume `ferric` is on `PATH`.
 
 > **Built with no backend feature** (`cargo build -p ferric-cli`), only the
 > offline tooling works — `trace`, `launch`, `icm init`/`plan`, `cron add`/`list`,

@@ -13,11 +13,12 @@ use ferric_provider::Capabilities;
 /// Else `TextXml`, the honest fallback: the model is prompted to emit
 /// `<tool_call>` XML and the loop regex-scrapes it, claiming no constraint.
 ///
-/// The in-process mistral.rs backend advertises neither capability (its
-/// constrained path hangs upstream — ADR-020), so it lands on `TextXml` and
-/// never hangs by default; the constrained thesis lives on the backend that
-/// can actually enforce it. `_policy` is retained for signature stability
-/// (selection is capability-driven, not model-size-driven).
+/// A backend advertising neither capability lands on `TextXml`, the honest
+/// fallback — the constrained thesis lives on the backend that can actually
+/// enforce it. (This was the in-process mistral.rs path, whose constrained
+/// decoding hung upstream — ADR-020/027; it has since been removed, but the
+/// fallback stays correct for any such backend.) `_policy` is retained for
+/// signature stability (selection is capability-driven, not model-size-driven).
 pub fn select_protocol(
     _policy: &RunPolicy,
     caps: &Capabilities,
@@ -78,7 +79,7 @@ mod tests {
 
     #[test]
     fn neither_selects_text_xml() {
-        // mistral.rs-shaped caps: neither constraint nor native → honest XML.
+        // A backend with neither constraint nor native tool calling → honest XML.
         assert_eq!(
             select_protocol(&nano(), &caps(false, false), None),
             ActionProtocol::TextXml

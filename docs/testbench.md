@@ -33,13 +33,13 @@ ferric server doctor    # checks the engine binary + model are present
 ferric server down      # stops it and clears the runfile
 ```
 
-## 2. Run the diagnostic toolbench
+## 2. Run the diagnostic bench (`ferric bench ltd`)
 
 ```sh
-ferric bench ltd --backend openai --model <name> --protocol grammar --iterations 20 --report report.md
+ferric bench ltd --model <name> --protocol grammar --iterations 20 --report report.md
 ```
 
-- `--backend openai` with no `--api-base` auto-discovers the server from the runfile.
+- With no `--api-base`, the backend auto-discovers the server from the runfile.
 - `--protocol grammar` exercises the **constrained** path (the server enforces a
   JSON-Schema over the action space). Use `--protocol native` or `xml` to compare
   the unconstrained paths.
@@ -73,13 +73,13 @@ small models — that's the whole point of harness-owned decoding.
 ## 4. Calibrate the whole fleet at once
 
 Rather than dialing one model down by hand, sweep a list in one shot with
-`--models` (comma-separated — ollama model names, or GGUF files for the mistral
-backend). Each model is benched in turn and the results collapse into a single
+`--models` (comma-separated ollama / llama-server model names). Each model is
+benched in turn and the results collapse into a single
 **leaderboard**, sorted best→worst:
 
 ```sh
 # Every model shares the one running ollama server, so this is cheap:
-ferric bench ltd --backend openai \
+ferric bench ltd \
   --models qwen2.5-coder:7b,llama3.1:8b,qwen2.5-coder:1.5b \
   --protocol grammar --iterations 20 --report fleet.md
 ```
@@ -107,7 +107,7 @@ as a model proves itself). `--calibrate-rings` benches a model **ring by ring**
 and tells you the largest ring it reliably drives — the recommended `--max-ring`:
 
 ```sh
-ferric bench ltd --backend openai --models qwen2.5-coder:7b,llama3.2:1b \
+ferric bench ltd --models qwen2.5-coder:7b,llama3.2:1b \
   --protocol grammar --iterations 20 --calibrate-rings --report calib.md
 ```
 
@@ -140,11 +140,11 @@ tier (`measured_level`) and ring (`calibrated_ring`) — no manual `--max-ring`:
 
 ```sh
 # 1. Prove the model once — writes calibrated_ring into benchmarks/model_profiles.json
-ferric toolbench --backend openai --models llama3.2:1b --protocol grammar \
+ferric bench ltd --models llama3.2:1b --protocol grammar \
   --calibrate-rings --profile-dir benchmarks
 
 # 2. Every later query auto-applies it (the trace shows the capped ring)
-ferric query --backend openai --model llama3.2:1b "refactor this module"
+ferric query --model llama3.2:1b "refactor this module"
 ```
 
 `measured_level` *raises* the tier (capability earned); `calibrated_ring` *caps*
@@ -154,13 +154,13 @@ read-back is a safe no-op until you've actually measured the model.
 
 ## 6. The full agentic loop — `ferric bench full` (L0–L6)
 
-The toolbench measures whether a model fires the *right single tool call*.
+`ferric bench ltd` measures whether a model fires the *right single tool call*.
 `ferric bench full` runs the **whole multi-turn loop** against a ladder of real tasks
 (L0 single readonly call → L6 a full todo app), and sets the model's
 `measured_level` = the highest level it *completes* end-to-end:
 
 ```sh
-ferric bench full --backend openai --api-base http://localhost:11434/v1 \
+ferric bench full --api-base http://localhost:11434/v1 \
   --model qwen2.5-coder:7b --params-b 7 --protocol grammar
 ```
 
@@ -173,10 +173,10 @@ calibrated qwen2.5-coder:7b: measured_level 6 (Small -> Large)
 
 It writes `measured_level` into `benchmarks/model_profiles.json`, so a later
 `ferric query --profile-dir benchmarks` auto-runs the model at its *earned* tier
-(§5's read-back, now with full-loop data). `--backend openai` targets ollama or a
-`ferric server`; `--backend mistral` uses a local GGUF (text-only — its constrained
-path hangs upstream); `--mock` is the CI self-test. This is the end-to-end check
-that the constrained loop *completes tasks*, not just that it emits tool calls.
+(§5's read-back, now with full-loop data). The real backend (`--model`/
+`--api-base`) targets ollama or a `ferric server`; `--mock` is the CI self-test.
+This is the end-to-end check that the constrained loop *completes tasks*, not
+just that it emits tool calls.
 
 **Fleet sweep:** `--models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b` runs the whole
 ladder for each model and prints an **agentic capability leaderboard**

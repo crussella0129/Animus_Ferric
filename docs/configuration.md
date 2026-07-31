@@ -22,8 +22,7 @@ A TOML file at `<workspace>/.ferric/config.toml`. Every field is optional; set
 only what you want to stop repeating on the command line.
 
 ```toml
-# Inference backend + model
-backend     = "openai"          # currently the one backend
+# Model + inference server (the OpenAI-compatible HTTP valve is the only backend)
 model       = "qwen2.5-coder:7b"
 api_base    = "http://localhost:8080/v1"   # omit to auto-discover `ferric server`
 api_key     = ""                # if your server needs one

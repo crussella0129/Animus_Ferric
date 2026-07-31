@@ -3,8 +3,8 @@
 //!
 //! Executor boundary (plan C-009): `--mock` drives the loop on
 //! `futures_executor::block_on` (no tokio in the default build); the real
-//! backend constructs a tokio multi-thread runtime (mistral.rs client
-//! futures need ambient tokio).
+//! backend constructs a tokio multi-thread runtime (the OpenAI HTTP client's
+//! async futures need ambient tokio).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -22,9 +22,9 @@ use ferric_provider::{Capabilities, Completion, MockProvider, Provider, Sampling
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink};
 
+use crate::backend::BackendOpts;
 #[cfg(feature = "backend-openai")]
 use crate::backend::create_provider;
-use crate::backend::{BackendArg, BackendOpts};
 
 /// CLI spelling of `ActionProtocol`. `grammar` is the server-enforced
 /// constrained-JSON path (the thesis); `xml` is the unconstrained
@@ -68,6 +68,34 @@ impl From<TierArg> for ferric_core::Tier {
             TierArg::Large => ferric_core::Tier::Large,
             TierArg::Xl => ferric_core::Tier::Xl,
             TierArg::Ultra => ferric_core::Tier::Ultra,
+        }
+    }
+}
+
+/// CLI spelling of the CaMeL sink action (ADR-080). A `ValueEnum` rather than a
+/// free-form string so an unrecognized value is **rejected at parse time**
+/// instead of silently collapsing to `requireapproval` — quietly defaulting a
+/// typo is the wrong failure mode for a security control. The canonical
+/// spellings (`requireapproval`/`deny`/`warn`) are unchanged; `require-approval`
+/// is accepted as an alias.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum SinkActionArg {
+    /// Ask a human once per mutation (via `--accept-edits`); with no approver
+    /// available, deny. The default.
+    #[value(name = "requireapproval", alias = "require-approval")]
+    RequireApproval,
+    /// Block the mutation outright.
+    Deny,
+    /// Allow the mutation but warn on stderr.
+    Warn,
+}
+
+impl SinkActionArg {
+    pub(crate) fn into_policy(self) -> ferric_guard::SinkPolicy {
+        match self {
+            SinkActionArg::RequireApproval => ferric_guard::SinkPolicy::require_approval(),
+            SinkActionArg::Deny => ferric_guard::SinkPolicy::deny(),
+            SinkActionArg::Warn => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
         }
     }
 }
@@ -223,7 +251,6 @@ pub struct QueryArgs {
     #[arg(long)]
     pub allow_standard_runtime: bool,
 
-    /// The SinkAction for the CaMeL sink policy. Deny | RequireApproval | Warn.
     /// What to do with a MUTATION once this run has ingested untrusted content
     /// (ADR-080): `requireapproval` (default) | `deny` | `warn`.
     ///
@@ -231,8 +258,8 @@ pub struct QueryArgs {
     /// gated. `requireapproval` asks a human once per mutation (via
     /// `--accept-edits`); with no approver available there is nobody to ask, so
     /// it denies.
-    #[arg(long, default_value = "requireapproval")]
-    pub sink_action: String,
+    #[arg(long, value_enum, default_value = "requireapproval")]
+    pub sink_action: SinkActionArg,
 
     /// Accept-edits mode (ADR-070): pause before each mutating tool call
     /// (write/edit/delete/exec), show a preview, and require `y` to apply it.
@@ -248,7 +275,6 @@ pub struct QueryArgs {
 /// reuses the resulting `RunConfig` across every subsequent `tools/call`.
 pub(crate) struct RunConfigArgs {
     pub mock: bool,
-    pub backend: BackendArg,
     pub params_b: f32,
     pub quant: String,
     pub family: String,
@@ -301,10 +327,9 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
     // Capability seed for auto protocol selection (an explicit `--protocol`
     // always overrides it). The backend's own `capabilities()` is the source of
     // truth, but the provider is constructed later (in drive_real, or once at
-    // `ferric mcp` launch), so we mirror it from the chosen backend: the HTTP
-    // valve enforces a JSON-Schema constraint (→ ConstrainedJson); mistral.rs
-    // does neither — its constrained path hangs upstream (ADR-020) and it
-    // strips tools — so it lands on the honest TextXml fallback.
+    // `ferric mcp` launch), so we mirror the sole backend here: the OpenAI HTTP
+    // valve enforces a JSON-Schema constraint server-side (→ ConstrainedJson)
+    // and carries media.
     let caps = if a.mock {
         Capabilities {
             supports_native_tool_calls: true,
@@ -313,13 +338,11 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
             supports_media: false,
         }
     } else {
-        match a.backend {
-            BackendArg::Openai => Capabilities {
-                supports_native_tool_calls: true,
-                supports_constraint: true,
-                exposes_logits: false,
-                supports_media: true,
-            },
+        Capabilities {
+            supports_native_tool_calls: true,
+            supports_constraint: true,
+            exposes_logits: false,
+            supports_media: true,
         }
     };
     // Protocol is caps/override-driven (`select_protocol` ignores the policy), so
@@ -577,7 +600,6 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
 
     let mut config = build_run_config(&RunConfigArgs {
         mock: args.mock,
-        backend: args.backend_opts.backend.unwrap_or(BackendArg::Openai),
         params_b: resolved_params_b,
         quant: resolved_quant,
         family: resolved_family,
@@ -772,11 +794,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         stream_sink,
         resume,
         provenance: ferric_guard::Provenance::Clean,
-        sink_policy: match args.sink_action.to_lowercase().as_str() {
-            "warn" => ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn),
-            "deny" => ferric_guard::SinkPolicy::deny(),
-            _ => ferric_guard::SinkPolicy::require_approval(),
-        },
+        sink_policy: args.sink_action.into_policy(),
         hooks: config.hooks.clone(),
         edit_approver: approver_ref,
     };
@@ -1212,6 +1230,50 @@ mod tests {
     use super::*;
     use ferric_core::policy_for;
 
+    /// Each `--sink-action` spelling maps to the policy it names — the security
+    /// control must not drift from its label.
+    #[test]
+    fn sink_action_maps_to_the_named_policy() {
+        assert_eq!(
+            SinkActionArg::RequireApproval.into_policy(),
+            ferric_guard::SinkPolicy::require_approval()
+        );
+        assert_eq!(
+            SinkActionArg::Deny.into_policy(),
+            ferric_guard::SinkPolicy::deny()
+        );
+        assert_eq!(
+            SinkActionArg::Warn.into_policy(),
+            ferric_guard::SinkPolicy::new(ferric_guard::SinkAction::Warn)
+        );
+    }
+
+    /// The point of making this a `ValueEnum`: a typo is **rejected**, not
+    /// silently treated as `requireapproval` (which is what the old free-form
+    /// `String` match did). The canonical spellings and the `require-approval`
+    /// alias still parse.
+    #[test]
+    fn sink_action_accepts_known_spellings_and_rejects_typos() {
+        use clap::ValueEnum;
+        for ok in ["requireapproval", "require-approval"] {
+            assert_eq!(
+                SinkActionArg::from_str(ok, false),
+                Ok(SinkActionArg::RequireApproval),
+                "{ok} should parse"
+            );
+        }
+        assert_eq!(
+            SinkActionArg::from_str("deny", false),
+            Ok(SinkActionArg::Deny)
+        );
+        assert_eq!(
+            SinkActionArg::from_str("warn", false),
+            Ok(SinkActionArg::Warn)
+        );
+        // A near-miss for a security control must fail loudly, not default.
+        assert!(SinkActionArg::from_str("deni", false).is_err());
+    }
+
     /// T-3806: `Animus.md` folds in AFTER whichever base prompt already
     /// exists (composed or default), as a distinct, clearly-delimited block.
     #[test]
@@ -1295,7 +1357,6 @@ mod tests {
             requested_skills: Vec::new(),
             allowed_skills: Vec::new(),
             mock: true,
-            backend: BackendArg::Openai,
             params_b: 8.0,
             quant: "Q4_K_M".to_string(),
             family: "unknown".to_string(),

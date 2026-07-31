@@ -539,9 +539,6 @@ impl McpServer {
             requested_skills: Vec::new(),
             allowed_skills: Vec::new(),
             mock: args.mock,
-            backend: backend_opts
-                .backend
-                .unwrap_or(crate::backend::BackendArg::Openai),
             params_b: resolved_params_b,
             quant: resolved_quant,
             family: resolved_family,
@@ -716,7 +713,6 @@ mod tests {
         McpArgs {
             workspace: Some(ws.to_path_buf()),
             backend_opts: crate::backend::BackendOpts {
-                backend: None,
                 model: None,
                 api_base: None,
                 api_key: None,
@@ -874,7 +870,6 @@ mod tests {
             allowed_skills: Vec::new(),
             tier_override: None,
             mock: true,
-            backend: crate::backend::BackendArg::Openai,
             params_b: 1.2,
             quant: "Q4_K_M".to_string(),
             family: "unknown".to_string(),

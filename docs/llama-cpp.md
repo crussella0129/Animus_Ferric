@@ -52,11 +52,11 @@ Two ways:
 ```sh
 # (a) let Ferric launch + manage it (writes .ferric/server.json so other commands auto-discover it):
 ferric server up --engine llama-server --model /path/to/model.gguf [--mmproj mmproj.gguf] [--ctx 8192]
-ferric query  --backend openai --protocol grammar "…your task…"     # auto-discovers the server
+ferric query  --protocol grammar "…your task…"     # auto-discovers the server
 ferric server down
 
 # (b) or point Ferric at a server you started yourself:
-ferric query --backend openai --api-base http://127.0.0.1:8080/v1 --model any-label --protocol grammar "…"
+ferric query --api-base http://127.0.0.1:8080/v1 --model any-label --protocol grammar "…"
 ```
 
 `--engine ollama` remains available if you prefer ollama for model management.
@@ -72,7 +72,7 @@ models are text-only, so there's no blob to reuse for vision):
 #   huggingface.co/ggml-org/SmolVLM-500M-Instruct-GGUF
 llama-server -m SmolVLM-500M-Instruct-Q8_0.gguf --mmproj mmproj-SmolVLM-500M-Instruct-Q8_0.gguf -c 4096 --port 8080
 
-ferric query --backend openai --api-base http://127.0.0.1:8080/v1 \
+ferric query --api-base http://127.0.0.1:8080/v1 \
   --file pic.png --modality image "what is in this image?"
 ```
 
@@ -93,11 +93,11 @@ no workaround needed. Official, ungated GGUF + mmproj:
 llama-server -m gemma-4-E4B_q4_0-it.gguf --mmproj gemma-4-E4B-it-mmproj.gguf -c 8192 --port 8080
 
 # vision:
-ferric query --backend openai --api-base http://127.0.0.1:8080/v1 \
+ferric query --api-base http://127.0.0.1:8080/v1 \
   --file pic.png --modality image "describe this image, then call task_complete"
 
 # audio (Gemma 4's mmproj is a unified vision+audio projector — same server):
-ferric query --backend openai --api-base http://127.0.0.1:8080/v1 \
+ferric query --api-base http://127.0.0.1:8080/v1 \
   --file speech.wav --modality audio "transcribe this audio, then call task_complete"
 ```
 
