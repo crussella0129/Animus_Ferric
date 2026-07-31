@@ -34,7 +34,7 @@ use ferric_icm::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_works
 use ferric_loop::StopReason;
 use ferric_trace::JsonlSink;
 
-use crate::backend::{BackendArg, BackendOpts};
+use crate::backend::BackendOpts;
 use crate::query::{RunConfigArgs, build_run_config, mock_provider, now_ms, run_with_provider};
 
 /// The pipeline's backend, shared with `ferric chat` since sprint 103
@@ -252,7 +252,6 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         requested_skills: Vec::new(),
         allowed_skills: Vec::new(),
         mock: args.mock,
-        backend: backend_opts.backend.unwrap_or(BackendArg::Openai),
         params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
         quant: cfg.quant.clone().unwrap_or_else(|| "Q4_K_M".to_string()),
         family: cfg.family.clone().unwrap_or_else(|| "unknown".to_string()),

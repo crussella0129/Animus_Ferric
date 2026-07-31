@@ -8,11 +8,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::backend::{BackendArg, BackendOpts};
+use crate::backend::BackendOpts;
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct Config {
-    pub backend: Option<BackendArg>,
     pub model: Option<String>,
     pub api_base: Option<String>,
     pub api_key: Option<String>,
@@ -53,7 +52,6 @@ pub struct Config {
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
-            .field("backend", &self.backend)
             .field("model", &self.model)
             .field("api_base", &self.api_base)
             // Presence is useful for debugging config precedence; the value
@@ -78,7 +76,6 @@ impl Config {
     /// Project's value wins over user's, field-by-field.
     fn merged_over(self, user: Config) -> Config {
         Config {
-            backend: self.backend.or(user.backend),
             model: self.model.or(user.model),
             api_base: self.api_base.or(user.api_base),
             api_key: self.api_key.or(user.api_key),
@@ -214,7 +211,6 @@ pub fn load_layered(workspace: &Path) -> LoadedConfig {
 /// has ONE call site that's directly unit-testable in isolation, rather than
 /// being inlined at each of the two (previously duplicated) launch sites.
 pub fn merge_backend_opts(mut opts: BackendOpts, cfg: &Config) -> BackendOpts {
-    opts.backend = opts.backend.take().or(cfg.backend);
     opts.model = opts.model.take().or_else(|| cfg.model.clone());
     opts.api_base = opts.api_base.take().or_else(|| cfg.api_base.clone());
     opts.api_key = opts.api_key.take().or_else(|| cfg.api_key.clone());
@@ -344,49 +340,25 @@ mod tests {
         }
     }
 
+    /// Backward-compat: a legacy `backend = "openai"` key (written before the
+    /// single-backend simplification removed the field) must still parse — the
+    /// now-unknown key is ignored, not a hard error — so old
+    /// `.ferric/config.toml` files keep working.
     #[test]
-    fn backend_arg_config_field_uses_kebab_case_spelling() {
-        // Matches clap's own lowercase ValueEnum spelling ("mistral"/"openai").
-        let cfg: Config = toml::from_str("backend = \"openai\"\n").unwrap();
-        assert_eq!(cfg.backend, Some(BackendArg::Openai));
+    fn legacy_backend_key_is_ignored_not_an_error() {
+        let cfg: Config = toml::from_str("backend = \"openai\"\nmodel = \"m\"\n").unwrap();
+        assert_eq!(cfg.model, Some("m".to_string()));
     }
 
     fn no_backend_opts() -> BackendOpts {
         BackendOpts {
-            backend: None,
             model: None,
             api_base: None,
             api_key: None,
         }
     }
 
-    /// Test-critic C-001/C-003: `merge_backend_opts` — the same masking-
-    /// hazard class T-3803's `model_key` fix caught, but for `BackendOpts`'
-    /// own fields — is now directly unit-tested in isolation, not just
-    /// "correct by inspection" at its two call sites.
-    #[test]
-    fn merge_backend_opts_config_only_backend_is_applied() {
-        let cfg = Config {
-            backend: Some(BackendArg::Openai),
-            ..Config::default()
-        };
-        let merged = merge_backend_opts(no_backend_opts(), &cfg);
-        assert_eq!(merged.backend, Some(BackendArg::Openai));
-    }
-
-    #[test]
-    fn merge_backend_opts_cli_flag_wins_over_config() {
-        let cfg = Config {
-            backend: Some(BackendArg::Openai),
-            ..Config::default()
-        };
-        let mut opts = no_backend_opts();
-        opts.backend = Some(BackendArg::Openai);
-        let merged = merge_backend_opts(opts, &cfg);
-        assert_eq!(merged.backend, Some(BackendArg::Openai));
-    }
-
-    /// The remaining five `BackendOpts` fields get the same config-only
+    /// The `BackendOpts` fields get config-only
     /// precedence, in one pass — closing the rest of the C-001-class gap the
     /// critic flagged (not just `backend`).
     #[test]

@@ -16,7 +16,7 @@ pub use calibrate::{
 };
 
 pub use results::{ResultRow, append_row, read_rows};
-pub use runner::{Invocation, ModelArgs, OpenAiArgs, RunRecord, WorkspaceHandle, run_spec};
+pub use runner::{Invocation, OpenAiArgs, RunRecord, WorkspaceHandle, run_spec};
 pub use spec::{BenchSpec, ExpectKind, Expectation, embedded_specs};
 pub use verify::{
     ToolVerdict, TraceMetrics, completed, failure_admission, parse_trace, verify_expectations,

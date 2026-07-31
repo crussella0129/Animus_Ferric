@@ -215,7 +215,7 @@ mod tests {
             decide_attachment(&img, &[], true),
             Attachment::Skip(_)
         ));
-        // declared, but a text-only backend (mistral.rs) → skip with a reason
+        // declared, but a text-only backend → skip with a reason
         assert!(matches!(
             decide_attachment(&img, &[Modality::Image], false),
             Attachment::Skip(_)

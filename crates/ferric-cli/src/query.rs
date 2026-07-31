@@ -3,8 +3,8 @@
 //!
 //! Executor boundary (plan C-009): `--mock` drives the loop on
 //! `futures_executor::block_on` (no tokio in the default build); the real
-//! backend constructs a tokio multi-thread runtime (mistral.rs client
-//! futures need ambient tokio).
+//! backend constructs a tokio multi-thread runtime (the OpenAI HTTP client's
+//! async futures need ambient tokio).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -22,9 +22,9 @@ use ferric_provider::{Capabilities, Completion, MockProvider, Provider, Sampling
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink};
 
+use crate::backend::BackendOpts;
 #[cfg(feature = "backend-openai")]
 use crate::backend::create_provider;
-use crate::backend::{BackendArg, BackendOpts};
 
 /// CLI spelling of `ActionProtocol`. `grammar` is the server-enforced
 /// constrained-JSON path (the thesis); `xml` is the unconstrained
@@ -248,7 +248,6 @@ pub struct QueryArgs {
 /// reuses the resulting `RunConfig` across every subsequent `tools/call`.
 pub(crate) struct RunConfigArgs {
     pub mock: bool,
-    pub backend: BackendArg,
     pub params_b: f32,
     pub quant: String,
     pub family: String,
@@ -301,10 +300,9 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
     // Capability seed for auto protocol selection (an explicit `--protocol`
     // always overrides it). The backend's own `capabilities()` is the source of
     // truth, but the provider is constructed later (in drive_real, or once at
-    // `ferric mcp` launch), so we mirror it from the chosen backend: the HTTP
-    // valve enforces a JSON-Schema constraint (→ ConstrainedJson); mistral.rs
-    // does neither — its constrained path hangs upstream (ADR-020) and it
-    // strips tools — so it lands on the honest TextXml fallback.
+    // `ferric mcp` launch), so we mirror the sole backend here: the OpenAI HTTP
+    // valve enforces a JSON-Schema constraint server-side (→ ConstrainedJson)
+    // and carries media.
     let caps = if a.mock {
         Capabilities {
             supports_native_tool_calls: true,
@@ -313,13 +311,11 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
             supports_media: false,
         }
     } else {
-        match a.backend {
-            BackendArg::Openai => Capabilities {
-                supports_native_tool_calls: true,
-                supports_constraint: true,
-                exposes_logits: false,
-                supports_media: true,
-            },
+        Capabilities {
+            supports_native_tool_calls: true,
+            supports_constraint: true,
+            exposes_logits: false,
+            supports_media: true,
         }
     };
     // Protocol is caps/override-driven (`select_protocol` ignores the policy), so
@@ -577,7 +573,6 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
 
     let mut config = build_run_config(&RunConfigArgs {
         mock: args.mock,
-        backend: args.backend_opts.backend.unwrap_or(BackendArg::Openai),
         params_b: resolved_params_b,
         quant: resolved_quant,
         family: resolved_family,
@@ -1295,7 +1290,6 @@ mod tests {
             requested_skills: Vec::new(),
             allowed_skills: Vec::new(),
             mock: true,
-            backend: BackendArg::Openai,
             params_b: 8.0,
             quant: "Q4_K_M".to_string(),
             family: "unknown".to_string(),

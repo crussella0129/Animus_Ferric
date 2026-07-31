@@ -8,7 +8,7 @@
 //!
 //! Executor-agnostic: no tokio here. Callers drive `run` on whatever
 //! executor suits their backend (futures-executor for mocks, a tokio
-//! runtime for mistral.rs).
+//! runtime for the OpenAI HTTP backend).
 
 mod backoff;
 mod compact;

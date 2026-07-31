@@ -49,7 +49,19 @@ cd Animus_Ferric
 cargo build --release -p ferric-cli --features backend-openai
 ```
 
-The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built with **no** backend feature, only the trace tooling works; `query`/`toolbench` will tell you to rebuild with a feature. Examples below assume `ferric` is on your `PATH`.
+The binary lands at `target/release/ferric` (`ferric.exe` on Windows). Built with **no** backend feature, only the trace tooling works; `query`/`toolbench` will tell you to rebuild with a feature.
+
+**Put `ferric` on your `PATH`** (the examples below assume it is). The portable way — identical on Windows, Linux, and macOS — is `cargo install`, which builds in release *and* drops the binary into `~/.cargo/bin` (rustup already adds that directory to your `PATH`):
+
+```sh
+cargo install --path crates/ferric-cli --features backend-openai --force
+# or use the wrapper, which does exactly this:
+#   Linux/macOS:  ./tools/install.sh
+#   Windows:      .\tools\install.ps1
+```
+
+> [!IMPORTANT]
+> `cargo install` copies a **snapshot**. After you `git pull` or edit source, re-run it — a plain `cargo build` refreshes `target/release/` but **not** the copy on your `PATH`, so the `ferric` you invoke can silently lag the code (this is how a months-old binary kept offering a `--backend` flag that source had already removed). `--force` re-installs even though the version string (`0.1.0`) never changes.
 
 ## Using Ferric
 

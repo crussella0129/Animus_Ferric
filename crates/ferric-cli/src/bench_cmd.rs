@@ -15,7 +15,6 @@ use ferric_bench::{
 };
 use ferric_core::{ActionProtocol, tier_for_params};
 
-use crate::backend::BackendArg;
 use crate::query::ProtocolArg;
 
 #[derive(Args)]
@@ -31,11 +30,6 @@ pub struct BenchArgs {
     /// Variant label recorded in each results row.
     #[arg(long, default_value = "default")]
     pub variant: String,
-
-    /// Inference backend (without `--mock`): `openai` (ollama / llama-server via `--api-base`/
-    /// `--model` — the constrained workhorse).
-    #[arg(long, value_enum, default_value = "openai")]
-    pub backend: BackendArg,
 
     /// OpenAI-compatible base URL (openai backend; omit to auto-discover a
     /// running `ferric server`).
@@ -128,7 +122,6 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
             let inv = Invocation {
                 ferric_bin: ferric_bin.clone(),
                 protocol,
-                model: None,
                 openai: Some(OpenAiArgs {
                     api_base: args.api_base.clone(),
                     model: model_id.clone(),
@@ -183,29 +176,24 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
 
     // Single-model path. openai = ollama/llama-server; `model_name`
     // keys the calibration record (model-id for openai).
-    let (model, openai, model_name) = if args.mock {
-        (None, None, None)
+    let (openai, model_name) = if args.mock {
+        (None, None)
     } else {
-        match args.backend {
-            BackendArg::Openai => {
-                let Some(model_id) = args.model.clone() else {
-                    eprintln!("--model <id> is required for --backend openai");
-                    return ExitCode::FAILURE;
-                };
-                let oa = OpenAiArgs {
-                    api_base: args.api_base.clone(),
-                    model: model_id.clone(),
-                    params_b: args.params_b,
-                    ctx: args.ctx,
-                };
-                (None, Some(oa), Some(model_id))
-            }
-        }
+        let Some(model_id) = args.model.clone() else {
+            eprintln!("--model <id> is required (or use --mock)");
+            return ExitCode::FAILURE;
+        };
+        let oa = OpenAiArgs {
+            api_base: args.api_base.clone(),
+            model: model_id.clone(),
+            params_b: args.params_b,
+            ctx: args.ctx,
+        };
+        (Some(oa), Some(model_id))
     };
     let inv = Invocation {
         ferric_bin,
         protocol,
-        model,
         openai,
         prompts_dir: args.prompts_dir.clone(),
         keep_workspace: args.keep_workspace,

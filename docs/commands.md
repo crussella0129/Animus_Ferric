@@ -21,8 +21,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 |---|---|
 | `--workspace <DIR>` | containment boundary (default: current dir) |
 | `--mock` | use the built-in scripted model — **no engine needed** |
-| `--backend openai` | inference backend (default) |
-| `--model <NAME>` | model id (required for a real openai backend) |
+| `--model <NAME>` | model id (required for a real backend) |
 | `--api-base <URL>` | server URL (default: the running `ferric server`, else `http://localhost:1234/v1`) |
 | `--api-key <KEY>` | API key, if your server needs one |
 | `--params-b <N>` · `--quant <Q>` · `--family <F>` · `--ctx <N>` | model profile → run policy (defaults 1.2 / Q4_K_M / unknown / 4096) |

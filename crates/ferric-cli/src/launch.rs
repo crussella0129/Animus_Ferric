@@ -129,7 +129,6 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                     workspace: Some(report.path.clone()),
                     mock: false, // You could add args or let config handle backend etc.
                     backend_opts: crate::backend::BackendOpts {
-                        backend: Some(crate::backend::BackendArg::Openai),
                         model: None,
                         api_base: None,
                         api_key: None,

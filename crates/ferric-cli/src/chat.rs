@@ -380,9 +380,6 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         requested_skills: Vec::new(),
         allowed_skills: cfg.allowed_skills.clone().unwrap_or_default(),
         mock: args.mock,
-        backend: backend_opts
-            .backend
-            .unwrap_or(crate::backend::BackendArg::Openai),
         params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
         quant: args
             .quant
@@ -725,7 +722,6 @@ mod tests {
             requested_skills: Vec::new(),
             allowed_skills: Vec::new(),
             mock: true,
-            backend: crate::backend::BackendArg::Openai,
             params_b: 1.0,
             quant: "Q4_K_M".to_string(),
             family: "test".to_string(),

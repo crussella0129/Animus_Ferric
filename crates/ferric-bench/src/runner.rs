@@ -21,22 +21,14 @@ pub struct Invocation {
     /// The `ferric` binary to spawn (default: this executable).
     pub ferric_bin: PathBuf,
     pub protocol: ActionProtocol,
-    /// Mistral GGUF backend removed; kept for CLI compatibility if needed, but unused.
-    pub model: Option<ModelArgs>,
     /// OpenAI-compatible backend (ollama / llama-server — the constrained
-    /// workhorse). Takes precedence over `model`; requires `backend-openai` in
-    /// the spawned binary.
+    /// workhorse), or `None` for `--mock`. The only real backend since the
+    /// in-process mistral.rs GGUF path was removed (ADR-027); `requires
+    /// backend-openai` in the spawned binary.
     pub openai: Option<OpenAiArgs>,
     /// Prompt library dir passed through as `--prompts-dir`.
     pub prompts_dir: Option<PathBuf>,
     pub keep_workspace: bool,
-}
-
-pub struct ModelArgs {
-    pub model_dir: PathBuf,
-    pub model_file: String,
-    pub params_b: f32,
-    pub ctx: u32,
 }
 
 pub struct OpenAiArgs {
@@ -54,7 +46,6 @@ impl Invocation {
         Self {
             ferric_bin: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ferric")),
             protocol: ActionProtocol::ConstrainedJson,
-            model: None,
             openai: None,
             prompts_dir: None,
             keep_workspace: false,
@@ -163,10 +154,10 @@ fn protocol_flag(p: ActionProtocol) -> &'static str {
 }
 
 /// Build the child `query` argv (excluding the binary). Pure, so the backend
-/// branching is unit-testable without spawning. Precedence: `openai` (the
-/// constrained workhorse — ollama/llama-server) → `model` (mistral GGUF) →
-/// `--mock`. mistral's constrained path hangs (ADR-027), so the openai arm is how
-/// the full loop reaches a real *constrained* model.
+/// branching is unit-testable without spawning. Either the `openai` backend
+/// (the constrained workhorse — ollama/llama-server) or `--mock`; the
+/// in-process mistral.rs GGUF path was removed (ADR-027), so the openai arm is
+/// how the full loop reaches a real *constrained* model.
 fn query_args(prompt: &str, inv: &Invocation, workspace: &Path) -> Vec<String> {
     let mut args = vec![
         "query".to_string(),
@@ -177,8 +168,6 @@ fn query_args(prompt: &str, inv: &Invocation, workspace: &Path) -> Vec<String> {
         protocol_flag(inv.protocol).to_string(),
     ];
     if let Some(o) = &inv.openai {
-        args.push("--backend".to_string());
-        args.push("openai".to_string());
         if let Some(base) = &o.api_base {
             args.push("--api-base".to_string());
             args.push(base.clone());
@@ -190,17 +179,6 @@ fn query_args(prompt: &str, inv: &Invocation, workspace: &Path) -> Vec<String> {
             o.params_b.to_string(),
             "--ctx".to_string(),
             o.ctx.to_string(),
-        ]);
-    } else if let Some(m) = &inv.model {
-        args.extend([
-            "--model-dir".to_string(),
-            m.model_dir.display().to_string(),
-            "--model-file".to_string(),
-            m.model_file.clone(),
-            "--params-b".to_string(),
-            m.params_b.to_string(),
-            "--ctx".to_string(),
-            m.ctx.to_string(),
         ]);
     } else {
         args.push("--mock".to_string());
@@ -247,7 +225,6 @@ mod tests {
         Invocation {
             ferric_bin: PathBuf::from("ferric"),
             protocol: ActionProtocol::ConstrainedJson,
-            model: None,
             openai: None,
             prompts_dir: None,
             keep_workspace: false,
@@ -268,30 +245,13 @@ mod tests {
             ctx: 4096,
         });
         let args = query_args("do a task", &inv, Path::new("/ws"));
-        assert!(has_pair(&args, "--backend", "openai"), "{args:?}");
         assert!(has_pair(&args, "--model", "qwen2.5-coder:7b"));
         assert!(has_pair(&args, "--api-base", "http://localhost:11434/v1"));
         assert!(has_pair(&args, "--protocol", "grammar"));
-        assert!(!args.iter().any(|a| a == "--model-dir"), "no mistral flags");
+        // The single-backend simplification removed `--backend`; the child
+        // `query` no longer accepts it, so the runner must never emit it.
+        assert!(!args.iter().any(|a| a == "--backend"), "{args:?}");
         assert!(!args.iter().any(|a| a == "--mock"));
-    }
-
-    #[test]
-    fn query_args_mistral_arm_unchanged() {
-        let mut inv = base();
-        inv.model = Some(ModelArgs {
-            model_dir: PathBuf::from("/m"),
-            model_file: "f.gguf".to_string(),
-            params_b: 1.0,
-            ctx: 4096,
-        });
-        let args = query_args("t", &inv, Path::new("/ws"));
-        assert!(args.iter().any(|a| a == "--model-dir"));
-        assert!(args.iter().any(|a| a == "--model-file"));
-        assert!(
-            !args.iter().any(|a| a == "--backend"),
-            "mistral arm adds no --backend"
-        );
     }
 
     #[test]

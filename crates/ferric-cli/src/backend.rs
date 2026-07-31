@@ -1,29 +1,15 @@
-use clap::{Args, ValueEnum};
-use serde::{Deserialize, Serialize};
+use clap::Args;
 
 #[cfg(feature = "backend-openai")]
 use ferric_provider::Provider;
 
-/// `Serialize`/`Deserialize` + kebab-case (T-3801): lets `Config::backend`
-/// (sprint 38's persistent config) round-trip through TOML using the same
-/// spelling clap's own `ValueEnum` already uses (`"openai"`).
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum BackendArg {
-    /// OpenAI-compatible HTTP valve (llama.cpp / Ollama). Enforces a
-    /// `response_format` constraint server-side → `ConstrainedJson`.
-    Openai,
-}
-
+/// Connection options for the sole backend — the OpenAI-compatible HTTP valve
+/// (llama.cpp / Ollama), which enforces a `response_format` constraint
+/// server-side → `ConstrainedJson`. The in-process mistral.rs path (ADR-027)
+/// and the `--backend` selector it needed were removed once the valve became
+/// the only backend; a second variant re-enters here trivially if one lands.
 #[derive(Args, Clone)]
 pub struct BackendOpts {
-    /// Which backend to use. Default "openai" when neither this flag nor a
-    /// config file's `backend` is set (T-3803/T-3805) — bare `Option<T>`
-    /// rather than a clap default so a config-only-set value isn't masked by
-    /// an indistinguishable clap default.
-    #[arg(long, value_enum)]
-    pub backend: Option<BackendArg>,
-
     /// The model string identifier (required for openai backend)
     #[arg(long)]
     pub model: Option<String>,
@@ -53,33 +39,25 @@ fn resolve_base(explicit: Option<&str>, runfile: Option<&str>) -> String {
 pub async fn create_provider(
     opts: &BackendOpts,
 ) -> Result<Box<dyn Provider + Send + Sync>, String> {
-    match opts.backend.unwrap_or(BackendArg::Openai) {
-        BackendArg::Openai => {
-            #[cfg(feature = "backend-openai")]
-            {
-                use ferric_provider::openai::{OpenAiConfig, OpenAiProvider};
-                let model_id = opts.model.clone().unwrap_or_else(|| "default".to_string());
-                let api_key = opts
-                    .api_key
-                    .clone()
-                    .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-                let runfile = std::env::current_dir()
-                    .ok()
-                    .and_then(|d| crate::server::read_runfile(&d));
-                let base_url = resolve_base(
-                    opts.api_base.as_deref(),
-                    runfile.as_ref().map(|r| r.base_url.as_str()),
-                );
-                let config = OpenAiConfig {
-                    base_url,
-                    api_key: api_key.unwrap_or_else(|| "ollama".to_string()),
-                    model: model_id,
-                };
-                let provider = OpenAiProvider::new(config);
-                Ok(Box::new(provider))
-            }
-        }
-    }
+    use ferric_provider::openai::{OpenAiConfig, OpenAiProvider};
+    let model_id = opts.model.clone().unwrap_or_else(|| "default".to_string());
+    let api_key = opts
+        .api_key
+        .clone()
+        .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+    let runfile = std::env::current_dir()
+        .ok()
+        .and_then(|d| crate::server::read_runfile(&d));
+    let base_url = resolve_base(
+        opts.api_base.as_deref(),
+        runfile.as_ref().map(|r| r.base_url.as_str()),
+    );
+    let config = OpenAiConfig {
+        base_url,
+        api_key: api_key.unwrap_or_else(|| "ollama".to_string()),
+        model: model_id,
+    };
+    Ok(Box::new(OpenAiProvider::new(config)))
 }
 
 // No `create_provider` stub for the backend-free build: the callers carry

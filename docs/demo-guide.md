@@ -313,16 +313,16 @@ Don't take a small model's tool-calling on faith — measure it.
 
 ```sh
 # Single-turn fire rate + failure taxonomy + verdict band:
-ferric bench ltd --backend openai --model <name> --protocol grammar --iterations 20 --report report.md
+ferric bench ltd --model <name> --protocol grammar --iterations 20 --report report.md
 
 # The full L0–L6 capability ladder -> a measured_level:
-ferric bench full --backend openai --model <name>
+ferric bench full --model <name>
 
 # Calibrate a fleet into one leaderboard (pick the smallest still-solid model):
-ferric bench ltd --backend openai --models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b --protocol grammar --report fleet.md
+ferric bench ltd --models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b --protocol grammar --report fleet.md
 
 # Calibrate the rings a model can reliably drive:
-ferric bench ltd --backend openai --model <name> --calibrate-rings --profile-dir benchmarks
+ferric bench ltd --model <name> --calibrate-rings --profile-dir benchmarks
 ```
 
 `bench full --mock` runs the ladder offline (against the scripted model) to
