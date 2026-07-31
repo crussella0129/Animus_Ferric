@@ -36,7 +36,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--accept-edits` | pause before every mutating (`Write`/`Execute`) tool call and preview it; approve/reject from stdin (y/N) before it touches disk |
 | `--resume <TRACE>` | continue an interrupted, incomplete session |
 | `--research <QUERY>` | run the Ornstein research phase first (quarantined) |
-| `--sink-action deny\|warn\|requireapproval` | CaMeL sink policy for tainted data (default deny) |
+| `--sink-action requireapproval\|deny\|warn` | CaMeL sink policy for tainted data (default requireapproval) |
 
 ---
 

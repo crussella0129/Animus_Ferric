@@ -149,7 +149,7 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                     research: None,
                     research_urls: Vec::new(),
                     allow_standard_runtime: false,
-                    sink_action: "deny".to_string(),
+                    sink_action: crate::query::SinkActionArg::Deny,
                     accept_edits: false,
                 };
                 return crate::query::run_query(query_args);
