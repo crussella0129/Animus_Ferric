@@ -338,6 +338,7 @@ fn run_scripted_full_cfg(
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             hooks: None,
         },
         &mut sink,
@@ -366,11 +367,16 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
         .map(|r| match &r.event {
             ParsedEvent::Known(Event::SessionStart { .. }) => "session_start",
             ParsedEvent::Known(Event::SessionEnd { .. }) => "session_end",
+            ParsedEvent::Known(Event::SessionPaused { .. }) => "session_paused",
             ParsedEvent::Known(Event::PolicySelected { .. }) => "policy_selected",
             ParsedEvent::Known(Event::PromptComposed { .. }) => "prompt_composed",
             ParsedEvent::Known(Event::SessionPrompt { .. }) => "session_prompt",
+            ParsedEvent::Known(Event::RecoveryCheckpoint { .. }) => "recovery_checkpoint",
+            ParsedEvent::Known(Event::ResumePrompt { .. }) => "resume_prompt",
             ParsedEvent::Known(Event::TurnStart { .. }) => "turn_start",
             ParsedEvent::Known(Event::TurnEnd { .. }) => "turn_end",
+            ParsedEvent::Known(Event::ActionsProposed { .. }) => "actions_proposed",
+            ParsedEvent::Known(Event::TurnCommitted { .. }) => "turn_committed",
             ParsedEvent::Known(Event::PromptAssembled { .. }) => "prompt_assembled",
             ParsedEvent::Known(Event::ConstraintApplied { .. }) => "constraint_applied",
             ParsedEvent::Known(Event::RepetitionGuard { .. }) => "repetition_guard",
@@ -380,6 +386,11 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
             ParsedEvent::Known(Event::PermissionCheck { .. }) => "permission_check",
             ParsedEvent::Known(Event::ToolCall { .. }) => "tool_call",
             ParsedEvent::Known(Event::ToolResult { .. }) => "tool_result",
+            ParsedEvent::Known(Event::WorkspaceMutation { .. }) => "workspace_mutation",
+            ParsedEvent::Known(Event::VerificationCheckPassed { .. }) => {
+                "verification_check_passed"
+            }
+            ParsedEvent::Known(Event::CompletionGate { .. }) => "completion_gate",
             ParsedEvent::Known(Event::Note { .. }) => "note",
             ParsedEvent::Known(Event::HistoryCompacted { .. }) => "history_compacted",
             ParsedEvent::Unknown(_) => "unknown",

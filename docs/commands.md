@@ -66,7 +66,9 @@ ferric server up|status|doctor|down [OPTIONS]
 ```
 
 Launches and supervises an OpenAI-compatible engine, pinned to `127.0.0.1`, and
-writes `.ferric/server.json` so other commands auto-discover it.
+writes `.ferric/server.json` so other commands auto-discover it. `up` rejects an
+existing registration or occupied port and registers only after the spawned
+process returns HTTP 200 from its engine-specific health endpoint.
 
 `server up` options:
 
@@ -80,8 +82,8 @@ writes `.ferric/server.json` so other commands auto-discover it.
 | `--threads <N>` · `--gpu-layers <N>` · `--batch-size <N>` | edge/latency tuning (llama-server) |
 | `--tailscale` | expose the port over Tailscale (needs the `tailscale` CLI) |
 
-- `status` — health-check + base URL
-- `doctor` — engine binary + model presence + reachability
+- `status` — registered PID + HTTP health-check + base URL
+- `doctor` — engine binary + launch inputs + registered PID/HTTP health
 - `down` — stop + remove the runfile
 
 ---
@@ -91,6 +93,7 @@ writes `.ferric/server.json` so other commands auto-discover it.
 ```
 ferric bench ltd  [OPTIONS]     # single-turn tool fire rate + failure taxonomy
 ferric bench full [OPTIONS]     # the L0–L6 capability ladder -> measured_level
+ferric bench autonomy [OPTIONS] # internal repository-work/recovery baseline
 ```
 
 `bench ltd` key flags: `--model`/`--models <a,b,c>` (fleet), `--protocol`,
@@ -99,6 +102,13 @@ ferric bench full [OPTIONS]     # the L0–L6 capability ladder -> measured_leve
 
 `bench full` key flags: `--model`/`--models`, `--level <N>` (repeatable),
 `--protocol` (default grammar), `--results-dir`, `--mock`.
+
+`bench autonomy` uses the real server-backed path only and requires
+`--model <ID>`. Key flags: repeatable `--task <ID>` and
+`--variant <current|recovery|repository-brief>`, `--trials`, `--model-sha256`, `--ctx`,
+`--server-state <cold|warm|unknown>`, `--results-dir`, and `--list`. Corpus v1
+requires `--protocol grammar`; exit zero means the requested measurement is
+complete and infrastructure-clean, not that the model passed every task.
 
 See [testbench.md](testbench.md).
 

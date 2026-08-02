@@ -1,5 +1,7 @@
-use ferric_core::{ActionProtocol, Message, Role, ToolCall};
-use ferric_trace::Event;
+use ferric_core::{ActionProtocol, Message, Role, ToolCall, UserInputRequest};
+use ferric_trace::{
+    Event, GuardTurn, RECOVERY_CHECKPOINT_VERSION, RecoveryCheckpointV1, TurnBoundary,
+};
 
 // Formatting functions extracted from run.rs
 pub(crate) fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
@@ -76,12 +78,16 @@ pub(crate) fn result_message(
 pub struct PendingTurn {
     pub turn: u32,
     pub turn_end: Option<(Option<String>, bool)>,
+    /// The complete decoded batch. `None` identifies legacy traces written
+    /// before the durable proposal/commit protocol.
+    pub actions_proposed: Option<Vec<ToolCall>>,
     pub tool_calls: Vec<ToolCall>,
-    pub tool_results: Vec<(String, String, String)>,
+    pub tool_results: Vec<(String, String, String, bool)>,
     pub repetition_warned: bool,
     pub no_progress_warned: bool,
     pub failure_warned: bool,
     pub oscillation_warned: bool,
+    pub completion_gate_feedback: Option<String>,
 }
 
 impl PendingTurn {
@@ -115,7 +121,10 @@ impl PendingTurn {
         if self.tool_calls.is_empty() {
             // No traced ToolCall events this turn: run() would have hit the
             // no-action nudge and `continue`d — no guards, no dispatch.
-            return Some(vec![assistant, Message::user(no_action_nudge(protocol))]);
+            let feedback = self
+                .completion_gate_feedback
+                .unwrap_or_else(|| no_action_nudge(protocol).to_string());
+            return Some(vec![assistant, Message::user(feedback)]);
         }
 
         let mut out = vec![assistant];
@@ -129,7 +138,7 @@ impl PendingTurn {
         if self.oscillation_warned {
             out.push(oscillation_warn_message());
         }
-        for (id, name, output) in &self.tool_results {
+        for (id, name, output, _) in &self.tool_results {
             out.push(result_message(protocol, id, name, output, truncation_limit));
         }
         if self.failure_warned {
@@ -150,6 +159,16 @@ pub struct TraceProjector {
     pub pending: Option<PendingTurn>,
     pub head_len: usize,
     pub committed_turn_starts: Vec<(u32, usize)>,
+    /// Absolute next turn id across a resume chain.
+    pub next_turn: u32,
+    /// Action/result history needed to reconstruct the stateful guards.
+    pub guard_history: Vec<GuardTurn>,
+    pub nudged_for_no_action: bool,
+    pub truncated_once: bool,
+    pub last_input_tokens: Option<u32>,
+    pub pending_input: Option<UserInputRequest>,
+    pub mutation_epoch: u64,
+    pub passed_checks: std::collections::BTreeMap<String, u64>,
     /// Model-facing cap on a single tool result (ADR-002). Set from the
     /// `PolicySelected` event and nowhere else, which is what makes run and
     /// replay agree: the projector must also work in replay, where there is no
@@ -169,6 +188,14 @@ impl TraceProjector {
             pending: None,
             head_len: 0,
             committed_turn_starts: Vec::new(),
+            next_turn: 0,
+            guard_history: Vec::new(),
+            nudged_for_no_action: false,
+            truncated_once: false,
+            last_input_tokens: None,
+            pending_input: None,
+            mutation_epoch: 0,
+            passed_checks: std::collections::BTreeMap::new(),
             truncation_limit: ferric_tools::DEFAULT_TRUNCATION_LIMIT,
         }
     }
@@ -194,18 +221,67 @@ impl TraceProjector {
                     .push(Message::user_with_media(user.clone(), media.clone()));
                 self.head_len = self.messages.len();
             }
+            Event::RecoveryCheckpoint { state } if state.version == RECOVERY_CHECKPOINT_VERSION => {
+                self.messages = state.messages.clone();
+                self.turns = state.next_turn;
+                self.next_turn = state.next_turn;
+                self.last_text = state.last_text.clone();
+                self.head_len = state.head_len;
+                self.committed_turn_starts = state
+                    .committed_turn_starts
+                    .iter()
+                    .map(|boundary| (boundary.turn, boundary.message_index))
+                    .collect();
+                self.guard_history = state.guard_history.clone();
+                self.nudged_for_no_action = state.nudged_for_no_action;
+                self.truncated_once = state.truncated_once;
+                self.last_input_tokens = state.last_input_tokens;
+                self.pending_input = state.pending_input.clone();
+                self.mutation_epoch = state.mutation_epoch;
+                self.passed_checks = state.passed_checks.clone();
+                self.pending = None;
+            }
+            Event::ResumePrompt { user, media } => {
+                self.messages
+                    .push(Message::user_with_media(user.clone(), media.clone()));
+                // The answer/amendment and consumption of the pending request
+                // are one durable transition. If the process crashes before
+                // the following checkpoint, replay must not ask for the same
+                // answer a second time.
+                self.pending_input = None;
+            }
             Event::TurnStart { turn } => {
-                self.commit_pending();
+                // Pre-recovery traces used the next turn start as their commit
+                // barrier. Modern turns carry ActionsProposed and must instead
+                // wait for an explicit TurnCommitted event.
+                if self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.actions_proposed.is_none())
+                {
+                    self.commit_pending();
+                }
                 self.pending = Some(PendingTurn {
                     turn: *turn,
                     ..Default::default()
                 });
             }
             Event::TurnEnd {
-                text, truncated, ..
+                text,
+                input_tokens,
+                truncated,
+                ..
             } => {
                 if let Some(p) = &mut self.pending {
                     p.turn_end = Some((text.clone(), *truncated));
+                }
+                self.last_input_tokens = *input_tokens;
+            }
+            Event::ActionsProposed { turn, calls } => {
+                if let Some(p) = &mut self.pending
+                    && p.turn == *turn
+                {
+                    p.actions_proposed = Some(calls.clone());
                 }
             }
             Event::ToolCall { id, name, args } => {
@@ -218,11 +294,54 @@ impl TraceProjector {
                 }
             }
             Event::ToolResult {
-                id, name, output, ..
+                id,
+                name,
+                output,
+                is_error,
+                ..
             } => {
                 if let Some(p) = &mut self.pending {
                     p.tool_results
-                        .push((id.clone(), name.clone(), output.clone()));
+                        .push((id.clone(), name.clone(), output.clone(), *is_error));
+                }
+            }
+            Event::WorkspaceMutation { mutation_epoch, .. } => {
+                self.mutation_epoch = self.mutation_epoch.max(*mutation_epoch);
+            }
+            Event::VerificationCheckPassed {
+                name,
+                mutation_epoch,
+                ..
+            } => {
+                self.passed_checks.insert(name.clone(), *mutation_epoch);
+            }
+            Event::TurnCommitted {
+                turn,
+                dispatched,
+                errored,
+                stop_reason,
+                ..
+            } => {
+                if self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.turn == *turn)
+                {
+                    self.commit_pending_with(*dispatched, *errored, stop_reason.as_deref());
+                }
+            }
+            Event::CompletionGate {
+                mutation_epoch,
+                required_checks,
+                fresh_checks,
+                decision,
+            } if decision == "blocked" => {
+                if let Some(pending) = &mut self.pending {
+                    pending.completion_gate_feedback = Some(completion_gate_message(
+                        *mutation_epoch,
+                        required_checks,
+                        fresh_checks,
+                    ));
                 }
             }
             Event::RepetitionGuard { action } if action == "warned" => {
@@ -279,8 +398,41 @@ impl TraceProjector {
     /// Commits the currently open pending turn (a later TurnStart confirms it
     /// finished dispatching) and appends its messages to the context window.
     pub fn commit_pending(&mut self) {
+        let (dispatched, errored) = self
+            .pending
+            .as_ref()
+            .map(|pending| {
+                let dispatched = pending.tool_results.len() as u32;
+                let errored = pending
+                    .tool_results
+                    .iter()
+                    .filter(|(_, _, _, is_error)| *is_error)
+                    .count() as u32;
+                (dispatched, errored)
+            })
+            .unwrap_or_default();
+        self.commit_pending_with(dispatched, errored, None);
+    }
+
+    /// Commit a turn at its durable barrier and retain enough control state to
+    /// reconstruct the guards after a process restart.
+    pub fn commit_pending_with(
+        &mut self,
+        dispatched: u32,
+        errored: u32,
+        stop_reason: Option<&str>,
+    ) {
         if let (Some(p), Some(proto)) = (self.pending.take(), self.protocol) {
             let turn_num = p.turn;
+            let proposed = p.actions_proposed.clone().unwrap_or_default();
+            let truncated = p.turn_end.as_ref().is_some_and(|(_, value)| *value);
+            let completion_was_blocked = p.completion_gate_feedback.is_some();
+            if stop_reason == Some("needs_input") && self.pending_input.is_none() {
+                self.pending_input = proposed
+                    .iter()
+                    .find(|call| crate::terminator::is_request_user_input(&call.name))
+                    .and_then(|call| crate::terminator::request_of(&call.args).ok());
+            }
             if let Some(msgs) = p.finalize(proto, self.truncation_limit) {
                 if proto == ActionProtocol::NativeTools
                     && let Some(assistant) = msgs.first()
@@ -293,7 +445,64 @@ impl TraceProjector {
                     .push((turn_num, self.messages.len()));
                 self.messages.extend(msgs);
                 self.turns += 1;
+                self.next_turn = self.next_turn.max(turn_num.saturating_add(1));
+                if truncated {
+                    self.truncated_once = true;
+                }
+                if proposed.is_empty() && stop_reason.is_none() && !completion_was_blocked {
+                    self.nudged_for_no_action = true;
+                }
+                if !proposed.is_empty() && stop_reason != Some("needs_input") {
+                    self.guard_history.push(GuardTurn {
+                        turn: turn_num,
+                        calls: proposed,
+                        dispatched,
+                        errored,
+                    });
+                }
             }
         }
     }
+
+    /// Capture a self-contained inherited-state anchor for a new trace.
+    pub fn checkpoint(&self) -> RecoveryCheckpointV1 {
+        RecoveryCheckpointV1 {
+            version: RECOVERY_CHECKPOINT_VERSION,
+            messages: self.messages.clone(),
+            next_turn: self.next_turn,
+            last_text: self.last_text.clone(),
+            head_len: self.head_len,
+            committed_turn_starts: self
+                .committed_turn_starts
+                .iter()
+                .map(|&(turn, message_index)| TurnBoundary {
+                    turn,
+                    message_index,
+                })
+                .collect(),
+            guard_history: self.guard_history.clone(),
+            nudged_for_no_action: self.nudged_for_no_action,
+            truncated_once: self.truncated_once,
+            last_input_tokens: self.last_input_tokens,
+            pending_input: self.pending_input.clone(),
+            mutation_epoch: self.mutation_epoch,
+            passed_checks: self.passed_checks.clone(),
+        }
+    }
+}
+
+pub(crate) fn completion_gate_message(
+    mutation_epoch: u64,
+    required_checks: &[String],
+    fresh_checks: &[String],
+) -> String {
+    let missing = required_checks
+        .iter()
+        .filter(|name| !fresh_checks.contains(name))
+        .cloned()
+        .collect::<Vec<_>>();
+    format!(
+        "Completion is blocked: run the required verification check(s) at workspace mutation epoch {mutation_epoch}: {}. Then call task_complete again.",
+        missing.join(", ")
+    )
 }

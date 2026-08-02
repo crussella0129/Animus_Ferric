@@ -481,7 +481,7 @@ fn query_defaults_unchanged_after_clap_type_change() {
 
 /// Shared by the T-3803 config-precedence tests below: the `policy_selected`
 /// trace event's tier, for a `--mock` run against workspace `ws`.
-fn policy_tier(ws: &std::path::Path) -> String {
+fn policy_event(ws: &std::path::Path) -> serde_json::Value {
     let trace_dir = ws.join(".ferric").join("trace");
     let trace = std::fs::read_dir(&trace_dir)
         .unwrap()
@@ -493,7 +493,11 @@ fn policy_tier(ws: &std::path::Path) -> String {
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .find(|v| v["event"]["type"] == "policy_selected")
-        .expect("a policy_selected event")["event"]["tier"]
+        .expect("a policy_selected event")
+}
+
+fn policy_tier(ws: &std::path::Path) -> String {
+    policy_event(ws)["event"]["tier"]
         .as_str()
         .unwrap()
         .to_string()
@@ -524,6 +528,131 @@ fn config_file_sets_default_without_flag() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(policy_tier(ws.path()), "small");
+}
+
+#[test]
+fn no_config_ignores_project_config() {
+    let ws = tempfile::tempdir().unwrap();
+    write_project_config(ws.path(), "params_b = 8.0\n");
+
+    let out = ferric()
+        .args(["query", "--mock", "--no-config", "do a task"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        policy_tier(ws.path()),
+        "nano",
+        "--no-config must restore the ordinary built-in params_b default"
+    );
+}
+
+#[test]
+fn max_turns_flag_overrides_the_selected_policy_budget() {
+    let ws = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["query", "--mock", "--max-turns", "7", "do a task"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(policy_event(ws.path())["event"]["max_turns"], 7);
+}
+
+#[test]
+fn max_turns_rejects_zero() {
+    let out = ferric()
+        .args(["query", "--mock", "--max-turns", "0", "do a task"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+}
+
+#[test]
+fn explicit_checks_file_offers_named_tool_and_blocks_unverified_completion() {
+    let ws = tempfile::tempdir().unwrap();
+    let checks = ws.path().join("operator-checks.toml");
+    let executable = std::env::current_exe().unwrap();
+    std::fs::write(
+        &checks,
+        format!(
+            "[[check]]\nname = 'unit'\nprogram = '{}'\nargs = ['--list']\n",
+            executable.display()
+        ),
+    )
+    .unwrap();
+
+    let out = ferric()
+        .args(["query", "--mock", "--checks-file"])
+        .arg(&checks)
+        .arg("do a task")
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "the fixed mock never runs the check");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("verification checks authorized: unit"));
+
+    let trace = std::fs::read_dir(ws.path().join(".ferric").join("trace"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+        .unwrap();
+    let offered = std::fs::read_to_string(&trace)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value["event"]["type"] == "prompt_assembled")
+        .unwrap();
+    assert!(
+        offered["event"]["offered_tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == "run_check")
+    );
+    let gate = std::fs::read_to_string(&trace)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value["event"]["type"] == "completion_gate")
+        .expect("task_complete must be evidence-gated");
+    assert_eq!(gate["event"]["decision"], "blocked");
+    assert_eq!(
+        gate["event"]["required_checks"],
+        serde_json::json!(["unit"])
+    );
+}
+
+#[test]
+fn checks_file_failure_is_fatal_before_a_model_run() {
+    let ws = tempfile::tempdir().unwrap();
+    let missing = ws.path().join("missing-checks.toml");
+    let out = ferric()
+        .args(["query", "--mock", "--checks-file"])
+        .arg(&missing)
+        .arg("do a task")
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read checks file"));
+    assert!(
+        !ws.path().join(".ferric").join("trace").exists(),
+        "an invalid operator policy must fail before opening a model trace"
+    );
 }
 
 /// T-3803: a CLI flag wins over the same field set in `.ferric/config.toml`.
@@ -844,9 +973,10 @@ fn write_interrupted_trace_fixture(ws: &std::path::Path, session: &str) -> std::
     let trace_dir = ws.join(".ferric").join("trace");
     std::fs::create_dir_all(&trace_dir).unwrap();
     let path = trace_dir.join(format!("{session}.jsonl"));
+    let workspace = serde_json::to_string(&ws.display().to_string()).unwrap();
     let lines = [
         format!(
-            r#"{{"v":1,"ts_ms":1,"session":"{session}","seq":0,"event":{{"type":"session_start","workspace":"/ws"}}}}"#
+            r#"{{"v":1,"ts_ms":1,"session":"{session}","seq":0,"event":{{"type":"session_start","workspace":{workspace}}}}}"#
         ),
         format!(
             r#"{{"v":1,"ts_ms":2,"session":"{session}","seq":1,"event":{{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512}}}}"#
@@ -871,6 +1001,82 @@ fn write_interrupted_trace_fixture(ws: &std::path::Path, session: &str) -> std::
         ),
     ];
     std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    path
+}
+
+fn write_clarification_trace_fixture(ws: &std::path::Path) -> std::path::PathBuf {
+    let trace_dir = ws.join(".ferric").join("trace");
+    std::fs::create_dir_all(&trace_dir).unwrap();
+    let path = trace_dir.join("awaiting-answer.jsonl");
+    let mut sink = ferric_trace::JsonlSink::open(&path, "awaiting-answer").unwrap();
+    let request = ferric_core::UserInputRequest {
+        question: "Which database should this target?".to_string(),
+        context: "Both adapters exist and no default is documented.".to_string(),
+        options: vec!["SQLite".to_string(), "PostgreSQL".to_string()],
+    };
+    let mut assistant = ferric_core::Message::assistant("");
+    assistant.text = None;
+    assistant.tool_calls = vec![ferric_core::ToolCall {
+        id: "ask-1".to_string(),
+        name: ferric_loop::REQUEST_USER_INPUT.to_string(),
+        args: serde_json::to_value(&request).unwrap(),
+    }];
+    let state = ferric_trace::RecoveryCheckpointV1 {
+        version: ferric_trace::RECOVERY_CHECKPOINT_VERSION,
+        messages: vec![
+            ferric_core::Message::system("You are Ferric."),
+            ferric_core::Message::user("finish the database task"),
+            assistant,
+            ferric_core::Message::tool_result(
+                "ask-1",
+                "user input requested; session paused until an answer is supplied",
+            ),
+        ],
+        next_turn: 1,
+        last_text: None,
+        head_len: 2,
+        committed_turn_starts: vec![ferric_trace::TurnBoundary {
+            turn: 0,
+            message_index: 2,
+        }],
+        guard_history: Vec::new(),
+        nudged_for_no_action: false,
+        truncated_once: false,
+        last_input_tokens: Some(40),
+        pending_input: Some(request),
+        mutation_epoch: 0,
+        passed_checks: std::collections::BTreeMap::new(),
+    };
+    for event in [
+        ferric_trace::Event::SessionStart {
+            workspace: ws.display().to_string(),
+            resumed_from: None,
+        },
+        ferric_trace::Event::PolicySelected {
+            tier: ferric_core::Tier::Nano,
+            protocol: ferric_core::ActionProtocol::NativeTools,
+            max_turns: 15,
+            max_tools: 10,
+            prompt_budget_tokens: 2_800,
+            max_output_tokens: 512,
+            truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
+            tier_source: ferric_core::TierSource::Params.label().to_string(),
+        },
+        ferric_trace::Event::SessionPrompt {
+            system: "You are Ferric.".to_string(),
+            user: "finish the database task".to_string(),
+            media: Vec::new(),
+        },
+        ferric_trace::Event::SessionEnd {
+            reason: "needs_input".to_string(),
+        },
+        ferric_trace::Event::RecoveryCheckpoint { state },
+        ferric_trace::Event::SessionPaused {
+            reason: "needs_input".to_string(),
+        },
+    ] {
+        sink.write_event(event).unwrap();
+    }
     path
 }
 
@@ -960,6 +1166,62 @@ fn resume_with_extra_prompt_appends_nudge() {
         chars_without + "extra instruction".len() as u64,
         "the extra prompt must add exactly its own length to the assembled turn"
     );
+}
+
+#[test]
+fn clarification_resume_requires_and_traces_an_explicit_answer() {
+    let ws = tempfile::tempdir().unwrap();
+    let fixture = write_clarification_trace_fixture(ws.path());
+
+    let missing = ferric()
+        .args(["query", "--mock", "--resume"])
+        .arg(&fixture)
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("waiting for user input"));
+
+    let answered = ferric()
+        .args(["query", "--mock", "--resume"])
+        .arg(&fixture)
+        .args(["--answer", "SQLite", "--workspace"])
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        answered.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&answered.stderr)
+    );
+
+    let content = std::fs::read_dir(ws.path().join(".ferric").join("trace"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("q-"))
+        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+        .find(|content| content.contains("\"type\":\"resume_prompt\""))
+        .expect("answered continuation trace");
+    let events: Vec<serde_json::Value> = content
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let answer = events
+        .iter()
+        .find(|value| value["event"]["type"] == "resume_prompt")
+        .expect("answer must be traced");
+    assert!(
+        answer["event"]["user"]
+            .as_str()
+            .unwrap()
+            .contains("User answer: SQLite")
+    );
+    assert!(events.windows(3).any(|window| {
+        window[0]["event"]["type"] == "recovery_checkpoint"
+            && window[1]["event"]["type"] == "resume_prompt"
+            && window[2]["event"]["type"] == "recovery_checkpoint"
+    }));
 }
 
 #[test]
@@ -1530,7 +1792,10 @@ fn mcp_resume_rejects_already_stopped() {
         run_mcp_mock(ws.path(), &["--resume", path.to_str().unwrap()], "");
     assert!(!status.success());
     assert!(stderr.contains("cannot resume"), "stderr: {stderr}");
-    assert!(stderr.contains("already ended (done)"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("completed successfully (done)"),
+        "stderr: {stderr}"
+    );
 }
 
 // ── ICM agent delegation (sprint 73, ADR-064) ──────────────────────────────

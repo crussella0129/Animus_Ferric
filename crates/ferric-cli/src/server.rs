@@ -5,14 +5,15 @@
 //! launcher never binds a public interface and never execs an arbitrary binary
 //! (the engine is a closed enum).
 //!
-//! Lifecycle (`up`/`status`/`down`) uses a TCP-connect readiness probe and a
-//! platform kill, so the whole command is std-only and lives in the default
-//! build. The deeper *constrained* capability check is `ferric toolbench
+//! Lifecycle (`up`/`status`/`down`) uses an engine-specific HTTP health probe
+//! and a platform kill, so the whole command is std-only and lives in the
+//! default build. The deeper *constrained* capability check is `ferric toolbench
 //! --protocol grammar` against the launched server.
 
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use clap::{Args, Subcommand, ValueEnum};
@@ -182,9 +183,13 @@ pub fn command(cfg: &ServerConfig) -> LaunchCommand {
 /// expose `/v1/models`.
 pub fn health_url(engine: Engine, base_url: &str) -> String {
     let root = base_url.trim_end_matches("/v1").trim_end_matches('/');
+    format!("{root}{}", health_path(engine))
+}
+
+fn health_path(engine: Engine) -> &'static str {
     match engine {
-        Engine::LlamaServer => format!("{root}/health"),
-        Engine::Ollama => format!("{root}/v1/models"),
+        Engine::LlamaServer => "/health",
+        Engine::Ollama => "/v1/models",
     }
 }
 
@@ -231,22 +236,6 @@ fn read_runfile_impl(workspace: &Path, global: Option<PathBuf>) -> Option<Server
     None
 }
 
-/// Poll a TCP connect to `(host, port)` until it succeeds or `timeout` elapses.
-fn wait_listening(host: &str, port: u16, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    let addr = format!("{host}:{port}");
-    while Instant::now() < deadline {
-        if let Ok(mut addrs) = addr.to_socket_addrs()
-            && let Some(sa) = addrs.next()
-            && TcpStream::connect_timeout(&sa, Duration::from_millis(500)).is_ok()
-        {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    false
-}
-
 fn is_listening(host: &str, port: u16) -> bool {
     format!("{host}:{port}")
         .to_socket_addrs()
@@ -254,6 +243,104 @@ fn is_listening(host: &str, port: u16) -> bool {
         .and_then(|mut a| a.next())
         .map(|sa| TcpStream::connect_timeout(&sa, Duration::from_millis(500)).is_ok())
         .unwrap_or(false)
+}
+
+/// Issue a bounded HTTP/1.1 GET to the engine's local health endpoint.
+///
+/// A TCP handshake alone is not server readiness: an unrelated process can own
+/// the port, and llama-server opens its socket before every HTTP route is ready.
+/// Keep this std-only so `ferric server` remains available in the default build.
+fn http_status_ok(host: &str, port: u16, path: &str) -> bool {
+    let addr = format!("{host}:{port}");
+    let Some(socket_addr) = addr
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut addrs| addrs.next())
+    else {
+        return false;
+    };
+
+    let Ok(mut stream) = TcpStream::connect_timeout(&socket_addr, Duration::from_millis(500))
+    else {
+        return false;
+    };
+    let timeout = Some(Duration::from_millis(500));
+    if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
+        return false;
+    }
+
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+
+    // The status line is tiny. Bounding the reader prevents an uncooperative
+    // loopback service from making the readiness probe allocate without limit.
+    let mut first_line = String::new();
+    let mut reader = BufReader::new(stream).take(256);
+    if reader.read_line(&mut first_line).is_err() {
+        return false;
+    }
+    let mut fields = first_line.split_whitespace();
+    matches!(fields.next(), Some("HTTP/1.0") | Some("HTTP/1.1")) && fields.next() == Some("200")
+}
+
+fn registered_server_healthy(runfile: &ServerRunfile) -> bool {
+    process_alive(runfile.pid)
+        && http_status_ok("127.0.0.1", runfile.port, health_path(runfile.engine))
+}
+
+/// Retain the spawned child while polling HTTP readiness. This ties a healthy
+/// endpoint to a process that has not already exited before any runfile is
+/// written. Port-availability preflight closes the ordinary conflicting-listener
+/// case; the post-probe `try_wait` closes the child-exited-during-probe race.
+fn wait_healthy(
+    child: &mut Child,
+    engine: Engine,
+    host: &str,
+    port: u16,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(format!("engine process exited before readiness ({status})"));
+            }
+            Ok(None) => {}
+            Err(error) => return Err(format!("could not inspect engine process: {error}")),
+        }
+
+        if http_status_ok(host, port, health_path(engine)) {
+            return match child.try_wait() {
+                Ok(Some(status)) => Err(format!(
+                    "engine process exited while readiness was checked ({status})"
+                )),
+                Ok(None) => Ok(()),
+                Err(error) => Err(format!("could not inspect engine process: {error}")),
+            };
+        }
+
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "HTTP health endpoint {} did not return 200 within {}s",
+                health_path(engine),
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+fn stop_child(child: &mut Child) {
+    let already_exited = matches!(child.try_wait(), Ok(Some(_)));
+    if !already_exited {
+        let _ = child.kill();
+    }
+    // Reap an exited or killed child while this command still owns the handle.
+    let _ = child.wait();
 }
 
 /// Kill a process by PID, portably (TerminateProcess on Windows, SIGKILL on
@@ -331,12 +418,14 @@ fn process_alive(pid: u32) -> bool {
 
 /// Is the engine binary runnable? Tries `<program> --version`.
 fn binary_present(engine: Engine) -> bool {
-    Command::new(engine.program())
+    matches!(
+        Command::new(engine.program())
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .is_ok()
+        .status(),
+        Ok(status) if status.success()
+    )
 }
 
 pub fn run_server(workspace: &Path, cmd: ServerCommand) -> ExitCode {
@@ -363,7 +452,75 @@ fn config_from(args: &ServerUpArgs) -> ServerConfig {
     }
 }
 
+fn require_registration_absent(path: &Path, scope: &str) -> Result<(), String> {
+    match std::fs::metadata(path) {
+        Ok(_) => Err(format!(
+            "{scope} server registration already exists at {}; inspect it and stop the registered server before launching another",
+            path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "could not inspect {scope} server registration {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn validate_launch_preconditions(
+    workspace: &Path,
+    args: &ServerUpArgs,
+    global_runfile: Option<&Path>,
+) -> Result<(), String> {
+    if args.port == 0 {
+        return Err("--port must be greater than zero".to_string());
+    }
+
+    if args.engine == Engine::LlamaServer {
+        if args.ctx == 0 {
+            return Err("--ctx must be greater than zero for llama-server".to_string());
+        }
+
+        let model = args
+            .model
+            .as_deref()
+            .ok_or_else(|| "--model is required for llama-server".to_string())?;
+        if !Path::new(model).is_file() {
+            return Err(format!(
+                "llama-server model must be a regular file: {model}"
+            ));
+        }
+
+        if let Some(mmproj) = &args.mmproj
+            && !mmproj.is_file()
+        {
+            return Err(format!(
+                "llama-server multimodal projector must be a regular file: {}",
+                mmproj.display()
+            ));
+        }
+    }
+
+    require_registration_absent(&runfile_path(workspace), "local")?;
+    if let Some(global) = global_runfile {
+        require_registration_absent(global, "global")?;
+    }
+
+    if is_listening("127.0.0.1", args.port) {
+        return Err(format!(
+            "refusing to launch: 127.0.0.1:{} is already listening",
+            args.port
+        ));
+    }
+    Ok(())
+}
+
 fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
+    let global_path = global_runfile_path();
+    if let Err(error) = validate_launch_preconditions(workspace, args, global_path.as_deref()) {
+        eprintln!("server launch preflight failed: {error}");
+        return ExitCode::FAILURE;
+    }
+
     let cfg = config_from(args);
     let launch = command(&cfg);
 
@@ -373,7 +530,7 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         proc.env(k, v);
     }
     println!("Launching {} on {} ...", launch.program, cfg.base_url());
-    let child = match proc.spawn() {
+    let mut child = match proc.spawn() {
         Ok(child) => child,
         Err(e) => {
             eprintln!(
@@ -384,15 +541,19 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         }
     };
     let pid = child.id();
-    // Drop the handle — the server keeps running past this command.
-    drop(child);
 
-    if !wait_listening(&cfg.host, cfg.port, Duration::from_secs(300)) {
+    if let Err(error) = wait_healthy(
+        &mut child,
+        cfg.engine,
+        &cfg.host,
+        cfg.port,
+        Duration::from_secs(300),
+    ) {
         eprintln!(
-            "server did not become reachable on {} within 300s",
+            "server did not become HTTP-healthy at {}: {error}",
             cfg.base_url()
         );
-        let _ = kill_pid(pid);
+        stop_child(&mut child);
         return ExitCode::FAILURE;
     }
 
@@ -451,7 +612,7 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         .map_err(|_| ())
         .and_then(|s| std::fs::write(&path, &s).map_err(|_| ()));
 
-    let global_res = if let Some(global) = global_runfile_path() {
+    let global_res = if let Some(global) = global_path {
         if let Some(parent) = global.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -474,7 +635,7 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         eprintln!("server is up (pid {pid}) but the runfile could not be written");
-        let _ = kill_pid(pid);
+        stop_child(&mut child);
         ExitCode::FAILURE
     }
 }
@@ -482,15 +643,19 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
 fn status(workspace: &Path) -> ExitCode {
     match read_runfile(workspace) {
         Some(rf) => {
-            let live = is_listening("127.0.0.1", rf.port);
+            let healthy = registered_server_healthy(&rf);
             println!(
                 "engine={:?} pid={} base_url={} ({})",
                 rf.engine,
                 rf.pid,
                 rf.base_url,
-                if live { "reachable" } else { "NOT reachable" }
+                if healthy {
+                    "process alive, HTTP healthy"
+                } else {
+                    "process absent or HTTP NOT healthy"
+                }
             );
-            if live {
+            if healthy {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
@@ -558,28 +723,59 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
     );
     ok &= bin;
 
-    if let Some(model) = &args.model {
-        // Only path-like models can be checked locally (Ollama names can't).
-        if args.engine == Engine::LlamaServer {
-            let present = Path::new(model).exists();
+    if args.port == 0 {
+        println!("[INVALID] --port must be greater than zero");
+        ok = false;
+    }
+
+    if args.engine == Engine::LlamaServer {
+        if args.ctx == 0 {
+            println!("[INVALID] --ctx must be greater than zero for llama-server");
+            ok = false;
+        }
+
+        if let Some(model) = &args.model {
+            let present = Path::new(model).is_file();
             println!(
                 "[{}] model `{}`",
                 if present { "ok" } else { "MISSING" },
                 model
             );
             ok &= present;
+        } else {
+            println!("[MISSING] --model is required for llama-server");
+            ok = false;
         }
-    } else if args.engine == Engine::LlamaServer {
-        println!("[warn] no --model given (llama-server needs one)");
+
+        if let Some(mmproj) = &args.mmproj {
+            let present = mmproj.is_file();
+            println!(
+                "[{}] multimodal projector `{}`",
+                if present { "ok" } else { "MISSING" },
+                mmproj.display()
+            );
+            ok &= present;
+        }
     }
 
     match read_runfile(workspace) {
-        Some(rf) if is_listening("127.0.0.1", rf.port) => {
-            println!("[ok] server reachable at {}", rf.base_url);
-            println!("     health: {}", health_url(rf.engine, &rf.base_url));
-            println!("     verify the constrained path: `ferric bench ltd --protocol grammar`");
+        Some(rf) => {
+            let healthy = registered_server_healthy(&rf);
+            if healthy {
+                println!(
+                    "[ok] registered process alive and HTTP healthy at {}",
+                    rf.base_url
+                );
+                println!("     health: {}", health_url(rf.engine, &rf.base_url));
+                println!("     verify the constrained path: `ferric bench ltd --protocol grammar`");
+            } else {
+                println!(
+                    "[FAILED] registered server {} has no live PID and healthy HTTP endpoint",
+                    rf.base_url
+                );
+            }
+            ok &= healthy;
         }
-        Some(rf) => println!("[warn] registered server {} is not reachable", rf.base_url),
         None => println!("[info] no server running — `ferric server up` to start one"),
     }
 
@@ -593,6 +789,8 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+    use std::thread;
 
     fn cfg(engine: Engine) -> ServerConfig {
         ServerConfig {
@@ -607,6 +805,53 @@ mod tests {
             batch_size: None,
             tailscale: false,
         }
+    }
+
+    fn unused_port() -> u16 {
+        TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    fn llama_args(model: &Path) -> ServerUpArgs {
+        ServerUpArgs {
+            engine: Engine::LlamaServer,
+            model: Some(model.display().to_string()),
+            mmproj: None,
+            ctx: 8192,
+            port: unused_port(),
+            threads: None,
+            gpu_layers: Some(0),
+            batch_size: None,
+            tailscale: false,
+        }
+    }
+
+    fn serve_one_status(path: &'static str, status: &'static str) -> (u16, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0_u8; 512];
+            let read = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..read]);
+            assert!(
+                request.starts_with(&format!("GET {path} HTTP/1.1\r\n")),
+                "unexpected request: {request}"
+            );
+            let body = "{}";
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (port, handle)
     }
 
     #[test]
@@ -698,6 +943,187 @@ mod tests {
             health_url(Engine::Ollama, "http://127.0.0.1:11434/v1"),
             "http://127.0.0.1:11434/v1/models"
         );
+    }
+
+    #[test]
+    fn launch_preflight_rejects_existing_local_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"model").unwrap();
+        let local = runfile_path(dir.path());
+        std::fs::create_dir_all(local.parent().unwrap()).unwrap();
+        std::fs::write(&local, b"stale or live registration").unwrap();
+
+        let error = validate_launch_preconditions(dir.path(), &llama_args(&model), None)
+            .expect_err("an existing local registration must block launch");
+        assert!(error.contains("local server registration already exists"));
+    }
+
+    #[test]
+    fn launch_preflight_rejects_existing_global_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"model").unwrap();
+        let global = dir.path().join("global").join("server.json");
+        std::fs::create_dir_all(global.parent().unwrap()).unwrap();
+        std::fs::write(&global, b"stale or live registration").unwrap();
+
+        let error = validate_launch_preconditions(dir.path(), &llama_args(&model), Some(&global))
+            .expect_err("an existing global registration must block launch");
+        assert!(error.contains("global server registration already exists"));
+    }
+
+    #[test]
+    fn launch_preflight_rejects_occupied_target_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"model").unwrap();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let mut args = llama_args(&model);
+        args.port = listener.local_addr().unwrap().port();
+
+        let error = validate_launch_preconditions(dir.path(), &args, None)
+            .expect_err("an occupied port must block launch");
+        assert!(error.contains("is already listening"));
+    }
+
+    #[test]
+    fn llama_launch_requires_regular_model_and_mmproj_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.gguf");
+        let mut args = llama_args(&missing);
+        assert!(
+            validate_launch_preconditions(dir.path(), &args, None)
+                .unwrap_err()
+                .contains("model must be a regular file")
+        );
+
+        args.model = None;
+        assert!(
+            validate_launch_preconditions(dir.path(), &args, None)
+                .unwrap_err()
+                .contains("--model is required")
+        );
+
+        args.model = Some(dir.path().display().to_string());
+        assert!(
+            validate_launch_preconditions(dir.path(), &args, None)
+                .unwrap_err()
+                .contains("model must be a regular file")
+        );
+
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"model").unwrap();
+        args.model = Some(model.display().to_string());
+        args.mmproj = Some(dir.path().to_path_buf());
+        assert!(
+            validate_launch_preconditions(dir.path(), &args, None)
+                .unwrap_err()
+                .contains("projector must be a regular file")
+        );
+
+        let mmproj = dir.path().join("mmproj.gguf");
+        std::fs::write(&mmproj, b"projector").unwrap();
+        args.mmproj = Some(mmproj);
+        validate_launch_preconditions(dir.path(), &args, None).unwrap();
+    }
+
+    #[test]
+    fn llama_launch_rejects_zero_context_or_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"model").unwrap();
+        let mut args = llama_args(&model);
+        args.ctx = 0;
+        assert!(
+            validate_launch_preconditions(dir.path(), &args, None)
+                .unwrap_err()
+                .contains("--ctx must be greater than zero")
+        );
+
+        args.ctx = 8192;
+        args.port = 0;
+        assert!(
+            validate_launch_preconditions(dir.path(), &args, None)
+                .unwrap_err()
+                .contains("--port must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn http_probe_requires_engine_path_and_status_200() {
+        let (ok_port, ok_server) = serve_one_status("/health", "200 OK");
+        assert!(http_status_ok("127.0.0.1", ok_port, "/health"));
+        ok_server.join().unwrap();
+
+        let (failed_port, failed_server) = serve_one_status("/v1/models", "503 Loading");
+        assert!(!http_status_ok("127.0.0.1", failed_port, "/v1/models"));
+        failed_server.join().unwrap();
+    }
+
+    #[test]
+    fn readiness_fails_when_child_exits_before_http_health() {
+        #[cfg(windows)]
+        let mut child = Command::new("cmd")
+            .args(["/C", "exit 7"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let mut child = Command::new("sh")
+            .args(["-c", "exit 7"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let error = wait_healthy(
+            &mut child,
+            Engine::LlamaServer,
+            "127.0.0.1",
+            unused_port(),
+            Duration::from_secs(2),
+        )
+        .expect_err("an exited child cannot become ready");
+        assert!(error.contains("exited before readiness"));
+        stop_child(&mut child);
+    }
+
+    #[test]
+    fn readiness_succeeds_only_while_child_is_alive_and_http_is_200() {
+        let (port, server) = serve_one_status("/health", "200 OK");
+        #[cfg(windows)]
+        let mut child = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 30",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        wait_healthy(
+            &mut child,
+            Engine::LlamaServer,
+            "127.0.0.1",
+            port,
+            Duration::from_secs(2),
+        )
+        .expect("a live child plus HTTP 200 is ready");
+        assert!(matches!(child.try_wait(), Ok(None)));
+        stop_child(&mut child);
+        server.join().unwrap();
     }
 
     #[test]

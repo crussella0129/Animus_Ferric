@@ -4,6 +4,53 @@ use serde::{Deserialize, Serialize};
 /// readers must keep accepting unknown event types regardless (ADR-002).
 pub const TRACE_SCHEMA_VERSION: u32 = 1;
 
+/// Version of the payload carried by [`Event::RecoveryCheckpoint`].
+///
+/// Checkpoint payloads evolve independently from the long-lived JSONL
+/// envelope. A reader must reject checkpoint versions it does not understand.
+pub const RECOVERY_CHECKPOINT_VERSION: u32 = 1;
+
+/// The model-message index at which one committed turn begins.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnBoundary {
+    pub turn: u32,
+    pub message_index: usize,
+}
+
+/// One action-bearing turn retained to reconstruct loop-guard state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GuardTurn {
+    pub turn: u32,
+    pub calls: Vec<ferric_core::ToolCall>,
+    pub dispatched: u32,
+    pub errored: u32,
+}
+
+/// A self-contained base for a session that resumes another trace.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecoveryCheckpointV1 {
+    pub version: u32,
+    pub messages: Vec<ferric_core::Message>,
+    /// Absolute identifier for the next turn across a resume chain.
+    pub next_turn: u32,
+    pub last_text: Option<String>,
+    pub head_len: usize,
+    pub committed_turn_starts: Vec<TurnBoundary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guard_history: Vec<GuardTurn>,
+    pub nudged_for_no_action: bool,
+    pub truncated_once: bool,
+    pub last_input_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_input: Option<ferric_core::UserInputRequest>,
+    /// Successful mutating calls advance the epoch; check evidence is fresh
+    /// only when it was recorded at the current value.
+    #[serde(default)]
+    pub mutation_epoch: u64,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub passed_checks: std::collections::BTreeMap<String, u64>,
+}
+
 /// Serde default for `PolicySelected.tier_source` on pre-ADR-098 traces.
 fn default_tier_source() -> String {
     ferric_core::TierSource::Params.label().to_string()
@@ -37,6 +84,13 @@ pub enum Event {
         resumed_from: Option<String>,
     },
     SessionEnd {
+        reason: String,
+    },
+    /// Marks an incomplete, intentionally resumable stop. New writers emit
+    /// `SessionEnd`, then a recovery checkpoint, then this event. Keeping
+    /// `SessionEnd` first makes pre-recovery readers fail closed while
+    /// recovery-aware readers recognize the terminal suffix as a pause.
+    SessionPaused {
         reason: String,
     },
     /// The run policy chosen for this session (benchmark parity: tier and
@@ -91,6 +145,17 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         media: Vec<ferric_core::MediaPart>,
     },
+    /// Self-contained inherited state at the start of a resumed session.
+    RecoveryCheckpoint {
+        state: RecoveryCheckpointV1,
+    },
+    /// Additional user input supplied while resuming. It amends the original
+    /// objective; it never replaces the session prompt.
+    ResumePrompt {
+        user: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        media: Vec<ferric_core::MediaPart>,
+    },
     TurnStart {
         turn: u32,
     },
@@ -108,6 +173,11 @@ pub enum Event {
         /// `false`.
         #[serde(default)]
         truncated: bool,
+    },
+    /// Complete action batch decoded before guard evaluation or dispatch.
+    ActionsProposed {
+        turn: u32,
+        calls: Vec<ferric_core::ToolCall>,
     },
     /// What was about to be sent to the provider: size, shape, and which
     /// tools were on offer.
@@ -165,6 +235,36 @@ pub enum Event {
         output: String,
         is_error: bool,
         duration_ms: u64,
+    },
+    /// A successful mutating tool advanced the workspace evidence epoch.
+    WorkspaceMutation {
+        turn: u32,
+        tool: String,
+        mutation_epoch: u64,
+    },
+    /// One operator-authorized check passed at the named workspace epoch.
+    VerificationCheckPassed {
+        turn: u32,
+        name: String,
+        mutation_epoch: u64,
+    },
+    /// Durable barrier proving that one turn finished processing.
+    TurnCommitted {
+        turn: u32,
+        dispatched: u32,
+        errored: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        snapshot_commit: Option<String>,
+    },
+    /// Evidence used when accepting or rejecting an attempted completion.
+    CompletionGate {
+        mutation_epoch: u64,
+        required_checks: Vec<String>,
+        fresh_checks: Vec<String>,
+        /// `passed` or `blocked`.
+        decision: String,
     },
     Note {
         text: String,

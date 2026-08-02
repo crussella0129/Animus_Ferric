@@ -1,0 +1,956 @@
+schema_version = 1
+suite_id = "ferric-autonomy-v1"
+name = "Ferric internal autonomy baseline v1"
+scope = "internal_baseline"
+description = "A tracked internal regression corpus for ambiguity handling, durable recovery, and verified long-horizon repository work. It is not an external benchmark and must not be reported as general coding-agent reliability."
+policy_variants = ["current", "recovery", "repository_brief"]
+
+# ---------------------------------------------------------------------------
+# Repository ambiguity: four tasks require a user decision and four are fully
+# specified controls. This supports clarification precision/recall measurement.
+# ---------------------------------------------------------------------------
+
+[[tasks]]
+id = "A01"
+name = "choose-timeout-key"
+category = "ambiguity"
+prompt = "Rename the timeout setting to a clearer name throughout this small repository. The requested target and replacement name are intentionally unspecified. Do not guess a product decision: use request_user_input if a decision is required, then implement the answer, run the authorized check, and call task_complete."
+max_turns = 10
+timeout_s = 300
+
+[tasks.setup_files]
+"config.py" = '''
+DEFAULTS = {
+    "connect_timeout_s": 5,
+    "read_timeout_s": 30,
+}
+
+def timeout_for(kind):
+    return DEFAULTS[f"{kind}_timeout_s"]
+'''
+"client.py" = '''
+from config import timeout_for
+
+def request_timeout():
+    return timeout_for("read")
+'''
+"README.md" = '''
+# Client settings
+
+The client exposes separate connection and response-read timeouts.
+'''
+
+[tasks.terminal]
+current = "needs_input"
+resumable_outcomes = ["needs_input", "completed"]
+
+[tasks.clarification]
+required = true
+answer = "Rename read_timeout_s to response_timeout_s, update its consumer, leave connect_timeout_s unchanged, and do not keep a compatibility alias."
+expected_question_terms = ["read", "connect", "replacement", "name"]
+
+[[tasks.checks]]
+name = "timeout-key-contract"
+argv = ["{python}", "-B", "-c", 'import config, client; assert config.DEFAULTS == {"connect_timeout_s": 5, "response_timeout_s": 30}; assert client.request_timeout() == 30']
+timeout_s = 20
+
+[[tasks]]
+id = "A02"
+name = "choose-parser-scope"
+category = "ambiguity"
+prompt = "Fix the parser so surrounding whitespace is ignored. This repository contains two independently supported parsers and the issue does not say which compatibility surface may change. Pause for the missing scope decision, then apply only the answered scope, run the authorized check, and call task_complete."
+max_turns = 10
+timeout_s = 300
+
+[tasks.setup_files]
+"api/__init__.py" = ""
+"api/parser.py" = '''
+def parse_name(value):
+    return value
+'''
+"legacy/__init__.py" = ""
+"legacy/parser.py" = '''
+def parse_name(value):
+    return value
+'''
+"README.md" = '''
+# Parsers
+
+`api` and `legacy` are separate compatibility surfaces.
+'''
+
+[tasks.terminal]
+current = "needs_input"
+resumable_outcomes = ["needs_input", "completed"]
+
+[tasks.clarification]
+required = true
+answer = "Change api/parser.py only. The legacy parser must preserve whitespace for compatibility."
+expected_question_terms = ["api", "legacy", "which", "scope"]
+
+[[tasks.checks]]
+name = "parser-scope-contract"
+argv = ["{python}", "-B", "-c", 'from api.parser import parse_name as api_parse; from legacy.parser import parse_name as legacy_parse; assert api_parse("  Ada  ") == "Ada"; assert legacy_parse("  Ada  ") == "  Ada  "']
+timeout_s = 20
+
+[[tasks]]
+id = "A03"
+name = "choose-export-format"
+category = "ambiguity"
+prompt = "Make export_records return a deterministic machine-readable export. No serialization format or record ordering has been selected. Ask for that product decision before editing, then implement the answer, run the authorized check, and call task_complete."
+max_turns = 10
+timeout_s = 300
+
+[tasks.setup_files]
+"exporter.py" = '''
+def export_records(records):
+    return repr(records)
+'''
+"README.md" = '''
+# Exporter
+
+The exporter is consumed by external automation. Its wire format is a public contract.
+'''
+
+[tasks.terminal]
+current = "needs_input"
+resumable_outcomes = ["needs_input", "completed"]
+
+[tasks.clarification]
+required = true
+answer = "Use newline-delimited JSON, one compact object per line, sorted by integer id ascending, with a final newline for non-empty output."
+expected_question_terms = ["json", "csv", "format", "order"]
+
+[[tasks.checks]]
+name = "ndjson-export-contract"
+argv = ["{python}", "-B", "-c", 'import json, exporter; text = exporter.export_records([{"id": 2, "name": "beta"}, {"id": 1, "name": "alpha"}]); assert text == "{\"id\":1,\"name\":\"alpha\"}\n{\"id\":2,\"name\":\"beta\"}\n"; rows = [json.loads(line) for line in text.splitlines()]; assert rows == [{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}]']
+timeout_s = 20
+
+[[tasks]]
+id = "A04"
+name = "choose-duplicate-policy"
+category = "ambiguity"
+prompt = "Prevent register() from silently replacing an existing entry. The issue does not define whether duplicates should be ignored, merged, or rejected. Request that behavioral decision before changing code, then implement the answer, run the authorized check, and call task_complete."
+max_turns = 10
+timeout_s = 300
+
+[tasks.setup_files]
+"registry.py" = '''
+class Registry:
+    def __init__(self):
+        self._items = {}
+
+    def register(self, name, value):
+        self._items[name] = value
+
+    def get(self, name):
+        return self._items[name]
+'''
+
+[tasks.terminal]
+current = "needs_input"
+resumable_outcomes = ["needs_input", "completed"]
+
+[tasks.clarification]
+required = true
+answer = "Reject a duplicate by raising ValueError and preserve the originally registered value."
+expected_question_terms = ["reject", "ignore", "merge", "duplicate"]
+
+[[tasks.checks]]
+name = "duplicate-policy-contract"
+argv = ["{python}", "-B", "-c", '''from registry import Registry; registry = Registry(); registry.register("key", 1); raised = False
+try:
+    registry.register("key", 2)
+except ValueError:
+    raised = True
+assert raised and registry.get("key") == 1''']
+timeout_s = 20
+
+[[tasks]]
+id = "A05"
+name = "clamp-discount"
+category = "ambiguity"
+prompt = "Fix the discounted function in pricing.py so discount is clamped to the inclusive range 0.0 through 1.0 before multiplication. Preserve the function signature and return a float. This is fully specified: implement it without asking a question, run the authorized check, and call task_complete."
+max_turns = 8
+timeout_s = 240
+
+[tasks.setup_files]
+"pricing.py" = '''
+def discounted(price, discount):
+    return float(price) * (1.0 - float(discount))
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[tasks.clarification]
+required = false
+
+[[tasks.checks]]
+name = "discount-clamp-contract"
+argv = ["{python}", "-B", "-c", 'import pricing; assert pricing.discounted(100, -0.2) == 100.0; assert pricing.discounted(100, 0.25) == 75.0; assert pricing.discounted(100, 1.4) == 0.0']
+timeout_s = 20
+
+[[tasks]]
+id = "A06"
+name = "normalize-api-username"
+category = "ambiguity"
+prompt = "Update only api/parser.py so parse_username strips leading and trailing whitespace and lowercases the result. Do not modify legacy/parser.py. This scope and behavior are complete: do not request clarification. Run the authorized check and call task_complete."
+max_turns = 8
+timeout_s = 240
+
+[tasks.setup_files]
+"api/__init__.py" = ""
+"api/parser.py" = '''
+def parse_username(value):
+    return value
+'''
+"legacy/__init__.py" = ""
+"legacy/parser.py" = '''
+def parse_username(value):
+    return value
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[tasks.clarification]
+required = false
+
+[[tasks.checks]]
+name = "username-scope-contract"
+argv = ["{python}", "-B", "-c", 'from api.parser import parse_username as api_parse; from legacy.parser import parse_username as legacy_parse; assert api_parse("  Ada.L  ") == "ada.l"; assert legacy_parse("  Ada.L  ") == "  Ada.L  "']
+timeout_s = 20
+
+[[tasks]]
+id = "A07"
+name = "add-explicit-slugify"
+category = "ambiguity"
+prompt = "Add slugify(text) to text_utils.py with this exact contract: trim the input, lowercase it, replace each run of non-ASCII-alphanumeric characters with one hyphen, and strip leading or trailing hyphens. Do not ask for clarification. Run the authorized check and call task_complete."
+max_turns = 8
+timeout_s = 240
+
+[tasks.setup_files]
+"text_utils.py" = '''
+def title_case(text):
+    return text.title()
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[tasks.clarification]
+required = false
+
+[[tasks.checks]]
+name = "slugify-contract"
+argv = ["{python}", "-B", "-c", 'import text_utils; assert text_utils.slugify("  Hello, Ferric World!  ") == "hello-ferric-world"; assert text_utils.slugify("A___B") == "a-b"; assert text_utils.slugify("AéB") == "a-b"; assert text_utils.slugify("---") == ""']
+timeout_s = 20
+
+[[tasks]]
+id = "A08"
+name = "preserve-explicit-zero"
+category = "ambiguity"
+prompt = "Fix the retry_count function in config_loader.py so a missing retry_count defaults to 3 while an explicit value of 0 remains 0. Convert any supplied value with int(). The behavior is fully specified; do not ask a question. Run the authorized check and call task_complete."
+max_turns = 8
+timeout_s = 240
+
+[tasks.setup_files]
+"config_loader.py" = '''
+def retry_count(config):
+    return int(config.get("retry_count") or 3)
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[tasks.clarification]
+required = false
+
+[[tasks.checks]]
+name = "retry-default-contract"
+argv = ["{python}", "-B", "-c", 'import config_loader; assert config_loader.retry_count({}) == 3; assert config_loader.retry_count({"retry_count": 0}) == 0; assert config_loader.retry_count({"retry_count": "5"}) == 5']
+timeout_s = 20
+
+# ---------------------------------------------------------------------------
+# Durable recovery: all operational injections are deterministic logical
+# pauses. Crash-window timing is intentionally left to lower-level replay tests.
+# ---------------------------------------------------------------------------
+
+[[tasks]]
+id = "R01"
+name = "resume-idempotent-membership"
+category = "recovery"
+prompt = "Implement ensure_member(members, name) in roster.py so it returns a new list containing name exactly once, preserves the order of existing entries, and never mutates its input. Run the authorized check after the final mutation and call task_complete."
+max_turns = 10
+timeout_s = 300
+
+[tasks.setup_files]
+"roster.py" = '''
+def ensure_member(members, name):
+    raise NotImplementedError
+'''
+"README.md" = "The roster helpers are pure functions.\n"
+
+[tasks.terminal]
+current = "paused"
+resumable_outcomes = ["paused", "completed"]
+
+[tasks.recovery]
+segment_turns = 1
+max_segments = 2
+expected_resume_count = 1
+
+[[tasks.recovery.injections]]
+segment = 1
+kind = "budget_exhaustion"
+
+[[tasks.checks]]
+name = "idempotent-membership-contract"
+argv = ["{python}", "-B", "-c", 'import roster; original = ["ada", "linus"]; assert roster.ensure_member(original, "grace") == ["ada", "linus", "grace"]; assert roster.ensure_member(original, "ada") == original; assert original == ["ada", "linus"]']
+timeout_s = 20
+
+[[tasks]]
+id = "R02"
+name = "resume-after-provider-pause"
+category = "recovery"
+prompt = "Fix the parse_bool function in flags.py to accept booleans directly and, after trimming surrounding whitespace, the case-insensitive strings true, false, 1, and 0. Raise ValueError for anything else. Run the authorized check and call task_complete."
+max_turns = 10
+timeout_s = 300
+
+[tasks.setup_files]
+"flags.py" = '''
+def parse_bool(value):
+    return bool(value)
+'''
+
+[tasks.terminal]
+current = "paused"
+resumable_outcomes = ["paused", "completed"]
+
+[tasks.recovery]
+segment_turns = 1
+max_segments = 2
+expected_resume_count = 1
+
+[[tasks.recovery.injections]]
+segment = 1
+kind = "provider_failure"
+
+[[tasks.checks]]
+name = "strict-bool-contract"
+argv = ["{python}", "-B", "-c", '''import flags; assert flags.parse_bool(True) is True; assert flags.parse_bool(False) is False; assert flags.parse_bool(" TRUE ") is True; assert flags.parse_bool("0") is False; raised = False
+try:
+    flags.parse_bool("yes")
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 20
+
+[[tasks]]
+id = "R03"
+name = "resume-after-budget-pause"
+category = "recovery"
+prompt = "Implement merge_tags(existing, incoming) in tags.py. Return lowercase unique tags in first-seen order across both inputs; ignore blank or whitespace-only entries and do not mutate either input. Run the authorized check and call task_complete."
+max_turns = 10
+timeout_s = 300
+
+[tasks.setup_files]
+"tags.py" = '''
+def merge_tags(existing, incoming):
+    raise NotImplementedError
+'''
+
+[tasks.terminal]
+current = "paused"
+resumable_outcomes = ["paused", "completed"]
+
+[tasks.recovery]
+segment_turns = 1
+max_segments = 2
+expected_resume_count = 1
+
+[[tasks.recovery.injections]]
+segment = 1
+kind = "budget_exhaustion"
+
+[[tasks.checks]]
+name = "merge-tags-contract"
+argv = ["{python}", "-B", "-c", 'import tags; left = [" Rust ", "AI"]; right = ["rust", "  ", "Tools"]; assert tags.merge_tags(left, right) == ["rust", "ai", "tools"]; assert left == [" Rust ", "AI"] and right == ["rust", "  ", "Tools"]']
+timeout_s = 20
+
+[[tasks]]
+id = "R04"
+name = "resume-explicit-zero-fix"
+category = "recovery"
+prompt = "Fix the effective_limit function in limits.py so None uses default_limit, while an explicit 0 remains 0. Convert every non-None supplied value with int() before validation, reject negative values with ValueError, and return an int. Run the authorized check and call task_complete."
+max_turns = 10
+timeout_s = 300
+
+[tasks.setup_files]
+"limits.py" = '''
+def effective_limit(value, default_limit=100):
+    return int(value or default_limit)
+'''
+
+[tasks.terminal]
+current = "paused"
+resumable_outcomes = ["paused", "completed"]
+
+[tasks.recovery]
+segment_turns = 1
+max_segments = 2
+expected_resume_count = 1
+
+[[tasks.recovery.injections]]
+segment = 1
+kind = "budget_exhaustion"
+
+[[tasks.checks]]
+name = "effective-limit-contract"
+argv = ["{python}", "-B", "-c", '''import limits; assert limits.effective_limit(None, 7) == 7; assert limits.effective_limit(0, 7) == 0; assert limits.effective_limit("4", 7) == 4; raised = False
+try:
+    limits.effective_limit(-1)
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 20
+
+[[tasks]]
+id = "R05"
+name = "resume-cross-file-status-change"
+category = "recovery"
+prompt = "Add normalize_status(value) to status.py so aliases queued and pending map to pending, running and active map to running, and done and complete map to complete, case-insensitively after trimming. Unknown values raise ValueError. Update job.py so Job.set_status uses normalize_status. Run the authorized check and call task_complete."
+max_turns = 14
+timeout_s = 360
+
+[tasks.setup_files]
+"status.py" = '''
+VALID = {"pending", "running", "complete"}
+'''
+"job.py" = '''
+class Job:
+    def __init__(self):
+        self.status = "pending"
+
+    def set_status(self, value):
+        self.status = value
+'''
+
+[tasks.terminal]
+current = "paused"
+resumable_outcomes = ["paused", "completed"]
+
+[tasks.recovery]
+segment_turns = 1
+max_segments = 2
+expected_resume_count = 1
+
+[[tasks.recovery.injections]]
+segment = 1
+kind = "provider_failure"
+
+[[tasks.checks]]
+name = "job-status-contract"
+argv = ["{python}", "-B", "-c", '''import status; from job import Job; assert status.normalize_status(" queued ") == "pending"; assert status.normalize_status("ACTIVE") == "running"; job = Job(); job.set_status("done"); assert job.status == "complete"; raised = False
+try:
+    job.set_status("lost")
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 20
+
+[[tasks]]
+id = "R06"
+name = "resume-stable-deduplication"
+category = "recovery"
+prompt = "Implement dedupe_by_id(records) in records.py. Keep the first record for each id, preserve first-seen order, return shallow copies, and raise ValueError when a record has no id key. Do not mutate the input. Run the authorized check and call task_complete."
+max_turns = 12
+timeout_s = 330
+
+[tasks.setup_files]
+"records.py" = '''
+def dedupe_by_id(records):
+    raise NotImplementedError
+'''
+
+[tasks.terminal]
+current = "paused"
+resumable_outcomes = ["paused", "completed"]
+
+[tasks.recovery]
+segment_turns = 1
+max_segments = 2
+expected_resume_count = 1
+
+[[tasks.recovery.injections]]
+segment = 1
+kind = "provider_failure"
+
+[[tasks.checks]]
+name = "dedupe-records-contract"
+argv = ["{python}", "-B", "-c", '''import records; source = [{"id": 2, "v": "first"}, {"id": 1}, {"id": 2, "v": "second"}]; result = records.dedupe_by_id(source); assert result == [{"id": 2, "v": "first"}, {"id": 1}]; assert result[0] is not source[0]; assert source[2]["v"] == "second"; raised = False
+try:
+    records.dedupe_by_id([{}])
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 20
+
+[[tasks]]
+id = "R07"
+name = "resume-with-pinned-timezone-answer"
+category = "recovery"
+prompt = "Add format_timestamp(epoch_seconds) to timestamps.py for log output. The repository does not specify which timezone log timestamps use. Do not guess; request the missing timezone decision, resume with the supplied answer, run the authorized check, and call task_complete."
+max_turns = 12
+timeout_s = 360
+
+[tasks.setup_files]
+"timestamps.py" = '''
+def format_timestamp(epoch_seconds):
+    raise NotImplementedError
+'''
+"README.md" = "Timestamps use an operator-selected log timezone.\n"
+
+[tasks.terminal]
+current = "needs_input"
+resumable_outcomes = ["needs_input", "completed"]
+
+[tasks.recovery]
+segment_turns = 1
+max_segments = 2
+expected_resume_count = 1
+answer = "Use UTC and return an ISO-8601 string with a trailing Z and whole-second precision."
+expected_question_terms = ["timezone", "UTC"]
+
+[[tasks.recovery.injections]]
+segment = 1
+kind = "clarification_pause"
+
+[[tasks.checks]]
+name = "utc-timestamp-contract"
+argv = ["{python}", "-B", "-c", 'import timestamps; assert timestamps.format_timestamp(0) == "1970-01-01T00:00:00Z"; assert timestamps.format_timestamp(946684800) == "2000-01-01T00:00:00Z"']
+timeout_s = 20
+
+[[tasks]]
+id = "R08"
+name = "resume-of-resume-with-refusals"
+category = "recovery"
+prompt = "Implement append_unique_event(events, event) in events.py. Return a new list and append a shallow copy of event only when no existing item has the same event_id; preserve all existing entries and never mutate inputs. Run the authorized check after the final mutation and call task_complete."
+max_turns = 14
+timeout_s = 420
+
+[tasks.setup_files]
+"events.py" = '''
+def append_unique_event(events, event):
+    raise NotImplementedError
+'''
+"README.md" = "Event replay must never duplicate an event_id.\n"
+
+[tasks.terminal]
+current = "paused"
+resumable_outcomes = ["paused", "paused", "completed"]
+workspace_mismatch = "resume_rejected"
+completed_session_resume = "resume_rejected"
+
+[tasks.recovery]
+segment_turns = 1
+max_segments = 3
+expected_resume_count = 2
+refusal_modes = ["workspace_mismatch", "completed_session"]
+
+[[tasks.recovery.injections]]
+segment = 1
+kind = "budget_exhaustion"
+
+[[tasks.recovery.injections]]
+segment = 2
+kind = "budget_exhaustion"
+
+[[tasks.checks]]
+name = "unique-event-contract"
+argv = ["{python}", "-B", "-c", 'import events; original = [{"event_id": "e1", "value": 1}]; duplicate = {"event_id": "e1", "value": 9}; fresh = {"event_id": "e2", "value": 2}; assert events.append_unique_event(original, duplicate) == original; result = events.append_unique_event(original, fresh); assert result == [original[0], fresh] and result[-1] is not fresh; assert original == [{"event_id": "e1", "value": 1}]']
+timeout_s = 20
+
+# ---------------------------------------------------------------------------
+# Long-horizon repository work: cross-file changes with executable end-state
+# grading. Tasks remain intentionally small enough for a local 7B model.
+# ---------------------------------------------------------------------------
+
+[[tasks]]
+id = "H01"
+name = "inventory-reorder-plan"
+category = "long_horizon"
+prompt = "Complete the inventory reorder feature across models.py and reorder.py. validate_item(item) must return a normalized shallow copy with a non-empty string sku and non-negative integer quantity and reorder_point, raising ValueError otherwise. build_reorder_plan(items) must validate every item, reject duplicate skus, and return sku/order_qty dictionaries for items below their reorder point, sorted by sku. order_qty raises stock to exactly twice the reorder point. Preserve inputs. Run the authorized check and call task_complete."
+max_turns = 26
+timeout_s = 720
+
+[tasks.setup_files]
+"models.py" = '''
+def validate_item(item):
+    return item
+'''
+"reorder.py" = '''
+from models import validate_item
+
+def build_reorder_plan(items):
+    return []
+'''
+"README.md" = '''
+# Inventory
+
+Reorder plans are deterministic so operators can review their diffs.
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[[tasks.checks]]
+name = "inventory-reorder-contract"
+argv = ["{python}", "-B", "-c", '''from models import validate_item; from reorder import build_reorder_plan; source = [{"sku": "z", "quantity": 2, "reorder_point": 5}, {"sku": "a", "quantity": 8, "reorder_point": 4}, {"sku": "b", "quantity": 0, "reorder_point": 3}]; assert build_reorder_plan(source) == [{"sku": "b", "order_qty": 6}, {"sku": "z", "order_qty": 8}]; assert source[0]["quantity"] == 2; item = {"sku": "x", "quantity": 0, "reorder_point": 0}; normalized = validate_item(item); assert normalized == item and normalized is not item
+for bad in ({"sku": "", "quantity": 0, "reorder_point": 0}, {"sku": "x", "quantity": -1, "reorder_point": 0}, {"sku": "x", "quantity": 0, "reorder_point": -1}, {"sku": "x", "quantity": "0", "reorder_point": 0}):
+    try:
+        validate_item(bad)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"accepted invalid item: {bad!r}")
+raised = False
+try:
+    build_reorder_plan([{"sku": "x", "quantity": 1, "reorder_point": 2}, {"sku": "x", "quantity": 0, "reorder_point": 2}])
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 30
+
+[[tasks]]
+id = "H02"
+name = "nested-config-overrides"
+category = "long_horizon"
+prompt = "Implement load_config(overrides) in config.py using DEFAULT_CONFIG from defaults.py. Return a deep copy with recursive overrides. Preserve unspecified defaults and explicit False or 0 values. Reject unknown keys at any depth with ValueError, and never mutate DEFAULT_CONFIG or overrides. Lists and scalar values replace their defaults rather than merge. Run the authorized check and call task_complete."
+max_turns = 24
+timeout_s = 660
+
+[tasks.setup_files]
+"defaults.py" = '''
+DEFAULT_CONFIG = {
+    "server": {"host": "127.0.0.1", "port": 8080},
+    "retry": {"enabled": True, "count": 3},
+    "tags": ["default"],
+}
+'''
+"config.py" = '''
+from defaults import DEFAULT_CONFIG
+
+def load_config(overrides):
+    config = dict(DEFAULT_CONFIG)
+    config.update(overrides)
+    return config
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[[tasks.checks]]
+name = "nested-config-contract"
+argv = ["{python}", "-B", "-c", '''from defaults import DEFAULT_CONFIG; from config import load_config; override = {"server": {"port": 0}, "retry": {"enabled": False}, "tags": []}; result = load_config(override); assert result == {"server": {"host": "127.0.0.1", "port": 0}, "retry": {"enabled": False, "count": 3}, "tags": []}; assert DEFAULT_CONFIG["server"]["port"] == 8080 and override["server"]["port"] == 0; raised = False
+try:
+    load_config({"server": {"threads": 4}})
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 30
+
+[[tasks]]
+id = "H03"
+name = "invoice-import-summary"
+category = "long_horizon"
+prompt = "Finish the invoice import pipeline. The parse_invoices(text) function in parser.py must parse CSV columns invoice_id,customer,amount; trim string fields; require unique non-empty invoice_id and customer; convert amount to Decimal; reject missing columns, duplicates, invalid numbers, and negative amounts with ValueError. The totals_by_customer(rows) function in summary.py must return a dictionary of Decimal totals without mutating rows. Keep deterministic behavior and use only the standard library. Run the authorized check and call task_complete."
+max_turns = 28
+timeout_s = 780
+
+[tasks.setup_files]
+"parser.py" = '''
+import csv
+from decimal import Decimal
+from io import StringIO
+
+def parse_invoices(text):
+    return list(csv.DictReader(StringIO(text)))
+'''
+"summary.py" = '''
+def totals_by_customer(rows):
+    return {}
+'''
+"README.md" = "Amounts are represented with decimal.Decimal, never binary float.\n"
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[[tasks.checks]]
+name = "invoice-pipeline-contract"
+argv = ["{python}", "-B", "-c", '''from decimal import Decimal; from parser import parse_invoices; from summary import totals_by_customer; text = "invoice_id,customer,amount\n i2 , Ada ,2.25\ni1,Ada,1.10\ni3,Grace,0\n"; rows = parse_invoices(text); assert rows == [{"invoice_id": "i2", "customer": "Ada", "amount": Decimal("2.25")}, {"invoice_id": "i1", "customer": "Ada", "amount": Decimal("1.10")}, {"invoice_id": "i3", "customer": "Grace", "amount": Decimal("0")}]; before = [dict(row) for row in rows]; assert totals_by_customer(rows) == {"Ada": Decimal("3.35"), "Grace": Decimal("0")}; assert rows == before
+for bad in ("invoice_id,customer\ni1,Ada\n", "invoice_id,customer,amount\ni1,Ada,1\ni1,Grace,2\n", "invoice_id,customer,amount\ni1,Ada,nope\n"):
+    try:
+        parse_invoices(bad)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("accepted invalid invoice CSV")
+raised = False
+try:
+    parse_invoices("invoice_id,customer,amount\ni1,Ada,-1\n")
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 30
+
+[[tasks]]
+id = "H04"
+name = "deterministic-build-order"
+category = "long_horizon"
+prompt = "Implement dependency validation and deterministic build ordering across graph.py and build_order.py. validate_graph(graph) must accept a mapping of task names to dependency lists, reject blank names, duplicate dependencies, self-dependencies, and references to missing tasks with ValueError, and preserve input. build_order(graph) must return a topological order, choosing the lexicographically smallest currently-ready task, and raise ValueError on a cycle. Run the authorized check and call task_complete."
+max_turns = 28
+timeout_s = 780
+
+[tasks.setup_files]
+"graph.py" = '''
+def validate_graph(graph):
+    return graph
+'''
+"build_order.py" = '''
+from graph import validate_graph
+
+def build_order(graph):
+    return list(graph)
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[[tasks.checks]]
+name = "build-order-contract"
+argv = ["{python}", "-B", "-c", '''from build_order import build_order; from graph import validate_graph; graph = {"package": ["compile", "docs"], "compile": ["generate"], "docs": [], "generate": []}; before = {name: list(dependencies) for name, dependencies in graph.items()}; validate_graph(graph); assert graph == before; assert build_order(graph) == ["docs", "generate", "compile", "package"]; assert graph == before; invalid_graphs = [{"": []}, {"a": ["b", "b"], "b": []}, {"a": ["a"]}, {"a": ["missing"]}]
+for invalid in invalid_graphs:
+    raised = False
+    try:
+        validate_graph(invalid)
+    except ValueError:
+        raised = True
+    assert raised
+cycle = {"a": ["b"], "b": ["a"]}; raised = False
+try:
+    build_order(cycle)
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 30
+
+[[tasks]]
+id = "H05"
+name = "ttl-cache-through-service"
+category = "long_horizon"
+prompt = "Complete cache.py and service.py. TtlCache(clock) stores values with set(key,value,ttl_s), rejects negative ttl, treats ttl 0 as immediately expired, and get(key) returns None while removing expired entries. delete(key) returns whether a live or expired entry existed. Service.get_or_load(key, loader, ttl_s) returns cached values without calling loader and otherwise loads once, caches, and returns the result. None is a valid cached value, so distinguish a cache miss. Keep the clock injectable and use only the standard library. Run the authorized check and call task_complete."
+max_turns = 30
+timeout_s = 840
+
+[tasks.setup_files]
+"cache.py" = '''
+import time
+
+class TtlCache:
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.items = {}
+
+    def set(self, key, value, ttl_s):
+        self.items[key] = value
+
+    def get(self, key):
+        return self.items.get(key)
+
+    def delete(self, key):
+        return self.items.pop(key, None) is not None
+'''
+"service.py" = '''
+class Service:
+    def __init__(self, cache):
+        self.cache = cache
+
+    def get_or_load(self, key, loader, ttl_s):
+        value = self.cache.get(key)
+        if value is None:
+            value = loader()
+            self.cache.set(key, value, ttl_s)
+        return value
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[[tasks.checks]]
+name = "ttl-service-contract"
+argv = ["{python}", "-B", "-c", '''from cache import TtlCache; from service import Service; now = [10.0]; cache = TtlCache(lambda: now[0]); service = Service(cache); calls = []
+def load_none():
+    calls.append(1)
+    return None
+assert service.get_or_load("k", load_none, 5) is None; assert service.get_or_load("k", load_none, 5) is None; assert len(calls) == 1; cache.set("live-none", None, 5); assert cache.delete("live-none") is True; assert cache.delete("live-none") is False; cache.set("expired", 3, 1); now[0] = 11.0; assert cache.delete("expired") is True; assert cache.delete("expired") is False; now[0] = 15.0; assert service.get_or_load("k", load_none, 5) is None; assert len(calls) == 2; cache.set("z", 3, 0); assert cache.get("z") is None; raised = False
+try:
+    cache.set("bad", 1, -1)
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 30
+
+[[tasks]]
+id = "H06"
+name = "audit-log-report"
+category = "long_horizon"
+prompt = "Build a strict JSON-lines audit reporting path. audit_parser.parse_events(text) must skip blank lines, parse each other line as an object with non-empty string user and action plus boolean success, preserve optional fields, and raise ValueError including the one-based line number for malformed data. audit_report.success_counts_by_user(events) returns a new dictionary counting successful actions per user and includes no user with zero successes. Neither function may mutate inputs. Run the authorized check and call task_complete."
+max_turns = 26
+timeout_s = 720
+
+[tasks.setup_files]
+"audit_parser.py" = '''
+import json
+
+def parse_events(text):
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+'''
+"audit_report.py" = '''
+def success_counts_by_user(events):
+    return {}
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[[tasks.checks]]
+name = "audit-report-contract"
+argv = ["{python}", "-B", "-c", '''from audit_parser import parse_events; from audit_report import success_counts_by_user; text = "\n{\"user\":\"ada\",\"action\":\"read\",\"success\":true,\"request_id\":\"r1\"}\n{\"user\":\"ada\",\"action\":\"write\",\"success\":false}\n{\"user\":\"grace\",\"action\":\"read\",\"success\":true}\n"; events = parse_events(text); assert events[0]["request_id"] == "r1"; before = [dict(event) for event in events]; assert success_counts_by_user(events) == {"ada": 1, "grace": 1}; assert events == before; message = ""
+try:
+    parse_events("{}\n")
+except ValueError as error:
+    message = str(error)
+assert "1" in message''']
+timeout_s = 30
+
+[[tasks]]
+id = "H07"
+name = "persistent-feature-flags"
+category = "long_horizon"
+prompt = "Complete the persistent feature flag service. FlagStore(path).load() returns {} when the file is absent, validates that stored JSON is an object of string keys to booleans, and raises ValueError otherwise. save(flags) validates the same contract and writes deterministic JSON with sorted keys and a trailing newline. FeatureFlags exposes set(name, enabled), is_enabled(name), and names(); set strips surrounding whitespace from name, then requires the result to be non-empty, requires enabled to be a bool, and persists immediately. names returns sorted names, and separate FeatureFlags instances see saved state. Use only the standard library and do not use global state. Run the authorized check and call task_complete."
+max_turns = 30
+timeout_s = 840
+
+[tasks.setup_files]
+"flag_store.py" = '''
+import json
+
+class FlagStore:
+    def __init__(self, path):
+        self.path = path
+
+    def load(self):
+        return json.loads(self.path.read_text())
+
+    def save(self, flags):
+        self.path.write_text(json.dumps(flags))
+'''
+"feature_flags.py" = '''
+class FeatureFlags:
+    def __init__(self, store):
+        self.store = store
+
+    def set(self, name, enabled):
+        raise NotImplementedError
+
+    def is_enabled(self, name):
+        return False
+
+    def names(self):
+        return []
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[[tasks.checks]]
+name = "feature-flag-contract"
+argv = ["{python}", "-B", "-c", '''import tempfile; from pathlib import Path; from flag_store import FlagStore; from feature_flags import FeatureFlags; directory = tempfile.TemporaryDirectory(); path = Path(directory.name) / "flags.json"; first = FeatureFlags(FlagStore(path)); assert first.is_enabled("missing") is False; first.set(" beta ", True); first.set("alpha", False); assert first.names() == ["alpha", "beta"]; second = FeatureFlags(FlagStore(path)); assert second.is_enabled("beta") is True and second.is_enabled("alpha") is False; assert path.read_text().endswith("\n") and path.read_text().index("alpha") < path.read_text().index("beta"); raised = False
+try:
+    first.set("", True)
+except ValueError:
+    raised = True
+assert raised; bad_path = Path(directory.name) / "bad.json"; bad_path.write_text('{"x":1}')
+for operation in (lambda: FlagStore(bad_path).load(), lambda: FlagStore(bad_path).save({"x": 1}), lambda: first.set("typed", 1)):
+    try:
+        operation()
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("accepted invalid feature-flag data")''']
+timeout_s = 30
+
+[[tasks]]
+id = "H08"
+name = "job-queue-state-machine"
+category = "long_horizon"
+prompt = "Finish the in-memory job queue across job.py and queue.py. make_job(job_id,payload) returns a new pending job dictionary. JobQueue.enqueue rejects duplicate ids and stores a shallow copy. claim() returns a shallow copy of the oldest pending job after marking the stored job running, or None if none are pending. complete(job_id,result) only permits a running job, marks it complete, stores result, and returns a shallow copy; missing jobs or invalid transitions raise ValueError. get(job_id) returns a shallow copy or None. Preserve caller-owned inputs and FIFO order. Run the authorized check and call task_complete."
+max_turns = 30
+timeout_s = 840
+
+[tasks.setup_files]
+"job.py" = '''
+def make_job(job_id, payload):
+    return {"job_id": job_id, "payload": payload}
+'''
+"queue.py" = '''
+class JobQueue:
+    def __init__(self):
+        self.jobs = []
+
+    def enqueue(self, job):
+        self.jobs.append(job)
+
+    def claim(self):
+        return None
+
+    def complete(self, job_id, result):
+        raise NotImplementedError
+
+    def get(self, job_id):
+        return None
+'''
+
+[tasks.terminal]
+current = "completed"
+resumable_outcomes = ["completed"]
+
+[[tasks.checks]]
+name = "job-queue-contract"
+argv = ["{python}", "-B", "-c", '''from job import make_job; from queue import JobQueue; queue = JobQueue(); first = make_job("j1", {"x": 1}); second = make_job("j2", {"x": 2}); queue.enqueue(first); queue.enqueue(second)
+try:
+    queue.enqueue(make_job("j1", {}))
+except ValueError:
+    pass
+else:
+    raise AssertionError("accepted duplicate job id")
+assert queue.get("missing") is None; first["payload"] = {"changed": True}; claimed = queue.claim(); assert claimed["job_id"] == "j1" and claimed["status"] == "running"; assert queue.get("j1")["payload"] == {"x": 1}; completed = queue.complete("j1", 9); assert completed["status"] == "complete" and completed["result"] == 9; assert queue.claim()["job_id"] == "j2"; raised = False
+try:
+    queue.complete("j1", 10)
+except ValueError:
+    raised = True
+assert raised''']
+timeout_s = 30

@@ -174,6 +174,7 @@ fn context_window_from_run_and_from_replay(cap: usize) -> (Vec<Message>, Vec<Mes
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             hooks: None,
         },
         &mut sink,
@@ -185,13 +186,16 @@ fn context_window_from_run_and_from_replay(cap: usize) -> (Vec<Message>, Vec<Mes
     // window this run ever built.
     let from_run = provider.requests()[2].messages.clone();
 
-    // Simulate a kill so `replay` will accept the trace at all (it refuses
-    // sessions that reached a StopReason). Turn 2 then has no confirming
-    // TurnStart and is discarded, leaving exactly turns 0 and 1 — which is
-    // precisely the context window request 2 was built from.
+    // Simulate a kill before turn 2's explicit commit barrier. Removing both
+    // SessionEnd and TurnCommitted leaves the intercepted task_complete tail
+    // uncommitted, so replay reconstructs exactly the request-2 context.
     let content = std::fs::read_to_string(&trace_path).unwrap();
     let mut lines: Vec<&str> = content.lines().collect();
     assert_eq!(lines.pop().map(|l| l.contains("session_end")), Some(true));
+    assert_eq!(
+        lines.pop().map(|l| l.contains("turn_committed")),
+        Some(true)
+    );
     std::fs::write(&trace_path, lines.join("\n") + "\n").unwrap();
 
     let from_replay = replay(&trace_path).unwrap().messages;

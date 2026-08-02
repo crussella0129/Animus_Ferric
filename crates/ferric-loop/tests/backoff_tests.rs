@@ -93,6 +93,7 @@ fn run_flaky(script: Vec<Result<Completion, ProviderError>>) -> FlakyRun {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             hooks: None,
         },
         &mut sink,

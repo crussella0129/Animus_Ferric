@@ -11,16 +11,29 @@ use ferric_provider::{MockProvider, SamplingParams};
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
 
-fn base_replayed(turns: u32) -> ReplayedState {
+fn base_replayed(turns: u32, workspace: &std::path::Path) -> ReplayedState {
     ReplayedState {
         messages: vec![
             Message::system("You are Ferric."),
             Message::user_with_media("do the task", Vec::new()),
         ],
         turns,
+        next_turn: turns,
         last_text: None,
         protocol: ActionProtocol::NativeTools,
+        truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: "orig-session".to_string(),
+        workspace: workspace.to_path_buf(),
+        head_len: 2,
+        committed_turn_starts: Vec::new(),
+        guard_history: Vec::new(),
+        nudged_for_no_action: false,
+        truncated_once: false,
+        last_input_tokens: None,
+        pending_input: None,
+        mutation_epoch: 0,
+        passed_checks: std::collections::BTreeMap::new(),
+        pause_reason: None,
     }
 }
 
@@ -52,7 +65,8 @@ fn resume_some_continues_from_replayed_state() {
             prompt_lineage: None,
             media: Vec::new(),
             stream_sink: None,
-            resume: Some(base_replayed(5)),
+            resume: Some(base_replayed(5, dir.path())),
+            answer: None,
             hooks: None,
         },
         &mut sink,
@@ -114,7 +128,8 @@ fn resume_some_with_extra_prompt_appends_one_user_message() {
             prompt_lineage: None,
             media: Vec::new(),
             stream_sink: None,
-            resume: Some(base_replayed(0)),
+            resume: Some(base_replayed(0, dir.path())),
+            answer: None,
             hooks: None,
         },
         &mut sink,
@@ -163,6 +178,7 @@ fn resume_none_prompt_none_is_an_error_not_a_panic() {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             hooks: None,
         },
         &mut sink,
@@ -217,6 +233,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             hooks: None,
         },
         &mut sink1,
@@ -225,13 +242,16 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
     .unwrap();
     assert_eq!(first.stop, StopReason::TaskComplete);
 
-    // 2. Simulate a kill: drop the trailing SessionEnd line from the REAL
-    //    trace file. (The turn that called task_complete has no further
-    //    TurnStart to confirm it, so replay's conservative rule discards it
-    //    too — the continuation below simply redoes it.)
+    // 2. Simulate a kill immediately before the task-complete commit barrier.
+    //    Dropping SessionEnd and TurnCommitted leaves only a side-effect-free
+    //    intercepted control tail, which replay safely discards and retries.
     let content = std::fs::read_to_string(&trace_path).unwrap();
     let mut lines: Vec<&str> = content.lines().collect();
     assert_eq!(lines.pop().map(|l| l.contains("session_end")), Some(true));
+    assert_eq!(
+        lines.pop().map(|l| l.contains("turn_committed")),
+        Some(true)
+    );
     std::fs::write(&trace_path, lines.join("\n") + "\n").unwrap();
 
     // 3. replay() the truncated REAL trace.
@@ -239,11 +259,9 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
     assert_eq!(replayed.protocol, ActionProtocol::NativeTools);
 
     // 4. A second real run, resuming, that finishes the task.
-    let dir2 = tempfile::tempdir().unwrap();
-    let workspace2 = Workspace::new(dir2.path()).unwrap();
     let mut registry2 = Registry::new();
     register_builtin_tools(&mut registry2);
-    let trace_path2 = dir2.path().join("trace.jsonl");
+    let trace_path2 = dir1.path().join("resume-trace.jsonl");
     let mut sink2 = JsonlSink::open(&trace_path2, "resumed-continuation").unwrap();
     let provider2 = MockProvider::new(vec![tool_completion(vec![(
         "tc-2",
@@ -259,7 +277,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
             provenance: ferric_guard::Provenance::Clean,
             provider: &provider2,
             registry: &registry2,
-            workspace: &workspace2,
+            workspace: &workspace1,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
             sampling: SamplingParams::default(),
@@ -269,6 +287,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
             media: Vec::new(),
             stream_sink: None,
             resume: Some(replayed),
+            answer: None,
             hooks: None,
         },
         &mut sink2,

@@ -138,3 +138,64 @@ test ever ran the real `tailscale` CLI.
 ## From reading Codex (sprint 109, ADR-100)
 - [ ] **Describe `check_command` honestly, and consider path pinning.** `ferric-guard::check_command` (`checker.rs:130`) is `lowered.contains(pattern)` over six fixed strings. Codex's `execpolicy` uses argv-token prefix rules, three-valued decisions, strictest-wins layering, a `justification` naming an alternative, and **`host_executable()`** pinning which absolute paths may satisfy a basename match — which Ferric has **no analogue for**. The substring approach is arguably fine because Ferric's real containment is the path guard at the registry chokepoint, but **nothing says so**, and a denylist that reads like a boundary invites being trusted as one. Minimum: document it as a footgun-catcher. Optional: argv tokenization, and wire the existing `SinkAction::RequireApproval` vocabulary in so it can ask rather than only allow/deny.
 - [ ] **Ferric has no OS-level sandbox for ordinary tool dispatch.** Codex enforces containment at the kernel (Seatbelt / bubblewrap / Windows Sandbox); Ferric's airlock covers only Ornstein's research plane. This is the single biggest architectural divergence and the reason Ferric's in-process guard has to be stricter. Not a defect — a deliberate difference worth revisiting only with the tradeoff stated: an OS sandbox would let several defaults relax safely, at the cost of a large platform-specific surface (Codex spends `linux-sandbox`, `windows-sandbox-rs`, `bwrap`, `sandboxing`, `process-hardening` on it).
+
+## Sprint 112 — autonomy baseline and recoverable execution
+- [x] **T-11201 — Defensible benchmark execution.** Isolate configuration and
+  model-profile inputs, enforce per-spec turn budgets, drain child output safely,
+  require exact terminal events plus executable grading, add repeats and
+  attributable result metadata, fail visibly on corrupt rows, and calculate
+  per-task/per-tool confidence intervals rather than pooled promotion. *(Done:
+  isolated/sanitized children, task-wide deadlines, fail-closed trace/result
+  parsing, fixed graders, Wilson intervals, pass³, and hashed provenance.)*
+- [x] **T-11202 — Crash-consistent recovery spine.** Add backward-compatible
+  committed-turn, checkpoint, and paused-session trace events; bind traces to a
+  canonical workspace identity; reconstruct only committed effects; support
+  pause/resume/resume-of-resume; test every dispatch crash window. *(Done:
+  shared trace-structure validation, workspace-bound checkpoints, linked
+  continuation traces, refusal probes, and recovery-protocol tests.)*
+- [x] **T-11203 — Structured ambiguity.** Add `request_user_input` with
+  question/context/options, a non-success `NeedsInput` outcome, and an
+  answer-aware continuation that preserves the original objective. *(Done in
+  CLI, MCP, and HTTP continuation paths; live A01 clarification passed.)*
+- [x] **T-11204 — Verification-gated completion.** Add operator-defined named
+  checks with fixed argv, timeout and output caps; expose only the name to the
+  model; require passing evidence newer than the latest mutation before
+  `task_complete` when checks are configured. *(Done; host Python startup and
+  optimization variables are also removed from both in-loop and final graders.)*
+- [x] **T-11205 — Versioned autonomy matrix.** Establish eight ambiguity, eight
+  recovery, and eight long-horizon tasks; retain traces and provenance; compare
+  current, recovery-enabled, and deterministic repository-brief policies without
+  claiming external general-agent accuracy. *(Done: all 24 seeds fail their
+  authoritative graders, grammar-only real-process execution, exact Cartesian
+  summaries, and an honest six-episode timed sample. The full 72/216 runs are
+  intentionally next-sprint baseline collection, not silently claimed here.)*
+- [x] **T-11206 — Live acceptance and durable record.** Run the real Ferric
+  server lifecycle and live-model repetitions, all Rust quality gates, document
+  confidence bounds/failures, add the ADR/walkthrough, and close the sprint.
+  *(Done: three process-cold Qwen lifecycles; 3/6 targeted objective/contract
+  sample with 18.8%–81.2% Wilson 95%; workspace fmt/clippy/tests green;
+  ADR-103 and operator docs.)*
+
+## Sprint 113 candidates — baseline collection and long-horizon improvement
+
+- [ ] **T-11301 — Collect the complete frozen baseline.** Run all 24 tasks ×
+  three variants once (72 coordinates), then three trials (216 episodes) as
+  hardware time permits. Preserve cold/warm server state and exact binary,
+  model, corpus, and trace hashes. Publish no pooled accuracy number without the
+  task/variant/category breakdown and intervals.
+- [ ] **T-11302 — Improve read-before-edit recovery.** Use held failure traces
+  to prevent edits that require an `old_string` before the file has been read;
+  measure unnecessary clarification and tool-error reduction across the frozen
+  matrix, not only H01.
+- [ ] **T-11303 — Bounded verification-guided repair.** Turn named-check failure
+  evidence into a compact repair state that survives continuation/compaction,
+  with an explicit retry budget and no arbitrary shell widening.
+- [ ] **T-11304 — Measure duplicate/collateral effects.** Add corpus-level
+  effect instrumentation and an authoritative limit before populating
+  `duplicate_effects_within_limit`; v1 correctly emits null today.
+- [ ] **T-11305 — Bind server teardown identity.** Record and verify executable
+  plus process-start identity before `server down` kills a PID; fail closed on a
+  stale/reused registration and report runfile deletion/listener cleanup errors.
+- [ ] **T-11306 — External validity.** Select a versioned external repository
+  benchmark or held-out task set and compare it with the internal matrix. Keep
+  external leaderboard claims separate from Ferric-specific recovery metrics.

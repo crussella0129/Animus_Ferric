@@ -79,6 +79,7 @@ pub struct Registry {
     // BTreeMap keeps enumeration deterministically sorted (ADR-008).
     tools: BTreeMap<String, Box<dyn Tool>>,
     truncation_limit: usize,
+    required_checks: Vec<String>,
 }
 
 impl Registry {
@@ -90,6 +91,7 @@ impl Registry {
         Self {
             tools: BTreeMap::new(),
             truncation_limit,
+            required_checks: Vec::new(),
         }
     }
 
@@ -97,6 +99,18 @@ impl Registry {
     /// projector's truncation in step with the registry's.
     pub fn truncation_limit(&self) -> usize {
         self.truncation_limit
+    }
+
+    /// Checks that must have fresh passing evidence before completion. Empty
+    /// preserves the historical assertion-only completion behavior.
+    pub fn required_checks(&self) -> &[String] {
+        &self.required_checks
+    }
+
+    pub(crate) fn set_required_checks(&mut self, mut names: Vec<String>) {
+        names.sort();
+        names.dedup();
+        self.required_checks = names;
     }
 
     pub fn register(&mut self, tool: Box<dyn Tool>) {

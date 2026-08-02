@@ -28,12 +28,16 @@ fn happy_path_golden_trace_order() {
             "turn_start",
             "prompt_assembled",
             "turn_end",
+            "actions_proposed",
             "tool_call",
             "permission_check",
             "tool_result",
+            "turn_committed",
             "turn_start",
             "prompt_assembled",
             "turn_end",
+            "actions_proposed",
+            "turn_committed",
             "session_end",
         ]
     );

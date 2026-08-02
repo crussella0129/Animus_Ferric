@@ -24,14 +24,19 @@ mod repetition;
 mod replay;
 mod run;
 mod terminator;
+mod trace_structure;
 
 pub use backoff::{BASE_DELAY_MS, MAX_RETRIES};
 pub use grammar::{ActionParseError, action_schema, parse_action, parse_json_action};
-pub use outcome::{LoopOutcome, StopReason};
+pub use outcome::{LoopOutcome, NeedsInput, StopReason};
 pub use protocol::select_protocol;
-pub use replay::{ReplayError, ReplayedState, replay};
+pub use replay::{ReplayError, ReplayedState, replay, validate_resume_target};
 pub use run::{
     DEFAULT_SYSTEM_PROMPT, EditApprover, EditPreview, PromptLineage, RunArgs, Sleeper,
     ThreadSleeper, run,
 };
-pub use terminator::{SUBMIT_PLAN, TASK_COMPLETE};
+pub use terminator::{
+    REQUEST_USER_INPUT, SUBMIT_PLAN, TASK_COMPLETE, UserInputRequestError, control_descriptors,
+    is_request_user_input, request_of, request_user_input_descriptor,
+};
+pub use trace_structure::TraceStructure;

@@ -1,41 +1,49 @@
-//! Reconstruct an interrupted session's in-memory turn-loop state from its
-//! JSONL trace (sprint 39, ADR-049), so `run()` can continue it with more
-//! turns instead of starting the task over from scratch.
+//! Reconstruct a still-incomplete session from its JSONL source of truth.
 //!
-//! Scope: **resuming an interrupted, still-incomplete task only** — a trace
-//! that already reached any `StopReason` (clean or not) isn't "interrupted";
-//! `replay` refuses those (`ReplayError::AlreadyStopped`). This is the ADR-011
-//! boundary: not a chat-continuation mechanism.
-//!
-//! # Why this isn't a simple single-pass walk
-//! `TurnEnd` is written *before* dispatch, not after (see `run.rs`) — so
-//! "this turn has a `TurnEnd`" does NOT mean its dispatch (tool calls,
-//! guard checks, results) finished; a crash mid-dispatch leaves a `TurnEnd`
-//! on disk with an incomplete tail. The only reliable "this turn's dispatch
-//! fully ran" signal is reaching the *next* `TurnStart` (or, for the last
-//! turn in a surviving — i.e. not-yet-`SessionEnd`ed — trace, never: it's
-//! discarded). So each turn is buffered and only committed to the returned
-//! `messages` once a later `TurnStart` confirms it's done.
+//! Modern traces use `ActionsProposed` and `TurnCommitted` as an explicit
+//! write-ahead protocol. A crash before dispatch is retryable, a tail whose
+//! calls all have durable results is recoverable, and a dispatched call with
+//! no result is reported as ambiguous instead of being silently repeated.
+//! Pre-recovery traces retain their next-`TurnStart` commit semantics.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
-use ferric_core::{ActionProtocol, FerricError, Message};
-use ferric_trace::{Event, ParsedEvent, TraceReader};
+use ferric_core::{ActionProtocol, FerricError, Message, UserInputRequest};
+use ferric_trace::{Event, GuardTurn, ParsedEvent, RECOVERY_CHECKPOINT_VERSION, TraceReader};
 use thiserror::Error;
 
 use crate::projector::TraceProjector;
+use crate::trace_structure::TraceStructure;
 
 /// Everything `run()` needs to seed a continuing turn loop.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplayedState {
     pub messages: Vec<Message>,
+    /// Total committed turns retained for caller compatibility.
     pub turns: u32,
+    /// Absolute id to assign to the next turn. A resumed run receives a fresh
+    /// per-run budget; this value is not itself a budget counter.
+    pub next_turn: u32,
     pub last_text: Option<String>,
     pub protocol: ActionProtocol,
+    pub truncation_limit: usize,
     /// The original session's `session` id (not a file path — stable even if
     /// trace files move). Threaded into the continuing session's
     /// `SessionStart.resumed_from`.
     pub source_session: String,
+    pub workspace: PathBuf,
+    pub head_len: usize,
+    pub committed_turn_starts: Vec<(u32, usize)>,
+    pub guard_history: Vec<GuardTurn>,
+    pub nudged_for_no_action: bool,
+    pub truncated_once: bool,
+    pub last_input_tokens: Option<u32>,
+    pub pending_input: Option<UserInputRequest>,
+    pub mutation_epoch: u64,
+    pub passed_checks: std::collections::BTreeMap<String, u64>,
+    /// The intentional incomplete stop, or `None` for an abrupt crash.
+    pub pause_reason: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -46,35 +54,193 @@ pub enum ReplayError {
         "trace has no SessionPrompt event — not a resumable session (missing, foreign, or pre-sprint-39 trace file)"
     )]
     MissingSessionPrompt,
-    #[error("session already ended ({0}) — resume is only for interrupted sessions")]
+    #[error("session completed successfully ({0}) and cannot be resumed")]
     AlreadyStopped(String),
+    #[error("trace contains an event this binary does not understand at sequence {seq}")]
+    UnknownEvent { seq: u64 },
+    #[error("trace mixes session ids {expected:?} and {actual:?}")]
+    MixedSessions { expected: String, actual: String },
+    #[error("trace has no SessionStart workspace")]
+    MissingWorkspace,
+    #[error("unsupported recovery checkpoint version {0}")]
+    UnsupportedCheckpoint(u32),
+    #[error("invalid recovery trace: {0}")]
+    InvalidStructure(String),
+    #[error(
+        "turn {turn} has dispatched calls with no durable result ({calls:?}); workspace state is ambiguous"
+    )]
+    AmbiguousTail { turn: u32, calls: Vec<String> },
+    #[error("recorded protocol {recorded:?} does not match requested protocol {requested:?}")]
+    ProtocolMismatch {
+        recorded: ActionProtocol,
+        requested: ActionProtocol,
+    },
+    #[error("recorded workspace {recorded} does not match requested workspace {requested}")]
+    WorkspaceMismatch { recorded: String, requested: String },
 }
 
 pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
-    // Pass 1: any SessionEnd at all means this session isn't "interrupted."
-    for record in TraceReader::open(path)? {
-        if let ParsedEvent::Known(Event::SessionEnd { reason }) = record?.event {
-            return Err(ReplayError::AlreadyStopped(reason));
-        }
-    }
-
-    // Pass 2: reconstruct.
     let mut source_session: Option<String> = None;
+    let mut workspace: Option<PathBuf> = None;
     let mut projector = TraceProjector::new();
+    let mut pause_reason: Option<String> = None;
+    let mut end_reason: Option<String> = None;
+    let mut saw_session_prompt = false;
+    let mut saw_state_base = false;
+    let mut saw_modern_turn = false;
+    let mut structure = TraceStructure::new();
 
     for record in TraceReader::open(path)? {
         let record = record?;
-        if source_session.is_none() {
-            source_session = Some(record.session.clone());
+        match &source_session {
+            None => source_session = Some(record.session.clone()),
+            Some(expected) if expected != &record.session => {
+                return Err(ReplayError::MixedSessions {
+                    expected: expected.clone(),
+                    actual: record.session,
+                });
+            }
+            Some(_) => {}
         }
-        if let ParsedEvent::Known(event) = record.event {
-            projector.step(&event);
-        }
-    }
-    // EOF: the still-open `pending` turn (if any) never saw a confirming
-    // next `TurnStart` — dangling, discarded, never committed or counted.
 
-    if projector.head_len == 0 {
+        let event = match record.event {
+            ParsedEvent::Known(event) => event,
+            ParsedEvent::Unknown(_) => return Err(ReplayError::UnknownEvent { seq: record.seq }),
+        };
+
+        structure
+            .observe(&event)
+            .map_err(ReplayError::InvalidStructure)?;
+
+        match &event {
+            Event::SessionStart {
+                workspace: recorded,
+                ..
+            } => {
+                if workspace.replace(PathBuf::from(recorded)).is_some() {
+                    return Err(ReplayError::InvalidStructure(
+                        "more than one SessionStart event".to_string(),
+                    ));
+                }
+            }
+            Event::SessionPrompt { .. } => {
+                if saw_state_base {
+                    return Err(ReplayError::InvalidStructure(
+                        "more than one initial state base".to_string(),
+                    ));
+                }
+                saw_session_prompt = true;
+                saw_state_base = true;
+            }
+            Event::RecoveryCheckpoint { state } => {
+                if state.version != RECOVERY_CHECKPOINT_VERSION {
+                    return Err(ReplayError::UnsupportedCheckpoint(state.version));
+                }
+                validate_checkpoint(state)?;
+                // A checkpoint before any prompt/turn is the initial base of a
+                // resumed trace. Later checkpoints are durable state anchors.
+                if !saw_state_base {
+                    saw_state_base = true;
+                }
+            }
+            Event::ActionsProposed { .. } | Event::TurnCommitted { .. } => {
+                saw_modern_turn = true;
+            }
+            Event::SessionPaused { reason } => {
+                if pause_reason.as_deref().is_some_and(|prior| prior != reason) {
+                    return Err(ReplayError::InvalidStructure(
+                        "conflicting SessionPaused reasons".to_string(),
+                    ));
+                }
+                pause_reason = Some(reason.clone());
+            }
+            Event::SessionEnd { reason } => {
+                if is_success_reason(reason) {
+                    return Err(ReplayError::AlreadyStopped(reason.clone()));
+                }
+                if !is_resumable_reason(reason) {
+                    return Err(ReplayError::InvalidStructure(format!(
+                        "unknown SessionEnd reason {reason:?}"
+                    )));
+                }
+                end_reason = Some(reason.clone());
+            }
+            _ => {}
+        }
+
+        projector.step(&event);
+    }
+
+    structure.finish().map_err(ReplayError::InvalidStructure)?;
+
+    // A durable successful commit is terminal even if the process crashed in
+    // the tiny window before writing SessionEnd. Never resume completed work.
+    if end_reason.is_none()
+        && let Some(reason) = structure.committed_terminal_reason()
+        && is_success_reason(reason)
+    {
+        return Err(ReplayError::AlreadyStopped(reason.to_string()));
+    }
+
+    if let (Some(paused), Some(ended)) = (&pause_reason, &end_reason)
+        && paused != ended
+    {
+        return Err(ReplayError::InvalidStructure(format!(
+            "SessionPaused reason {paused:?} differs from SessionEnd {ended:?}"
+        )));
+    }
+    if pause_reason.is_none() {
+        pause_reason =
+            end_reason.or_else(|| structure.unclosed_terminal_reason().map(str::to_string));
+    }
+
+    // A modern EOF tail can be recovered when every call that crossed the
+    // dispatch boundary has a result. Missing results are deliberately not
+    // guessed: the call may have mutated the workspace before the crash.
+    if let Some(pending) = projector.pending.as_ref()
+        && pending.actions_proposed.is_some()
+    {
+        let result_ids: BTreeSet<&str> = pending
+            .tool_results
+            .iter()
+            .map(|(id, _, _, _)| id.as_str())
+            .collect();
+        let unresolved: Vec<String> = pending
+            .tool_calls
+            .iter()
+            .filter(|call| !result_ids.contains(call.id.as_str()) && !is_control_call(&call.name))
+            .map(|call| format!("{}:{}", call.id, call.name))
+            .collect();
+        if !unresolved.is_empty() {
+            return Err(ReplayError::AmbiguousTail {
+                turn: pending.turn,
+                calls: unresolved,
+            });
+        }
+
+        let proposed_len = pending.actions_proposed.as_ref().map_or(0, Vec::len);
+        if !pending.tool_results.is_empty() && pending.tool_calls.len() != proposed_len {
+            return Err(ReplayError::AmbiguousTail {
+                turn: pending.turn,
+                calls: vec!["partially dispatched multi-call batch".to_string()],
+            });
+        }
+        if !pending.tool_results.is_empty() {
+            let dispatched = pending.tool_results.len() as u32;
+            let errored = pending
+                .tool_results
+                .iter()
+                .filter(|(_, _, _, is_error)| *is_error)
+                .count() as u32;
+            projector.commit_pending_with(dispatched, errored, None);
+        }
+    } else if end_reason_is_legacy_pause(&pause_reason, saw_modern_turn) {
+        // A pre-recovery SessionEnd was only written after run() had returned
+        // from dispatch, so it remains a valid implicit barrier.
+        projector.commit_pending();
+    }
+
+    if !saw_state_base || (projector.head_len == 0 && !saw_session_prompt) {
         return Err(ReplayError::MissingSessionPrompt);
     }
     let protocol = projector
@@ -85,10 +251,125 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     Ok(ReplayedState {
         messages: projector.messages,
         turns: projector.turns,
+        next_turn: projector.next_turn,
         last_text: projector.last_text,
         protocol,
+        truncation_limit: projector.truncation_limit,
         source_session,
+        workspace: workspace.ok_or(ReplayError::MissingWorkspace)?,
+        head_len: projector.head_len,
+        committed_turn_starts: projector.committed_turn_starts,
+        guard_history: projector.guard_history,
+        nudged_for_no_action: projector.nudged_for_no_action,
+        truncated_once: projector.truncated_once,
+        last_input_tokens: projector.last_input_tokens,
+        pending_input: projector.pending_input,
+        mutation_epoch: projector.mutation_epoch,
+        passed_checks: projector.passed_checks,
+        pause_reason,
     })
+}
+
+/// Validate the two pieces of operator-selected execution context that a trace
+/// must never silently change across a resume boundary.
+pub fn validate_resume_target(
+    state: &ReplayedState,
+    workspace: &Path,
+    protocol: ActionProtocol,
+) -> Result<(), ReplayError> {
+    if state.protocol != protocol {
+        return Err(ReplayError::ProtocolMismatch {
+            recorded: state.protocol,
+            requested: protocol,
+        });
+    }
+
+    let recorded =
+        std::fs::canonicalize(&state.workspace).map_err(|_| ReplayError::WorkspaceMismatch {
+            recorded: state.workspace.display().to_string(),
+            requested: workspace.display().to_string(),
+        })?;
+    let requested =
+        std::fs::canonicalize(workspace).map_err(|_| ReplayError::WorkspaceMismatch {
+            recorded: state.workspace.display().to_string(),
+            requested: workspace.display().to_string(),
+        })?;
+    if recorded != requested {
+        return Err(ReplayError::WorkspaceMismatch {
+            recorded: recorded.display().to_string(),
+            requested: requested.display().to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_checkpoint(state: &ferric_trace::RecoveryCheckpointV1) -> Result<(), ReplayError> {
+    if state.head_len > state.messages.len() {
+        return Err(ReplayError::InvalidStructure(
+            "checkpoint head_len exceeds message count".to_string(),
+        ));
+    }
+    if state
+        .committed_turn_starts
+        .iter()
+        .any(|boundary| boundary.message_index > state.messages.len())
+    {
+        return Err(ReplayError::InvalidStructure(
+            "checkpoint turn boundary exceeds message count".to_string(),
+        ));
+    }
+    if let Some(request) = &state.pending_input {
+        request.validate().map_err(|error| {
+            ReplayError::InvalidStructure(format!("invalid pending input request: {error}"))
+        })?;
+    }
+    if state
+        .passed_checks
+        .values()
+        .any(|epoch| *epoch > state.mutation_epoch)
+    {
+        return Err(ReplayError::InvalidStructure(
+            "checkpoint contains check evidence from a future mutation epoch".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_control_call(name: &str) -> bool {
+    matches!(
+        name,
+        crate::terminator::TASK_COMPLETE
+            | crate::terminator::SUBMIT_PLAN
+            | crate::terminator::REQUEST_USER_INPUT
+    )
+}
+
+fn is_success_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "final_text" | "task_complete" | "plan_submitted" | "done"
+    )
+}
+
+fn is_resumable_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "max_turns"
+            | "repetition_guard"
+            | "no_progress"
+            | "repeated_failure"
+            | "oscillation"
+            | "provider_error"
+            | "empty_completion"
+            | "truncated_action"
+            | "interrupted"
+            | "hook_failed"
+            | "needs_input"
+    )
+}
+
+fn end_reason_is_legacy_pause(pause_reason: &Option<String>, saw_modern_turn: bool) -> bool {
+    pause_reason.is_some() && !saw_modern_turn
 }
 
 #[cfg(test)]

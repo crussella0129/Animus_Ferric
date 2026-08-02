@@ -16,6 +16,7 @@ mod manage_task;
 mod move_path;
 mod multi_edit;
 mod read_file;
+mod run_check;
 mod search_files;
 mod shell_exec;
 pub mod task_registry;
@@ -35,6 +36,7 @@ pub use manage_task::ManageTask;
 pub use move_path::MovePath;
 pub use multi_edit::MultiEdit;
 pub use read_file::ReadFile;
+pub use run_check::{NamedCheck, RunCheck};
 pub use search_files::SearchFiles;
 pub use shell_exec::ShellExec;
 pub use write_file::WriteFile;
@@ -57,6 +59,15 @@ pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(ApplyPatch));
     registry.register(Box::new(GitRead));
     registry.register(Box::new(GitWrite));
+}
+
+/// Register the operator-authorized verification tool and retain the complete
+/// required-check set for the loop's completion-evidence gate.
+pub fn register_run_checks(registry: &mut Registry, checks: Vec<NamedCheck>) -> Result<(), String> {
+    let tool = RunCheck::new(checks)?;
+    registry.set_required_checks(tool.names());
+    registry.register(Box::new(tool));
+    Ok(())
 }
 
 /// Register host-shell controls for an explicit human surface.

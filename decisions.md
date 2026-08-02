@@ -2969,3 +2969,95 @@ where PID, listener owner, endpoints, inference, artifacts, trace, and teardown
 were all checked independently. The installed llama.cpp distribution appeared
 CPU-only despite the GPU-layer argument, so presentation latency is the known
 demo caveat.
+
+## ADR-103 — 2026-08-02 (sprint 112): autonomy is a measured internal contract, not a general-agent claim
+
+The next sprint needs to improve long-horizon recovery and ambiguous repository
+work, but there was no defensible baseline on which to do that. The old ladder
+could establish that a model completed one task; it could not distinguish model
+failure from corrupt result rows, inherited configuration, a child-process
+deadlock, a forged completion claim, or a grader that never exercised the stated
+objective. Optimizing against that would have optimized the harness's blind
+spots.
+
+**The execution contract now fails closed.** Benchmark children run with
+isolated configuration/profile inputs, exact per-task turn and wall-clock
+budgets, concurrently drained bounded output, strict new-trace discovery, and
+fixed-argv executable checks. Malformed traces and result rows are errors rather
+than skipped evidence. A task-wide deadline includes final grading. Python check
+processes lose host startup/optimization variables and receive deterministic
+defaults, so `PYTHONOPTIMIZE` cannot erase assertions. Binary, model, corpus,
+trace, repository-brief, and run coordinates are retained or hashed when the
+artifact exists locally.
+
+**Recovery is a trace protocol rather than a hopeful re-prompt.** A committed
+turn, recovery checkpoint, and paused-session record define the durable prefix;
+resume binds to the canonical workspace and preserves the original objective.
+Resume-of-resume, clarification answers, provider pauses, budget stops, crash
+windows, cross-workspace refusal, and completed-session refusal are executable
+cases. CLI, MCP, and HTTP continuations use the same contract. Structured
+`request_user_input` produces the non-success `needs_input` terminal instead of
+silently guessing. Operator-named `run_check` exposes only a name to the model,
+runs the owner's fixed argv, and lets `task_complete` through only when passing
+evidence is newer than the last mutation.
+
+**The v1 corpus is deliberately internal and frozen.** It contains exactly 24
+tasks: eight ambiguity, eight recovery, and eight long-horizon cross-file tasks.
+Every untouched seed repository is proven to fail its authoritative grader. The
+Cartesian variants are `current`, `recovery`, and a metadata-only deterministic
+`repository_brief`; the latter is paired against recovery on identical
+task/trial coordinates. Corpus v1 is grammar-only because one-turn injections
+are not comparable with multi-call protocols. There is no operational mock or
+offline autonomy path: every episode launches the real Ferric query process
+against the discovered or explicit OpenAI-compatible endpoint.
+
+Results keep **contract pass**, **objective completion**, and **infrastructure
+failure** separate. Infrastructure rows do not become model failures. Summaries
+report exact expected/observed coordinates, Wilson intervals, per-task/variant/
+category rates, clarification precision/recall, recovery/refusal outcomes,
+paired repository-brief deltas, and pass³ only for groups with three trials.
+Per-tool output is named as conditional objective association when a tool was
+observed—not tool-call accuracy or causal impact. Duplicate/collateral effects
+are not yet measured by corpus v1; the field remains null and does not affect a
+score. Lower-level crash-window tests cover the recovery mechanism, while an
+effect-aware corpus remains future work.
+
+**The live result is useful because it is not flattering.** A timed,
+post-freeze Qwen2.5-Coder-7B sample completed six infrastructure-clean episodes:
+A05/current, A01/recovery, and R02/recovery passed; R08/recovery and both H01
+arms failed. That is 3/6 objective and contract completion, with a Wilson 95%
+interval of approximately 18.8%–81.2%. Four expected continuation operations
+across A01, R02, and R08 were all linked and observed, but R08 still failed its
+final coding objective. This is the distinction the harness is meant to expose:
+recovery transport can work while autonomous recovery does not.
+
+The single H01 repository-brief pair was failure/failure. The ordinary recovery
+arm stopped after an unnecessary clarification in 68.2 seconds; the brief arm
+reached 26 turns and failed its grader after 670.6 seconds. One pair cannot
+estimate an effect, but it is enough to reject making the brief a default. An
+earlier A05 run used pre-freeze wording that the model reasonably interpreted
+as a filename; it was corrected and excluded rather than scored against the
+model. The six retained episodes are unbalanced and single-trial. They are **not
+the 72-episode 24×3 baseline**, not the 216-episode pass³ run, not an external
+benchmark, and not evidence that Ferric is already a reliable general coding
+agent.
+
+**The live launch path is stronger than in ADR-102.** `server up` now rejects
+existing local/global registrations, occupied or zero ports, zero llama
+context, and non-file model/projector inputs. It retains the spawned child,
+requires the engine-specific HTTP endpoint to return 200 while the child is
+alive, and writes runfiles only afterward. `status` and `doctor` require PID
+liveness plus HTTP health rather than accepting any TCP listener. Three
+process-cold Qwen launches produced distinct PIDs, exact loopback listener
+ownership, matching local/global runfiles, the expected model/context metadata,
+and clean teardown; the third was intentionally left down. `server down` still
+trusts a runfile PID without executable/start-time identity. That stale-PID
+safety gap remains explicit and prevents a general lifecycle-safety claim.
+
+The next sprint should first collect the complete 72-coordinate run, then three
+trials where hardware time permits. Improvements should be accepted only when
+they move held coordinates without increasing unsafe edits or unnecessary
+questions. The first failure-driven candidates are read-before-edit recovery,
+bounded verification-guided repair, better progress summaries across long
+horizons, duplicate-effect instrumentation, and safe server-down identity
+binding—not task-specific prompt patches.

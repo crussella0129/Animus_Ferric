@@ -16,6 +16,7 @@
 //! - `ferric dev` — reserved for the Development Engine (s4–s7).
 
 mod api;
+mod autonomy_cmd;
 mod backend;
 mod bench_cmd;
 mod chat;
@@ -105,6 +106,8 @@ enum BenchCommand {
     Ltd(Box<toolbench_cmd::ToolbenchArgs>),
     /// Run the L0–L6 capability benchmark and calibrate measured_level
     Full(Box<bench_cmd::BenchArgs>),
+    /// Run the versioned internal autonomous repository-work matrix
+    Autonomy(Box<autonomy_cmd::AutonomyArgs>),
 }
 
 #[derive(Subcommand)]
@@ -128,6 +131,7 @@ fn main() -> ExitCode {
         Command::Bench { command } => match command {
             BenchCommand::Ltd(args) => toolbench_cmd::run_toolbench(*args),
             BenchCommand::Full(args) => bench_cmd::run_bench(*args),
+            BenchCommand::Autonomy(args) => autonomy_cmd::run_autonomy(*args),
         },
         Command::Mcp(args) => mcp::run_mcp(*args),
         Command::Chat(args) => chat::run_chat(*args),

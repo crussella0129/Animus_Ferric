@@ -70,11 +70,12 @@ cargo install --path crates/ferric-cli --features backend-openai --force
 
 | Command | What it does |
 |---|---|
-| `ferric server up\|status\|doctor\|down` | Launch & manage the local OpenAI-compatible inference server (the HTTP valve), bound to `127.0.0.1` only. Writes `.ferric/server.json` so other commands auto-discover it. |
+| `ferric server up\|status\|doctor\|down` | Launch & manage the local OpenAI-compatible inference server (the HTTP valve), bound to `127.0.0.1` only. Registration happens only after the spawned process returns HTTP 200. |
 | `ferric query "<prompt>"` | Run one workspace-scoped agent turn against a local model. |
 | `ferric mcp` | Run an MCP-stdio server exposing one tool, `ferric_query`, to MCP clients (Claude Code, Cursor, an IDE). Workspace/backend/model are launch-time-fixed flags; each call runs the full constrained agent loop. *ADR-046.* |
 | `ferric bench ltd` | Measure & diagnose tool-calling fire rate for a model (or a fleet — see below). |
 | `ferric bench full` | Run the L0–L6 capability ladder and calibrate a model's `measured_level`. |
+| `ferric bench autonomy` | Run the versioned 24-task internal repository-work baseline with retained traces, executable grading, and recovery evidence. |
 | `ferric trace cat <file.jsonl>` | Render a session trace as a human-readable log. |
 
 A typical loop — bring a server up, point Ferric at it, work, tear it down:
@@ -90,6 +91,12 @@ ferric server down
 > If you run `ferric server up --tailscale` on a machine for the first time, you must authorize Tailscale Serve on your Tailnet. The command will output an authorization link that you must click to unblock the proxy and register the server globally.
 
 `query` and `bench` **auto-discover** the running server from `.ferric/server.json` (or your global `APPDATA` directory) — no `--api-base` needed. To target a server you didn't launch (e.g. an already-running Ollama), pass `--api-base http://localhost:11434/v1`. By default `query` runs the **constrained** path, which is the reliable one for small models.
+
+`server up` fails closed when a local/global registration already exists, the
+target port is occupied, or a llama.cpp model/projector is not a regular file.
+It keeps ownership of the child until the engine-specific health endpoint
+returns HTTP 200; `status` also requires both a live registered PID and HTTP
+health.
 
 `ferric query` also takes workspace-local, guard-permitted files as input with `--file` (repeatable): text/code files fold into the prompt (works on any model), while image/audio/video attach as content parts when you declare `--modality` and the model can read them (Gemma 3n on the OpenAI valve). Attachments are bounded and pass through the same sensitive-path and `.ferricignore` checks as tool reads. See [docs/multimodal.md](docs/multimodal.md).
 
@@ -348,4 +355,12 @@ Ferric is built in **sprints** — a Research → Plan → Build → Test → Lo
 
 - **Sprint 111 — live server acceptance** (2026-08-01). Superseded the offline Monday criterion at the user's direction and exercised the actual release path: `ferric server doctor` → `server up` → independent HTTP health/model checks → a six-turn Qwen2.5-Coder-7B task with asserted file creation, deletion, `task_complete`, and trace verification → `server down`. The engine PID owned the loopback listener, both runfiles matched it, and shutdown removed the process, listener, and registrations. The live task passed in about 58 seconds; the installed llama.cpp distribution appeared CPU-only, so that timing—not correctness—is the remaining presentation caveat. *ADR-102.*
 
-> **Next.** **Skills granting tools:** the conventional format has an `allowed-tools` key, and honouring it would let an installed file widen the tool rings — the one change that turns a skill from instructions into an action channel. That needs a decision against the tool rings and the provenance gate before any parsing is added. **`TailnetFsRetriever`** will not be live-exercised over SSH here, and that is now settled rather than pending: ZimaBoard2 blocks SSH **by the owner's deliberate choice** (ADR-095), so the earlier "one command away" framing was asking them to weaken a boundary they had chosen. Where a share is *mounted* instead (SMB/NFS are open), `LocalFsRetriever` already covers it; whether to generalise or retire the SSH transport is an open design decision.
+- **Sprint 112 — an autonomy baseline that can fail honestly** (2026-08-02). Added a frozen internal corpus of 24 executable repository tasks (eight ambiguity, eight recovery, eight long-horizon) across current, recovery, and metadata-only repository-brief variants. Every episode is a real `ferric query` child against an OpenAI-compatible server—there is no mock/offline autonomy path. Results separate contract completion, objective completion, and infrastructure failure; retain hashed traces and binary/model/corpus provenance; report Wilson intervals, clarification/recovery outcomes, paired brief comparisons, and pass³ only when three trials exist. Recovery is now a durable trace contract with workspace-bound checkpoints, resume-of-resume, structured clarification, refusal probes, and mutation-newer verification evidence. The targeted Qwen2.5-Coder-7B sample was **3/6**, with the long-horizon H01 pair failing in both variants; that is deliberately recorded as a small, unbalanced sample, not a general coding-agent score. Three hardened process-cold `server up` lifecycles passed with exact PID/listener/HTTP/model checks and clean teardown. *ADR-103.*
+
+> **Next.** Establish the first complete autonomy baseline: 72 episodes for one
+> pass over the 24×3 matrix, then 216 for pass³ when hardware time permits.
+> Use the retained failure traces to improve read-before-edit behavior,
+> verification-guided repair, and long-horizon recovery without tuning to one
+> task. Duplicate/collateral-effect instrumentation and safe identity binding
+> for stale `server down` runfiles remain explicit gaps. Skills granting tools
+> and the SSH-only `TailnetFsRetriever` design remain separate open decisions.

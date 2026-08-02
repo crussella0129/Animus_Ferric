@@ -38,6 +38,9 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
         ParsedEvent::Known(Event::SessionEnd { reason }) => {
             format!("session end ({reason})")
         }
+        ParsedEvent::Known(Event::SessionPaused { reason }) => {
+            format!("session paused ({reason})")
+        }
         ParsedEvent::Known(Event::ToolCall { id, name, args }) => {
             format!("tool call {name} [{id}] args={args}")
         }
@@ -57,6 +60,30 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             };
             format!("tool result {name} [{id}] {status} {duration_ms}ms: {preview}{ellipsis}")
         }
+        ParsedEvent::Known(Event::WorkspaceMutation {
+            turn,
+            tool,
+            mutation_epoch,
+        }) => format!(
+            "turn {turn} workspace mutation by {tool} advanced evidence epoch to {mutation_epoch}"
+        ),
+        ParsedEvent::Known(Event::VerificationCheckPassed {
+            turn,
+            name,
+            mutation_epoch,
+        }) => format!(
+            "turn {turn} verification check {name} passed at mutation epoch {mutation_epoch}"
+        ),
+        ParsedEvent::Known(Event::CompletionGate {
+            mutation_epoch,
+            required_checks,
+            fresh_checks,
+            decision,
+        }) => format!(
+            "completion gate {decision} at epoch {mutation_epoch}: {}/{} fresh checks",
+            fresh_checks.len(),
+            required_checks.len()
+        ),
         ParsedEvent::Known(Event::PolicySelected {
             tier,
             protocol,
@@ -88,6 +115,20 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
                 user.chars().count()
             )
         }
+        ParsedEvent::Known(Event::RecoveryCheckpoint { state }) => format!(
+            "recovery checkpoint v{} (next turn {}, {} messages{})",
+            state.version,
+            state.next_turn,
+            state.messages.len(),
+            if state.pending_input.is_some() {
+                ", awaiting user input"
+            } else {
+                ""
+            }
+        ),
+        ParsedEvent::Known(Event::ResumePrompt { user, .. }) => {
+            format!("resume prompt: {} chars", user.chars().count())
+        }
         ParsedEvent::Known(Event::TurnStart { turn }) => format!("turn {turn} start"),
         ParsedEvent::Known(Event::TurnEnd {
             turn,
@@ -112,6 +153,26 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
                 output_tokens.map_or("?".to_string(), |t| t.to_string()),
             )
         }
+        ParsedEvent::Known(Event::ActionsProposed { turn, calls }) => format!(
+            "turn {turn} proposed {} action(s): [{}]",
+            calls.len(),
+            calls
+                .iter()
+                .map(|call| call.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ParsedEvent::Known(Event::TurnCommitted {
+            turn,
+            dispatched,
+            errored,
+            stop_reason,
+            snapshot_commit,
+        }) => format!(
+            "turn {turn} committed ({dispatched} result(s), {errored} error(s), stop {}, snapshot {})",
+            stop_reason.as_deref().unwrap_or("none"),
+            snapshot_commit.as_deref().unwrap_or("unavailable")
+        ),
         ParsedEvent::Known(Event::PromptAssembled {
             turn,
             message_count,

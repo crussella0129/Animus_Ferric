@@ -19,7 +19,7 @@ use ferric_trace::JsonlSink;
 
 use crate::backend::BackendOpts;
 use crate::query::{
-    ProtocolArg, RunConfig, RunConfigArgs, build_run_config, mock_provider, now_ms, route_files,
+    ProtocolArg, RunConfig, RunConfigArgs, build_run_config, mock_provider, route_files,
     run_with_provider,
 };
 
@@ -148,7 +148,7 @@ pub fn ferric_query_tool_schema() -> Value {
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "The task to perform.",
+                    "description": "The task to perform, or an optional goal amendment for a non-clarification continuation.",
                 },
                 "files": {
                     "type": "array",
@@ -157,9 +157,35 @@ pub fn ferric_query_tool_schema() -> Value {
                         prompt; images/audio/video attach as media if the server's \
                         declared --modality supports it.",
                 },
+                "continuation_id": {
+                    "type": "string",
+                    "description": "Opaque id returned by an incomplete prior ferric_query call. Never a trace path.",
+                },
+                "answer": {
+                    "type": "string",
+                    "description": "Answer to a pending structured clarification. Use with continuation_id and without prompt/files.",
+                },
             },
-            "required": ["prompt"],
+            "additionalProperties": false,
+            "anyOf": [
+                {"required": ["prompt"]},
+                {"required": ["continuation_id"]},
+                {"required": ["answer"]}
+            ]
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["completed", "needs_input", "failed"]},
+                "text": {"type": ["string", "null"]},
+                "turns": {"type": "integer", "minimum": 0},
+                "stop_reason": {"type": "string"},
+                "continuation_id": {"type": ["string", "null"]},
+                "needs_input": {"type": ["object", "null"]}
+            },
+            "required": ["status", "text", "turns", "stop_reason", "continuation_id", "needs_input"],
+            "additionalProperties": false
+        }
     })
 }
 
@@ -289,6 +315,55 @@ fn tool_content(text: String, is_error: bool) -> Value {
     })
 }
 
+fn outcome_content(outcome: &ferric_loop::LoopOutcome, continuation_id: Option<&str>) -> Value {
+    let status = if outcome.stop.is_success() {
+        "completed"
+    } else if outcome.needs_input.is_some() {
+        "needs_input"
+    } else {
+        "failed"
+    };
+    let legacy_text = if let Some(needs_input) = &outcome.needs_input {
+        let options = if needs_input.request.options.is_empty() {
+            String::new()
+        } else {
+            format!("\nOptions: {}", needs_input.request.options.join(", "))
+        };
+        format!(
+            "Ferric needs input before continuing.\nQuestion: {}\nContext: {}{}\nContinuation: {}",
+            needs_input.request.question,
+            needs_input.request.context,
+            options,
+            continuation_id.unwrap_or(&needs_input.continuation_id)
+        )
+    } else {
+        outcome.final_text.clone().unwrap_or_else(|| {
+            format!("query stopped before completion: {}", outcome.stop.as_str())
+        })
+    };
+    let structured = serde_json::json!({
+        "status": status,
+        "text": outcome.final_text,
+        "turns": outcome.turns,
+        "stop_reason": outcome.stop.as_str(),
+        "continuation_id": continuation_id,
+        "needs_input": outcome.needs_input,
+    });
+    serde_json::json!({
+        "content": [{"type": "text", "text": legacy_text}],
+        "structuredContent": structured,
+        "isError": status == "failed",
+    })
+}
+
+fn optional_string_argument(arguments: &Value, name: &str) -> Result<Option<String>, String> {
+    match arguments.get(name) {
+        None => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(format!("\"{name}\" must be a string")),
+    }
+}
+
 impl McpServer {
     /// Dispatch one parsed request. Returns `None` for notifications (no
     /// response is ever sent for those, per the JSON-RPC 2.0 spec).
@@ -366,15 +441,17 @@ impl McpServer {
             return RpcResponse::error(id, INVALID_PARAMS, format!("unknown tool: {name}"));
         }
         let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-        let prompt = match arguments.get("prompt").and_then(Value::as_str) {
-            Some(p) => p.to_string(),
-            None => {
-                return RpcResponse::error(
-                    id,
-                    INVALID_PARAMS,
-                    "\"prompt\" is required and must be a string",
-                );
-            }
+        let prompt = match optional_string_argument(&arguments, "prompt") {
+            Ok(value) => value,
+            Err(message) => return RpcResponse::error(id, INVALID_PARAMS, message),
+        };
+        let continuation_id = match optional_string_argument(&arguments, "continuation_id") {
+            Ok(value) => value,
+            Err(message) => return RpcResponse::error(id, INVALID_PARAMS, message),
+        };
+        let answer = match optional_string_argument(&arguments, "answer") {
+            Ok(value) => value,
+            Err(message) => return RpcResponse::error(id, INVALID_PARAMS, message),
         };
         let files: Vec<PathBuf> = match arguments.get("files") {
             None => Vec::new(),
@@ -397,59 +474,151 @@ impl McpServer {
             }
         };
 
-        let (media_parts, prompt_suffix) = match route_files(
-            &self.workspace,
-            &files,
-            &self.declared,
-            self.config.caps.supports_media,
-        ) {
-            Ok(routed) => routed,
-            Err(e) => return RpcResponse::success(id, tool_content(format!("files: {e}"), true)),
-        };
-        let effective_prompt = if prompt_suffix.is_empty() {
-            prompt
-        } else {
-            format!("{prompt}{prompt_suffix}")
-        };
+        let mut resume_slot = self.resume.lock().unwrap();
+        let resume_ref = resume_slot.as_ref();
+        if let (Some(expected), Some(actual)) = (
+            resume_ref.map(|state| state.source_session.as_str()),
+            continuation_id.as_deref(),
+        ) && expected != actual
+        {
+            return RpcResponse::error(
+                id,
+                INVALID_PARAMS,
+                format!("unknown continuation_id {actual:?}"),
+            );
+        }
 
-        let session = format!("mcp-{}", now_ms());
-        let trace_path = self.trace_dir.join(format!("{session}.jsonl"));
-        let mut sink = match JsonlSink::open(&trace_path, &session) {
-            Ok(sink) => sink,
-            Err(e) => {
-                return RpcResponse::success(
-                    id,
-                    tool_content(format!("cannot open trace: {e}"), true),
-                );
+        match resume_ref {
+            None => {
+                if continuation_id.is_some()
+                    || answer.is_some()
+                    || prompt
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty())
+                {
+                    return RpcResponse::error(
+                        id,
+                        INVALID_PARAMS,
+                        "a new ferric_query call requires one non-empty prompt",
+                    );
+                }
             }
+            Some(state) if state.pending_input.is_some() => {
+                if prompt.is_some()
+                    || !files.is_empty()
+                    || answer
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty())
+                {
+                    return RpcResponse::error(
+                        id,
+                        INVALID_PARAMS,
+                        "a clarification continuation requires a non-empty answer and accepts no prompt or files",
+                    );
+                }
+            }
+            Some(_) => {
+                if answer.is_some()
+                    || prompt
+                        .as_deref()
+                        .is_some_and(|value| value.trim().is_empty())
+                {
+                    return RpcResponse::error(
+                        id,
+                        INVALID_PARAMS,
+                        "a non-clarification continuation accepts an optional non-empty prompt, not answer",
+                    );
+                }
+            }
+        }
+        let resume_state = resume_slot.take();
+        drop(resume_slot);
+
+        let (media_parts, effective_prompt) = if answer.is_some() {
+            (Vec::new(), None)
+        } else {
+            let (media_parts, prompt_suffix) = match route_files(
+                &self.workspace,
+                &files,
+                &self.declared,
+                self.config.caps.supports_media,
+            ) {
+                Ok(routed) => routed,
+                Err(e) => {
+                    if let Some(state) = resume_state {
+                        *self.resume.lock().unwrap() = Some(state);
+                    }
+                    return RpcResponse::success(id, tool_content(format!("files: {e}"), true));
+                }
+            };
+            let effective = match (prompt, prompt_suffix.is_empty()) {
+                (Some(prompt), true) => Some(prompt),
+                (Some(prompt), false) => Some(format!("{prompt}{prompt_suffix}")),
+                (None, true) => None,
+                (None, false) => Some(prompt_suffix),
+            };
+            (media_parts, effective)
         };
 
-        let resume_state = self.resume.lock().unwrap().take();
+        let (session, trace_path, mut sink) =
+            match crate::query::create_trace_sink(&self.trace_dir, "mcp") {
+                Ok(trace) => trace,
+                Err(e) => {
+                    if let Some(state) = resume_state {
+                        *self.resume.lock().unwrap() = Some(state);
+                    }
+                    return RpcResponse::success(
+                        id,
+                        tool_content(format!("cannot open trace: {e}"), true),
+                    );
+                }
+            };
 
-        match self.run_one(&mut sink, &effective_prompt, media_parts, resume_state) {
-            Ok(outcome) if outcome.stop.is_success() => RpcResponse::success(
-                id,
-                tool_content(outcome.final_text.unwrap_or_default(), false),
-            ),
-            Ok(outcome) => RpcResponse::success(
-                id,
-                tool_content(
-                    outcome.final_text.unwrap_or_else(|| {
-                        format!("query stopped before completion: {}", outcome.stop.as_str())
-                    }),
-                    true,
-                ),
-            ),
-            Err(message) => RpcResponse::success(id, tool_content(message, true)),
+        match self.run_one(
+            &mut sink,
+            effective_prompt.as_deref(),
+            media_parts,
+            resume_state.clone(),
+            answer.as_deref(),
+        ) {
+            Ok(outcome) => {
+                let continuation = if outcome.stop.is_success() {
+                    None
+                } else {
+                    match ferric_loop::replay(&trace_path) {
+                        Ok(state) => {
+                            *self.resume.lock().unwrap() = Some(state);
+                            Some(session.as_str())
+                        }
+                        Err(error) => {
+                            return RpcResponse::success(
+                                id,
+                                tool_content(
+                                    format!("cannot retain continuation state: {error}"),
+                                    true,
+                                ),
+                            );
+                        }
+                    }
+                };
+                RpcResponse::success(id, outcome_content(&outcome, continuation))
+            }
+            Err(message) => {
+                if let Some(state) = resume_state {
+                    *self.resume.lock().unwrap() = Some(state);
+                }
+                RpcResponse::success(id, tool_content(message, true))
+            }
         }
     }
 
     fn run_one(
         &self,
         sink: &mut JsonlSink,
-        prompt: &str,
+        prompt: Option<&str>,
         media: Vec<ferric_core::MediaPart>,
         resume: Option<ferric_loop::ReplayedState>,
+        answer: Option<&str>,
     ) -> Result<ferric_loop::LoopOutcome, String> {
         // MCP streams partial text via custom JSON-RPC notification.
         let sink_fn = |d: ferric_provider::StreamDelta| match d {
@@ -480,6 +649,7 @@ impl McpServer {
             media,
             stream_sink: Some(&sink_fn),
             resume,
+            answer,
             provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: self.config.hooks.clone(),
@@ -488,16 +658,12 @@ impl McpServer {
         match &self.provider {
             ProviderSource::FreshMock => {
                 let provider = mock_provider(self.config.protocol);
-                let fut =
-                    run_with_provider(setup.into_run_args(&provider, None), sink, Some(prompt));
+                let fut = run_with_provider(setup.into_run_args(&provider, None), sink, prompt);
                 futures_executor::block_on(fut)
             }
             ProviderSource::Shared(provider) => {
-                let fut = run_with_provider(
-                    setup.into_run_args(provider.as_ref(), None),
-                    sink,
-                    Some(prompt),
-                );
+                let fut =
+                    run_with_provider(setup.into_run_args(provider.as_ref(), None), sink, prompt);
                 match &self.executor {
                     Executor::Blocking => futures_executor::block_on(fut),
                     #[cfg(feature = "backend-openai")]
@@ -881,6 +1047,12 @@ mod tests {
         assert!(properties.get("backend").is_none());
         assert!(properties.get("model").is_none());
         assert!(properties.get("prompt").is_some());
+        assert!(properties.get("continuation_id").is_some());
+        assert!(properties.get("answer").is_some());
+        assert_eq!(
+            schema["outputSchema"]["properties"]["status"]["type"],
+            "string"
+        );
     }
 
     fn test_server(dir: &std::path::Path, provider: Box<dyn Provider + Send + Sync>) -> McpServer {
@@ -921,6 +1093,25 @@ mod tests {
             id: Some(Value::from(id)),
             method: "tools/call".to_string(),
             params: serde_json::json!({"name": "ferric_query", "arguments": arguments}),
+        }
+    }
+
+    fn native_completion(id: &str, name: &str, args: Value) -> ferric_provider::Completion {
+        ferric_provider::Completion {
+            message: ferric_core::Message {
+                role: ferric_core::Role::Assistant,
+                text: None,
+                tool_calls: vec![ferric_core::ToolCall {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    args,
+                }],
+                tool_call_id: None,
+                media: Vec::new(),
+            },
+            input_tokens: Some(10),
+            output_tokens: Some(5),
+            truncated: false,
         }
     }
 
@@ -973,6 +1164,89 @@ mod tests {
         let result = resp.result.unwrap();
         assert_eq!(result["isError"], false);
         assert_eq!(result["content"][0]["text"], "mock run complete");
+        assert_eq!(result["structuredContent"]["status"], "completed");
+        assert!(result["structuredContent"]["continuation_id"].is_null());
+    }
+
+    #[test]
+    fn clarification_roundtrips_through_structured_mcp_continuation() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = ferric_provider::MockProvider::new(vec![
+            native_completion(
+                "ask-1",
+                ferric_loop::REQUEST_USER_INPUT,
+                serde_json::json!({
+                    "question": "Which database?",
+                    "context": "Both adapters exist and no default is documented.",
+                    "options": ["SQLite", "PostgreSQL"]
+                }),
+            ),
+            native_completion(
+                "done-1",
+                ferric_loop::TASK_COMPLETE,
+                serde_json::json!({"summary": "used SQLite"}),
+            ),
+        ]);
+        let server = test_server(dir.path(), Box::new(provider));
+
+        let paused = server
+            .dispatch(call_request(
+                1,
+                serde_json::json!({"prompt": "configure the database"}),
+            ))
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(paused["isError"], false);
+        assert_eq!(paused["structuredContent"]["status"], "needs_input");
+        assert_eq!(
+            paused["structuredContent"]["needs_input"]["request"]["question"],
+            "Which database?"
+        );
+        let continuation = paused["structuredContent"]["continuation_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let invalid = server
+            .dispatch(call_request(
+                2,
+                serde_json::json!({
+                    "continuation_id": "mcp-wrong",
+                    "answer": "SQLite"
+                }),
+            ))
+            .unwrap();
+        assert_eq!(invalid.error.unwrap().code, INVALID_PARAMS);
+        assert!(
+            server.resume.lock().unwrap().is_some(),
+            "invalid input must not consume continuation state"
+        );
+
+        let completed = server
+            .dispatch(call_request(
+                3,
+                serde_json::json!({
+                    "continuation_id": continuation,
+                    "answer": "SQLite"
+                }),
+            ))
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(completed["isError"], false);
+        assert_eq!(completed["structuredContent"]["status"], "completed");
+        assert_eq!(completed["content"][0]["text"], "used SQLite");
+        assert!(server.resume.lock().unwrap().is_none());
+
+        let traces = std::fs::read_dir(&server.trace_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(traces.contains("\"type\":\"resume_prompt\""));
+        assert!(traces.contains("User answer: SQLite"));
     }
 
     #[test]

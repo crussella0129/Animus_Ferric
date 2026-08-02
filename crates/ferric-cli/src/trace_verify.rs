@@ -15,6 +15,7 @@ use ferric_trace::{Event, ParsedEvent, TRACE_SCHEMA_VERSION, TraceReader};
 struct TurnState {
     number: u32,
     ended: bool,
+    modern: bool,
     declared_calls: u32,
     calls: BTreeMap<String, RecordedCall>,
     pre_dispatch_stop: Option<PreDispatchStop>,
@@ -24,6 +25,7 @@ struct TurnState {
 struct RecordedCall {
     name: String,
     has_result: bool,
+    is_error: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +56,7 @@ struct VerificationSummary {
 
 #[derive(Debug, Default)]
 struct VerificationState {
+    structure: ferric_loop::TraceStructure,
     session: Option<String>,
     next_seq: u64,
     saw_start: bool,
@@ -64,6 +67,10 @@ struct VerificationState {
     saw_task_complete: bool,
     saw_submit_plan: bool,
     expected_stop: Option<&'static str>,
+    saw_modern_turn: bool,
+    paused_reason: Option<String>,
+    checkpoint_after_stop: bool,
+    mutation_epoch: u64,
     summary: VerificationSummary,
 }
 
@@ -138,14 +145,28 @@ fn verify_trace(path: &Path) -> Result<VerificationSummary, String> {
     if !state.saw_policy {
         return Err("trace has no policy_selected event".to_string());
     }
-    finish_turn(&mut state)?;
+    state
+        .structure
+        .finish()
+        .map_err(|error| format!("recovery structure: {error}"))?;
+    finish_turn(&mut state, true)?;
     validate_stop_terminator(&state)?;
 
     Ok(state.summary)
 }
 
 fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> Result<(), String> {
-    if state.summary.stop_reason.is_some() && !matches!(event, Event::Note { .. }) {
+    state
+        .structure
+        .observe(&event)
+        .map_err(|error| format!("record {index} recovery structure: {error}"))?;
+
+    if state.summary.stop_reason.is_some()
+        && !matches!(
+            event,
+            Event::Note { .. } | Event::RecoveryCheckpoint { .. } | Event::SessionPaused { .. }
+        )
+    {
         return Err(format!(
             "record {index} contains an event after session_end: {event:?}"
         ));
@@ -174,7 +195,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
             state.saw_policy = true;
             state.protocol = Some(protocol);
         }
-        Event::SessionPrompt { .. } | Event::PromptComposed { .. } => {
+        Event::SessionPrompt { .. } | Event::ResumePrompt { .. } | Event::PromptComposed { .. } => {
             require_started(index, state)?;
             if state.current_turn.is_some() {
                 return Err(format!(
@@ -184,7 +205,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
         }
         Event::TurnStart { turn } => {
             require_policy(index, state)?;
-            finish_turn(state)?;
+            finish_turn(state, false)?;
             if let Some(previous) = state.last_turn
                 && turn <= previous
             {
@@ -196,6 +217,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
             state.current_turn = Some(TurnState {
                 number: turn,
                 ended: false,
+                modern: false,
                 declared_calls: 0,
                 calls: BTreeMap::new(),
                 pre_dispatch_stop: None,
@@ -233,6 +255,24 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
             current.ended = true;
             current.declared_calls = tool_call_count;
         }
+        Event::ActionsProposed { turn, calls } => {
+            let is_native = state.protocol == Some(ActionProtocol::NativeTools);
+            let current = current_turn_mut(index, state)?;
+            if current.number != turn || !current.ended {
+                return Err(format!(
+                    "record {index} proposes actions outside ended turn {turn}"
+                ));
+            }
+            if is_native && calls.len() != current.declared_calls as usize {
+                return Err(format!(
+                    "turn {turn} proposed {} actions but declared {}",
+                    calls.len(),
+                    current.declared_calls
+                ));
+            }
+            current.modern = true;
+            state.saw_modern_turn = true;
+        }
         Event::ToolCall { id, name, .. } => {
             let current = current_turn_mut(index, state)?;
             if !current.ended {
@@ -247,6 +287,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
                     RecordedCall {
                         name,
                         has_result: false,
+                        is_error: false,
                     },
                 )
                 .is_some()
@@ -255,7 +296,9 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
             }
             state.summary.tool_calls += 1;
         }
-        Event::ToolResult { id, name, .. } => {
+        Event::ToolResult {
+            id, name, is_error, ..
+        } => {
             let current = current_turn_mut(index, state)?;
             let call = current.calls.get_mut(&id).ok_or_else(|| {
                 format!("record {index} has a result for unknown tool-call id {id:?}")
@@ -272,11 +315,148 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
                 ));
             }
             call.has_result = true;
+            call.is_error = is_error;
+        }
+        Event::WorkspaceMutation {
+            turn,
+            mutation_epoch,
+            ..
+        } => {
+            let current = current_turn_mut(index, state)?;
+            if current.number != turn || !current.ended {
+                return Err(format!(
+                    "record {index} records a mutation outside ended turn {turn}"
+                ));
+            }
+            if mutation_epoch != state.mutation_epoch.saturating_add(1) {
+                return Err(format!(
+                    "record {index} advances mutation epoch from {} to {mutation_epoch}",
+                    state.mutation_epoch
+                ));
+            }
+            state.mutation_epoch = mutation_epoch;
+        }
+        Event::VerificationCheckPassed {
+            turn,
+            mutation_epoch,
+            ..
+        } => {
+            let current = current_turn_mut(index, state)?;
+            if current.number != turn || !current.ended {
+                return Err(format!(
+                    "record {index} records check evidence outside ended turn {turn}"
+                ));
+            }
+            if mutation_epoch != state.mutation_epoch {
+                return Err(format!(
+                    "record {index} records check evidence at epoch {mutation_epoch}, current epoch is {}",
+                    state.mutation_epoch
+                ));
+            }
+        }
+        Event::CompletionGate {
+            mutation_epoch,
+            required_checks,
+            fresh_checks,
+            decision,
+        } => {
+            let current = current_turn_mut(index, state)?;
+            if !current.ended || mutation_epoch != state.mutation_epoch {
+                return Err(format!(
+                    "record {index} has an out-of-state completion gate"
+                ));
+            }
+            if !matches!(decision.as_str(), "passed" | "blocked")
+                || fresh_checks
+                    .iter()
+                    .any(|check| !required_checks.contains(check))
+                || (decision == "passed" && fresh_checks.len() != required_checks.len())
+                || (decision == "blocked" && fresh_checks.len() == required_checks.len())
+            {
+                return Err(format!(
+                    "record {index} has inconsistent completion evidence"
+                ));
+            }
+        }
+        Event::TurnCommitted {
+            turn,
+            dispatched,
+            errored,
+            ..
+        } => {
+            let current = current_turn_mut(index, state)?;
+            if current.number != turn || !current.ended {
+                return Err(format!("record {index} commits outside ended turn {turn}"));
+            }
+            let result_count = current
+                .calls
+                .values()
+                .filter(|call| call.has_result)
+                .count() as u32;
+            let error_count = current
+                .calls
+                .values()
+                .filter(|call| call.has_result && call.is_error)
+                .count() as u32;
+            if dispatched != result_count || errored != error_count {
+                return Err(format!(
+                    "turn {turn} commit reports {dispatched}/{errored} dispatched/errors, recorded {result_count}/{error_count}"
+                ));
+            }
+            state.saw_modern_turn = true;
+            finish_turn(state, false)?;
         }
         Event::SessionEnd { reason } => {
             require_policy(index, state)?;
             state.summary.stop_reason = Some(reason);
-            finish_turn(state)?;
+            finish_turn(state, false)?;
+        }
+        Event::RecoveryCheckpoint { state: checkpoint } => {
+            require_policy(index, state)?;
+            if checkpoint.version != ferric_trace::RECOVERY_CHECKPOINT_VERSION {
+                return Err(format!(
+                    "record {index} has unsupported checkpoint version {}",
+                    checkpoint.version
+                ));
+            }
+            if checkpoint.head_len > checkpoint.messages.len() {
+                return Err(format!("record {index} checkpoint head exceeds messages"));
+            }
+            if checkpoint
+                .passed_checks
+                .values()
+                .any(|epoch| *epoch > checkpoint.mutation_epoch)
+            {
+                return Err(format!(
+                    "record {index} checkpoint contains future check evidence"
+                ));
+            }
+            if state.last_turn.is_some() && checkpoint.mutation_epoch != state.mutation_epoch {
+                return Err(format!(
+                    "record {index} checkpoint mutation epoch {} differs from projected {}",
+                    checkpoint.mutation_epoch, state.mutation_epoch
+                ));
+            }
+            state.mutation_epoch = checkpoint.mutation_epoch;
+            if state.summary.stop_reason.is_some() {
+                state.checkpoint_after_stop = true;
+            }
+        }
+        Event::SessionPaused { reason } => {
+            let ended = state.summary.stop_reason.as_deref().ok_or_else(|| {
+                format!("record {index} pauses before session_end established a reason")
+            })?;
+            if ended != reason {
+                return Err(format!(
+                    "record {index} pause reason {reason:?} differs from session_end {ended:?}"
+                ));
+            }
+            if !state.checkpoint_after_stop {
+                return Err(format!(
+                    "record {index} pauses without a recovery checkpoint"
+                ));
+            }
+            state.paused_reason = Some(reason);
         }
         Event::RepetitionGuard { action } => {
             record_pre_dispatch_stop(index, state, &action, PreDispatchStop::Repetition)?
@@ -355,7 +535,7 @@ fn record_pre_dispatch_stop(
     }
 }
 
-fn finish_turn(state: &mut VerificationState) -> Result<(), String> {
+fn finish_turn(state: &mut VerificationState, eof: bool) -> Result<(), String> {
     let Some(turn) = state.current_turn.take() else {
         return Ok(());
     };
@@ -375,9 +555,10 @@ fn finish_turn(state: &mut VerificationState) -> Result<(), String> {
 
     if state.protocol == Some(ActionProtocol::NativeTools) {
         let declared = turn.declared_calls as usize;
+        let retryable_before_dispatch = eof && turn.modern && turn.calls.is_empty();
         let guarded_before_dispatch =
             turn.pre_dispatch_stop.is_some() && turn.calls.is_empty() && declared > 0;
-        if turn.calls.len() != declared && !guarded_before_dispatch {
+        if turn.calls.len() != declared && !guarded_before_dispatch && !retryable_before_dispatch {
             return Err(format!(
                 "turn {} declares {} tool call(s), but {} were recorded",
                 turn.number,
@@ -469,6 +650,150 @@ mod tests {
                 media: Vec::new(),
             },
         ]
+    }
+
+    fn modern_call(id: &str, name: &str) -> ferric_core::ToolCall {
+        ferric_core::ToolCall {
+            id: id.to_string(),
+            name: name.to_string(),
+            args: json!({"path": "a.txt"}),
+        }
+    }
+
+    fn checkpoint() -> ferric_trace::RecoveryCheckpointV1 {
+        ferric_trace::RecoveryCheckpointV1 {
+            version: ferric_trace::RECOVERY_CHECKPOINT_VERSION,
+            messages: vec![
+                ferric_core::Message::system("system"),
+                ferric_core::Message::user("task"),
+            ],
+            next_turn: 0,
+            last_text: None,
+            head_len: 2,
+            committed_turn_starts: Vec::new(),
+            guard_history: Vec::new(),
+            nudged_for_no_action: false,
+            truncated_once: false,
+            last_input_tokens: None,
+            pending_input: None,
+            mutation_epoch: 0,
+            passed_checks: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn rejects_a_next_turn_after_an_uncommitted_modern_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("uncommitted-modern.jsonl");
+        let call = modern_call("read-1", "read_file");
+        let mut events = prefix(dir.path());
+        events.extend([
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: None,
+                output_tokens: None,
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![call.clone()],
+            },
+            Event::ToolCall {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                args: call.args.clone(),
+            },
+            Event::ToolResult {
+                id: call.id,
+                name: call.name,
+                output: "read".to_string(),
+                is_error: false,
+                duration_ms: 1,
+            },
+            Event::TurnStart { turn: 1 },
+        ]);
+        write_trace(&trace, events);
+
+        let error = verify_trace(&trace).unwrap_err();
+        assert!(error.contains("without TurnCommitted"), "{error}");
+    }
+
+    #[test]
+    fn rejects_dispatch_that_differs_from_the_proposed_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("proposal-mismatch.jsonl");
+        let mut events = prefix(dir.path());
+        events.extend([
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: None,
+                output_tokens: None,
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![modern_call("read-1", "read_file")],
+            },
+            Event::ToolCall {
+                id: "write-1".to_string(),
+                name: "write_file".to_string(),
+                args: json!({"path": "a.txt"}),
+            },
+        ]);
+        write_trace(&trace, events);
+
+        let error = verify_trace(&trace).unwrap_err();
+        assert!(error.contains("dispatched call"), "{error}");
+    }
+
+    #[test]
+    fn rejects_a_checkpoint_inside_an_active_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("checkpoint-in-turn.jsonl");
+        let mut events = prefix(dir.path());
+        events.extend([
+            Event::TurnStart { turn: 0 },
+            Event::RecoveryCheckpoint {
+                state: checkpoint(),
+            },
+        ]);
+        write_trace(&trace, events);
+
+        let error = verify_trace(&trace).unwrap_err();
+        assert!(error.contains("inside an active turn"), "{error}");
+    }
+
+    #[test]
+    fn accepts_a_retryable_modern_crash_before_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("retryable-modern.jsonl");
+        let mut events = prefix(dir.path());
+        events.extend([
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: None,
+                output_tokens: None,
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![modern_call("read-1", "read_file")],
+            },
+        ]);
+        write_trace(&trace, events);
+
+        let summary = verify_trace(&trace).unwrap();
+        assert_eq!(summary.turns, 1);
+        assert!(summary.stop_reason.is_none());
     }
 
     #[test]
@@ -658,6 +983,7 @@ mod tests {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             provenance: Provenance::Clean,
             sink_policy: SinkPolicy::deny(),
             hooks: None,

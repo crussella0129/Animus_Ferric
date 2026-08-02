@@ -190,13 +190,27 @@ pub(crate) fn escalation_seed(
     history: &[Message],
     config: &RunConfig,
     chat_session: &str,
+    workspace: &std::path::Path,
 ) -> ReplayedState {
     ReplayedState {
         messages: history.to_vec(),
         turns: 0,
+        next_turn: 0,
         last_text: None,
         protocol: config.protocol,
+        truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: chat_session.to_string(),
+        workspace: workspace.to_path_buf(),
+        head_len: history.len(),
+        committed_turn_starts: Vec::new(),
+        guard_history: Vec::new(),
+        nudged_for_no_action: false,
+        truncated_once: false,
+        last_input_tokens: None,
+        pending_input: None,
+        mutation_epoch: 0,
+        passed_checks: std::collections::BTreeMap::new(),
+        pause_reason: None,
     }
 }
 
@@ -292,6 +306,7 @@ impl ChatBackend {
             media: Vec::new(),
             stream_sink,
             resume: Some(seed.clone()),
+            answer: None,
             provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: None,
@@ -519,7 +534,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                 }
             }
             ChatInput::Escalate(text) => {
-                let seed = escalation_seed(&history, &config, &chat_session);
+                let seed = escalation_seed(&history, &config, &chat_session, workspace.root());
                 esc_count += 1;
                 let esc_session = format!("chat-esc-{}-{esc_count}", now_ms());
                 let esc_path = trace_dir.join(format!("{esc_session}.jsonl"));
@@ -739,7 +754,8 @@ mod tests {
             model_key: None,
             hooks: None,
         });
-        let seed = escalation_seed(&history, &config, "chat-123");
+        let workspace = tempfile::tempdir().unwrap();
+        let seed = escalation_seed(&history, &config, "chat-123", workspace.path());
         assert_eq!(
             seed.messages, history,
             "the full conversation seeds the run"

@@ -19,7 +19,7 @@ use ferric_loop::{
     DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run, select_protocol,
 };
 use ferric_provider::{Capabilities, Completion, MockProvider, Provider, SamplingParams};
-use ferric_tools::{Registry, register_builtin_tools};
+use ferric_tools::{NamedCheck, Registry, register_builtin_tools, register_run_checks};
 use ferric_trace::{Event, JsonlSink};
 
 use crate::backend::BackendOpts;
@@ -117,6 +117,11 @@ pub struct QueryArgs {
     #[arg(long)]
     pub resume: Option<PathBuf>,
 
+    /// Answer a pending `request_user_input` clarification. Requires
+    /// `--resume` and cannot be combined with a new positional prompt.
+    #[arg(long, requires = "resume", conflicts_with = "prompt")]
+    pub answer: Option<String>,
+
     /// Workspace root (containment boundary). Default: current directory.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
@@ -205,6 +210,11 @@ pub struct QueryArgs {
     #[arg(long)]
     pub max_ring: Option<u8>,
 
+    /// Override the selected policy's turn budget for this invocation.
+    /// Ordinary queries use the tier-derived budget when this is absent.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..))]
+    pub max_turns: Option<u8>,
+
     /// Directory holding `model_profiles.json` (written by `ferric bench` and
     /// `toolbench --calibrate-rings`). When a record exists for this model, its
     /// `measured_level` sets the tier and its `calibrated_ring` defaults
@@ -213,6 +223,18 @@ pub struct QueryArgs {
     /// `profile_dir` is set (T-3803).
     #[arg(long)]
     pub profile_dir: Option<PathBuf>,
+
+    /// Explicit operator authorization for model-visible verification checks.
+    /// The TOML file contains fixed program/argv definitions; the model can
+    /// choose only a check name. Checks are never loaded implicitly from a
+    /// repository or the ordinary layered config.
+    #[arg(long)]
+    pub checks_file: Option<PathBuf>,
+
+    /// Ignore project and user config files for this invocation. CLI flags and
+    /// built-in defaults still apply. Intended for isolated benchmark runs.
+    #[arg(long)]
+    pub no_config: bool,
 
     /// Suppress live streaming of text and tool activity (default: streaming is ON).
     #[arg(long)]
@@ -318,6 +340,27 @@ pub(crate) struct RunConfig {
     /// responsible for recording it as a `Note` once a sink exists.
     pub prompt_composition_error: Option<String>,
     pub hooks: Option<ferric_core::HooksConfig>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NamedChecksFile {
+    #[serde(default, rename = "check")]
+    checks: Vec<NamedCheck>,
+}
+
+fn load_named_checks(path: &Path) -> Result<Vec<NamedCheck>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read checks file {}: {error}", path.display()))?;
+    let parsed: NamedChecksFile = toml::from_str(&text)
+        .map_err(|error| format!("invalid checks file {}: {error}", path.display()))?;
+    if parsed.checks.is_empty() {
+        return Err(format!(
+            "checks file {} defines no [[check]] entries",
+            path.display()
+        ));
+    }
+    Ok(parsed.checks)
 }
 
 pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
@@ -693,7 +736,11 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     // config > today's hardcoded default). `BackendOpts`' fields are resolved
     // IN PLACE on `args` so the same merged values reach `create_provider` in
     // `drive_real` below, not just this function's own `RunConfigArgs` build.
-    let loaded_config = crate::config::load_layered(&workspace_root);
+    let loaded_config = if args.no_config {
+        crate::config::LoadedConfig::default()
+    } else {
+        crate::config::load_layered(&workspace_root)
+    };
     // Hooks are the one config field that becomes arbitrary command execution
     // (`run_hook` -> `sh -c` with the full inherited environment), and the user
     // layer's location is chosen by environment variable. Naming the file is
@@ -749,6 +796,28 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         requested_skills: args.skills.clone(),
         allowed_skills: cfg.allowed_skills.clone().unwrap_or_default(),
     });
+    if let Some(max_turns) = args.max_turns {
+        config.policy.max_turns = max_turns;
+    }
+    if let Some(path) = &args.checks_file {
+        let checks = match load_named_checks(path) {
+            Ok(checks) => checks,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let names = checks
+            .iter()
+            .map(|check| check.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if let Err(error) = register_run_checks(&mut config.registry, checks) {
+            eprintln!("invalid checks file {}: {error}", path.display());
+            return ExitCode::FAILURE;
+        }
+        eprintln!("verification checks authorized: {names}");
+    }
 
     // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
     // incomplete session. Resolved here (needs `config.protocol` for the
@@ -756,14 +825,12 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     let resume = match &args.resume {
         Some(path) => match ferric_loop::replay(path) {
             Ok(replayed) => {
-                if replayed.protocol != config.protocol {
-                    eprintln!(
-                        "cannot resume {}: recorded protocol {:?} does not match this \
-                         invocation's resolved protocol {:?}",
-                        path.display(),
-                        replayed.protocol,
-                        config.protocol
-                    );
+                if let Err(error) = ferric_loop::validate_resume_target(
+                    &replayed,
+                    workspace.root(),
+                    config.protocol,
+                ) {
+                    eprintln!("cannot resume {}: {error}", path.display());
                     return ExitCode::FAILURE;
                 }
                 Some(replayed)
@@ -820,12 +887,10 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         eprintln!("cannot create trace dir {}: {e}", trace_dir.display());
         return ExitCode::FAILURE;
     }
-    let session = format!("q-{}", now_ms());
-    let trace_path = trace_dir.join(format!("{session}.jsonl"));
-    let mut sink = match JsonlSink::open(&trace_path, &session) {
-        Ok(sink) => sink,
+    let (_session, trace_path, mut sink) = match create_trace_sink(&trace_dir, "q") {
+        Ok(trace) => trace,
         Err(e) => {
-            eprintln!("cannot open trace {}: {e}", trace_path.display());
+            eprintln!("cannot allocate query trace: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -934,6 +999,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         media: media_parts,
         stream_sink,
         resume,
+        answer: args.answer.as_deref(),
         provenance: ferric_guard::Provenance::Clean,
         sink_policy: args.sink_action.into_policy(),
         hooks: config.hooks.clone(),
@@ -975,6 +1041,20 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         outcome.turns,
         trace_path.display()
     );
+    if let Some(needs_input) = &outcome.needs_input {
+        eprintln!("Question: {}", needs_input.request.question);
+        eprintln!("Context: {}", needs_input.request.context);
+        if !needs_input.request.options.is_empty() {
+            eprintln!("Options:");
+            for (index, option) in needs_input.request.options.iter().enumerate() {
+                eprintln!("  {}. {}", index + 1, option);
+            }
+        }
+        eprintln!(
+            "Resume: ferric query --resume \"{}\" --answer \"<answer>\"",
+            trace_path.display()
+        );
+    }
     if outcome.stop.is_success() {
         ExitCode::SUCCESS
     } else {
@@ -987,6 +1067,32 @@ pub(crate) fn now_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0)
+}
+
+static TRACE_SESSION_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Allocate an opaque, collision-resistant session id and a trace that cannot
+/// append to an existing session. The `create_new` boundary matters for API
+/// and MCP servers where multiple requests can begin in the same millisecond.
+pub(crate) fn create_trace_sink(
+    trace_dir: &Path,
+    prefix: &str,
+) -> Result<(String, PathBuf, JsonlSink), ferric_core::FerricError> {
+    std::fs::create_dir_all(trace_dir)?;
+    for _ in 0..32 {
+        let counter = TRACE_SESSION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let session = format!("{prefix}-{}-{}-{counter}", now_ms(), std::process::id());
+        let path = trace_dir.join(format!("{session}.jsonl"));
+        match JsonlSink::create_new(&path, &session) {
+            Ok(sink) => return Ok((session, path, sink)),
+            Err(ferric_core::FerricError::Io(error))
+                if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(ferric_core::FerricError::Other(
+        "could not allocate a unique trace after 32 attempts".to_string(),
+    ))
 }
 
 /// Built-in mock script: one file write, then a structured termination —
@@ -1143,6 +1249,7 @@ pub(crate) struct LoopSetup<'a> {
     pub media: Vec<MediaPart>,
     pub stream_sink: Option<&'a (dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     pub resume: Option<ferric_loop::ReplayedState>,
+    pub answer: Option<&'a str>,
     pub provenance: ferric_guard::Provenance,
     pub sink_policy: ferric_guard::SinkPolicy,
     pub hooks: Option<ferric_core::HooksConfig>,
@@ -1170,6 +1277,7 @@ impl<'a> LoopSetup<'a> {
             media: self.media,
             stream_sink: self.stream_sink,
             resume: self.resume,
+            answer: self.answer,
             cancel_flag,
             provenance: self.provenance,
             sink_policy: self.sink_policy,
@@ -1372,6 +1480,36 @@ mod tests {
     use super::*;
     use ferric_core::policy_for;
 
+    #[test]
+    fn trace_allocator_never_appends_same_millisecond_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first_id, first_path, mut first) = create_trace_sink(dir.path(), "api").unwrap();
+        let (second_id, second_path, mut second) = create_trace_sink(dir.path(), "api").unwrap();
+        assert_ne!(first_id, second_id);
+        assert_ne!(first_path, second_path);
+        first
+            .write_event(Event::Note {
+                text: "first".to_string(),
+            })
+            .unwrap();
+        second
+            .write_event(Event::Note {
+                text: "second".to_string(),
+            })
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(first_path).unwrap().lines().count(),
+            1
+        );
+        assert_eq!(
+            std::fs::read_to_string(second_path)
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+    }
+
     /// Each `--sink-action` spelling maps to the policy it names — the security
     /// control must not drift from its label.
     #[test]
@@ -1547,6 +1685,7 @@ mod tests {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: None,
@@ -1648,6 +1787,53 @@ mod tests {
         let (protocol_2, max_ring_2) = (config.protocol, config.policy.max_ring);
         assert_eq!(protocol_1, protocol_2);
         assert_eq!(max_ring_1, max_ring_2);
+    }
+
+    #[test]
+    fn checks_file_parses_fixed_argv_and_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checks.toml");
+        std::fs::write(
+            &path,
+            r#"
+                [[check]]
+                name = "unit"
+                program = "cargo"
+                args = ["test", "--workspace"]
+            "#,
+        )
+        .unwrap();
+
+        let checks = load_named_checks(&path).unwrap();
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].name, "unit");
+        assert_eq!(checks[0].args, ["test", "--workspace"]);
+        assert_eq!(checks[0].timeout_s, 120);
+        assert_eq!(checks[0].output_limit, 4_000);
+    }
+
+    #[test]
+    fn checks_file_is_explicit_and_fail_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let empty = directory.path().join("empty.toml");
+        std::fs::write(&empty, "# no checks\n").unwrap();
+        assert!(
+            load_named_checks(&empty)
+                .unwrap_err()
+                .contains("no [[check]]")
+        );
+
+        let unknown = directory.path().join("unknown.toml");
+        std::fs::write(
+            &unknown,
+            "[[check]]\nname='unit'\nprogram='cargo'\ncommand='arbitrary'\n",
+        )
+        .unwrap();
+        assert!(
+            load_named_checks(&unknown)
+                .unwrap_err()
+                .contains("unknown field")
+        );
     }
 
     // --- ADR-085: the allowlist is derived from the URLs, so host parsing is a
