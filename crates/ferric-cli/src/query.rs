@@ -205,6 +205,11 @@ pub struct QueryArgs {
     #[arg(long)]
     pub max_ring: Option<u8>,
 
+    /// Override the selected policy's turn budget for this invocation.
+    /// Ordinary queries use the tier-derived budget when this is absent.
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..))]
+    pub max_turns: Option<u8>,
+
     /// Directory holding `model_profiles.json` (written by `ferric bench` and
     /// `toolbench --calibrate-rings`). When a record exists for this model, its
     /// `measured_level` sets the tier and its `calibrated_ring` defaults
@@ -213,6 +218,11 @@ pub struct QueryArgs {
     /// `profile_dir` is set (T-3803).
     #[arg(long)]
     pub profile_dir: Option<PathBuf>,
+
+    /// Ignore project and user config files for this invocation. CLI flags and
+    /// built-in defaults still apply. Intended for isolated benchmark runs.
+    #[arg(long)]
+    pub no_config: bool,
 
     /// Suppress live streaming of text and tool activity (default: streaming is ON).
     #[arg(long)]
@@ -693,7 +703,11 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     // config > today's hardcoded default). `BackendOpts`' fields are resolved
     // IN PLACE on `args` so the same merged values reach `create_provider` in
     // `drive_real` below, not just this function's own `RunConfigArgs` build.
-    let loaded_config = crate::config::load_layered(&workspace_root);
+    let loaded_config = if args.no_config {
+        crate::config::LoadedConfig::default()
+    } else {
+        crate::config::load_layered(&workspace_root)
+    };
     // Hooks are the one config field that becomes arbitrary command execution
     // (`run_hook` -> `sh -c` with the full inherited environment), and the user
     // layer's location is chosen by environment variable. Naming the file is
@@ -749,6 +763,9 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         requested_skills: args.skills.clone(),
         allowed_skills: cfg.allowed_skills.clone().unwrap_or_default(),
     });
+    if let Some(max_turns) = args.max_turns {
+        config.policy.max_turns = max_turns;
+    }
 
     // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
     // incomplete session. Resolved here (needs `config.protocol` for the

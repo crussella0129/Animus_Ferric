@@ -98,6 +98,7 @@ impl Config {
 /// malformed layers — testable data (C-004), not a bare `eprintln!`. Mirrors
 /// `RunConfig::prompt_composition_error`'s existing pattern of surfacing a
 /// degrade-gracefully failure as data the caller traces once a sink exists.
+#[derive(Default)]
 pub struct LoadedConfig {
     pub config: Config,
     pub diagnostics: Vec<String>,

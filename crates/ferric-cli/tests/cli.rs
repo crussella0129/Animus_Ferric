@@ -481,7 +481,7 @@ fn query_defaults_unchanged_after_clap_type_change() {
 
 /// Shared by the T-3803 config-precedence tests below: the `policy_selected`
 /// trace event's tier, for a `--mock` run against workspace `ws`.
-fn policy_tier(ws: &std::path::Path) -> String {
+fn policy_event(ws: &std::path::Path) -> serde_json::Value {
     let trace_dir = ws.join(".ferric").join("trace");
     let trace = std::fs::read_dir(&trace_dir)
         .unwrap()
@@ -493,7 +493,11 @@ fn policy_tier(ws: &std::path::Path) -> String {
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .find(|v| v["event"]["type"] == "policy_selected")
-        .expect("a policy_selected event")["event"]["tier"]
+        .expect("a policy_selected event")
+}
+
+fn policy_tier(ws: &std::path::Path) -> String {
+    policy_event(ws)["event"]["tier"]
         .as_str()
         .unwrap()
         .to_string()
@@ -524,6 +528,55 @@ fn config_file_sets_default_without_flag() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(policy_tier(ws.path()), "small");
+}
+
+#[test]
+fn no_config_ignores_project_config() {
+    let ws = tempfile::tempdir().unwrap();
+    write_project_config(ws.path(), "params_b = 8.0\n");
+
+    let out = ferric()
+        .args(["query", "--mock", "--no-config", "do a task"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        policy_tier(ws.path()),
+        "nano",
+        "--no-config must restore the ordinary built-in params_b default"
+    );
+}
+
+#[test]
+fn max_turns_flag_overrides_the_selected_policy_budget() {
+    let ws = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["query", "--mock", "--max-turns", "7", "do a task"])
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(policy_event(ws.path())["event"]["max_turns"], 7);
+}
+
+#[test]
+fn max_turns_rejects_zero() {
+    let out = ferric()
+        .args(["query", "--mock", "--max-turns", "0", "do a task"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
 }
 
 /// T-3803: a CLI flag wins over the same field set in `.ferric/config.toml`.

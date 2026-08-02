@@ -7,8 +7,10 @@
 //! poll loop. Release-profile children are required for usable speed (debug
 //! candle is ~1 tok/s — s1 lesson); the CLI warns under debug_assertions.
 
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use ferric_core::ActionProtocol;
@@ -81,10 +83,21 @@ impl WorkspaceHandle {
 }
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+const STDERR_TAIL_BYTES: usize = 1000;
+
+struct ChildOutcome {
+    exit_code: Option<i32>,
+    timed_out: bool,
+    wall: Duration,
+    stderr_tail: String,
+}
 
 /// Materialize the spec's workspace, run the agent, and return the raw record.
 pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord> {
     let dir = tempfile::tempdir()?;
+    // A calibration run must not consume a profile written by an earlier run.
+    // Keep the empty profile directory alive until the child exits.
+    let profile_dir = tempfile::tempdir()?;
     for (rel, content) in &spec.setup_files {
         let path = dir.path().join(rel);
         if let Some(parent) = path.parent() {
@@ -94,15 +107,63 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
     }
 
     let mut cmd = Command::new(&inv.ferric_bin);
-    cmd.args(query_args(&spec.prompt, inv, dir.path()));
+    cmd.args(query_args(
+        &spec.prompt,
+        spec.max_turns,
+        inv,
+        dir.path(),
+        profile_dir.path(),
+    ));
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
     let started = Instant::now();
-    let mut child = cmd.spawn()?;
-    let timeout = Duration::from_secs(spec.timeout_s);
-    let mut timed_out = false;
+    let child = cmd.spawn()?;
+    let outcome = wait_for_child(child, started, Duration::from_secs(spec.timeout_s))?;
 
+    let trace_path = find_trace(dir.path());
+
+    let workspace = if inv.keep_workspace {
+        let kept = dir.keep();
+        WorkspaceHandle::Kept(kept)
+    } else {
+        WorkspaceHandle::Temp(dir)
+    };
+
+    Ok(RunRecord {
+        exit_code: outcome.exit_code,
+        timed_out: outcome.timed_out,
+        wall: outcome.wall,
+        trace_path,
+        workspace,
+        stderr_tail: outcome.stderr_tail,
+    })
+}
+
+/// Drain both child pipes while polling. Waiting to read until after exit can
+/// deadlock when a verbose child fills an OS pipe and blocks before exiting.
+fn wait_for_child(
+    mut child: Child,
+    started: Instant,
+    timeout: Duration,
+) -> io::Result<ChildOutcome> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("child stdout was not piped"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("child stderr was not piped"))?;
+
+    let stdout_drain = std::thread::spawn(move || {
+        let mut stdout = stdout;
+        let mut sink = io::sink();
+        io::copy(&mut stdout, &mut sink).map(|_| ())
+    });
+    let stderr_drain = std::thread::spawn(move || read_tail(stderr, STDERR_TAIL_BYTES));
+
+    let mut timed_out = false;
     let exit_code = loop {
         match child.try_wait()? {
             Some(status) => break status.code(),
@@ -119,29 +180,45 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
     };
     let wall = started.elapsed();
 
-    // Drain stderr tail (the child closes its pipes on exit/kill).
-    let stderr_tail = match child.wait_with_output() {
-        Ok(out) => tail(&String::from_utf8_lossy(&out.stderr), 1000),
-        Err(_) => String::new(),
-    };
+    join_drain(stdout_drain, "stdout")?;
+    let stderr = join_drain(stderr_drain, "stderr")?;
 
-    let trace_path = find_trace(dir.path());
-
-    let workspace = if inv.keep_workspace {
-        let kept = dir.keep();
-        WorkspaceHandle::Kept(kept)
-    } else {
-        WorkspaceHandle::Temp(dir)
-    };
-
-    Ok(RunRecord {
+    Ok(ChildOutcome {
         exit_code,
         timed_out,
         wall,
-        trace_path,
-        workspace,
-        stderr_tail,
+        stderr_tail: String::from_utf8_lossy(&stderr).into_owned(),
     })
+}
+
+fn join_drain<T>(handle: JoinHandle<io::Result<T>>, pipe: &str) -> io::Result<T> {
+    handle
+        .join()
+        .map_err(|_| io::Error::other(format!("{pipe} drain thread panicked")))?
+}
+
+fn read_tail(mut reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
+    let mut tail = Vec::with_capacity(limit);
+    let mut buf = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut buf)?;
+        if read == 0 {
+            return Ok(tail);
+        }
+        if limit == 0 {
+            continue;
+        }
+        if read >= limit {
+            tail.clear();
+            tail.extend_from_slice(&buf[read - limit..read]);
+            continue;
+        }
+        let overflow = tail.len().saturating_add(read).saturating_sub(limit);
+        if overflow > 0 {
+            tail.drain(..overflow);
+        }
+        tail.extend_from_slice(&buf[..read]);
+    }
 }
 
 fn protocol_flag(p: ActionProtocol) -> &'static str {
@@ -158,7 +235,13 @@ fn protocol_flag(p: ActionProtocol) -> &'static str {
 /// (the constrained workhorse — ollama/llama-server) or `--mock`; the
 /// in-process mistral.rs GGUF path was removed (ADR-027), so the openai arm is
 /// how the full loop reaches a real *constrained* model.
-fn query_args(prompt: &str, inv: &Invocation, workspace: &Path) -> Vec<String> {
+fn query_args(
+    prompt: &str,
+    max_turns: u32,
+    inv: &Invocation,
+    workspace: &Path,
+    profile_dir: &Path,
+) -> Vec<String> {
     let mut args = vec![
         "query".to_string(),
         prompt.to_string(),
@@ -166,6 +249,14 @@ fn query_args(prompt: &str, inv: &Invocation, workspace: &Path) -> Vec<String> {
         workspace.display().to_string(),
         "--protocol".to_string(),
         protocol_flag(inv.protocol).to_string(),
+        "--no-config".to_string(),
+        "--profile-dir".to_string(),
+        profile_dir.display().to_string(),
+        "--temperature".to_string(),
+        "0".to_string(),
+        "--max-turns".to_string(),
+        max_turns.to_string(),
+        "--no-stream".to_string(),
     ];
     if let Some(o) = &inv.openai {
         if let Some(base) = &o.api_base {
@@ -204,19 +295,6 @@ fn find_trace(workspace: &Path) -> Option<PathBuf> {
         })
 }
 
-fn tail(s: &str, n: usize) -> String {
-    if s.len() <= n {
-        return s.to_string();
-    }
-    s.chars()
-        .rev()
-        .take(n)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,10 +322,21 @@ mod tests {
             params_b: 7.0,
             ctx: 4096,
         });
-        let args = query_args("do a task", &inv, Path::new("/ws"));
+        let args = query_args(
+            "do a task",
+            12,
+            &inv,
+            Path::new("/ws"),
+            Path::new("/profiles"),
+        );
         assert!(has_pair(&args, "--model", "qwen2.5-coder:7b"));
         assert!(has_pair(&args, "--api-base", "http://localhost:11434/v1"));
         assert!(has_pair(&args, "--protocol", "grammar"));
+        assert!(has_pair(&args, "--profile-dir", "/profiles"));
+        assert!(has_pair(&args, "--temperature", "0"));
+        assert!(has_pair(&args, "--max-turns", "12"));
+        assert!(args.iter().any(|a| a == "--no-config"));
+        assert!(args.iter().any(|a| a == "--no-stream"));
         // The single-backend simplification removed `--backend`; the child
         // `query` no longer accepts it, so the runner must never emit it.
         assert!(!args.iter().any(|a| a == "--backend"), "{args:?}");
@@ -256,8 +345,52 @@ mod tests {
 
     #[test]
     fn query_args_mock_arm() {
-        let args = query_args("t", &base(), Path::new("/ws"));
+        let args = query_args("t", 5, &base(), Path::new("/ws"), Path::new("/profiles"));
         assert!(args.iter().any(|a| a == "--mock"));
         assert!(!args.iter().any(|a| a == "--backend"));
+    }
+
+    #[test]
+    fn read_tail_is_bounded_and_keeps_the_end() {
+        let input = format!("{}THE-END", "x".repeat(128 * 1024));
+        let tail = read_tail(std::io::Cursor::new(input), 1000).unwrap();
+        assert_eq!(tail.len(), 1000);
+        assert!(tail.ends_with(b"THE-END"));
+    }
+
+    #[test]
+    fn verbose_child_cannot_fill_pipes_and_deadlock() {
+        let mut cmd = noisy_child_command();
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let started = Instant::now();
+        let child = cmd.spawn().expect("spawn noisy child");
+        let outcome = wait_for_child(child, started, Duration::from_secs(15)).unwrap();
+        assert_eq!(outcome.exit_code, Some(0));
+        assert!(!outcome.timed_out);
+        assert!(outcome.stderr_tail.ends_with("THE-END"));
+        assert!(outcome.stderr_tail.len() <= STDERR_TAIL_BYTES);
+    }
+
+    #[cfg(windows)]
+    fn noisy_child_command() -> Command {
+        let mut cmd = Command::new("powershell.exe");
+        cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$s = ('x' * 131072) -join ''; [Console]::Out.Write($s); [Console]::Error.Write($s + 'THE-END')",
+        ]);
+        cmd
+    }
+
+    #[cfg(not(windows))]
+    fn noisy_child_command() -> Command {
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            "head -c 131072 /dev/zero; head -c 131072 /dev/zero >&2; printf THE-END >&2",
+        ]);
+        cmd
     }
 }
