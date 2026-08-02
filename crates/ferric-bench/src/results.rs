@@ -5,11 +5,15 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::verify::CommandCheckResult;
+
 /// One benchmark run's recorded outcome. Append-only to `results.jsonl`;
 /// `null` fields are metrics Ferric cannot yet source (flagged, not faked).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultRow {
     pub level: u8,
+    #[serde(default = "crate::spec::default_spec_version")]
+    pub spec_version: u32,
     pub level_name: String,
     pub variant: String,
     pub protocol: String,
@@ -32,6 +36,9 @@ pub struct ResultRow {
     pub plan_steps: Option<u32>,
     pub expectations_ok: bool,
     pub tools_ok: bool,
+    /// Detailed authoritative post-run grading. Empty for legacy rows/specs.
+    #[serde(default)]
+    pub command_checks: Vec<CommandCheckResult>,
     /// Tier the param-count would assign vs the measured/observed tier.
     pub tier_from_params: String,
     pub stderr_tail: String,
@@ -69,6 +76,7 @@ mod tests {
     fn row(level: u8, completed: bool) -> ResultRow {
         ResultRow {
             level,
+            spec_version: 1,
             level_name: format!("l{level}"),
             variant: "test".to_string(),
             protocol: "unified_grammar".to_string(),
@@ -90,6 +98,7 @@ mod tests {
             plan_steps: None,
             expectations_ok: true,
             tools_ok: true,
+            command_checks: Vec::new(),
             tier_from_params: "Nano".to_string(),
             stderr_tail: String::new(),
         }
@@ -108,5 +117,17 @@ mod tests {
             rows[0].plan_steps.is_none(),
             "plan_steps is null, not faked"
         );
+    }
+
+    #[test]
+    fn legacy_row_without_spec_or_checks_uses_compatible_defaults() {
+        let mut value = serde_json::to_value(row(0, true)).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("spec_version");
+        object.remove("command_checks");
+
+        let legacy: ResultRow = serde_json::from_value(value).unwrap();
+        assert_eq!(legacy.spec_version, 1);
+        assert!(legacy.command_checks.is_empty());
     }
 }

@@ -10,8 +10,8 @@ use std::process::ExitCode;
 use clap::Args;
 use ferric_bench::{
     BenchSpec, Invocation, ModelProfileRecord, OpenAiArgs, ResultRow, append_row, calibrate,
-    completed, embedded_specs, failure_admission, parse_trace, run_spec, verify_expectations,
-    verify_tools,
+    completed, embedded_specs, failure_admission, parse_trace, preflight_command_checks, run_spec,
+    verify_command_checks, verify_expectations, verify_tools,
 };
 use ferric_core::{ActionProtocol, tier_for_params};
 
@@ -56,6 +56,10 @@ pub struct BenchArgs {
     #[arg(long)]
     pub prompts_dir: Option<PathBuf>,
 
+    /// Python executable used by authoritative L3-L6 checks.
+    #[arg(long, default_value = "python")]
+    pub python_bin: PathBuf,
+
     /// Where results.jsonl and model_profiles.json are written.
     #[arg(long, default_value = "benchmarks")]
     pub results_dir: PathBuf,
@@ -96,6 +100,10 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         eprintln!("no matching levels for {:?}", args.level);
         return ExitCode::FAILURE;
     }
+    if let Err(e) = preflight_command_checks(&selected, &args.python_bin) {
+        eprintln!("benchmark check infrastructure: {e}");
+        return ExitCode::FAILURE;
+    }
 
     let protocol: ActionProtocol = args.protocol.into();
     let ferric_bin = args
@@ -117,6 +125,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
         let mut board: Vec<ModelProfileRecord> = Vec::new();
+        let mut infrastructure_ok = true;
         for model_id in &model_ids {
             println!("\n=== {model_id} ===");
             let inv = Invocation {
@@ -131,7 +140,13 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
                 prompts_dir: args.prompts_dir.clone(),
                 keep_workspace: args.keep_workspace,
             };
-            let (rows, _) = run_levels(&selected, &inv, protocol, &Some(model_id.clone()), &args);
+            let (rows, _, model_infrastructure_ok) =
+                run_levels(&selected, &inv, protocol, &Some(model_id.clone()), &args);
+            if !model_infrastructure_ok {
+                eprintln!("{model_id}: benchmark infrastructure failed; profile left unchanged");
+                infrastructure_ok = false;
+                continue;
+            }
             let record = calibrate(
                 model_id,
                 args.params_b,
@@ -171,7 +186,11 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
             );
         }
         // A low measured_level is a valid measurement, not a failure.
-        return ExitCode::SUCCESS;
+        return if infrastructure_ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
     }
 
     // Single-model path. openai = ollama/llama-server; `model_name`
@@ -199,7 +218,8 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         keep_workspace: args.keep_workspace,
     };
 
-    let (rows, all_passed) = run_levels(&selected, &inv, protocol, &model_name, &args);
+    let (rows, all_passed, infrastructure_ok) =
+        run_levels(&selected, &inv, protocol, &model_name, &args);
 
     // Calibrate from this sweep's rows — but ONLY from a full ladder.
     //
@@ -217,6 +237,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
     }
     if let Some(model_name) = &model_name
         && full_ladder
+        && infrastructure_ok
     {
         let record = calibrate(
             model_name,
@@ -240,8 +261,11 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
             );
         }
     }
+    if model_name.is_some() && full_ladder && !infrastructure_ok {
+        eprintln!("benchmark infrastructure failed; profile left unchanged");
+    }
 
-    if all_passed {
+    if all_passed && infrastructure_ok {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -257,15 +281,17 @@ fn run_levels(
     protocol: ActionProtocol,
     model_name: &Option<String>,
     args: &BenchArgs,
-) -> (Vec<ResultRow>, bool) {
+) -> (Vec<ResultRow>, bool, bool) {
     let mut rows: Vec<ResultRow> = Vec::new();
     let mut all_passed = true;
+    let mut infrastructure_ok = true;
     for spec in selected {
         let record = match run_spec(spec, inv) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("L{} run error: {e}", spec.level);
                 all_passed = false;
+                infrastructure_ok = false;
                 continue;
             }
         };
@@ -276,17 +302,32 @@ fn run_levels(
             .unwrap_or_default();
         let expectations = verify_expectations(record.workspace.path(), spec);
         let tools = verify_tools(&metrics, spec);
+        let command_checks = verify_command_checks(record.workspace.path(), spec, &args.python_bin);
+        for check in command_checks.iter().filter(|check| !check.passed()) {
+            eprintln!(
+                "L{} check `{}` — {:?}: {}",
+                spec.level,
+                check.name,
+                check.status,
+                check.reason.as_deref().unwrap_or("no reason recorded")
+            );
+        }
+        infrastructure_ok &= !command_checks
+            .iter()
+            .any(ferric_bench::CommandCheckResult::infrastructure_error);
         let done = completed(
             record.timed_out,
             record.exit_code,
             &expectations,
             &tools,
+            &command_checks,
             metrics.terminator.as_deref(),
         );
         all_passed &= done;
 
         let row = ResultRow {
             level: spec.level,
+            spec_version: spec.version,
             level_name: spec.name.clone(),
             variant: args.variant.clone(),
             protocol: ferric_core::protocol_key(protocol),
@@ -308,6 +349,7 @@ fn run_levels(
             plan_steps: metrics.plan_steps,
             expectations_ok: expectations.iter().all(|e| e.passed),
             tools_ok: tools.ok(),
+            command_checks,
             tier_from_params: format!("{:?}", tier_for_params(args.params_b)),
             stderr_tail: record.stderr_tail.clone(),
         };
@@ -331,7 +373,7 @@ fn run_levels(
         );
         rows.push(row);
     }
-    (rows, all_passed)
+    (rows, all_passed, infrastructure_ok)
 }
 
 /// Small display helper for the kept-workspace suffix.

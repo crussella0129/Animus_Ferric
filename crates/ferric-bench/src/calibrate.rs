@@ -131,6 +131,7 @@ mod tests {
     fn row(level: u8, completed: bool) -> ResultRow {
         ResultRow {
             level,
+            spec_version: 1,
             level_name: format!("l{level}"),
             variant: "v".to_string(),
             protocol: "unified_grammar".to_string(),
@@ -152,6 +153,7 @@ mod tests {
             plan_steps: None,
             expectations_ok: true,
             tools_ok: true,
+            command_checks: Vec::new(),
             tier_from_params: "Nano".to_string(),
             stderr_tail: String::new(),
         }

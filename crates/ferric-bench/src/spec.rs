@@ -7,6 +7,10 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BenchSpec {
+    /// Increment when a level's prompt or authoritative grading contract
+    /// changes. Specs written before versioning deserialize as version 1.
+    #[serde(default = "default_spec_version")]
+    pub version: u32,
     pub level: u8,
     pub name: String,
     pub prompt: String,
@@ -24,8 +28,39 @@ pub struct BenchSpec {
     /// Tools that must NOT be called.
     #[serde(default)]
     pub forbidden_tools: Vec<String>,
+    /// Trusted, fixed-argv post-run checks. `argv[0]` is the executable; the
+    /// special value `{python}` resolves to `bench full --python-bin`.
+    #[serde(default)]
+    pub checks: Vec<CommandCheck>,
     pub max_turns: u32,
     pub timeout_s: u64,
+}
+
+pub(crate) const fn default_spec_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CommandCheck {
+    pub name: String,
+    pub argv: Vec<String>,
+    #[serde(default = "default_expected_exit")]
+    pub expected_exit: i32,
+    #[serde(default)]
+    pub stdout_regex: Option<String>,
+    #[serde(default)]
+    pub stderr_regex: Option<String>,
+    #[serde(default = "default_check_timeout")]
+    pub timeout_s: u64,
+}
+
+const fn default_expected_exit() -> i32 {
+    0
+}
+
+const fn default_check_timeout() -> u64 {
+    15
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -81,6 +116,24 @@ mod tests {
         assert_eq!(specs.len(), 7);
         let levels: Vec<u8> = specs.iter().map(|s| s.level).collect();
         assert_eq!(levels, vec![0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(specs[0].version, 1, "legacy specs default to version 1");
+        assert_eq!(
+            specs[3..].iter().map(|s| s.version).collect::<Vec<_>>(),
+            vec![2, 2, 2, 2]
+        );
+        assert_eq!(
+            specs[3..]
+                .iter()
+                .map(|s| s.checks.len())
+                .collect::<Vec<_>>(),
+            vec![2, 3, 3, 10]
+        );
+        assert!(
+            specs[3..]
+                .iter()
+                .flat_map(|s| &s.checks)
+                .all(|check| { check.argv.first().map(String::as_str) == Some("{python}") })
+        );
     }
 
     #[test]

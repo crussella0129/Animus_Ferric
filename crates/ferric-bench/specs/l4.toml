@@ -1,6 +1,7 @@
+version = 2
 level = 4
 name = "multi-file-with-test"
-prompt = "Create a Python module greet.py with a function hello() that returns 'world'. Then create tests/test_greet.py that imports greet and asserts greet.hello() == 'world'. Then call task_complete."
+prompt = "Create a Python module greet.py with a function hello() that returns 'world'. Then create tests/test_greet.py using Python's standard-library unittest that imports greet and asserts greet.hello() == 'world'. Then call task_complete."
 max_turns = 12
 timeout_s = 300
 expected_tools = ["task_complete", "write_file"]
@@ -21,3 +22,18 @@ content_regex = "assert"
 path = "tests/test_greet.py"
 type = "file"
 content_regex = "hello\\s*\\("
+
+[[checks]]
+name = "greet-and-test-compile"
+argv = ["{python}", "-m", "py_compile", "greet.py", "tests/test_greet.py"]
+timeout_s = 15
+
+[[checks]]
+name = "generated-unittest-passes"
+argv = ["{python}", "-m", "unittest", "discover", "-s", "tests"]
+timeout_s = 30
+
+[[checks]]
+name = "greet-returns-world"
+argv = ["{python}", "-c", "import greet; assert greet.hello() == 'world'"]
+timeout_s = 15

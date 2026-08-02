@@ -17,10 +17,11 @@ pub use calibrate::{
 
 pub use results::{ResultRow, append_row, read_rows};
 pub use runner::{Invocation, OpenAiArgs, RunRecord, WorkspaceHandle, run_spec};
-pub use spec::{BenchSpec, ExpectKind, Expectation, embedded_specs};
+pub use spec::{BenchSpec, CommandCheck, ExpectKind, Expectation, embedded_specs};
 pub use verify::{
-    ToolVerdict, TraceMetrics, completed, failure_admission, parse_trace, verify_expectations,
-    verify_tools,
+    CommandCheckResult, CommandCheckStatus, ToolVerdict, TraceMetrics, completed,
+    failure_admission, parse_trace, preflight_command_checks, verify_command_checks,
+    verify_expectations, verify_tools,
 };
 
 #[cfg(test)]

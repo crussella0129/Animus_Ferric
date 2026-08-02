@@ -1,3 +1,4 @@
+version = 2
 level = 3
 name = "single-file-construction"
 prompt = "Create a Python file greet.py containing a single function hello() that returns the string 'world'. Then call task_complete."
@@ -16,3 +17,13 @@ content_regex = "def\\s+hello\\s*\\([^)]*\\)\\s*:"
 path = "greet.py"
 type = "file"
 content_regex = "['\"]world['\"]"
+
+[[checks]]
+name = "greet-compiles"
+argv = ["{python}", "-m", "py_compile", "greet.py"]
+timeout_s = 15
+
+[[checks]]
+name = "greet-returns-world"
+argv = ["{python}", "-c", "import greet; assert greet.hello() == 'world'"]
+timeout_s = 15

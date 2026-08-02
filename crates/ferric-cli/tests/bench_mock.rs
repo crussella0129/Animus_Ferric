@@ -59,6 +59,38 @@ fn bench_mock_records_each_requested_level() {
         .filter_map(|v| v["level"].as_u64())
         .collect();
     assert_eq!(levels, vec![3, 4], "one row per requested level, in order");
+    let first: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+    assert_eq!(first["spec_version"], 2);
+    assert_eq!(
+        first["command_checks"][0]["status"], "model_failure",
+        "a missing model artifact is grading evidence, not infrastructure failure"
+    );
+}
+
+#[test]
+fn bench_check_preflight_distinguishes_missing_python_infrastructure() {
+    let results = tempfile::tempdir().unwrap();
+    let missing_python = results.path().join("definitely-missing-python");
+    let out = ferric()
+        .args(["bench", "full", "--mock", "--level", "3"])
+        .arg("--python-bin")
+        .arg(&missing_python)
+        .arg("--results-dir")
+        .arg(results.path())
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("benchmark check infrastructure")
+            && stderr.contains("cannot launch Python"),
+        "missing interpreter must be surfaced as infrastructure: {stderr}"
+    );
+    assert!(
+        !results.path().join("results.jsonl").exists(),
+        "preflight must fail before recording a model result"
+    );
 }
 
 #[test]
