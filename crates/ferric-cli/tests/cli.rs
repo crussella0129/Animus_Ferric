@@ -1096,10 +1096,28 @@ fn write_interrupted_trace_fixture(ws: &std::path::Path, session: &str) -> std::
 }
 
 fn write_clarification_trace_fixture(ws: &std::path::Path) -> std::path::PathBuf {
+    // Generate a REAL needs_input trace by driving the loop with a mock that
+    // asks a clarification question. A hand-built checkpoint cannot be used:
+    // the durable-recovery invariant (sprint 113) requires a stored
+    // RecoveryCheckpoint to equal the projector-derived state anchor, which
+    // only an actual run produces. This mirrors ferric-loop's
+    // `clarification_tests.rs`, but through the on-disk trace the CLI resumes.
     let trace_dir = ws.join(".ferric").join("trace");
     std::fs::create_dir_all(&trace_dir).unwrap();
     let path = trace_dir.join("awaiting-answer.jsonl");
     let mut sink = ferric_trace::JsonlSink::open(&path, "awaiting-answer").unwrap();
+
+    let workspace = ferric_guard::Workspace::new(ws).unwrap();
+    let mut registry = ferric_tools::Registry::new();
+    ferric_tools::register_builtin_tools(&mut registry);
+    let policy = ferric_core::policy_for(&ferric_core::ModelProfile {
+        params_b: 1.0,
+        quant: "Q4_K_M".to_string(),
+        ctx: 4096,
+        family: "test".to_string(),
+        measured_level: None,
+    });
+
     let request = ferric_core::UserInputRequest {
         question: "Which database should this target?".to_string(),
         context: "Both adapters exist and no default is documented.".to_string(),
@@ -1112,63 +1130,41 @@ fn write_clarification_trace_fixture(ws: &std::path::Path) -> std::path::PathBuf
         name: ferric_loop::REQUEST_USER_INPUT.to_string(),
         args: serde_json::to_value(&request).unwrap(),
     }];
-    let state = ferric_trace::RecoveryCheckpointV1 {
-        version: ferric_trace::RECOVERY_CHECKPOINT_VERSION,
-        messages: vec![
-            ferric_core::Message::system("You are Ferric."),
-            ferric_core::Message::user("finish the database task"),
-            assistant,
-            ferric_core::Message::tool_result(
-                "ask-1",
-                "user input requested; session paused until an answer is supplied",
-            ),
-        ],
-        next_turn: 1,
-        last_text: None,
-        head_len: 2,
-        committed_turn_starts: vec![ferric_trace::TurnBoundary {
-            turn: 0,
-            message_index: 2,
-        }],
-        guard_history: Vec::new(),
-        nudged_for_no_action: false,
-        truncated_once: false,
-        last_input_tokens: Some(40),
-        pending_input: Some(request),
-        mutation_epoch: 0,
-        passed_checks: std::collections::BTreeMap::new(),
-    };
-    for event in [
-        ferric_trace::Event::SessionStart {
-            workspace: ws.display().to_string(),
-            resumed_from: None,
-        },
-        ferric_trace::Event::PolicySelected {
-            tier: ferric_core::Tier::Nano,
+    let provider = ferric_provider::MockProvider::new(vec![ferric_provider::Completion {
+        message: assistant,
+        input_tokens: Some(50),
+        output_tokens: Some(10),
+        truncated: false,
+    }]);
+
+    let outcome = futures_executor::block_on(ferric_loop::run(
+        ferric_loop::RunArgs {
+            provider: &provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &policy,
             protocol: ferric_core::ActionProtocol::NativeTools,
-            harness_policy: ferric_core::HarnessPolicy::Legacy,
-            max_turns: 15,
-            max_tools: 10,
-            prompt_budget_tokens: 2_800,
-            max_output_tokens: 512,
-            truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
-            tier_source: ferric_core::TierSource::Params.label().to_string(),
-        },
-        ferric_trace::Event::SessionPrompt {
-            system: "You are Ferric.".to_string(),
-            user: "finish the database task".to_string(),
+            harness_policy: None,
+            sampling: ferric_provider::SamplingParams::default(),
+            sleeper: &ferric_loop::ThreadSleeper,
+            system_prompt: None,
+            prompt_lineage: None,
             media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+            answer: None,
+            cancel_flag: None,
+            provenance: ferric_guard::Provenance::Clean,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: None,
+            edit_approver: None,
         },
-        ferric_trace::Event::SessionEnd {
-            reason: "needs_input".to_string(),
-        },
-        ferric_trace::Event::RecoveryCheckpoint { state },
-        ferric_trace::Event::SessionPaused {
-            reason: "needs_input".to_string(),
-        },
-    ] {
-        sink.write_event(event).unwrap();
-    }
+        &mut sink,
+        Some("finish the database task"),
+    ))
+    .expect("mock clarification run");
+    assert_eq!(outcome.stop, ferric_loop::StopReason::NeedsInput);
+    drop(sink);
     path
 }
 

@@ -1908,7 +1908,12 @@ fn logical_target(
     workspace: &Workspace,
     requested_path: &str,
 ) -> Result<(String, PathBuf), PrepareError> {
-    let requested = Path::new(requested_path);
+    // A model may emit either path separator regardless of host OS. Treat a
+    // backslash as a component separator so Linux resolves `dir\file` the same
+    // way Windows already does, matching the forward-slash canonical form this
+    // function returns below.
+    let requested_path = requested_path.replace('\\', "/");
+    let requested = Path::new(&requested_path);
     let relative = if requested.is_absolute() {
         requested.strip_prefix(workspace.root()).map_err(|_| {
             PrepareError::new(
