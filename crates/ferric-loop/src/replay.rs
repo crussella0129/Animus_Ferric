@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use ferric_core::{ActionProtocol, FerricError, Message, UserInputRequest};
+use ferric_core::{ActionProtocol, FerricError, HarnessPolicy, Message, UserInputRequest};
 use ferric_trace::{Event, GuardTurn, ParsedEvent, RECOVERY_CHECKPOINT_VERSION, TraceReader};
 use thiserror::Error;
 
@@ -27,6 +27,9 @@ pub struct ReplayedState {
     pub next_turn: u32,
     pub last_text: Option<String>,
     pub protocol: ActionProtocol,
+    /// Concrete harness policy recorded by the source trace. Traces written
+    /// before the field existed deserialize it as `Legacy`.
+    pub harness_policy: HarnessPolicy,
     pub truncation_limit: usize,
     /// The original session's `session` id (not a file path — stable even if
     /// trace files move). Threaded into the continuing session's
@@ -75,6 +78,13 @@ pub enum ReplayError {
         recorded: ActionProtocol,
         requested: ActionProtocol,
     },
+    #[error(
+        "recorded harness policy {recorded} does not match requested harness policy {requested}"
+    )]
+    HarnessPolicyMismatch {
+        recorded: HarnessPolicy,
+        requested: HarnessPolicy,
+    },
     #[error("recorded workspace {recorded} does not match requested workspace {requested}")]
     WorkspaceMismatch { recorded: String, requested: String },
 }
@@ -88,6 +98,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     let mut saw_session_prompt = false;
     let mut saw_state_base = false;
     let mut saw_modern_turn = false;
+    let mut harness_policy: Option<HarnessPolicy> = None;
     let mut structure = TraceStructure::new();
 
     for record in TraceReader::open(path)? {
@@ -131,6 +142,12 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                 }
                 saw_session_prompt = true;
                 saw_state_base = true;
+            }
+            Event::PolicySelected {
+                harness_policy: recorded,
+                ..
+            } => {
+                harness_policy = Some(*recorded);
             }
             Event::RecoveryCheckpoint { state } => {
                 if state.version != RECOVERY_CHECKPOINT_VERSION {
@@ -246,6 +263,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     let protocol = projector
         .protocol
         .ok_or(ReplayError::MissingSessionPrompt)?;
+    let harness_policy = harness_policy.ok_or(ReplayError::MissingSessionPrompt)?;
     let source_session = source_session.ok_or(ReplayError::MissingSessionPrompt)?;
 
     Ok(ReplayedState {
@@ -254,6 +272,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
         next_turn: projector.next_turn,
         last_text: projector.last_text,
         protocol,
+        harness_policy,
         truncation_limit: projector.truncation_limit,
         source_session,
         workspace: workspace.ok_or(ReplayError::MissingWorkspace)?,
@@ -270,17 +289,28 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     })
 }
 
-/// Validate the two pieces of operator-selected execution context that a trace
-/// must never silently change across a resume boundary.
+/// Validate the operator-selected execution context that a trace must never
+/// silently change across a resume boundary. An omitted harness policy is not
+/// a mismatch: `run()` inherits the concrete policy recorded in the trace.
 pub fn validate_resume_target(
     state: &ReplayedState,
     workspace: &Path,
     protocol: ActionProtocol,
+    harness_policy: Option<HarnessPolicy>,
 ) -> Result<(), ReplayError> {
     if state.protocol != protocol {
         return Err(ReplayError::ProtocolMismatch {
             recorded: state.protocol,
             requested: protocol,
+        });
+    }
+
+    if let Some(requested) = harness_policy
+        && state.harness_policy != requested
+    {
+        return Err(ReplayError::HarnessPolicyMismatch {
+            recorded: state.harness_policy,
+            requested,
         });
     }
 

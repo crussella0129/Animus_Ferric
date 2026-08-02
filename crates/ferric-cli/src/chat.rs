@@ -32,8 +32,8 @@ use ferric_trace::{Event, JsonlSink};
 
 use crate::backend::BackendOpts;
 use crate::query::{
-    ProtocolArg, RunConfig, RunConfigArgs, build_run_config, mock_provider, now_ms,
-    run_with_provider,
+    HarnessPolicyArg, ProtocolArg, RunConfig, RunConfigArgs, build_run_config,
+    ensure_supported_harness_policy, mock_provider, now_ms, run_with_provider,
 };
 
 /// How chat drives the provider, shared with `ferric icm` since sprint 103
@@ -82,6 +82,10 @@ pub struct ChatArgs {
     /// Action protocol override for escalated (`/do`) turns.
     #[arg(long, value_enum)]
     pub protocol: Option<ProtocolArg>,
+
+    /// Harness policy for escalated (`/do`) turns.
+    #[arg(long, value_enum)]
+    pub harness_policy: Option<HarnessPolicyArg>,
 
     /// Directory of prompt elements to compose the system prompt from.
     #[arg(long)]
@@ -198,6 +202,10 @@ pub(crate) fn escalation_seed(
         next_turn: 0,
         last_text: None,
         protocol: config.protocol,
+        // Chat escalation is a synthetic legacy resume seed, not a replayed
+        // evidence continuation. Non-legacy chat launch is refused above;
+        // evidence `/do` needs an explicit continuation kind in a later unit.
+        harness_policy: ferric_core::HarnessPolicy::Legacy,
         truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: chat_session.to_string(),
         workspace: workspace.to_path_buf(),
@@ -300,6 +308,7 @@ impl ChatBackend {
             workspace,
             policy: &config.policy,
             protocol: config.protocol,
+            harness_policy: config.harness_policy,
             sampling: config.sampling.clone(),
             system_prompt: config.system_prompt.as_deref(),
             lineage: config.lineage.clone(),
@@ -409,6 +418,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         ctx: args.ctx.or(cfg.ctx).unwrap_or(4096),
         temperature: args.temperature.or(cfg.temperature).unwrap_or(0.0),
         protocol_override: args.protocol,
+        harness_policy: args.harness_policy.map(Into::into).or(cfg.harness_policy),
         prompts_dir: args.prompts_dir.clone(),
         max_ring: args.max_ring.or(cfg.max_ring),
         tier_override: args.tier.or(cfg.tier).map(Into::into),
@@ -420,6 +430,10 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         model_key: backend_opts.model.clone(),
         hooks: None,
     });
+    if let Err(error) = ensure_supported_harness_policy(config.harness_policy) {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
     let mut human_registry =
         ferric_tools::Registry::with_truncation_limit(config.registry.truncation_limit());
     ferric_tools::register_human_tools(&mut human_registry);
@@ -747,6 +761,7 @@ mod tests {
             ctx: 4096,
             temperature: 0.0,
             protocol_override: None,
+            harness_policy: None,
             prompts_dir: None,
             max_ring: None,
             tier_override: None,

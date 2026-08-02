@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use ferric_core::{ActionProtocol, FerricError, MediaPart, RunPolicy, UserInputRequest};
+use ferric_core::{
+    ActionProtocol, FerricError, HarnessPolicy, MediaPart, RunPolicy, UserInputRequest,
+};
 use ferric_guard::Workspace;
 use ferric_provider::{
     CompletionRequest, Constraint, Provider, SamplingParams, StreamDelta, ToolDescriptor,
@@ -58,6 +60,9 @@ pub struct RunArgs<'a> {
     pub workspace: &'a Workspace,
     pub policy: &'a RunPolicy,
     pub protocol: ActionProtocol,
+    /// Operator-requested harness policy. `None` means Legacy for a fresh run
+    /// and inherits the recorded policy for a resumed run.
+    pub harness_policy: Option<HarnessPolicy>,
     pub sampling: SamplingParams,
     pub sleeper: &'a dyn Sleeper,
     pub system_prompt: Option<&'a str>,
@@ -874,7 +879,7 @@ impl<'a> LoopState<'a> {
 
 #[allow(clippy::collapsible_if)]
 pub async fn run(
-    args: RunArgs<'_>,
+    mut args: RunArgs<'_>,
     sink: &mut JsonlSink,
     prompt: Option<&str>,
 ) -> Result<LoopOutcome, FerricError> {
@@ -885,8 +890,13 @@ pub async fn run(
     }
     match &args.resume {
         Some(replayed) => {
-            crate::replay::validate_resume_target(replayed, args.workspace.root(), args.protocol)
-                .map_err(|error| FerricError::InvalidInput(error.to_string()))?;
+            crate::replay::validate_resume_target(
+                replayed,
+                args.workspace.root(),
+                args.protocol,
+                args.harness_policy,
+            )
+            .map_err(|error| FerricError::InvalidInput(error.to_string()))?;
             match (&replayed.pending_input, args.answer) {
                 (Some(_), None) => {
                     return Err(FerricError::InvalidInput(
@@ -916,6 +926,29 @@ pub async fn run(
         None => {}
     }
 
+    // Keep the requested policy optional across every caller boundary. This is
+    // the sole resolution point: fresh runs default to Legacy, while resumes
+    // inherit their trace unless the operator explicitly selected a match.
+    let effective_harness_policy = args
+        .harness_policy
+        .or(args.resume.as_ref().map(|state| state.harness_policy))
+        .unwrap_or_default();
+    match effective_harness_policy {
+        HarnessPolicy::Legacy => {}
+        HarnessPolicy::Evidence => {
+            return Err(FerricError::InvalidInput(
+                "harness policy evidence is not available until controller checkpoints are enabled"
+                    .to_string(),
+            ));
+        }
+        HarnessPolicy::EvidencePlanner => {
+            return Err(FerricError::InvalidInput(
+                "harness policy evidence_planner is not implemented yet".to_string(),
+            ));
+        }
+    }
+    args.harness_policy = Some(effective_harness_policy);
+
     // The projector's model-facing cap is not set here: it comes from the
     // `PolicySelected` event below, which carries the registry's value. That
     // is the point of ADR-093 — replay and `trace verify` have only the trace,
@@ -932,10 +965,7 @@ pub async fn run(
     let policy_selected = Event::PolicySelected {
         tier: args.policy.tier,
         protocol: args.protocol,
-        // B113-01 is an additive wire foundation only. A later build unit
-        // threads an explicit harness policy through every product surface;
-        // until then the live writer must preserve historical behavior.
-        harness_policy: ferric_core::HarnessPolicy::Legacy,
+        harness_policy: effective_harness_policy,
         max_turns: u32::from(args.policy.max_turns),
         max_tools: u32::from(args.policy.max_tools),
         prompt_budget_tokens: args.policy.prompt_budget_tokens,

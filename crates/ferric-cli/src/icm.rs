@@ -34,7 +34,10 @@ use ferric_icm::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_works
 use ferric_trace::JsonlSink;
 
 use crate::backend::BackendOpts;
-use crate::query::{RunConfigArgs, build_run_config, mock_provider, now_ms, run_with_provider};
+use crate::query::{
+    HarnessPolicyArg, RunConfigArgs, build_run_config, ensure_supported_harness_policy,
+    mock_provider, now_ms, run_with_provider,
+};
 
 /// The pipeline's backend, shared with `ferric chat` since sprint 103
 /// (ADR-094) — both had declared this enum and its constructor identically.
@@ -109,6 +112,10 @@ pub struct IcmRunArgs {
 
     #[arg(long)]
     max_ring: Option<u8>,
+
+    /// Autonomous harness policy for every stage in the pipeline.
+    #[arg(long, value_enum)]
+    harness_policy: Option<HarnessPolicyArg>,
 
     /// Serve Layer-3 references on demand via the `fetch_reference` tool instead
     /// of folding whole reference files into each stage's prompt (Dark Matter
@@ -257,6 +264,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         ctx: args.ctx.or(cfg.ctx).unwrap_or(4096),
         temperature: cfg.temperature.unwrap_or(0.0),
         protocol_override: None,
+        harness_policy: args.harness_policy.map(Into::into).or(cfg.harness_policy),
         prompts_dir: None,
         max_ring: args.max_ring.or(cfg.max_ring),
         tier_override: args.tier.or(cfg.tier).map(Into::into),
@@ -267,6 +275,10 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         model_key: backend_opts.model.clone(),
         hooks: cfg.hooks.clone(),
     });
+    if let Err(error) = ensure_supported_harness_policy(config.harness_policy) {
+        eprintln!("icm run: {error}");
+        return ExitCode::FAILURE;
+    }
 
     // ICM-only: `fetch_reference` is not part of the global builtin set, so it
     // never costs a normal `ferric query` run a tool-budget slot. It joins the
@@ -340,6 +352,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
             workspace: &stage_ws,
             policy: &config.policy,
             protocol: config.protocol,
+            harness_policy: config.harness_policy,
             sampling: config.sampling.clone(),
             system_prompt: config.system_prompt.as_deref(),
             lineage: config.lineage.clone(),

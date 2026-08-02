@@ -4,9 +4,11 @@
 mod common;
 
 use common::*;
-use ferric_core::{ActionProtocol, Message};
+use ferric_core::{ActionProtocol, HarnessPolicy, Message};
 use ferric_guard::Workspace;
-use ferric_loop::{ReplayedState, RunArgs, StopReason, replay, run};
+use ferric_loop::{
+    ReplayError, ReplayedState, RunArgs, StopReason, replay, run, validate_resume_target,
+};
 use ferric_provider::{MockProvider, SamplingParams};
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
@@ -21,6 +23,7 @@ fn base_replayed(turns: u32, workspace: &std::path::Path) -> ReplayedState {
         next_turn: turns,
         last_text: None,
         protocol: ActionProtocol::NativeTools,
+        harness_policy: ferric_core::HarnessPolicy::Legacy,
         truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: "orig-session".to_string(),
         workspace: workspace.to_path_buf(),
@@ -34,6 +37,87 @@ fn base_replayed(turns: u32, workspace: &std::path::Path) -> ReplayedState {
         mutation_epoch: 0,
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: None,
+    }
+}
+
+#[test]
+fn resume_target_inherits_omitted_policy_and_rejects_an_explicit_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let replayed = base_replayed(0, dir.path());
+
+    validate_resume_target(&replayed, dir.path(), ActionProtocol::NativeTools, None).unwrap();
+    validate_resume_target(
+        &replayed,
+        dir.path(),
+        ActionProtocol::NativeTools,
+        Some(HarnessPolicy::Legacy),
+    )
+    .unwrap();
+
+    let error = validate_resume_target(
+        &replayed,
+        dir.path(),
+        ActionProtocol::NativeTools,
+        Some(HarnessPolicy::Evidence),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ReplayError::HarnessPolicyMismatch {
+            recorded: HarnessPolicy::Legacy,
+            requested: HarnessPolicy::Evidence,
+        }
+    ));
+}
+
+#[test]
+fn unavailable_policies_write_no_event_and_dispatch_no_tool() {
+    for policy in [HarnessPolicy::Evidence, HarnessPolicy::EvidencePlanner] {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+        let mut registry = Registry::new();
+        register_builtin_tools(&mut registry);
+        let trace_path = dir.path().join(format!("{}.jsonl", policy.label()));
+        let mut sink = JsonlSink::open(&trace_path, "refused-policy").unwrap();
+        let provider = MockProvider::new(vec![tool_completion(vec![(
+            "tc-0",
+            "write_file",
+            serde_json::json!({"path": "should-not-exist.txt", "content": "no"}),
+        )])]);
+        let sleeper = RecordingSleeper::new();
+
+        let error = futures_executor::block_on(run(
+            RunArgs {
+                edit_approver: None,
+                cancel_flag: None,
+                sink_policy: ferric_guard::SinkPolicy::deny(),
+                provenance: ferric_guard::Provenance::Clean,
+                provider: &provider,
+                registry: &registry,
+                workspace: &workspace,
+                policy: &nano_policy(),
+                protocol: ActionProtocol::NativeTools,
+                harness_policy: Some(policy),
+                sampling: SamplingParams::default(),
+                sleeper: &sleeper,
+                system_prompt: None,
+                prompt_lineage: None,
+                media: Vec::new(),
+                stream_sink: None,
+                resume: None,
+                answer: None,
+                hooks: None,
+            },
+            &mut sink,
+            Some("write a file"),
+        ))
+        .unwrap_err();
+
+        assert!(error.to_string().contains(policy.label()), "{error}");
+        drop(sink);
+        assert_eq!(std::fs::read_to_string(&trace_path).unwrap(), "");
+        assert!(!dir.path().join("should-not-exist.txt").exists());
+        assert!(provider.requests().is_empty());
     }
 }
 
@@ -59,6 +143,7 @@ fn resume_some_continues_from_replayed_state() {
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
@@ -122,6 +207,7 @@ fn resume_some_with_extra_prompt_appends_one_user_message() {
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
@@ -171,6 +257,7 @@ fn resume_none_prompt_none_is_an_error_not_a_panic() {
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
@@ -226,6 +313,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
             workspace: &workspace1,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper1,
             system_prompt: None,
@@ -257,6 +345,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
     // 3. replay() the truncated REAL trace.
     let replayed = replay(&trace_path).unwrap();
     assert_eq!(replayed.protocol, ActionProtocol::NativeTools);
+    assert_eq!(replayed.harness_policy, HarnessPolicy::Legacy);
 
     // 4. A second real run, resuming, that finishes the task.
     let mut registry2 = Registry::new();
@@ -280,6 +369,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
             workspace: &workspace1,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper2,
             system_prompt: None,

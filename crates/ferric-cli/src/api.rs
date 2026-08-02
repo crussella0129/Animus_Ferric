@@ -29,7 +29,8 @@ pub mod server {
 
     use crate::backend::BackendOpts;
     use crate::query::{
-        ProtocolArg, RunConfigArgs, build_run_config, route_files, run_with_provider,
+        HarnessPolicyArg, ProtocolArg, RunConfigArgs, build_run_config,
+        ensure_supported_harness_policy, route_files, run_with_provider,
     };
 
     /// CLI arguments for `ferric api`.
@@ -73,6 +74,10 @@ pub mod server {
         /// Action protocol override.
         #[arg(long, value_enum)]
         pub protocol: Option<ProtocolArg>,
+
+        /// Autonomous harness policy for every request.
+        #[arg(long, value_enum)]
+        pub harness_policy: Option<HarnessPolicyArg>,
 
         /// Directory of prompt elements.
         #[arg(long)]
@@ -337,6 +342,7 @@ pub mod server {
             ctx: args.ctx.or(cfg.ctx).unwrap_or(4096),
             temperature: args.temperature.or(cfg.temperature).unwrap_or(0.0),
             protocol_override: args.protocol,
+            harness_policy: args.harness_policy.map(Into::into).or(cfg.harness_policy),
             prompts_dir: args.prompts_dir.clone(), // not in Config
             max_ring: args.max_ring.or(cfg.max_ring),
             tier_override: args.tier.or(cfg.tier).map(Into::into),
@@ -348,7 +354,6 @@ pub mod server {
             model_key: backend_opts.model.clone(),
             hooks: None,
         });
-
         let trace_dir = ferric_trace::trace_dir(state.workspace.root());
         let (effective_prompt, media, resume, answer) = match mode {
             RequestMode::New { prompt } => {
@@ -383,11 +388,14 @@ pub mod server {
                     &replayed,
                     state.workspace.root(),
                     config.protocol,
+                    config.harness_policy,
                 )
                 .map_err(|error| ApiQueryError::InvalidContinuation(error.to_string()))?;
                 (None, Vec::new(), Some(replayed), Some(answer))
             }
         };
+        ensure_supported_harness_policy(config.harness_policy)
+            .map_err(ApiQueryError::InvalidRequest)?;
 
         let (_session, _trace_path, mut sink) = crate::query::create_trace_sink(&trace_dir, "api")
             .map_err(|e| ApiQueryError::Internal(format!("trace open: {e}")))?;
@@ -405,6 +413,7 @@ pub mod server {
             workspace: &state.workspace,
             policy: &config.policy,
             protocol: config.protocol,
+            harness_policy: config.harness_policy,
             sampling: config.sampling.clone(),
             system_prompt: config.system_prompt.as_deref(),
             lineage: config.lineage.clone(),
@@ -456,6 +465,19 @@ pub mod server {
             }
         };
 
+        // API policy is launch-time fixed. Refuse unsupported CLI or layered
+        // config selections before binding a socket; the request-boundary
+        // check remains as defense in depth if config changes while running.
+        let launch_config = crate::config::load_layered(&workspace_root).config;
+        let launch_harness_policy = args
+            .harness_policy
+            .map(Into::into)
+            .or(launch_config.harness_policy);
+        if let Err(error) = ensure_supported_harness_policy(launch_harness_policy) {
+            eprintln!("api: {error}");
+            return std::process::ExitCode::FAILURE;
+        }
+
         let bind_addr = if args.host.contains(':') {
             format!("[{}]:{}", args.host, args.port)
         } else {
@@ -502,6 +524,32 @@ pub mod server {
     mod tests {
         use super::*;
 
+        fn api_args(workspace: &std::path::Path) -> ApiArgs {
+            ApiArgs {
+                workspace: Some(workspace.to_path_buf()),
+                host: "127.0.0.1".to_string(),
+                port: 0,
+                backend_opts: BackendOpts {
+                    model: None,
+                    api_base: None,
+                    api_key: None,
+                },
+                params_b: None,
+                quant: None,
+                family: None,
+                ctx: None,
+                temperature: None,
+                protocol: None,
+                harness_policy: None,
+                prompts_dir: None,
+                tier: None,
+                max_ring: None,
+                profile_dir: None,
+                modality: None,
+                mock: true,
+            }
+        }
+
         #[test]
         fn api_bind_is_restricted_to_loopback() {
             assert!(is_loopback_host("127.0.0.1"));
@@ -511,6 +559,33 @@ pub mod server {
             assert!(!is_loopback_host("0.0.0.0"));
             assert!(!is_loopback_host("192.0.2.10"));
             assert!(!is_loopback_host("example-host"));
+        }
+
+        #[test]
+        fn unsupported_cli_and_project_policies_fail_before_api_bind_or_trace() {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+
+            let cli_workspace = tempfile::tempdir().unwrap();
+            let mut explicit = api_args(cli_workspace.path());
+            explicit.harness_policy = Some(HarnessPolicyArg::EvidencePlanner);
+            assert_eq!(
+                runtime.block_on(run_api(explicit)),
+                std::process::ExitCode::FAILURE
+            );
+            assert!(!cli_workspace.path().join(".ferric/trace").exists());
+
+            let config_workspace = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(config_workspace.path().join(".ferric")).unwrap();
+            std::fs::write(
+                config_workspace.path().join(".ferric/config.toml"),
+                "harness_policy = \"evidence\"\n",
+            )
+            .unwrap();
+            assert_eq!(
+                runtime.block_on(run_api(api_args(config_workspace.path()))),
+                std::process::ExitCode::FAILURE
+            );
+            assert!(!config_workspace.path().join(".ferric/trace").exists());
         }
 
         #[test]

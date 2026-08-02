@@ -331,6 +331,7 @@ fn run_scripted_full_cfg(
             workspace: &workspace,
             policy,
             protocol,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,

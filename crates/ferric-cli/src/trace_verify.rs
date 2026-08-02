@@ -983,6 +983,7 @@ mod tests {
             workspace: &workspace,
             policy: &policy,
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &ThreadSleeper,
             system_prompt: None,

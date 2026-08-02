@@ -167,6 +167,7 @@ fn context_window_from_run_and_from_replay(cap: usize) -> (Vec<Message>, Vec<Mes
             workspace: &workspace,
             policy: &large_policy(),
             protocol: ActionProtocol::ConstrainedJson,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
