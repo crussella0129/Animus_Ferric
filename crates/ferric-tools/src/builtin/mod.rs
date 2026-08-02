@@ -1,5 +1,4 @@
-//! Builtin tools. All are NANO-tier: the simple operations small models must
-//! get 100% right are exactly the ones every tier needs available.
+//! Builtin tools offered to models, plus explicitly human-only host controls.
 
 mod apply_patch;
 mod blocking;
@@ -58,6 +57,14 @@ pub fn register_builtin_tools(registry: &mut Registry) {
     registry.register(Box::new(ApplyPatch));
     registry.register(Box::new(GitRead));
     registry.register(Box::new(GitWrite));
+}
+
+/// Register host-shell controls for an explicit human surface.
+///
+/// These tools use the host OS with the workspace as their working directory;
+/// that is not filesystem containment. They must never share the registry used
+/// to build a model's grammar or dispatch model-authored calls.
+pub fn register_human_tools(registry: &mut Registry) {
     registry.register(Box::new(ShellExec));
     registry.register(Box::new(ManageTask));
 }

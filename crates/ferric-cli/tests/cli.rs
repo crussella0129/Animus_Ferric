@@ -53,15 +53,8 @@ fn trace_cat_renders_history_compacted() {
     assert!(stdout.contains("did a, b, c"));
 }
 
-/// Sprint 102 (ADR-093): `ferric trace verify` re-runs a trace and must find
-/// no drift against itself. It could not: `run()` writes `TurnEnd` before
-/// dispatching, so a turn's `ToolCall` events follow it, and the reconstructed
-/// script paired each turn with the *previous* turn's calls while dropping the
-/// last turn's — losing the terminator. Every trace carrying a tool call
-/// reported a mismatch, so a real drift and this bug were indistinguishable.
-///
-/// Deliberately end-to-end against a `run()`-produced trace: a hand-built
-/// fixture would have had to encode the very event order that was misread.
+/// End-to-end against a `run()`-produced trace: validation must understand the
+/// real TurnEnd → ToolCall → ToolResult order without replaying any tool.
 #[test]
 fn trace_verify_finds_no_drift_in_a_real_trace() {
     let dir = tempfile::tempdir().unwrap();
@@ -99,7 +92,7 @@ fn trace_verify_finds_no_drift_in_a_real_trace() {
     );
     assert!(
         combined.contains("Trace verification successful"),
-        "verify reported drift against the trace it just replayed: {combined}"
+        "verify rejected the trace structure: {combined}"
     );
 }
 
@@ -263,6 +256,54 @@ fn query_file_media_skipped_with_reason() {
         stderr.contains("skip") && stderr.contains("photo.png"),
         "expected a surfaced skip reason; stderr: {stderr}"
     );
+}
+
+#[test]
+fn query_file_outside_selected_workspace_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let outside = dir.path().join("outside.md");
+    std::fs::write(&outside, "must not enter the prompt").unwrap();
+
+    let out = ferric()
+        .args(["query", "--mock", "summarize"])
+        .arg("--workspace")
+        .arg(&workspace)
+        .arg("--file")
+        .arg(&outside)
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("workspace containment") && stderr.contains("escapes workspace"),
+        "unexpected denial: {stderr}"
+    );
+    assert!(!workspace.join("ferric-mock.txt").exists());
+}
+
+#[test]
+fn query_file_sensitive_path_is_rejected_by_read_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".env"), "TOKEN=must-not-leak").unwrap();
+
+    let out = ferric()
+        .args(["query", "--mock", "summarize"])
+        .arg("--workspace")
+        .arg(dir.path())
+        .args(["--file", ".env"])
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("denied by read guard") && stderr.contains("denied_read_file"),
+        "unexpected denial: {stderr}"
+    );
+    assert!(!dir.path().join("ferric-mock.txt").exists());
 }
 
 #[test]
@@ -1335,6 +1376,14 @@ fn launch_noninteractive_scaffolds() {
     );
     assert!(status.success(), "launch should succeed; stdout: {stdout}");
     assert!(stdout.contains("Scaffolded"), "report on stdout: {stdout}");
+    assert!(
+        stdout.contains("enter the scaffolded directory and start a Ferric query with your task"),
+        "next-step guidance should be descriptive and path-safe: {stdout}"
+    );
+    assert!(
+        !stdout.contains("run ferric query"),
+        "next-step guidance must not print a nonexistent command: {stdout}"
+    );
     // A real repo with the skeleton.
     assert!(target.join(".git").is_dir());
     assert!(target.join("README.md").exists());

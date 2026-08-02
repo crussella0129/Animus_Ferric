@@ -7,7 +7,7 @@ pub mod builtin;
 mod registry;
 mod spec;
 
-pub use builtin::register_builtin_tools;
+pub use builtin::{register_builtin_tools, register_human_tools};
 pub use registry::{
     ApprovalRequest, CheckRecord, DEFAULT_TRUNCATION_LIMIT, ExecuteOutcome, Registry, SinkApprover,
     ToolOutput, truncate_for_model,

@@ -2857,3 +2857,115 @@ passed" and "the changed surface works" were, here, different claims. The Rust m
 authoritative for structure; the YAML spellings are not confirmed, and any
 future Ferric claim of "conventional format" compatibility must check them
 first.
+
+## ADR-101 — 2026-08-01 (sprint 110): demo trust requires a side-effect-free verifier and no model-visible host shell
+
+The Monday demo audit found that a green suite did not describe the safety of
+the path being demonstrated. `trace verify` reconstructed a provider, replayed
+recorded actions, and could therefore mutate a workspace while presenting
+itself as verification. File attachments bypassed the registry's workspace
+read policy. `shell_exec` and `manage_task` were available to the model despite
+Ferric having no OS-level sandbox for ordinary tool dispatch. Several E2E
+scripts also converted native failures into green output or asserted only an
+exit code, not the promised artifact.
+
+**Verification is now observation, never execution.** `trace verify` parses the
+JSONL transcript and validates its structural invariants: schema, sequence and
+session identity, policy envelope, turn ordering, call/result pairing, and
+terminator consistency. It does not construct a provider, registry, executor,
+or temporary trace, and it never dispatches a recorded tool. This deliberately
+retires the old "replay for drift" claim: re-executing side effects is unsafe,
+and mock reconstruction was not evidence about the original provider anyway.
+
+**Every attachment enters through the same read boundary.** CLI, MCP, and API
+paths are resolved relative to the selected workspace, checked with the
+workspace's hardcoded and `.ferricignore` policies, required to be regular UTF-8
+files, and capped at 8 MiB per file and 16 MiB per request. Size checks bracket
+the read so a file growing during ingestion cannot evade the cap. Attachment
+failure occurs before trace creation or inference.
+
+**The model grammar has no host shell.** `shell_exec` and `manage_task` are not
+registered in any model-visible ring. Human-entered `!cmd` and `/run` chat
+passthrough use a separate guarded registry, preserving the explicitly
+human-authorized workflow. Foreground shell commands that exit non-zero now
+return tool errors with their status and bounded output. The command denylist
+remains a footgun catcher, not an OS sandbox.
+
+**Failure semantics are one exhaustive function.** Only `FinalText`,
+`TaskComplete`, and `PlanSubmitted` are successful stop reasons.
+`StopReason::is_success` is shared by query exit status, MCP errors, ICM stage
+gating, and loop error hooks, so guard, budget, provider, interruption, and
+other incomplete outcomes cannot become surface-specific successes.
+
+The HTTP and launch surfaces were brought into the same demo contract:
+`api --mock` uses the mock provider, unauthenticated API servers may bind only
+to loopback, request JSON cannot replace the launch-fixed workspace, and
+`launch` scaffolds then returns instead of prompting and starting an
+unrequested real-model query.
+
+**The release criterion is an asserted artifact path, not reassuring output.**
+`tools/demo-smoke.ps1` builds and invokes the repository's release binary
+directly, uses a validated disposable workspace, and checks eight offline
+flows: version, mock query output, trace inspection and safe verification,
+sensitive attachment denial, skills, noninteractive launch, three-stage mock
+ICM, and cron state. The older PowerShell and Bash E2E runners now preserve
+native exit status, enable pipe failure, use current CLI arguments, and assert
+the artifacts they claim to produce.
+
+The final adversarial review made those claims executable rather than implied.
+The smoke deletes the artifact named by the recorded `write_file` before
+verification and asserts it remains absent; the attachment denial must name the
+read-guard rule and create no trace. Completed native turns must record exactly
+the number of calls they declare, with a narrow exception for the named
+pre-dispatch repetition/progress/oscillation stop; real provider-error traces
+may end a started turn before `TurnEnd`. MCP's finite mock script is rebuilt for
+each request while real providers remain shared, so one successful
+`tools/call` cannot exhaust the server. Container E2E overrides the compose
+service's idle `sleep` entrypoint with `ferric`, and live runners validate
+content plus requested deletion, not mere file existence. The Windows guide
+pins the freshly built release executable and demonstrates the command guard
+with harmless `!echo mkfs` rather than placing a destructive command in the
+presenter's clipboard.
+
+The consequence is a demo path that is deterministic without Docker, a model
+server, network access, or Tailscale. Those live integrations are intentionally
+**not validated by this sprint** because their external services were
+unavailable; skipped or no-op Docker tests are not counted as evidence. Ferric
+also still lacks an OS sandbox around its ordinary in-process file and git
+tools. That remains an architectural risk, but removing host shell from the
+model's action space materially reduces the Monday blast radius without
+pretending the larger boundary has been solved.
+
+## ADR-102 — 2026-08-01 (sprint 111): Monday acceptance is a live server-backed task
+
+The user rejected sprint 110's offline smoke as the demo criterion. The mock
+path remains useful for deterministic regression testing, but it does not
+answer the operational question: can the repository release launch an engine,
+discover it, complete a real model-driven task, and tear it down cleanly?
+
+The live acceptance gate is therefore: build `ferric-cli` release with
+`backend-openai`; run `server doctor` with the exact engine and model; require
+the target port to be free; launch with `server up`; match the registered PID
+to the engine process and loopback listener; independently require HTTP 200
+from `/health` and `/v1/models`; run a constrained non-mock task whose artifact,
+requested deletion, `task_complete` trace terminator, and structural trace
+verification are all asserted; then run `server down` and require the process,
+listener, and both local/global registrations to be gone.
+
+That gate passed on 2026-08-01 with `llama-server` and Qwen2.5-Coder-7B at an
+8192-token context. The model completed six native tool turns, created a valid
+two-argument Python addition function, deleted the requested directory, and
+ended with `task_complete`; the full E2E took about 58 seconds. Shutdown exited
+zero and left no listener or runfile. This is direct evidence for the Monday
+launch path, not an inference from unit tests or a mock provider.
+
+The independent HTTP and process checks are intentional. The current
+`server status`, readiness loop, and `server doctor` establish TCP reachability
+but do not prove HTTP health or listener ownership; `server down` also trusts a
+runfile PID without executable/start-time identity. Those lifecycle-hardening
+items remain follow-up work and prevent a general claim that every stale or
+conflicting registration is safe. They do not invalidate this observed run,
+where PID, listener owner, endpoints, inference, artifacts, trace, and teardown
+were all checked independently. The installed llama.cpp distribution appeared
+CPU-only despite the GPU-layer argument, so presentation latency is the known
+demo caveat.

@@ -18,16 +18,16 @@ so restricting them is restricting what the model can even emit.
 Tools are organized into concentric rings that widen as reliability is proven:
 
 - **Ring 0 — the navigate/mutate core** (always on): `read_file`, `list_dir`,
-  `write_file`, `make_dir`, `edit_file` (surgical first-occurrence replace — small
-  models do targeted edits far more reliably than full rewrites), and
-  `delete_path` (guarded, `recursive`-gated). This is the smallest, surest grammar
-  — every model gets it.
-- **Ring 1 — "find & organize"**: `search_files` (grep-style content search →
-  `relpath:lineno:line`), `find_files` (by name), `move_path`, `copy_file`.
+  `write_file`, `make_dir`, `edit_file`, `delete_path`, `search_files`,
+  `move_path`, and `copy_file`. This is the smallest, surest grammar.
+- **Ring 1 — "find & inspect history"**: `find_files` and read-only `git_read`.
 - **Ring 2 — "plan & apply structured changes"**: `multi_edit` (an ordered,
   *atomic* batch of edits to one file), `apply_patch` (a context-located unified
-  diff — its context disambiguates *which* occurrence to edit), and, at the top,
-  `shell_exec`.
+  diff), and `git_write`.
+
+`shell_exec` and `manage_task` are not model tools at any ring. They run on the
+host rather than in an OS sandbox, so they exist only in the dedicated
+human-command registry used by interactive chat's explicit `!cmd`/`/run` path.
 
 Outer rings assume the model can already drive the inner ones; the loop **trims
 from the outer ring first**, so the core is never dropped.
