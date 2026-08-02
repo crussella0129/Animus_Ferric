@@ -477,6 +477,81 @@ fn query_defaults_unchanged_after_clap_type_change() {
         .expect("a policy_selected event");
     assert_eq!(policy["event"]["tier"], "nano");
     assert_eq!(policy["event"]["max_output_tokens"], 512);
+    assert_eq!(policy["event"]["harness_policy"], "legacy");
+}
+
+#[test]
+fn unavailable_harness_policies_fail_before_trace_or_workspace_mutation() {
+    for (policy, diagnostic) in [
+        (
+            "evidence",
+            "evidence is not available until controller checkpoints are enabled",
+        ),
+        (
+            "evidence-planner",
+            "evidence_planner is not implemented yet",
+        ),
+    ] {
+        let ws = tempfile::tempdir().unwrap();
+        let out = ferric()
+            .args([
+                "query",
+                "--mock",
+                "--no-config",
+                "--harness-policy",
+                policy,
+                "do a task",
+            ])
+            .arg("--workspace")
+            .arg(ws.path())
+            .output()
+            .unwrap();
+
+        assert!(!out.status.success(), "{policy} unexpectedly ran");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(diagnostic), "stderr: {stderr}");
+        assert!(
+            !ws.path().join(".ferric").join("trace").exists(),
+            "{policy} must be refused before trace allocation"
+        );
+        assert!(
+            !ws.path().join("ferric-mock.txt").exists(),
+            "{policy} must be refused before tool mutation"
+        );
+    }
+}
+
+#[test]
+fn harness_policy_config_obeys_cli_over_project_precedence() {
+    let refused = tempfile::tempdir().unwrap();
+    write_project_config(refused.path(), "harness_policy = \"evidence\"\n");
+    let out = ferric()
+        .args(["query", "--mock", "do a task"])
+        .arg("--workspace")
+        .arg(refused.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("controller checkpoints"));
+    assert!(!refused.path().join(".ferric").join("trace").exists());
+
+    let overridden = tempfile::tempdir().unwrap();
+    write_project_config(overridden.path(), "harness_policy = \"evidence\"\n");
+    let out = ferric()
+        .args(["query", "--mock", "--harness-policy", "legacy", "do a task"])
+        .arg("--workspace")
+        .arg(overridden.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        policy_event(overridden.path())["event"]["harness_policy"],
+        "legacy"
+    );
 }
 
 /// Shared by the T-3803 config-precedence tests below: the `policy_selected`
@@ -1055,6 +1130,7 @@ fn write_clarification_trace_fixture(ws: &std::path::Path) -> std::path::PathBuf
         ferric_trace::Event::PolicySelected {
             tier: ferric_core::Tier::Nano,
             protocol: ferric_core::ActionProtocol::NativeTools,
+            harness_policy: ferric_core::HarnessPolicy::Legacy,
             max_turns: 15,
             max_tools: 10,
             prompt_budget_tokens: 2_800,
@@ -1116,6 +1192,12 @@ fn resume_continues_an_interrupted_session() {
         .map(|v| v["event"]["resumed_from"].clone())
         .unwrap();
     assert_eq!(resumed_from, serde_json::json!("orig-1"));
+    let selected = content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value["event"]["type"] == "policy_selected")
+        .expect("resumed trace policy selection");
+    assert_eq!(selected["event"]["harness_policy"], "legacy");
 }
 
 /// The first (turn 1, since the fixture resumes at turn 1) `prompt_assembled`
@@ -1257,6 +1339,35 @@ fn resume_protocol_mismatch_is_a_clear_error() {
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("NativeTools") && stderr.contains("ConstrainedJson"));
+}
+
+#[test]
+fn resume_harness_policy_mismatch_is_clear_and_allocates_no_new_trace() {
+    let ws = tempfile::tempdir().unwrap();
+    // The omitted field in this pre-policy fixture deserializes as Legacy.
+    let fixture = write_interrupted_trace_fixture(ws.path(), "orig-policy-mismatch");
+
+    let out = ferric()
+        .args(["query", "--mock", "--resume"])
+        .arg(&fixture)
+        .args(["--harness-policy", "evidence", "--workspace"])
+        .arg(ws.path())
+        .output()
+        .unwrap();
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("recorded harness policy legacy")
+            && stderr.contains("requested harness policy evidence"),
+        "stderr: {stderr}"
+    );
+    let q_traces = std::fs::read_dir(ws.path().join(".ferric").join("trace"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("q-"))
+        .count();
+    assert_eq!(q_traces, 0, "mismatch must fail before trace allocation");
 }
 
 #[test]

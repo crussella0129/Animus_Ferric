@@ -470,6 +470,12 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
         Event::ConstraintApplied { .. }
         | Event::FailureGuard { .. }
         | Event::PermissionCheck { .. }
+        | Event::ObservationRecorded { .. }
+        | Event::ControllerBlocked { .. }
+        | Event::WorkspaceEffectRecorded { .. }
+        | Event::VerificationCheckRecorded { .. }
+        | Event::ControllerCheckpoint { .. }
+        | Event::RecoveryPacketInjected { .. }
         | Event::HistoryCompacted { .. }
         | Event::Note { .. } => {
             require_started(index, state)?;
@@ -628,6 +634,7 @@ mod tests {
         Event::PolicySelected {
             tier: Tier::Nano,
             protocol: ActionProtocol::NativeTools,
+            harness_policy: ferric_core::HarnessPolicy::Legacy,
             max_turns: 3,
             max_tools: 8,
             prompt_budget_tokens: 2_800,
@@ -976,6 +983,7 @@ mod tests {
             workspace: &workspace,
             policy: &policy,
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &ThreadSleeper,
             system_prompt: None,

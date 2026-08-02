@@ -21,6 +21,9 @@ pub struct Config {
     pub ctx: Option<u32>,
     pub temperature: Option<f32>,
     pub max_ring: Option<u8>,
+    /// Autonomous harness policy. CLI selection wins; an omitted resume
+    /// inherits its source trace rather than this field being defaulted early.
+    pub harness_policy: Option<ferric_core::HarnessPolicy>,
     /// Persistent operator tier override (ADR-098) — the config spelling of
     /// `--tier`. Separate from `params_b`, which stays a fact about the model.
     pub tier: Option<crate::query::TierArg>,
@@ -63,6 +66,7 @@ impl std::fmt::Debug for Config {
             .field("ctx", &self.ctx)
             .field("temperature", &self.temperature)
             .field("max_ring", &self.max_ring)
+            .field("harness_policy", &self.harness_policy)
             .field("tier", &self.tier)
             .field("profile_dir", &self.profile_dir)
             .field("stream", &self.stream)
@@ -85,6 +89,7 @@ impl Config {
             ctx: self.ctx.or(user.ctx),
             temperature: self.temperature.or(user.temperature),
             max_ring: self.max_ring.or(user.max_ring),
+            harness_policy: self.harness_policy.or(user.harness_policy),
             tier: self.tier.or(user.tier),
             profile_dir: self.profile_dir.or(user.profile_dir),
             stream: self.stream.or(user.stream),

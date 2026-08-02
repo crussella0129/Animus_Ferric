@@ -25,8 +25,14 @@ pub fn trace_dir(workspace_root: &Path) -> PathBuf {
 }
 
 pub use event::{
-    Event, GuardTurn, RECOVERY_CHECKPOINT_VERSION, RecoveryCheckpointV1, TRACE_SCHEMA_VERSION,
-    TraceEvent, TurnBoundary,
+    CONTROLLER_CHECKPOINT_VERSION, CONTROLLER_RECORD_VERSION, CheckExecutionV1,
+    ControllerBlockReason, ControllerBlockV1, ControllerBlockWitnessV1, ControllerCheckpointV1,
+    Event, FailedCheckV1, FileEvidenceOrigin, FileEvidenceV1, FileObservationV1, GuardTurn,
+    LineRangeV1, NavigationObservationV1, ObservationDetailV1, ObservationV1, PathEffectKind,
+    PathEffectV1, PreparedPathIdentityV1, PreparedPathStateV1, RECOVERY_CHECKPOINT_VERSION,
+    RECOVERY_PACKET_VERSION, RecoveryCheckpointV1, RecoveryPacketV1, RequestedLineRangeV1,
+    SyntaxStateV1, TRACE_SCHEMA_VERSION, TraceEvent, TurnBoundary, UnsupportedMutationKindV1,
+    VerificationCheckV1, VerificationOutcome, WorkspaceEffectV1,
 };
 pub use reader::{ParsedEvent, TraceReader, TraceRecord};
 pub use sink::JsonlSink;
@@ -45,6 +51,9 @@ mod tests {
             Event::PolicySelected {
                 tier: ferric_core::Tier::Nano,
                 protocol: ferric_core::ActionProtocol::ConstrainedJson,
+                // Non-default so this exercises the new additive field rather
+                // than succeeding only because deserialization supplied it.
+                harness_policy: ferric_core::HarnessPolicy::EvidencePlanner,
                 max_turns: 15,
                 max_tools: 6,
                 prompt_budget_tokens: 2_800,
@@ -160,6 +169,68 @@ mod tests {
                 is_error: false,
                 duration_ms: 3,
             },
+            Event::ObservationRecorded {
+                turn: 0,
+                call_id: "tc-1".to_string(),
+                observation: ObservationV1 {
+                    version: CONTROLLER_RECORD_VERSION,
+                    detail: ObservationDetailV1::File(FileObservationV1 {
+                        path: "a.txt".to_string(),
+                        sha256: "a".repeat(64),
+                        total_bytes: 8,
+                        total_lines: 1,
+                        requested_range: Some(RequestedLineRangeV1 {
+                            start: Some(1),
+                            end: Some(1),
+                        }),
+                        returned_range: Some(LineRangeV1 { start: 1, end: 1 }),
+                        complete: true,
+                        model_truncated: false,
+                    }),
+                },
+            },
+            Event::ControllerBlocked {
+                turn: 0,
+                call_id: "tc-2".to_string(),
+                tool: "write_file".to_string(),
+                block: ControllerBlockV1 {
+                    version: CONTROLLER_RECORD_VERSION,
+                    reason: ControllerBlockReason::SameTurnObservation,
+                    mutation_epoch: 2,
+                    paths: vec!["a.txt".to_string()],
+                    check_name: None,
+                    witness: None,
+                },
+            },
+            Event::WorkspaceEffectRecorded {
+                turn: 0,
+                call_id: "tc-3".to_string(),
+                tool: "write_file".to_string(),
+                effect: WorkspaceEffectV1 {
+                    version: CONTROLLER_RECORD_VERSION,
+                    mutation_epoch: 3,
+                    effects: vec![PathEffectV1 {
+                        path: "a.txt".to_string(),
+                        kind: PathEffectKind::Modified,
+                        before_sha256: Some("a".repeat(64)),
+                        after_sha256: Some("b".repeat(64)),
+                        after_bytes: Some(9),
+                        after_lines: Some(1),
+                    }],
+                },
+            },
+            Event::VerificationCheckRecorded {
+                turn: 0,
+                call_id: "tc-4".to_string(),
+                check: VerificationCheckV1 {
+                    version: CONTROLLER_RECORD_VERSION,
+                    name: "unit".to_string(),
+                    mutation_epoch: 3,
+                    attempt: 1,
+                    outcome: VerificationOutcome::Failed,
+                    diagnostic_sha256: Some("c".repeat(64)),
+                },
+            },
             Event::WorkspaceMutation {
                 turn: 0,
                 tool: "write_file".to_string(),
@@ -169,6 +240,64 @@ mod tests {
                 turn: 0,
                 name: "unit".to_string(),
                 mutation_epoch: 2,
+            },
+            Event::ControllerCheckpoint {
+                state: ControllerCheckpointV1 {
+                    version: CONTROLLER_CHECKPOINT_VERSION,
+                    harness_policy: ferric_core::HarnessPolicy::EvidencePlanner,
+                    mutation_epoch: 3,
+                    required_checks: vec!["unit".to_string()],
+                    passed_checks: std::collections::BTreeMap::from([("lint".to_string(), 3)]),
+                    file_evidence: vec![FileEvidenceV1 {
+                        path: "a.txt".to_string(),
+                        sha256: "b".repeat(64),
+                        total_bytes: 9,
+                        total_lines: 1,
+                        covered_ranges: vec![LineRangeV1 { start: 1, end: 1 }],
+                        complete: true,
+                        fresh: true,
+                        observed_turn: 0,
+                        origin: FileEvidenceOrigin::ModelRead,
+                    }],
+                    check_executions: vec![CheckExecutionV1 {
+                        turn: 0,
+                        name: "unit".to_string(),
+                        mutation_epoch: 3,
+                        attempt: 1,
+                        outcome: VerificationOutcome::Failed,
+                        diagnostic_sha256: Some("c".repeat(64)),
+                    }],
+                    last_failed_check: Some(FailedCheckV1 {
+                        turn: 0,
+                        name: "unit".to_string(),
+                        mutation_epoch: 3,
+                        attempt: 1,
+                        diagnostic_sha256: "c".repeat(64),
+                    }),
+                    changed_paths: vec!["a.txt".to_string()],
+                    repair_paths: vec!["a.txt".to_string()],
+                    repair_observation_after_turn: Some(0),
+                    inherited_pause_reason: Some("max_turns".to_string()),
+                },
+            },
+            Event::RecoveryPacketInjected {
+                packet: RecoveryPacketV1 {
+                    version: RECOVERY_PACKET_VERSION,
+                    pause_reason: "max_turns".to_string(),
+                    mutation_epoch: 3,
+                    required_checks: vec!["unit".to_string()],
+                    passed_checks: std::collections::BTreeMap::from([("lint".to_string(), 3)]),
+                    last_failed_check: Some(FailedCheckV1 {
+                        turn: 0,
+                        name: "unit".to_string(),
+                        mutation_epoch: 3,
+                        attempt: 1,
+                        diagnostic_sha256: "c".repeat(64),
+                    }),
+                    changed_paths: vec!["a.txt".to_string()],
+                    reread_paths: vec!["a.txt".to_string()],
+                },
+                message: "Resume from measured evidence.".to_string(),
             },
             Event::TurnCommitted {
                 turn: 0,
@@ -224,6 +353,148 @@ mod tests {
     }
 
     #[test]
+    fn controller_block_reason_wire_labels_are_explicit_and_stable() {
+        let cases = [
+            (ControllerBlockReason::BlindMutation, "blind_mutation"),
+            (
+                ControllerBlockReason::SameTurnObservation,
+                "same_turn_observation",
+            ),
+            (ControllerBlockReason::StaleObservation, "stale_observation"),
+            (
+                ControllerBlockReason::UnsupportedMutation,
+                "unsupported_mutation",
+            ),
+            (
+                ControllerBlockReason::RepairInspectionRequired,
+                "repair_inspection_required",
+            ),
+            (ControllerBlockReason::NoEffect, "no_effect"),
+            (ControllerBlockReason::SyntaxRegression, "syntax_regression"),
+            (ControllerBlockReason::RepeatedCheck, "repeated_check"),
+        ];
+
+        for (reason, label) in cases {
+            assert_eq!(serde_json::to_value(reason).unwrap(), json!(label));
+            assert_eq!(
+                serde_json::from_value::<ControllerBlockReason>(json!(label)).unwrap(),
+                reason
+            );
+        }
+    }
+
+    #[test]
+    fn requested_range_shapes_and_large_navigation_counts_roundtrip_losslessly() {
+        let ranges = [
+            None,
+            Some(RequestedLineRangeV1 {
+                start: Some(2),
+                end: None,
+            }),
+            Some(RequestedLineRangeV1 {
+                start: None,
+                end: Some(7),
+            }),
+            Some(RequestedLineRangeV1 {
+                start: Some(2),
+                end: Some(7),
+            }),
+        ];
+        for requested_range in ranges {
+            let observation = ObservationV1 {
+                version: CONTROLLER_RECORD_VERSION,
+                detail: ObservationDetailV1::File(FileObservationV1 {
+                    path: "src/lib.rs".to_string(),
+                    sha256: "a".repeat(64),
+                    total_bytes: 20,
+                    total_lines: 10,
+                    requested_range,
+                    returned_range: Some(LineRangeV1 { start: 2, end: 7 }),
+                    complete: false,
+                    model_truncated: false,
+                }),
+            };
+            let encoded = serde_json::to_string(&observation).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ObservationV1>(&encoded).unwrap(),
+                observation
+            );
+        }
+
+        let navigation = NavigationObservationV1 {
+            root: ".".to_string(),
+            literal: "needle".to_string(),
+            match_count: u64::MAX - 1,
+            max_results: u64::MAX,
+            exhausted: true,
+            result_sha256: "b".repeat(64),
+        };
+        let encoded = serde_json::to_string(&navigation).unwrap();
+        assert_eq!(
+            serde_json::from_str::<NavigationObservationV1>(&encoded).unwrap(),
+            navigation
+        );
+    }
+
+    #[test]
+    fn controller_block_witnesses_roundtrip_and_old_optional_fields_remain_readable() {
+        let block = ControllerBlockV1 {
+            version: CONTROLLER_RECORD_VERSION,
+            reason: ControllerBlockReason::NoEffect,
+            mutation_epoch: 2,
+            paths: vec!["a.txt".to_string()],
+            check_name: None,
+            witness: Some(ControllerBlockWitnessV1::NoEffect {
+                states: vec![PreparedPathStateV1 {
+                    path: "a.txt".to_string(),
+                    before: PreparedPathIdentityV1::File {
+                        sha256: "a".repeat(64),
+                        bytes: 4,
+                    },
+                    candidate: PreparedPathIdentityV1::File {
+                        sha256: "a".repeat(64),
+                        bytes: 4,
+                    },
+                }],
+            }),
+        };
+        let encoded = serde_json::to_string(&block).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ControllerBlockV1>(&encoded).unwrap(),
+            block
+        );
+
+        let unsupported_check = ControllerBlockV1 {
+            version: CONTROLLER_RECORD_VERSION,
+            reason: ControllerBlockReason::UnsupportedMutation,
+            mutation_epoch: 2,
+            paths: Vec::new(),
+            check_name: Some("unknown".to_string()),
+            witness: Some(ControllerBlockWitnessV1::UnsupportedMutation {
+                control_kind: UnsupportedMutationKindV1::UnsupportedOperation,
+            }),
+        };
+        let encoded = serde_json::to_string(&unsupported_check).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ControllerBlockV1>(&encoded).unwrap(),
+            unsupported_check
+        );
+
+        let old_block =
+            r#"{"version":1,"reason":"blind_mutation","mutation_epoch":0,"paths":["a.txt"]}"#;
+        assert_eq!(
+            serde_json::from_str::<ControllerBlockV1>(old_block)
+                .unwrap()
+                .witness,
+            None
+        );
+        let old_effect = r#"{"path":"a.txt","kind":"modified","before_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","after_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#;
+        let effect: PathEffectV1 = serde_json::from_str(old_effect).unwrap();
+        assert_eq!(effect.after_bytes, None);
+        assert_eq!(effect.after_lines, None);
+    }
+
+    #[test]
     fn reader_tolerates_unknown_event() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("trace.jsonl");
@@ -276,13 +547,11 @@ mod tests {
         assert!(state.pending_input.is_none());
     }
 
-    /// ADR-093 added `truncation_limit` to `policy_selected`. Every trace
-    /// written before it lacks the key, and those runs all used the default —
-    /// so reading one must produce the default, not fail and not guess.
-    /// Asserted against a literal pre-ADR-093 line rather than a re-serialized
-    /// new one, because only the literal proves what is actually on disk.
+    /// ADR-093 added `truncation_limit`, and Sprint 113 added
+    /// `harness_policy`, to `policy_selected`. A literal older line must pick
+    /// up both safe historical defaults rather than fail or guess.
     #[test]
-    fn a_pre_adr_093_policy_line_reads_back_at_the_default_cap() {
+    fn an_old_policy_line_reads_back_at_the_default_cap_and_legacy_harness() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("trace.jsonl");
         let old_line = r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"policy_selected","tier":"nano","protocol":"constrained_json","max_turns":15,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#;
@@ -294,8 +563,13 @@ mod tests {
             .unwrap();
         match &records[0].event {
             ParsedEvent::Known(Event::PolicySelected {
-                truncation_limit, ..
-            }) => assert_eq!(*truncation_limit, ferric_core::DEFAULT_TRUNCATION_LIMIT),
+                harness_policy,
+                truncation_limit,
+                ..
+            }) => {
+                assert_eq!(*harness_policy, ferric_core::HarnessPolicy::Legacy);
+                assert_eq!(*truncation_limit, ferric_core::DEFAULT_TRUNCATION_LIMIT);
+            }
             other => panic!("expected a Known PolicySelected, got {other:?}"),
         }
     }

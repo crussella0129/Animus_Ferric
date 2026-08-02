@@ -45,6 +45,7 @@ fn run_script(
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,

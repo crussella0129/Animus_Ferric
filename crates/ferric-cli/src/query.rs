@@ -13,7 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Args, ValueEnum};
 
-use ferric_core::{ActionProtocol, MediaPart, Message, ModelProfile, RunPolicy, policy_for};
+use ferric_core::{
+    ActionProtocol, HarnessPolicy, MediaPart, Message, ModelProfile, RunPolicy, policy_for,
+};
 use ferric_guard::{Decision, PermissionLevel, Workspace, check_with_ignore};
 use ferric_loop::{
     DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run, select_protocol,
@@ -42,6 +44,26 @@ impl From<ProtocolArg> for ActionProtocol {
             ProtocolArg::Native => ActionProtocol::NativeTools,
             ProtocolArg::Grammar => ActionProtocol::ConstrainedJson,
             ProtocolArg::Xml => ActionProtocol::TextXml,
+        }
+    }
+}
+
+/// CLI spelling of the autonomous harness policy. Clap exposes the compound
+/// variant as `evidence-planner`; persistent config uses the core type's
+/// stable `evidence_planner` wire spelling.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum HarnessPolicyArg {
+    Legacy,
+    Evidence,
+    EvidencePlanner,
+}
+
+impl From<HarnessPolicyArg> for HarnessPolicy {
+    fn from(policy: HarnessPolicyArg) -> Self {
+        match policy {
+            HarnessPolicyArg::Legacy => HarnessPolicy::Legacy,
+            HarnessPolicyArg::Evidence => HarnessPolicy::Evidence,
+            HarnessPolicyArg::EvidencePlanner => HarnessPolicy::EvidencePlanner,
         }
     }
 }
@@ -180,6 +202,11 @@ pub struct QueryArgs {
     #[arg(long, value_enum)]
     pub protocol: Option<ProtocolArg>,
 
+    /// Autonomous harness policy. Omitted fresh runs use `legacy`; omitted
+    /// resumes inherit the policy recorded in their source trace.
+    #[arg(long, value_enum)]
+    pub harness_policy: Option<HarnessPolicyArg>,
+
     /// Directory of prompt elements to compose the system prompt from.
     /// Falls back to the built-in default prompt when absent or unloadable.
     /// Also read from FERRIC_PROMPTS_DIR.
@@ -303,6 +330,7 @@ pub(crate) struct RunConfigArgs {
     pub ctx: u32,
     pub temperature: f32,
     pub protocol_override: Option<ProtocolArg>,
+    pub harness_policy: Option<HarnessPolicy>,
     pub prompts_dir: Option<PathBuf>,
     pub max_ring: Option<u8>,
     /// Explicit operator tier (ADR-098). Wins over the measured read-back and
@@ -331,6 +359,7 @@ pub(crate) struct RunConfig {
     pub registry: Registry,
     pub caps: Capabilities,
     pub protocol: ActionProtocol,
+    pub harness_policy: Option<HarnessPolicy>,
     pub policy: RunPolicy,
     pub sampling: SamplingParams,
     pub system_prompt: Option<String>,
@@ -526,12 +555,31 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
         registry,
         caps,
         protocol,
+        harness_policy: a.harness_policy,
         policy,
         sampling,
         system_prompt,
         lineage,
         prompt_composition_error,
         hooks: a.hooks.clone(),
+    }
+}
+
+/// Fail closed before a product allocates a trace. Evidence traces require
+/// controller checkpoints, so accepting either not-yet-live policy here would
+/// create a structurally invalid partial trace before `run()` could refuse it.
+pub(crate) fn ensure_supported_harness_policy(
+    harness_policy: Option<HarnessPolicy>,
+) -> Result<(), String> {
+    match harness_policy {
+        None | Some(HarnessPolicy::Legacy) => Ok(()),
+        Some(HarnessPolicy::Evidence) => Err(
+            "harness policy evidence is not available until controller checkpoints are enabled"
+                .to_string(),
+        ),
+        Some(HarnessPolicy::EvidencePlanner) => {
+            Err("harness policy evidence_planner is not implemented yet".to_string())
+        }
     }
 }
 
@@ -765,6 +813,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         .unwrap_or_else(|| "unknown".to_string());
     let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
     let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
+    let resolved_harness_policy = args.harness_policy.map(Into::into).or(cfg.harness_policy);
     let resolved_max_ring = args.max_ring.or(cfg.max_ring);
     let resolved_tier = args.tier.or(cfg.tier);
     let resolved_profile_dir = args
@@ -782,6 +831,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         ctx: resolved_ctx,
         temperature: resolved_temperature,
         protocol_override: args.protocol,
+        harness_policy: resolved_harness_policy,
         prompts_dir: args.prompts_dir.clone(),
         max_ring: resolved_max_ring,
         tier_override: resolved_tier.map(Into::into),
@@ -829,6 +879,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
                     &replayed,
                     workspace.root(),
                     config.protocol,
+                    config.harness_policy,
                 ) {
                     eprintln!("cannot resume {}: {error}", path.display());
                     return ExitCode::FAILURE;
@@ -842,6 +893,10 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         },
         None => None,
     };
+    if let Err(error) = ensure_supported_harness_policy(config.harness_policy) {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
 
     // T-3806: `Animus.md` — read-only, no parsing. Presence folds its content
     // into the system prompt as a distinct block; absence is a silent no-op
@@ -993,6 +1048,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         workspace: &workspace,
         policy: &config.policy,
         protocol: config.protocol,
+        harness_policy: config.harness_policy,
         sampling: config.sampling,
         system_prompt: config.system_prompt.as_deref(),
         lineage: config.lineage.clone(),
@@ -1243,6 +1299,7 @@ pub(crate) struct LoopSetup<'a> {
     pub workspace: &'a Workspace,
     pub policy: &'a RunPolicy,
     pub protocol: ActionProtocol,
+    pub harness_policy: Option<HarnessPolicy>,
     pub sampling: SamplingParams,
     pub system_prompt: Option<&'a str>,
     pub lineage: Option<PromptLineage>,
@@ -1270,6 +1327,7 @@ impl<'a> LoopSetup<'a> {
             workspace: self.workspace,
             policy: self.policy,
             protocol: self.protocol,
+            harness_policy: self.harness_policy,
             sampling: self.sampling,
             sleeper: &ThreadSleeper,
             system_prompt: self.system_prompt,
@@ -1679,6 +1737,7 @@ mod tests {
             workspace: &workspace,
             policy: &policy,
             protocol,
+            harness_policy: None,
             sampling,
             system_prompt: None,
             lineage: None,
@@ -1720,6 +1779,7 @@ mod tests {
             // would pass a same-value assertion vacuously.
             temperature: 0.7,
             protocol_override: None,
+            harness_policy: None,
             prompts_dir: None,
             max_ring: None,
             tier_override: None,

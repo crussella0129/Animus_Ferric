@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use ferric_core::{ActionProtocol, FerricError, MediaPart, RunPolicy, UserInputRequest};
+use ferric_core::{
+    ActionProtocol, FerricError, HarnessPolicy, MediaPart, RunPolicy, UserInputRequest,
+};
 use ferric_guard::Workspace;
 use ferric_provider::{
     CompletionRequest, Constraint, Provider, SamplingParams, StreamDelta, ToolDescriptor,
@@ -9,6 +11,7 @@ use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
 use ferric_trace::{Event, JsonlSink};
 use tracing::{debug, info, instrument, warn};
 
+use crate::ControllerState;
 use crate::outcome::{LoopOutcome, NeedsInput, StopReason};
 use crate::projector::TraceProjector;
 
@@ -58,6 +61,9 @@ pub struct RunArgs<'a> {
     pub workspace: &'a Workspace,
     pub policy: &'a RunPolicy,
     pub protocol: ActionProtocol,
+    /// Operator-requested harness policy. `None` means Legacy for a fresh run
+    /// and inherits the recorded policy for a resumed run.
+    pub harness_policy: Option<HarnessPolicy>,
     pub sampling: SamplingParams,
     pub sleeper: &'a dyn Sleeper,
     pub system_prompt: Option<&'a str>,
@@ -89,6 +95,10 @@ pub struct LoopState<'a> {
     pub args: RunArgs<'a>,
     pub sink: &'a mut JsonlSink,
     pub projector: TraceProjector,
+    /// Prompt-independent evidence truth. `None` is mandatory for Legacy;
+    /// live Evidence dispatch remains disabled until B113-05 wires the
+    /// controlled registry chokepoint.
+    pub controller: Option<ControllerState>,
     /// Absolute id assigned to the next turn across resume boundaries.
     pub turns: u32,
     /// Budget consumption in this process run. Resume always gets a fresh
@@ -874,7 +884,7 @@ impl<'a> LoopState<'a> {
 
 #[allow(clippy::collapsible_if)]
 pub async fn run(
-    args: RunArgs<'_>,
+    mut args: RunArgs<'_>,
     sink: &mut JsonlSink,
     prompt: Option<&str>,
 ) -> Result<LoopOutcome, FerricError> {
@@ -885,8 +895,13 @@ pub async fn run(
     }
     match &args.resume {
         Some(replayed) => {
-            crate::replay::validate_resume_target(replayed, args.workspace.root(), args.protocol)
-                .map_err(|error| FerricError::InvalidInput(error.to_string()))?;
+            crate::replay::validate_resume_target(
+                replayed,
+                args.workspace.root(),
+                args.protocol,
+                args.harness_policy,
+            )
+            .map_err(|error| FerricError::InvalidInput(error.to_string()))?;
             match (&replayed.pending_input, args.answer) {
                 (Some(_), None) => {
                     return Err(FerricError::InvalidInput(
@@ -916,6 +931,46 @@ pub async fn run(
         None => {}
     }
 
+    // Keep the requested policy optional across every caller boundary. This is
+    // the sole resolution point: fresh runs default to Legacy, while resumes
+    // inherit their trace unless the operator explicitly selected a match.
+    let effective_harness_policy = args
+        .harness_policy
+        .or(args.resume.as_ref().map(|state| state.harness_policy))
+        .unwrap_or_default();
+    let controller = match (effective_harness_policy, args.resume.as_ref()) {
+        (HarnessPolicy::Legacy, Some(replayed)) | (HarnessPolicy::Evidence, Some(replayed)) => {
+            crate::replay::resume_controller_state(replayed, args.registry.required_checks())
+                .map_err(|error| FerricError::InvalidInput(error.to_string()))?
+        }
+        (HarnessPolicy::Legacy, None) => None,
+        (HarnessPolicy::Evidence, None) => Some(
+            ControllerState::new(
+                HarnessPolicy::Evidence,
+                args.registry.required_checks().iter().cloned(),
+            )
+            .map_err(|error| FerricError::InvalidInput(error.to_string()))?,
+        ),
+        (HarnessPolicy::EvidencePlanner, _) => {
+            return Err(FerricError::InvalidInput(
+                "harness policy evidence_planner is not implemented yet".to_string(),
+            ));
+        }
+    };
+    match effective_harness_policy {
+        HarnessPolicy::Legacy => {}
+        HarnessPolicy::Evidence => {
+            return Err(FerricError::InvalidInput(
+                "harness policy evidence is not available until controller checkpoints are enabled"
+                    .to_string(),
+            ));
+        }
+        HarnessPolicy::EvidencePlanner => {
+            unreachable!("evidence_planner returned during controller preparation")
+        }
+    }
+    args.harness_policy = Some(effective_harness_policy);
+
     // The projector's model-facing cap is not set here: it comes from the
     // `PolicySelected` event below, which carries the registry's value. That
     // is the point of ADR-093 — replay and `trace verify` have only the trace,
@@ -932,6 +987,7 @@ pub async fn run(
     let policy_selected = Event::PolicySelected {
         tier: args.policy.tier,
         protocol: args.protocol,
+        harness_policy: effective_harness_policy,
         max_turns: u32::from(args.policy.max_turns),
         max_tools: u32::from(args.policy.max_tools),
         prompt_budget_tokens: args.policy.prompt_budget_tokens,
@@ -979,7 +1035,15 @@ pub async fn run(
             };
             sink.write_event(checkpoint.clone())?;
             projector.step(&checkpoint);
+            if let Some(controller) = controller.as_ref() {
+                let checkpoint = Event::ControllerCheckpoint {
+                    state: controller.checkpoint(),
+                };
+                sink.write_event(checkpoint.clone())?;
+                projector.step(&checkpoint);
+            }
 
+            let clarification = replayed.pending_input.is_some() && args.answer.is_some();
             let amendment =
                 if let (Some(request), Some(answer)) = (&replayed.pending_input, args.answer) {
                     Some(format_clarification_answer(request, answer))
@@ -1001,6 +1065,31 @@ pub async fn run(
                 };
                 sink.write_event(anchored.clone())?;
                 projector.step(&anchored);
+                if let Some(controller) = controller.as_ref() {
+                    let anchored = Event::ControllerCheckpoint {
+                        state: controller.checkpoint(),
+                    };
+                    sink.write_event(anchored.clone())?;
+                    projector.step(&anchored);
+                }
+            }
+            if !clarification && let Some(controller) = controller.as_ref() {
+                let reason = controller
+                    .checkpoint()
+                    .inherited_pause_reason
+                    .ok_or_else(|| {
+                        FerricError::InvalidInput(
+                            "resumed evidence controller omits its pause reason".to_string(),
+                        )
+                    })?;
+                let packet = controller
+                    .recovery_packet(&reason)
+                    .map_err(|error| FerricError::Other(error.to_string()))?;
+                let message = ControllerState::render_recovery_packet(&packet)
+                    .map_err(|error| FerricError::Other(error.to_string()))?;
+                let injected = Event::RecoveryPacketInjected { packet, message };
+                sink.write_event(injected.clone())?;
+                projector.step(&injected);
             }
             replayed.next_turn
         }
@@ -1031,6 +1120,13 @@ pub async fn run(
             };
             sink.write_event(session_prompt.clone())?;
             projector.step(&session_prompt);
+            if let Some(controller) = controller.as_ref() {
+                let checkpoint = Event::ControllerCheckpoint {
+                    state: controller.checkpoint(),
+                };
+                sink.write_event(checkpoint.clone())?;
+                projector.step(&checkpoint);
+            }
             0
         }
     };
@@ -1066,6 +1162,7 @@ pub async fn run(
         args,
         sink,
         projector,
+        controller,
         turns,
         turns_this_run: 0,
         offered_names,
@@ -1100,6 +1197,18 @@ pub async fn run(
         };
         state.sink.write_event(checkpoint.clone())?;
         state.projector.step(&checkpoint);
+        if let Some(controller) = state.controller.as_mut() {
+            let controller_checkpoint = controller
+                .checkpoint_for_pause(stop.as_str())
+                .map_err(|error| FerricError::Other(error.to_string()))?;
+            let checkpoint = Event::ControllerCheckpoint {
+                state: controller_checkpoint.clone(),
+            };
+            state.sink.write_event(checkpoint.clone())?;
+            state.projector.step(&checkpoint);
+            *controller = ControllerState::from_checkpoint(&controller_checkpoint)
+                .map_err(|error| FerricError::Other(error.to_string()))?;
+        }
         let paused = Event::SessionPaused {
             reason: stop.as_str().to_string(),
         };

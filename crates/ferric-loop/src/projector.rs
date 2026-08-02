@@ -1,6 +1,7 @@
 use ferric_core::{ActionProtocol, Message, Role, ToolCall, UserInputRequest};
 use ferric_trace::{
     Event, GuardTurn, RECOVERY_CHECKPOINT_VERSION, RecoveryCheckpointV1, TurnBoundary,
+    VerificationOutcome,
 };
 
 // Formatting functions extracted from run.rs
@@ -250,6 +251,15 @@ impl TraceProjector {
                 // answer a second time.
                 self.pending_input = None;
             }
+            Event::RecoveryPacketInjected { message, .. } => {
+                // The literal trace payload, not a newly rendered equivalent,
+                // is the durable model-history source of truth.
+                self.messages.push(Message::user(message.clone()));
+            }
+            Event::ControllerCheckpoint { .. } => {
+                // Controller truth is projected by TraceStructure and remains
+                // deliberately separate from model-visible message history.
+            }
             Event::TurnStart { turn } => {
                 // Pre-recovery traces used the next turn start as their commit
                 // barrier. Modern turns carry ActionsProposed and must instead
@@ -314,6 +324,13 @@ impl TraceProjector {
                 ..
             } => {
                 self.passed_checks.insert(name.clone(), *mutation_epoch);
+            }
+            Event::VerificationCheckRecorded { check, .. }
+                if check.outcome == VerificationOutcome::Failed =>
+            {
+                // A failed typed record is authoritative even though the
+                // compatibility vocabulary has no corresponding failure event.
+                self.passed_checks.remove(&check.name);
             }
             Event::TurnCommitted {
                 turn,

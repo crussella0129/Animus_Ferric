@@ -14,12 +14,13 @@ use std::process::{Child, Command};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use ferric_core::ActionProtocol;
+use ferric_core::{ActionProtocol, HarnessPolicy};
 use tempfile::TempDir;
 
 use crate::spec::BenchSpec;
 
 /// How to invoke the agent for a benchmark run.
+#[derive(Clone)]
 pub struct Invocation {
     /// The `ferric` binary to spawn (default: this executable).
     pub ferric_bin: PathBuf,
@@ -34,6 +35,7 @@ pub struct Invocation {
     pub keep_workspace: bool,
 }
 
+#[derive(Clone)]
 pub struct OpenAiArgs {
     /// `--api-base` (e.g. `http://localhost:11434/v1`); `None` auto-discovers a
     /// `ferric server` runfile, like `query` itself.
@@ -86,6 +88,10 @@ pub struct QuerySegmentRequest<'a> {
     /// failure fixture uses an unreachable loopback endpoint, then resumes
     /// against the ordinary endpoint in the next process.
     pub api_base_override: Option<&'a str>,
+    /// Optional autonomous-controller flag for binaries which support it.
+    /// `None` is intentional: frozen legacy controls predate this flag and
+    /// must continue to receive the historical child argv unchanged.
+    pub harness_policy: Option<HarnessPolicy>,
 }
 
 /// Raw process evidence for one autonomy segment. A rejected resume normally
@@ -358,7 +364,7 @@ fn query_args(
         "--profile-dir".to_string(),
         profile_dir.display().to_string(),
         "--temperature".to_string(),
-        "0".to_string(),
+        "0.0".to_string(),
         "--max-turns".to_string(),
         max_turns.to_string(),
         "--no-stream".to_string(),
@@ -405,7 +411,7 @@ fn query_segment_args(inv: &Invocation, request: &QuerySegmentRequest<'_>) -> Ve
         "--profile-dir".to_string(),
         request.profile_dir.display().to_string(),
         "--temperature".to_string(),
-        "0".to_string(),
+        "0.0".to_string(),
         "--max-turns".to_string(),
         request.max_turns.to_string(),
         "--no-stream".to_string(),
@@ -432,6 +438,9 @@ fn query_segment_args(inv: &Invocation, request: &QuerySegmentRequest<'_>) -> Ve
         && let Some(prompts) = &inv.prompts_dir
     {
         args.extend(["--prompts-dir".to_string(), prompts.display().to_string()]);
+    }
+    if let Some(policy) = request.harness_policy {
+        args.extend(["--harness-policy".to_string(), policy.to_string()]);
     }
     args
 }
@@ -509,7 +518,7 @@ mod tests {
         assert!(has_pair(&args, "--api-base", "http://localhost:11434/v1"));
         assert!(has_pair(&args, "--protocol", "grammar"));
         assert!(has_pair(&args, "--profile-dir", "/profiles"));
-        assert!(has_pair(&args, "--temperature", "0"));
+        assert!(has_pair(&args, "--temperature", "0.0"));
         assert!(has_pair(&args, "--max-turns", "12"));
         assert!(args.iter().any(|a| a == "--no-config"));
         assert!(args.iter().any(|a| a == "--no-stream"));
@@ -535,7 +544,7 @@ mod tests {
             params_b: 7.6,
             ctx: 8192,
         });
-        let request = QuerySegmentRequest {
+        let mut request = QuerySegmentRequest {
             workspace: Path::new("/ws"),
             profile_dir: Path::new("/profiles"),
             checks_file: Some(Path::new("/checks.toml")),
@@ -545,12 +554,25 @@ mod tests {
             max_turns: 9,
             timeout: Duration::from_secs(60),
             api_base_override: Some("http://127.0.0.1:9/v1"),
+            harness_policy: None,
         };
+        let control_args = query_segment_args(&inv, &request);
+        request.harness_policy = Some(HarnessPolicy::Legacy);
+        let explicit_legacy_args = query_segment_args(&inv, &request);
+        let mut expected_explicit_legacy = control_args.clone();
+        expected_explicit_legacy.extend(["--harness-policy".to_string(), "legacy".to_string()]);
+        assert_eq!(explicit_legacy_args, expected_explicit_legacy);
+        request.harness_policy = Some(HarnessPolicy::Evidence);
         let args = query_segment_args(&inv, &request);
+        let mut expected_candidate = control_args;
+        expected_candidate.extend(["--harness-policy".to_string(), "evidence".to_string()]);
+        assert_eq!(args, expected_candidate);
         assert!(has_pair(&args, "--resume", "/ws/.ferric/trace/prior.jsonl"));
         assert!(has_pair(&args, "--answer", "use UTC"));
         assert!(has_pair(&args, "--checks-file", "/checks.toml"));
         assert!(has_pair(&args, "--api-base", "http://127.0.0.1:9/v1"));
+        assert!(has_pair(&args, "--temperature", "0.0"));
+        assert!(has_pair(&args, "--harness-policy", "evidence"));
         assert!(args.iter().any(|arg| arg == "--no-config"));
         assert!(args.iter().any(|arg| arg == "--no-stream"));
         assert!(!args.iter().any(|arg| arg == "--prompts-dir"));
@@ -568,6 +590,7 @@ mod tests {
             max_turns: 1,
             timeout: Duration::from_secs(1),
             api_base_override: None,
+            harness_policy: None,
         };
         assert_eq!(
             validate_segment_request(&request).unwrap_err().kind(),

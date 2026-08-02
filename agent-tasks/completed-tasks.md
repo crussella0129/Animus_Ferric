@@ -956,3 +956,24 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-08-01
 - **Files modified:** README.md, decisions.md, agent-tasks/completed-tasks.md, docs/demo-guide.md
 - **Commit:** pending
+
+
+## T-11301 (sprint 113)
+- **Description:** Added the orthogonal `HarnessPolicy` vocabulary and additive,
+  versioned trace payloads for observations, controller refusals, measured
+  effects, verification attempts, controller checkpoints, and recovery packets.
+  Pre-sprint traces deserialize as `legacy`; every existing live writer remains
+  explicitly legacy until controlled dispatch lands. Updated trace rendering and
+  exhaustive consumers. The shared `TraceStructure` now rejects known controller
+  events instead of silently accepting them before the causal validator is
+  implemented, including an explicit legacy-policy rejection.
+- **Completed:** 2026-08-02
+- **Files modified:** crates/ferric-core/src/{harness.rs,lib.rs},
+  crates/ferric-trace/src/{event.rs,lib.rs},
+  crates/ferric-loop/src/{run.rs,replay.rs,trace_structure.rs},
+  crates/ferric-loop/tests/{common/mod.rs,recovery_protocol_tests.rs},
+  crates/ferric-cli/src/{autonomy_cmd.rs,trace_cmd.rs,trace_verify.rs},
+  crates/ferric-cli/tests/cli.rs, agent-tasks/*
+- **Verification:** `cargo check --workspace`; core/trace, loop, and CLI tests;
+  affected clippy with `-D warnings`; workspace format check.
+- **Commit:** pending

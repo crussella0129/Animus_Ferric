@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use ferric_trace::{Event, ParsedEvent, TraceReader};
+use ferric_trace::{Event, ObservationDetailV1, ParsedEvent, TraceReader};
 
 pub fn trace_cat(path: &Path) -> ExitCode {
     let reader = match TraceReader::open(path) {
@@ -60,6 +60,72 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             };
             format!("tool result {name} [{id}] {status} {duration_ms}ms: {preview}{ellipsis}")
         }
+        ParsedEvent::Known(Event::ObservationRecorded {
+            turn,
+            call_id,
+            observation,
+        }) => {
+            let detail = match &observation.detail {
+                ObservationDetailV1::File(file) => format!(
+                    "file {} sha256 {} ({} bytes, complete {}, truncated {})",
+                    file.path, file.sha256, file.total_bytes, file.complete, file.model_truncated
+                ),
+                ObservationDetailV1::Search(search) => format!(
+                    "literal search {:?} under {} ({} matches, exhausted {})",
+                    search.literal, search.root, search.match_count, search.exhausted
+                ),
+                ObservationDetailV1::Find(find) => format!(
+                    "literal find {:?} under {} ({} matches, exhausted {})",
+                    find.literal, find.root, find.match_count, find.exhausted
+                ),
+            };
+            format!(
+                "turn {turn} observation v{} [{call_id}]: {detail}",
+                observation.version
+            )
+        }
+        ParsedEvent::Known(Event::ControllerBlocked {
+            turn,
+            call_id,
+            tool,
+            block,
+        }) => format!(
+            "turn {turn} controller blocked {tool} [{call_id}] at epoch {}: {:?} (paths [{}], check {})",
+            block.mutation_epoch,
+            block.reason,
+            block.paths.join(", "),
+            block.check_name.as_deref().unwrap_or("none")
+        ),
+        ParsedEvent::Known(Event::WorkspaceEffectRecorded {
+            turn,
+            call_id,
+            tool,
+            effect,
+        }) => format!(
+            "turn {turn} measured effect by {tool} [{call_id}] advanced epoch to {}: [{}]",
+            effect.mutation_epoch,
+            effect
+                .effects
+                .iter()
+                .map(|item| format!("{}:{:?}", item.path, item.kind))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ParsedEvent::Known(Event::VerificationCheckRecorded {
+            turn,
+            call_id,
+            check,
+        }) => format!(
+            "turn {turn} verification check {} [{call_id}] attempt {} at epoch {}: {:?}{}",
+            check.name,
+            check.attempt,
+            check.mutation_epoch,
+            check.outcome,
+            check
+                .diagnostic_sha256
+                .as_deref()
+                .map_or_else(String::new, |digest| format!(" ({digest})"))
+        ),
         ParsedEvent::Known(Event::WorkspaceMutation {
             turn,
             tool,
@@ -87,6 +153,7 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
         ParsedEvent::Known(Event::PolicySelected {
             tier,
             protocol,
+            harness_policy,
             max_turns,
             max_tools,
             prompt_budget_tokens,
@@ -94,7 +161,7 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             truncation_limit,
             tier_source,
         }) => format!(
-            "policy selected: {tier:?} (from {tier_source})/{protocol:?} (turns {max_turns}, tools {max_tools}, prompt budget {prompt_budget_tokens}, output budget {max_output_tokens}, tool output cap {truncation_limit})"
+            "policy selected: {tier:?} (from {tier_source})/{protocol:?}, harness {harness_policy} (turns {max_turns}, tools {max_tools}, prompt budget {prompt_budget_tokens}, output budget {max_output_tokens}, tool output cap {truncation_limit})"
         ),
         ParsedEvent::Known(Event::PromptComposed {
             output_id,
@@ -125,6 +192,22 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             } else {
                 ""
             }
+        ),
+        ParsedEvent::Known(Event::ControllerCheckpoint { state }) => format!(
+            "controller checkpoint v{} (harness {}, epoch {}, {} file observations, {} check executions)",
+            state.version,
+            state.harness_policy,
+            state.mutation_epoch,
+            state.file_evidence.len(),
+            state.check_executions.len()
+        ),
+        ParsedEvent::Known(Event::RecoveryPacketInjected { packet, message }) => format!(
+            "recovery packet v{} (reason {}, epoch {}, {} reread paths, {} chars)",
+            packet.version,
+            packet.pause_reason,
+            packet.mutation_epoch,
+            packet.reread_paths.len(),
+            message.chars().count()
         ),
         ParsedEvent::Known(Event::ResumePrompt { user, .. }) => {
             format!("resume prompt: {} chars", user.chars().count())

@@ -19,8 +19,8 @@ use ferric_trace::JsonlSink;
 
 use crate::backend::BackendOpts;
 use crate::query::{
-    ProtocolArg, RunConfig, RunConfigArgs, build_run_config, mock_provider, route_files,
-    run_with_provider,
+    HarnessPolicyArg, ProtocolArg, RunConfig, RunConfigArgs, build_run_config,
+    ensure_supported_harness_policy, mock_provider, route_files, run_with_provider,
 };
 
 #[cfg(feature = "backend-openai")]
@@ -238,6 +238,10 @@ pub struct McpArgs {
     /// Action protocol override (default: chosen from policy + backend caps)
     #[arg(long, value_enum)]
     pub protocol: Option<ProtocolArg>,
+
+    /// Autonomous harness policy fixed for the server lifetime.
+    #[arg(long, value_enum)]
+    pub harness_policy: Option<HarnessPolicyArg>,
 
     /// Directory of prompt elements to compose the system prompt from.
     #[arg(long)]
@@ -643,6 +647,7 @@ impl McpServer {
             workspace: &self.workspace,
             policy: &self.config.policy,
             protocol: self.config.protocol,
+            harness_policy: self.config.harness_policy,
             sampling: self.config.sampling.clone(),
             system_prompt: self.config.system_prompt.as_deref(),
             lineage: self.config.lineage.clone(),
@@ -707,6 +712,7 @@ impl McpServer {
             .unwrap_or_else(|| "unknown".to_string());
         let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
         let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
+        let resolved_harness_policy = args.harness_policy.map(Into::into).or(cfg.harness_policy);
         let resolved_max_ring = args.max_ring.or(cfg.max_ring);
         let resolved_tier = args.tier.or(cfg.tier);
         let resolved_profile_dir = args
@@ -731,6 +737,7 @@ impl McpServer {
             ctx: resolved_ctx,
             temperature: resolved_temperature,
             protocol_override: args.protocol,
+            harness_policy: resolved_harness_policy,
             prompts_dir: args.prompts_dir.clone(),
             max_ring: resolved_max_ring,
             tier_override: resolved_tier.map(Into::into),
@@ -741,27 +748,25 @@ impl McpServer {
             model_key: backend_opts.model.clone(),
             hooks: None,
         });
-
         // T-3905 (sprint 39 / 55): `--resume <path>` replays an interrupted, still-
         // incomplete session. Resolved here and passed to the first `ferric_query` call.
         let resume_state = match &args.resume {
             Some(path) => match ferric_loop::replay(path) {
                 Ok(replayed) => {
-                    if replayed.protocol != config.protocol {
-                        return Err(format!(
-                            "cannot resume {}: recorded protocol {:?} does not match this \
-                             invocation's resolved protocol {:?}",
-                            path.display(),
-                            replayed.protocol,
-                            config.protocol
-                        ));
-                    }
+                    ferric_loop::validate_resume_target(
+                        &replayed,
+                        workspace.root(),
+                        config.protocol,
+                        config.harness_policy,
+                    )
+                    .map_err(|error| format!("cannot resume {}: {error}", path.display()))?;
                     Some(replayed)
                 }
                 Err(e) => return Err(format!("cannot resume {}: {e}", path.display())),
             },
             None => None,
         };
+        ensure_supported_harness_policy(config.harness_policy)?;
 
         // No trace sink exists yet at launch (each tools/call opens its own),
         // so a composition failure — and any malformed-config diagnostic
@@ -910,6 +915,7 @@ mod tests {
             ctx: None,
             temperature: None,
             protocol: None,
+            harness_policy: None,
             prompts_dir: None,
             mock: true,
             modality: None,
@@ -1069,6 +1075,7 @@ mod tests {
             ctx: 4096,
             temperature: 0.0,
             protocol_override: None,
+            harness_policy: None,
             prompts_dir: None,
             max_ring: None,
             profile_dir: PathBuf::from("benchmarks"),

@@ -9,10 +9,13 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use ferric_core::{ActionProtocol, FerricError, Message, UserInputRequest};
-use ferric_trace::{Event, GuardTurn, ParsedEvent, RECOVERY_CHECKPOINT_VERSION, TraceReader};
+use ferric_core::{ActionProtocol, FerricError, HarnessPolicy, Message, UserInputRequest};
+use ferric_trace::{
+    ControllerCheckpointV1, Event, GuardTurn, ParsedEvent, RECOVERY_CHECKPOINT_VERSION, TraceReader,
+};
 use thiserror::Error;
 
+use crate::ControllerState;
 use crate::projector::TraceProjector;
 use crate::trace_structure::TraceStructure;
 
@@ -27,6 +30,9 @@ pub struct ReplayedState {
     pub next_turn: u32,
     pub last_text: Option<String>,
     pub protocol: ActionProtocol,
+    /// Concrete harness policy recorded by the source trace. Traces written
+    /// before the field existed deserialize it as `Legacy`.
+    pub harness_policy: HarnessPolicy,
     pub truncation_limit: usize,
     /// The original session's `session` id (not a file path — stable even if
     /// trace files move). Threaded into the continuing session's
@@ -42,8 +48,13 @@ pub struct ReplayedState {
     pub pending_input: Option<UserInputRequest>,
     pub mutation_epoch: u64,
     pub passed_checks: std::collections::BTreeMap<String, u64>,
-    /// The intentional incomplete stop, or `None` for an abrupt crash.
+    /// The intentional incomplete stop. Evidence traces use `process_crash`
+    /// for an otherwise unclassified abrupt EOF; legacy abrupt EOFs retain
+    /// `None` for compatibility.
     pub pause_reason: Option<String>,
+    /// Durable controller truth for Evidence traces. Legacy traces deliberately
+    /// carry `None` so absence can never default into trusted safety state.
+    pub controller_checkpoint: Option<ControllerCheckpointV1>,
 }
 
 #[derive(Debug, Error)]
@@ -75,8 +86,28 @@ pub enum ReplayError {
         recorded: ActionProtocol,
         requested: ActionProtocol,
     },
+    #[error(
+        "recorded harness policy {recorded} does not match requested harness policy {requested}"
+    )]
+    HarnessPolicyMismatch {
+        recorded: HarnessPolicy,
+        requested: HarnessPolicy,
+    },
     #[error("recorded workspace {recorded} does not match requested workspace {requested}")]
     WorkspaceMismatch { recorded: String, requested: String },
+    #[error("evidence trace has no projected controller checkpoint")]
+    MissingControllerCheckpoint,
+    #[error("legacy trace unexpectedly carries controller state")]
+    UnexpectedControllerCheckpoint,
+    #[error("invalid controller checkpoint: {0}")]
+    InvalidControllerCheckpoint(String),
+    #[error(
+        "recorded required checks {recorded:?} do not match requested required checks {requested:?}"
+    )]
+    RequiredChecksMismatch {
+        recorded: Vec<String>,
+        requested: Vec<String>,
+    },
 }
 
 pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
@@ -88,6 +119,8 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     let mut saw_session_prompt = false;
     let mut saw_state_base = false;
     let mut saw_modern_turn = false;
+    let mut harness_policy: Option<HarnessPolicy> = None;
+    let mut saw_session_paused = false;
     let mut structure = TraceStructure::new();
 
     for record in TraceReader::open(path)? {
@@ -132,6 +165,12 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                 saw_session_prompt = true;
                 saw_state_base = true;
             }
+            Event::PolicySelected {
+                harness_policy: recorded,
+                ..
+            } => {
+                harness_policy = Some(*recorded);
+            }
             Event::RecoveryCheckpoint { state } => {
                 if state.version != RECOVERY_CHECKPOINT_VERSION {
                     return Err(ReplayError::UnsupportedCheckpoint(state.version));
@@ -153,6 +192,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                     ));
                 }
                 pause_reason = Some(reason.clone());
+                saw_session_paused = true;
             }
             Event::SessionEnd { reason } => {
                 if is_success_reason(reason) {
@@ -246,7 +286,15 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     let protocol = projector
         .protocol
         .ok_or(ReplayError::MissingSessionPrompt)?;
+    let harness_policy = harness_policy.ok_or(ReplayError::MissingSessionPrompt)?;
     let source_session = source_session.ok_or(ReplayError::MissingSessionPrompt)?;
+    let controller_checkpoint = projected_controller_checkpoint(
+        &structure,
+        &projector,
+        harness_policy,
+        &mut pause_reason,
+        saw_session_paused,
+    )?;
 
     Ok(ReplayedState {
         messages: projector.messages,
@@ -254,6 +302,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
         next_turn: projector.next_turn,
         last_text: projector.last_text,
         protocol,
+        harness_policy,
         truncation_limit: projector.truncation_limit,
         source_session,
         workspace: workspace.ok_or(ReplayError::MissingWorkspace)?,
@@ -267,20 +316,130 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
         mutation_epoch: projector.mutation_epoch,
         passed_checks: projector.passed_checks,
         pause_reason,
+        controller_checkpoint,
     })
 }
 
-/// Validate the two pieces of operator-selected execution context that a trace
-/// must never silently change across a resume boundary.
+fn projected_controller_checkpoint(
+    structure: &TraceStructure,
+    projector: &TraceProjector,
+    harness_policy: HarnessPolicy,
+    pause_reason: &mut Option<String>,
+    saw_session_paused: bool,
+) -> Result<Option<ControllerCheckpointV1>, ReplayError> {
+    let projected = structure.controller_checkpoint();
+    match harness_policy {
+        HarnessPolicy::Legacy => {
+            if projected.is_some() {
+                return Err(ReplayError::UnexpectedControllerCheckpoint);
+            }
+            Ok(None)
+        }
+        HarnessPolicy::Evidence => {
+            let checkpoint = projected.ok_or(ReplayError::MissingControllerCheckpoint)?;
+            let controller = ControllerState::from_checkpoint(&checkpoint)
+                .map_err(|error| ReplayError::InvalidControllerCheckpoint(error.to_string()))?;
+            let reason = pause_reason
+                .clone()
+                .unwrap_or_else(|| "process_crash".to_string());
+            if pause_reason.is_none() {
+                *pause_reason = Some(reason.clone());
+            }
+            let checkpoint = if saw_session_paused {
+                if checkpoint.inherited_pause_reason.as_deref() != Some(reason.as_str()) {
+                    return Err(ReplayError::InvalidControllerCheckpoint(
+                        "durable pause reason differs from projected controller state".to_string(),
+                    ));
+                }
+                checkpoint
+            } else {
+                controller
+                    .checkpoint_for_pause(&reason)
+                    .map_err(|error| ReplayError::InvalidControllerCheckpoint(error.to_string()))?
+            };
+            if checkpoint.mutation_epoch != projector.mutation_epoch
+                || checkpoint.passed_checks != projector.passed_checks
+            {
+                return Err(ReplayError::InvalidStructure(
+                    "projected core/controller mutation-check coordinates disagree".to_string(),
+                ));
+            }
+            Ok(Some(checkpoint))
+        }
+        HarnessPolicy::EvidencePlanner => Err(ReplayError::InvalidStructure(
+            "evidence_planner is unsupported until a planner trace protocol is defined".to_string(),
+        )),
+    }
+}
+
+pub(crate) fn resume_controller_state(
+    state: &ReplayedState,
+    required_checks: &[String],
+) -> Result<Option<ControllerState>, ReplayError> {
+    match state.harness_policy {
+        HarnessPolicy::Legacy => {
+            if state.controller_checkpoint.is_some() {
+                return Err(ReplayError::UnexpectedControllerCheckpoint);
+            }
+            Ok(None)
+        }
+        HarnessPolicy::Evidence => {
+            let checkpoint = state
+                .controller_checkpoint
+                .as_ref()
+                .ok_or(ReplayError::MissingControllerCheckpoint)?;
+            let inherited_reason =
+                checkpoint
+                    .inherited_pause_reason
+                    .as_deref()
+                    .ok_or_else(|| {
+                        ReplayError::InvalidControllerCheckpoint(
+                            "resumed evidence checkpoint omits its pause reason".to_string(),
+                        )
+                    })?;
+            if state.pause_reason.as_deref() != Some(inherited_reason) {
+                return Err(ReplayError::InvalidControllerCheckpoint(
+                    "replayed pause reason differs from controller checkpoint".to_string(),
+                ));
+            }
+            if checkpoint.required_checks != required_checks {
+                return Err(ReplayError::RequiredChecksMismatch {
+                    recorded: checkpoint.required_checks.clone(),
+                    requested: required_checks.to_vec(),
+                });
+            }
+            ControllerState::resume_conservatively(checkpoint)
+                .map(Some)
+                .map_err(|error| ReplayError::InvalidControllerCheckpoint(error.to_string()))
+        }
+        HarnessPolicy::EvidencePlanner => Err(ReplayError::InvalidStructure(
+            "evidence_planner is unsupported until a planner trace protocol is defined".to_string(),
+        )),
+    }
+}
+
+/// Validate the operator-selected execution context that a trace must never
+/// silently change across a resume boundary. An omitted harness policy is not
+/// a mismatch: `run()` inherits the concrete policy recorded in the trace.
 pub fn validate_resume_target(
     state: &ReplayedState,
     workspace: &Path,
     protocol: ActionProtocol,
+    harness_policy: Option<HarnessPolicy>,
 ) -> Result<(), ReplayError> {
     if state.protocol != protocol {
         return Err(ReplayError::ProtocolMismatch {
             recorded: state.protocol,
             requested: protocol,
+        });
+    }
+
+    if let Some(requested) = harness_policy
+        && state.harness_policy != requested
+    {
+        return Err(ReplayError::HarnessPolicyMismatch {
+            recorded: state.harness_policy,
+            requested,
         });
     }
 
@@ -401,6 +560,7 @@ mod tests {
         Event::PolicySelected {
             tier: ferric_core::Tier::Nano,
             protocol,
+            harness_policy: ferric_core::HarnessPolicy::Legacy,
             max_turns: 15,
             max_tools: 10,
             prompt_budget_tokens: 2_800,
@@ -423,6 +583,723 @@ mod tests {
             Message::system("You are Ferric."),
             Message::user_with_media("do the task", Vec::new()),
         ]
+    }
+
+    fn evidence_policy_selected() -> Event {
+        Event::PolicySelected {
+            tier: ferric_core::Tier::Nano,
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: HarnessPolicy::Evidence,
+            max_turns: 15,
+            max_tools: 10,
+            prompt_budget_tokens: 2_800,
+            max_output_tokens: 512,
+            truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
+            tier_source: ferric_core::TierSource::Params.label().to_string(),
+        }
+    }
+
+    fn evidence_fresh_prefix(required_checks: &[&str]) -> (Vec<Event>, ControllerState) {
+        let controller = ControllerState::new(
+            HarnessPolicy::Evidence,
+            required_checks.iter().map(|name| (*name).to_string()),
+        )
+        .unwrap();
+        (
+            vec![
+                Event::SessionStart {
+                    workspace: "/ws".to_string(),
+                    resumed_from: None,
+                },
+                evidence_policy_selected(),
+                session_prompt(),
+                Event::ControllerCheckpoint {
+                    state: controller.checkpoint(),
+                },
+            ],
+            controller,
+        )
+    }
+
+    fn projected_core(events: &[Event]) -> ferric_trace::RecoveryCheckpointV1 {
+        let mut projector = TraceProjector::new();
+        for event in events {
+            projector.step(event);
+        }
+        projector.checkpoint()
+    }
+
+    fn append_pause(events: &mut Vec<Event>, controller: &ControllerState, reason: &str) {
+        let core = projected_core(events);
+        events.push(Event::SessionEnd {
+            reason: reason.to_string(),
+        });
+        events.push(Event::RecoveryCheckpoint { state: core });
+        events.push(Event::ControllerCheckpoint {
+            state: controller.checkpoint_for_pause(reason).unwrap(),
+        });
+        events.push(Event::SessionPaused {
+            reason: reason.to_string(),
+        });
+    }
+
+    fn core_from_replayed(state: &ReplayedState) -> ferric_trace::RecoveryCheckpointV1 {
+        ferric_trace::RecoveryCheckpointV1 {
+            version: ferric_trace::RECOVERY_CHECKPOINT_VERSION,
+            messages: state.messages.clone(),
+            next_turn: state.next_turn,
+            last_text: state.last_text.clone(),
+            head_len: state.head_len,
+            committed_turn_starts: state
+                .committed_turn_starts
+                .iter()
+                .map(|&(turn, message_index)| ferric_trace::TurnBoundary {
+                    turn,
+                    message_index,
+                })
+                .collect(),
+            guard_history: state.guard_history.clone(),
+            nudged_for_no_action: state.nudged_for_no_action,
+            truncated_once: state.truncated_once,
+            last_input_tokens: state.last_input_tokens,
+            pending_input: state.pending_input.clone(),
+            mutation_epoch: state.mutation_epoch,
+            passed_checks: state.passed_checks.clone(),
+        }
+    }
+
+    fn evidence_resume_prefix(state: &ReplayedState) -> (Vec<Event>, ControllerState) {
+        let controller = resume_controller_state(
+            state,
+            &state
+                .controller_checkpoint
+                .as_ref()
+                .unwrap()
+                .required_checks,
+        )
+        .unwrap()
+        .unwrap();
+        (
+            vec![
+                Event::SessionStart {
+                    workspace: "/ws".to_string(),
+                    resumed_from: Some(state.source_session.clone()),
+                },
+                evidence_policy_selected(),
+                Event::RecoveryCheckpoint {
+                    state: core_from_replayed(state),
+                },
+                Event::ControllerCheckpoint {
+                    state: controller.checkpoint(),
+                },
+            ],
+            controller,
+        )
+    }
+
+    fn recovery_packet_event(controller: &ControllerState) -> Event {
+        let reason = controller
+            .checkpoint()
+            .inherited_pause_reason
+            .expect("resumed controller carries pause reason");
+        let packet = controller.recovery_packet(&reason).unwrap();
+        let message = ControllerState::render_recovery_packet(&packet).unwrap();
+        Event::RecoveryPacketInjected { packet, message }
+    }
+
+    fn append_needs_input_turn(events: &mut Vec<Event>, turn: u32) {
+        let call = ferric_core::ToolCall {
+            id: format!("ask-{turn}"),
+            name: "request_user_input".to_string(),
+            args: json!({
+                "question": "Which file?",
+                "context": "Two candidates",
+                "options": ["a.txt", "b.txt"]
+            }),
+        };
+        events.extend([
+            Event::TurnStart { turn },
+            Event::TurnEnd {
+                turn,
+                text: Some("I need one decision.".to_string()),
+                tool_call_count: 1,
+                input_tokens: Some(20),
+                output_tokens: Some(5),
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn,
+                calls: vec![call.clone()],
+            },
+            Event::ToolCall {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                args: call.args.clone(),
+            },
+            Event::ToolResult {
+                id: call.id,
+                name: call.name,
+                output: "waiting for user input".to_string(),
+                is_error: false,
+                duration_ms: 1,
+            },
+            Event::TurnCommitted {
+                turn,
+                dispatched: 1,
+                errored: 0,
+                stop_reason: Some("needs_input".to_string()),
+                snapshot_commit: None,
+            },
+        ]);
+    }
+
+    fn append_created_file_turn(
+        events: &mut Vec<Event>,
+        controller: &mut ControllerState,
+        turn: u32,
+    ) {
+        let call = ferric_core::ToolCall {
+            id: format!("write-{turn}"),
+            name: "write_file".to_string(),
+            args: json!({"path": "new.txt", "content": "new"}),
+        };
+        let effect = ferric_trace::WorkspaceEffectV1 {
+            version: ferric_trace::CONTROLLER_RECORD_VERSION,
+            mutation_epoch: controller.mutation_epoch() + 1,
+            effects: vec![ferric_trace::PathEffectV1 {
+                path: "new.txt".to_string(),
+                kind: ferric_trace::PathEffectKind::Created,
+                before_sha256: None,
+                after_sha256: Some("b".repeat(64)),
+                after_bytes: Some(3),
+                after_lines: Some(1),
+            }],
+        };
+        controller.apply_workspace_effect(turn, &effect).unwrap();
+        events.extend([
+            Event::TurnStart { turn },
+            Event::TurnEnd {
+                turn,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: Some(20),
+                output_tokens: Some(5),
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn,
+                calls: vec![call.clone()],
+            },
+            Event::ToolCall {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                args: call.args.clone(),
+            },
+            Event::WorkspaceEffectRecorded {
+                turn,
+                call_id: call.id.clone(),
+                tool: call.name.clone(),
+                effect: effect.clone(),
+            },
+            Event::WorkspaceMutation {
+                turn,
+                tool: call.name.clone(),
+                mutation_epoch: effect.mutation_epoch,
+            },
+            Event::ToolResult {
+                id: call.id,
+                name: call.name,
+                output: "wrote new.txt".to_string(),
+                is_error: false,
+                duration_ms: 1,
+            },
+            Event::TurnCommitted {
+                turn,
+                dispatched: 1,
+                errored: 0,
+                stop_reason: None,
+                snapshot_commit: None,
+            },
+        ]);
+    }
+
+    fn append_check_turn(
+        events: &mut Vec<Event>,
+        controller: &mut ControllerState,
+        turn: u32,
+        outcome: ferric_trace::VerificationOutcome,
+        diagnostic_sha256: Option<String>,
+    ) {
+        let call = ferric_core::ToolCall {
+            id: format!("check-{turn}"),
+            name: "run_check".to_string(),
+            args: json!({"name": "unit"}),
+        };
+        let check = ferric_trace::VerificationCheckV1 {
+            version: ferric_trace::CONTROLLER_RECORD_VERSION,
+            name: "unit".to_string(),
+            mutation_epoch: controller.mutation_epoch(),
+            attempt: controller.admit_check("unit").unwrap(),
+            outcome,
+            diagnostic_sha256,
+        };
+        controller.apply_verification_check(turn, &check).unwrap();
+        events.extend([
+            Event::TurnStart { turn },
+            Event::TurnEnd {
+                turn,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: Some(20),
+                output_tokens: Some(5),
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn,
+                calls: vec![call.clone()],
+            },
+            Event::ToolCall {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                args: call.args.clone(),
+            },
+            Event::VerificationCheckRecorded {
+                turn,
+                call_id: call.id.clone(),
+                check: check.clone(),
+            },
+        ]);
+        if outcome == ferric_trace::VerificationOutcome::Passed {
+            events.push(Event::VerificationCheckPassed {
+                turn,
+                name: check.name.clone(),
+                mutation_epoch: check.mutation_epoch,
+            });
+        }
+        let is_error = outcome == ferric_trace::VerificationOutcome::Failed;
+        events.extend([
+            Event::ToolResult {
+                id: call.id,
+                name: call.name,
+                output: if is_error {
+                    "unit failed".to_string()
+                } else {
+                    "unit passed".to_string()
+                },
+                is_error,
+                duration_ms: 1,
+            },
+            Event::TurnCommitted {
+                turn,
+                dispatched: 1,
+                errored: u32::from(is_error),
+                stop_reason: None,
+                snapshot_commit: None,
+            },
+        ]);
+    }
+
+    #[test]
+    fn evidence_replay_requires_projected_state_and_derives_safe_crash_reason() {
+        let (events, _) = evidence_fresh_prefix(&["unit"]);
+        let (_dir, path) = write_trace(&events);
+        let replayed = replay(&path).unwrap();
+
+        assert_eq!(replayed.pause_reason.as_deref(), Some("process_crash"));
+        let checkpoint = replayed.controller_checkpoint.as_ref().unwrap();
+        assert_eq!(checkpoint.required_checks, ["unit"]);
+        assert_eq!(
+            checkpoint.inherited_pause_reason.as_deref(),
+            Some("process_crash")
+        );
+        assert_eq!(replayed.messages, expected_prefix());
+
+        let mismatch = resume_controller_state(&replayed, &["lint".to_string()]).unwrap_err();
+        assert!(matches!(
+            mismatch,
+            ReplayError::RequiredChecksMismatch { .. }
+        ));
+        let resumed = resume_controller_state(&replayed, &["unit".to_string()])
+            .unwrap()
+            .unwrap();
+        assert!(resumed.file_evidence("missing.rs").is_none());
+
+        let mut mismatched_reason = replayed;
+        mismatched_reason.pause_reason = Some("max_turns".to_string());
+        assert!(matches!(
+            resume_controller_state(&mismatched_reason, &["unit".to_string()]),
+            Err(ReplayError::InvalidControllerCheckpoint(message))
+                if message.contains("pause reason differs")
+        ));
+    }
+
+    #[test]
+    fn evidence_replay_preserves_a_complete_intentional_pause_suffix() {
+        let (mut events, controller) = evidence_fresh_prefix(&["unit"]);
+        append_pause(&mut events, &controller, "max_turns");
+        let expected = controller.checkpoint_for_pause("max_turns").unwrap();
+        let (_dir, path) = write_trace(&events);
+        let replayed = replay(&path).unwrap();
+
+        assert_eq!(replayed.pause_reason.as_deref(), Some("max_turns"));
+        assert_eq!(replayed.controller_checkpoint, Some(expected));
+    }
+
+    #[test]
+    fn evidence_crash_prefix_retries_predispatch_without_inventing_an_effect() {
+        let call = ferric_core::ToolCall {
+            id: "write-0".to_string(),
+            name: "write_file".to_string(),
+            args: json!({"path": "new.txt", "content": "new"}),
+        };
+        let (mut safe_events, _) = evidence_fresh_prefix(&[]);
+        safe_events.extend([
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: Some(20),
+                output_tokens: Some(5),
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![call.clone()],
+            },
+        ]);
+        let (_dir, safe_path) = write_trace(&safe_events);
+        let safe = replay(&safe_path).unwrap();
+        assert_eq!(safe.next_turn, 0);
+        assert_eq!(safe.mutation_epoch, 0);
+        assert_eq!(safe.messages, expected_prefix());
+        let checkpoint = safe.controller_checkpoint.unwrap();
+        assert_eq!(checkpoint.mutation_epoch, 0);
+        assert!(checkpoint.changed_paths.is_empty());
+        assert!(checkpoint.file_evidence.is_empty());
+
+        let mut ambiguous_events = safe_events;
+        ambiguous_events.push(Event::ToolCall {
+            id: call.id,
+            name: call.name,
+            args: call.args,
+        });
+        let (_dir, ambiguous_path) = write_trace(&ambiguous_events);
+        assert!(matches!(
+            replay(&ambiguous_path),
+            Err(ReplayError::AmbiguousTail { turn: 0, calls })
+                if calls == ["write-0:write_file"]
+        ));
+
+        // Once the result is durable, replay can finish the missing commit
+        // without losing the already-projected controller effect.
+        let (mut fully_resulted_events, mut controller) = evidence_fresh_prefix(&[]);
+        append_created_file_turn(&mut fully_resulted_events, &mut controller, 0);
+        assert!(matches!(
+            fully_resulted_events.pop(),
+            Some(Event::TurnCommitted { turn: 0, .. })
+        ));
+        let (_dir, fully_resulted_path) = write_trace(&fully_resulted_events);
+        let fully_resulted = replay(&fully_resulted_path).unwrap();
+        assert_eq!(fully_resulted.next_turn, 1);
+        assert_eq!(fully_resulted.mutation_epoch, 1);
+        let checkpoint = fully_resulted.controller_checkpoint.unwrap();
+        assert_eq!(checkpoint.mutation_epoch, 1);
+        assert_eq!(checkpoint.changed_paths, ["new.txt"]);
+    }
+
+    #[test]
+    fn evidence_resume_packet_is_literal_history_after_base_or_generic_anchors() {
+        let (mut paused_events, controller) = evidence_fresh_prefix(&["unit"]);
+        append_pause(&mut paused_events, &controller, "max_turns");
+        let (_dir, paused_path) = write_trace(&paused_events);
+        let paused = replay(&paused_path).unwrap();
+
+        let (mut direct_events, direct_controller) = evidence_resume_prefix(&paused);
+        let direct_packet = recovery_packet_event(&direct_controller);
+        let direct_message = match &direct_packet {
+            Event::RecoveryPacketInjected { message, .. } => message.clone(),
+            _ => unreachable!(),
+        };
+        direct_events.push(direct_packet);
+        let (_dir, direct_path) = write_trace(&direct_events);
+        let direct = replay(&direct_path).unwrap();
+        assert_eq!(direct.messages.last(), Some(&Message::user(direct_message)));
+
+        let (mut amended_events, amended_controller) = evidence_resume_prefix(&paused);
+        amended_events.push(Event::ResumePrompt {
+            user: "also update the docs".to_string(),
+            media: Vec::new(),
+        });
+        amended_events.push(Event::RecoveryCheckpoint {
+            state: projected_core(&amended_events),
+        });
+        amended_events.push(Event::ControllerCheckpoint {
+            state: amended_controller.checkpoint(),
+        });
+        let amended_packet = recovery_packet_event(&amended_controller);
+        let amended_message = match &amended_packet {
+            Event::RecoveryPacketInjected { message, .. } => message.clone(),
+            _ => unreachable!(),
+        };
+        amended_events.push(amended_packet);
+        let (_dir, amended_path) = write_trace(&amended_events);
+        let amended = replay(&amended_path).unwrap();
+        assert_eq!(
+            &amended.messages[amended.messages.len() - 2..],
+            &[
+                Message::user_with_media("also update the docs", Vec::new()),
+                Message::user(amended_message)
+            ]
+        );
+    }
+
+    #[test]
+    fn evidence_clarification_resume_anchors_the_answer_without_a_generic_packet() {
+        let (mut paused_events, controller) = evidence_fresh_prefix(&[]);
+        append_needs_input_turn(&mut paused_events, 0);
+        append_pause(&mut paused_events, &controller, "needs_input");
+        let (_dir, paused_path) = write_trace(&paused_events);
+        let paused = replay(&paused_path).unwrap();
+        assert_eq!(paused.pause_reason.as_deref(), Some("needs_input"));
+        assert_eq!(
+            paused
+                .controller_checkpoint
+                .as_ref()
+                .and_then(|checkpoint| checkpoint.inherited_pause_reason.as_deref()),
+            Some("needs_input")
+        );
+        assert_eq!(
+            paused
+                .pending_input
+                .as_ref()
+                .map(|request| request.question.as_str()),
+            Some("Which file?")
+        );
+
+        let (mut resumed_events, resumed_controller) = evidence_resume_prefix(&paused);
+        resumed_events.push(Event::ResumePrompt {
+            user: "a.txt".to_string(),
+            media: Vec::new(),
+        });
+        resumed_events.push(Event::RecoveryCheckpoint {
+            state: projected_core(&resumed_events),
+        });
+        resumed_events.push(Event::ControllerCheckpoint {
+            state: resumed_controller.checkpoint(),
+        });
+        assert!(
+            resumed_events
+                .iter()
+                .all(|event| !matches!(event, Event::RecoveryPacketInjected { .. }))
+        );
+
+        let (_dir, resumed_path) = write_trace(&resumed_events);
+        let resumed = replay(&resumed_path).unwrap();
+        assert_eq!(resumed.pending_input, None);
+        assert_eq!(
+            resumed.messages.last(),
+            Some(&Message::user_with_media("a.txt", Vec::new()))
+        );
+        assert_eq!(resumed.pause_reason.as_deref(), Some("process_crash"));
+    }
+
+    #[test]
+    fn evidence_replay_accepts_safe_answer_eof_and_rejects_incomplete_anchor_windows() {
+        let (mut paused_events, controller) = evidence_fresh_prefix(&[]);
+        append_pause(&mut paused_events, &controller, "max_turns");
+        let (_dir, paused_path) = write_trace(&paused_events);
+        let paused = replay(&paused_path).unwrap();
+
+        // ResumePrompt is itself a durable, replay-safe transition. An EOF
+        // before its two explicit anchors must retain the answer for a later
+        // resume-of-resume rather than ask the user twice.
+        let (mut safe_events, _) = evidence_resume_prefix(&paused);
+        safe_events.push(Event::ResumePrompt {
+            user: "also update docs".to_string(),
+            media: Vec::new(),
+        });
+        let (_dir, safe_path) = write_trace(&safe_events);
+        let safe = replay(&safe_path).unwrap();
+        assert_eq!(
+            safe.messages.last(),
+            Some(&Message::user_with_media("also update docs", Vec::new()))
+        );
+        assert_eq!(safe.pause_reason.as_deref(), Some("process_crash"));
+        assert_eq!(
+            safe.controller_checkpoint
+                .as_ref()
+                .and_then(|checkpoint| checkpoint.inherited_pause_reason.as_deref()),
+            Some("process_crash")
+        );
+
+        let (fresh_without_controller, _) = evidence_fresh_prefix(&[]);
+        let mut fresh_without_controller = fresh_without_controller;
+        fresh_without_controller.pop();
+        let (_dir, path) = write_trace(&fresh_without_controller);
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::InvalidStructure(message))
+                if message.contains("required ControllerCheckpoint")
+        ));
+
+        let (resume_without_controller, _) = evidence_resume_prefix(&paused);
+        let mut resume_without_controller = resume_without_controller;
+        resume_without_controller.pop();
+        let (_dir, path) = write_trace(&resume_without_controller);
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::InvalidStructure(message))
+                if message.contains("required ControllerCheckpoint")
+        ));
+
+        let (mut answer_without_controller, _) = evidence_resume_prefix(&paused);
+        answer_without_controller.push(Event::ResumePrompt {
+            user: "also update docs".to_string(),
+            media: Vec::new(),
+        });
+        answer_without_controller.push(Event::RecoveryCheckpoint {
+            state: projected_core(&answer_without_controller),
+        });
+        let (_dir, path) = write_trace(&answer_without_controller);
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::InvalidStructure(message))
+                if message.contains("required ControllerCheckpoint")
+        ));
+
+        let (mut unsupported, _) = evidence_fresh_prefix(&[]);
+        let Some(Event::ControllerCheckpoint { state }) = unsupported.last_mut() else {
+            unreachable!()
+        };
+        state.version += 1;
+        let (_dir, path) = write_trace(&unsupported);
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::InvalidStructure(message))
+                if message.contains("unsupported controller checkpoint version")
+        ));
+    }
+
+    #[test]
+    fn evidence_resume_of_resume_uses_the_latest_projected_controller_state() {
+        let (mut paused_events, controller) = evidence_fresh_prefix(&["unit"]);
+        append_pause(&mut paused_events, &controller, "max_turns");
+        let (_dir, paused_path) = write_trace(&paused_events);
+        let paused = replay(&paused_path).unwrap();
+
+        let (mut first_resume_events, mut first_resume_controller) =
+            evidence_resume_prefix(&paused);
+        first_resume_events.push(recovery_packet_event(&first_resume_controller));
+        let mutation_turn = paused.next_turn;
+        append_created_file_turn(
+            &mut first_resume_events,
+            &mut first_resume_controller,
+            mutation_turn,
+        );
+        append_check_turn(
+            &mut first_resume_events,
+            &mut first_resume_controller,
+            mutation_turn + 1,
+            ferric_trace::VerificationOutcome::Failed,
+            Some("f".repeat(64)),
+        );
+        let (_dir, first_resume_path) = write_trace(&first_resume_events);
+        let first_resume = replay(&first_resume_path).unwrap();
+        let first_checkpoint = first_resume.controller_checkpoint.as_ref().unwrap();
+        assert_eq!(first_checkpoint.mutation_epoch, 1);
+        assert_eq!(first_checkpoint.changed_paths, ["new.txt"]);
+        assert_eq!(first_checkpoint.repair_paths, ["new.txt"]);
+        assert_eq!(
+            first_checkpoint
+                .last_failed_check
+                .as_ref()
+                .map(|failure| (failure.name.as_str(), failure.mutation_epoch)),
+            Some(("unit", 1))
+        );
+        assert_eq!(
+            first_checkpoint.inherited_pause_reason.as_deref(),
+            Some("process_crash")
+        );
+        assert_eq!(first_resume.mutation_epoch, 1);
+
+        let (mut second_resume_events, second_resume_controller) =
+            evidence_resume_prefix(&first_resume);
+        second_resume_events.push(recovery_packet_event(&second_resume_controller));
+        let (_dir, second_resume_path) = write_trace(&second_resume_events);
+        let second_resume = replay(&second_resume_path).unwrap();
+        let second_checkpoint = second_resume.controller_checkpoint.as_ref().unwrap();
+        assert_eq!(second_checkpoint.mutation_epoch, 1);
+        assert_eq!(second_checkpoint.changed_paths, ["new.txt"]);
+        assert_eq!(second_checkpoint.repair_paths, ["new.txt"]);
+        assert_eq!(
+            second_checkpoint
+                .last_failed_check
+                .as_ref()
+                .map(|failure| (failure.name.as_str(), failure.mutation_epoch)),
+            Some(("unit", 1))
+        );
+        assert_eq!(
+            second_checkpoint.inherited_pause_reason.as_deref(),
+            Some("process_crash")
+        );
+        assert_eq!(second_checkpoint.required_checks, ["unit"]);
+        assert_eq!(second_checkpoint.harness_policy, HarnessPolicy::Evidence);
+        let inherited_file = second_checkpoint
+            .file_evidence
+            .iter()
+            .find(|evidence| evidence.path == "new.txt")
+            .unwrap();
+        assert!(!inherited_file.fresh);
+        assert!(!inherited_file.complete);
+        assert!(inherited_file.covered_ranges.is_empty());
+        assert_eq!(second_resume.mutation_epoch, 1);
+        assert_eq!(second_resume.harness_policy, HarnessPolicy::Evidence);
+        assert_eq!(second_resume.next_turn, mutation_turn + 2);
+        assert_eq!(
+            second_resume
+                .messages
+                .iter()
+                .filter(|message| message
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| text.starts_with("[Ferric recovery packet v")))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn evidence_core_and_controller_projection_keep_effect_and_check_parity() {
+        let (mut events, mut controller) = evidence_fresh_prefix(&["unit"]);
+        append_check_turn(
+            &mut events,
+            &mut controller,
+            0,
+            ferric_trace::VerificationOutcome::Passed,
+            None,
+        );
+        append_created_file_turn(&mut events, &mut controller, 1);
+        append_check_turn(
+            &mut events,
+            &mut controller,
+            2,
+            ferric_trace::VerificationOutcome::Failed,
+            Some("f".repeat(64)),
+        );
+        append_pause(&mut events, &controller, "max_turns");
+        let expected = controller.checkpoint_for_pause("max_turns").unwrap();
+
+        let (_dir, path) = write_trace(&events);
+        let replayed = replay(&path).unwrap();
+        assert_eq!(replayed.mutation_epoch, 1);
+        assert!(replayed.passed_checks.is_empty());
+        assert_eq!(replayed.controller_checkpoint, Some(expected));
+        let checkpoint = replayed.controller_checkpoint.as_ref().unwrap();
+        assert!(checkpoint.passed_checks.is_empty());
+        assert_eq!(checkpoint.check_executions.len(), 2);
+        assert_eq!(checkpoint.check_executions[1].attempt, 2);
+        assert_eq!(checkpoint.changed_paths, ["new.txt"]);
     }
 
     #[test]
@@ -487,6 +1364,8 @@ mod tests {
         assert_eq!(replayed.turns, 2);
         assert_eq!(replayed.protocol, ActionProtocol::ConstrainedJson);
         assert_eq!(replayed.source_session, "s-1");
+        assert_eq!(replayed.pause_reason, None);
+        assert_eq!(replayed.controller_checkpoint, None);
     }
 
     #[test]

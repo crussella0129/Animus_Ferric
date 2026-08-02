@@ -1,10 +1,16 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::time::Instant;
 
 use ferric_core::{RunPolicy, ring_for_tier};
 use ferric_guard::{Decision, Workspace, check_with_ignore};
 use tracing::{debug, warn};
 
+use crate::control::{
+    ControlCapability, ControlFailure, ControlFailureKind, ControlMetadata, PrepareCtx,
+    PrepareError, PrepareErrorKind, PrepareFailureWitness, PreparedExecution, PreparedIntent,
+    ToolObservation, ToolPreparation, UnsupportedMutationKind, VerificationAttempt,
+};
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
 /// Re-exported from `ferric-core`, which owns it so the trace event and the
@@ -72,9 +78,118 @@ pub enum ExecuteOutcome {
     },
 }
 
-/// Tool registry. `execute` is the single chokepoint every tool call flows
-/// through: boundary resolution + permission check (before the handler),
-/// timing, and the full-vs-truncated output split (after it).
+/// Result of the guard-first, side-effect-free controlled preparation phase.
+///
+/// A caller may inspect a `Prepared` call's typed intent, apply its controller
+/// policy, and only then consume it through [`Registry::commit_admitted`].
+pub enum PrepareOutcome<'a> {
+    Prepared(PreparedCall<'a>),
+    Rejected {
+        error: PrepareError,
+        duration_ms: u64,
+        checks: Vec<CheckRecord>,
+    },
+    Denied {
+        reason: String,
+        checks: Vec<CheckRecord>,
+    },
+    UnknownTool {
+        name: String,
+    },
+}
+
+impl fmt::Debug for PrepareOutcome<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Prepared(call) => formatter.debug_tuple("Prepared").field(call).finish(),
+            Self::Rejected {
+                error,
+                duration_ms,
+                checks,
+            } => formatter
+                .debug_struct("Rejected")
+                .field("error", error)
+                .field("duration_ms", duration_ms)
+                .field("checks", checks)
+                .finish(),
+            Self::Denied { reason, checks } => formatter
+                .debug_struct("Denied")
+                .field("reason", reason)
+                .field("checks", checks)
+                .finish(),
+            Self::UnknownTool { name } => formatter
+                .debug_struct("UnknownTool")
+                .field("name", name)
+                .finish(),
+        }
+    }
+}
+
+/// A guarded, side-effect-free preparation. Fields are intentionally private:
+/// exact candidate/output data cannot be detached from the tool and workspace
+/// that produced it.
+pub struct PreparedCall<'a> {
+    tool: &'a dyn Tool,
+    workspace: &'a Workspace,
+    args: serde_json::Value,
+    spec: ToolSpec,
+    preparation: Box<ToolPreparation>,
+    checks: Vec<CheckRecord>,
+    preparation_duration_ms: u64,
+}
+
+impl PreparedCall<'_> {
+    /// Typed, byte-redacted meaning consumed by an evidence controller.
+    pub fn intent(&self) -> &PreparedIntent {
+        &self.preparation.intent
+    }
+
+    /// Guard decisions already made before preparation ran.
+    pub fn checks(&self) -> &[CheckRecord] {
+        &self.checks
+    }
+
+    pub fn permission(&self) -> ferric_guard::PermissionLevel {
+        self.spec.permission
+    }
+}
+
+impl fmt::Debug for PreparedCall<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedCall")
+            .field("tool", &self.spec.name)
+            .field("intent", &self.preparation.intent)
+            .field("checks", &self.checks)
+            .field("preparation_duration_ms", &self.preparation_duration_ms)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Controlled commit result. Textual error status and measured workspace
+/// effects are deliberately independent.
+// Keep metadata inline in this public result: callers immediately decompose it
+// into trace fields, and hiding it behind allocation would make the evidence
+// contract less direct for no runtime benefit at this low-frequency boundary.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ControlledOutcome {
+    Completed {
+        output: ToolOutput,
+        metadata: ControlMetadata,
+        duration_ms: u64,
+        checks: Vec<CheckRecord>,
+    },
+    Denied {
+        reason: String,
+        checks: Vec<CheckRecord>,
+    },
+}
+
+/// Tool registry. Legacy calls use [`Registry::execute`]; evidence-controlled
+/// calls use [`Registry::prepare_controlled`] and
+/// [`Registry::commit_admitted`]. Both paths enforce boundary/permission
+/// checks before tool work and split full trace output from the model view.
 pub struct Registry {
     // BTreeMap keeps enumeration deterministically sorted (ADR-008).
     tools: BTreeMap<String, Box<dyn Tool>>,
@@ -148,6 +263,306 @@ impl Registry {
         // Deterministic presentation by name (ADR-008).
         specs.sort_by(|a, b| a.name.cmp(&b.name));
         specs
+    }
+
+    /// Evidence-mode vocabulary. This preserves the legacy ring/cap/order
+    /// algorithm while filtering opaque tools before applying the cap.
+    pub fn tools_for_controlled_policy(&self, policy: &RunPolicy) -> Vec<ToolSpec> {
+        let ceiling = ring_for_tier(policy.tier).min(policy.max_ring.unwrap_or(u8::MAX));
+        let mut specs: Vec<ToolSpec> = self
+            .tools
+            .values()
+            .filter_map(|tool| {
+                let capability = tool.control_capability();
+                let spec = tool.spec();
+                (capability.is_supported()
+                    && capability_matches_permission(capability, spec.permission))
+                .then_some(spec)
+            })
+            .filter(|spec| spec.ring <= ceiling)
+            .collect();
+        specs.sort_by(|a, b| a.ring.cmp(&b.ring).then_with(|| a.name.cmp(&b.name)));
+        specs.truncate(policy.max_tools as usize);
+        specs.sort_by(|a, b| a.name.cmp(&b.name));
+        specs
+    }
+
+    /// Guard and prepare a model-authored call without permitting it to
+    /// mutate the workspace. Guard checks deliberately run before
+    /// [`Tool::prepare`], so even preparation cannot inspect a denied target.
+    pub fn prepare_controlled<'a>(
+        &'a self,
+        workspace: &'a Workspace,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> PrepareOutcome<'a> {
+        let Some(tool) = self.tools.get(name) else {
+            return PrepareOutcome::UnknownTool {
+                name: name.to_string(),
+            };
+        };
+        let spec = tool.spec();
+
+        let mut checks = Vec::new();
+        for target in tool.target_paths(args) {
+            let resolved = match workspace.resolve(&target) {
+                Ok(path) => path,
+                Err(error) => {
+                    warn!(tool = name, target = %target, error = %error, "guard denied controlled preparation: outside workspace boundary");
+                    checks.push(CheckRecord::deny(
+                        target.into(),
+                        "boundary",
+                        error.to_string(),
+                    ));
+                    return PrepareOutcome::Denied {
+                        reason: format!("boundary: {error}"),
+                        checks,
+                    };
+                }
+            };
+            if let Decision::Deny(reason) = check_with_ignore(
+                spec.permission,
+                &resolved,
+                workspace.root(),
+                workspace.ignore(),
+            ) {
+                warn!(tool = name, path = %resolved.display(), rule = %reason.rule, matched = %reason.matched, "guard denied controlled preparation: permission check");
+                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
+                checks.push(CheckRecord::deny(resolved, reason.rule, &reason.matched));
+                return PrepareOutcome::Denied {
+                    reason: detail,
+                    checks,
+                };
+            }
+            checks.push(CheckRecord::allow(resolved));
+        }
+
+        for command in tool.target_commands(args) {
+            if let Decision::Deny(reason) = ferric_guard::check_command(&command) {
+                warn!(tool = name, command = %command, rule = %reason.rule, matched = %reason.matched, "guard denied controlled preparation: command denylist");
+                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
+                checks.push(CheckRecord::deny(
+                    std::path::PathBuf::from(&command),
+                    reason.rule,
+                    &reason.matched,
+                ));
+                return PrepareOutcome::Denied {
+                    reason: detail,
+                    checks,
+                };
+            }
+            checks.push(CheckRecord::allow(std::path::PathBuf::from(command)));
+        }
+
+        let capability = tool.control_capability();
+        if !capability.is_supported() {
+            return PrepareOutcome::Rejected {
+                error: PrepareError::opaque(spec.permission),
+                duration_ms: 0,
+                checks,
+            };
+        }
+        if !capability_matches_permission(capability, spec.permission) {
+            return PrepareOutcome::Rejected {
+                error: PrepareError::new(
+                    PrepareErrorKind::UnsupportedOperation,
+                    format!(
+                        "controlled preparation rejected capability/permission mismatch: {capability:?} capability on {:?} tool",
+                        spec.permission
+                    ),
+                )
+                .with_witness(PrepareFailureWitness::UnsupportedMutation(
+                    UnsupportedMutationKind::UnsupportedOperation,
+                )),
+                duration_ms: 0,
+                checks,
+            };
+        }
+
+        let started = Instant::now();
+        let ctx = PrepareCtx {
+            workspace,
+            truncation_limit: self.truncation_limit,
+        };
+        match tool.prepare(&ctx, args) {
+            Ok(preparation) if intent_matches_permission(spec.permission, &preparation.intent) => {
+                PrepareOutcome::Prepared(PreparedCall {
+                    tool: tool.as_ref(),
+                    workspace,
+                    args: args.clone(),
+                    spec,
+                    preparation: Box::new(preparation),
+                    checks,
+                    preparation_duration_ms: started.elapsed().as_millis() as u64,
+                })
+            }
+            Ok(preparation) => PrepareOutcome::Rejected {
+                error: PrepareError::new(
+                    PrepareErrorKind::UnsupportedOperation,
+                    format!(
+                        "controlled preparation rejected permission/intent mismatch: {:?} tool returned {} intent",
+                        spec.permission,
+                        intent_label(&preparation.intent)
+                    ),
+                )
+                .with_witness(PrepareFailureWitness::UnsupportedMutation(
+                    UnsupportedMutationKind::UnsupportedOperation,
+                )),
+                duration_ms: started.elapsed().as_millis() as u64,
+                checks,
+            },
+            Err(error) => PrepareOutcome::Rejected {
+                error,
+                duration_ms: started.elapsed().as_millis() as u64,
+                checks,
+            },
+        }
+    }
+
+    /// Commit a preparation after its typed intent has been admitted by the
+    /// controller. The sink policy remains the final gate before execution.
+    pub fn commit_admitted(
+        &self,
+        prepared: PreparedCall<'_>,
+        provenance: ferric_guard::Provenance,
+        sink_policy: &ferric_guard::SinkPolicy,
+        approver: Option<SinkApprover<'_>>,
+    ) -> ControlledOutcome {
+        let PreparedCall {
+            tool,
+            workspace,
+            args,
+            spec,
+            preparation,
+            checks,
+            preparation_duration_ms,
+        } = prepared;
+        let name = spec.name.as_str();
+
+        match sink_policy.decide(spec.permission, provenance) {
+            ferric_guard::SinkDecision::Allow => {}
+            ferric_guard::SinkDecision::Warn => {
+                warn!(
+                    tool = name,
+                    permission = ?spec.permission,
+                    "sink policy: run has ingested untrusted content; {:?} sink proceeding (warn mode)",
+                    spec.permission
+                );
+            }
+            ferric_guard::SinkDecision::RequireApproval => match approver {
+                Some(approve) => {
+                    let request = ApprovalRequest {
+                        tool: name,
+                        permission: spec.permission,
+                        args: &args,
+                    };
+                    if approve(&request) {
+                        warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation approved by human");
+                    } else {
+                        warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation rejected by human");
+                        return ControlledOutcome::Denied {
+                            reason: "sink policy: mutation rejected by human (run has ingested untrusted content)"
+                                .to_string(),
+                            checks,
+                        };
+                    }
+                }
+                None => {
+                    warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; no approver available, denying mutation");
+                    return ControlledOutcome::Denied {
+                        reason: "sink policy: this run has ingested untrusted research \
+                                 content, so mutations require human approval — and this \
+                                 run has no approver. Re-run with --accept-edits to \
+                                 approve interactively, or --sink-action warn to proceed \
+                                 unguarded."
+                            .to_string(),
+                        checks,
+                    };
+                }
+            },
+            ferric_guard::SinkDecision::Deny => {
+                warn!(tool = name, permission = ?spec.permission, "sink policy: mutation denied (run has ingested untrusted content)");
+                return ControlledOutcome::Denied {
+                    reason: "sink policy: mutation denied (run has ingested untrusted content)"
+                        .to_string(),
+                    checks,
+                };
+            }
+        }
+
+        let ToolPreparation { intent, execution } = *preparation;
+        let started = Instant::now();
+        let (full, is_error, effects, explicit_failure) = match execution {
+            PreparedExecution::Deferred { effects } => {
+                let ctx = ToolCtx { workspace };
+                match tool.run(&ctx, &args) {
+                    Ok(output) => (output, false, effects, None),
+                    Err(error) => (error, true, effects, None),
+                }
+            }
+            PreparedExecution::Immediate {
+                full,
+                is_error,
+                effects,
+                failure,
+            } => (full, is_error, effects, failure),
+            PreparedExecution::FileMutation(operation) => {
+                let result =
+                    crate::builtin::controlled_file::commit_candidate(workspace, operation);
+                (result.full, result.is_error, result.effects, result.failure)
+            }
+        };
+        let duration_ms =
+            preparation_duration_ms.saturating_add(started.elapsed().as_millis() as u64);
+        debug!(
+            tool = name,
+            is_error, duration_ms, "controlled tool returned"
+        );
+
+        let observation = if is_error {
+            None
+        } else {
+            match &intent {
+                PreparedIntent::FileObservation(value) => {
+                    Some(ToolObservation::File(value.clone()))
+                }
+                PreparedIntent::Navigation(value) => {
+                    Some(ToolObservation::Navigation(value.clone()))
+                }
+                _ => None,
+            }
+        };
+        let verification = match &intent {
+            PreparedIntent::Verification(value) => Some(VerificationAttempt {
+                name: value.name.clone(),
+                passed: !is_error,
+            }),
+            _ => None,
+        };
+        let failure = explicit_failure.or_else(|| {
+            is_error.then(|| ControlFailure {
+                kind: ControlFailureKind::ToolError,
+                message: full.clone(),
+                witness: None,
+            })
+        });
+        let for_model = truncate_chars(&full, self.truncation_limit);
+
+        ControlledOutcome::Completed {
+            output: ToolOutput {
+                full,
+                for_model,
+                is_error,
+            },
+            metadata: ControlMetadata {
+                observation,
+                verification,
+                effects,
+                failure,
+            },
+            duration_ms,
+            checks,
+        }
     }
 
     /// Execute `name` with `args` inside `workspace`. The guard check runs
@@ -300,6 +715,56 @@ impl Registry {
     }
 }
 
+fn intent_matches_permission(
+    permission: ferric_guard::PermissionLevel,
+    intent: &PreparedIntent,
+) -> bool {
+    matches!(
+        (permission, intent),
+        (
+            ferric_guard::PermissionLevel::Read,
+            PreparedIntent::ReadOnly
+                | PreparedIntent::FileObservation(_)
+                | PreparedIntent::Navigation(_)
+        ) | (
+            ferric_guard::PermissionLevel::Write,
+            PreparedIntent::Mutation(_)
+        ) | (
+            ferric_guard::PermissionLevel::Execute,
+            PreparedIntent::Verification(_)
+        )
+    )
+}
+
+fn capability_matches_permission(
+    capability: ControlCapability,
+    permission: ferric_guard::PermissionLevel,
+) -> bool {
+    matches!(
+        (capability, permission),
+        (
+            ControlCapability::ReadOnly,
+            ferric_guard::PermissionLevel::Read
+        ) | (
+            ControlCapability::ContentMutation,
+            ferric_guard::PermissionLevel::Write
+        ) | (
+            ControlCapability::Verification,
+            ferric_guard::PermissionLevel::Execute
+        )
+    )
+}
+
+fn intent_label(intent: &PreparedIntent) -> &'static str {
+    match intent {
+        PreparedIntent::ReadOnly => "read-only",
+        PreparedIntent::FileObservation(_) => "file-observation",
+        PreparedIntent::Navigation(_) => "navigation",
+        PreparedIntent::Mutation(_) => "mutation",
+        PreparedIntent::Verification(_) => "verification",
+    }
+}
+
 impl Default for Registry {
     fn default() -> Self {
         Self::new()
@@ -356,6 +821,7 @@ mod tests {
         output_len: usize,
         ran: std::sync::Arc<AtomicBool>,
         ring: u8,
+        capability: Option<ControlCapability>,
     }
 
     impl Tool for DummyTool {
@@ -373,6 +839,10 @@ mod tests {
             self.ran.store(true, Ordering::SeqCst);
             Ok("y".repeat(self.output_len))
         }
+
+        fn control_capability(&self) -> ControlCapability {
+            self.capability.unwrap_or(ControlCapability::Opaque)
+        }
     }
 
     fn dummy(
@@ -388,6 +858,7 @@ mod tests {
                 output_len,
                 ran: ran.clone(),
                 ring: 0,
+                capability: None,
             },
             ran,
         )
@@ -400,6 +871,7 @@ mod tests {
             output_len: 1,
             ran: std::sync::Arc::new(AtomicBool::new(false)),
             ring,
+            capability: None,
         }
     }
 
@@ -666,6 +1138,49 @@ mod tests {
     }
 
     #[test]
+    fn controlled_policy_filters_opaque_before_preserving_order_and_cap() {
+        let mut registry = Registry::new();
+        for suffix in (b'a'..=b'l').rev() {
+            let name = format!("read_{}", char::from(suffix));
+            let (mut tool, _) = dummy(&name, PermissionLevel::Read, 1);
+            tool.capability = Some(ControlCapability::ReadOnly);
+            registry.register(Box::new(tool));
+        }
+        let (opaque, _) = dummy("a_opaque_write", PermissionLevel::Write, 1);
+        registry.register(Box::new(opaque));
+        let (mut mutation, _) = dummy("mutation", PermissionLevel::Write, 1);
+        mutation.capability = Some(ControlCapability::ContentMutation);
+        registry.register(Box::new(mutation));
+
+        let nano = policy_for(&ModelProfile {
+            params_b: 1.0,
+            quant: "Q4_K_M".to_string(),
+            ctx: 4096,
+            family: "test".to_string(),
+            measured_level: None,
+        });
+        let controlled: Vec<String> = registry
+            .tools_for_controlled_policy(&nano)
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        assert_eq!(controlled.len(), nano.max_tools as usize);
+        let mut sorted = controlled.clone();
+        sorted.sort();
+        assert_eq!(controlled, sorted);
+        assert!(controlled.iter().any(|name| name == "mutation"));
+        assert!(!controlled.iter().any(|name| name == "read_l"));
+        assert!(!controlled.iter().any(|name| name == "a_opaque_write"));
+
+        let legacy: Vec<String> = registry
+            .tools_for_policy(&nano)
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        assert!(legacy.iter().any(|name| name == "a_opaque_write"));
+    }
+
+    #[test]
     fn unknown_tool_outcome() {
         let (_dir, ws) = temp_workspace();
         let registry = Registry::new();
@@ -801,5 +1316,73 @@ mod tests {
             !asked.load(Ordering::SeqCst),
             "untainted calls must not prompt the human"
         );
+    }
+
+    struct TypedMutationProbe {
+        ran: std::sync::Arc<AtomicBool>,
+    }
+
+    impl Tool for TypedMutationProbe {
+        fn spec(&self) -> ToolSpec {
+            ToolSpec {
+                name: "typed_mutation_probe".to_string(),
+                description: "controlled sink test".to_string(),
+                input_schema: json!({"type": "object"}),
+                permission: PermissionLevel::Write,
+                ring: 0,
+            }
+        }
+
+        fn control_capability(&self) -> ControlCapability {
+            ControlCapability::ContentMutation
+        }
+
+        fn prepare(
+            &self,
+            _ctx: &PrepareCtx<'_>,
+            _args: &serde_json::Value,
+        ) -> Result<ToolPreparation, PrepareError> {
+            Ok(ToolPreparation {
+                intent: PreparedIntent::Mutation(crate::control::MutationIntent {
+                    kind: crate::control::MutationKind::ModifyFile,
+                    requirements: Vec::new(),
+                    paths: vec!["notes.md".to_string()],
+                    states: Vec::new(),
+                    syntax: None,
+                }),
+                execution: PreparedExecution::Deferred {
+                    effects: crate::control::WorkspaceEffectReport::measured_none(),
+                },
+            })
+        }
+
+        fn run(&self, _ctx: &ToolCtx<'_>, _args: &serde_json::Value) -> Result<String, String> {
+            self.ran.store(true, Ordering::SeqCst);
+            Ok("mutation ran".to_string())
+        }
+    }
+
+    #[test]
+    fn controlled_sink_denial_never_commits_a_typed_mutation() {
+        let (_directory, workspace) = temp_workspace();
+        let ran = std::sync::Arc::new(AtomicBool::new(false));
+        let mut registry = Registry::new();
+        registry.register(Box::new(TypedMutationProbe { ran: ran.clone() }));
+
+        let args = json!({"path": "notes.md"});
+        let prepared = match registry.prepare_controlled(&workspace, "typed_mutation_probe", &args)
+        {
+            PrepareOutcome::Prepared(prepared) => prepared,
+            other => panic!("expected typed mutation preparation, got {other:?}"),
+        };
+        let outcome = registry.commit_admitted(
+            prepared,
+            ferric_guard::Provenance::UntrustedIngested,
+            &ferric_guard::SinkPolicy::deny(),
+            None,
+        );
+
+        assert!(matches!(outcome, ControlledOutcome::Denied { .. }));
+        assert!(!ran.load(Ordering::SeqCst), "denied sink must not run");
     }
 }

@@ -13,6 +13,7 @@ fn policy() -> Event {
     Event::PolicySelected {
         tier: ferric_core::Tier::Nano,
         protocol: ActionProtocol::NativeTools,
+        harness_policy: ferric_core::HarnessPolicy::Legacy,
         max_turns: 15,
         max_tools: 10,
         prompt_budget_tokens: 2_800,
@@ -247,6 +248,7 @@ fn resume_uses_a_fresh_budget_but_keeps_absolute_turn_ids() {
         next_turn: 15,
         last_text: None,
         protocol: ActionProtocol::NativeTools,
+        harness_policy: ferric_core::HarnessPolicy::Legacy,
         truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: "prior".to_string(),
         workspace: dir.path().to_path_buf(),
@@ -260,6 +262,7 @@ fn resume_uses_a_fresh_budget_but_keeps_absolute_turn_ids() {
         mutation_epoch: 0,
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: Some("max_turns".to_string()),
+        controller_checkpoint: None,
     };
     let provider = MockProvider::new(vec![tool_completion(vec![(
         "done-15",
@@ -276,6 +279,7 @@ fn resume_uses_a_fresh_budget_but_keeps_absolute_turn_ids() {
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,

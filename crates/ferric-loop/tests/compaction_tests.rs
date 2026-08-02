@@ -156,6 +156,7 @@ fn compaction_triggers_and_shrinks_next_prompt_assembled() {
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
@@ -253,6 +254,7 @@ fn history_compacted_traced_after_triggering_turn_start() {
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
@@ -330,6 +332,7 @@ fn resume_only_folds_new_post_resume_turns() {
         next_turn: 1,
         last_text: None,
         protocol: ActionProtocol::NativeTools,
+        harness_policy: ferric_core::HarnessPolicy::Legacy,
         truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: "orig".to_string(),
         workspace: dir.path().to_path_buf(),
@@ -343,6 +346,7 @@ fn resume_only_folds_new_post_resume_turns() {
         mutation_epoch: 0,
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: None,
+        controller_checkpoint: None,
     };
     let replayed_prefix = replayed.messages.clone();
 
@@ -384,6 +388,7 @@ fn resume_only_folds_new_post_resume_turns() {
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
@@ -436,6 +441,7 @@ fn resume_seeds_compactor_numbering_consistently() {
         next_turn: 7,
         last_text: None,
         protocol: ActionProtocol::NativeTools,
+        harness_policy: ferric_core::HarnessPolicy::Legacy,
         truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: "orig".to_string(),
         workspace: dir.path().to_path_buf(),
@@ -449,6 +455,7 @@ fn resume_seeds_compactor_numbering_consistently() {
         mutation_epoch: 0,
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: None,
+        controller_checkpoint: None,
     };
 
     let provider = MockProvider::new(vec![
@@ -489,6 +496,7 @@ fn resume_seeds_compactor_numbering_consistently() {
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
@@ -585,6 +593,7 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
             workspace: &workspace1,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper1,
             system_prompt: None,
@@ -650,6 +659,7 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
             workspace: &workspace1,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper2,
             system_prompt: None,

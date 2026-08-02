@@ -2,6 +2,8 @@ use serde::Serialize;
 
 use ferric_guard::{PermissionLevel, Workspace};
 
+use crate::control::{ControlCapability, PrepareCtx, PrepareError, ToolPreparation};
+
 /// Declarative description of a tool: what the model sees (name, description,
 /// schema) plus what the harness enforces (permission level, ring).
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -31,6 +33,32 @@ pub struct ToolCtx<'a> {
 /// change — do not pre-pay that complexity here.
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
+
+    /// Static evidence-mode capability used before a tool is offered. Every
+    /// tool fails closed until its implementation explicitly opts in.
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::Opaque
+    }
+
+    /// Prepare a call for evidence-controlled execution without mutating the
+    /// workspace.
+    ///
+    /// Read-only tools retain a conservative deferred adapter around their
+    /// existing [`Tool::run`] implementation. A write/execute tool must opt in
+    /// with exact typed semantics; otherwise controlled execution fails closed.
+    /// The legacy registry path never calls this method.
+    fn prepare(
+        &self,
+        _ctx: &PrepareCtx<'_>,
+        _args: &serde_json::Value,
+    ) -> Result<ToolPreparation, PrepareError> {
+        match self.spec().permission {
+            PermissionLevel::Read => Ok(ToolPreparation::deferred_read_only()),
+            permission @ (PermissionLevel::Write | PermissionLevel::Execute) => {
+                Err(PrepareError::opaque(permission))
+            }
+        }
+    }
 
     /// The workspace-relative or absolute paths this call will touch, parsed
     /// from `args`. The registry boundary-resolves and permission-checks every

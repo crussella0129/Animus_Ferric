@@ -79,6 +79,14 @@ pub struct ServerUpArgs {
     /// Batch size (llama-server only; ignored for Ollama).
     #[arg(long)]
     pub batch_size: Option<u32>,
+    /// Sampling seed (llama-server only). Use a non-negative value for a
+    /// reproducible non-greedy run; llama.cpp reserves -1 for a random seed.
+    #[arg(long, allow_hyphen_values = true)]
+    pub seed: Option<i64>,
+    /// Number of concurrent llama-server request slots. The Sprint 113 causal
+    /// comparison uses one slot to avoid cross-request scheduling effects.
+    #[arg(long)]
+    pub parallel: Option<u32>,
     /// Securely expose the engine port over Tailscale (requires `tailscale` CLI).
     #[arg(long)]
     pub tailscale: bool,
@@ -97,6 +105,8 @@ pub struct ServerConfig {
     pub threads: Option<u32>,
     pub gpu_layers: Option<u32>,
     pub batch_size: Option<u32>,
+    pub seed: Option<i64>,
+    pub parallel: Option<u32>,
     pub tailscale: bool,
 }
 
@@ -158,6 +168,14 @@ pub fn command(cfg: &ServerConfig) -> LaunchCommand {
                 args.push("-b".to_string());
                 args.push(batch_size.to_string());
             }
+            if let Some(seed) = cfg.seed {
+                args.push("--seed".to_string());
+                args.push(seed.to_string());
+            }
+            if let Some(parallel) = cfg.parallel {
+                args.push("--parallel".to_string());
+                args.push(parallel.to_string());
+            }
             args.push("--host".to_string());
             args.push(cfg.host.clone());
             args.push("--port".to_string());
@@ -203,6 +221,16 @@ pub struct ServerRunfile {
     pub base_url: String,
     #[serde(default)]
     pub tailscale: bool,
+    /// Additive launch provenance. Old runfiles deserialize these fields as
+    /// unknown rather than silently claiming a reproducible setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_size: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling_seed: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_slots: Option<u32>,
 }
 
 /// Runfile location: `<workspace>/.ferric/server.json` (the `.ferric/` dir is
@@ -290,6 +318,242 @@ fn http_status_ok(host: &str, port: u16, path: &str) -> bool {
 fn registered_server_healthy(runfile: &ServerRunfile) -> bool {
     process_alive(runfile.pid)
         && http_status_ok("127.0.0.1", runfile.port, health_path(runfile.engine))
+}
+
+/// Live process/listener facts used by strict autonomy evidence.  The runfile
+/// is only a registration hint; callers must bind it back to the process and
+/// socket which exist now before treating it as provenance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RegisteredServerSnapshot {
+    pub pid: u32,
+    pub executable: PathBuf,
+    pub argv: Vec<String>,
+    pub listener_owner_pid: u32,
+}
+
+/// Fail-closed live validation for a registered managed server.
+///
+/// This deliberately does not infer process identity from HTTP health alone:
+/// an unrelated service can answer on the registered port.  Platform process
+/// inspection must prove the executable/argv and that the registered PID owns
+/// the listening socket.  Unsupported or unavailable inspection is an error.
+pub(crate) fn inspect_registered_server(
+    runfile: &ServerRunfile,
+) -> Result<RegisteredServerSnapshot, String> {
+    if !process_alive(runfile.pid) {
+        return Err(format!(
+            "registered server PID {} is not alive",
+            runfile.pid
+        ));
+    }
+    if !http_status_ok("127.0.0.1", runfile.port, health_path(runfile.engine)) {
+        return Err(format!(
+            "registered server PID {} does not have a healthy engine endpoint on loopback port {}",
+            runfile.pid, runfile.port
+        ));
+    }
+
+    let snapshot = inspect_process_and_listener(runfile.pid, runfile.port)?;
+    if snapshot.listener_owner_pid != runfile.pid {
+        return Err(format!(
+            "loopback listener on port {} belongs to PID {}, not registered PID {}",
+            runfile.port, snapshot.listener_owner_pid, runfile.pid
+        ));
+    }
+    if snapshot.argv.is_empty() {
+        return Err(format!(
+            "registered server PID {} has no inspectable argv",
+            runfile.pid
+        ));
+    }
+    Ok(snapshot)
+}
+
+#[cfg(windows)]
+fn inspect_process_and_listener(pid: u32, port: u16) -> Result<RegisteredServerSnapshot, String> {
+    #[derive(Deserialize)]
+    struct PowerShellSnapshot {
+        executable_path: String,
+        command_line: String,
+        listener_owner_pids: String,
+    }
+
+    // Only numeric values are interpolated.  Any unavailable CIM/network
+    // inspection command terminates the script and therefore fails closed.
+    let script = format!(
+        "$ErrorActionPreference='Stop'; \
+         $p=Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\"; \
+         if ($null -eq $p) {{ throw 'registered process absent' }}; \
+         $owners=@(Get-NetTCPConnection -State Listen -LocalPort {port} \
+             -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique); \
+         [pscustomobject]@{{ \
+             executable_path=[string]$p.ExecutablePath; \
+             command_line=[string]$p.CommandLine; \
+             listener_owner_pids=($owners -join ',') \
+         }} | ConvertTo-Json -Compress"
+    );
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|error| format!("launch Windows managed-server inspection: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Windows managed-server inspection failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let facts: PowerShellSnapshot = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("decode Windows managed-server inspection: {error}"))?;
+    if facts.executable_path.trim().is_empty() || facts.command_line.trim().is_empty() {
+        return Err("Windows process inspection omitted executable or command line".to_string());
+    }
+    let owners = facts
+        .listener_owner_pids
+        .split(',')
+        .filter(|owner| !owner.trim().is_empty())
+        .map(|owner| {
+            owner
+                .trim()
+                .parse::<u32>()
+                .map_err(|error| format!("invalid Windows listener owner PID {owner:?}: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if owners != [pid] {
+        return Err(format!(
+            "loopback port {port} listener owners are {owners:?}; expected only PID {pid}"
+        ));
+    }
+    Ok(RegisteredServerSnapshot {
+        pid,
+        executable: PathBuf::from(facts.executable_path),
+        argv: split_windows_command_line(&facts.command_line),
+        listener_owner_pid: pid,
+    })
+}
+
+#[cfg(windows)]
+fn split_windows_command_line(command_line: &str) -> Vec<String> {
+    let chars = command_line.chars().collect::<Vec<_>>();
+    let mut argv = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        while index < chars.len() && chars[index].is_whitespace() {
+            index += 1;
+        }
+        if index == chars.len() {
+            break;
+        }
+        let mut argument = String::new();
+        let mut quoted = false;
+        while index < chars.len() {
+            if !quoted && chars[index].is_whitespace() {
+                break;
+            }
+            let mut backslashes = 0;
+            while index < chars.len() && chars[index] == '\\' {
+                backslashes += 1;
+                index += 1;
+            }
+            if index < chars.len() && chars[index] == '"' {
+                argument.extend(std::iter::repeat_n('\\', backslashes / 2));
+                if backslashes % 2 == 0 {
+                    quoted = !quoted;
+                } else {
+                    argument.push('"');
+                }
+                index += 1;
+            } else {
+                argument.extend(std::iter::repeat_n('\\', backslashes));
+                if index < chars.len() {
+                    argument.push(chars[index]);
+                    index += 1;
+                }
+            }
+        }
+        argv.push(argument);
+    }
+    argv
+}
+
+#[cfg(target_os = "linux")]
+fn inspect_process_and_listener(pid: u32, port: u16) -> Result<RegisteredServerSnapshot, String> {
+    use std::os::unix::ffi::OsStringExt;
+
+    let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
+        .map_err(|error| format!("inspect /proc/{pid}/exe: {error}"))?;
+    let command_line = std::fs::read(format!("/proc/{pid}/cmdline"))
+        .map_err(|error| format!("inspect /proc/{pid}/cmdline: {error}"))?;
+    let argv = command_line
+        .split(|byte| *byte == 0)
+        .filter(|argument| !argument.is_empty())
+        .map(|argument| {
+            std::ffi::OsString::from_vec(argument.to_vec())
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    if argv.is_empty() {
+        return Err(format!("/proc/{pid}/cmdline contains no argv"));
+    }
+
+    let mut process_socket_inodes = Vec::new();
+    let fd_dir = std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .map_err(|error| format!("inspect /proc/{pid}/fd: {error}"))?;
+    for entry in fd_dir {
+        let entry = entry.map_err(|error| format!("inspect /proc/{pid}/fd entry: {error}"))?;
+        let Ok(target) = std::fs::read_link(entry.path()) else {
+            continue;
+        };
+        let target = target.to_string_lossy();
+        if let Some(inode) = target
+            .strip_prefix("socket:[")
+            .and_then(|value| value.strip_suffix(']'))
+        {
+            process_socket_inodes.push(inode.to_string());
+        }
+    }
+    let listener_inodes = ["/proc/net/tcp", "/proc/net/tcp6"]
+        .into_iter()
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .flat_map(|table| listening_socket_inodes(&table, port))
+        .collect::<Vec<_>>();
+    if !listener_inodes
+        .iter()
+        .any(|inode| process_socket_inodes.contains(inode))
+    {
+        return Err(format!(
+            "registered PID {pid} does not own a TCP listener on loopback port {port}"
+        ));
+    }
+    Ok(RegisteredServerSnapshot {
+        pid,
+        executable,
+        argv,
+        listener_owner_pid: pid,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn listening_socket_inodes(table: &str, port: u16) -> Vec<String> {
+    let expected_port = format!("{port:04X}");
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            let local_port = fields.get(1)?.rsplit_once(':')?.1;
+            (local_port.eq_ignore_ascii_case(&expected_port) && fields.get(3) == Some(&"0A"))
+                .then(|| fields.get(9).map(|inode| (*inode).to_string()))
+                .flatten()
+        })
+        .collect()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn inspect_process_and_listener(pid: u32, _port: u16) -> Result<RegisteredServerSnapshot, String> {
+    Err(format!(
+        "live process/listener inspection is unsupported on this platform for PID {pid}"
+    ))
 }
 
 /// Retain the spawned child while polling HTTP readiness. This ties a healthy
@@ -448,6 +712,8 @@ fn config_from(args: &ServerUpArgs) -> ServerConfig {
         threads: args.threads,
         gpu_layers: args.gpu_layers,
         batch_size: args.batch_size,
+        seed: args.seed,
+        parallel: args.parallel,
         tailscale: args.tailscale,
     }
 }
@@ -498,6 +764,11 @@ fn validate_launch_preconditions(
                 mmproj.display()
             ));
         }
+        if args.parallel == Some(0) {
+            return Err("--parallel must be greater than zero for llama-server".to_string());
+        }
+    } else if args.seed.is_some() || args.parallel.is_some() {
+        return Err("--seed and --parallel are supported only by llama-server".to_string());
     }
 
     require_registration_absent(&runfile_path(workspace), "local")?;
@@ -602,6 +873,10 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         port: cfg.port,
         base_url: base_url.clone(),
         tailscale: cfg.tailscale,
+        model: cfg.model.clone(),
+        context_size: (cfg.engine == Engine::LlamaServer).then_some(cfg.ctx),
+        sampling_seed: cfg.seed,
+        parallel_slots: cfg.parallel,
     };
 
     let path = runfile_path(workspace);
@@ -655,6 +930,15 @@ fn status(workspace: &Path) -> ExitCode {
                     "process absent or HTTP NOT healthy"
                 }
             );
+            if rf.sampling_seed.is_some() || rf.parallel_slots.is_some() {
+                println!(
+                    "sampling_seed={} parallel_slots={}",
+                    rf.sampling_seed
+                        .map_or_else(|| "unspecified".to_string(), |seed| seed.to_string()),
+                    rf.parallel_slots
+                        .map_or_else(|| "unspecified".to_string(), |slots| slots.to_string())
+                );
+            }
             if healthy {
                 ExitCode::SUCCESS
             } else {
@@ -756,6 +1040,13 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
             );
             ok &= present;
         }
+        if args.parallel == Some(0) {
+            println!("[INVALID] --parallel must be greater than zero for llama-server");
+            ok = false;
+        }
+    } else if args.seed.is_some() || args.parallel.is_some() {
+        println!("[INVALID] --seed and --parallel are supported only by llama-server");
+        ok = false;
     }
 
     match read_runfile(workspace) {
@@ -803,8 +1094,39 @@ mod tests {
             threads: None,
             gpu_layers: None,
             batch_size: None,
+            seed: None,
+            parallel: None,
             tailscale: false,
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_line_inspection_preserves_quoted_argv() {
+        assert_eq!(
+            split_windows_command_line(
+                r#""C:\Program Files\llama-server.exe" -m "models\example model.gguf" -c 8192 --seed 42"#,
+            ),
+            [
+                r#"C:\Program Files\llama-server.exe"#,
+                "-m",
+                r#"models\example model.gguf"#,
+                "-c",
+                "8192",
+                "--seed",
+                "42",
+            ]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn proc_tcp_parser_requires_listen_state_and_exact_port() {
+        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+          0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 12345 1 0000000000000000\n\
+          1: 0100007F:1F91 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 99999 1 0000000000000000\n\
+          2: 0100007F:1F90 00000000:0000 01 00000000:00000000 00:00000000 00000000 1000 0 77777 1 0000000000000000\n";
+        assert_eq!(listening_socket_inodes(table, 8080), ["12345"]);
     }
 
     fn unused_port() -> u16 {
@@ -825,6 +1147,8 @@ mod tests {
             threads: None,
             gpu_layers: Some(0),
             batch_size: None,
+            seed: None,
+            parallel: None,
             tailscale: false,
         }
     }
@@ -852,6 +1176,43 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
         });
         (port, handle)
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn live_registration_inspection_binds_pid_listener_and_health() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release, released) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 512];
+            let read = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..read]).starts_with("GET /health "));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .unwrap();
+            released.recv_timeout(Duration::from_secs(15)).unwrap();
+        });
+        let runfile = ServerRunfile {
+            engine: Engine::LlamaServer,
+            pid: std::process::id(),
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            model: Some("model.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+        };
+        let inspected = inspect_registered_server(&runfile);
+        release.send(()).unwrap();
+        server.join().unwrap();
+        let inspected = inspected.unwrap();
+        assert_eq!(inspected.pid, std::process::id());
+        assert_eq!(inspected.listener_owner_pid, std::process::id());
+        assert!(!inspected.argv.is_empty());
+        assert!(inspected.executable.is_file());
     }
 
     #[test]
@@ -901,10 +1262,14 @@ mod tests {
         config.threads = Some(4);
         config.gpu_layers = Some(20);
         config.batch_size = Some(512);
+        config.seed = Some(42);
+        config.parallel = Some(1);
         let c = command(&config);
         assert!(c.args.windows(2).any(|w| w == ["-t", "4"]));
         assert!(c.args.windows(2).any(|w| w == ["-ngl", "20"]));
         assert!(c.args.windows(2).any(|w| w == ["-b", "512"]));
+        assert!(c.args.windows(2).any(|w| w == ["--seed", "42"]));
+        assert!(c.args.windows(2).any(|w| w == ["--parallel", "1"]));
     }
 
     #[test]
@@ -920,6 +1285,25 @@ mod tests {
             vec!["serve"],
             "edge-tuning flags must not leak into Ollama argv"
         );
+    }
+
+    #[test]
+    fn ollama_preflight_rejects_claiming_llama_sampling_controls() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"model").unwrap();
+        let mut args = llama_args(&model);
+        args.engine = Engine::Ollama;
+        args.model = Some("example-model".to_string());
+        args.seed = Some(42);
+
+        let error = validate_launch_preconditions(dir.path(), &args, None).unwrap_err();
+        assert!(error.contains("supported only by llama-server"), "{error}");
+
+        args.seed = None;
+        args.parallel = Some(1);
+        let error = validate_launch_preconditions(dir.path(), &args, None).unwrap_err();
+        assert!(error.contains("supported only by llama-server"), "{error}");
     }
 
     #[test]
@@ -1048,6 +1432,14 @@ mod tests {
                 .unwrap_err()
                 .contains("--port must be greater than zero")
         );
+
+        args.port = unused_port();
+        args.parallel = Some(0);
+        assert!(
+            validate_launch_preconditions(dir.path(), &args, None)
+                .unwrap_err()
+                .contains("--parallel must be greater than zero")
+        );
     }
 
     #[test]
@@ -1134,12 +1526,30 @@ mod tests {
             port: 8080,
             base_url: "http://127.0.0.1:8080/v1".to_string(),
             tailscale: false,
+            model: Some("model.gguf".to_string()),
+            context_size: Some(4096),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
         };
         let s = serde_json::to_string(&rf).unwrap();
         let back: ServerRunfile = serde_json::from_str(&s).unwrap();
         assert_eq!(back.pid, 4321);
         assert_eq!(back.engine, Engine::LlamaServer);
         assert_eq!(back.base_url, rf.base_url);
+        assert_eq!(back.sampling_seed, Some(42));
+        assert_eq!(back.parallel_slots, Some(1));
+        assert_eq!(back.context_size, Some(4096));
+        assert_eq!(back.model.as_deref(), Some("model.gguf"));
+    }
+
+    #[test]
+    fn old_runfile_sampling_metadata_defaults_to_unknown() {
+        let old = r#"{"engine":"llama-server","pid":4321,"port":8080,"base_url":"http://127.0.0.1:8080/v1","tailscale":false}"#;
+        let runfile: ServerRunfile = serde_json::from_str(old).unwrap();
+        assert!(runfile.model.is_none());
+        assert!(runfile.context_size.is_none());
+        assert!(runfile.sampling_seed.is_none());
+        assert!(runfile.parallel_slots.is_none());
     }
 
     #[test]

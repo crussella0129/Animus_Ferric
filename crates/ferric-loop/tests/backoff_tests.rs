@@ -86,6 +86,7 @@ fn run_flaky(script: Vec<Result<Completion, ProviderError>>) -> FlakyRun {
             workspace: &workspace,
             policy: &nano_policy(),
             protocol: ferric_core::ActionProtocol::NativeTools,
+            harness_policy: None,
             sampling: SamplingParams::default(),
             sleeper: &sleeper,
             system_prompt: None,
