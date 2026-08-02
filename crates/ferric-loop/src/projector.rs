@@ -395,17 +395,33 @@ impl TraceProjector {
                         .get(split_at)
                         .map(|&(_, idx)| idx)
                         .unwrap_or(self.messages.len());
+                    let Some(new_base) = self.head_len.checked_add(1) else {
+                        return;
+                    };
+                    if self.head_len > self.messages.len()
+                        || preserve_from_idx < self.head_len
+                        || preserve_from_idx > self.messages.len()
+                    {
+                        return;
+                    }
+                    let Some(remapped_boundaries) = self.committed_turn_starts[split_at..]
+                        .iter()
+                        .map(|&(turn, index)| {
+                            index
+                                .checked_sub(preserve_from_idx)
+                                .and_then(|offset| new_base.checked_add(offset))
+                                .map(|index| (turn, index))
+                        })
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        return;
+                    };
                     let preserved_tail: Vec<Message> = self.messages[preserve_from_idx..].to_vec();
                     self.messages.truncate(self.head_len);
                     self.messages
                         .push(Message::user(format!("[compacted history] {summary}")));
-                    let new_base = self.messages.len();
                     self.messages.extend(preserved_tail);
-                    let shift = preserve_from_idx - new_base;
-                    self.committed_turn_starts = self.committed_turn_starts[split_at..]
-                        .iter()
-                        .map(|&(t, idx)| (t, idx - shift))
-                        .collect();
+                    self.committed_turn_starts = remapped_boundaries;
                 }
             }
             _ => {}

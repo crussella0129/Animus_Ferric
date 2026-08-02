@@ -18,6 +18,97 @@ use ferric_trace::{
 use crate::controller::ControllerState;
 use crate::terminator::{REQUEST_USER_INPUT, SUBMIT_PLAN, TASK_COMPLETE};
 
+pub(crate) fn validate_recovery_checkpoint_shape(
+    state: &RecoveryCheckpointV1,
+) -> Result<(), String> {
+    if state.head_len > state.messages.len() {
+        return Err("checkpoint head_len exceeds message count".to_string());
+    }
+    if let Some(request) = &state.pending_input {
+        request
+            .validate()
+            .map_err(|error| format!("invalid pending input request: {error}"))?;
+    }
+    if state
+        .passed_checks
+        .values()
+        .any(|epoch| *epoch > state.mutation_epoch)
+    {
+        return Err("checkpoint contains check evidence from a future epoch".to_string());
+    }
+
+    let mut prior_boundary: Option<(u32, usize)> = None;
+    for boundary in &state.committed_turn_starts {
+        if boundary.message_index < state.head_len || boundary.message_index >= state.messages.len()
+        {
+            return Err(format!(
+                "checkpoint turn {} boundary {} is outside retained turn history",
+                boundary.turn, boundary.message_index
+            ));
+        }
+        if boundary.turn >= state.next_turn {
+            return Err(format!(
+                "checkpoint turn boundary {} is not before next_turn {}",
+                boundary.turn, state.next_turn
+            ));
+        }
+        if let Some((prior_turn, prior_index)) = prior_boundary
+            && (boundary.turn <= prior_turn || boundary.message_index <= prior_index)
+        {
+            return Err(
+                "checkpoint turn boundaries are not strictly increasing by turn and message index"
+                    .to_string(),
+            );
+        }
+        prior_boundary = Some((boundary.turn, boundary.message_index));
+    }
+
+    let retained_turns: BTreeSet<u32> = state
+        .committed_turn_starts
+        .iter()
+        .map(|boundary| boundary.turn)
+        .collect();
+    let first_retained_turn = state
+        .committed_turn_starts
+        .first()
+        .map(|boundary| boundary.turn);
+    let mut prior_guard_turn = None;
+    for guarded in &state.guard_history {
+        if guarded.turn >= state.next_turn {
+            return Err(format!(
+                "checkpoint guard turn {} is not before next_turn {}",
+                guarded.turn, state.next_turn
+            ));
+        }
+        if prior_guard_turn.is_some_and(|prior| guarded.turn <= prior) {
+            return Err("checkpoint guard turns are not strictly increasing".to_string());
+        }
+        if guarded.calls.is_empty() {
+            return Err(format!(
+                "checkpoint guard turn {} contains no proposed calls",
+                guarded.turn
+            ));
+        }
+        if guarded.dispatched as usize > guarded.calls.len() || guarded.errored > guarded.dispatched
+        {
+            return Err(format!(
+                "checkpoint guard turn {} has incoherent dispatch/error counts",
+                guarded.turn
+            ));
+        }
+        if first_retained_turn.is_some_and(|first| guarded.turn >= first)
+            && !retained_turns.contains(&guarded.turn)
+        {
+            return Err(format!(
+                "checkpoint guard turn {} has no retained message boundary",
+                guarded.turn
+            ));
+        }
+        prior_guard_turn = Some(guarded.turn);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum StateBase {
     #[default]
@@ -455,16 +546,7 @@ impl TraceStructure {
         if self.active.is_some() {
             return Err("RecoveryCheckpoint appears inside an active turn".to_string());
         }
-        if state.head_len > state.messages.len() {
-            return Err("checkpoint head_len exceeds message count".to_string());
-        }
-        if state
-            .passed_checks
-            .values()
-            .any(|epoch| *epoch > state.mutation_epoch)
-        {
-            return Err("checkpoint contains check evidence from a future epoch".to_string());
-        }
+        validate_recovery_checkpoint_shape(state)?;
 
         if let Some(reason) = self.ended_reason.clone() {
             if is_success_reason(&reason) {
