@@ -535,7 +535,7 @@ fn path_effect(effect: &WorkspaceEffect) -> Result<PathEffectV1, String> {
 fn file_observation(observation: &FileObservation) -> ObservationV1 {
     let requested_range = (observation.requested.start.is_some()
         || observation.requested.end.is_some())
-    .then(|| RequestedLineRangeV1 {
+    .then_some(RequestedLineRangeV1 {
         start: observation.requested.start,
         end: observation.requested.end,
     });

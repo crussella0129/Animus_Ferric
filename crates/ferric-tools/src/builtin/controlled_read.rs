@@ -53,11 +53,14 @@ fn open_controlled_dir_with<F>(
 where
     F: FnOnce(),
 {
+    // Normalize model-supplied separators before the boundary check so a
+    // backslash path is resolved (and escape-checked) identically on every OS.
+    let requested = requested.replace('\\', "/");
     workspace
-        .resolve(requested)
+        .resolve(&requested)
         .map_err(|error| format!("boundary: {error}"))?;
     after_boundary_check();
-    let relative = lexical_relative(workspace, Path::new(requested))?;
+    let relative = lexical_relative(workspace, Path::new(&requested))?;
     let dir = open_relative_dir(workspace, &relative)?;
     Ok((dir, relative))
 }
@@ -77,11 +80,14 @@ fn read_controlled_file_with<F>(
 where
     F: FnOnce(),
 {
+    // Normalize model-supplied separators before the boundary check so a
+    // backslash path is resolved (and escape-checked) identically on every OS.
+    let requested = requested.replace('\\', "/");
     workspace
-        .resolve(requested)
+        .resolve(&requested)
         .map_err(|error| format!("boundary: {error}"))?;
     after_boundary_check();
-    let relative = lexical_relative(workspace, Path::new(requested))?;
+    let relative = lexical_relative(workspace, Path::new(&requested))?;
     let leaf = relative
         .file_name()
         .ok_or_else(|| "controlled read path must name a file".to_string())?
