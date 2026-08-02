@@ -887,12 +887,10 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         eprintln!("cannot create trace dir {}: {e}", trace_dir.display());
         return ExitCode::FAILURE;
     }
-    let session = format!("q-{}", now_ms());
-    let trace_path = trace_dir.join(format!("{session}.jsonl"));
-    let mut sink = match JsonlSink::open(&trace_path, &session) {
-        Ok(sink) => sink,
+    let (_session, trace_path, mut sink) = match create_trace_sink(&trace_dir, "q") {
+        Ok(trace) => trace,
         Err(e) => {
-            eprintln!("cannot open trace {}: {e}", trace_path.display());
+            eprintln!("cannot allocate query trace: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -1069,6 +1067,32 @@ pub(crate) fn now_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0)
+}
+
+static TRACE_SESSION_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Allocate an opaque, collision-resistant session id and a trace that cannot
+/// append to an existing session. The `create_new` boundary matters for API
+/// and MCP servers where multiple requests can begin in the same millisecond.
+pub(crate) fn create_trace_sink(
+    trace_dir: &Path,
+    prefix: &str,
+) -> Result<(String, PathBuf, JsonlSink), ferric_core::FerricError> {
+    std::fs::create_dir_all(trace_dir)?;
+    for _ in 0..32 {
+        let counter = TRACE_SESSION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let session = format!("{prefix}-{}-{}-{counter}", now_ms(), std::process::id());
+        let path = trace_dir.join(format!("{session}.jsonl"));
+        match JsonlSink::create_new(&path, &session) {
+            Ok(sink) => return Ok((session, path, sink)),
+            Err(ferric_core::FerricError::Io(error))
+                if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(ferric_core::FerricError::Other(
+        "could not allocate a unique trace after 32 attempts".to_string(),
+    ))
 }
 
 /// Built-in mock script: one file write, then a structured termination —
@@ -1455,6 +1479,36 @@ fn drive_real(
 mod tests {
     use super::*;
     use ferric_core::policy_for;
+
+    #[test]
+    fn trace_allocator_never_appends_same_millisecond_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first_id, first_path, mut first) = create_trace_sink(dir.path(), "api").unwrap();
+        let (second_id, second_path, mut second) = create_trace_sink(dir.path(), "api").unwrap();
+        assert_ne!(first_id, second_id);
+        assert_ne!(first_path, second_path);
+        first
+            .write_event(Event::Note {
+                text: "first".to_string(),
+            })
+            .unwrap();
+        second
+            .write_event(Event::Note {
+                text: "second".to_string(),
+            })
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(first_path).unwrap().lines().count(),
+            1
+        );
+        assert_eq!(
+            std::fs::read_to_string(second_path)
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+    }
 
     /// Each `--sink-action` spelling maps to the policy it names — the security
     /// control must not drift from its label.

@@ -26,11 +26,10 @@ pub mod server {
 
     use ferric_guard::Workspace;
     use ferric_provider::StreamDelta;
-    use ferric_trace::JsonlSink;
 
     use crate::backend::BackendOpts;
     use crate::query::{
-        ProtocolArg, RunConfigArgs, build_run_config, now_ms, route_files, run_with_provider,
+        ProtocolArg, RunConfigArgs, build_run_config, route_files, run_with_provider,
     };
 
     /// CLI arguments for `ferric api`.
@@ -108,13 +107,20 @@ pub mod server {
     }
 
     /// The request body for query and chat endpoints.
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Clone, Deserialize)]
     #[serde(deny_unknown_fields)]
     #[allow(dead_code)]
     pub struct QueryRequest {
-        pub prompt: String,
+        #[serde(default)]
+        pub prompt: Option<String>,
         #[serde(default)]
         pub files: Vec<String>,
+        /// Opaque prior API session id; never a caller-supplied path.
+        #[serde(default)]
+        pub continuation_id: Option<String>,
+        /// Explicit answer to a pending clarification request.
+        #[serde(default)]
+        pub answer: Option<String>,
     }
 
     /// The JSON response for non-streaming query.
@@ -124,6 +130,8 @@ pub mod server {
         pub text: Option<String>,
         pub turns: u32,
         pub stop_reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub needs_input: Option<ferric_loop::NeedsInput>,
     }
 
     /// SSE event wrapper for streaming.
@@ -134,24 +142,91 @@ pub mod server {
         pub name: Option<String>,
     }
 
+    #[derive(Debug)]
     enum ApiQueryError {
+        InvalidRequest(String),
         InvalidAttachment(String),
+        InvalidContinuation(String),
         Internal(String),
     }
 
     impl ApiQueryError {
         fn into_http(self) -> (StatusCode, String) {
             match self {
-                Self::InvalidAttachment(message) => (StatusCode::BAD_REQUEST, message),
+                Self::InvalidRequest(message)
+                | Self::InvalidAttachment(message)
+                | Self::InvalidContinuation(message) => (StatusCode::BAD_REQUEST, message),
                 Self::Internal(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
             }
         }
 
         fn message(self) -> String {
             match self {
-                Self::InvalidAttachment(message) | Self::Internal(message) => message,
+                Self::InvalidRequest(message)
+                | Self::InvalidAttachment(message)
+                | Self::InvalidContinuation(message)
+                | Self::Internal(message) => message,
             }
         }
+    }
+
+    #[derive(Debug)]
+    enum RequestMode<'a> {
+        New {
+            prompt: &'a str,
+        },
+        Resume {
+            continuation_id: &'a str,
+            answer: &'a str,
+        },
+    }
+
+    fn request_mode(request: &QueryRequest) -> Result<RequestMode<'_>, ApiQueryError> {
+        match (
+            request.prompt.as_deref(),
+            request.continuation_id.as_deref(),
+            request.answer.as_deref(),
+        ) {
+            (Some(prompt), None, None) if !prompt.trim().is_empty() => {
+                Ok(RequestMode::New { prompt })
+            }
+            (None, Some(continuation_id), Some(answer)) if !answer.trim().is_empty() => {
+                if !request.files.is_empty() {
+                    return Err(ApiQueryError::InvalidRequest(
+                        "files are not accepted when answering a continuation".to_string(),
+                    ));
+                }
+                Ok(RequestMode::Resume {
+                    continuation_id,
+                    answer,
+                })
+            }
+            _ => Err(ApiQueryError::InvalidRequest(
+                "supply either a non-empty prompt, or continuation_id plus a non-empty answer"
+                    .to_string(),
+            )),
+        }
+    }
+
+    fn continuation_path(trace_dir: &std::path::Path, id: &str) -> Result<PathBuf, ApiQueryError> {
+        if id.is_empty()
+            || id.len() > 160
+            || !id.starts_with("api-")
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(ApiQueryError::InvalidContinuation(
+                "invalid continuation_id".to_string(),
+            ));
+        }
+        let path = trace_dir.join(format!("{id}.jsonl"));
+        if !path.is_file() {
+            return Err(ApiQueryError::InvalidContinuation(format!(
+                "unknown continuation_id {id:?}"
+            )));
+        }
+        Ok(path)
     }
 
     /// Health check handler.
@@ -166,7 +241,7 @@ pub mod server {
         State(state): State<Arc<AppState>>,
         Json(req): Json<QueryRequest>,
     ) -> Result<Json<QueryResponse>, (StatusCode, String)> {
-        let outcome = run_query(&state, &req.prompt, &req.files, false, None)
+        let outcome = run_query(&state, &req, false, None)
             .await
             .map_err(ApiQueryError::into_http)?;
         Ok(Json(outcome))
@@ -179,8 +254,7 @@ pub mod server {
     ) -> Sse<ReceiverStream<Result<Event, std::convert::Infallible>>> {
         let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(1024);
         let state = Arc::clone(&state);
-        let prompt = req.prompt.clone();
-        let files = req.files.clone();
+        let request = req.clone();
 
         tokio::spawn(async move {
             let tx_clone = tx.clone();
@@ -202,13 +276,14 @@ pub mod server {
                 let _ = tx_clone.try_send(Ok(event));
             };
 
-            match run_query(&state, &prompt, &files, true, Some(&sink_fn)).await {
+            match run_query(&state, &request, true, Some(&sink_fn)).await {
                 Ok(outcome) => {
                     let done_event = Event::default().event("done").data(
                         serde_json::json!({
                             "turns": outcome.turns,
                             "stop_reason": outcome.stop_reason,
                             "text": outcome.text,
+                            "needs_input": outcome.needs_input,
                         })
                         .to_string(),
                     );
@@ -229,11 +304,11 @@ pub mod server {
     /// Core query executor, shared by streaming and non-streaming paths.
     async fn run_query(
         state: &AppState,
-        prompt: &str,
-        files: &[String],
+        request: &QueryRequest,
         _stream: bool,
         sink_fn: Option<&(dyn Fn(StreamDelta) + Sync)>,
     ) -> Result<QueryResponse, ApiQueryError> {
+        let mode = request_mode(request)?;
         let args = &state.args;
         let loaded_config = crate::config::load_layered(state.workspace.root());
         let cfg = loaded_config.config;
@@ -274,27 +349,47 @@ pub mod server {
             hooks: None,
         });
 
-        let file_paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
-        let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
-        let (media, prompt_suffix) = route_files(
-            &state.workspace,
-            &file_paths,
-            &declared,
-            config.caps.supports_media,
-        )
-        .map_err(|e| ApiQueryError::InvalidAttachment(format!("files: {e}")))?;
-        let effective_prompt = if prompt_suffix.is_empty() {
-            prompt.to_string()
-        } else {
-            format!("{prompt}{prompt_suffix}")
+        let trace_dir = ferric_trace::trace_dir(state.workspace.root());
+        let (effective_prompt, media, resume, answer) = match mode {
+            RequestMode::New { prompt } => {
+                let file_paths: Vec<PathBuf> = request.files.iter().map(PathBuf::from).collect();
+                let declared =
+                    ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
+                let (media, prompt_suffix) = route_files(
+                    &state.workspace,
+                    &file_paths,
+                    &declared,
+                    config.caps.supports_media,
+                )
+                .map_err(|e| ApiQueryError::InvalidAttachment(format!("files: {e}")))?;
+                let prompt = if prompt_suffix.is_empty() {
+                    prompt.to_string()
+                } else {
+                    format!("{prompt}{prompt_suffix}")
+                };
+                (Some(prompt), media, None, None)
+            }
+            RequestMode::Resume {
+                continuation_id,
+                answer,
+            } => {
+                let path = continuation_path(&trace_dir, continuation_id)?;
+                let replayed = ferric_loop::replay(&path).map_err(|error| {
+                    ApiQueryError::InvalidContinuation(format!(
+                        "cannot resume continuation {continuation_id:?}: {error}"
+                    ))
+                })?;
+                ferric_loop::validate_resume_target(
+                    &replayed,
+                    state.workspace.root(),
+                    config.protocol,
+                )
+                .map_err(|error| ApiQueryError::InvalidContinuation(error.to_string()))?;
+                (None, Vec::new(), Some(replayed), Some(answer))
+            }
         };
 
-        let ts = now_ms();
-        let session = format!("api-{ts}");
-        let trace_dir = ferric_trace::trace_dir(state.workspace.root());
-        let _ = std::fs::create_dir_all(&trace_dir);
-        let trace_path = trace_dir.join(format!("{session}.jsonl"));
-        let mut sink = JsonlSink::open(&trace_path, &session)
+        let (_session, _trace_path, mut sink) = crate::query::create_trace_sink(&trace_dir, "api")
             .map_err(|e| ApiQueryError::Internal(format!("trace open: {e}")))?;
 
         let provider: Box<dyn ferric_provider::Provider> = if args.mock {
@@ -315,8 +410,8 @@ pub mod server {
             lineage: config.lineage.clone(),
             media,
             stream_sink: sink_fn,
-            resume: None,
-            answer: None,
+            resume,
+            answer,
             provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: None,
@@ -325,7 +420,7 @@ pub mod server {
         let outcome = run_with_provider(
             setup.into_run_args(provider.as_ref(), None),
             &mut sink,
-            Some(&effective_prompt),
+            effective_prompt.as_deref(),
         )
         .await
         .map_err(|e| ApiQueryError::Internal(format!("query failed: {e}")))?;
@@ -334,6 +429,7 @@ pub mod server {
             text: outcome.final_text.clone(),
             turns: outcome.turns,
             stop_reason: outcome.stop.as_str().to_string(),
+            needs_input: outcome.needs_input.clone(),
         })
     }
 
@@ -404,7 +500,7 @@ pub mod server {
 
     #[cfg(test)]
     mod tests {
-        use super::is_loopback_host;
+        use super::*;
 
         #[test]
         fn api_bind_is_restricted_to_loopback() {
@@ -415,6 +511,73 @@ pub mod server {
             assert!(!is_loopback_host("0.0.0.0"));
             assert!(!is_loopback_host("192.0.2.10"));
             assert!(!is_loopback_host("example-host"));
+        }
+
+        #[test]
+        fn legacy_prompt_request_keeps_its_wire_shape() {
+            let request: QueryRequest = serde_json::from_value(serde_json::json!({
+                "prompt": "do the task",
+                "files": ["notes.md"]
+            }))
+            .unwrap();
+            assert!(matches!(
+                request_mode(&request),
+                Ok(RequestMode::New {
+                    prompt: "do the task"
+                })
+            ));
+
+            let response = QueryResponse {
+                text: Some("done".to_string()),
+                turns: 2,
+                stop_reason: "task_complete".to_string(),
+                needs_input: None,
+            };
+            let value = serde_json::to_value(response).unwrap();
+            assert!(value.get("needs_input").is_none());
+        }
+
+        #[test]
+        fn continuation_request_requires_one_nonblank_answer_mode() {
+            let valid: QueryRequest = serde_json::from_value(serde_json::json!({
+                "continuation_id": "api-123-4-5",
+                "answer": "SQLite"
+            }))
+            .unwrap();
+            assert!(matches!(
+                request_mode(&valid),
+                Ok(RequestMode::Resume {
+                    continuation_id: "api-123-4-5",
+                    answer: "SQLite"
+                })
+            ));
+
+            for invalid in [
+                serde_json::json!({}),
+                serde_json::json!({"prompt": "task", "answer": "SQLite"}),
+                serde_json::json!({"continuation_id": "api-1", "answer": " "}),
+                serde_json::json!({
+                    "continuation_id": "api-1",
+                    "answer": "SQLite",
+                    "files": ["notes.md"]
+                }),
+            ] {
+                let request: QueryRequest = serde_json::from_value(invalid).unwrap();
+                assert!(request_mode(&request).is_err());
+            }
+        }
+
+        #[test]
+        fn continuation_id_is_an_opaque_workspace_scoped_name() {
+            let dir = tempfile::tempdir().unwrap();
+            let valid = "api-123-4-5";
+            let expected = dir.path().join(format!("{valid}.jsonl"));
+            std::fs::write(&expected, "").unwrap();
+            assert_eq!(continuation_path(dir.path(), valid).unwrap(), expected);
+
+            for invalid in ["../outside", "api/child", "q-123", "api-💥", ""] {
+                assert!(continuation_path(dir.path(), invalid).is_err(), "{invalid}");
+            }
         }
     }
 }

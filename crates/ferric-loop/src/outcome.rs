@@ -125,7 +125,7 @@ pub struct LoopOutcome {
     pub needs_input: Option<NeedsInput>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct NeedsInput {
     pub request: ferric_core::UserInputRequest,
     /// Opaque id of the new trace that must be resumed with the answer.

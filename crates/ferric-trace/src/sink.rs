@@ -30,6 +30,27 @@ impl JsonlSink {
         })
     }
 
+    /// Create a brand-new trace and fail if the path already exists.
+    ///
+    /// Long-lived servers allocate session IDs concurrently. Appending a new
+    /// sequence-zero session to an existing file would corrupt both replay and
+    /// verification, so production allocators use this constructor and retry
+    /// with another opaque ID on `AlreadyExists`.
+    pub fn create_new(
+        path: impl AsRef<Path>,
+        session: impl Into<String>,
+    ) -> Result<Self, FerricError> {
+        let file = OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(path.as_ref())?;
+        Ok(Self {
+            file,
+            session: session.into(),
+            next_seq: 0,
+        })
+    }
+
     /// Returns the session ID for this sink.
     pub fn session(&self) -> &str {
         &self.session

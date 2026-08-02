@@ -424,6 +424,7 @@ dependencies = [
  "ferric-vcs",
  "futures-executor",
  "regex",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",

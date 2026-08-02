@@ -321,6 +321,30 @@ mod tests {
     }
 
     #[test]
+    fn create_new_refuses_to_append_a_second_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trace.jsonl");
+        let mut first = JsonlSink::create_new(&path, "first").unwrap();
+        first
+            .write_event(Event::Note {
+                text: "first".to_string(),
+            })
+            .unwrap();
+        drop(first);
+
+        let error = match JsonlSink::create_new(&path, "second") {
+            Ok(_) => panic!("create_new appended a second session"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            ferric_core::FerricError::Io(ref io)
+                if io.kind() == std::io::ErrorKind::AlreadyExists
+        ));
+        assert_eq!(std::fs::read_to_string(path).unwrap().lines().count(), 1);
+    }
+
+    #[test]
     fn s0_trace_still_parses() {
         // A fixture in the exact s0 wire format (pre-s1 event set only) must
         // keep parsing as Known events forever.
