@@ -13,10 +13,13 @@ pub use builtin::{
     NamedCheck, RunCheck, register_builtin_tools, register_human_tools, register_run_checks,
 };
 pub use control::{
-    ControlFailure, ControlFailureKind, ControlMetadata, FileObservation, LineRange,
-    MutationIntent, MutationKind, NavigationKind, NavigationObservation, ObservationRequirement,
-    PathState, PrepareCtx, PrepareError, PrepareErrorKind, PreparedIntent, RequestedLineRange,
-    ToolObservation, ToolPreparation, VerificationAttempt, VerificationIntent, WorkspaceEffect,
+    CandidatePathState, ControlCapability, ControlFailure, ControlFailureKind,
+    ControlFailureWitness, ControlMetadata, FileObservation, LineRange, MutationIntent,
+    MutationKind, NavigationKind, NavigationObservation, NoEffectKind, ObservationRequirement,
+    PathState, PrepareCtx, PrepareError, PrepareErrorKind, PrepareFailureWitness, PreparedIntent,
+    RequestedLineRange, StaleObservationWitness, SyntaxState, SyntaxTransition,
+    SyntaxUncheckedReason, ToolObservation, ToolPreparation, UnsupportedMutationKind,
+    VerificationAttempt, VerificationIntent, WorkspaceEffect, WorkspaceEffectKind,
     WorkspaceEffectReport,
 };
 pub use registry::{

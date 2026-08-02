@@ -15,6 +15,21 @@ pub struct PrepareCtx<'a> {
     pub truncation_limit: usize,
 }
 
+/// Whether a tool can participate in evidence-controlled enumeration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlCapability {
+    ReadOnly,
+    ContentMutation,
+    Verification,
+    Opaque,
+}
+
+impl ControlCapability {
+    pub fn is_supported(self) -> bool {
+        !matches!(self, Self::Opaque)
+    }
+}
+
 /// Inclusive, one-indexed line range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineRange {
@@ -91,6 +106,47 @@ pub struct ObservationRequirement {
     pub sha256: String,
 }
 
+/// Redacted before/candidate identities compiled during preparation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidatePathState {
+    pub path: String,
+    pub before: PathState,
+    pub candidate: PathState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntaxUncheckedReason {
+    UnsupportedExtension,
+    InterpreterUnavailable,
+    InputTooLarge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntaxState {
+    Absent,
+    Valid,
+    Invalid,
+    Unchecked(SyntaxUncheckedReason),
+}
+
+/// Syntax evidence for the exact preimage and candidate bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyntaxTransition {
+    pub before: SyntaxState,
+    pub candidate: SyntaxState,
+    pub diagnostic_sha256: Option<String>,
+    /// Human-facing warning retained separately from the stable diagnostic
+    /// identity. Present only for an admitted invalid-to-invalid repair.
+    pub warning: Option<String>,
+}
+
+impl SyntaxTransition {
+    pub fn blocks_mutation(&self) -> bool {
+        matches!(self.candidate, SyntaxState::Invalid)
+            && matches!(self.before, SyntaxState::Absent | SyntaxState::Valid)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MutationKind {
     CreateFile,
@@ -108,6 +164,8 @@ pub struct MutationIntent {
     pub kind: MutationKind,
     pub requirements: Vec<ObservationRequirement>,
     pub paths: Vec<String>,
+    pub states: Vec<CandidatePathState>,
+    pub syntax: Option<SyntaxTransition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,11 +195,37 @@ pub enum PrepareErrorKind {
     UnsupportedOperation,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoEffectKind {
+    Identity,
+    MatchNotFound,
+    NetZeroBatch,
+    NetZeroPatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsupportedMutationKind {
+    OpaqueMutation,
+    UnsupportedOperation,
+}
+
+/// Machine-readable evidence attached to a preparation refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrepareFailureWitness {
+    NoEffect {
+        kind: NoEffectKind,
+        states: Vec<CandidatePathState>,
+    },
+    SyntaxRegression(SyntaxTransition),
+    UnsupportedMutation(UnsupportedMutationKind),
+}
+
 /// Typed preparation failure with a separate model-facing diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrepareError {
     pub kind: PrepareErrorKind,
     pub message: String,
+    pub witness: Option<PrepareFailureWitness>,
 }
 
 impl PrepareError {
@@ -149,7 +233,13 @@ impl PrepareError {
         Self {
             kind,
             message: message.into(),
+            witness: None,
         }
+    }
+
+    pub fn with_witness(mut self, witness: PrepareFailureWitness) -> Self {
+        self.witness = Some(witness);
+        self
     }
 
     pub fn opaque(permission: PermissionLevel) -> Self {
@@ -159,6 +249,9 @@ impl PrepareError {
                 "controlled execution rejected an opaque {permission:?} tool; implement typed preparation before offering it to an evidence-policy model"
             ),
         )
+        .with_witness(PrepareFailureWitness::UnsupportedMutation(
+            UnsupportedMutationKind::OpaqueMutation,
+        ))
     }
 }
 
@@ -187,8 +280,17 @@ pub enum PathState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceEffect {
     pub path: String,
+    pub kind: WorkspaceEffectKind,
     pub before: PathState,
     pub after: PathState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceEffectKind {
+    Created,
+    Modified,
+    Deleted,
+    Opaque,
 }
 
 /// `Measured([])` is positive proof of no byte/path effect. It is intentionally
@@ -219,6 +321,21 @@ pub enum ControlFailureKind {
 pub struct ControlFailure {
     pub kind: ControlFailureKind,
     pub message: String,
+    pub witness: Option<ControlFailureWitness>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlFailureWitness {
+    StaleObservation(StaleObservationWitness),
+}
+
+/// Exact prepared/current path identities for a CAS refusal. Non-file races
+/// remain explicit through [`PathState::Absent`], `Directory`, and `Other`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleObservationWitness {
+    pub path: String,
+    pub expected: PathState,
+    pub observed: PathState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,6 +369,15 @@ pub(crate) enum PreparedExecution {
         effects: WorkspaceEffectReport,
         failure: Option<ControlFailure>,
     },
+    FileMutation(FileMutationCandidate),
+}
+
+/// Exact bytes and CAS identity sealed inside a [`ToolPreparation`].
+pub(crate) struct FileMutationCandidate {
+    pub path: String,
+    pub expected: PathState,
+    pub candidate: Vec<u8>,
+    pub success: String,
 }
 
 /// Side-effect-free tool preparation returned through the controlled registry
@@ -268,6 +394,18 @@ impl ToolPreparation {
             intent: PreparedIntent::ReadOnly,
             execution: PreparedExecution::Deferred {
                 effects: WorkspaceEffectReport::UnmeasuredReadOnly,
+            },
+        }
+    }
+
+    pub(crate) fn immediate_read_only(full: String) -> Self {
+        Self {
+            intent: PreparedIntent::ReadOnly,
+            execution: PreparedExecution::Immediate {
+                full,
+                is_error: false,
+                effects: WorkspaceEffectReport::measured_none(),
+                failure: None,
             },
         }
     }
@@ -293,6 +431,13 @@ impl ToolPreparation {
                 effects: WorkspaceEffectReport::measured_none(),
                 failure: None,
             },
+        }
+    }
+
+    pub(crate) fn file_mutation(intent: MutationIntent, candidate: FileMutationCandidate) -> Self {
+        Self {
+            intent: PreparedIntent::Mutation(intent),
+            execution: PreparedExecution::FileMutation(candidate),
         }
     }
 }

@@ -331,6 +331,68 @@ fn search_navigation_normalizes_root_and_hashes_returned_bytes() {
     assert_lowercase_sha256(&first.result_sha256);
 }
 
+#[cfg(any(unix, windows))]
+#[test]
+fn controlled_reads_reject_or_skip_links_outside_the_workspace() {
+    let (directory, workspace, registry) = setup(8_192);
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.txt");
+    std::fs::write(&secret, b"outside-secret\n").unwrap();
+    let file_link = directory.path().join("linked-secret.txt");
+    let directory_link = directory.path().join("linked-directory");
+
+    #[cfg(unix)]
+    let links = std::os::unix::fs::symlink(&secret, &file_link)
+        .and_then(|_| std::os::unix::fs::symlink(outside.path(), &directory_link));
+    #[cfg(windows)]
+    let links = std::os::windows::fs::symlink_file(&secret, &file_link)
+        .and_then(|_| std::os::windows::fs::symlink_dir(outside.path(), &directory_link));
+    if let Err(error) = links {
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            return;
+        }
+        panic!("create search link fixtures: {error}");
+    }
+
+    for (name, args) in [
+        ("read_file", json!({"path": "linked-secret.txt"})),
+        ("list_dir", json!({"path": "linked-directory"})),
+    ] {
+        match registry.prepare_controlled(&workspace, name, &args) {
+            PrepareOutcome::Rejected { .. } | PrepareOutcome::Denied { .. } => {}
+            other => panic!("expected controlled {name} to reject an outside link, got {other:?}"),
+        }
+    }
+
+    let (find_intent, find_outcome) = controlled_call(
+        &registry,
+        &workspace,
+        "find_files",
+        &json!({"pattern": "secret"}),
+    );
+    assert_eq!(navigation_observation(find_intent).matches, 0);
+    let (find_full, _, _) = completed(find_outcome);
+    assert_eq!(
+        body_after(&find_full, "[/ferric:navigation_observation:v1]\n"),
+        "(no matches)"
+    );
+
+    let (intent, outcome) = controlled_call(
+        &registry,
+        &workspace,
+        "search_files",
+        &json!({"query": "outside-secret"}),
+    );
+    let observation = navigation_observation(intent);
+    assert_eq!(observation.matches, 0);
+    let (full, _, _) = completed(outcome);
+    assert_eq!(
+        body_after(&full, "[/ferric:navigation_observation:v1]\n"),
+        "(no matches)"
+    );
+    assert_eq!(std::fs::read(&secret).unwrap(), b"outside-secret\n");
+}
+
 #[test]
 fn truncated_navigation_marks_the_model_view_but_hashes_full_results() {
     let (directory, workspace, registry) = setup(512);

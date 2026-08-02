@@ -11,6 +11,7 @@ use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
 use ferric_trace::{Event, JsonlSink};
 use tracing::{debug, info, instrument, warn};
 
+use crate::ControllerState;
 use crate::outcome::{LoopOutcome, NeedsInput, StopReason};
 use crate::projector::TraceProjector;
 
@@ -94,6 +95,10 @@ pub struct LoopState<'a> {
     pub args: RunArgs<'a>,
     pub sink: &'a mut JsonlSink,
     pub projector: TraceProjector,
+    /// Prompt-independent evidence truth. `None` is mandatory for Legacy;
+    /// live Evidence dispatch remains disabled until B113-05 wires the
+    /// controlled registry chokepoint.
+    pub controller: Option<ControllerState>,
     /// Absolute id assigned to the next turn across resume boundaries.
     pub turns: u32,
     /// Budget consumption in this process run. Resume always gets a fresh
@@ -933,6 +938,25 @@ pub async fn run(
         .harness_policy
         .or(args.resume.as_ref().map(|state| state.harness_policy))
         .unwrap_or_default();
+    let controller = match (effective_harness_policy, args.resume.as_ref()) {
+        (HarnessPolicy::Legacy, Some(replayed)) | (HarnessPolicy::Evidence, Some(replayed)) => {
+            crate::replay::resume_controller_state(replayed, args.registry.required_checks())
+                .map_err(|error| FerricError::InvalidInput(error.to_string()))?
+        }
+        (HarnessPolicy::Legacy, None) => None,
+        (HarnessPolicy::Evidence, None) => Some(
+            ControllerState::new(
+                HarnessPolicy::Evidence,
+                args.registry.required_checks().iter().cloned(),
+            )
+            .map_err(|error| FerricError::InvalidInput(error.to_string()))?,
+        ),
+        (HarnessPolicy::EvidencePlanner, _) => {
+            return Err(FerricError::InvalidInput(
+                "harness policy evidence_planner is not implemented yet".to_string(),
+            ));
+        }
+    };
     match effective_harness_policy {
         HarnessPolicy::Legacy => {}
         HarnessPolicy::Evidence => {
@@ -942,9 +966,7 @@ pub async fn run(
             ));
         }
         HarnessPolicy::EvidencePlanner => {
-            return Err(FerricError::InvalidInput(
-                "harness policy evidence_planner is not implemented yet".to_string(),
-            ));
+            unreachable!("evidence_planner returned during controller preparation")
         }
     }
     args.harness_policy = Some(effective_harness_policy);
@@ -1013,7 +1035,15 @@ pub async fn run(
             };
             sink.write_event(checkpoint.clone())?;
             projector.step(&checkpoint);
+            if let Some(controller) = controller.as_ref() {
+                let checkpoint = Event::ControllerCheckpoint {
+                    state: controller.checkpoint(),
+                };
+                sink.write_event(checkpoint.clone())?;
+                projector.step(&checkpoint);
+            }
 
+            let clarification = replayed.pending_input.is_some() && args.answer.is_some();
             let amendment =
                 if let (Some(request), Some(answer)) = (&replayed.pending_input, args.answer) {
                     Some(format_clarification_answer(request, answer))
@@ -1035,6 +1065,31 @@ pub async fn run(
                 };
                 sink.write_event(anchored.clone())?;
                 projector.step(&anchored);
+                if let Some(controller) = controller.as_ref() {
+                    let anchored = Event::ControllerCheckpoint {
+                        state: controller.checkpoint(),
+                    };
+                    sink.write_event(anchored.clone())?;
+                    projector.step(&anchored);
+                }
+            }
+            if !clarification && let Some(controller) = controller.as_ref() {
+                let reason = controller
+                    .checkpoint()
+                    .inherited_pause_reason
+                    .ok_or_else(|| {
+                        FerricError::InvalidInput(
+                            "resumed evidence controller omits its pause reason".to_string(),
+                        )
+                    })?;
+                let packet = controller
+                    .recovery_packet(&reason)
+                    .map_err(|error| FerricError::Other(error.to_string()))?;
+                let message = ControllerState::render_recovery_packet(&packet)
+                    .map_err(|error| FerricError::Other(error.to_string()))?;
+                let injected = Event::RecoveryPacketInjected { packet, message };
+                sink.write_event(injected.clone())?;
+                projector.step(&injected);
             }
             replayed.next_turn
         }
@@ -1065,6 +1120,13 @@ pub async fn run(
             };
             sink.write_event(session_prompt.clone())?;
             projector.step(&session_prompt);
+            if let Some(controller) = controller.as_ref() {
+                let checkpoint = Event::ControllerCheckpoint {
+                    state: controller.checkpoint(),
+                };
+                sink.write_event(checkpoint.clone())?;
+                projector.step(&checkpoint);
+            }
             0
         }
     };
@@ -1100,6 +1162,7 @@ pub async fn run(
         args,
         sink,
         projector,
+        controller,
         turns,
         turns_this_run: 0,
         offered_names,
@@ -1134,6 +1197,18 @@ pub async fn run(
         };
         state.sink.write_event(checkpoint.clone())?;
         state.projector.step(&checkpoint);
+        if let Some(controller) = state.controller.as_mut() {
+            let controller_checkpoint = controller
+                .checkpoint_for_pause(stop.as_str())
+                .map_err(|error| FerricError::Other(error.to_string()))?;
+            let checkpoint = Event::ControllerCheckpoint {
+                state: controller_checkpoint.clone(),
+            };
+            state.sink.write_event(checkpoint.clone())?;
+            state.projector.step(&checkpoint);
+            *controller = ControllerState::from_checkpoint(&controller_checkpoint)
+                .map_err(|error| FerricError::Other(error.to_string()))?;
+        }
         let paused = Event::SessionPaused {
             reason: stop.as_str().to_string(),
         };

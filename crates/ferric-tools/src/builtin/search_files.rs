@@ -1,14 +1,23 @@
+use std::io::Read;
 use std::path::Path;
 
+#[cfg(unix)]
+use cap_fs_ext::OpenOptionsExt as _;
+use cap_fs_ext::{
+    DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt, OpenOptionsMaybeDirExt,
+};
+use cap_std::fs::{Dir, OpenOptions};
 use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
 use crate::control::{
-    NavigationKind, NavigationObservation, PrepareCtx, PrepareError, PrepareErrorKind,
-    ToolPreparation, normalized_relative_path, sha256_bytes,
+    ControlCapability, NavigationKind, NavigationObservation, PrepareCtx, PrepareError,
+    PrepareErrorKind, ToolPreparation, normalized_relative_path, sha256_bytes,
 };
 use crate::spec::{Tool, ToolCtx, ToolSpec};
+
+use super::controlled_read::{open_controlled_dir, validate_controlled_dir};
 
 /// Recursively search file contents for a literal substring within the
 /// workspace — the navigation primitive a small model needs to find code
@@ -41,6 +50,10 @@ impl Tool for SearchFiles {
             permission: PermissionLevel::Read,
             ring: 0,
         }
+    }
+
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::ReadOnly
     }
 
     fn target_paths(&self, args: &serde_json::Value) -> Vec<String> {
@@ -100,12 +113,12 @@ impl Tool for SearchFiles {
                 "max_results is too large to establish whether more results exist",
             )
         })?;
-        let root = ctx.workspace.resolve(search_path(args)).map_err(|error| {
-            PrepareError::new(PrepareErrorKind::Io, format!("boundary: {error}"))
-        })?;
-
+        let (root_dir, relative_root) = open_controlled_dir(ctx.workspace, search_path(args))
+            .map_err(|error| PrepareError::new(PrepareErrorKind::Io, error))?;
         let mut results = Vec::new();
-        search_dir(&root, ctx.workspace.root(), query, scan_limit, &mut results)
+        search_dir_controlled(&root_dir, &relative_root, query, scan_limit, &mut results)
+            .map_err(|error| PrepareError::new(PrepareErrorKind::Io, error))?;
+        validate_controlled_dir(ctx.workspace, search_path(args), &root_dir)
             .map_err(|error| PrepareError::new(PrepareErrorKind::Io, error))?;
         let has_more = results.len() > max_results;
         results.truncate(max_results);
@@ -117,7 +130,10 @@ impl Tool for SearchFiles {
         };
         let mut observation = NavigationObservation {
             kind: NavigationKind::SearchFiles,
-            root: normalized_relative_path(ctx.workspace, &root)?,
+            root: normalized_relative_path(
+                ctx.workspace,
+                &ctx.workspace.root().join(&relative_root),
+            )?,
             literal: query.to_string(),
             result_sha256: sha256_bytes(result_bytes.as_bytes()),
             matches: results.len() as u64,
@@ -237,6 +253,132 @@ fn search_dir(
                     if out.len() >= max_results {
                         break;
                     }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Capability-relative controlled traversal. Symlinks, reparse points, and
+/// non-regular entries are skipped; a raced replacement cannot escape the
+/// retained directory handle or be followed by the final open.
+fn search_dir_controlled(
+    dir: &Dir,
+    relative: &Path,
+    query: &str,
+    max_results: usize,
+    out: &mut Vec<String>,
+) -> Result<(), String> {
+    if out.len() >= max_results {
+        return Ok(());
+    }
+    let mut entries: Vec<_> = dir
+        .entries()
+        .map_err(|error| format!("search {}: {error}", relative.display()))?
+        .filter_map(Result::ok)
+        .collect();
+    entries.sort_by_key(cap_std::fs::DirEntry::file_name);
+
+    for entry in entries {
+        if out.len() >= max_results {
+            break;
+        }
+        let name = entry.file_name();
+        let before = match dir.symlink_metadata(&name) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        if before.file_type().is_symlink() {
+            continue;
+        }
+        let path = relative.join(&name);
+        if before.is_dir() {
+            let lossy_name = name.to_string_lossy();
+            if NOISE_DIRS.contains(&lossy_name.as_ref()) {
+                continue;
+            }
+            let identity = (MetadataExt::dev(&before), MetadataExt::ino(&before));
+            let Ok(child) = dir.open_dir_nofollow(&name) else {
+                continue;
+            };
+            let Ok(opened) = child.dir_metadata() else {
+                continue;
+            };
+            let Ok(after) = dir.symlink_metadata(&name) else {
+                continue;
+            };
+            if !opened.is_dir()
+                || after.file_type().is_symlink()
+                || !after.is_dir()
+                || (MetadataExt::dev(&opened), MetadataExt::ino(&opened)) != identity
+                || (MetadataExt::dev(&after), MetadataExt::ino(&after)) != identity
+            {
+                continue;
+            }
+            search_dir_controlled(&child, &path, query, max_results, out)?;
+            let current = dir
+                .symlink_metadata(&name)
+                .map_err(|error| format!("revalidate controlled search directory: {error}"))?;
+            if current.file_type().is_symlink()
+                || !current.is_dir()
+                || (MetadataExt::dev(&current), MetadataExt::ino(&current)) != identity
+            {
+                return Err("controlled search directory changed during traversal".to_string());
+            }
+            continue;
+        }
+        if !before.is_file() {
+            continue;
+        }
+
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .follow(FollowSymlinks::No)
+            .maybe_dir(true);
+        #[cfg(unix)]
+        {
+            options.custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK | libc::O_NOFOLLOW);
+        }
+        let identity = (MetadataExt::dev(&before), MetadataExt::ino(&before));
+        let Ok(mut file) = dir.open_with(&name, &options) else {
+            continue;
+        };
+        let Ok(opened) = file.metadata() else {
+            continue;
+        };
+        let Ok(after) = dir.symlink_metadata(&name) else {
+            continue;
+        };
+        if !opened.is_file()
+            || opened.file_type().is_symlink()
+            || after.file_type().is_symlink()
+            || !after.is_file()
+            || (MetadataExt::dev(&opened), MetadataExt::ino(&opened)) != identity
+            || (MetadataExt::dev(&after), MetadataExt::ino(&after)) != identity
+        {
+            continue;
+        }
+        let mut content = String::new();
+        if file.read_to_string(&mut content).is_err() {
+            continue;
+        }
+        let current = dir
+            .symlink_metadata(&name)
+            .map_err(|error| format!("revalidate controlled search file: {error}"))?;
+        if current.file_type().is_symlink()
+            || !current.is_file()
+            || (MetadataExt::dev(&current), MetadataExt::ino(&current)) != identity
+        {
+            return Err("controlled search file changed during traversal".to_string());
+        }
+        let display = path.to_string_lossy().replace('\\', "/");
+        for (index, line) in content.lines().enumerate() {
+            if line.contains(query) {
+                out.push(format!("{}:{}:{}", display, index + 1, line.trim_end()));
+                if out.len() >= max_results {
+                    break;
                 }
             }
         }

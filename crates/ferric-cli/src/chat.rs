@@ -219,6 +219,7 @@ pub(crate) fn escalation_seed(
         mutation_epoch: 0,
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: None,
+        controller_checkpoint: None,
     }
 }
 

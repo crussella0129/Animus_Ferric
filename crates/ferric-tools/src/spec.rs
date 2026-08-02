@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use ferric_guard::{PermissionLevel, Workspace};
 
-use crate::control::{PrepareCtx, PrepareError, ToolPreparation};
+use crate::control::{ControlCapability, PrepareCtx, PrepareError, ToolPreparation};
 
 /// Declarative description of a tool: what the model sees (name, description,
 /// schema) plus what the harness enforces (permission level, ring).
@@ -33,6 +33,12 @@ pub struct ToolCtx<'a> {
 /// change — do not pre-pay that complexity here.
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
+
+    /// Static evidence-mode capability used before a tool is offered. Every
+    /// tool fails closed until its implementation explicitly opts in.
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::Opaque
+    }
 
     /// Prepare a call for evidence-controlled execution without mutating the
     /// workspace.

@@ -1,14 +1,18 @@
 use std::path::Path;
 
+use cap_fs_ext::{DirExt, MetadataExt};
+use cap_std::fs::Dir;
 use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
 use crate::control::{
-    NavigationKind, NavigationObservation, PrepareCtx, PrepareError, PrepareErrorKind,
-    ToolPreparation, normalized_relative_path, sha256_bytes,
+    ControlCapability, NavigationKind, NavigationObservation, PrepareCtx, PrepareError,
+    PrepareErrorKind, ToolPreparation, normalized_relative_path, sha256_bytes,
 };
 use crate::spec::{Tool, ToolCtx, ToolSpec};
+
+use super::controlled_read::{open_controlled_dir, validate_controlled_dir};
 
 /// Recursively find files whose **name** contains a literal substring within the
 /// workspace — the name-search companion to `search_files`' content search. A
@@ -42,6 +46,10 @@ impl Tool for FindFiles {
             permission: PermissionLevel::Read,
             ring: 1,
         }
+    }
+
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::ReadOnly
     }
 
     fn target_paths(&self, args: &serde_json::Value) -> Vec<String> {
@@ -101,19 +109,13 @@ impl Tool for FindFiles {
                 "max_results is too large to establish whether more results exist",
             )
         })?;
-        let root = ctx.workspace.resolve(search_path(args)).map_err(|error| {
-            PrepareError::new(PrepareErrorKind::Io, format!("boundary: {error}"))
-        })?;
-
+        let (root_dir, relative_root) = open_controlled_dir(ctx.workspace, search_path(args))
+            .map_err(|error| PrepareError::new(PrepareErrorKind::Io, error))?;
         let mut results = Vec::new();
-        find_dir(
-            &root,
-            ctx.workspace.root(),
-            pattern,
-            scan_limit,
-            &mut results,
-        )
-        .map_err(|error| PrepareError::new(PrepareErrorKind::Io, error))?;
+        find_dir_controlled(&root_dir, &relative_root, pattern, scan_limit, &mut results)
+            .map_err(|error| PrepareError::new(PrepareErrorKind::Io, error))?;
+        validate_controlled_dir(ctx.workspace, search_path(args), &root_dir)
+            .map_err(|error| PrepareError::new(PrepareErrorKind::Io, error))?;
         let has_more = results.len() > max_results;
         results.truncate(max_results);
         let result_bytes = results.join("\n");
@@ -124,7 +126,10 @@ impl Tool for FindFiles {
         };
         let mut observation = NavigationObservation {
             kind: NavigationKind::FindFiles,
-            root: normalized_relative_path(ctx.workspace, &root)?,
+            root: normalized_relative_path(
+                ctx.workspace,
+                &ctx.workspace.root().join(&relative_root),
+            )?,
             literal: pattern.to_string(),
             result_sha256: sha256_bytes(result_bytes.as_bytes()),
             matches: results.len() as u64,
@@ -232,6 +237,86 @@ fn find_dir(
         } else if name.contains(pattern) {
             let rel = path.strip_prefix(ws_root).unwrap_or(&path);
             out.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Ok(())
+}
+
+fn find_dir_controlled(
+    dir: &Dir,
+    relative: &Path,
+    pattern: &str,
+    max_results: usize,
+    out: &mut Vec<String>,
+) -> Result<(), String> {
+    if out.len() >= max_results {
+        return Ok(());
+    }
+    let mut entries: Vec<_> = dir
+        .entries()
+        .map_err(|error| format!("find {}: {error}", relative.display()))?
+        .filter_map(Result::ok)
+        .collect();
+    entries.sort_by_key(cap_std::fs::DirEntry::file_name);
+
+    for entry in entries {
+        if out.len() >= max_results {
+            break;
+        }
+        let name = entry.file_name();
+        let before = match dir.symlink_metadata(&name) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        if before.file_type().is_symlink() {
+            continue;
+        }
+        let path = relative.join(&name);
+        if before.is_dir() {
+            let lossy = name.to_string_lossy();
+            if NOISE_DIRS.contains(&lossy.as_ref()) {
+                continue;
+            }
+            let identity = (MetadataExt::dev(&before), MetadataExt::ino(&before));
+            let Ok(child) = dir.open_dir_nofollow(&name) else {
+                continue;
+            };
+            let Ok(opened) = child.dir_metadata() else {
+                continue;
+            };
+            let Ok(after) = dir.symlink_metadata(&name) else {
+                continue;
+            };
+            if !opened.is_dir()
+                || after.file_type().is_symlink()
+                || !after.is_dir()
+                || (MetadataExt::dev(&opened), MetadataExt::ino(&opened)) != identity
+                || (MetadataExt::dev(&after), MetadataExt::ino(&after)) != identity
+            {
+                continue;
+            }
+            find_dir_controlled(&child, &path, pattern, max_results, out)?;
+            let current = dir
+                .symlink_metadata(&name)
+                .map_err(|error| format!("revalidate controlled find directory: {error}"))?;
+            if current.file_type().is_symlink()
+                || !current.is_dir()
+                || (MetadataExt::dev(&current), MetadataExt::ino(&current)) != identity
+            {
+                return Err("controlled find directory changed during traversal".to_string());
+            }
+        } else if before.is_file() && name.to_string_lossy().contains(pattern) {
+            let identity = (MetadataExt::dev(&before), MetadataExt::ino(&before));
+            let Ok(after) = dir.symlink_metadata(&name) else {
+                continue;
+            };
+            if after.file_type().is_symlink()
+                || !after.is_file()
+                || (MetadataExt::dev(&after), MetadataExt::ino(&after)) != identity
+            {
+                continue;
+            }
+            out.push(path.to_string_lossy().replace('\\', "/"));
         }
     }
     Ok(())

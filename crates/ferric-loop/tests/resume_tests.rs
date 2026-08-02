@@ -7,7 +7,8 @@ use common::*;
 use ferric_core::{ActionProtocol, HarnessPolicy, Message};
 use ferric_guard::Workspace;
 use ferric_loop::{
-    ReplayError, ReplayedState, RunArgs, StopReason, replay, run, validate_resume_target,
+    ControllerState, ReplayError, ReplayedState, RunArgs, StopReason, replay, run,
+    validate_resume_target,
 };
 use ferric_provider::{MockProvider, SamplingParams};
 use ferric_tools::{Registry, register_builtin_tools};
@@ -37,6 +38,7 @@ fn base_replayed(turns: u32, workspace: &std::path::Path) -> ReplayedState {
         mutation_epoch: 0,
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: None,
+        controller_checkpoint: None,
     }
 }
 
@@ -119,6 +121,61 @@ fn unavailable_policies_write_no_event_and_dispatch_no_tool() {
         assert!(!dir.path().join("should-not-exist.txt").exists());
         assert!(provider.requests().is_empty());
     }
+}
+
+#[test]
+fn evidence_resume_rejects_required_check_drift_before_trace_or_dispatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new(dir.path()).unwrap();
+    let registry = Registry::new();
+    let trace_path = dir.path().join("required-check-mismatch.jsonl");
+    let mut sink = JsonlSink::open(&trace_path, "required-check-mismatch").unwrap();
+    let provider = MockProvider::new(vec![text_completion("must not run")]);
+    let sleeper = RecordingSleeper::new();
+    let mut replayed = base_replayed(0, dir.path());
+    replayed.harness_policy = HarnessPolicy::Evidence;
+    replayed.pause_reason = Some("max_turns".to_string());
+    replayed.controller_checkpoint = Some(
+        ControllerState::new(HarnessPolicy::Evidence, ["unit".to_string()])
+            .unwrap()
+            .checkpoint_for_pause("max_turns")
+            .unwrap(),
+    );
+
+    let error = futures_executor::block_on(run(
+        RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            provenance: ferric_guard::Provenance::Clean,
+            provider: &provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &nano_policy(),
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
+            sampling: SamplingParams::default(),
+            sleeper: &sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: Some(replayed),
+            answer: None,
+            hooks: None,
+        },
+        &mut sink,
+        None,
+    ))
+    .unwrap_err();
+
+    assert!(
+        error.to_string().contains("recorded required checks"),
+        "{error}"
+    );
+    drop(sink);
+    assert_eq!(std::fs::read_to_string(&trace_path).unwrap(), "");
+    assert!(provider.requests().is_empty());
 }
 
 #[test]

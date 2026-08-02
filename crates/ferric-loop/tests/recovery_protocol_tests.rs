@@ -262,6 +262,7 @@ fn resume_uses_a_fresh_budget_but_keeps_absolute_turn_ids() {
         mutation_epoch: 0,
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: Some("max_turns".to_string()),
+        controller_checkpoint: None,
     };
     let provider = MockProvider::new(vec![tool_completion(vec![(
         "done-15",

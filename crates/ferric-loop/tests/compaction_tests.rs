@@ -346,6 +346,7 @@ fn resume_only_folds_new_post_resume_turns() {
         mutation_epoch: 0,
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: None,
+        controller_checkpoint: None,
     };
     let replayed_prefix = replayed.messages.clone();
 
@@ -454,6 +455,7 @@ fn resume_seeds_compactor_numbering_consistently() {
         mutation_epoch: 0,
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: None,
+        controller_checkpoint: None,
     };
 
     let provider = MockProvider::new(vec![

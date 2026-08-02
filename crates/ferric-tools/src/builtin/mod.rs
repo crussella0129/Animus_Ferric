@@ -3,6 +3,8 @@
 mod apply_patch;
 mod blocking;
 pub(crate) mod check_syntax;
+pub(crate) mod controlled_file;
+pub(crate) mod controlled_read;
 mod copy_file;
 mod delete_path;
 mod edit_file;

@@ -2,10 +2,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ferric_guard::{PermissionLevel, Provenance, SinkPolicy, Workspace};
+use ferric_tools::builtin::FetchReference;
 use ferric_tools::{
-    ControlFailureKind, ControlledOutcome, ExecuteOutcome, PrepareCtx, PrepareError,
-    PrepareErrorKind, PrepareOutcome, PreparedIntent, Registry, Tool, ToolCtx, ToolPreparation,
-    ToolSpec, WorkspaceEffectReport,
+    ControlCapability, ControlFailureKind, ControlledOutcome, ExecuteOutcome, NamedCheck,
+    PrepareCtx, PrepareError, PrepareErrorKind, PrepareOutcome, PreparedIntent, Registry, Tool,
+    ToolCtx, ToolPreparation, ToolSpec, WorkspaceEffectReport, register_builtin_tools,
+    register_human_tools, register_run_checks,
 };
 use serde_json::{Value, json};
 
@@ -39,6 +41,31 @@ impl Tool for OpaqueExecute {
     }
 }
 
+struct OpaqueReadProbe {
+    prepared: Arc<AtomicBool>,
+    ran: Arc<AtomicBool>,
+}
+
+impl Tool for OpaqueReadProbe {
+    fn spec(&self) -> ToolSpec {
+        test_spec("opaque_read_probe", PermissionLevel::Read)
+    }
+
+    fn prepare(
+        &self,
+        _ctx: &PrepareCtx<'_>,
+        _args: &Value,
+    ) -> Result<ToolPreparation, PrepareError> {
+        self.prepared.store(true, Ordering::SeqCst);
+        Ok(ToolPreparation::deferred_read_only())
+    }
+
+    fn run(&self, _ctx: &ToolCtx<'_>, _args: &Value) -> Result<String, String> {
+        self.ran.store(true, Ordering::SeqCst);
+        Ok("opaque read ran".to_string())
+    }
+}
+
 struct PreparationProbe {
     prepared: Arc<AtomicBool>,
     ran: Arc<AtomicBool>,
@@ -47,6 +74,10 @@ struct PreparationProbe {
 impl Tool for PreparationProbe {
     fn spec(&self) -> ToolSpec {
         test_spec("preparation_probe", PermissionLevel::Write)
+    }
+
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::ContentMutation
     }
 
     fn prepare(
@@ -69,6 +100,10 @@ struct FailingRead;
 impl Tool for FailingRead {
     fn spec(&self) -> ToolSpec {
         test_spec("failing_read", PermissionLevel::Read)
+    }
+
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::ReadOnly
     }
 
     fn run(&self, _ctx: &ToolCtx<'_>, _args: &Value) -> Result<String, String> {
@@ -122,6 +157,27 @@ fn controlled_execute_fails_closed_without_typed_preparation() {
         }
         other => panic!("expected typed rejection, got {other:?}"),
     }
+    assert!(!ran.load(Ordering::SeqCst));
+}
+
+#[test]
+fn controlled_read_fails_closed_before_prepare_without_an_explicit_capability() {
+    let (_directory, workspace) = workspace();
+    let prepared = Arc::new(AtomicBool::new(false));
+    let ran = Arc::new(AtomicBool::new(false));
+    let mut registry = Registry::new();
+    registry.register(Box::new(OpaqueReadProbe {
+        prepared: prepared.clone(),
+        ran: ran.clone(),
+    }));
+
+    match registry.prepare_controlled(&workspace, "opaque_read_probe", &json!({})) {
+        PrepareOutcome::Rejected { error, .. } => {
+            assert_eq!(error.kind, PrepareErrorKind::OpaqueMutation);
+        }
+        other => panic!("expected typed rejection, got {other:?}"),
+    }
+    assert!(!prepared.load(Ordering::SeqCst));
     assert!(!ran.load(Ordering::SeqCst));
 }
 
@@ -225,4 +281,87 @@ fn legacy_execute_remains_available_for_opaque_tools() {
     );
     assert!(matches!(outcome, ExecuteOutcome::Completed { .. }));
     assert!(ran.load(Ordering::SeqCst));
+}
+
+#[test]
+fn controlled_enumeration_and_preparation_use_the_exact_explicit_allowlist() {
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+    registry.register(Box::new(FetchReference));
+    register_human_tools(&mut registry);
+    register_run_checks(
+        &mut registry,
+        vec![NamedCheck {
+            name: "test-check".to_string(),
+            program: std::env::current_exe().unwrap(),
+            args: Vec::new(),
+            timeout_s: 1,
+            output_limit: 32,
+        }],
+    )
+    .unwrap();
+    let policy = ferric_core::policy_for(&ferric_core::ModelProfile {
+        params_b: 70.0,
+        quant: "Q4_K_M".to_string(),
+        ctx: 32_768,
+        family: "test".to_string(),
+        measured_level: None,
+    });
+    let controlled: Vec<String> = registry
+        .tools_for_controlled_policy(&policy)
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect();
+    assert_eq!(
+        controlled,
+        [
+            "apply_patch",
+            "edit_file",
+            "find_files",
+            "list_dir",
+            "multi_edit",
+            "read_file",
+            "search_files",
+            "write_file",
+        ]
+    );
+
+    let opaque = [
+        "copy_file",
+        "delete_path",
+        "fetch_reference",
+        "git_read",
+        "git_write",
+        "make_dir",
+        "manage_task",
+        "move_path",
+        "run_check",
+        "shell_exec",
+    ];
+    let (_directory, workspace) = workspace();
+    for name in opaque {
+        assert!(!controlled.iter().any(|offered| offered == name));
+        let args = if name == "git_read" {
+            json!({"subcommand": "branch", "args": ["would-mutate"]})
+        } else {
+            json!({})
+        };
+        match registry.prepare_controlled(&workspace, name, &args) {
+            PrepareOutcome::Rejected { error, .. } => {
+                assert_eq!(error.kind, PrepareErrorKind::OpaqueMutation, "{name}");
+            }
+            other => panic!("expected opaque rejection for {name}, got {other:?}"),
+        }
+    }
+
+    let legacy: Vec<String> = registry
+        .tools_for_policy(&policy)
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect();
+    assert!(
+        opaque
+            .iter()
+            .all(|name| legacy.iter().any(|item| item == name))
+    );
 }

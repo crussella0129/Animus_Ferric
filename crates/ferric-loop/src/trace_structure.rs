@@ -410,6 +410,13 @@ impl TraceStructure {
         self.committed_terminal.as_deref()
     }
 
+    /// Canonical controller truth projected from every structurally validated
+    /// event observed so far. Replay uses this single source instead of
+    /// maintaining a second controller-event parser.
+    pub(crate) fn controller_checkpoint(&self) -> Option<ControllerCheckpointV1> {
+        self.controller.as_ref().map(ControllerState::checkpoint)
+    }
+
     /// EOF is a valid crash boundary. An open modern proposal is either a safe
     /// pre-dispatch retry or is classified more precisely by replay's
     /// ambiguity check; no state transition is performed here.
@@ -1867,6 +1874,24 @@ mod tests {
             .unwrap();
         commit(&mut validator, 0, 1, 0);
         validator.finish().unwrap();
+    }
+
+    #[test]
+    fn history_compaction_does_not_change_projected_controller_truth() {
+        let mut validator = TraceStructure::new();
+        evidence_base(&mut validator, &[]);
+        establish_prior_read(&mut validator);
+        let before = validator.controller_checkpoint().unwrap();
+
+        validator
+            .observe(&Event::HistoryCompacted {
+                through_turn: 0,
+                dropped_turns: 1,
+                summary: "earlier model history".to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(validator.controller_checkpoint(), Some(before));
     }
 
     #[test]

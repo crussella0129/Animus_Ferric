@@ -7,8 +7,9 @@ use ferric_guard::{Decision, Workspace, check_with_ignore};
 use tracing::{debug, warn};
 
 use crate::control::{
-    ControlFailure, ControlFailureKind, ControlMetadata, PrepareCtx, PrepareError,
-    PreparedExecution, PreparedIntent, ToolObservation, ToolPreparation, VerificationAttempt,
+    ControlCapability, ControlFailure, ControlFailureKind, ControlMetadata, PrepareCtx,
+    PrepareError, PrepareErrorKind, PrepareFailureWitness, PreparedExecution, PreparedIntent,
+    ToolObservation, ToolPreparation, UnsupportedMutationKind, VerificationAttempt,
 };
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
@@ -264,6 +265,28 @@ impl Registry {
         specs
     }
 
+    /// Evidence-mode vocabulary. This preserves the legacy ring/cap/order
+    /// algorithm while filtering opaque tools before applying the cap.
+    pub fn tools_for_controlled_policy(&self, policy: &RunPolicy) -> Vec<ToolSpec> {
+        let ceiling = ring_for_tier(policy.tier).min(policy.max_ring.unwrap_or(u8::MAX));
+        let mut specs: Vec<ToolSpec> = self
+            .tools
+            .values()
+            .filter_map(|tool| {
+                let capability = tool.control_capability();
+                let spec = tool.spec();
+                (capability.is_supported()
+                    && capability_matches_permission(capability, spec.permission))
+                .then_some(spec)
+            })
+            .filter(|spec| spec.ring <= ceiling)
+            .collect();
+        specs.sort_by(|a, b| a.ring.cmp(&b.ring).then_with(|| a.name.cmp(&b.name)));
+        specs.truncate(policy.max_tools as usize);
+        specs.sort_by(|a, b| a.name.cmp(&b.name));
+        specs
+    }
+
     /// Guard and prepare a model-authored call without permitting it to
     /// mutate the workspace. Guard checks deliberately run before
     /// [`Tool::prepare`], so even preparation cannot inspect a denied target.
@@ -331,6 +354,31 @@ impl Registry {
             checks.push(CheckRecord::allow(std::path::PathBuf::from(command)));
         }
 
+        let capability = tool.control_capability();
+        if !capability.is_supported() {
+            return PrepareOutcome::Rejected {
+                error: PrepareError::opaque(spec.permission),
+                duration_ms: 0,
+                checks,
+            };
+        }
+        if !capability_matches_permission(capability, spec.permission) {
+            return PrepareOutcome::Rejected {
+                error: PrepareError::new(
+                    PrepareErrorKind::UnsupportedOperation,
+                    format!(
+                        "controlled preparation rejected capability/permission mismatch: {capability:?} capability on {:?} tool",
+                        spec.permission
+                    ),
+                )
+                .with_witness(PrepareFailureWitness::UnsupportedMutation(
+                    UnsupportedMutationKind::UnsupportedOperation,
+                )),
+                duration_ms: 0,
+                checks,
+            };
+        }
+
         let started = Instant::now();
         let ctx = PrepareCtx {
             workspace,
@@ -350,13 +398,16 @@ impl Registry {
             }
             Ok(preparation) => PrepareOutcome::Rejected {
                 error: PrepareError::new(
-                    crate::control::PrepareErrorKind::UnsupportedOperation,
+                    PrepareErrorKind::UnsupportedOperation,
                     format!(
                         "controlled preparation rejected permission/intent mismatch: {:?} tool returned {} intent",
                         spec.permission,
                         intent_label(&preparation.intent)
                     ),
-                ),
+                )
+                .with_witness(PrepareFailureWitness::UnsupportedMutation(
+                    UnsupportedMutationKind::UnsupportedOperation,
+                )),
                 duration_ms: started.elapsed().as_millis() as u64,
                 checks,
             },
@@ -455,6 +506,11 @@ impl Registry {
                 effects,
                 failure,
             } => (full, is_error, effects, failure),
+            PreparedExecution::FileMutation(operation) => {
+                let result =
+                    crate::builtin::controlled_file::commit_candidate(workspace, operation);
+                (result.full, result.is_error, result.effects, result.failure)
+            }
         };
         let duration_ms =
             preparation_duration_ms.saturating_add(started.elapsed().as_millis() as u64);
@@ -487,6 +543,7 @@ impl Registry {
             is_error.then(|| ControlFailure {
                 kind: ControlFailureKind::ToolError,
                 message: full.clone(),
+                witness: None,
             })
         });
         let for_model = truncate_chars(&full, self.truncation_limit);
@@ -679,6 +736,25 @@ fn intent_matches_permission(
     )
 }
 
+fn capability_matches_permission(
+    capability: ControlCapability,
+    permission: ferric_guard::PermissionLevel,
+) -> bool {
+    matches!(
+        (capability, permission),
+        (
+            ControlCapability::ReadOnly,
+            ferric_guard::PermissionLevel::Read
+        ) | (
+            ControlCapability::ContentMutation,
+            ferric_guard::PermissionLevel::Write
+        ) | (
+            ControlCapability::Verification,
+            ferric_guard::PermissionLevel::Execute
+        )
+    )
+}
+
 fn intent_label(intent: &PreparedIntent) -> &'static str {
     match intent {
         PreparedIntent::ReadOnly => "read-only",
@@ -745,6 +821,7 @@ mod tests {
         output_len: usize,
         ran: std::sync::Arc<AtomicBool>,
         ring: u8,
+        capability: Option<ControlCapability>,
     }
 
     impl Tool for DummyTool {
@@ -762,6 +839,10 @@ mod tests {
             self.ran.store(true, Ordering::SeqCst);
             Ok("y".repeat(self.output_len))
         }
+
+        fn control_capability(&self) -> ControlCapability {
+            self.capability.unwrap_or(ControlCapability::Opaque)
+        }
     }
 
     fn dummy(
@@ -777,6 +858,7 @@ mod tests {
                 output_len,
                 ran: ran.clone(),
                 ring: 0,
+                capability: None,
             },
             ran,
         )
@@ -789,6 +871,7 @@ mod tests {
             output_len: 1,
             ran: std::sync::Arc::new(AtomicBool::new(false)),
             ring,
+            capability: None,
         }
     }
 
@@ -1055,6 +1138,49 @@ mod tests {
     }
 
     #[test]
+    fn controlled_policy_filters_opaque_before_preserving_order_and_cap() {
+        let mut registry = Registry::new();
+        for suffix in (b'a'..=b'l').rev() {
+            let name = format!("read_{}", char::from(suffix));
+            let (mut tool, _) = dummy(&name, PermissionLevel::Read, 1);
+            tool.capability = Some(ControlCapability::ReadOnly);
+            registry.register(Box::new(tool));
+        }
+        let (opaque, _) = dummy("a_opaque_write", PermissionLevel::Write, 1);
+        registry.register(Box::new(opaque));
+        let (mut mutation, _) = dummy("mutation", PermissionLevel::Write, 1);
+        mutation.capability = Some(ControlCapability::ContentMutation);
+        registry.register(Box::new(mutation));
+
+        let nano = policy_for(&ModelProfile {
+            params_b: 1.0,
+            quant: "Q4_K_M".to_string(),
+            ctx: 4096,
+            family: "test".to_string(),
+            measured_level: None,
+        });
+        let controlled: Vec<String> = registry
+            .tools_for_controlled_policy(&nano)
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        assert_eq!(controlled.len(), nano.max_tools as usize);
+        let mut sorted = controlled.clone();
+        sorted.sort();
+        assert_eq!(controlled, sorted);
+        assert!(controlled.iter().any(|name| name == "mutation"));
+        assert!(!controlled.iter().any(|name| name == "read_l"));
+        assert!(!controlled.iter().any(|name| name == "a_opaque_write"));
+
+        let legacy: Vec<String> = registry
+            .tools_for_policy(&nano)
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        assert!(legacy.iter().any(|name| name == "a_opaque_write"));
+    }
+
+    #[test]
     fn unknown_tool_outcome() {
         let (_dir, ws) = temp_workspace();
         let registry = Registry::new();
@@ -1207,6 +1333,10 @@ mod tests {
             }
         }
 
+        fn control_capability(&self) -> ControlCapability {
+            ControlCapability::ContentMutation
+        }
+
         fn prepare(
             &self,
             _ctx: &PrepareCtx<'_>,
@@ -1217,6 +1347,8 @@ mod tests {
                     kind: crate::control::MutationKind::ModifyFile,
                     requirements: Vec::new(),
                     paths: vec!["notes.md".to_string()],
+                    states: Vec::new(),
+                    syntax: None,
                 }),
                 execution: PreparedExecution::Deferred {
                     effects: crate::control::WorkspaceEffectReport::measured_none(),

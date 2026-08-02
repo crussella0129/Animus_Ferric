@@ -3,11 +3,13 @@ use serde_json::json;
 use ferric_guard::PermissionLevel;
 
 use crate::control::{
-    FileObservation, LineRange, PrepareCtx, PrepareError, PrepareErrorKind, RequestedLineRange,
-    ToolPreparation, logical_line_count, normalized_relative_path, sha256_bytes,
+    ControlCapability, FileObservation, LineRange, PrepareCtx, PrepareError, PrepareErrorKind,
+    RequestedLineRange, ToolPreparation, logical_line_count, normalized_relative_path,
+    sha256_bytes,
 };
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
+use super::controlled_read::read_controlled_file;
 use super::path_arg;
 
 /// Read a UTF-8 text file inside the workspace, optionally paginated by lines.
@@ -34,6 +36,10 @@ impl Tool for ReadFile {
             permission: PermissionLevel::Read,
             ring: 0,
         }
+    }
+
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::ReadOnly
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
@@ -95,12 +101,9 @@ impl Tool for ReadFile {
             ));
         }
 
-        let resolved = ctx.workspace.resolve(path).map_err(|error| {
-            PrepareError::new(PrepareErrorKind::Io, format!("boundary: {error}"))
-        })?;
-        let bytes = std::fs::read(&resolved).map_err(|error| {
-            PrepareError::new(PrepareErrorKind::Io, format!("read {path}: {error}"))
-        })?;
+        let controlled = read_controlled_file(ctx.workspace, path)
+            .map_err(|error| PrepareError::new(PrepareErrorKind::Io, error))?;
+        let bytes = controlled.bytes;
         std::str::from_utf8(&bytes).map_err(|error| {
             PrepareError::new(
                 PrepareErrorKind::Io,
@@ -120,7 +123,10 @@ impl Tool for ReadFile {
             })
             .unwrap_or_default();
         let selected = std::str::from_utf8(selected).expect("slice of validated UTF-8");
-        let path = normalized_relative_path(ctx.workspace, &resolved)?;
+        let path = normalized_relative_path(
+            ctx.workspace,
+            &ctx.workspace.root().join(controlled.relative),
+        )?;
 
         let mut observation = FileObservation {
             path,
