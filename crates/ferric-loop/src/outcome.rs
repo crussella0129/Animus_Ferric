@@ -36,6 +36,9 @@ pub enum StopReason {
     Interrupted,
     /// A required hook script failed.
     HookFailed,
+    /// The model identified one material ambiguity that requires an explicit
+    /// user answer before the original objective can continue.
+    NeedsInput,
 }
 
 impl StopReason {
@@ -49,6 +52,12 @@ impl StopReason {
             self,
             StopReason::FinalText | StopReason::TaskComplete | StopReason::PlanSubmitted
         )
+    }
+
+    /// Whether this stop is an operational failure. A clarification pause is
+    /// incomplete but intentional, so it must not fire failure hooks.
+    pub fn is_failure(self) -> bool {
+        !self.is_success() && self != StopReason::NeedsInput
     }
 
     pub fn as_str(self) -> &'static str {
@@ -66,6 +75,7 @@ impl StopReason {
             StopReason::TruncatedAction => "truncated_action",
             StopReason::Interrupted => "interrupted",
             StopReason::HookFailed => "hook_failed",
+            StopReason::NeedsInput => "needs_input",
         }
     }
 }
@@ -95,9 +105,13 @@ mod tests {
             StopReason::TruncatedAction,
             StopReason::Interrupted,
             StopReason::HookFailed,
+            StopReason::NeedsInput,
         ] {
             assert!(!stop.is_success(), "{stop:?}");
         }
+
+        assert!(!StopReason::NeedsInput.is_failure());
+        assert!(StopReason::ProviderError.is_failure());
     }
 }
 
@@ -108,4 +122,12 @@ pub struct LoopOutcome {
     pub final_text: Option<String>,
     pub stop: StopReason,
     pub turns: u32,
+    pub needs_input: Option<NeedsInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NeedsInput {
+    pub request: ferric_core::UserInputRequest,
+    /// Opaque id of the new trace that must be resumed with the answer.
+    pub continuation_id: String,
 }

@@ -346,6 +346,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: config.hooks.clone(),

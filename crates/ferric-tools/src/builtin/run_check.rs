@@ -165,9 +165,21 @@ impl Tool for RunCheck {
             .get(name)
             .ok_or_else(|| format!("unknown authorized check `{name}`"))?;
 
-        super::blocking::block_on_ambient("run_check", async {
-            run_resolved_check(name, check, ctx.workspace.root()).await
-        })?
+        if tokio::runtime::Handle::try_current().is_ok() {
+            super::blocking::block_on_ambient("run_check", async {
+                run_resolved_check(name, check, ctx.workspace.root()).await
+            })?
+        } else {
+            // `ferric-loop` is executor-agnostic and its deterministic/mock
+            // driver intentionally has no ambient Tokio runtime. A named
+            // verification check is still a synchronous Tool operation, so it
+            // can safely own a short-lived current-thread runtime here.
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| format!("run_check runtime creation failed: {error}"))?
+                .block_on(run_resolved_check(name, check, ctx.workspace.root()))
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ferric_core::{ActionProtocol, FerricError, MediaPart, Message, RunPolicy};
+use ferric_core::{ActionProtocol, FerricError, MediaPart, RunPolicy, UserInputRequest};
 use ferric_guard::Workspace;
 use ferric_provider::{
     CompletionRequest, Constraint, Provider, SamplingParams, StreamDelta, ToolDescriptor,
@@ -9,7 +9,7 @@ use ferric_tools::{CheckRecord, ExecuteOutcome, Registry};
 use ferric_trace::{Event, JsonlSink};
 use tracing::{debug, info, instrument, warn};
 
-use crate::outcome::{LoopOutcome, StopReason};
+use crate::outcome::{LoopOutcome, NeedsInput, StopReason};
 use crate::projector::TraceProjector;
 
 /// Injectable clock for backoff.
@@ -65,6 +65,10 @@ pub struct RunArgs<'a> {
     pub media: Vec<MediaPart>,
     pub stream_sink: Option<&'a (dyn Fn(StreamDelta) + Sync)>,
     pub resume: Option<crate::replay::ReplayedState>,
+    /// Explicit answer to a pending `request_user_input` pause. Only valid
+    /// together with `resume`; it is intentionally distinct from a generic
+    /// goal-amendment prompt.
+    pub answer: Option<&'a str>,
     pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub provenance: ferric_guard::Provenance,
     pub sink_policy: ferric_guard::SinkPolicy,
@@ -85,7 +89,11 @@ pub struct LoopState<'a> {
     pub args: RunArgs<'a>,
     pub sink: &'a mut JsonlSink,
     pub projector: TraceProjector,
+    /// Absolute id assigned to the next turn across resume boundaries.
     pub turns: u32,
+    /// Budget consumption in this process run. Resume always gets a fresh
+    /// policy budget without reusing absolute turn ids.
+    pub turns_this_run: u32,
     pub offered_names: Vec<String>,
     pub native_tools: Vec<ToolDescriptor>,
     pub repetition: crate::repetition::RepetitionGuard,
@@ -98,6 +106,80 @@ pub struct LoopState<'a> {
 }
 
 impl<'a> LoopState<'a> {
+    fn commit_turn(
+        &mut self,
+        turn: u32,
+        dispatched: usize,
+        errored: usize,
+        stop: Option<StopReason>,
+        snapshot_commit: Option<String>,
+    ) -> Result<(), FerricError> {
+        let committed = Event::TurnCommitted {
+            turn,
+            dispatched: dispatched as u32,
+            errored: errored as u32,
+            stop_reason: stop.map(|reason| reason.as_str().to_string()),
+            snapshot_commit,
+        };
+        self.sink.write_event(committed.clone())?;
+        self.projector.step(&committed);
+        Ok(())
+    }
+
+    fn record_synthetic_result(
+        &mut self,
+        call: &ferric_core::ToolCall,
+        output: String,
+        is_error: bool,
+    ) -> Result<(), FerricError> {
+        let tc = Event::ToolCall {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            args: call.args.clone(),
+        };
+        self.sink.write_event(tc.clone())?;
+        self.projector.step(&tc);
+        let tr = Event::ToolResult {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            output,
+            is_error,
+            duration_ms: 0,
+        };
+        self.sink.write_event(tr.clone())?;
+        self.projector.step(&tr);
+        Ok(())
+    }
+
+    fn completion_evidence(&self) -> (Vec<String>, Vec<String>) {
+        let required = self.args.registry.required_checks().to_vec();
+        let fresh = required
+            .iter()
+            .filter(|name| {
+                self.projector.passed_checks.get(*name) == Some(&self.projector.mutation_epoch)
+            })
+            .cloned()
+            .collect();
+        (required, fresh)
+    }
+
+    fn record_completion_gate(
+        &mut self,
+        required_checks: Vec<String>,
+        fresh_checks: Vec<String>,
+        passed: bool,
+    ) -> Result<(), FerricError> {
+        let event = Event::CompletionGate {
+            mutation_epoch: self.projector.mutation_epoch,
+            required_checks,
+            fresh_checks,
+            decision: if passed { "passed" } else { "blocked" }.to_string(),
+        };
+        self.sink.write_event(event.clone())?;
+        self.projector.step(&event);
+        Ok(())
+    }
+
     #[allow(clippy::collapsible_if)]
     #[instrument(level = "debug", name = "turn", skip_all, fields(turn = self.turns))]
     pub async fn step(&mut self) -> Result<TurnOutcome, FerricError> {
@@ -108,7 +190,7 @@ impl<'a> LoopState<'a> {
             }
         }
 
-        if self.turns >= u32::from(self.args.policy.max_turns) {
+        if self.turns_this_run >= u32::from(self.args.policy.max_turns) {
             info!(
                 max_turns = self.args.policy.max_turns,
                 "turn budget exhausted; stopping"
@@ -132,6 +214,7 @@ impl<'a> LoopState<'a> {
 
         let turn = self.turns;
         self.turns += 1;
+        self.turns_this_run += 1;
         let start_event = Event::TurnStart { turn };
         self.sink.write_event(start_event.clone())?;
         self.projector.step(&start_event);
@@ -253,16 +336,18 @@ impl<'a> LoopState<'a> {
         self.projector.step(&turn_end);
 
         let vcs = ferric_vcs::Vcs::new(self.args.workspace.root());
-        if let Err(e) = vcs.snapshot(self.sink.session(), turn) {
-            // debug, not warn: in a non-git workspace this fires every turn, so
-            // a WARN would break quiet-by-default. The failure is still recorded
-            // as a trace Note below (the durable record); revert is simply
-            // unavailable for this turn.
-            debug!(error = %e, turn, "vcs snapshot failed (revert unavailable for this turn)");
-            self.sink.write_event(Event::Note {
-                text: format!("vcs snapshot failed: {e}"),
-            })?;
-        }
+        let snapshot_commit = match vcs.snapshot(self.sink.session(), turn) {
+            Ok(commit) => Some(commit),
+            Err(e) => {
+                // debug, not warn: in a non-git workspace this fires every
+                // turn. The durable note still explains why revert is absent.
+                debug!(error = %e, turn, "vcs snapshot failed (revert unavailable for this turn)");
+                self.sink.write_event(Event::Note {
+                    text: format!("vcs snapshot failed: {e}"),
+                })?;
+                None
+            }
+        };
 
         self.last_input_tokens = completion.input_tokens;
 
@@ -270,10 +355,24 @@ impl<'a> LoopState<'a> {
             || self.args.protocol == ActionProtocol::Plan)
             && completion.truncated
         {
+            let proposed = Event::ActionsProposed {
+                turn,
+                calls: Vec::new(),
+            };
+            self.sink.write_event(proposed.clone())?;
+            self.projector.step(&proposed);
             if self.truncated_once {
+                self.commit_turn(
+                    turn,
+                    0,
+                    0,
+                    Some(StopReason::TruncatedAction),
+                    snapshot_commit,
+                )?;
                 return Ok(TurnOutcome::Stop(StopReason::TruncatedAction));
             }
             self.truncated_once = true;
+            self.commit_turn(turn, 0, 0, None, snapshot_commit)?;
             return Ok(TurnOutcome::Continue);
         }
 
@@ -299,6 +398,13 @@ impl<'a> LoopState<'a> {
             }
         };
 
+        let proposed = Event::ActionsProposed {
+            turn,
+            calls: actions.clone(),
+        };
+        self.sink.write_event(proposed.clone())?;
+        self.projector.step(&proposed);
+
         if actions.is_empty() {
             // Record WHY there was no action. Without this a grammar failure and
             // a genuinely empty completion are indistinguishable in the trace,
@@ -319,14 +425,114 @@ impl<'a> LoopState<'a> {
                     .as_deref()
                     .is_some_and(|t| !t.trim().is_empty());
             if is_native_final {
+                let (required, fresh) = self.completion_evidence();
+                if !required.is_empty() {
+                    let passed = required.len() == fresh.len();
+                    self.record_completion_gate(required, fresh, passed)?;
+                    if !passed {
+                        self.commit_turn(turn, 0, 0, None, snapshot_commit)?;
+                        self.fire_post_turn()?;
+                        return Ok(TurnOutcome::Continue);
+                    }
+                }
+                self.commit_turn(turn, 0, 0, Some(StopReason::FinalText), snapshot_commit)?;
                 self.fire_post_turn()?;
                 return Ok(TurnOutcome::Stop(StopReason::FinalText));
             }
             if self.nudged_for_no_action {
+                self.commit_turn(
+                    turn,
+                    0,
+                    0,
+                    Some(StopReason::EmptyCompletion),
+                    snapshot_commit,
+                )?;
                 return Ok(TurnOutcome::Stop(StopReason::EmptyCompletion));
             }
             self.nudged_for_no_action = true;
+            self.commit_turn(turn, 0, 0, None, snapshot_commit)?;
             return Ok(TurnOutcome::Continue);
+        }
+
+        // Clarification is a control transition, not an executable tool. It
+        // must be intercepted before any action-shape guard so the act of
+        // declaring ambiguity cannot be mistaken for repetition or flailing.
+        if actions
+            .iter()
+            .any(|call| crate::terminator::is_request_user_input(&call.name))
+        {
+            if actions.len() != 1 {
+                let output = "request_user_input must be the only action in its turn; no calls were executed"
+                    .to_string();
+                for call in &actions {
+                    self.record_synthetic_result(call, output.clone(), true)?;
+                }
+                let dispatched = actions.len();
+                let errored = dispatched;
+                let failure_stop = match self.failure.observe_turn(dispatched, errored) {
+                    crate::repetition::Verdict::Proceed => None,
+                    crate::repetition::Verdict::Warn => {
+                        let event = Event::FailureGuard {
+                            action: "warned".to_string(),
+                        };
+                        self.sink.write_event(event.clone())?;
+                        self.projector.step(&event);
+                        None
+                    }
+                    crate::repetition::Verdict::Stop => {
+                        let event = Event::FailureGuard {
+                            action: "stopped".to_string(),
+                        };
+                        self.sink.write_event(event.clone())?;
+                        self.projector.step(&event);
+                        Some(StopReason::RepeatedFailure)
+                    }
+                };
+                self.commit_turn(turn, dispatched, errored, failure_stop, snapshot_commit)?;
+                self.fire_post_turn()?;
+                return Ok(failure_stop.map_or(TurnOutcome::Continue, TurnOutcome::Stop));
+            }
+
+            let call = &actions[0];
+            match crate::terminator::request_of(&call.args) {
+                Ok(request) => {
+                    self.record_synthetic_result(
+                        call,
+                        "user input requested; session paused until an answer is supplied"
+                            .to_string(),
+                        false,
+                    )?;
+                    self.projector.pending_input = Some(request);
+                    self.commit_turn(turn, 1, 0, Some(StopReason::NeedsInput), snapshot_commit)?;
+                    self.fire_post_turn()?;
+                    return Ok(TurnOutcome::Stop(StopReason::NeedsInput));
+                }
+                Err(error) => {
+                    self.record_synthetic_result(call, error.to_string(), true)?;
+                    let failure_stop = match self.failure.observe_turn(1, 1) {
+                        crate::repetition::Verdict::Proceed => None,
+                        crate::repetition::Verdict::Warn => {
+                            let event = Event::FailureGuard {
+                                action: "warned".to_string(),
+                            };
+                            self.sink.write_event(event.clone())?;
+                            self.projector.step(&event);
+                            None
+                        }
+                        crate::repetition::Verdict::Stop => {
+                            let event = Event::FailureGuard {
+                                action: "stopped".to_string(),
+                            };
+                            self.sink.write_event(event.clone())?;
+                            self.projector.step(&event);
+                            Some(StopReason::RepeatedFailure)
+                        }
+                    };
+                    self.commit_turn(turn, 1, 1, failure_stop, snapshot_commit)?;
+                    self.fire_post_turn()?;
+                    return Ok(failure_stop.map_or(TurnOutcome::Continue, TurnOutcome::Stop));
+                }
+            }
         }
 
         match self.repetition.observe(&actions) {
@@ -345,6 +551,13 @@ impl<'a> LoopState<'a> {
                 };
                 self.sink.write_event(evt.clone())?;
                 self.projector.step(&evt);
+                self.commit_turn(
+                    turn,
+                    0,
+                    0,
+                    Some(StopReason::RepetitionGuard),
+                    snapshot_commit,
+                )?;
                 return Ok(TurnOutcome::Stop(StopReason::RepetitionGuard));
             }
         }
@@ -368,6 +581,7 @@ impl<'a> LoopState<'a> {
                 };
                 self.sink.write_event(evt.clone())?;
                 self.projector.step(&evt);
+                self.commit_turn(turn, 0, 0, Some(StopReason::NoProgress), snapshot_commit)?;
                 return Ok(TurnOutcome::Stop(StopReason::NoProgress));
             }
         }
@@ -395,17 +609,18 @@ impl<'a> LoopState<'a> {
                 };
                 self.sink.write_event(evt.clone())?;
                 self.projector.step(&evt);
+                self.commit_turn(turn, 0, 0, Some(StopReason::Oscillation), snapshot_commit)?;
                 return Ok(TurnOutcome::Stop(StopReason::Oscillation));
             }
         }
 
-        let mut terminate_with: Option<String> = None;
+        let mut terminate_with: Option<(ferric_core::ToolCall, String)> = None;
         let mut plan_terminate_with: Option<String> = None;
         let mut dispatched = 0usize;
         let mut errored = 0usize;
         for call in &actions {
             if crate::terminator::is_task_complete(&call.name) {
-                terminate_with = Some(crate::terminator::summary_of(&call.args));
+                terminate_with = Some((call.clone(), crate::terminator::summary_of(&call.args)));
                 let tc = Event::ToolCall {
                     id: call.id.clone(),
                     name: call.name.clone(),
@@ -444,8 +659,9 @@ impl<'a> LoopState<'a> {
             // human was being asked twice about one call (ADR-079). Now they are
             // asked once, here, with the taint disclosed in the preview; an
             // approval here carries through to the sink gate below.
+            let permission = self.args.registry.permission_of(&call.name);
             let mutating = matches!(
-                self.args.registry.permission_of(&call.name),
+                permission,
                 Some(ferric_guard::PermissionLevel::Write)
                     | Some(ferric_guard::PermissionLevel::Execute)
             );
@@ -495,6 +711,28 @@ impl<'a> LoopState<'a> {
                 self.sink.write_event(evt.clone())?;
                 self.projector.step(&evt);
             }
+            if !is_error {
+                if call.name == "run_check" {
+                    if let Some(name) = call.args.get("name").and_then(|value| value.as_str()) {
+                        let evidence = Event::VerificationCheckPassed {
+                            turn,
+                            name: name.to_string(),
+                            mutation_epoch: self.projector.mutation_epoch,
+                        };
+                        self.sink.write_event(evidence.clone())?;
+                        self.projector.step(&evidence);
+                    }
+                } else if mutating {
+                    let mutation_epoch = self.projector.mutation_epoch.saturating_add(1);
+                    let mutation = Event::WorkspaceMutation {
+                        turn,
+                        tool: call.name.clone(),
+                        mutation_epoch,
+                    };
+                    self.sink.write_event(mutation.clone())?;
+                    self.projector.step(&mutation);
+                }
+            }
             let tr = Event::ToolResult {
                 id: call.id.clone(),
                 name: call.name.clone(),
@@ -519,17 +757,53 @@ impl<'a> LoopState<'a> {
             }
         }
 
-        if let Some(summary) = terminate_with {
-            self.projector.commit_pending();
-            self.projector.last_text = Some(summary);
+        if let Some((call, summary)) = terminate_with {
+            let (required, fresh) = self.completion_evidence();
+            let passed = required.len() == fresh.len();
+            if !required.is_empty() {
+                self.record_completion_gate(required.clone(), fresh.clone(), passed)?;
+            }
+            if passed {
+                self.commit_turn(
+                    turn,
+                    dispatched,
+                    errored,
+                    Some(StopReason::TaskComplete),
+                    snapshot_commit,
+                )?;
+                self.projector.last_text = Some(summary);
 
-            self.fire_post_turn()?;
+                self.fire_post_turn()?;
 
-            return Ok(TurnOutcome::Stop(StopReason::TaskComplete));
+                return Ok(TurnOutcome::Stop(StopReason::TaskComplete));
+            }
+
+            let output = crate::projector::completion_gate_message(
+                self.projector.mutation_epoch,
+                &required,
+                &fresh,
+            );
+            let result = Event::ToolResult {
+                id: call.id,
+                name: call.name,
+                output,
+                is_error: true,
+                duration_ms: 0,
+            };
+            self.sink.write_event(result.clone())?;
+            self.projector.step(&result);
+            dispatched += 1;
+            errored += 1;
         }
 
         if let Some(plan) = plan_terminate_with {
-            self.projector.commit_pending();
+            self.commit_turn(
+                turn,
+                dispatched,
+                errored,
+                Some(StopReason::PlanSubmitted),
+                snapshot_commit,
+            )?;
             self.projector.last_text = Some(plan);
 
             self.fire_post_turn()?;
@@ -557,10 +831,18 @@ impl<'a> LoopState<'a> {
                     };
                     self.sink.write_event(evt.clone())?;
                     self.projector.step(&evt);
+                    self.commit_turn(
+                        turn,
+                        dispatched,
+                        errored,
+                        Some(StopReason::RepeatedFailure),
+                        snapshot_commit,
+                    )?;
                     return Ok(TurnOutcome::Stop(StopReason::RepeatedFailure));
                 }
             }
         }
+        self.commit_turn(turn, dispatched, errored, None, snapshot_commit)?;
         self.fire_post_turn()?;
 
         Ok(TurnOutcome::Continue)
@@ -596,6 +878,44 @@ pub async fn run(
     sink: &mut JsonlSink,
     prompt: Option<&str>,
 ) -> Result<LoopOutcome, FerricError> {
+    if prompt.is_some() && args.answer.is_some() {
+        return Err(FerricError::InvalidInput(
+            "a resume cannot supply both a generic prompt and --answer".to_string(),
+        ));
+    }
+    match &args.resume {
+        Some(replayed) => {
+            crate::replay::validate_resume_target(replayed, args.workspace.root(), args.protocol)
+                .map_err(|error| FerricError::InvalidInput(error.to_string()))?;
+            match (&replayed.pending_input, args.answer) {
+                (Some(_), None) => {
+                    return Err(FerricError::InvalidInput(
+                        "this continuation is waiting for user input; supply a non-empty answer"
+                            .to_string(),
+                    ));
+                }
+                (Some(_), Some(answer)) if answer.trim().is_empty() => {
+                    return Err(FerricError::InvalidInput(
+                        "the clarification answer must not be empty".to_string(),
+                    ));
+                }
+                (None, Some(_)) => {
+                    return Err(FerricError::InvalidInput(
+                        "--answer is only valid for a continuation waiting for user input"
+                            .to_string(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        None if args.answer.is_some() => {
+            return Err(FerricError::InvalidInput(
+                "--answer requires a resumed session".to_string(),
+            ));
+        }
+        None => {}
+    }
+
     // The projector's model-facing cap is not set here: it comes from the
     // `PolicySelected` event below, which carries the registry's value. That
     // is the point of ADR-093 — replay and `trace verify` have only the trace,
@@ -616,7 +936,10 @@ pub async fn run(
         max_tools: u32::from(args.policy.max_tools),
         prompt_budget_tokens: args.policy.prompt_budget_tokens,
         max_output_tokens: args.policy.max_output_tokens,
-        truncation_limit: args.registry.truncation_limit(),
+        truncation_limit: args.resume.as_ref().map_or_else(
+            || args.registry.truncation_limit(),
+            |state| state.truncation_limit,
+        ),
         tier_source: args.policy.tier_source.label().to_string(),
     };
     sink.write_event(policy_selected.clone())?;
@@ -638,10 +961,48 @@ pub async fn run(
         Some(replayed) => {
             projector.messages = replayed.messages.clone();
             projector.turns = replayed.turns;
+            projector.next_turn = replayed.next_turn;
             projector.last_text = replayed.last_text.clone();
             projector.protocol = Some(replayed.protocol);
-            projector.head_len = replayed.messages.len();
-            replayed.turns
+            projector.head_len = replayed.head_len;
+            projector.committed_turn_starts = replayed.committed_turn_starts.clone();
+            projector.guard_history = replayed.guard_history.clone();
+            projector.nudged_for_no_action = replayed.nudged_for_no_action;
+            projector.truncated_once = replayed.truncated_once;
+            projector.last_input_tokens = replayed.last_input_tokens;
+            projector.pending_input = replayed.pending_input.clone();
+            projector.mutation_epoch = replayed.mutation_epoch;
+            projector.passed_checks = replayed.passed_checks.clone();
+
+            let checkpoint = Event::RecoveryCheckpoint {
+                state: projector.checkpoint(),
+            };
+            sink.write_event(checkpoint.clone())?;
+            projector.step(&checkpoint);
+
+            let amendment =
+                if let (Some(request), Some(answer)) = (&replayed.pending_input, args.answer) {
+                    Some(format_clarification_answer(request, answer))
+                } else {
+                    prompt.map(str::to_string)
+                };
+            if let Some(user) = amendment {
+                let resumed = Event::ResumePrompt {
+                    user,
+                    media: args.media.clone(),
+                };
+                sink.write_event(resumed.clone())?;
+                projector.step(&resumed);
+                // The projector atomically consumes pending input when the
+                // durable ResumePrompt is applied. The second checkpoint makes
+                // that transition self-contained for later resume chains.
+                let anchored = Event::RecoveryCheckpoint {
+                    state: projector.checkpoint(),
+                };
+                sink.write_event(anchored.clone())?;
+                projector.step(&anchored);
+            }
+            replayed.next_turn
         }
         None => {
             let mut system = args
@@ -653,7 +1014,9 @@ pub async fn run(
                 for t in &registry_tools {
                     system.push_str(&format!("- {}: {}\n", t.name, t.description));
                 }
-                system.push_str("- task_complete: Finish the task and provide a summary.\n");
+                for control in crate::terminator::control_descriptors(args.protocol) {
+                    system.push_str(&format!("- {}: {}\n", control.name, control.description));
+                }
             }
 
             let prompt_text = prompt.ok_or_else(|| {
@@ -672,43 +1035,48 @@ pub async fn run(
         }
     };
 
-    if args.resume.is_some()
-        && let Some(extra) = prompt
-    {
-        projector.messages.push(Message::user(extra));
-    }
-
     let mut offered_names: Vec<String> = registry_tools.iter().map(|t| t.name.clone()).collect();
-    if args.protocol == ActionProtocol::Plan {
-        offered_names.push(crate::terminator::SUBMIT_PLAN.to_string());
-    } else {
-        offered_names.push(crate::terminator::TASK_COMPLETE.to_string());
-    }
+    let controls = crate::terminator::control_descriptors(args.protocol);
+    offered_names.extend(controls.iter().map(|control| control.name.clone()));
 
     let native_tools: Vec<ToolDescriptor> = {
         let mut v = registry_tools.clone();
-        if args.protocol == ActionProtocol::Plan {
-            v.push(crate::terminator::plan_descriptor());
-        } else {
-            v.push(crate::terminator::descriptor());
-        }
+        v.extend(controls);
         v
     };
+
+    let mut repetition = crate::repetition::RepetitionGuard::new();
+    let mut progress = crate::progress::ProgressGuard::new();
+    let mut failure = crate::failure::FailureGuard::new();
+    let mut oscillation = crate::oscillation::OscillationGuard::new();
+    for guarded in &projector.guard_history {
+        let _ = repetition.observe(&guarded.calls);
+        let _ = progress.observe(&guarded.calls);
+        let _ = oscillation.observe(&guarded.calls);
+        if guarded.dispatched > 0 {
+            let _ = failure.observe_turn(guarded.dispatched as usize, guarded.errored as usize);
+        }
+    }
+
+    let nudged_for_no_action = projector.nudged_for_no_action;
+    let truncated_once = projector.truncated_once;
+    let last_input_tokens = projector.last_input_tokens;
 
     let mut state = LoopState {
         args,
         sink,
         projector,
         turns,
+        turns_this_run: 0,
         offered_names,
         native_tools,
-        repetition: crate::repetition::RepetitionGuard::new(),
-        progress: crate::progress::ProgressGuard::new(),
-        failure: crate::failure::FailureGuard::new(),
-        oscillation: crate::oscillation::OscillationGuard::new(),
-        nudged_for_no_action: false,
-        truncated_once: false,
-        last_input_tokens: None,
+        repetition,
+        progress,
+        failure,
+        oscillation,
+        nudged_for_no_action,
+        truncated_once,
+        last_input_tokens,
     };
 
     let stop = loop {
@@ -726,10 +1094,20 @@ pub async fn run(
     state.sink.write_event(session_end.clone())?;
     state.projector.step(&session_end);
 
-    state.projector.commit_pending();
+    if !stop.is_success() {
+        let checkpoint = Event::RecoveryCheckpoint {
+            state: state.projector.checkpoint(),
+        };
+        state.sink.write_event(checkpoint.clone())?;
+        state.projector.step(&checkpoint);
+        let paused = Event::SessionPaused {
+            reason: stop.as_str().to_string(),
+        };
+        state.sink.write_event(paused.clone())?;
+        state.projector.step(&paused);
+    }
 
-    let is_error = !stop.is_success();
-    if is_error {
+    if stop.is_failure() {
         if let Some(hooks) = &state.args.hooks {
             if let Some(cmd) = &hooks.on_error {
                 if let Err(e) = crate::hooks_exec::run_hook(cmd, state.args.workspace.root()) {
@@ -743,11 +1121,36 @@ pub async fn run(
         }
     }
 
+    let needs_input = if stop == StopReason::NeedsInput {
+        state
+            .projector
+            .pending_input
+            .clone()
+            .map(|request| NeedsInput {
+                request,
+                continuation_id: state.sink.session().to_string(),
+            })
+    } else {
+        None
+    };
+
     Ok(LoopOutcome {
-        final_text: state.projector.last_text,
+        final_text: (stop != StopReason::NeedsInput)
+            .then_some(state.projector.last_text)
+            .flatten(),
         stop,
         turns: state.turns,
+        needs_input,
     })
+}
+
+fn format_clarification_answer(request: &UserInputRequest, answer: &str) -> String {
+    format!(
+        "[goal amendment: clarification answer]\nQuestion: {}\nContext: {}\nUser answer: {}\nContinue the original objective; this answer amends it and does not replace it.",
+        request.question,
+        request.context,
+        answer.trim()
+    )
 }
 
 fn registry_tools(

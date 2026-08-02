@@ -24,7 +24,10 @@ pub fn trace_dir(workspace_root: &Path) -> PathBuf {
     workspace_root.join(".ferric").join("trace")
 }
 
-pub use event::{Event, TRACE_SCHEMA_VERSION, TraceEvent};
+pub use event::{
+    Event, GuardTurn, RECOVERY_CHECKPOINT_VERSION, RecoveryCheckpointV1, TRACE_SCHEMA_VERSION,
+    TraceEvent, TurnBoundary,
+};
 pub use reader::{ParsedEvent, TraceReader, TraceRecord};
 pub use sink::JsonlSink;
 
@@ -70,6 +73,46 @@ mod tests {
                 user: "read a.txt".to_string(),
                 media: Vec::new(),
             },
+            Event::RecoveryCheckpoint {
+                state: RecoveryCheckpointV1 {
+                    version: RECOVERY_CHECKPOINT_VERSION,
+                    messages: vec![
+                        ferric_core::Message::system("You are Ferric."),
+                        ferric_core::Message::user("read a.txt"),
+                    ],
+                    next_turn: 1,
+                    last_text: Some("working".to_string()),
+                    head_len: 2,
+                    committed_turn_starts: vec![TurnBoundary {
+                        turn: 0,
+                        message_index: 2,
+                    }],
+                    guard_history: vec![GuardTurn {
+                        turn: 0,
+                        calls: vec![ferric_core::ToolCall {
+                            id: "tc-0".to_string(),
+                            name: "read_file".to_string(),
+                            args: json!({"path": "a.txt"}),
+                        }],
+                        dispatched: 1,
+                        errored: 0,
+                    }],
+                    nudged_for_no_action: false,
+                    truncated_once: false,
+                    last_input_tokens: Some(50),
+                    pending_input: Some(ferric_core::UserInputRequest {
+                        question: "Which branch?".to_string(),
+                        context: "Two branches are available.".to_string(),
+                        options: vec!["dev".to_string(), "main".to_string()],
+                    }),
+                    mutation_epoch: 2,
+                    passed_checks: std::collections::BTreeMap::from([("unit".to_string(), 2)]),
+                },
+            },
+            Event::ResumePrompt {
+                user: "Use dev.".to_string(),
+                media: Vec::new(),
+            },
             Event::TurnStart { turn: 0 },
             Event::PromptAssembled {
                 turn: 0,
@@ -87,6 +130,14 @@ mod tests {
                 input_tokens: Some(50),
                 output_tokens: Some(12),
                 truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![ferric_core::ToolCall {
+                    id: "tc-1".to_string(),
+                    name: "read_file".to_string(),
+                    args: json!({"path": "a.txt"}),
+                }],
             },
             Event::RepetitionGuard {
                 action: "warned".to_string(),
@@ -109,6 +160,29 @@ mod tests {
                 is_error: false,
                 duration_ms: 3,
             },
+            Event::WorkspaceMutation {
+                turn: 0,
+                tool: "write_file".to_string(),
+                mutation_epoch: 2,
+            },
+            Event::VerificationCheckPassed {
+                turn: 0,
+                name: "unit".to_string(),
+                mutation_epoch: 2,
+            },
+            Event::TurnCommitted {
+                turn: 0,
+                dispatched: 1,
+                errored: 0,
+                stop_reason: None,
+                snapshot_commit: Some("0123456789abcdef".to_string()),
+            },
+            Event::CompletionGate {
+                mutation_epoch: 2,
+                required_checks: vec!["unit".to_string()],
+                fresh_checks: vec!["unit".to_string()],
+                decision: "passed".to_string(),
+            },
             Event::Note {
                 text: "checkpoint".to_string(),
             },
@@ -116,6 +190,9 @@ mod tests {
                 through_turn: 4,
                 dropped_turns: 5,
                 summary: "created a.txt and b.txt".to_string(),
+            },
+            Event::SessionPaused {
+                reason: "max_turns".to_string(),
             },
             Event::SessionEnd {
                 reason: "done".to_string(),
@@ -173,6 +250,30 @@ mod tests {
                 text: "hi".to_string()
             })
         );
+    }
+
+    #[test]
+    fn checkpoint_additive_collections_and_pending_input_default_when_omitted() {
+        let encoded = r#"{
+            "type":"recovery_checkpoint",
+            "state":{
+                "version":1,
+                "messages":[],
+                "next_turn":0,
+                "last_text":null,
+                "head_len":0,
+                "committed_turn_starts":[],
+                "nudged_for_no_action":false,
+                "truncated_once":false,
+                "last_input_tokens":null
+            }
+        }"#;
+        let event: Event = serde_json::from_str(encoded).unwrap();
+        let Event::RecoveryCheckpoint { state } = event else {
+            panic!("expected checkpoint");
+        };
+        assert!(state.guard_history.is_empty());
+        assert!(state.pending_input.is_none());
     }
 
     /// ADR-093 added `truncation_limit` to `policy_selected`. Every trace

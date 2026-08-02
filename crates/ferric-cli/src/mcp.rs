@@ -480,6 +480,7 @@ impl McpServer {
             media,
             stream_sink: Some(&sink_fn),
             resume,
+            answer: None,
             provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: self.config.hooks.clone(),

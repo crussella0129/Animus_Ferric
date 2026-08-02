@@ -316,6 +316,7 @@ pub mod server {
             media,
             stream_sink: sink_fn,
             resume: None,
+            answer: None,
             provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: None,

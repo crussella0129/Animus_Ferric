@@ -163,6 +163,7 @@ fn compaction_triggers_and_shrinks_next_prompt_assembled() {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             hooks: None,
         },
         &mut sink,
@@ -259,6 +260,7 @@ fn history_compacted_traced_after_triggering_turn_start() {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             hooks: None,
         },
         &mut sink,
@@ -325,9 +327,22 @@ fn resume_only_folds_new_post_resume_turns() {
             Message::tool_result("tc-old", "wrote old.txt"),
         ],
         turns: 1,
+        next_turn: 1,
         last_text: None,
         protocol: ActionProtocol::NativeTools,
+        truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: "orig".to_string(),
+        workspace: dir.path().to_path_buf(),
+        head_len: 4,
+        committed_turn_starts: Vec::new(),
+        guard_history: Vec::new(),
+        nudged_for_no_action: false,
+        truncated_once: false,
+        last_input_tokens: None,
+        pending_input: None,
+        mutation_epoch: 0,
+        passed_checks: std::collections::BTreeMap::new(),
+        pause_reason: None,
     };
     let replayed_prefix = replayed.messages.clone();
 
@@ -376,6 +391,7 @@ fn resume_only_folds_new_post_resume_turns() {
             media: Vec::new(),
             stream_sink: None,
             resume: Some(replayed),
+            answer: None,
             hooks: None,
         },
         &mut sink,
@@ -417,9 +433,22 @@ fn resume_seeds_compactor_numbering_consistently() {
             Message::user_with_media("do the task", Vec::new()),
         ],
         turns: 7,
+        next_turn: 7,
         last_text: None,
         protocol: ActionProtocol::NativeTools,
+        truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: "orig".to_string(),
+        workspace: dir.path().to_path_buf(),
+        head_len: 2,
+        committed_turn_starts: Vec::new(),
+        guard_history: Vec::new(),
+        nudged_for_no_action: false,
+        truncated_once: false,
+        last_input_tokens: None,
+        pending_input: None,
+        mutation_epoch: 0,
+        passed_checks: std::collections::BTreeMap::new(),
+        pause_reason: None,
     };
 
     let provider = MockProvider::new(vec![
@@ -467,6 +496,7 @@ fn resume_seeds_compactor_numbering_consistently() {
             media: Vec::new(),
             stream_sink: None,
             resume: Some(replayed),
+            answer: None,
             hooks: None,
         },
         &mut sink,
@@ -562,6 +592,7 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             hooks: None,
         },
         &mut sink1,
@@ -574,15 +605,9 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
         "script exhausted on turn 4's own request"
     );
 
-    // Simulate a kill: drop the trailing SessionEnd line (sprint 39's C-010
-    // technique) — turn 4 never got a TurnEnd at all, so replay's existing
-    // dangling-turn discard correctly drops it; the fold (turns 0-1) and the
-    // preserved tail (turns 2-3) survive.
-    let content = std::fs::read_to_string(&trace_path).unwrap();
-    let mut lines: Vec<&str> = content.lines().collect();
-    assert_eq!(lines.pop().map(|l| l.contains("session_end")), Some(true));
-    std::fs::write(&trace_path, lines.join("\n") + "\n").unwrap();
-
+    // Provider failure is now an intentional recovery pause. Replay accepts
+    // the durable SessionEnd/checkpoint/SessionPaused tail directly; turn 4
+    // never got a TurnEnd and the checkpoint discards that dangling request.
     let replayed = replay(&trace_path).unwrap();
     // Precise, deterministic shrinkage proof: turns 0-3 each produced 2
     // messages (assistant + tool_result, no guard warnings) = 8, plus the
@@ -604,11 +629,9 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
     );
 
     // A second real run, resuming, finishes the task.
-    let dir2 = tempfile::tempdir().unwrap();
-    let workspace2 = Workspace::new(dir2.path()).unwrap();
     let mut registry2 = Registry::new();
     register_builtin_tools(&mut registry2);
-    let trace_path2 = dir2.path().join("trace.jsonl");
+    let trace_path2 = dir1.path().join("resume-trace.jsonl");
     let mut sink2 = JsonlSink::open(&trace_path2, "compact-e2e-continuation").unwrap();
     let provider2 = MockProvider::new(vec![tool_completion(vec![(
         "tc-5",
@@ -624,7 +647,7 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
             provenance: ferric_guard::Provenance::Clean,
             provider: &provider2,
             registry: &registry2,
-            workspace: &workspace2,
+            workspace: &workspace1,
             policy: &nano_policy(),
             protocol: ActionProtocol::NativeTools,
             sampling: SamplingParams::default(),
@@ -634,6 +657,7 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
             media: Vec::new(),
             stream_sink: None,
             resume: Some(replayed),
+            answer: None,
             hooks: None,
         },
         &mut sink2,

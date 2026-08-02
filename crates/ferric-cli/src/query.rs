@@ -117,6 +117,11 @@ pub struct QueryArgs {
     #[arg(long)]
     pub resume: Option<PathBuf>,
 
+    /// Answer a pending `request_user_input` clarification. Requires
+    /// `--resume` and cannot be combined with a new positional prompt.
+    #[arg(long, requires = "resume", conflicts_with = "prompt")]
+    pub answer: Option<String>,
+
     /// Workspace root (containment boundary). Default: current directory.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
@@ -820,14 +825,12 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     let resume = match &args.resume {
         Some(path) => match ferric_loop::replay(path) {
             Ok(replayed) => {
-                if replayed.protocol != config.protocol {
-                    eprintln!(
-                        "cannot resume {}: recorded protocol {:?} does not match this \
-                         invocation's resolved protocol {:?}",
-                        path.display(),
-                        replayed.protocol,
-                        config.protocol
-                    );
+                if let Err(error) = ferric_loop::validate_resume_target(
+                    &replayed,
+                    workspace.root(),
+                    config.protocol,
+                ) {
+                    eprintln!("cannot resume {}: {error}", path.display());
                     return ExitCode::FAILURE;
                 }
                 Some(replayed)
@@ -998,6 +1001,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         media: media_parts,
         stream_sink,
         resume,
+        answer: args.answer.as_deref(),
         provenance: ferric_guard::Provenance::Clean,
         sink_policy: args.sink_action.into_policy(),
         hooks: config.hooks.clone(),
@@ -1039,6 +1043,20 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         outcome.turns,
         trace_path.display()
     );
+    if let Some(needs_input) = &outcome.needs_input {
+        eprintln!("Question: {}", needs_input.request.question);
+        eprintln!("Context: {}", needs_input.request.context);
+        if !needs_input.request.options.is_empty() {
+            eprintln!("Options:");
+            for (index, option) in needs_input.request.options.iter().enumerate() {
+                eprintln!("  {}. {}", index + 1, option);
+            }
+        }
+        eprintln!(
+            "Resume: ferric query --resume \"{}\" --answer \"<answer>\"",
+            trace_path.display()
+        );
+    }
     if outcome.stop.is_success() {
         ExitCode::SUCCESS
     } else {
@@ -1207,6 +1225,7 @@ pub(crate) struct LoopSetup<'a> {
     pub media: Vec<MediaPart>,
     pub stream_sink: Option<&'a (dyn Fn(ferric_provider::StreamDelta) + Sync)>,
     pub resume: Option<ferric_loop::ReplayedState>,
+    pub answer: Option<&'a str>,
     pub provenance: ferric_guard::Provenance,
     pub sink_policy: ferric_guard::SinkPolicy,
     pub hooks: Option<ferric_core::HooksConfig>,
@@ -1234,6 +1253,7 @@ impl<'a> LoopSetup<'a> {
             media: self.media,
             stream_sink: self.stream_sink,
             resume: self.resume,
+            answer: self.answer,
             cancel_flag,
             provenance: self.provenance,
             sink_policy: self.sink_policy,
@@ -1611,6 +1631,7 @@ mod tests {
             media: Vec::new(),
             stream_sink: None,
             resume: None,
+            answer: None,
             provenance: ferric_guard::Provenance::Clean,
             sink_policy: ferric_guard::SinkPolicy::deny(),
             hooks: None,

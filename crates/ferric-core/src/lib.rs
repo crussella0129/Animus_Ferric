@@ -5,6 +5,7 @@ pub mod hooks;
 mod media;
 mod message;
 mod scale;
+mod user_input;
 
 pub use error::FerricError;
 pub use hooks::HooksConfig;
@@ -18,3 +19,4 @@ pub use scale::{
     default_truncation_limit, policy_for, policy_for_with_override, protocol_key, ring_for_tier,
     tier_decision, tier_for_level, tier_for_params,
 };
+pub use user_input::{UserInputRequest, UserInputValidationError};
