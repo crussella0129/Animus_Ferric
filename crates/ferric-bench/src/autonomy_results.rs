@@ -12,8 +12,148 @@ use serde::{Deserialize, Serialize};
 
 use crate::summary::{RunProvenance, SampleStats, Wilson95};
 use crate::verify::{CommandCheckResult, CommandCheckStatus};
+use ferric_core::HarnessPolicy;
 
-pub const AUTONOMY_RESULTS_SCHEMA_VERSION: u32 = 1;
+/// Version two adds orthogonal harness-policy/arm coordinates and paired-run
+/// evidence. Every new field has a serde default so historical version-one
+/// rows and summaries remain readable as single-arm legacy evidence.
+pub const AUTONOMY_RESULTS_SCHEMA_VERSION: u32 = 2;
+const STRICT_EVIDENCE_CONTEXT_SIZE: u32 = 8192;
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AutonomyArm {
+    /// Historical and current one-binary autonomy runs.
+    #[default]
+    Single,
+    Control,
+    Candidate,
+}
+
+impl AutonomyArm {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Control => "control",
+            Self::Candidate => "candidate",
+        }
+    }
+}
+
+/// One independent evaluation coordinate. Corpus `variant` remains a separate
+/// dimension; it is never overloaded with controller-policy or binary-arm
+/// identity.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AutonomyEvaluationCoordinate {
+    #[serde(default)]
+    pub arm: AutonomyArm,
+    #[serde(default)]
+    pub harness_policy: HarnessPolicy,
+}
+
+impl AutonomyEvaluationCoordinate {
+    pub const fn single_legacy() -> Self {
+        Self {
+            arm: AutonomyArm::Single,
+            harness_policy: HarnessPolicy::Legacy,
+        }
+    }
+
+    pub const fn paired() -> [Self; 2] {
+        [
+            Self {
+                arm: AutonomyArm::Control,
+                harness_policy: HarnessPolicy::Legacy,
+            },
+            Self {
+                arm: AutonomyArm::Candidate,
+                harness_policy: HarnessPolicy::Evidence,
+            },
+        ]
+    }
+
+    pub fn key(self) -> String {
+        format!("{}/{}", self.arm.label(), self.harness_policy.label())
+    }
+}
+
+/// Row-level provenance which was absent from schema v1. The default maps old
+/// rows to their exact historical meaning: one binary using legacy policy.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutonomyEvaluationProvenance {
+    #[serde(default)]
+    pub arm: AutonomyArm,
+    #[serde(default)]
+    pub harness_policy: HarnessPolicy,
+    #[serde(default)]
+    pub pair_id: Option<String>,
+    #[serde(default)]
+    pub pair_slot: Option<u8>,
+    #[serde(default)]
+    pub pair_order: Option<String>,
+    /// Digest of the canonical temporary-workspace identity. This establishes
+    /// pair independence without retaining a machine-specific path.
+    #[serde(default)]
+    pub workspace_instance_sha256: Option<String>,
+    /// Deterministic digest of sorted portable relative paths and file bytes,
+    /// captured after task materialization and before any child execution.
+    #[serde(default)]
+    pub initial_tree_sha256: Option<String>,
+    #[serde(default)]
+    pub child_binary_sha256: Option<String>,
+    #[serde(default)]
+    pub corpus_sha256: Option<String>,
+    #[serde(default)]
+    pub model_sha256: Option<String>,
+    /// Exact child-query literal, represented as text to avoid floating-point
+    /// provenance ambiguity.
+    #[serde(default)]
+    pub query_temperature: Option<String>,
+    #[serde(default)]
+    pub managed_server: Option<ManagedServerProvenance>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ManagedServerProvenance {
+    pub engine: String,
+    pub listener_base_url: String,
+    /// Canonical local model artifact identity established during live
+    /// validation.
+    pub model: Option<String>,
+    /// Exact `-m` value observed in the live engine argv.
+    #[serde(default)]
+    pub model_launch_argument: Option<String>,
+    #[serde(default)]
+    pub model_sha256: Option<String>,
+    pub context_size: Option<u32>,
+    pub sampling_seed: Option<i64>,
+    pub parallel_slots: Option<u32>,
+    #[serde(default)]
+    pub gpu_layers: Option<u32>,
+    /// Live process identity, not merely text copied from the runfile.
+    #[serde(default)]
+    pub pid: Option<u32>,
+    #[serde(default)]
+    pub listener_owner_pid: Option<u32>,
+    #[serde(default)]
+    pub listener_port: Option<u16>,
+    #[serde(default)]
+    pub engine_executable: Option<String>,
+    #[serde(default)]
+    pub engine_executable_sha256: Option<String>,
+    #[serde(default)]
+    pub engine_version: Option<String>,
+    #[serde(default)]
+    pub engine_argv: Option<Vec<String>>,
+}
+
+/// A typed assertion that trace structure was validated from the same retained
+/// byte snapshot whose path and SHA-256 are recorded in the segment row.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RetainedTraceValidation {
+    StructureValidated,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AutonomySegmentResult {
@@ -26,6 +166,8 @@ pub struct AutonomySegmentResult {
     /// Results-directory-relative retained trace path.
     pub trace_path: Option<String>,
     pub trace_sha256: Option<String>,
+    #[serde(default)]
+    pub trace_validation: Option<RetainedTraceValidation>,
     pub stderr_tail: String,
 }
 
@@ -56,6 +198,50 @@ pub struct AutonomyTraceMetrics {
     pub truncations: u32,
     pub provider_error_stops: u32,
     pub history_compactions: u32,
+    #[serde(default)]
+    pub observations_recorded: u32,
+    #[serde(default)]
+    pub file_observations: u32,
+    #[serde(default)]
+    pub search_observations: u32,
+    #[serde(default)]
+    pub find_observations: u32,
+    #[serde(default)]
+    pub controller_blocks: u32,
+    #[serde(default)]
+    pub blind_mutation_blocks: u32,
+    #[serde(default)]
+    pub same_turn_observation_blocks: u32,
+    #[serde(default)]
+    pub stale_observation_blocks: u32,
+    #[serde(default)]
+    pub unsupported_mutation_blocks: u32,
+    #[serde(default)]
+    pub repair_inspection_blocks: u32,
+    #[serde(default)]
+    pub no_effect_blocks: u32,
+    #[serde(default)]
+    pub syntax_regression_blocks: u32,
+    #[serde(default)]
+    pub repeated_check_blocks: u32,
+    #[serde(default)]
+    pub workspace_effects_recorded: u32,
+    #[serde(default)]
+    pub workspace_effect_paths: u32,
+    #[serde(default)]
+    pub verification_checks_recorded: u32,
+    #[serde(default)]
+    pub verification_checks_passed: u32,
+    #[serde(default)]
+    pub verification_checks_failed: u32,
+    #[serde(default)]
+    pub verification_repair_attempts: u32,
+    #[serde(default)]
+    pub distinct_failed_diagnostic_fingerprints: u32,
+    #[serde(default)]
+    pub controller_checkpoints: u32,
+    #[serde(default)]
+    pub recovery_packets_injected: u32,
     /// First absolute turn where at least 80% of this episode's tool calls had
     /// occurred. `None` when the episode made no tool calls.
     pub horizon_80_turn: Option<u32>,
@@ -73,6 +259,10 @@ pub struct AutonomyResultRow {
     pub task_name: String,
     pub category: String,
     pub variant: String,
+    #[serde(default)]
+    pub arm: AutonomyArm,
+    #[serde(default)]
+    pub harness_policy: HarnessPolicy,
     pub trial: u32,
     pub started_at_unix_ms: u64,
     pub finished_at_unix_ms: u64,
@@ -108,6 +298,8 @@ pub struct AutonomyResultRow {
     pub repository_brief_truncated: Option<bool>,
     pub server_state: String,
     pub provenance: RunProvenance,
+    #[serde(default)]
+    pub evaluation_provenance: AutonomyEvaluationProvenance,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -137,6 +329,36 @@ pub struct AutonomyToolSummary {
     /// Conditional association, not tool-call accuracy or causal tool impact.
     pub objective_completion_rate_when_used: f64,
     pub objective_wilson_95_when_used: Wilson95,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PolicyMechanismSummary {
+    pub harness_policy: HarnessPolicy,
+    pub scoreable_episodes: u32,
+    pub observations_recorded: u32,
+    pub file_observations: u32,
+    pub search_observations: u32,
+    pub find_observations: u32,
+    pub controller_blocks: u32,
+    pub blind_mutation_blocks: u32,
+    pub same_turn_observation_blocks: u32,
+    pub stale_observation_blocks: u32,
+    pub unsupported_mutation_blocks: u32,
+    pub repair_inspection_blocks: u32,
+    pub no_effect_blocks: u32,
+    pub syntax_regression_blocks: u32,
+    pub repeated_check_blocks: u32,
+    pub workspace_effects_recorded: u32,
+    pub workspace_effect_paths: u32,
+    pub verification_checks_recorded: u32,
+    pub verification_checks_passed: u32,
+    pub verification_checks_failed: u32,
+    pub verification_repair_attempts: u32,
+    /// Sum of per-episode distinct fingerprint counts. Digests are deliberately
+    /// not copied into aggregate output.
+    pub distinct_failed_diagnostic_fingerprints: u32,
+    pub controller_checkpoints: u32,
+    pub recovery_packets_injected: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -173,6 +395,12 @@ pub struct PassPowerSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PolicyPassPowerSummary {
+    pub harness_policy: HarnessPolicy,
+    pub summary: PassPowerSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RepositoryBriefComparison {
     pub paired_episodes: u32,
     pub recovery_wins: u32,
@@ -184,10 +412,54 @@ pub struct RepositoryBriefComparison {
     pub objective_rate_delta: Option<f64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PolicyRepositoryBriefComparison {
+    pub harness_policy: HarnessPolicy,
+    pub comparison: RepositoryBriefComparison,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PairedObjectiveSummary {
+    /// Expected task×variant×trial pairs, including excluded infrastructure
+    /// or incomplete pairs.
+    pub expected_pairs: u32,
+    /// Pairs with both arms, distinct fresh workspaces, valid coordinates, and
+    /// no infrastructure failure on either row.
+    pub eligible_pairs: u32,
+    pub excluded_pairs: u32,
+    pub control_wins: u32,
+    pub candidate_wins: u32,
+    pub both_completed: u32,
+    pub neither_completed: u32,
+    /// Candidate objective rate minus control objective rate on eligible pairs
+    /// only. An excluded control row is never counted as a model loss.
+    pub objective_rate_delta: Option<f64>,
+    /// Task IDs with at least one qualifying task/variant coordinate.
+    #[serde(default)]
+    pub candidate_tasks_at_least_two_of_three: Vec<String>,
+    /// Task/variant coordinates whose first three eligible paired trials
+    /// include at least two candidate objective completions.
+    #[serde(default)]
+    pub candidate_task_variants_at_least_two_of_three: Vec<String>,
+    pub task_evidence_threshold_met: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CoordinateProvenanceSummary {
+    pub coordinate: AutonomyEvaluationCoordinate,
+    pub provenance: RunProvenance,
+    #[serde(default)]
+    pub evaluation_provenance: AutonomyEvaluationProvenance,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AutonomyRunIssue {
     pub task_id: Option<String>,
     pub variant: Option<String>,
+    #[serde(default)]
+    pub arm: Option<AutonomyArm>,
+    #[serde(default)]
+    pub harness_policy: Option<HarnessPolicy>,
     pub trial: Option<u32>,
     pub message: String,
 }
@@ -204,12 +476,16 @@ pub struct AutonomyRunSummary {
     pub trials_requested: u32,
     pub expected_tasks: Vec<String>,
     pub expected_variants: Vec<String>,
+    #[serde(default)]
+    pub expected_coordinates: Vec<AutonomyEvaluationCoordinate>,
     pub expected_rows: u32,
     pub observed_rows: u32,
     pub complete: bool,
     pub infrastructure_clean: bool,
     pub internal_baseline_only: bool,
     pub provenance: Option<RunProvenance>,
+    #[serde(default)]
+    pub provenance_by_coordinate: Vec<CoordinateProvenanceSummary>,
     pub server_states: Vec<String>,
     pub issues: Vec<AutonomyRunIssue>,
     pub overall: AutonomyRateSummary,
@@ -217,12 +493,24 @@ pub struct AutonomyRunSummary {
     pub by_task_variant: Vec<AutonomyRateSummary>,
     pub by_category: Vec<AutonomyRateSummary>,
     pub by_variant: Vec<AutonomyRateSummary>,
+    #[serde(default)]
+    pub by_harness_policy: Vec<AutonomyRateSummary>,
+    #[serde(default)]
+    pub by_arm: Vec<AutonomyRateSummary>,
     pub by_tool: Vec<AutonomyToolSummary>,
+    #[serde(default)]
+    pub by_policy_mechanisms: Vec<PolicyMechanismSummary>,
     pub clarification: ClarificationSummary,
     pub recovery: RecoverySummary,
     pub resolved_at_1: AutonomyRateSummary,
     pub pass_power_3: PassPowerSummary,
+    #[serde(default)]
+    pub pass_power_3_by_policy: Vec<PolicyPassPowerSummary>,
     pub repository_brief_ab: RepositoryBriefComparison,
+    #[serde(default)]
+    pub repository_brief_ab_by_policy: Vec<PolicyRepositoryBriefComparison>,
+    #[serde(default)]
+    pub paired_objective: Option<PairedObjectiveSummary>,
     pub turns: SampleStats,
     pub input_tokens: SampleStats,
     pub output_tokens: SampleStats,
@@ -275,55 +563,134 @@ pub fn summarize_autonomy_run(
     rows: &[AutonomyResultRow],
     issues: Vec<AutonomyRunIssue>,
 ) -> AutonomyRunSummary {
+    summarize_autonomy_run_with_coordinates(
+        run_id,
+        suite_id,
+        suite_schema_version,
+        suite_sha256,
+        started_at_unix_ms,
+        finished_at_unix_ms,
+        trials_requested,
+        expected_tasks,
+        expected_task_categories,
+        expected_variants,
+        &[AutonomyEvaluationCoordinate::single_legacy()],
+        rows,
+        issues,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn summarize_autonomy_run_with_coordinates(
+    run_id: &str,
+    suite_id: &str,
+    suite_schema_version: u32,
+    suite_sha256: &str,
+    started_at_unix_ms: u64,
+    finished_at_unix_ms: u64,
+    trials_requested: u32,
+    expected_tasks: &[String],
+    expected_task_categories: &BTreeMap<String, String>,
+    expected_variants: &[String],
+    expected_coordinates: &[AutonomyEvaluationCoordinate],
+    rows: &[AutonomyResultRow],
+    issues: Vec<AutonomyRunIssue>,
+) -> AutonomyRunSummary {
     let run_rows: Vec<&AutonomyResultRow> =
         rows.iter().filter(|row| row.run_id == run_id).collect();
+    let coordinate_count = expected_coordinates.len() as u32;
     let expected_rows = trials_requested
         .saturating_mul(expected_tasks.len() as u32)
-        .saturating_mul(expected_variants.len() as u32);
+        .saturating_mul(expected_variants.len() as u32)
+        .saturating_mul(coordinate_count);
     let observed_coordinates: BTreeSet<_> = run_rows
         .iter()
-        .map(|row| (row.task_id.clone(), row.variant.clone(), row.trial))
+        .map(|row| {
+            (
+                row.task_id.clone(),
+                row.variant.clone(),
+                row.trial,
+                row.arm,
+                row.harness_policy,
+            )
+        })
         .collect();
-    let expected_coordinates: BTreeSet<_> = expected_tasks
+    let expected_row_coordinates: BTreeSet<_> = expected_tasks
         .iter()
         .flat_map(|task| {
             expected_variants.iter().flat_map(move |variant| {
-                (1..=trials_requested).map(move |trial| (task.clone(), variant.clone(), trial))
+                (1..=trials_requested).flat_map(move |trial| {
+                    expected_coordinates.iter().map(move |coordinate| {
+                        (
+                            task.clone(),
+                            variant.clone(),
+                            trial,
+                            coordinate.arm,
+                            coordinate.harness_policy,
+                        )
+                    })
+                })
             })
         })
         .collect();
     let expected_task_set: BTreeSet<_> = expected_tasks.iter().cloned().collect();
+    let expected_variant_set: BTreeSet<_> = expected_variants.iter().cloned().collect();
+    let expected_coordinate_set: BTreeSet<_> = expected_coordinates.iter().copied().collect();
+    let expected_dimensions_unique = trials_requested > 0
+        && !expected_task_set.is_empty()
+        && !expected_variant_set.is_empty()
+        && !expected_coordinate_set.is_empty()
+        && expected_task_set.len() == expected_tasks.len()
+        && expected_variant_set.len() == expected_variants.len()
+        && expected_coordinate_set.len() == expected_coordinates.len();
     let category_contract_matches = expected_task_categories.len() == expected_task_set.len()
         && expected_task_categories
             .keys()
             .all(|task| expected_task_set.contains(task));
     let row_contract_matches = run_rows.iter().all(|row| {
-        row.schema_version == AUTONOMY_RESULTS_SCHEMA_VERSION
+        let schema_coordinate_matches = if row.schema_version == AUTONOMY_RESULTS_SCHEMA_VERSION {
+            row.evaluation_provenance.arm == row.arm
+                && row.evaluation_provenance.harness_policy == row.harness_policy
+                && row.evaluation_provenance.child_binary_sha256 == row.provenance.binary.sha256
+                && row.evaluation_provenance.corpus_sha256.as_deref() == Some(suite_sha256)
+                && row.evaluation_provenance.model_sha256 == row.provenance.model.sha256
+                && row.evaluation_provenance.query_temperature.as_deref() == Some("0.0")
+        } else {
+            row.schema_version == 1
+                && coordinate_count == 1
+                && row.arm == AutonomyArm::Single
+                && row.harness_policy == HarnessPolicy::Legacy
+                && row.evaluation_provenance == AutonomyEvaluationProvenance::default()
+        };
+        schema_coordinate_matches
             && row.suite_id == suite_id
             && row.suite_schema_version == suite_schema_version
             && row.suite_sha256 == suite_sha256
             && expected_task_categories.get(&row.task_id) == Some(&row.category)
             && row.provenance.variant == row.variant
+            && (!strict_evidence_coordinate(row) || strict_persisted_row_valid(row))
     });
-    let provenance_matches = run_rows.first().is_none_or(|first| {
-        run_rows.iter().all(|row| {
-            let mut expected = first.provenance.clone();
-            expected.variant = row.variant.clone();
-            row.provenance == expected
-        })
-    });
+    let provenance_matches = coordinate_provenance_matches(&run_rows);
+    let paired_metadata_matches = paired_metadata_matches(&run_rows, coordinate_count as usize);
     let complete = run_rows.len() as u32 == expected_rows
-        && observed_coordinates == expected_coordinates
+        && observed_coordinates == expected_row_coordinates
         && category_contract_matches
         && row_contract_matches
-        && provenance_matches;
+        && provenance_matches
+        && paired_metadata_matches
+        && expected_dimensions_unique;
     let infrastructure_clean =
         issues.is_empty() && run_rows.iter().all(|row| row_is_scoreable(row));
-    let provenance = run_rows.first().map(|row| {
-        let mut provenance = row.provenance.clone();
-        provenance.variant = "autonomy_matrix".to_string();
-        provenance
-    });
+    let provenance = (coordinate_count == 1)
+        .then(|| {
+            run_rows.first().map(|row| {
+                let mut provenance = row.provenance.clone();
+                provenance.variant = "autonomy_matrix".to_string();
+                provenance
+            })
+        })
+        .flatten();
+    let provenance_by_coordinate = coordinate_provenance_summaries(&run_rows);
     let server_states: BTreeSet<_> = run_rows
         .iter()
         .map(|row| row.server_state.clone())
@@ -335,6 +702,12 @@ pub fn summarize_autonomy_run(
     let mut variant_keys = expected_variants.to_vec();
     variant_keys.sort();
     variant_keys.dedup();
+    let coordinate_keys: BTreeSet<_> = expected_row_coordinates
+        .iter()
+        .map(|coordinate| (coordinate.3, coordinate.4))
+        .collect();
+    let policy_keys: BTreeSet<_> = coordinate_keys.iter().map(|(_, policy)| *policy).collect();
+    let arm_keys: BTreeSet<_> = coordinate_keys.iter().map(|(arm, _)| *arm).collect();
     let category_keys: BTreeSet<String> = expected_task_categories.values().cloned().collect();
     let scoreable_rows: Vec<_> = run_rows
         .iter()
@@ -353,7 +726,9 @@ pub fn summarize_autonomy_run(
                 .collect();
             rate_summary(
                 key,
-                trials_requested.saturating_mul(variant_keys.len() as u32),
+                trials_requested
+                    .saturating_mul(variant_keys.len() as u32)
+                    .saturating_mul(coordinate_count),
                 &selected,
             )
         })
@@ -368,7 +743,11 @@ pub fn summarize_autonomy_run(
                     .copied()
                     .filter(|row| &row.task_id == task && &row.variant == variant)
                     .collect();
-                rate_summary(&format!("{task}/{variant}"), trials_requested, &selected)
+                rate_summary(
+                    &format!("{task}/{variant}"),
+                    trials_requested.saturating_mul(coordinate_count),
+                    &selected,
+                )
             })
         })
         .collect();
@@ -388,7 +767,8 @@ pub fn summarize_autonomy_run(
                 key,
                 trials_requested
                     .saturating_mul(variant_keys.len() as u32)
-                    .saturating_mul(tasks_in_category),
+                    .saturating_mul(tasks_in_category)
+                    .saturating_mul(coordinate_count),
                 &selected,
             )
         })
@@ -403,12 +783,62 @@ pub fn summarize_autonomy_run(
                 .collect();
             rate_summary(
                 key,
-                trials_requested.saturating_mul(task_keys.len() as u32),
+                trials_requested
+                    .saturating_mul(task_keys.len() as u32)
+                    .saturating_mul(coordinate_count),
+                &selected,
+            )
+        })
+        .collect();
+    let by_harness_policy = policy_keys
+        .iter()
+        .map(|policy| {
+            let selected: Vec<_> = run_rows
+                .iter()
+                .copied()
+                .filter(|row| row.harness_policy == *policy)
+                .collect();
+            let policy_coordinate_count = expected_coordinates
+                .iter()
+                .filter(|coordinate| coordinate.harness_policy == *policy)
+                .count() as u32;
+            rate_summary(
+                policy.label(),
+                trials_requested
+                    .saturating_mul(task_keys.len() as u32)
+                    .saturating_mul(variant_keys.len() as u32)
+                    .saturating_mul(policy_coordinate_count),
+                &selected,
+            )
+        })
+        .collect();
+    let by_arm = arm_keys
+        .iter()
+        .map(|arm| {
+            let selected: Vec<_> = run_rows
+                .iter()
+                .copied()
+                .filter(|row| row.arm == *arm)
+                .collect();
+            let arm_coordinate_count = expected_coordinates
+                .iter()
+                .filter(|coordinate| coordinate.arm == *arm)
+                .count() as u32;
+            rate_summary(
+                arm.label(),
+                trials_requested
+                    .saturating_mul(task_keys.len() as u32)
+                    .saturating_mul(variant_keys.len() as u32)
+                    .saturating_mul(arm_coordinate_count),
                 &selected,
             )
         })
         .collect();
     let by_tool = summarize_tools(&run_rows);
+    let by_policy_mechanisms = policy_keys
+        .iter()
+        .map(|policy| summarize_policy_mechanisms(*policy, &run_rows))
+        .collect();
 
     let required = scoreable_rows
         .iter()
@@ -476,11 +906,47 @@ pub fn summarize_autonomy_run(
         .collect();
     let resolved_at_1 = rate_summary(
         "trial_1",
-        (task_keys.len() as u32).saturating_mul(variant_keys.len() as u32),
+        (task_keys.len() as u32)
+            .saturating_mul(variant_keys.len() as u32)
+            .saturating_mul(coordinate_count),
         &resolved_rows,
     );
-    let pass_power_3 = pass_power_3(&run_rows);
+    let aggregate_pass_power_3 = pass_power_3(&run_rows);
+    let pass_power_3_by_policy = policy_keys
+        .iter()
+        .map(|policy| PolicyPassPowerSummary {
+            harness_policy: *policy,
+            summary: pass_power_3(
+                &run_rows
+                    .iter()
+                    .copied()
+                    .filter(|row| row.harness_policy == *policy)
+                    .collect::<Vec<_>>(),
+            ),
+        })
+        .collect();
     let repository_brief_ab = repository_brief_comparison(&run_rows);
+    let repository_brief_ab_by_policy = policy_keys
+        .iter()
+        .map(|policy| PolicyRepositoryBriefComparison {
+            harness_policy: *policy,
+            comparison: repository_brief_comparison(
+                &run_rows
+                    .iter()
+                    .copied()
+                    .filter(|row| row.harness_policy == *policy)
+                    .collect::<Vec<_>>(),
+            ),
+        })
+        .collect();
+    let paired_objective = (coordinate_count == 2).then(|| {
+        summarize_paired_objective(
+            trials_requested
+                .saturating_mul(task_keys.len() as u32)
+                .saturating_mul(variant_keys.len() as u32),
+            &run_rows,
+        )
+    });
 
     let mut terminal_counts = BTreeMap::new();
     let mut failure_counts = BTreeMap::new();
@@ -535,12 +1001,14 @@ pub fn summarize_autonomy_run(
         trials_requested,
         expected_tasks: task_keys,
         expected_variants: variant_keys,
+        expected_coordinates: expected_coordinates.to_vec(),
         expected_rows,
         observed_rows: run_rows.len() as u32,
         complete,
         infrastructure_clean,
         internal_baseline_only: true,
         provenance,
+        provenance_by_coordinate,
         server_states: server_states.into_iter().collect(),
         issues,
         overall,
@@ -548,12 +1016,18 @@ pub fn summarize_autonomy_run(
         by_task_variant,
         by_category,
         by_variant,
+        by_harness_policy,
+        by_arm,
         by_tool,
+        by_policy_mechanisms,
         clarification,
         recovery,
         resolved_at_1,
-        pass_power_3,
+        pass_power_3: aggregate_pass_power_3,
+        pass_power_3_by_policy,
         repository_brief_ab,
+        repository_brief_ab_by_policy,
+        paired_objective,
         turns: stats(&scoreable_rows, |row| f64::from(row.metrics.turns)),
         input_tokens: stats(&scoreable_rows, |row| row.metrics.input_tokens as f64),
         output_tokens: stats(&scoreable_rows, |row| row.metrics.output_tokens as f64),
@@ -642,11 +1116,61 @@ fn summarize_tools(rows: &[&AutonomyResultRow]) -> Vec<AutonomyToolSummary> {
         .collect()
 }
 
+fn summarize_policy_mechanisms(
+    harness_policy: HarnessPolicy,
+    rows: &[&AutonomyResultRow],
+) -> PolicyMechanismSummary {
+    let rows = rows
+        .iter()
+        .copied()
+        .filter(|row| row.harness_policy == harness_policy && row_is_scoreable(row))
+        .collect::<Vec<_>>();
+    let sum = |value: fn(&AutonomyTraceMetrics) -> u32| {
+        rows.iter().fold(0_u32, |total, row| {
+            total.saturating_add(value(&row.metrics))
+        })
+    };
+    PolicyMechanismSummary {
+        harness_policy,
+        scoreable_episodes: rows.len() as u32,
+        observations_recorded: sum(|metrics| metrics.observations_recorded),
+        file_observations: sum(|metrics| metrics.file_observations),
+        search_observations: sum(|metrics| metrics.search_observations),
+        find_observations: sum(|metrics| metrics.find_observations),
+        controller_blocks: sum(|metrics| metrics.controller_blocks),
+        blind_mutation_blocks: sum(|metrics| metrics.blind_mutation_blocks),
+        same_turn_observation_blocks: sum(|metrics| metrics.same_turn_observation_blocks),
+        stale_observation_blocks: sum(|metrics| metrics.stale_observation_blocks),
+        unsupported_mutation_blocks: sum(|metrics| metrics.unsupported_mutation_blocks),
+        repair_inspection_blocks: sum(|metrics| metrics.repair_inspection_blocks),
+        no_effect_blocks: sum(|metrics| metrics.no_effect_blocks),
+        syntax_regression_blocks: sum(|metrics| metrics.syntax_regression_blocks),
+        repeated_check_blocks: sum(|metrics| metrics.repeated_check_blocks),
+        workspace_effects_recorded: sum(|metrics| metrics.workspace_effects_recorded),
+        workspace_effect_paths: sum(|metrics| metrics.workspace_effect_paths),
+        verification_checks_recorded: sum(|metrics| metrics.verification_checks_recorded),
+        verification_checks_passed: sum(|metrics| metrics.verification_checks_passed),
+        verification_checks_failed: sum(|metrics| metrics.verification_checks_failed),
+        verification_repair_attempts: sum(|metrics| metrics.verification_repair_attempts),
+        distinct_failed_diagnostic_fingerprints: sum(|metrics| {
+            metrics.distinct_failed_diagnostic_fingerprints
+        }),
+        controller_checkpoints: sum(|metrics| metrics.controller_checkpoints),
+        recovery_packets_injected: sum(|metrics| metrics.recovery_packets_injected),
+    }
+}
+
 fn pass_power_3(rows: &[&AutonomyResultRow]) -> PassPowerSummary {
-    let mut groups: BTreeMap<(&str, &str), Vec<&AutonomyResultRow>> = BTreeMap::new();
+    let mut groups: BTreeMap<(&str, &str, HarnessPolicy, AutonomyArm), Vec<&AutonomyResultRow>> =
+        BTreeMap::new();
     for row in rows {
         groups
-            .entry((row.task_id.as_str(), row.variant.as_str()))
+            .entry((
+                row.task_id.as_str(),
+                row.variant.as_str(),
+                row.harness_policy,
+                row.arm,
+            ))
             .or_default()
             .push(row);
     }
@@ -681,7 +1205,7 @@ fn repository_brief_comparison(rows: &[&AutonomyResultRow]) -> RepositoryBriefCo
     let mut recovery = BTreeMap::new();
     let mut brief = BTreeMap::new();
     for row in rows.iter().copied().filter(|row| row_is_scoreable(row)) {
-        let key = (row.task_id.as_str(), row.trial);
+        let key = (row.task_id.as_str(), row.trial, row.harness_policy, row.arm);
         match row.variant.as_str() {
             "recovery" => {
                 recovery.insert(key, row.objective_completed);
@@ -726,6 +1250,257 @@ fn repository_brief_comparison(rows: &[&AutonomyResultRow]) -> RepositoryBriefCo
     }
 }
 
+fn coordinate_provenance_matches(rows: &[&AutonomyResultRow]) -> bool {
+    let Some(first) = rows.first() else {
+        return true;
+    };
+    if rows.iter().any(|row| {
+        row.provenance.model != first.provenance.model
+            || row.provenance.protocol != first.provenance.protocol
+            || row.provenance.python_bin != first.provenance.python_bin
+    }) {
+        return false;
+    }
+
+    let mut exemplars: BTreeMap<
+        (AutonomyArm, HarnessPolicy),
+        (RunProvenance, AutonomyEvaluationProvenance),
+    > = BTreeMap::new();
+    for row in rows {
+        let mut normalized = row.provenance.clone();
+        normalized.variant = "autonomy_matrix".to_string();
+        let mut evaluation = row.evaluation_provenance.clone();
+        evaluation.pair_id = None;
+        evaluation.pair_slot = None;
+        evaluation.pair_order = None;
+        evaluation.workspace_instance_sha256 = None;
+        evaluation.initial_tree_sha256 = None;
+        match exemplars.entry((row.arm, row.harness_policy)) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert((normalized, evaluation));
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if entry.get() != &(normalized, evaluation) =>
+            {
+                return false;
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+    true
+}
+
+fn coordinate_provenance_summaries(
+    rows: &[&AutonomyResultRow],
+) -> Vec<CoordinateProvenanceSummary> {
+    let mut exemplars = BTreeMap::new();
+    for row in rows {
+        let mut provenance = row.provenance.clone();
+        provenance.variant = "autonomy_matrix".to_string();
+        let mut evaluation_provenance = row.evaluation_provenance.clone();
+        evaluation_provenance.pair_id = None;
+        evaluation_provenance.pair_slot = None;
+        evaluation_provenance.pair_order = None;
+        evaluation_provenance.workspace_instance_sha256 = None;
+        evaluation_provenance.initial_tree_sha256 = None;
+        exemplars
+            .entry((row.arm, row.harness_policy))
+            .or_insert((provenance, evaluation_provenance));
+    }
+    exemplars
+        .into_iter()
+        .map(
+            |((arm, harness_policy), (provenance, evaluation_provenance))| {
+                CoordinateProvenanceSummary {
+                    coordinate: AutonomyEvaluationCoordinate {
+                        arm,
+                        harness_policy,
+                    },
+                    provenance,
+                    evaluation_provenance,
+                }
+            },
+        )
+        .collect()
+}
+
+fn paired_metadata_matches(rows: &[&AutonomyResultRow], coordinate_count: usize) -> bool {
+    if coordinate_count == 1 {
+        return rows.iter().all(|row| {
+            row.evaluation_provenance.pair_id.is_none()
+                && row.evaluation_provenance.pair_slot.is_none()
+                && row.evaluation_provenance.pair_order.is_none()
+        });
+    }
+    if coordinate_count != 2 {
+        return false;
+    }
+    let mut pairs: BTreeMap<&str, Vec<&AutonomyResultRow>> = BTreeMap::new();
+    for row in rows {
+        let Some(pair_id) = row.evaluation_provenance.pair_id.as_deref() else {
+            return false;
+        };
+        pairs.entry(pair_id).or_default().push(row);
+    }
+    pairs.values().all(|pair| paired_rows(pair).is_some())
+}
+
+fn paired_rows<'a>(
+    rows: &[&'a AutonomyResultRow],
+) -> Option<(&'a AutonomyResultRow, &'a AutonomyResultRow)> {
+    if rows.len() != 2 {
+        return None;
+    }
+    let control = rows.iter().copied().find(|row| {
+        row.arm == AutonomyArm::Control && row.harness_policy == HarnessPolicy::Legacy
+    })?;
+    let candidate = rows.iter().copied().find(|row| {
+        row.arm == AutonomyArm::Candidate && row.harness_policy == HarnessPolicy::Evidence
+    })?;
+    let order = control.evaluation_provenance.pair_order.as_deref()?;
+    if candidate.evaluation_provenance.pair_order.as_deref() != Some(order) {
+        return None;
+    }
+    let slots_match = match order {
+        "control_candidate" => {
+            control.evaluation_provenance.pair_slot == Some(1)
+                && candidate.evaluation_provenance.pair_slot == Some(2)
+        }
+        "candidate_control" => {
+            candidate.evaluation_provenance.pair_slot == Some(1)
+                && control.evaluation_provenance.pair_slot == Some(2)
+        }
+        _ => false,
+    };
+    if !slots_match
+        || control.task_id != candidate.task_id
+        || control.variant != candidate.variant
+        || control.trial != candidate.trial
+        || control
+            .evaluation_provenance
+            .workspace_instance_sha256
+            .is_none()
+        || candidate
+            .evaluation_provenance
+            .workspace_instance_sha256
+            .is_none()
+        || control.evaluation_provenance.workspace_instance_sha256
+            == candidate.evaluation_provenance.workspace_instance_sha256
+        || control.evaluation_provenance.initial_tree_sha256.is_none()
+        || control.evaluation_provenance.initial_tree_sha256
+            != candidate.evaluation_provenance.initial_tree_sha256
+        || control.evaluation_provenance.child_binary_sha256.is_none()
+        || candidate
+            .evaluation_provenance
+            .child_binary_sha256
+            .is_none()
+        || control.evaluation_provenance.child_binary_sha256
+            == candidate.evaluation_provenance.child_binary_sha256
+        || control.evaluation_provenance.corpus_sha256
+            != candidate.evaluation_provenance.corpus_sha256
+        || control.evaluation_provenance.model_sha256.is_none()
+        || control.evaluation_provenance.model_sha256
+            != candidate.evaluation_provenance.model_sha256
+        || control.evaluation_provenance.query_temperature.as_deref() != Some("0.0")
+        || candidate.evaluation_provenance.query_temperature.as_deref() != Some("0.0")
+        || control.evaluation_provenance.managed_server.is_none()
+        || control.evaluation_provenance.managed_server
+            != candidate.evaluation_provenance.managed_server
+        || control
+            .evaluation_provenance
+            .managed_server
+            .as_ref()
+            .and_then(|server| server.model_sha256.as_ref())
+            != control.evaluation_provenance.model_sha256.as_ref()
+        || candidate
+            .evaluation_provenance
+            .managed_server
+            .as_ref()
+            .and_then(|server| server.model_sha256.as_ref())
+            != candidate.evaluation_provenance.model_sha256.as_ref()
+    {
+        return None;
+    }
+    Some((control, candidate))
+}
+
+fn summarize_paired_objective(
+    expected_pairs: u32,
+    rows: &[&AutonomyResultRow],
+) -> PairedObjectiveSummary {
+    let mut groups: BTreeMap<&str, Vec<&AutonomyResultRow>> = BTreeMap::new();
+    for row in rows {
+        if let Some(pair_id) = row.evaluation_provenance.pair_id.as_deref() {
+            groups.entry(pair_id).or_default().push(row);
+        }
+    }
+    let mut control_wins = 0_u32;
+    let mut candidate_wins = 0_u32;
+    let mut both_completed = 0_u32;
+    let mut neither_completed = 0_u32;
+    let mut task_trials: BTreeMap<(&str, &str), BTreeMap<u32, bool>> = BTreeMap::new();
+    for group in groups.values() {
+        let Some((control, candidate)) = paired_rows(group) else {
+            continue;
+        };
+        if !row_is_scoreable(control) || !row_is_scoreable(candidate) {
+            continue;
+        }
+        match (control.objective_completed, candidate.objective_completed) {
+            (true, false) => control_wins = control_wins.saturating_add(1),
+            (false, true) => candidate_wins = candidate_wins.saturating_add(1),
+            (true, true) => both_completed = both_completed.saturating_add(1),
+            (false, false) => neither_completed = neither_completed.saturating_add(1),
+        }
+        task_trials
+            .entry((candidate.task_id.as_str(), candidate.variant.as_str()))
+            .or_default()
+            .insert(candidate.trial, candidate.objective_completed);
+    }
+    let eligible_pairs = control_wins
+        .saturating_add(candidate_wins)
+        .saturating_add(both_completed)
+        .saturating_add(neither_completed);
+    let control_completed = control_wins.saturating_add(both_completed);
+    let candidate_completed = candidate_wins.saturating_add(both_completed);
+    let candidate_task_variants_at_least_two_of_three = task_trials
+        .into_iter()
+        .filter_map(|((task, variant), trials)| {
+            let first_three = (1..=3)
+                .map(|trial| trials.get(&trial).copied())
+                .collect::<Option<Vec<_>>>()?;
+            (first_three
+                .into_iter()
+                .filter(|completed| *completed)
+                .count()
+                >= 2)
+                .then(|| format!("{task}/{variant}"))
+        })
+        .collect::<Vec<_>>();
+    let candidate_tasks_at_least_two_of_three = candidate_task_variants_at_least_two_of_three
+        .iter()
+        .filter_map(|coordinate| coordinate.split_once('/').map(|(task, _)| task.to_string()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    PairedObjectiveSummary {
+        expected_pairs,
+        eligible_pairs,
+        excluded_pairs: expected_pairs.saturating_sub(eligible_pairs),
+        control_wins,
+        candidate_wins,
+        both_completed,
+        neither_completed,
+        objective_rate_delta: (eligible_pairs > 0).then(|| {
+            (f64::from(candidate_completed) - f64::from(control_completed))
+                / f64::from(eligible_pairs)
+        }),
+        task_evidence_threshold_met: !candidate_tasks_at_least_two_of_three.is_empty(),
+        candidate_tasks_at_least_two_of_three,
+        candidate_task_variants_at_least_two_of_three,
+    }
+}
+
 fn stats(rows: &[&AutonomyResultRow], value: impl Fn(&AutonomyResultRow) -> f64) -> SampleStats {
     SampleStats::from_values(rows.iter().map(|row| value(row)))
 }
@@ -736,6 +1511,168 @@ fn row_is_scoreable(row: &AutonomyResultRow) -> bool {
             .command_checks
             .iter()
             .all(|check| check.status != CommandCheckStatus::InfrastructureError)
+        && if row.schema_version == 1 {
+            retained_trace_evidence_valid(row)
+        } else if strict_evidence_coordinate(row) {
+            strict_persisted_row_valid(row)
+        } else {
+            true
+        }
+}
+
+fn strict_evidence_coordinate(row: &AutonomyResultRow) -> bool {
+    row.arm != AutonomyArm::Single || row.harness_policy == HarnessPolicy::Evidence
+}
+
+fn strict_persisted_row_valid(row: &AutonomyResultRow) -> bool {
+    row.schema_version == AUTONOMY_RESULTS_SCHEMA_VERSION
+        && retained_trace_evidence_valid(row)
+        && valid_sha256(row.provenance.binary.sha256.as_deref())
+        && row.evaluation_provenance.child_binary_sha256 == row.provenance.binary.sha256
+        && valid_sha256(row.evaluation_provenance.corpus_sha256.as_deref())
+        && row.evaluation_provenance.corpus_sha256.as_deref() == Some(row.suite_sha256.as_str())
+        && valid_sha256(row.provenance.model.sha256.as_deref())
+        && row.evaluation_provenance.model_sha256 == row.provenance.model.sha256
+        && row
+            .evaluation_provenance
+            .managed_server
+            .as_ref()
+            .is_some_and(|server| strict_managed_server_valid(server, row))
+}
+
+fn retained_trace_evidence_valid(row: &AutonomyResultRow) -> bool {
+    !row.segments.is_empty()
+        && row.segments.iter().enumerate().all(|(index, segment)| {
+            segment.segment == index as u32 + 1
+                && !segment.timed_out
+                && segment
+                    .observed_terminal
+                    .as_deref()
+                    .is_some_and(|terminal| !terminal.is_empty())
+                && segment
+                    .trace_path
+                    .as_deref()
+                    .is_some_and(valid_retained_trace_path)
+                && valid_sha256(segment.trace_sha256.as_deref())
+                && segment.trace_validation == Some(RetainedTraceValidation::StructureValidated)
+        })
+}
+
+fn valid_retained_trace_path(path: &str) -> bool {
+    let path = Path::new(path);
+    !path.as_os_str().is_empty()
+        && !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+fn strict_managed_server_valid(server: &ManagedServerProvenance, row: &AutonomyResultRow) -> bool {
+    let exact_loopback_endpoint = server
+        .listener_port
+        .is_some_and(|port| server.listener_base_url == format!("http://127.0.0.1:{port}/v1"));
+    if server.engine != "llama-server"
+        || !exact_loopback_endpoint
+        || server.listener_base_url.trim().is_empty()
+        || row
+            .provenance
+            .model
+            .api_base
+            .as_deref()
+            .is_none_or(str::is_empty)
+        || normalized_endpoint(&server.listener_base_url)
+            != normalized_endpoint(row.provenance.model.api_base.as_deref().unwrap_or_default())
+        || server.model.as_deref().is_none_or(str::is_empty)
+        || server
+            .model
+            .as_deref()
+            .is_none_or(|model| !canonical_absolute_path_text(model))
+        || server
+            .model_launch_argument
+            .as_deref()
+            .is_none_or(str::is_empty)
+        || row
+            .provenance
+            .model
+            .model
+            .as_deref()
+            .is_none_or(str::is_empty)
+        || server.model != row.provenance.model.model
+        || server.context_size != Some(STRICT_EVIDENCE_CONTEXT_SIZE)
+        || row.provenance.model.ctx != STRICT_EVIDENCE_CONTEXT_SIZE
+        || server.sampling_seed.is_none_or(|seed| seed < 0)
+        || server.parallel_slots != Some(1)
+        || server.gpu_layers != Some(0)
+        || server.pid.is_none_or(|pid| pid == 0)
+        || server.listener_owner_pid != server.pid
+        || server.listener_port.is_none_or(|port| port == 0)
+        || server
+            .engine_executable
+            .as_deref()
+            .is_none_or(str::is_empty)
+        || server
+            .engine_executable
+            .as_deref()
+            .is_none_or(|path| !canonical_absolute_path_text(path))
+        || !valid_sha256(server.engine_executable_sha256.as_deref())
+        || server.engine_version.as_deref().is_none_or(str::is_empty)
+        || server.engine_argv.as_ref().is_none_or(Vec::is_empty)
+        || server.model_sha256 != row.provenance.model.sha256
+        || !valid_sha256(server.model_sha256.as_deref())
+    {
+        return false;
+    }
+
+    let argv = server.engine_argv.as_deref().unwrap_or_default();
+    let model_argument = server.model_launch_argument.as_deref().unwrap_or_default();
+    let context = row.provenance.model.ctx.to_string();
+    let seed = server.sampling_seed.unwrap_or_default().to_string();
+    let port = server.listener_port.unwrap_or_default().to_string();
+    executable_is_llama_server(server.engine_executable.as_deref().unwrap_or_default())
+        && argv
+            .first()
+            .is_some_and(|program| executable_is_llama_server(program))
+        && argv_value(argv, &["-m", "--model"]) == Some(model_argument)
+        && argv_value(argv, &["-c", "--ctx-size"]) == Some(context.as_str())
+        && argv_value(argv, &["--seed"]) == Some(seed.as_str())
+        && argv_value(argv, &["--parallel"]) == Some("1")
+        && argv_value(argv, &["-ngl", "--gpu-layers"]) == Some("0")
+        && argv_value(argv, &["--host"]) == Some("127.0.0.1")
+        && argv_value(argv, &["--port"]) == Some(port.as_str())
+}
+
+fn argv_value<'a>(argv: &'a [String], flags: &[&str]) -> Option<&'a str> {
+    argv.windows(2)
+        .find(|window| flags.contains(&window[0].as_str()))
+        .map(|window| window[1].as_str())
+}
+
+fn canonical_absolute_path_text(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute()
+        && path.components().all(|component| {
+            !matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+}
+
+fn executable_is_llama_server(value: &str) -> bool {
+    Path::new(value)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("llama-server"))
+}
+
+fn normalized_endpoint(value: &str) -> &str {
+    value.trim_end_matches('/')
+}
+
+fn valid_sha256(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
 }
 
 fn ratio(numerator: u32, denominator: u32) -> Option<f64> {
@@ -768,6 +1705,8 @@ mod tests {
             task_name: task.to_string(),
             category: category.to_string(),
             variant: variant.to_string(),
+            arm: AutonomyArm::Single,
+            harness_policy: HarnessPolicy::Legacy,
             trial,
             started_at_unix_ms: 1,
             finished_at_unix_ms: 2,
@@ -783,7 +1722,8 @@ mod tests {
                 timed_out: false,
                 wall_ms: 10,
                 trace_path: Some("traces/test.jsonl".to_string()),
-                trace_sha256: Some("trace".to_string()),
+                trace_sha256: Some("d".repeat(64)),
+                trace_validation: Some(RetainedTraceValidation::StructureValidated),
                 stderr_tail: String::new(),
             }],
             clarification_expected: false,
@@ -830,6 +1770,14 @@ mod tests {
                 variant: variant.to_string(),
                 python_bin: "python".to_string(),
             },
+            evaluation_provenance: AutonomyEvaluationProvenance {
+                arm: AutonomyArm::Single,
+                harness_policy: HarnessPolicy::Legacy,
+                child_binary_sha256: Some("binary".to_string()),
+                corpus_sha256: Some("suite".to_string()),
+                query_temperature: Some("0.0".to_string()),
+                ..Default::default()
+            },
         }
     }
 
@@ -838,6 +1786,105 @@ mod tests {
             .iter()
             .map(|(task, category)| ((*task).to_string(), (*category).to_string()))
             .collect()
+    }
+
+    fn managed_server() -> ManagedServerProvenance {
+        let canonical_model = std::env::current_dir()
+            .unwrap()
+            .join("models/model.gguf")
+            .display()
+            .to_string();
+        ManagedServerProvenance {
+            engine: "llama-server".to_string(),
+            listener_base_url: "http://127.0.0.1:8080/v1".to_string(),
+            model: Some(canonical_model),
+            model_launch_argument: Some("models/model.gguf".to_string()),
+            model_sha256: Some("b".repeat(64)),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            gpu_layers: Some(0),
+            pid: Some(1234),
+            listener_owner_pid: Some(1234),
+            listener_port: Some(8080),
+            engine_executable: Some(
+                std::env::current_dir()
+                    .unwrap()
+                    .join("bin/llama-server")
+                    .display()
+                    .to_string(),
+            ),
+            engine_executable_sha256: Some("e".repeat(64)),
+            engine_version: Some("llama-server version example".to_string()),
+            engine_argv: Some(vec![
+                "llama-server".to_string(),
+                "-m".to_string(),
+                "models/model.gguf".to_string(),
+                "-c".to_string(),
+                "8192".to_string(),
+                "--seed".to_string(),
+                "42".to_string(),
+                "--parallel".to_string(),
+                "1".to_string(),
+                "-ngl".to_string(),
+                "0".to_string(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                "8080".to_string(),
+            ]),
+        }
+    }
+
+    fn paired_row(
+        task: &str,
+        variant: &str,
+        trial: u32,
+        arm: AutonomyArm,
+        completed: bool,
+    ) -> AutonomyResultRow {
+        let mut row = row("run", task, "long_horizon", variant, trial);
+        let (harness_policy, binary_sha, workspace, slot) = match arm {
+            AutonomyArm::Control => (
+                HarnessPolicy::Legacy,
+                "c".repeat(64),
+                "workspace-control",
+                1,
+            ),
+            AutonomyArm::Candidate => (
+                HarnessPolicy::Evidence,
+                "a".repeat(64),
+                "workspace-candidate",
+                2,
+            ),
+            AutonomyArm::Single => panic!("paired fixture requires a paired arm"),
+        };
+        row.arm = arm;
+        row.harness_policy = harness_policy;
+        row.objective_completed = completed;
+        row.suite_sha256 = "5".repeat(64);
+        row.provenance.binary.path = format!("{binary_sha}-ferric");
+        row.provenance.binary.sha256 = Some(binary_sha.clone());
+        row.provenance.model.backend = "openai".to_string();
+        row.provenance.model.model = managed_server().model;
+        row.provenance.model.api_base = Some("http://127.0.0.1:8080/v1".to_string());
+        row.provenance.model.ctx = 8192;
+        row.provenance.model.sha256 = Some("b".repeat(64));
+        row.evaluation_provenance = AutonomyEvaluationProvenance {
+            arm,
+            harness_policy,
+            pair_id: Some(format!("trial-{trial:03}-{task}-{variant}")),
+            pair_slot: Some(slot),
+            pair_order: Some("control_candidate".to_string()),
+            workspace_instance_sha256: Some(format!("{workspace}-{trial}-{variant}")),
+            initial_tree_sha256: Some("initial-tree".to_string()),
+            child_binary_sha256: Some(binary_sha),
+            corpus_sha256: Some("5".repeat(64)),
+            model_sha256: Some("b".repeat(64)),
+            query_temperature: Some("0.0".to_string()),
+            managed_server: Some(managed_server()),
+        };
+        row
     }
 
     #[test]
@@ -991,6 +2038,341 @@ mod tests {
         assert_eq!(summary.clarification.required, 0);
         assert_eq!(summary.recovery.episodes_expected, 0);
         assert_eq!(summary.turns.samples, 0);
+    }
+
+    #[test]
+    fn paired_summary_is_coordinate_complete_and_uses_only_eligible_pairs() {
+        let mut rows = Vec::new();
+        for (trial, control, candidate) in [(1, false, true), (2, false, true), (3, true, false)] {
+            rows.push(paired_row(
+                "H01",
+                "recovery",
+                trial,
+                AutonomyArm::Control,
+                control,
+            ));
+            rows.push(paired_row(
+                "H01",
+                "recovery",
+                trial,
+                AutonomyArm::Candidate,
+                candidate,
+            ));
+        }
+        for row in rows
+            .iter_mut()
+            .filter(|row| row.harness_policy == HarnessPolicy::Evidence)
+        {
+            row.metrics.observations_recorded = 1;
+            row.metrics.file_observations = 1;
+        }
+        let summary = summarize_autonomy_run_with_coordinates(
+            "run",
+            "autonomy-v1",
+            1,
+            &"5".repeat(64),
+            1,
+            2,
+            3,
+            &["H01".to_string()],
+            &categories(&[("H01", "long_horizon")]),
+            &["recovery".to_string()],
+            &AutonomyEvaluationCoordinate::paired(),
+            &rows,
+            Vec::new(),
+        );
+        assert!(summary.complete);
+        assert_eq!(summary.by_harness_policy.len(), 2);
+        assert_eq!(summary.provenance_by_coordinate.len(), 2);
+        assert_eq!(summary.by_policy_mechanisms.len(), 2);
+        let evidence_mechanisms = summary
+            .by_policy_mechanisms
+            .iter()
+            .find(|summary| summary.harness_policy == HarnessPolicy::Evidence)
+            .unwrap();
+        assert_eq!(evidence_mechanisms.scoreable_episodes, 3);
+        assert_eq!(evidence_mechanisms.observations_recorded, 3);
+        assert_eq!(evidence_mechanisms.file_observations, 3);
+        let paired = summary.paired_objective.unwrap();
+        assert_eq!(paired.expected_pairs, 3);
+        assert_eq!(paired.eligible_pairs, 3);
+        assert_eq!(paired.excluded_pairs, 0);
+        assert_eq!(paired.candidate_wins, 2);
+        assert_eq!(paired.control_wins, 1);
+        assert_eq!(paired.objective_rate_delta, Some(1.0 / 3.0));
+        assert!(paired.task_evidence_threshold_met);
+        assert_eq!(paired.candidate_tasks_at_least_two_of_three, ["H01"]);
+        assert_eq!(
+            paired.candidate_task_variants_at_least_two_of_three,
+            ["H01/recovery"]
+        );
+    }
+
+    #[test]
+    fn invalid_trace_or_unpaired_rows_are_excluded_not_scored_as_losses() {
+        let mut rows = vec![
+            paired_row("H01", "recovery", 1, AutonomyArm::Control, false),
+            paired_row("H01", "recovery", 1, AutonomyArm::Candidate, true),
+            paired_row("H01", "recovery", 2, AutonomyArm::Control, false),
+            paired_row("H01", "recovery", 2, AutonomyArm::Candidate, true),
+            paired_row("H01", "recovery", 3, AutonomyArm::Candidate, true),
+        ];
+        rows[0].infrastructure_error =
+            Some("trace structure finish rejected the trace".to_string());
+        let summary = summarize_autonomy_run_with_coordinates(
+            "run",
+            "autonomy-v1",
+            1,
+            &"5".repeat(64),
+            1,
+            2,
+            3,
+            &["H01".to_string()],
+            &categories(&[("H01", "long_horizon")]),
+            &["recovery".to_string()],
+            &AutonomyEvaluationCoordinate::paired(),
+            &rows,
+            Vec::new(),
+        );
+        assert!(!summary.complete);
+        let paired = summary.paired_objective.unwrap();
+        assert_eq!(paired.expected_pairs, 3);
+        assert_eq!(paired.eligible_pairs, 1);
+        assert_eq!(paired.excluded_pairs, 2);
+        assert_eq!(paired.candidate_wins, 1);
+        assert_eq!(paired.control_wins, 0);
+        assert_eq!(paired.objective_rate_delta, Some(1.0));
+    }
+
+    #[test]
+    fn repository_brief_comparisons_never_cross_policy_coordinates() {
+        let rows = vec![
+            paired_row("H01", "recovery", 1, AutonomyArm::Control, true),
+            paired_row("H01", "recovery", 1, AutonomyArm::Candidate, false),
+            paired_row("H01", "repository_brief", 1, AutonomyArm::Control, false),
+            paired_row("H01", "repository_brief", 1, AutonomyArm::Candidate, true),
+        ];
+        let summary = summarize_autonomy_run_with_coordinates(
+            "run",
+            "autonomy-v1",
+            1,
+            &"5".repeat(64),
+            1,
+            2,
+            1,
+            &["H01".to_string()],
+            &categories(&[("H01", "long_horizon")]),
+            &["recovery".to_string(), "repository_brief".to_string()],
+            &AutonomyEvaluationCoordinate::paired(),
+            &rows,
+            Vec::new(),
+        );
+        assert!(summary.complete);
+        assert_eq!(summary.repository_brief_ab.paired_episodes, 2);
+        let legacy = summary
+            .repository_brief_ab_by_policy
+            .iter()
+            .find(|summary| summary.harness_policy == HarnessPolicy::Legacy)
+            .unwrap();
+        assert_eq!(legacy.comparison.paired_episodes, 1);
+        assert_eq!(legacy.comparison.recovery_wins, 1);
+        let evidence = summary
+            .repository_brief_ab_by_policy
+            .iter()
+            .find(|summary| summary.harness_policy == HarnessPolicy::Evidence)
+            .unwrap();
+        assert_eq!(evidence.comparison.paired_episodes, 1);
+        assert_eq!(evidence.comparison.repository_brief_wins, 1);
+    }
+
+    #[test]
+    fn paired_freshness_requires_distinct_instances_and_equal_initial_trees() {
+        let control = paired_row("H01", "recovery", 1, AutonomyArm::Control, false);
+        let mut candidate = paired_row("H01", "recovery", 1, AutonomyArm::Candidate, true);
+        candidate.evaluation_provenance.workspace_instance_sha256 = control
+            .evaluation_provenance
+            .workspace_instance_sha256
+            .clone();
+        assert!(paired_rows(&[&control, &candidate]).is_none());
+
+        candidate.evaluation_provenance.workspace_instance_sha256 =
+            Some("different-workspace".to_string());
+        candidate.evaluation_provenance.initial_tree_sha256 = Some("different-tree".to_string());
+        assert!(paired_rows(&[&control, &candidate]).is_none());
+    }
+
+    #[test]
+    fn strict_rows_fail_closed_on_trace_or_managed_server_tampering() {
+        let row = paired_row("H01", "recovery", 1, AutonomyArm::Candidate, true);
+        assert!(strict_persisted_row_valid(&row));
+        assert!(row_is_scoreable(&row));
+
+        let mut cases = Vec::new();
+        let mut missing_trace_validation = row.clone();
+        missing_trace_validation.segments[0].trace_validation = None;
+        cases.push(missing_trace_validation);
+
+        let mut timed_out = row.clone();
+        timed_out.segments[0].timed_out = true;
+        cases.push(timed_out);
+
+        let mut missing_terminal = row.clone();
+        missing_terminal.segments[0].observed_terminal = None;
+        cases.push(missing_terminal);
+
+        let mut bad_trace_digest = row.clone();
+        bad_trace_digest.segments[0].trace_sha256 = Some("not-a-digest".to_string());
+        cases.push(bad_trace_digest);
+
+        let mut wrong_engine = row.clone();
+        wrong_engine
+            .evaluation_provenance
+            .managed_server
+            .as_mut()
+            .unwrap()
+            .engine = "ollama".to_string();
+        cases.push(wrong_engine);
+
+        let mut wrong_context = row.clone();
+        wrong_context
+            .evaluation_provenance
+            .managed_server
+            .as_mut()
+            .unwrap()
+            .context_size = Some(4096);
+        cases.push(wrong_context);
+
+        let mut random_seed = row.clone();
+        random_seed
+            .evaluation_provenance
+            .managed_server
+            .as_mut()
+            .unwrap()
+            .sampling_seed = Some(-1);
+        cases.push(random_seed);
+
+        let mut wrong_owner = row.clone();
+        wrong_owner
+            .evaluation_provenance
+            .managed_server
+            .as_mut()
+            .unwrap()
+            .listener_owner_pid = Some(9999);
+        cases.push(wrong_owner);
+
+        let mut split_listener_url = row.clone();
+        split_listener_url
+            .evaluation_provenance
+            .managed_server
+            .as_mut()
+            .unwrap()
+            .listener_base_url = "http://127.0.0.1:8081/v1".to_string();
+        cases.push(split_listener_url);
+
+        let mut same_basename_other_path = row.clone();
+        same_basename_other_path
+            .evaluation_provenance
+            .managed_server
+            .as_mut()
+            .unwrap()
+            .model = Some(
+            std::env::current_dir()
+                .unwrap()
+                .join("other/model.gguf")
+                .display()
+                .to_string(),
+        );
+        cases.push(same_basename_other_path);
+
+        let mut gpu_enabled = row.clone();
+        gpu_enabled
+            .evaluation_provenance
+            .managed_server
+            .as_mut()
+            .unwrap()
+            .gpu_layers = Some(1);
+        cases.push(gpu_enabled);
+
+        let mut tampered_argv = row.clone();
+        tampered_argv
+            .evaluation_provenance
+            .managed_server
+            .as_mut()
+            .unwrap()
+            .engine_argv
+            .as_mut()
+            .unwrap()[2] = "other.gguf".to_string();
+        cases.push(tampered_argv);
+
+        let mut wrong_model_hash = row.clone();
+        wrong_model_hash
+            .evaluation_provenance
+            .managed_server
+            .as_mut()
+            .unwrap()
+            .model_sha256 = Some("f".repeat(64));
+        cases.push(wrong_model_hash);
+
+        for tampered in cases {
+            assert!(!strict_persisted_row_valid(&tampered));
+            assert!(!row_is_scoreable(&tampered));
+        }
+    }
+
+    #[test]
+    fn single_evidence_rows_use_the_same_strict_persisted_predicate() {
+        let mut row = paired_row("H01", "current", 1, AutonomyArm::Candidate, true);
+        row.arm = AutonomyArm::Single;
+        row.evaluation_provenance.arm = AutonomyArm::Single;
+        row.evaluation_provenance.pair_id = None;
+        row.evaluation_provenance.pair_slot = None;
+        row.evaluation_provenance.pair_order = None;
+        assert!(strict_persisted_row_valid(&row));
+        row.evaluation_provenance.managed_server = None;
+        assert!(!row_is_scoreable(&row));
+    }
+
+    #[test]
+    fn schema_one_rows_default_to_single_legacy_coordinates() {
+        let row = row("run", "A01", "ambiguity", "current", 1);
+        let mut value = serde_json::to_value(row).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.insert("schema_version".to_string(), serde_json::json!(1));
+        object.remove("arm");
+        object.remove("harness_policy");
+        object.remove("evaluation_provenance");
+        object
+            .get_mut("segments")
+            .and_then(serde_json::Value::as_array_mut)
+            .and_then(|segments| segments.first_mut())
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("segment object")
+            .remove("trace_validation");
+        let decoded: AutonomyResultRow = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.arm, AutonomyArm::Single);
+        assert_eq!(decoded.harness_policy, HarnessPolicy::Legacy);
+        assert_eq!(
+            decoded.evaluation_provenance,
+            AutonomyEvaluationProvenance::default()
+        );
+        let summary = summarize_autonomy_run(
+            "run",
+            "autonomy-v1",
+            1,
+            "suite",
+            1,
+            2,
+            1,
+            &["A01".to_string()],
+            &categories(&[("A01", "ambiguity")]),
+            &["current".to_string()],
+            &[decoded],
+            Vec::new(),
+        );
+        assert!(summary.complete);
+        assert!(!summary.infrastructure_clean);
+        assert_eq!(summary.overall.scoreable, 0);
     }
 
     #[test]

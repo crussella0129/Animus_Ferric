@@ -23,11 +23,14 @@ pub use autonomy::{
     autonomy_bench_spec, embedded_autonomy_suite, parse_autonomy_suite, validate_autonomy_suite,
 };
 pub use autonomy_results::{
-    AUTONOMY_RESULTS_SCHEMA_VERSION, AutonomyRateSummary, AutonomyResultRow, AutonomyRunIssue,
+    AUTONOMY_RESULTS_SCHEMA_VERSION, AutonomyArm, AutonomyEvaluationCoordinate,
+    AutonomyEvaluationProvenance, AutonomyRateSummary, AutonomyResultRow, AutonomyRunIssue,
     AutonomyRunSummary, AutonomySegmentResult, AutonomyToolSummary, AutonomyTraceMetrics,
-    ClarificationSummary, PassPowerSummary, RecoverySummary, RepositoryBriefComparison,
-    ResumeProbeResult, append_autonomy_row, read_autonomy_rows, summarize_autonomy_run,
-    write_autonomy_summary,
+    ClarificationSummary, CoordinateProvenanceSummary, ManagedServerProvenance,
+    PairedObjectiveSummary, PassPowerSummary, PolicyMechanismSummary, PolicyPassPowerSummary,
+    PolicyRepositoryBriefComparison, RecoverySummary, RepositoryBriefComparison, ResumeProbeResult,
+    RetainedTraceValidation, append_autonomy_row, read_autonomy_rows, summarize_autonomy_run,
+    summarize_autonomy_run_with_coordinates, write_autonomy_summary,
 };
 pub use calibrate::{
     ModelProfileRecord, calibrate, calibrate_from_evidence, highest_completed_level,
