@@ -40,6 +40,12 @@ $Model = 'C:\Models\qwen2.5-coder-7b-instruct-q4_k_m.gguf'
 & $FerricExe server up --engine llama-server --model $Model --ctx 8192 --gpu-layers 99
 ```
 
+`server up` now fails before spawning if either runfile already exists, port
+8080 is occupied, or the model is not a regular file. It returns success only
+after the spawned PID remains alive and `/health` returns HTTP 200. If preflight
+reports an existing registration, inspect it and use `server status`; do not
+overwrite the record.
+
 Leave that terminal open for engine logs. In a second terminal, verify the
 registered server, independently check its HTTP surface, and run the asserted
 real-model task:

@@ -98,8 +98,8 @@ ferric server up --engine llama-server --model /path/to/your-model.gguf --ctx 81
 
 # (multimodal? add --mmproj mmproj.gguf. Edge tuning? --threads / --gpu-layers.)
 
-ferric server status      # prints the base URL + a health check
-ferric server doctor      # checks the engine binary + model presence + reachability
+ferric server status      # requires the registered PID + HTTP health
+ferric server doctor      # checks the engine binary, model file, and health
 ```
 
 `server up` writes `.ferric/server.json` in the current directory, so the other
@@ -117,9 +117,10 @@ ferric server down        # stops the engine and removes the runfile
 > throwaway `server up` in a scratch folder becomes the server every workspace
 > discovers until you take it down. `server down` removes both.
 
-`--model` is optional if your `llama-server` build supports router mode — it
-will then load models on demand. `server up` returns as soon as the engine is
-listening, so it is quick either way.
+`--model` is required for the managed `llama-server` path and must name a
+regular file. `server up` also refuses an existing registration or occupied
+port, and returns only after the spawned process is still alive and the
+engine-specific HTTP health endpoint returns 200.
 
 > **Already running your own server?** (an existing Ollama, LM Studio, vLLM, or a
 > remote llama-server) — skip `ferric server` entirely and pass

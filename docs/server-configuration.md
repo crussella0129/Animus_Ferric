@@ -18,10 +18,13 @@ ferric server doctor  # check engine-binary + model presence (and reachability)
 ferric server down    # stop it and remove the runfile
 ```
 
-`up` writes a **runfile** at `.ferric/server.json` recording the engine, PID,
-port, and base URL. This is what lets `ferric query` and `ferric bench`
-**auto-discover** the server — you launch once and everything else finds it, no
-`--api-base` needed.
+`up` refuses to launch when a local/global registration already exists or the
+target port is occupied. For llama.cpp it also requires a regular model file,
+a regular projector when supplied, and nonzero context/port values. Ferric
+retains the spawned child until its engine-specific HTTP endpoint returns 200;
+only then does it write a **runfile** at `.ferric/server.json` recording the
+engine, PID, port, and base URL. This is what lets `ferric query` and `ferric
+bench` **auto-discover** the server—no `--api-base` needed.
 
 `doctor` is the pre-flight check; it validates presence *without* launching:
 
@@ -29,15 +32,22 @@ port, and base URL. This is what lets `ferric query` and `ferric bench`
 $ ferric server doctor --engine llama-server --model ./model.gguf
 [ok] engine binary `llama-server`
 [MISSING] model `./model.gguf`
-[warn] registered server http://127.0.0.1:8080/v1 is not reachable
+[info] no server running — `ferric server up` to start one
 ```
 
 `status` reports the registered server and whether it is actually answering:
 
 ```console
 $ ferric server status
-engine=LlamaServer pid=36792 base_url=http://127.0.0.1:8080/v1 (NOT reachable)
+engine=LlamaServer pid=36792 base_url=http://127.0.0.1:8080/v1 (process alive, HTTP healthy)
 ```
+
+`status` requires both the registered PID to be alive and the engine-specific
+local HTTP endpoint to return 200; a bare TCP listener is not accepted as
+health. `server down` is intended for a runfile created by `server up`. If a
+runfile was copied, hand-edited, or left across PID reuse, verify its process
+identity before using `down`; executable/start-time binding remains future
+lifecycle hardening.
 
 ## Launch flags
 

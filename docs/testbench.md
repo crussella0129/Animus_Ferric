@@ -23,9 +23,11 @@ ferric server up --engine llama-server --model path/to/model.gguf [--mmproj path
 ferric server up --engine ollama --model qwen2.5-coder:7b
 ```
 
-`up` spawns the server, waits for it to start listening, and registers it in
-`.ferric/server.json` (`{engine, pid, port, base_url}`). Other commands read that
-file, so you don't repeat connection flags.
+`up` rejects an existing registration, occupied target port, invalid zero
+context/port, or a llama.cpp model/projector that is not a regular file. It
+retains the child process and registers it in `.ferric/server.json` only after
+the engine-specific HTTP health endpoint returns 200. Other commands read that
+record, so you don't repeat connection flags.
 
 ```sh
 ferric server status   # is it up? prints the base URL + health endpoint
@@ -184,3 +186,51 @@ ladder for each model and prints an **agentic capability leaderboard**
 leaderboard. It answers "how small can a model be and still *complete* real tasks?",
 and writes each model's `measured_level` so `query --profile-dir` auto-runs it at its
 earned tier.
+
+## 7. Repository autonomy — `ferric bench autonomy`
+
+The L0–L6 ladder is a capability calibration. The autonomy suite is a stricter
+internal engineering baseline for repository work: 24 frozen tasks, balanced
+across ambiguity, durable recovery, and longer cross-file objectives. Each task
+has an authoritative fixed-argv grader, and every untouched seed repository is
+tested to fail its grader.
+
+```sh
+# Inspect the corpus without a model.
+ferric bench autonomy --list
+
+# One complete 24 tasks × 3 variants pass (72 real model episodes).
+ferric bench autonomy \
+  --model <exact-id-from-v1-models> \
+  --params-b <billions> --ctx <runtime-context> \
+  --model-sha256 <64-hex-digest> \
+  --server-state cold --trials 1
+
+# Repeated reliability / pass³ evidence (216 episodes).
+ferric bench autonomy --model <exact-id-from-v1-models> --trials 3
+```
+
+Corpus v1 intentionally permits only `--protocol grammar`: its one-turn
+injections would not be comparable under multi-call protocols. It has no
+`--mock` path. Omit `--api-base` to exercise `ferric server` auto-discovery.
+Use repeatable `--task` and `--variant` flags for a clearly labelled timed
+sample; a subset is not the full baseline.
+
+The three variants are `current`, `recovery`, and `repository-brief`. Recovery
+tasks drive real pause/resume processes and refusal probes. The repository brief
+adds deterministic relative-path metadata only—no repository contents—and is
+paired against the recovery variant on the same task/trial coordinates.
+
+Results go to `benchmarks/autonomy` by default and include append-only JSONL,
+per-run summaries, retained traces, hashes for the corpus/binary/model when
+known, contract and objective rates with Wilson intervals, clarification and
+recovery outcomes, paired brief deltas, and pass³ for eligible three-trial
+groups. Infrastructure failures are reported separately and excluded from model
+rates. Per-tool figures are explicitly conditional objective association when a
+tool was observed; they are not tool-call accuracy or causal impact.
+
+The command exits zero when the requested Cartesian measurement completed and
+its infrastructure was clean, even when the model failed tasks. Read the
+summary's contract/objective fields for model performance. The suite labels
+itself `internal_baseline_only`; it is not SWE-bench, an external leaderboard,
+or evidence of reliable general autonomy by itself.
