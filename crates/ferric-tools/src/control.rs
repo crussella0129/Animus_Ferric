@@ -434,6 +434,19 @@ impl ToolPreparation {
         }
     }
 
+    /// Seal an exact named verification for execution only after controller
+    /// admission consumes the preparation.
+    pub fn verification(name: impl Into<String>) -> Self {
+        Self {
+            intent: PreparedIntent::Verification(VerificationIntent { name: name.into() }),
+            execution: PreparedExecution::Deferred {
+                // A verification process is not assumed to be workspace-pure;
+                // callers classify its typed check outcome independently.
+                effects: WorkspaceEffectReport::UnmeasuredLegacy,
+            },
+        }
+    }
+
     pub(crate) fn file_mutation(intent: MutationIntent, candidate: FileMutationCandidate) -> Self {
         Self {
             intent: PreparedIntent::Mutation(intent),
@@ -442,7 +455,8 @@ impl ToolPreparation {
     }
 }
 
-pub(crate) fn sha256_bytes(bytes: &[u8]) -> String {
+/// Return the lowercase SHA-256 digest of the exact supplied bytes.
+pub fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 

@@ -593,6 +593,7 @@ dependencies = [
  "ferric-core",
  "ferric-guard",
  "ferric-trace",
+ "getrandom 0.3.4",
  "libc",
  "rustpython-parser",
  "serde",

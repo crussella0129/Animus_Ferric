@@ -11,13 +11,14 @@ use std::path::{Path, PathBuf};
 
 use ferric_core::{ActionProtocol, FerricError, HarnessPolicy, Message, UserInputRequest};
 use ferric_trace::{
-    ControllerCheckpointV1, Event, GuardTurn, ParsedEvent, RECOVERY_CHECKPOINT_VERSION, TraceReader,
+    ControllerCheckpointV1, Event, GuardTurn, ParsedEvent, RECOVERY_CHECKPOINT_VERSION,
+    TraceReadMode, TraceReader,
 };
 use thiserror::Error;
 
 use crate::ControllerState;
 use crate::projector::TraceProjector;
-use crate::trace_structure::TraceStructure;
+use crate::trace_structure::{TraceStructure, validate_recovery_checkpoint_shape};
 
 /// Everything `run()` needs to seed a continuing turn loop.
 #[derive(Debug, Clone, PartialEq)]
@@ -123,7 +124,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     let mut saw_session_paused = false;
     let mut structure = TraceStructure::new();
 
-    for record in TraceReader::open(path)? {
+    for record in TraceReader::open_with_mode(path, TraceReadMode::ReplayRecovery)? {
         let record = record?;
         match &source_session {
             None => source_session = Some(record.session.clone()),
@@ -141,9 +142,22 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
             ParsedEvent::Unknown(_) => return Err(ReplayError::UnknownEvent { seq: record.seq }),
         };
 
+        if let Event::RecoveryCheckpoint { state } = &event {
+            validate_checkpoint(state)?;
+        }
+
         structure
             .observe(&event)
             .map_err(ReplayError::InvalidStructure)?;
+
+        if let Event::RecoveryCheckpoint { state } = &event
+            && saw_state_base
+            && *state != projector.checkpoint()
+        {
+            return Err(ReplayError::InvalidStructure(
+                "recovery checkpoint differs from the projector-derived state anchor".to_string(),
+            ));
+        }
 
         match &event {
             Event::SessionStart {
@@ -171,11 +185,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
             } => {
                 harness_policy = Some(*recorded);
             }
-            Event::RecoveryCheckpoint { state } => {
-                if state.version != RECOVERY_CHECKPOINT_VERSION {
-                    return Err(ReplayError::UnsupportedCheckpoint(state.version));
-                }
-                validate_checkpoint(state)?;
+            Event::RecoveryCheckpoint { .. } => {
                 // A checkpoint before any prompt/turn is the initial base of a
                 // resumed trace. Later checkpoints are durable state anchors.
                 if !saw_state_base {
@@ -245,16 +255,24 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
             .iter()
             .map(|(id, _, _, _)| id.as_str())
             .collect();
-        let unresolved: Vec<String> = pending
+        let unresolved: Vec<(String, bool)> = pending
             .tool_calls
             .iter()
-            .filter(|call| !result_ids.contains(call.id.as_str()) && !is_control_call(&call.name))
-            .map(|call| format!("{}:{}", call.id, call.name))
+            .filter(|call| !result_ids.contains(call.id.as_str()))
+            .map(|call| {
+                (
+                    format!("{}:{}", call.id, call.name),
+                    is_control_call(&call.name),
+                )
+            })
             .collect();
-        if !unresolved.is_empty() {
+        let crossed_external_dispatch = unresolved.iter().any(|(_, control)| !control);
+        let unresolved_control_with_sibling_result =
+            !pending.tool_results.is_empty() && unresolved.iter().any(|(_, control)| *control);
+        if crossed_external_dispatch || unresolved_control_with_sibling_result {
             return Err(ReplayError::AmbiguousTail {
                 turn: pending.turn,
-                calls: unresolved,
+                calls: unresolved.into_iter().map(|(call, _)| call).collect(),
             });
         }
 
@@ -463,35 +481,10 @@ pub fn validate_resume_target(
 }
 
 fn validate_checkpoint(state: &ferric_trace::RecoveryCheckpointV1) -> Result<(), ReplayError> {
-    if state.head_len > state.messages.len() {
-        return Err(ReplayError::InvalidStructure(
-            "checkpoint head_len exceeds message count".to_string(),
-        ));
+    if state.version != RECOVERY_CHECKPOINT_VERSION {
+        return Err(ReplayError::UnsupportedCheckpoint(state.version));
     }
-    if state
-        .committed_turn_starts
-        .iter()
-        .any(|boundary| boundary.message_index > state.messages.len())
-    {
-        return Err(ReplayError::InvalidStructure(
-            "checkpoint turn boundary exceeds message count".to_string(),
-        ));
-    }
-    if let Some(request) = &state.pending_input {
-        request.validate().map_err(|error| {
-            ReplayError::InvalidStructure(format!("invalid pending input request: {error}"))
-        })?;
-    }
-    if state
-        .passed_checks
-        .values()
-        .any(|epoch| *epoch > state.mutation_epoch)
-    {
-        return Err(ReplayError::InvalidStructure(
-            "checkpoint contains check evidence from a future mutation epoch".to_string(),
-        ));
-    }
-    Ok(())
+    validate_recovery_checkpoint_shape(state).map_err(ReplayError::InvalidStructure)
 }
 
 fn is_control_call(name: &str) -> bool {
@@ -539,8 +532,9 @@ mod tests {
     //! dependency and can't see `pub(crate)` items.
     use super::*;
     use crate::projector::*;
-    use ferric_trace::JsonlSink;
+    use ferric_trace::{GuardTurn, JsonlSink, TurnBoundary};
     use serde_json::json;
+    use std::io::Write as _;
 
     fn write_trace(events: &[Event]) -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -583,6 +577,60 @@ mod tests {
             Message::system("You are Ferric."),
             Message::user_with_media("do the task", Vec::new()),
         ]
+    }
+
+    fn valid_checkpoint_with_history() -> ferric_trace::RecoveryCheckpointV1 {
+        let calls = |turn: u32| {
+            vec![ferric_core::ToolCall {
+                id: format!("read-{turn}"),
+                name: "read_file".to_string(),
+                args: json!({"path": format!("{turn}.txt")}),
+            }]
+        };
+        ferric_trace::RecoveryCheckpointV1 {
+            version: RECOVERY_CHECKPOINT_VERSION,
+            messages: vec![
+                Message::system("system"),
+                Message::user("task"),
+                Message::assistant("turn zero"),
+                Message::user("result zero"),
+                Message::assistant("turn two"),
+                Message::user("result two"),
+            ],
+            next_turn: 3,
+            last_text: Some("turn two".to_string()),
+            head_len: 2,
+            committed_turn_starts: vec![
+                TurnBoundary {
+                    turn: 0,
+                    message_index: 2,
+                },
+                TurnBoundary {
+                    turn: 2,
+                    message_index: 4,
+                },
+            ],
+            guard_history: vec![
+                GuardTurn {
+                    turn: 0,
+                    calls: calls(0),
+                    dispatched: 1,
+                    errored: 0,
+                },
+                GuardTurn {
+                    turn: 2,
+                    calls: calls(2),
+                    dispatched: 1,
+                    errored: 0,
+                },
+            ],
+            nudged_for_no_action: false,
+            truncated_once: false,
+            last_input_tokens: Some(10),
+            pending_input: None,
+            mutation_epoch: 0,
+            passed_checks: std::collections::BTreeMap::new(),
+        }
     }
 
     fn evidence_policy_selected() -> Event {
@@ -897,6 +945,268 @@ mod tests {
                 snapshot_commit: None,
             },
         ]);
+    }
+
+    #[test]
+    fn replay_drops_only_a_torn_tail_then_preserves_dispatch_ambiguity() {
+        let call = ferric_core::ToolCall {
+            id: "write-0".to_string(),
+            name: "write_file".to_string(),
+            args: json!({"path": "new.txt", "content": "new"}),
+        };
+        let events = vec![
+            Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: None,
+            },
+            policy_selected(ActionProtocol::NativeTools),
+            session_prompt(),
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: Some(20),
+                output_tokens: Some(5),
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![call.clone()],
+            },
+            Event::ToolCall {
+                id: call.id,
+                name: call.name,
+                args: call.args,
+            },
+        ];
+        let (_dir, path) = write_trace(&events);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(br#"{"v":1,"ts_ms":2,"session":"s-1","seq":7,"event":{"type":"tool_result""#)
+            .unwrap();
+
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::AmbiguousTail { turn: 0, calls })
+                if calls == ["write-0:write_file"]
+        ));
+    }
+
+    #[test]
+    fn unresolved_terminal_control_with_resulted_sibling_is_ambiguous() {
+        let complete = ferric_core::ToolCall {
+            id: "complete-0".to_string(),
+            name: crate::terminator::TASK_COMPLETE.to_string(),
+            args: json!({"summary": "done"}),
+        };
+        let read = ferric_core::ToolCall {
+            id: "read-0".to_string(),
+            name: "read_file".to_string(),
+            args: json!({"path": "a.txt"}),
+        };
+        let mut events = vec![
+            Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: None,
+            },
+            policy_selected(ActionProtocol::NativeTools),
+            session_prompt(),
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: None,
+                tool_call_count: 2,
+                input_tokens: Some(20),
+                output_tokens: Some(5),
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![complete.clone(), read.clone()],
+            },
+            Event::ToolCall {
+                id: complete.id.clone(),
+                name: complete.name.clone(),
+                args: complete.args.clone(),
+            },
+            Event::ToolCall {
+                id: read.id.clone(),
+                name: read.name.clone(),
+                args: read.args.clone(),
+            },
+            Event::ToolResult {
+                id: read.id,
+                name: read.name,
+                output: "contents".to_string(),
+                is_error: false,
+                duration_ms: 1,
+            },
+        ];
+        let (_dir, path) = write_trace(&events);
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::AmbiguousTail { turn: 0, calls })
+                if calls == ["complete-0:task_complete"]
+        ));
+
+        events.truncate(events.len() - 2);
+        let (_dir, control_only_path) = write_trace(&events);
+        let retryable = replay(&control_only_path).unwrap();
+        assert_eq!(retryable.next_turn, 0);
+        assert_eq!(retryable.messages, expected_prefix());
+    }
+
+    #[test]
+    fn recovery_checkpoint_history_and_guard_coordinates_are_canonical() {
+        let valid = valid_checkpoint_with_history();
+        validate_checkpoint(&valid).unwrap();
+
+        let mut invalid = Vec::new();
+        let mut checkpoint = valid.clone();
+        checkpoint.committed_turn_starts[0].message_index = 1;
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.committed_turn_starts[1].message_index = checkpoint.messages.len();
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.committed_turn_starts[1].turn = 0;
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.committed_turn_starts[1].message_index = 2;
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.committed_turn_starts[1].turn = checkpoint.next_turn;
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.guard_history[1].turn = 0;
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.guard_history[1].turn = 1;
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.guard_history[1].turn = checkpoint.next_turn;
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.guard_history[0].calls.clear();
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.guard_history[0].dispatched = 2;
+        invalid.push(checkpoint);
+        let mut checkpoint = valid;
+        checkpoint.guard_history[0].errored = 2;
+        invalid.push(checkpoint);
+
+        for checkpoint in invalid {
+            assert!(matches!(
+                validate_checkpoint(&checkpoint),
+                Err(ReplayError::InvalidStructure(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn invalid_checkpoint_boundaries_fail_before_compaction_can_project_them() {
+        let mut checkpoint = valid_checkpoint_with_history();
+        checkpoint.committed_turn_starts[1].message_index = 1;
+        let events = vec![
+            Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: Some("prior".to_string()),
+            },
+            policy_selected(ActionProtocol::NativeTools),
+            Event::RecoveryCheckpoint { state: checkpoint },
+            Event::HistoryCompacted {
+                through_turn: 0,
+                dropped_turns: 1,
+                summary: "summary".to_string(),
+            },
+        ];
+        let (_dir, path) = write_trace(&events);
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::InvalidStructure(_))
+        ));
+
+        let mut projector = TraceProjector::new();
+        projector.protocol = Some(ActionProtocol::NativeTools);
+        projector.messages = valid_checkpoint_with_history().messages;
+        projector.head_len = 2;
+        projector.committed_turn_starts = vec![(0, 2), (2, 1)];
+        let before = projector.messages.clone();
+        projector.step(&Event::HistoryCompacted {
+            through_turn: 0,
+            dropped_turns: 1,
+            summary: "summary".to_string(),
+        });
+        assert_eq!(projector.messages, before);
+    }
+
+    #[test]
+    fn later_pause_and_answer_checkpoints_must_match_projected_history_exactly() {
+        let mut paused_events = vec![
+            Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: None,
+            },
+            policy_selected(ActionProtocol::NativeTools),
+            session_prompt(),
+        ];
+        let mut forged_pause = projected_core(&paused_events);
+        forged_pause
+            .messages
+            .push(Message::user("forged pause history"));
+        paused_events.push(Event::SessionEnd {
+            reason: "max_turns".to_string(),
+        });
+        paused_events.push(Event::RecoveryCheckpoint {
+            state: forged_pause,
+        });
+        let (_dir, pause_path) = write_trace(&paused_events);
+        assert!(matches!(
+            replay(&pause_path),
+            Err(ReplayError::InvalidStructure(message))
+                if message.contains("projector-derived state anchor")
+        ));
+
+        let base = ferric_trace::RecoveryCheckpointV1 {
+            version: RECOVERY_CHECKPOINT_VERSION,
+            messages: expected_prefix(),
+            next_turn: 0,
+            last_text: None,
+            head_len: 2,
+            committed_turn_starts: Vec::new(),
+            guard_history: Vec::new(),
+            nudged_for_no_action: false,
+            truncated_once: false,
+            last_input_tokens: None,
+            pending_input: None,
+            mutation_epoch: 0,
+            passed_checks: std::collections::BTreeMap::new(),
+        };
+        let answer_events = vec![
+            Event::SessionStart {
+                workspace: "/ws".to_string(),
+                resumed_from: Some("prior".to_string()),
+            },
+            policy_selected(ActionProtocol::NativeTools),
+            Event::RecoveryCheckpoint {
+                state: base.clone(),
+            },
+            Event::ResumePrompt {
+                user: "answer".to_string(),
+                media: Vec::new(),
+            },
+            Event::RecoveryCheckpoint { state: base },
+        ];
+        let (_dir, answer_path) = write_trace(&answer_events);
+        assert!(matches!(
+            replay(&answer_path),
+            Err(ReplayError::InvalidStructure(message))
+                if message.contains("projector-derived state anchor")
+        ));
     }
 
     #[test]

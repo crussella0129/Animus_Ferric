@@ -24,7 +24,7 @@ use std::process::ExitCode;
 
 use clap::Args;
 
-use ferric_core::Message;
+use ferric_core::{HarnessPolicy, Message};
 use ferric_guard::Workspace;
 use ferric_loop::ReplayedState;
 use ferric_provider::{Completion, CompletionRequest, MockProvider, Provider, SamplingParams};
@@ -203,8 +203,9 @@ pub(crate) fn escalation_seed(
         last_text: None,
         protocol: config.protocol,
         // Chat escalation is a synthetic legacy resume seed, not a replayed
-        // evidence continuation. Non-legacy chat launch is refused above;
-        // evidence `/do` needs an explicit continuation kind in a later unit.
+        // evidence continuation. Evidence talk remains available, but `/do`
+        // is explicitly refused before this constructor is called until chat
+        // can create a truthful synthetic controller checkpoint.
         harness_policy: ferric_core::HarnessPolicy::Legacy,
         truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: chat_session.to_string(),
@@ -221,6 +222,12 @@ pub(crate) fn escalation_seed(
         pause_reason: None,
         controller_checkpoint: None,
     }
+}
+
+fn escalation_policy_error(policy: Option<HarnessPolicy>) -> Option<&'static str> {
+    (policy == Some(HarnessPolicy::Evidence)).then_some(
+        "evidence-policy /do escalation is unavailable: chat cannot yet construct a truthful synthetic evidence continuation; use ferric query for controlled execution",
+    )
 }
 
 /// The mock talk completion (`--mock`): a fresh one per talk turn so a REPL's
@@ -549,6 +556,10 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                 }
             }
             ChatInput::Escalate(text) => {
+                if let Some(error) = escalation_policy_error(config.harness_policy) {
+                    eprintln!("{error}");
+                    continue;
+                }
                 let seed = escalation_seed(&history, &config, &chat_session, workspace.root());
                 esc_count += 1;
                 let esc_session = format!("chat-esc-{}-{esc_count}", now_ms());
@@ -784,5 +795,15 @@ mod tests {
             seed.protocol,
             ActionProtocol::NativeTools | ActionProtocol::ConstrainedJson | ActionProtocol::TextXml
         ));
+    }
+
+    #[test]
+    fn evidence_talk_is_allowed_but_do_escalation_fails_explicitly() {
+        assert!(ensure_supported_harness_policy(Some(HarnessPolicy::Evidence)).is_ok());
+        let error = escalation_policy_error(Some(HarnessPolicy::Evidence))
+            .expect("evidence /do must not silently become legacy");
+        assert!(error.contains("truthful synthetic evidence continuation"));
+        assert_eq!(escalation_policy_error(None), None);
+        assert_eq!(escalation_policy_error(Some(HarnessPolicy::Legacy)), None);
     }
 }

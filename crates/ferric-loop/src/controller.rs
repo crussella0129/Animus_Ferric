@@ -15,9 +15,9 @@ use ferric_trace::{
     ControllerBlockReason, ControllerBlockV1, ControllerBlockWitnessV1, ControllerCheckpointV1,
     FailedCheckV1, FileEvidenceOrigin, FileEvidenceV1, FileObservationV1, LineRangeV1,
     NavigationObservationV1, ObservationDetailV1, ObservationV1, PathEffectKind,
-    PreparedPathIdentityV1, RECOVERY_PACKET_VERSION, RecoveryPacketV1, RequestedLineRangeV1,
-    SyntaxStateV1, UnsupportedMutationKindV1, VerificationCheckV1, VerificationOutcome,
-    WorkspaceEffectV1,
+    PreparedPathIdentityV1, PreparedPathStateV1, RECOVERY_PACKET_VERSION, RecoveryPacketV1,
+    RequestedLineRangeV1, SyntaxStateV1, UnsupportedMutationKindV1, VerificationCheckV1,
+    VerificationOutcome, WorkspaceEffectV1,
 };
 
 /// One path identity supplied by side-effect-free mutation preparation.
@@ -345,6 +345,66 @@ impl ControllerState {
             None,
             Some(ControllerBlockWitnessV1::StaleObservation { expected, current }),
         ))
+    }
+
+    /// Build and validate the exact typed refusal for a preparation that
+    /// proved its candidate would leave every named path unchanged.
+    pub(crate) fn no_effect_block(
+        &self,
+        mut states: Vec<PreparedPathStateV1>,
+    ) -> Result<ControllerBlockV1, ControllerError> {
+        states.sort_by(|left, right| left.path.cmp(&right.path));
+        let paths = states.iter().map(|state| state.path.clone()).collect();
+        let block = self.block(
+            ControllerBlockReason::NoEffect,
+            paths,
+            None,
+            Some(ControllerBlockWitnessV1::NoEffect { states }),
+        );
+        self.validate_block(0, &block)?;
+        Ok(block)
+    }
+
+    /// Build and validate the exact typed refusal for a prepared
+    /// valid/absent-to-invalid syntax transition.
+    pub(crate) fn syntax_regression_block(
+        &self,
+        path: impl Into<String>,
+        before: SyntaxStateV1,
+        candidate: SyntaxStateV1,
+        diagnostic_sha256: impl Into<String>,
+    ) -> Result<ControllerBlockV1, ControllerError> {
+        let block = self.block(
+            ControllerBlockReason::SyntaxRegression,
+            vec![path.into()],
+            None,
+            Some(ControllerBlockWitnessV1::SyntaxRegression {
+                before,
+                candidate,
+                diagnostic_sha256: diagnostic_sha256.into(),
+            }),
+        );
+        self.validate_block(0, &block)?;
+        Ok(block)
+    }
+
+    /// Build and validate a typed preparation-boundary refusal without
+    /// deriving control meaning from a human-readable tool diagnostic.
+    pub(crate) fn unsupported_mutation_block(
+        &self,
+        mut paths: Vec<String>,
+        control_kind: UnsupportedMutationKindV1,
+    ) -> Result<ControllerBlockV1, ControllerError> {
+        paths.sort();
+        paths.dedup();
+        let block = self.block(
+            ControllerBlockReason::UnsupportedMutation,
+            paths,
+            None,
+            Some(ControllerBlockWitnessV1::UnsupportedMutation { control_kind }),
+        );
+        self.validate_block(0, &block)?;
+        Ok(block)
     }
 
     /// Validate that a recorded refusal is the unique typed consequence of

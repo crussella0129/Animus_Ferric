@@ -34,7 +34,7 @@ pub use event::{
     SyntaxStateV1, TRACE_SCHEMA_VERSION, TraceEvent, TurnBoundary, UnsupportedMutationKindV1,
     VerificationCheckV1, VerificationOutcome, WorkspaceEffectV1,
 };
-pub use reader::{ParsedEvent, TraceReader, TraceRecord};
+pub use reader::{ParsedEvent, TraceReadMode, TraceReader, TraceRecord};
 pub use sink::JsonlSink;
 
 #[cfg(test)]

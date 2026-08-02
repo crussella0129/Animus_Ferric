@@ -321,6 +321,7 @@ fn controlled_enumeration_and_preparation_use_the_exact_explicit_allowlist() {
             "list_dir",
             "multi_edit",
             "read_file",
+            "run_check",
             "search_files",
             "write_file",
         ]
@@ -335,7 +336,6 @@ fn controlled_enumeration_and_preparation_use_the_exact_explicit_allowlist() {
         "make_dir",
         "manage_task",
         "move_path",
-        "run_check",
         "shell_exec",
     ];
     let (_directory, workspace) = workspace();

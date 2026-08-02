@@ -249,14 +249,28 @@ fn find_dir_controlled(
     max_results: usize,
     out: &mut Vec<String>,
 ) -> Result<(), String> {
+    find_dir_controlled_with_hook(dir, relative, pattern, max_results, out, &mut |_, _| {})
+}
+
+fn find_dir_controlled_with_hook<F>(
+    dir: &Dir,
+    relative: &Path,
+    pattern: &str,
+    max_results: usize,
+    out: &mut Vec<String>,
+    before_metadata: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(&Dir, &std::ffi::OsString),
+{
     if out.len() >= max_results {
         return Ok(());
     }
     let mut entries: Vec<_> = dir
         .entries()
         .map_err(|error| format!("find {}: {error}", relative.display()))?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("enumerate controlled find {}: {error}", relative.display()))?;
     entries.sort_by_key(cap_std::fs::DirEntry::file_name);
 
     for entry in entries {
@@ -264,38 +278,54 @@ fn find_dir_controlled(
             break;
         }
         let name = entry.file_name();
-        let before = match dir.symlink_metadata(&name) {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
-        };
+        let path = relative.join(&name);
+        before_metadata(dir, &name);
+        let before = dir.symlink_metadata(&name).map_err(|error| {
+            format!("inspect controlled find entry {}: {error}", path.display())
+        })?;
         if before.file_type().is_symlink() {
             continue;
         }
-        let path = relative.join(&name);
         if before.is_dir() {
             let lossy = name.to_string_lossy();
             if NOISE_DIRS.contains(&lossy.as_ref()) {
                 continue;
             }
             let identity = (MetadataExt::dev(&before), MetadataExt::ino(&before));
-            let Ok(child) = dir.open_dir_nofollow(&name) else {
-                continue;
-            };
-            let Ok(opened) = child.dir_metadata() else {
-                continue;
-            };
-            let Ok(after) = dir.symlink_metadata(&name) else {
-                continue;
-            };
+            let child = dir.open_dir_nofollow(&name).map_err(|error| {
+                format!("open controlled find directory {}: {error}", path.display())
+            })?;
+            let opened = child.dir_metadata().map_err(|error| {
+                format!(
+                    "inspect opened controlled find directory {}: {error}",
+                    path.display()
+                )
+            })?;
+            let after = dir.symlink_metadata(&name).map_err(|error| {
+                format!(
+                    "revalidate controlled find directory {}: {error}",
+                    path.display()
+                )
+            })?;
             if !opened.is_dir()
                 || after.file_type().is_symlink()
                 || !after.is_dir()
                 || (MetadataExt::dev(&opened), MetadataExt::ino(&opened)) != identity
                 || (MetadataExt::dev(&after), MetadataExt::ino(&after)) != identity
             {
-                continue;
+                return Err(format!(
+                    "controlled find directory {} changed before traversal",
+                    path.display()
+                ));
             }
-            find_dir_controlled(&child, &path, pattern, max_results, out)?;
+            find_dir_controlled_with_hook(
+                &child,
+                &path,
+                pattern,
+                max_results,
+                out,
+                before_metadata,
+            )?;
             let current = dir
                 .symlink_metadata(&name)
                 .map_err(|error| format!("revalidate controlled find directory: {error}"))?;
@@ -307,17 +337,57 @@ fn find_dir_controlled(
             }
         } else if before.is_file() && name.to_string_lossy().contains(pattern) {
             let identity = (MetadataExt::dev(&before), MetadataExt::ino(&before));
-            let Ok(after) = dir.symlink_metadata(&name) else {
-                continue;
-            };
+            let after = dir.symlink_metadata(&name).map_err(|error| {
+                format!(
+                    "revalidate controlled find file {}: {error}",
+                    path.display()
+                )
+            })?;
             if after.file_type().is_symlink()
                 || !after.is_file()
                 || (MetadataExt::dev(&after), MetadataExt::ino(&after)) != identity
             {
-                continue;
+                return Err(format!(
+                    "controlled find file {} changed during traversal",
+                    path.display()
+                ));
             }
             out.push(path.to_string_lossy().replace('\\', "/"));
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn controlled_find_fails_when_an_enumerated_entry_disappears() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("vanish.txt"), b"data\n").unwrap();
+        let workspace = ferric_guard::Workspace::new(directory.path()).unwrap();
+        let (root, relative) = open_controlled_dir(&workspace, ".").unwrap();
+        let mut removed = false;
+        let mut results = Vec::new();
+
+        let error = find_dir_controlled_with_hook(
+            &root,
+            &relative,
+            "vanish",
+            10,
+            &mut results,
+            &mut |dir, name| {
+                if !removed && name.to_string_lossy() == "vanish.txt" {
+                    removed = true;
+                    dir.remove_file(name).unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert!(removed);
+        assert!(results.is_empty());
+        assert!(error.contains("inspect controlled find entry"));
+    }
 }
