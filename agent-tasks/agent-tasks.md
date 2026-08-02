@@ -188,16 +188,21 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 - [ ] **T-11303 — Evidence controller.** Enforce prior-turn complete observation,
   actual-effect epochs, failed-check fingerprints, repair inspection, and
   unchanged-check process refusal through the registry/loop chokepoint.
-- [ ] **T-11304 — Durable recovery.** Persist controller checkpoints separately
+- [x] **T-11304 — Durable recovery.** Persist controller checkpoints separately
   from model history and inject truthful recovery packets across pause, resume,
-  resume-of-resume, clarification, and compaction.
+  resume-of-resume, clarification, and compaction. *(Done: conservative
+  controller replay, byte-stable recovery packets, exact checkpoint parity,
+  recovery-only torn-tail handling, ambiguous mixed-control tails, and
+  panic-safe compaction are covered by trace/loop tests.)*
 - [ ] **T-11305 — Controlled dispatch and product surfaces.** Integrate the
   controller/approval/commit order, general evidence prompt guidance, typed trace
   emission, and compatible query/API/MCP/chat/ICM policy plumbing.
-- [ ] **T-11306 — Reproducible paired runner.** Record managed-server sampling
+- [x] **T-11306 — Reproducible paired runner.** Record managed-server sampling
   metadata; add frozen legacy/candidate arms, AB/BA scheduling, collision-safe
   trace retention, two-arm completeness/provenance, mechanism metrics, and
-  infrastructure-clean paired scoring.
+  infrastructure-clean paired scoring. *(Done: strict managed-server
+  attestation, immutable per-arm executables, adjacent counterbalanced pairs,
+  retained-trace provenance, and fail-closed paired result scoring.)*
 - [ ] **T-11307 — Real-model causal evaluation.** Pass Rust gates; run the exact
   Qwen evidence screen; allow no more than two retained general revisions;
   freeze the candidate; run paired stability and untouched held-task comparisons;
