@@ -198,6 +198,7 @@ async fn run_resolved_check(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    ferric_core::configure_check_environment(command.as_std_mut());
 
     let mut child = command
         .spawn()

@@ -27,7 +27,7 @@ pub struct SampleStats {
 }
 
 impl SampleStats {
-    fn from_values(values: impl IntoIterator<Item = f64>) -> Self {
+    pub fn from_values(values: impl IntoIterator<Item = f64>) -> Self {
         let mut values: Vec<f64> = values.into_iter().collect();
         values.sort_by(f64::total_cmp);
         if values.is_empty() {
@@ -84,7 +84,7 @@ pub struct Wilson95 {
 }
 
 impl Wilson95 {
-    fn from_counts(passes: u32, samples: u32) -> Self {
+    pub fn from_counts(passes: u32, samples: u32) -> Self {
         if samples == 0 {
             return Self {
                 lower: 0.0,
@@ -134,6 +134,8 @@ pub struct BinaryProvenance {
     pub path: String,
     pub size_bytes: Option<u64>,
     pub modified_at_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -143,6 +145,11 @@ pub struct ModelProvenance {
     pub api_base: Option<String>,
     pub params_b: f32,
     pub ctx: u32,
+    /// Operator-supplied or locally computed model artifact digest. Remote
+    /// model IDs cannot be honestly converted into a file hash, so unknown is
+    /// represented as null rather than inferred.
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -479,6 +486,7 @@ mod tests {
                 path: "ferric".to_string(),
                 size_bytes: None,
                 modified_at_unix_ms: None,
+                sha256: None,
             },
             model: ModelProvenance {
                 backend: "mock".to_string(),
@@ -486,6 +494,7 @@ mod tests {
                 api_base: None,
                 params_b: 1.2,
                 ctx: 4096,
+                sha256: None,
             },
             protocol: "ConstrainedJson".to_string(),
             variant: "test".to_string(),

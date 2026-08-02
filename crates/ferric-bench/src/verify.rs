@@ -111,10 +111,7 @@ pub fn parse_trace(path: &Path) -> std::io::Result<TraceMetrics> {
     let mut m = TraceMetrics::default();
     let reader = TraceReader::open(path).map_err(std::io::Error::other)?;
     for record in reader {
-        let record = match record {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
+        let record = record.map_err(std::io::Error::other)?;
         if let ParsedEvent::Known(event) = record.event {
             match event {
                 Event::TurnStart { .. } => m.turns += 1,
@@ -276,9 +273,55 @@ pub fn verify_command_checks(
     spec: &BenchSpec,
     python_bin: &Path,
 ) -> Vec<CommandCheckResult> {
+    verify_command_checks_inner(workspace, spec, python_bin, None)
+}
+
+/// Execute trusted checks within one shared wall-clock budget.
+///
+/// This is used by multi-segment autonomy episodes so final grading cannot
+/// multiply the task-wide deadline by applying a fresh timeout to every check.
+/// Exhausting the shared budget is harness infrastructure failure, not evidence
+/// that the model produced an incorrect artifact.
+pub fn verify_command_checks_with_deadline(
+    workspace: &Path,
+    spec: &BenchSpec,
+    python_bin: &Path,
+    budget: Duration,
+) -> Vec<CommandCheckResult> {
+    verify_command_checks_inner(
+        workspace,
+        spec,
+        python_bin,
+        Instant::now().checked_add(budget),
+    )
+}
+
+fn verify_command_checks_inner(
+    workspace: &Path,
+    spec: &BenchSpec,
+    python_bin: &Path,
+    deadline: Option<Instant>,
+) -> Vec<CommandCheckResult> {
     let mut results = Vec::with_capacity(spec.checks.len());
     for check in &spec.checks {
-        let result = run_command_check(workspace, check, python_bin);
+        let configured_timeout = Duration::from_secs(check.timeout_s);
+        let (timeout, deadline_limited) = if let Some(deadline) = deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                results.push(check_infrastructure_error(
+                    check,
+                    "shared command-check deadline exhausted before launch".to_string(),
+                ));
+                break;
+            }
+            (
+                configured_timeout.min(remaining),
+                remaining < configured_timeout,
+            )
+        } else {
+            (configured_timeout, false)
+        };
+        let result = run_command_check(workspace, check, python_bin, timeout, deadline_limited);
         let passed = result.passed();
         results.push(result);
         if !passed {
@@ -292,6 +335,8 @@ fn run_command_check(
     workspace: &Path,
     check: &CommandCheck,
     python_bin: &Path,
+    timeout: Duration,
+    deadline_limited: bool,
 ) -> CommandCheckResult {
     let Some(program) = check.argv.first() else {
         return check_infrastructure_error(check, "empty argv".to_string());
@@ -309,6 +354,7 @@ fn run_command_check(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    ferric_core::configure_check_environment(&mut command);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
@@ -337,7 +383,7 @@ fn run_command_check(
     let exit_code = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.code(),
-            Ok(None) if started.elapsed() >= Duration::from_secs(check.timeout_s) => {
+            Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
                 timed_out = true;
@@ -364,6 +410,21 @@ fn run_command_check(
     };
     let stdout_excerpt = String::from_utf8_lossy(&stdout).into_owned();
     let stderr_excerpt = String::from_utf8_lossy(&stderr).into_owned();
+
+    if timed_out && deadline_limited {
+        return CommandCheckResult {
+            name: check.name.clone(),
+            status: CommandCheckStatus::InfrastructureError,
+            exit_code,
+            timed_out,
+            stdout_excerpt,
+            stderr_excerpt,
+            reason: Some(format!(
+                "shared command-check deadline exhausted after {} ms",
+                timeout.as_millis()
+            )),
+        };
+    }
 
     let reason = if timed_out {
         Some(format!("timed out after {}s", check.timeout_s))
@@ -529,6 +590,15 @@ mod tests {
             tools_called: tools.iter().map(|s| s.to_string()).collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn parse_trace_fails_closed_on_malformed_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trace.jsonl");
+        std::fs::write(&path, "{not-json}\n").unwrap();
+        let error = parse_trace(&path).unwrap_err();
+        assert!(error.to_string().contains("expected") || error.to_string().contains("key"));
     }
 
     #[test]
@@ -736,6 +806,36 @@ mod tests {
         let result = verify_command_checks(workspace.path(), &spec, &current_exe);
         assert_eq!(result[0].status, CommandCheckStatus::ModelFailure);
         assert!(result[0].timed_out);
+    }
+
+    #[test]
+    fn shared_check_deadline_is_an_infrastructure_failure() {
+        let workspace = tempfile::tempdir().unwrap();
+        let current_exe = std::env::current_exe().unwrap();
+        let check = command_check(vec![
+            current_exe.display().to_string(),
+            "--ignored".to_string(),
+            "--exact".to_string(),
+            "verify::tests::command_check_sleep_fixture".to_string(),
+        ]);
+        let mut spec = spec_with(&[], &[], &[], vec![]);
+        spec.checks = vec![check];
+
+        let result = verify_command_checks_with_deadline(
+            workspace.path(),
+            &spec,
+            &current_exe,
+            Duration::from_millis(100),
+        );
+        assert_eq!(result[0].status, CommandCheckStatus::InfrastructureError);
+        assert!(result[0].timed_out);
+        assert!(
+            result[0]
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("shared command-check deadline")
+        );
     }
 
     #[test]

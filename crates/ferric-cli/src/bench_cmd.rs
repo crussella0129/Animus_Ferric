@@ -43,6 +43,11 @@ pub struct BenchArgs {
     #[arg(long)]
     pub model: Option<String>,
 
+    /// SHA-256 of the model artifact when known. Remote model identifiers do
+    /// not imply a file digest, so the default is intentionally unknown.
+    #[arg(long, value_parser = parse_sha256)]
+    pub model_sha256: Option<String>,
+
     /// Fleet sweep (openai backend): run the full L0–L6 ladder for each
     /// comma-separated model id and print a `measured_level` leaderboard. One
     /// profile record per model. Overrides `--model`.
@@ -93,6 +98,10 @@ pub struct BenchArgs {
 }
 
 pub fn run_bench(args: BenchArgs) -> ExitCode {
+    if args.models.is_some() && args.model_sha256.is_some() {
+        eprintln!("--model-sha256 is only valid with one --model, not --models");
+        return ExitCode::FAILURE;
+    }
     if cfg!(debug_assertions) && !args.mock {
         eprintln!(
             "warning: running a real-model sweep from a DEBUG binary — inference will be ~1 tok/s. \
@@ -546,6 +555,7 @@ fn provenance(inv: &Invocation, args: &BenchArgs) -> RunProvenance {
             .as_ref()
             .and_then(|metadata| metadata.modified().ok())
             .and_then(system_time_unix_ms),
+        sha256: ferric_bench::sha256_file(&binary_path).ok(),
     };
     let model = match &inv.openai {
         Some(openai) => ModelProvenance {
@@ -554,6 +564,7 @@ fn provenance(inv: &Invocation, args: &BenchArgs) -> RunProvenance {
             api_base: openai.api_base.clone(),
             params_b: openai.params_b,
             ctx: openai.ctx,
+            sha256: args.model_sha256.clone(),
         },
         None => ModelProvenance {
             backend: "mock".to_string(),
@@ -561,6 +572,7 @@ fn provenance(inv: &Invocation, args: &BenchArgs) -> RunProvenance {
             api_base: None,
             params_b: args.params_b,
             ctx: args.ctx,
+            sha256: None,
         },
     };
     RunProvenance {
@@ -602,6 +614,14 @@ fn parse_pass_rate(value: &str) -> Result<f64, String> {
         Ok(rate)
     } else {
         Err("pass rate must be a finite number greater than 0 and at most 1".to_string())
+    }
+}
+
+fn parse_sha256(value: &str) -> Result<String, String> {
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(value.to_ascii_lowercase())
+    } else {
+        Err("SHA-256 must contain exactly 64 hexadecimal characters".to_string())
     }
 }
 

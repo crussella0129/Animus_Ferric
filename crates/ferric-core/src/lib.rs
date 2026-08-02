@@ -1,5 +1,6 @@
 //! Shared vocabulary types and the deterministic scale function for Animus Ferric.
 
+mod check_env;
 mod error;
 pub mod hooks;
 mod media;
@@ -7,6 +8,7 @@ mod message;
 mod scale;
 mod user_input;
 
+pub use check_env::{CHECK_ENV_REMOVE, CHECK_ENV_SET, configure_check_environment};
 pub use error::FerricError;
 pub use hooks::HooksConfig;
 pub use media::{

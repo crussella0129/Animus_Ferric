@@ -27,12 +27,24 @@ pub struct BackendOpts {
 /// Resolve the OpenAI base URL (T-805 auto-discovery): an explicit `--api-base`
 /// wins, else the running `ferric server` runfile's `base_url`, else the
 /// built-in default.
-#[cfg(any(feature = "backend-openai", test))]
 fn resolve_base(explicit: Option<&str>, runfile: Option<&str>) -> String {
     explicit
         .or(runfile)
         .map(str::to_string)
         .unwrap_or_else(|| "http://localhost:1234/v1".to_string())
+}
+
+/// Resolve the endpoint exactly once for commands that launch multiple query
+/// processes. Freezing the discovered runfile URL prevents a long benchmark
+/// from silently switching servers mid-run.
+pub(crate) fn resolved_base_url(explicit: Option<&str>) -> String {
+    let runfile = std::env::current_dir()
+        .ok()
+        .and_then(|directory| crate::server::read_runfile(&directory));
+    resolve_base(
+        explicit,
+        runfile.as_ref().map(|record| record.base_url.as_str()),
+    )
 }
 
 #[cfg(feature = "backend-openai")]
@@ -45,13 +57,7 @@ pub async fn create_provider(
         .api_key
         .clone()
         .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-    let runfile = std::env::current_dir()
-        .ok()
-        .and_then(|d| crate::server::read_runfile(&d));
-    let base_url = resolve_base(
-        opts.api_base.as_deref(),
-        runfile.as_ref().map(|r| r.base_url.as_str()),
-    );
+    let base_url = resolved_base_url(opts.api_base.as_deref());
     let config = OpenAiConfig {
         base_url,
         api_key: api_key.unwrap_or_else(|| "ollama".to_string()),

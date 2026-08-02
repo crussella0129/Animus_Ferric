@@ -7,6 +7,7 @@
 //! poll loop. Release-profile children are required for usable speed (debug
 //! candle is ~1 tok/s — s1 lesson); the CLI warns under debug_assertions.
 
+use std::collections::BTreeSet;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -68,6 +69,37 @@ pub struct RunRecord {
     pub stderr_tail: String,
 }
 
+/// One process segment in the autonomy matrix. Initial segments supply a
+/// prompt; continuation segments supply a prior trace and, when applicable, a
+/// clarification answer. The workspace and isolated profile directory survive
+/// across every segment in an episode.
+pub struct QuerySegmentRequest<'a> {
+    pub workspace: &'a Path,
+    pub profile_dir: &'a Path,
+    pub checks_file: Option<&'a Path>,
+    pub prompt: Option<&'a str>,
+    pub resume: Option<&'a Path>,
+    pub answer: Option<&'a str>,
+    pub max_turns: u32,
+    pub timeout: Duration,
+    /// Override only this segment's OpenAI endpoint. The autonomy provider-
+    /// failure fixture uses an unreachable loopback endpoint, then resumes
+    /// against the ordinary endpoint in the next process.
+    pub api_base_override: Option<&'a str>,
+}
+
+/// Raw process evidence for one autonomy segment. A rejected resume normally
+/// has no new trace; that is data for a refusal probe rather than a discovery
+/// failure.
+pub struct QuerySegmentRecord {
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub wall: Duration,
+    pub trace_path: Option<PathBuf>,
+    pub trace_discovery_error: Option<String>,
+    pub stderr_tail: String,
+}
+
 pub enum WorkspaceHandle {
     Temp(TempDir),
     Kept(PathBuf),
@@ -116,6 +148,9 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
     ));
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    if inv.prompts_dir.is_none() {
+        cmd.env_remove("FERRIC_PROMPTS_DIR");
+    }
 
     let started = Instant::now();
     let child = cmd.spawn()?;
@@ -138,6 +173,76 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
         workspace,
         stderr_tail: outcome.stderr_tail,
     })
+}
+
+/// Spawn one isolated `ferric query` process without creating or deleting the
+/// workspace. This is the process boundary used by the autonomy runner to
+/// exercise real pause/resume and resume-of-resume chains.
+pub fn run_query_segment(
+    inv: &Invocation,
+    request: &QuerySegmentRequest<'_>,
+) -> std::io::Result<QuerySegmentRecord> {
+    validate_segment_request(request)?;
+    let before = trace_files(request.workspace)?;
+    let mut cmd = Command::new(&inv.ferric_bin);
+    cmd.args(query_segment_args(inv, request));
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if inv.prompts_dir.is_none() {
+        cmd.env_remove("FERRIC_PROMPTS_DIR");
+    }
+
+    let started = Instant::now();
+    let child = cmd.spawn()?;
+    let outcome = wait_for_child(child, started, request.timeout)?;
+    let after = trace_files(request.workspace)?;
+    let created: Vec<PathBuf> = after.difference(&before).cloned().collect();
+    let (trace_path, trace_discovery_error) = match created.as_slice() {
+        [] => (None, None),
+        [path] => (Some(path.clone()), None),
+        paths => (
+            None,
+            Some(format!(
+                "query segment created {} traces; expected exactly one",
+                paths.len()
+            )),
+        ),
+    };
+
+    Ok(QuerySegmentRecord {
+        exit_code: outcome.exit_code,
+        timed_out: outcome.timed_out,
+        wall: outcome.wall,
+        trace_path,
+        trace_discovery_error,
+        stderr_tail: outcome.stderr_tail,
+    })
+}
+
+fn validate_segment_request(request: &QuerySegmentRequest<'_>) -> io::Result<()> {
+    match (request.prompt, request.resume) {
+        (Some(prompt), None) if !prompt.trim().is_empty() => {}
+        (None, Some(_)) => {}
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "query segment requires exactly one of a non-empty prompt or resume trace",
+            ));
+        }
+    }
+    if request.answer.is_some() && request.resume.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "query segment answer requires a resume trace",
+        ));
+    }
+    if request.max_turns == 0 || request.max_turns > u32::from(u8::MAX) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "query segment max_turns must be in 1..=255",
+        ));
+    }
+    Ok(())
 }
 
 /// Drain both child pipes while polling. Waiting to read until after exit can
@@ -281,6 +386,77 @@ fn query_args(
     args
 }
 
+fn query_segment_args(inv: &Invocation, request: &QuerySegmentRequest<'_>) -> Vec<String> {
+    let mut args = vec!["query".to_string()];
+    if let Some(prompt) = request.prompt {
+        args.push(prompt.to_string());
+    } else if let Some(resume) = request.resume {
+        args.extend(["--resume".to_string(), resume.display().to_string()]);
+    }
+    if let Some(answer) = request.answer {
+        args.extend(["--answer".to_string(), answer.to_string()]);
+    }
+    args.extend([
+        "--workspace".to_string(),
+        request.workspace.display().to_string(),
+        "--protocol".to_string(),
+        protocol_flag(inv.protocol).to_string(),
+        "--no-config".to_string(),
+        "--profile-dir".to_string(),
+        request.profile_dir.display().to_string(),
+        "--temperature".to_string(),
+        "0".to_string(),
+        "--max-turns".to_string(),
+        request.max_turns.to_string(),
+        "--no-stream".to_string(),
+    ]);
+    if let Some(checks) = request.checks_file {
+        args.extend(["--checks-file".to_string(), checks.display().to_string()]);
+    }
+    if let Some(openai) = &inv.openai {
+        if let Some(base) = request.api_base_override.or(openai.api_base.as_deref()) {
+            args.extend(["--api-base".to_string(), base.to_string()]);
+        }
+        args.extend([
+            "--model".to_string(),
+            openai.model.clone(),
+            "--params-b".to_string(),
+            openai.params_b.to_string(),
+            "--ctx".to_string(),
+            openai.ctx.to_string(),
+        ]);
+    } else {
+        args.push("--mock".to_string());
+    }
+    if request.resume.is_none()
+        && let Some(prompts) = &inv.prompts_dir
+    {
+        args.extend(["--prompts-dir".to_string(), prompts.display().to_string()]);
+    }
+    args
+}
+
+fn trace_files(workspace: &Path) -> io::Result<BTreeSet<PathBuf>> {
+    let trace_dir = ferric_trace::trace_dir(workspace);
+    let entries = match std::fs::read_dir(trace_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(error) => return Err(error),
+    };
+    let mut traces = BTreeSet::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("q-") && name.ends_with(".jsonl"))
+        {
+            traces.insert(path);
+        }
+    }
+    Ok(traces)
+}
+
 /// Find the single `q-*.jsonl` the child wrote under `<ws>/.ferric/trace/`.
 fn find_trace(workspace: &Path) -> Option<PathBuf> {
     let trace_dir = ferric_trace::trace_dir(workspace);
@@ -348,6 +524,67 @@ mod tests {
         let args = query_args("t", 5, &base(), Path::new("/ws"), Path::new("/profiles"));
         assert!(args.iter().any(|a| a == "--mock"));
         assert!(!args.iter().any(|a| a == "--backend"));
+    }
+
+    #[test]
+    fn autonomy_resume_args_preserve_isolation_and_answer() {
+        let mut inv = base();
+        inv.openai = Some(OpenAiArgs {
+            api_base: Some("http://127.0.0.1:8080/v1".to_string()),
+            model: "model.gguf".to_string(),
+            params_b: 7.6,
+            ctx: 8192,
+        });
+        let request = QuerySegmentRequest {
+            workspace: Path::new("/ws"),
+            profile_dir: Path::new("/profiles"),
+            checks_file: Some(Path::new("/checks.toml")),
+            prompt: None,
+            resume: Some(Path::new("/ws/.ferric/trace/prior.jsonl")),
+            answer: Some("use UTC"),
+            max_turns: 9,
+            timeout: Duration::from_secs(60),
+            api_base_override: Some("http://127.0.0.1:9/v1"),
+        };
+        let args = query_segment_args(&inv, &request);
+        assert!(has_pair(&args, "--resume", "/ws/.ferric/trace/prior.jsonl"));
+        assert!(has_pair(&args, "--answer", "use UTC"));
+        assert!(has_pair(&args, "--checks-file", "/checks.toml"));
+        assert!(has_pair(&args, "--api-base", "http://127.0.0.1:9/v1"));
+        assert!(args.iter().any(|arg| arg == "--no-config"));
+        assert!(args.iter().any(|arg| arg == "--no-stream"));
+        assert!(!args.iter().any(|arg| arg == "--prompts-dir"));
+    }
+
+    #[test]
+    fn segment_request_rejects_mixed_or_missing_sources() {
+        let request = QuerySegmentRequest {
+            workspace: Path::new("/ws"),
+            profile_dir: Path::new("/profiles"),
+            checks_file: None,
+            prompt: Some("new task"),
+            resume: Some(Path::new("trace.jsonl")),
+            answer: None,
+            max_turns: 1,
+            timeout: Duration::from_secs(1),
+            api_base_override: None,
+        };
+        assert_eq!(
+            validate_segment_request(&request).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn trace_discovery_ignores_foreign_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace_dir = ferric_trace::trace_dir(dir.path());
+        std::fs::create_dir_all(&trace_dir).unwrap();
+        std::fs::write(trace_dir.join("q-one.jsonl"), "").unwrap();
+        std::fs::write(trace_dir.join("mcp-two.jsonl"), "").unwrap();
+        std::fs::write(trace_dir.join("q-note.txt"), "").unwrap();
+        let traces = trace_files(dir.path()).unwrap();
+        assert_eq!(traces, BTreeSet::from([trace_dir.join("q-one.jsonl")]));
     }
 
     #[test]
