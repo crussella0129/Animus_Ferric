@@ -932,6 +932,10 @@ pub async fn run(
     let policy_selected = Event::PolicySelected {
         tier: args.policy.tier,
         protocol: args.protocol,
+        // B113-01 is an additive wire foundation only. A later build unit
+        // threads an explicit harness policy through every product surface;
+        // until then the live writer must preserve historical behavior.
+        harness_policy: ferric_core::HarnessPolicy::Legacy,
         max_turns: u32::from(args.policy.max_turns),
         max_tools: u32::from(args.policy.max_tools),
         prompt_budget_tokens: args.policy.prompt_budget_tokens,

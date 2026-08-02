@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ferric_core::ToolCall;
+use ferric_core::{HarnessPolicy, ToolCall};
 use ferric_trace::{Event, RecoveryCheckpointV1};
 
 use crate::terminator::{REQUEST_USER_INPUT, SUBMIT_PLAN, TASK_COMPLETE};
@@ -75,6 +75,7 @@ pub struct TraceStructure {
     committed_terminal: Option<String>,
     mutation_epoch: u64,
     passed_checks: BTreeMap<String, u64>,
+    harness_policy: Option<HarnessPolicy>,
 }
 
 impl TraceStructure {
@@ -93,6 +94,9 @@ impl TraceStructure {
         }
 
         match event {
+            Event::PolicySelected { harness_policy, .. } => {
+                self.observe_policy_selected(*harness_policy)
+            }
             Event::SessionPrompt { .. } => self.observe_session_prompt(),
             Event::RecoveryCheckpoint { state } => self.observe_checkpoint(state),
             Event::ResumePrompt { .. } => self.observe_resume_prompt(),
@@ -107,6 +111,14 @@ impl TraceStructure {
             Event::ToolResult {
                 id, name, is_error, ..
             } => self.observe_tool_result(id, name, *is_error),
+            Event::ObservationRecorded { .. }
+            | Event::ControllerBlocked { .. }
+            | Event::WorkspaceEffectRecorded { .. }
+            | Event::VerificationCheckRecorded { .. }
+            | Event::ControllerCheckpoint { .. }
+            | Event::RecoveryPacketInjected { .. } => {
+                self.reject_unintegrated_controller_event(event)
+            }
             Event::WorkspaceMutation {
                 turn,
                 tool,
@@ -148,6 +160,34 @@ impl TraceStructure {
             Event::SessionEnd { reason } => self.observe_session_end(reason),
             Event::SessionPaused { reason } => self.observe_session_paused(reason),
             _ => Ok(()),
+        }
+    }
+
+    fn observe_policy_selected(&mut self, policy: HarnessPolicy) -> Result<(), String> {
+        if self.harness_policy.is_some() {
+            return Err("trace contains more than one PolicySelected".to_string());
+        }
+        if self.saw_turn || self.base != StateBase::None {
+            return Err("PolicySelected appears after session state began".to_string());
+        }
+        self.harness_policy = Some(policy);
+        Ok(())
+    }
+
+    /// B113-01 makes the new wire vocabulary readable but deliberately emits
+    /// none of it. Treating a newly-known event as harmless via the wildcard
+    /// would let a forged evidence trace pass `trace verify` before the causal
+    /// controller state machine exists. Later build units replace this gate
+    /// with full per-event validation; until then both legacy misuse and
+    /// prematurely-authored evidence traces fail closed here.
+    fn reject_unintegrated_controller_event(&self, event: &Event) -> Result<(), String> {
+        match self.harness_policy {
+            Some(HarnessPolicy::Legacy) | None => Err(format!(
+                "controller event is not valid under the legacy harness policy: {event:?}"
+            )),
+            Some(HarnessPolicy::Evidence | HarnessPolicy::EvidencePlanner) => Err(format!(
+                "controller event validation is not enabled yet: {event:?}"
+            )),
         }
     }
 
@@ -702,6 +742,58 @@ mod tests {
                 truncated: false,
             })
             .unwrap();
+    }
+
+    fn policy(harness_policy: HarnessPolicy) -> Event {
+        Event::PolicySelected {
+            tier: ferric_core::Tier::Nano,
+            protocol: ferric_core::ActionProtocol::NativeTools,
+            harness_policy,
+            max_turns: 15,
+            max_tools: 10,
+            prompt_budget_tokens: 2_800,
+            max_output_tokens: 512,
+            truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
+            tier_source: ferric_core::TierSource::Params.label().to_string(),
+        }
+    }
+
+    fn observation_event() -> Event {
+        Event::ObservationRecorded {
+            turn: 0,
+            call_id: "read-1".to_string(),
+            observation: ferric_trace::ObservationV1 {
+                version: ferric_trace::CONTROLLER_RECORD_VERSION,
+                detail: ferric_trace::ObservationDetailV1::Find(
+                    ferric_trace::NavigationObservationV1 {
+                        root: ".".to_string(),
+                        literal: "missing.rs".to_string(),
+                        match_count: 0,
+                        max_results: 100,
+                        exhausted: true,
+                        result_sha256: "0".repeat(64),
+                    },
+                ),
+            },
+        }
+    }
+
+    #[test]
+    fn legacy_policy_rejects_known_controller_events_instead_of_ignoring_them() {
+        let mut validator = TraceStructure::new();
+        validator.observe(&policy(HarnessPolicy::Legacy)).unwrap();
+
+        let error = validator.observe(&observation_event()).unwrap_err();
+        assert!(error.contains("legacy harness policy"), "{error}");
+    }
+
+    #[test]
+    fn evidence_events_fail_closed_until_the_controller_validator_lands() {
+        let mut validator = TraceStructure::new();
+        validator.observe(&policy(HarnessPolicy::Evidence)).unwrap();
+
+        let error = validator.observe(&observation_event()).unwrap_err();
+        assert!(error.contains("not enabled yet"), "{error}");
     }
 
     #[test]

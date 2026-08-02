@@ -1558,6 +1558,7 @@ mod tests {
         sink.write_event(Event::PolicySelected {
             tier: ferric_core::Tier::Small,
             protocol: ActionProtocol::ConstrainedJson,
+            harness_policy: ferric_core::HarnessPolicy::Legacy,
             max_turns: 7,
             max_tools: 8,
             prompt_budget_tokens: 4096,

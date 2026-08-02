@@ -386,11 +386,21 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
             ParsedEvent::Known(Event::PermissionCheck { .. }) => "permission_check",
             ParsedEvent::Known(Event::ToolCall { .. }) => "tool_call",
             ParsedEvent::Known(Event::ToolResult { .. }) => "tool_result",
+            ParsedEvent::Known(Event::ObservationRecorded { .. }) => "observation_recorded",
+            ParsedEvent::Known(Event::ControllerBlocked { .. }) => "controller_blocked",
+            ParsedEvent::Known(Event::WorkspaceEffectRecorded { .. }) => {
+                "workspace_effect_recorded"
+            }
+            ParsedEvent::Known(Event::VerificationCheckRecorded { .. }) => {
+                "verification_check_recorded"
+            }
             ParsedEvent::Known(Event::WorkspaceMutation { .. }) => "workspace_mutation",
             ParsedEvent::Known(Event::VerificationCheckPassed { .. }) => {
                 "verification_check_passed"
             }
             ParsedEvent::Known(Event::CompletionGate { .. }) => "completion_gate",
+            ParsedEvent::Known(Event::ControllerCheckpoint { .. }) => "controller_checkpoint",
+            ParsedEvent::Known(Event::RecoveryPacketInjected { .. }) => "recovery_packet_injected",
             ParsedEvent::Known(Event::Note { .. }) => "note",
             ParsedEvent::Known(Event::HistoryCompacted { .. }) => "history_compacted",
             ParsedEvent::Unknown(_) => "unknown",

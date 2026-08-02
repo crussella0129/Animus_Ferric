@@ -2,6 +2,7 @@
 
 mod check_env;
 mod error;
+mod harness;
 pub mod hooks;
 mod media;
 mod message;
@@ -10,6 +11,7 @@ mod user_input;
 
 pub use check_env::{CHECK_ENV_REMOVE, CHECK_ENV_SET, configure_check_environment};
 pub use error::FerricError;
+pub use harness::{HarnessPolicy, ParseHarnessPolicyError};
 pub use hooks::HooksConfig;
 pub use media::{
     Attachment, FileKind, MediaPart, Modality, base64_encode, classify_path, decide_attachment,

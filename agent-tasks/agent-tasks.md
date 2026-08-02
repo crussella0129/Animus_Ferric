@@ -176,26 +176,32 @@ test ever ran the real `tailscale` CLI.
   sample with 18.8%–81.2% Wilson 95%; workspace fmt/clippy/tests green;
   ADR-103 and operator docs.)*
 
-## Sprint 113 candidates — baseline collection and long-horizon improvement
+## Sprint 113 — evidence-bound autonomous recovery (approved)
 
-- [ ] **T-11301 — Collect the complete frozen baseline.** Run all 24 tasks ×
-  three variants once (72 coordinates), then three trials (216 episodes) as
-  hardware time permits. Preserve cold/warm server state and exact binary,
-  model, corpus, and trace hashes. Publish no pooled accuracy number without the
-  task/variant/category breakdown and intervals.
-- [ ] **T-11302 — Improve read-before-edit recovery.** Use held failure traces
-  to prevent edits that require an `old_string` before the file has been read;
-  measure unnecessary clarification and tool-error reduction across the frozen
-  matrix, not only H01.
-- [ ] **T-11303 — Bounded verification-guided repair.** Turn named-check failure
-  evidence into a compact repair state that survives continuation/compaction,
-  with an explicit retry budget and no arbitrary shell widening.
-- [ ] **T-11304 — Measure duplicate/collateral effects.** Add corpus-level
-  effect instrumentation and an authoritative limit before populating
-  `duplicate_effects_within_limit`; v1 correctly emits null today.
-- [ ] **T-11305 — Bind server teardown identity.** Record and verify executable
-  plus process-start identity before `server down` kills a PID; fail closed on a
-  stale/reused registration and report runfile deletion/listener cleanup errors.
-- [ ] **T-11306 — External validity.** Select a versioned external repository
-  benchmark or held-out task set and compare it with the internal matrix. Keep
-  external leaderboard claims separate from Ferric-specific recovery metrics.
+The exact-model control is complete at 0/3 objective and contract completions.
+These work packages implement and causally evaluate the approved general
+intervention through repository-native Rust, tests, runtime evidence, and Git.
+
+- [ ] **T-11302 — Typed tool preparation and measured effects.** Add navigation
+  envelopes, content fingerprints, prepare/commit/effect contracts, stale and
+  no-effect rejection, syntax admission, and fail-closed opaque mutation.
+- [ ] **T-11303 — Evidence controller.** Enforce prior-turn complete observation,
+  actual-effect epochs, failed-check fingerprints, repair inspection, and
+  unchanged-check process refusal through the registry/loop chokepoint.
+- [ ] **T-11304 — Durable recovery.** Persist controller checkpoints separately
+  from model history and inject truthful recovery packets across pause, resume,
+  resume-of-resume, clarification, and compaction.
+- [ ] **T-11305 — Controlled dispatch and product surfaces.** Integrate the
+  controller/approval/commit order, general evidence prompt guidance, typed trace
+  emission, and compatible query/API/MCP/chat/ICM policy plumbing.
+- [ ] **T-11306 — Reproducible paired runner.** Record managed-server sampling
+  metadata; add frozen legacy/candidate arms, AB/BA scheduling, collision-safe
+  trace retention, two-arm completeness/provenance, mechanism metrics, and
+  infrastructure-clean paired scoring.
+- [ ] **T-11307 — Real-model causal evaluation.** Pass Rust gates; run the exact
+  Qwen evidence screen; allow no more than two retained general revisions;
+  freeze the candidate; run paired stability and untouched held-task comparisons;
+  independently verify traces and teardown.
+- [ ] **T-11308 — Planner decision and durable record.** Only after the
+  evidence-only result, freeze a planner orchestration addendum or reject the
+  arm; record the causal conclusion, ADR, walkthrough, commit/push/PR, and CI.

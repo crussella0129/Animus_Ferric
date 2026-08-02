@@ -1055,6 +1055,7 @@ fn write_clarification_trace_fixture(ws: &std::path::Path) -> std::path::PathBuf
         ferric_trace::Event::PolicySelected {
             tier: ferric_core::Tier::Nano,
             protocol: ferric_core::ActionProtocol::NativeTools,
+            harness_policy: ferric_core::HarnessPolicy::Legacy,
             max_turns: 15,
             max_tools: 10,
             prompt_budget_tokens: 2_800,

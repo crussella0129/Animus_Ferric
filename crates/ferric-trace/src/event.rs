@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Version stamped into every trace line. Bump on breaking schema change;
@@ -9,6 +11,17 @@ pub const TRACE_SCHEMA_VERSION: u32 = 1;
 /// Checkpoint payloads evolve independently from the long-lived JSONL
 /// envelope. A reader must reject checkpoint versions it does not understand.
 pub const RECOVERY_CHECKPOINT_VERSION: u32 = 1;
+
+/// Version shared by the typed observation/block/effect/check records added by
+/// the evidence controller. These records are additive trace vocabulary; their
+/// payload version evolves independently from the JSONL envelope.
+pub const CONTROLLER_RECORD_VERSION: u32 = 1;
+
+/// Version of the payload carried by [`Event::ControllerCheckpoint`].
+pub const CONTROLLER_CHECKPOINT_VERSION: u32 = 1;
+
+/// Version of the payload carried by [`Event::RecoveryPacketInjected`].
+pub const RECOVERY_PACKET_VERSION: u32 = 1;
 
 /// The model-message index at which one committed turn begins.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +37,213 @@ pub struct GuardTurn {
     pub calls: Vec<ferric_core::ToolCall>,
     pub dispatched: u32,
     pub errored: u32,
+}
+
+/// One inclusive, one-indexed range of lines shown to the model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineRangeV1 {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Exact metadata for a file read. The digest always describes the complete
+/// file bytes, while `returned_range` describes only the content shown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileObservationV1 {
+    pub path: String,
+    pub sha256: String,
+    pub total_bytes: u64,
+    pub total_lines: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_range: Option<LineRangeV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub returned_range: Option<LineRangeV1>,
+    /// True only when the complete current file was shown to the model.
+    pub complete: bool,
+    /// True when the registry's model-facing output cap removed any content.
+    pub model_truncated: bool,
+}
+
+/// Exact metadata for literal repository navigation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NavigationObservationV1 {
+    pub root: String,
+    pub literal: String,
+    pub match_count: u32,
+    pub max_results: u32,
+    /// True when traversal reached the end rather than stopping at the cap.
+    pub exhausted: bool,
+    pub result_sha256: String,
+}
+
+/// The typed result behind one successful observation tool call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+pub enum ObservationDetailV1 {
+    File(FileObservationV1),
+    Search(NavigationObservationV1),
+    Find(NavigationObservationV1),
+}
+
+/// Versioned observation record carried by [`Event::ObservationRecorded`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationV1 {
+    pub version: u32,
+    pub detail: ObservationDetailV1,
+}
+
+/// Machine-readable reason an evidence-controller call did not reach commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControllerBlockReason {
+    BlindMutation,
+    SameTurnObservation,
+    StaleObservation,
+    UnsupportedMutation,
+    RepairInspectionRequired,
+    NoEffect,
+    SyntaxRegression,
+    RepeatedCheck,
+}
+
+/// Versioned controller-admission refusal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControllerBlockV1 {
+    pub version: u32,
+    pub reason: ControllerBlockReason,
+    pub mutation_epoch: u64,
+    pub paths: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_name: Option<String>,
+}
+
+/// How one path changed during a measured workspace effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PathEffectKind {
+    Created,
+    Modified,
+    Deleted,
+    Opaque,
+}
+
+/// Before/after identity for one path touched by a tool call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PathEffectV1 {
+    pub path: String,
+    pub kind: PathEffectKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_sha256: Option<String>,
+}
+
+/// Versioned, measured workspace effect. One call advances the epoch once even
+/// when it changes more than one path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceEffectV1 {
+    pub version: u32,
+    pub mutation_epoch: u64,
+    pub effects: Vec<PathEffectV1>,
+}
+
+/// Outcome of a named check process that actually executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationOutcome {
+    Passed,
+    Failed,
+}
+
+/// Versioned named-check execution record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationCheckV1 {
+    pub version: u32,
+    pub name: String,
+    pub mutation_epoch: u64,
+    pub attempt: u32,
+    pub outcome: VerificationOutcome,
+    /// Required for failed checks; absent for a passing check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic_sha256: Option<String>,
+}
+
+/// Why the controller considers file content known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileEvidenceOrigin {
+    ModelRead,
+    AuthoredMutation,
+}
+
+/// File-evidence ledger entry persisted across process segments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileEvidenceV1 {
+    pub path: String,
+    pub sha256: String,
+    pub total_bytes: u64,
+    pub total_lines: u64,
+    pub covered_ranges: Vec<LineRangeV1>,
+    pub complete: bool,
+    pub fresh: bool,
+    pub observed_turn: u32,
+    pub origin: FileEvidenceOrigin,
+}
+
+/// One real named-check execution retained in the controller checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckExecutionV1 {
+    pub turn: u32,
+    pub name: String,
+    pub mutation_epoch: u64,
+    pub attempt: u32,
+    pub outcome: VerificationOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic_sha256: Option<String>,
+}
+
+/// The latest failed named check, formatted directly into recovery guidance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailedCheckV1 {
+    pub turn: u32,
+    pub name: String,
+    pub mutation_epoch: u64,
+    pub attempt: u32,
+    pub diagnostic_sha256: String,
+}
+
+/// Evidence-controller state stored separately from the legacy recovery
+/// checkpoint. No scalar or collection field has a serde default: an evidence
+/// checkpoint is either complete for its declared version or rejected by its
+/// consumer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControllerCheckpointV1 {
+    pub version: u32,
+    pub harness_policy: ferric_core::HarnessPolicy,
+    pub mutation_epoch: u64,
+    pub required_checks: Vec<String>,
+    pub passed_checks: BTreeMap<String, u64>,
+    pub file_evidence: Vec<FileEvidenceV1>,
+    pub check_executions: Vec<CheckExecutionV1>,
+    pub last_failed_check: Option<FailedCheckV1>,
+    pub changed_paths: Vec<String>,
+    pub repair_paths: Vec<String>,
+    pub repair_observation_after_turn: Option<u32>,
+    pub inherited_pause_reason: Option<String>,
+}
+
+/// Typed facts injected into a non-clarification continuation. `message` lives
+/// on the event itself so later render changes cannot alter replayed history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryPacketV1 {
+    pub version: u32,
+    pub pause_reason: String,
+    pub mutation_epoch: u64,
+    pub required_checks: Vec<String>,
+    pub passed_checks: BTreeMap<String, u64>,
+    pub last_failed_check: Option<FailedCheckV1>,
+    pub changed_paths: Vec<String>,
+    pub reread_paths: Vec<String>,
 }
 
 /// A self-contained base for a session that resumes another trace.
@@ -98,6 +318,10 @@ pub enum Event {
     PolicySelected {
         tier: ferric_core::Tier,
         protocol: ferric_core::ActionProtocol,
+        /// Autonomous-controller behavior. Additive: every trace written
+        /// before Sprint 113 omitted this key and therefore means `legacy`.
+        #[serde(default)]
+        harness_policy: ferric_core::HarnessPolicy,
         max_turns: u32,
         max_tools: u32,
         prompt_budget_tokens: u32,
@@ -236,6 +460,36 @@ pub enum Event {
         is_error: bool,
         duration_ms: u64,
     },
+    /// A successful observation tool returned machine-readable evidence in
+    /// addition to its human/model-facing [`Event::ToolResult`].
+    ObservationRecorded {
+        turn: u32,
+        call_id: String,
+        observation: ObservationV1,
+    },
+    /// The evidence controller refused a call before any effect was committed.
+    ControllerBlocked {
+        turn: u32,
+        call_id: String,
+        tool: String,
+        block: ControllerBlockV1,
+    },
+    /// Measured before/after effects for one call. Unlike the legacy
+    /// `WorkspaceMutation`, this can coexist with an errored tool result when a
+    /// handler partially changed the workspace before failing.
+    WorkspaceEffectRecorded {
+        turn: u32,
+        call_id: String,
+        tool: String,
+        effect: WorkspaceEffectV1,
+    },
+    /// One named check process that actually executed. A repeated same-epoch
+    /// attempt is represented by `ControllerBlocked`, never by this event.
+    VerificationCheckRecorded {
+        turn: u32,
+        call_id: String,
+        check: VerificationCheckV1,
+    },
     /// A successful mutating tool advanced the workspace evidence epoch.
     WorkspaceMutation {
         turn: u32,
@@ -247,6 +501,18 @@ pub enum Event {
         turn: u32,
         name: String,
         mutation_epoch: u64,
+    },
+    /// Evidence-controller state, deliberately separate from
+    /// `RecoveryCheckpointV1` so legacy absence cannot default into trusted
+    /// safety state.
+    ControllerCheckpoint {
+        state: ControllerCheckpointV1,
+    },
+    /// Literal model-facing recovery guidance plus the typed facts from which
+    /// it was rendered.
+    RecoveryPacketInjected {
+        packet: RecoveryPacketV1,
+        message: String,
     },
     /// Durable barrier proving that one turn finished processing.
     TurnCommitted {

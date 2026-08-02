@@ -401,6 +401,7 @@ mod tests {
         Event::PolicySelected {
             tier: ferric_core::Tier::Nano,
             protocol,
+            harness_policy: ferric_core::HarnessPolicy::Legacy,
             max_turns: 15,
             max_tools: 10,
             prompt_budget_tokens: 2_800,
