@@ -615,7 +615,7 @@ fn rings_gate_builtins_by_tier() {
         "Ring-0 tools are in a Nano grammar"
     );
 
-    // Small (4..13 → ring ceiling 1) → the full 10 (Ring 0 + the 1-tool Ring 1).
+    // Small (4..13 → ring ceiling 1) → 11 tools (Ring 0 + 2-tool Ring 1).
     let small = registry.tools_for_policy(&policy_for(&profile(8.0)));
     let small_names: Vec<&str> = small.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
@@ -639,20 +639,23 @@ fn rings_gate_builtins_by_tier() {
         "Ring-2 tools absent at Small"
     );
 
-    // Medium (13..30 → ring ceiling 2) → 15: Ring 0 + Ring 1 + `multi_edit` + `apply_patch` + `git_write` + `shell_exec`.
+    // Medium (13..30 → ring ceiling 2): Ring 0 + Ring 1 + the three
+    // structured mutation tools. Host shell/task controls are human-only.
     let medium = registry.tools_for_policy(&policy_for(&profile(20.0)));
     let medium_names: Vec<&str> = medium.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
         medium.len(),
-        16,
-        "Medium adds the 4-tool Ring 2 (multi_edit + apply_patch + git_write + shell_exec): {medium_names:?}"
+        14,
+        "Medium adds the 3 model-safe Ring-2 tools: {medium_names:?}"
     );
-    for ring2 in ["multi_edit", "apply_patch", "git_write", "shell_exec"] {
+    for ring2 in ["multi_edit", "apply_patch", "git_write"] {
         assert!(
             medium_names.contains(&ring2),
             "Ring 2 includes {ring2}: {medium_names:?}"
         );
     }
+    assert!(!medium_names.contains(&"shell_exec"));
+    assert!(!medium_names.contains(&"manage_task"));
 }
 
 #[test]

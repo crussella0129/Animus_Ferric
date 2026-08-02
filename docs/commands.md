@@ -32,7 +32,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--prompts-dir <DIR>` | prompt-element library for the system prompt |
 | `--file <PATH>` | attach a file (repeatable); text folds into the prompt |
 | `--modality image,audio,video` | declare media modalities for `--file` attachments |
-| `--stream` | stream text + thought live to stdout |
+| `--no-stream` | buffer output instead of streaming text + activity live |
 | `--accept-edits` | pause before every mutating (`Write`/`Execute`) tool call and preview it; approve/reject from stdin (y/N) before it touches disk |
 | `--resume <TRACE>` | continue an interrupted, incomplete session |
 | `--research <QUERY>` | run the Ornstein research phase first (quarantined) |
@@ -174,7 +174,7 @@ Bound to loopback by default. Requires the `backend-openai` build. Routes:
 ferric dream [--recent-traces <N>] [--memory-file <PATH>] [--model <NAME>] [--api-base <URL>]
 ```
 
-Parses recent `.ferric/traces` into a synthesized `MEMORY.md` (default
+Parses recent `.ferric/trace` files into a synthesized `MEMORY.md` (default
 `.ferric/MEMORY.md`, 5 traces). Requires the `backend-openai` build + a model.
 
 ---
@@ -195,7 +195,7 @@ agent's memory resets there. Workspace root is automatically resolved from the t
 
 ```
 ferric trace cat <FILE>        # render a JSONL trace as a readable log
-ferric trace verify <GOLDEN>   # replay with the mock to detect execution drift
+ferric trace verify <GOLDEN>   # validate transcript structure; executes no tools
 ```
 
 ---

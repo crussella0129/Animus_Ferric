@@ -1,7 +1,7 @@
 //! Process-global registry of detached background tasks (`shell_exec
 //! --background`), plus the `manage_task` tool's view of them.
 //!
-//! **No lock acquisition here may panic.** `manage_task` is model-invokable, and
+//! **No lock acquisition here may panic.** `manage_task` is human-invokable, and
 //! `Tool::run` is called from the loop's dispatch chokepoint — a panic there
 //! takes down the whole harness, not just the call. A `std` lock poisons when
 //! *any* holder panics, so `.unwrap()` on a lock turns one unlucky task thread

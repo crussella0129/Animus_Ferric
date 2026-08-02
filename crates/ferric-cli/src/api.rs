@@ -25,12 +25,13 @@ pub mod server {
     use tokio_stream::wrappers::ReceiverStream;
 
     use ferric_guard::Workspace;
-    use ferric_loop::StopReason;
     use ferric_provider::StreamDelta;
     use ferric_trace::JsonlSink;
 
     use crate::backend::BackendOpts;
-    use crate::query::{ProtocolArg, RunConfigArgs, build_run_config, now_ms, run_with_provider};
+    use crate::query::{
+        ProtocolArg, RunConfigArgs, build_run_config, now_ms, route_files, run_with_provider,
+    };
 
     /// CLI arguments for `ferric api`.
     #[derive(Args)]
@@ -78,16 +79,22 @@ pub mod server {
         #[arg(long)]
         pub prompts_dir: Option<PathBuf>,
 
-        /// Cap the active tool ring.
-        #[arg(long)]
         /// Run at this tier regardless of size or measured level (ADR-098).
         #[arg(long, value_enum)]
         pub tier: Option<crate::query::TierArg>,
+
+        /// Cap the active tool ring.
+        #[arg(long)]
         pub max_ring: Option<u8>,
 
         /// Directory holding `model_profiles.json`.
         #[arg(long)]
         pub profile_dir: Option<PathBuf>,
+
+        /// Declare the model's accepted non-text modalities (comma list:
+        /// `image,audio,video`). Applies to every request's `files`.
+        #[arg(long)]
+        pub modality: Option<String>,
 
         /// Run against a built-in scripted mock.
         #[arg(long)]
@@ -102,11 +109,10 @@ pub mod server {
 
     /// The request body for query and chat endpoints.
     #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     #[allow(dead_code)]
     pub struct QueryRequest {
         pub prompt: String,
-        #[serde(default)]
-        pub workspace: Option<String>,
         #[serde(default)]
         pub files: Vec<String>,
     }
@@ -128,6 +134,26 @@ pub mod server {
         pub name: Option<String>,
     }
 
+    enum ApiQueryError {
+        InvalidAttachment(String),
+        Internal(String),
+    }
+
+    impl ApiQueryError {
+        fn into_http(self) -> (StatusCode, String) {
+            match self {
+                Self::InvalidAttachment(message) => (StatusCode::BAD_REQUEST, message),
+                Self::Internal(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
+            }
+        }
+
+        fn message(self) -> String {
+            match self {
+                Self::InvalidAttachment(message) | Self::Internal(message) => message,
+            }
+        }
+    }
+
     /// Health check handler.
     async fn health() -> Json<serde_json::Value> {
         Json(
@@ -140,9 +166,9 @@ pub mod server {
         State(state): State<Arc<AppState>>,
         Json(req): Json<QueryRequest>,
     ) -> Result<Json<QueryResponse>, (StatusCode, String)> {
-        let outcome = run_query(&state, &req.prompt, false, None)
+        let outcome = run_query(&state, &req.prompt, &req.files, false, None)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            .map_err(ApiQueryError::into_http)?;
         Ok(Json(outcome))
     }
 
@@ -154,6 +180,7 @@ pub mod server {
         let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(1024);
         let state = Arc::clone(&state);
         let prompt = req.prompt.clone();
+        let files = req.files.clone();
 
         tokio::spawn(async move {
             let tx_clone = tx.clone();
@@ -175,7 +202,7 @@ pub mod server {
                 let _ = tx_clone.try_send(Ok(event));
             };
 
-            match run_query(&state, &prompt, true, Some(&sink_fn)).await {
+            match run_query(&state, &prompt, &files, true, Some(&sink_fn)).await {
                 Ok(outcome) => {
                     let done_event = Event::default().event("done").data(
                         serde_json::json!({
@@ -190,7 +217,7 @@ pub mod server {
                 Err(e) => {
                     let err_event = Event::default()
                         .event("error")
-                        .data(serde_json::json!({"error": e}).to_string());
+                        .data(serde_json::json!({"error": e.message()}).to_string());
                     let _ = tx.send(Ok(err_event)).await;
                 }
             }
@@ -203,9 +230,10 @@ pub mod server {
     async fn run_query(
         state: &AppState,
         prompt: &str,
+        files: &[String],
         _stream: bool,
         sink_fn: Option<&(dyn Fn(StreamDelta) + Sync)>,
-    ) -> Result<QueryResponse, String> {
+    ) -> Result<QueryResponse, ApiQueryError> {
         let args = &state.args;
         let loaded_config = crate::config::load_layered(state.workspace.root());
         let cfg = loaded_config.config;
@@ -246,15 +274,36 @@ pub mod server {
             hooks: None,
         });
 
+        let file_paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
+        let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
+        let (media, prompt_suffix) = route_files(
+            &state.workspace,
+            &file_paths,
+            &declared,
+            config.caps.supports_media,
+        )
+        .map_err(|e| ApiQueryError::InvalidAttachment(format!("files: {e}")))?;
+        let effective_prompt = if prompt_suffix.is_empty() {
+            prompt.to_string()
+        } else {
+            format!("{prompt}{prompt_suffix}")
+        };
+
         let ts = now_ms();
         let session = format!("api-{ts}");
         let trace_dir = ferric_trace::trace_dir(state.workspace.root());
         let _ = std::fs::create_dir_all(&trace_dir);
         let trace_path = trace_dir.join(format!("{session}.jsonl"));
-        let mut sink =
-            JsonlSink::open(&trace_path, &session).map_err(|e| format!("trace open: {e}"))?;
+        let mut sink = JsonlSink::open(&trace_path, &session)
+            .map_err(|e| ApiQueryError::Internal(format!("trace open: {e}")))?;
 
-        let provider = crate::backend::create_provider(&backend_opts).await?;
+        let provider: Box<dyn ferric_provider::Provider> = if args.mock {
+            Box::new(crate::query::mock_provider(config.protocol))
+        } else {
+            crate::backend::create_provider(&backend_opts)
+                .await
+                .map_err(ApiQueryError::Internal)?
+        };
 
         let setup = crate::query::LoopSetup {
             registry: &config.registry,
@@ -264,7 +313,7 @@ pub mod server {
             sampling: config.sampling.clone(),
             system_prompt: config.system_prompt.as_deref(),
             lineage: config.lineage.clone(),
-            media: Vec::new(),
+            media,
             stream_sink: sink_fn,
             resume: None,
             provenance: ferric_guard::Provenance::Clean,
@@ -275,29 +324,28 @@ pub mod server {
         let outcome = run_with_provider(
             setup.into_run_args(provider.as_ref(), None),
             &mut sink,
-            Some(prompt),
+            Some(&effective_prompt),
         )
         .await
-        .map_err(|e| format!("query failed: {e}"))?;
-
-        let stop = match &outcome.stop {
-            StopReason::TaskComplete => "task_complete",
-            StopReason::MaxTurns => "max_turns",
-            StopReason::RepetitionGuard => "repetition",
-            StopReason::NoProgress => "no_progress",
-            StopReason::RepeatedFailure => "repeated_failure",
-            _ => "unknown",
-        };
+        .map_err(|e| ApiQueryError::Internal(format!("query failed: {e}")))?;
 
         Ok(QueryResponse {
             text: outcome.final_text.clone(),
             turns: outcome.turns,
-            stop_reason: stop.to_string(),
+            stop_reason: outcome.stop.as_str().to_string(),
         })
     }
 
     /// Entry point for `ferric api`.
     pub async fn run_api(args: ApiArgs) -> std::process::ExitCode {
+        if !is_loopback_host(&args.host) {
+            eprintln!(
+                "refusing unauthenticated API bind to '{}'; use 127.0.0.1, localhost, or ::1",
+                args.host
+            );
+            return std::process::ExitCode::FAILURE;
+        }
+
         let workspace_root = args
             .workspace
             .clone()
@@ -311,7 +359,11 @@ pub mod server {
             }
         };
 
-        let bind_addr = format!("{}:{}", args.host, args.port);
+        let bind_addr = if args.host.contains(':') {
+            format!("[{}]:{}", args.host, args.port)
+        } else {
+            format!("{}:{}", args.host, args.port)
+        };
 
         let state = Arc::new(AppState { workspace, args });
 
@@ -340,5 +392,28 @@ pub mod server {
         }
 
         std::process::ExitCode::SUCCESS
+    }
+
+    fn is_loopback_host(host: &str) -> bool {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|addr| addr.is_loopback())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::is_loopback_host;
+
+        #[test]
+        fn api_bind_is_restricted_to_loopback() {
+            assert!(is_loopback_host("127.0.0.1"));
+            assert!(is_loopback_host("127.42.0.9"));
+            assert!(is_loopback_host("::1"));
+            assert!(is_loopback_host("localhost"));
+            assert!(!is_loopback_host("0.0.0.0"));
+            assert!(!is_loopback_host("192.0.2.10"));
+            assert!(!is_loopback_host("example-host"));
+        }
     }
 }

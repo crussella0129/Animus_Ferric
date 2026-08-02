@@ -31,7 +31,6 @@ use std::process::ExitCode;
 use clap::{Args, Subcommand};
 use ferric_guard::Workspace;
 use ferric_icm::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_workspace};
-use ferric_loop::StopReason;
 use ferric_trace::JsonlSink;
 
 use crate::backend::BackendOpts;
@@ -371,7 +370,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         };
 
         match outcome {
-            Ok(o) if is_success(o.stop) => {
+            Ok(o) if o.stop.is_success() => {
                 eprintln!(
                     "✔ Stage {:02} · {} complete ({}, {} turn(s)). Output in stages/{}/output/",
                     stage.index,
@@ -409,16 +408,6 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
 
     println!("ICM pipeline finished.");
     ExitCode::SUCCESS
-}
-
-/// A successful terminator: the stage produced its deliverable and stopped
-/// cleanly. Any other stop (max turns, provider error, guard trip) means the
-/// stage's output cannot be trusted as input to the next stage.
-fn is_success(stop: StopReason) -> bool {
-    matches!(
-        stop,
-        StopReason::TaskComplete | StopReason::PlanSubmitted | StopReason::FinalText
-    )
 }
 
 /// Prompt on stderr and read a line from stdin. Returns `true` to continue,

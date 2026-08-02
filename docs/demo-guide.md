@@ -3,12 +3,15 @@
 A hands-on, copy-paste walkthrough of **every** Ferric feature. Each section is
 tagged:
 
-- 🟢 **offline** — runs with `--mock` or no model at all. Great for demos.
+- 🟢 **offline** — runs with `--mock` or no model at all. Useful for local
+  development checks, but not the Monday acceptance path.
 - 🔵 **needs a model** — requires a running inference server (see
   [Getting Started §3](getting-started.md#3-external-run-a-real-model)).
 
-Assumes `ferric` is on your `PATH` (built with `--features backend-openai`). Most
-demos use a throwaway workspace:
+The cross-platform examples use `ferric` as shorthand for the current binary.
+For the Monday Windows demo, use the setup below to bind that shorthand to the
+freshly built release executable instead of any older copy on `PATH`. Most demos
+use a throwaway workspace:
 
 ```sh
 mkdir /tmp/ferric-demo && cd /tmp/ferric-demo
@@ -17,6 +20,51 @@ mkdir /tmp/ferric-demo && cd /tmp/ferric-demo
 > **The one external prerequisite for the 🔵 demos:** bring a model up first —
 > `ferric server up --engine llama-server --model /path/to.gguf` — then the 🔵
 > commands auto-discover it. See [Getting Started](getting-started.md).
+
+---
+
+## Monday live path (Windows) 🔵
+
+The Monday acceptance path is a real `llama-server` launch followed by a real
+constrained query. It does not use `--mock`.
+
+In the repository root, build the backend-enabled release and preflight the
+exact engine/model pair. Replace `$Model` with the GGUF path on the demo host:
+
+```powershell
+cargo build --release -p ferric-cli --features backend-openai
+$FerricExe = (Resolve-Path .\target\release\ferric.exe).Path
+$Model = 'C:\Models\qwen2.5-coder-7b-instruct-q4_k_m.gguf'
+
+& $FerricExe server doctor --engine llama-server --model $Model --ctx 8192 --gpu-layers 99
+& $FerricExe server up --engine llama-server --model $Model --ctx 8192 --gpu-layers 99
+```
+
+Leave that terminal open for engine logs. In a second terminal, verify the
+registered server, independently check its HTTP surface, and run the asserted
+real-model task:
+
+```powershell
+$FerricExe = (Resolve-Path .\target\release\ferric.exe).Path
+& $FerricExe server status
+(Invoke-RestMethod http://127.0.0.1:8080/health).status
+Invoke-RestMethod http://127.0.0.1:8080/v1/models
+.\tools\e2e_test.ps1 -Model qwen2.5-coder-7b
+```
+
+Acceptance requires `E2E PASS`: the model must create a valid `math.py`, delete
+the requested temporary directory, end its trace with `task_complete`, and pass
+side-effect-free trace verification. Stop the server after the presentation:
+
+```powershell
+& $FerricExe server down
+& $FerricExe server status # expected: no server registered
+```
+
+Use the repository release binary shown above; an older `ferric.exe` elsewhere
+on `PATH` is not evidence about the code being demonstrated. The offline
+`.\tools\demo-smoke.ps1` remains available as a development regression check,
+not as the live-demo acceptance criterion.
 
 ---
 
@@ -40,7 +88,7 @@ containment boundary — the agent cannot touch anything outside it.
 
 ## 2. Read the trace 🟢
 
-Every run is a replayable trace. Render the most recent one as a readable log
+Every run has an inspectable trace. Render the most recent one as a readable log
 (`trace cat` takes a single file):
 
 ```sh
@@ -51,7 +99,8 @@ ferric trace cat "$(ls -t .ferric/trace/*.jsonl | head -1)"
 `session_end`. Tool *results* are stored full and untruncated — "if it isn't in
 the trace, it didn't happen."
 
-Verify a trace replays deterministically (regression check):
+Validate its session, sequence, turn, and tool-result structure without
+re-executing any recorded tool call:
 
 ```sh
 ferric trace verify .ferric/trace/<file>.jsonl
@@ -113,9 +162,10 @@ Then at the `you>` prompt:
 | `!ls -la` or `/run git status` | **passthrough** — runs the shell command directly, **no LLM**, through the guarded `shell_exec` denylist |
 | `/help` / `/exit` | help / quit |
 
-**Security demo:** try `!rm -rf /` — it's **blocked** by the command denylist even
-in direct passthrough. Talk mode structurally has no action channel; only `/do`
-(LLM-driven) and `!` (human-driven) can act.
+**Security demo:** try `!echo mkfs`. The command would only print a word if it
+reached the shell, but it is **blocked** because `mkfs` is a denied command
+pattern. Talk mode structurally has no action channel; only `/do` (LLM-driven)
+and `!` (human-driven) can act.
 
 ---
 
@@ -295,11 +345,12 @@ Full guide: [multimodal.md](multimodal.md).
 
 ## 15. Streaming output 🔵
 
-See tokens (and the agent's live "thought") as they generate, instead of waiting
-for the whole loop:
+Text and tool activity stream by default instead of waiting for the whole loop:
 
 ```sh
-ferric query --stream "explain what this project does"
+ferric query "explain what this project does"
+# For a buffered/machine-oriented caller:
+ferric query --no-stream "explain what this project does"
 ```
 
 Under the constrained protocol, the final answer streams and a per-tool activity
@@ -363,7 +414,7 @@ Each SSE frame is a `StreamDelta` (thought / tool call / text). Built for the
 Offline knowledge extraction: parse recent traces into a persistent `MEMORY.md`:
 
 ```sh
-# After several runs (so .ferric/traces has history), with a model up:
+# After several runs (so .ferric/trace has history), with a model up:
 ferric dream --recent-traces 5 --memory-file .ferric/MEMORY.md
 cat .ferric/MEMORY.md
 ```
@@ -412,7 +463,7 @@ apply this edit? [y/N]
 
 Read-only calls (`read_file`, `list_dir`, …) are never gated, so you only get
 prompted for things that actually change the workspace. The preview goes to stderr,
-so `--stream` / piped stdout stays clean. *(Sprint 79, ADR-070.)*
+so live or piped stdout stays clean. *(Sprint 79, ADR-070.)*
 
 ---
 
@@ -420,7 +471,7 @@ so `--stream` / piped stdout stays clean. *(Sprint 79, ADR-070.)*
 
 | Offline (🟢) | Needs a model (🔵) |
 |---|---|
-| `query --mock`, `trace cat`/`verify`, `-v` diagnostics, `--max-ring` | `query` (real), `--stream`, multimodal |
+| `query --mock`, `trace cat`/`verify`, `-v` diagnostics, `--max-ring` | `query` (real; streams by default), multimodal |
 | `chat --mock` (talk / `/do` / `!cmd`) | `chat` (real talk/escalate) |
 | `launch`, `icm init`/`plan`/`run --mock`, `cron` (with mock jobs) | `icm run` (real), `dream`, `bench` |
 | `.ferricignore`, hooks, config, `Animus.md` (mechanism) | `revert` (real run), `mcp`/`api` (real), `server` |

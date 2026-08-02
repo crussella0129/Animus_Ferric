@@ -28,14 +28,15 @@ fn next_task_id() -> String {
     format!("task-{millis}-{}", SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
-/// Execute a shell command inside the workspace.
+/// Execute an explicitly human-requested host shell command with the workspace
+/// as its working directory. The working directory is not OS containment.
 pub struct ShellExec;
 
 impl Tool for ShellExec {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "shell_exec".to_string(),
-            description: "Run an arbitrary shell command within the workspace. Output is capped at 10KB. \
+            description: "Run an explicitly human-approved host shell command with the workspace as its working directory (not a sandbox). Output is capped at 10KB. \
                 Timeout is 60 seconds (unless background is true). Args: {\"command\": string, \"background\": boolean (optional)}".to_string(),
             input_schema: json!({
                 "type": "object",
@@ -160,17 +161,21 @@ impl Tool for ShellExec {
             };
 
             let mut timed_out = false;
-            match tokio::time::timeout(timeout, async {
-                let _ = tokio::join!(child.wait(), read_pipes);
+            let exit_status = match tokio::time::timeout(timeout, async {
+                let (status, _) = tokio::join!(child.wait(), read_pipes);
+                status
             })
             .await
             {
-                Ok(_) => {}
+                Ok(status) => {
+                    Some(status.map_err(|e| format!("failed while waiting for command: {e}"))?)
+                }
                 Err(_) => {
                     let _ = child.kill().await;
                     timed_out = true;
+                    None
                 }
-            }
+            };
 
             let out_str = String::from_utf8_lossy(&out_buf);
             let err_str = String::from_utf8_lossy(&err_buf);
@@ -205,6 +210,19 @@ impl Tool for ShellExec {
 
             if timed_out {
                 Err(result_text)
+            } else if let Some(status) = exit_status
+                && !status.success()
+            {
+                let status = status
+                    .code()
+                    .map_or_else(|| "a signal".to_string(), |code| format!("status {code}"));
+                if result_text.is_empty() {
+                    Err(format!("Command exited with {status}."))
+                } else {
+                    Err(format!(
+                        "Command exited with {status}.\nOutput:\n{result_text}"
+                    ))
+                }
             } else {
                 Ok(result_text)
             }
@@ -257,5 +275,23 @@ mod tests {
         // Capped at 10,000 + length of truncation notice
         assert!(result.len() <= OUTPUT_LIMIT + 100);
         assert!(result.contains("[TRUNCATED]"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn nonzero_exit_is_reported_as_an_error() {
+        let (_dir, ws) = temp_workspace();
+        let ctx = ToolCtx { workspace: &ws };
+        let tool = ShellExec;
+        let command = if cfg!(windows) {
+            "echo before-exit & exit /b 7"
+        } else {
+            "printf before-exit; exit 7"
+        };
+
+        let error = tool
+            .run(&ctx, &json!({"command": command}))
+            .expect_err("a non-zero command must be a tool error");
+        assert!(error.contains("status 7"), "{error}");
+        assert!(error.contains("before-exit"), "{error}");
     }
 }

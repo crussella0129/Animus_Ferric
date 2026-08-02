@@ -39,6 +39,18 @@ pub enum StopReason {
 }
 
 impl StopReason {
+    /// Whether this stop represents a completed user request.
+    ///
+    /// Guard trips, exhausted budgets, interrupts, malformed output, hook
+    /// failures, and provider failures all leave work incomplete and must not
+    /// be surfaced as a successful CLI/MCP/API result.
+    pub fn is_success(self) -> bool {
+        matches!(
+            self,
+            StopReason::FinalText | StopReason::TaskComplete | StopReason::PlanSubmitted
+        )
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             StopReason::FinalText => "final_text",
@@ -54,6 +66,37 @@ impl StopReason {
             StopReason::TruncatedAction => "truncated_action",
             StopReason::Interrupted => "interrupted",
             StopReason::HookFailed => "hook_failed",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StopReason;
+
+    #[test]
+    fn only_clean_completion_reasons_are_successful() {
+        for stop in [
+            StopReason::FinalText,
+            StopReason::TaskComplete,
+            StopReason::PlanSubmitted,
+        ] {
+            assert!(stop.is_success(), "{stop:?}");
+        }
+
+        for stop in [
+            StopReason::MaxTurns,
+            StopReason::RepetitionGuard,
+            StopReason::NoProgress,
+            StopReason::RepeatedFailure,
+            StopReason::Oscillation,
+            StopReason::ProviderError,
+            StopReason::EmptyCompletion,
+            StopReason::TruncatedAction,
+            StopReason::Interrupted,
+            StopReason::HookFailed,
+        ] {
+            assert!(!stop.is_success(), "{stop:?}");
         }
     }
 }

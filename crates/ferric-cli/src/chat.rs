@@ -405,6 +405,9 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         model_key: backend_opts.model.clone(),
         hooks: None,
     });
+    let mut human_registry =
+        ferric_tools::Registry::with_truncation_limit(config.registry.truncation_limit());
+    ferric_tools::register_human_tools(&mut human_registry);
     for diag in &loaded_config.diagnostics {
         eprintln!("{diag}");
     }
@@ -559,12 +562,13 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                     eprintln!("cannot start shell runtime for passthrough");
                     continue;
                 };
-                // Human-initiated, no LLM: run through the SAME guarded
-                // `shell_exec` chokepoint the agent uses, so the command
-                // denylist (ADR-005) still applies. Not folded into the talk
-                // history — it is a terminal side-channel, not conversation.
+                // Human-initiated, no LLM: run through a dedicated registry
+                // that is never offered to `/do` or any other model path. The
+                // command denylist (ADR-005) still applies. This is a terminal
+                // side-channel, not conversation, so it is not folded into
+                // talk history.
                 let outcome = rt.block_on(async {
-                    config.registry.execute(
+                    human_registry.execute(
                         &workspace,
                         "shell_exec",
                         &serde_json::json!({ "command": cmd }),

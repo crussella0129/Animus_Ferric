@@ -728,10 +728,7 @@ pub async fn run(
 
     state.projector.commit_pending();
 
-    let is_error = !matches!(
-        stop,
-        StopReason::TaskComplete | StopReason::PlanSubmitted | StopReason::FinalText
-    );
+    let is_error = !stop.is_success();
     if is_error {
         if let Some(hooks) = &state.args.hooks {
             if let Some(cmd) = &hooks.on_error {

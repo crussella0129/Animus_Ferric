@@ -14,7 +14,6 @@ use serde_json::Value;
 
 use ferric_core::Modality;
 use ferric_guard::Workspace;
-use ferric_loop::StopReason;
 use ferric_provider::Provider;
 use ferric_trace::JsonlSink;
 
@@ -251,32 +250,32 @@ pub struct McpArgs {
     pub resume: Option<PathBuf>,
 }
 
-/// How `McpServer` drives a loop turn. `Mock` needs no ambient async runtime
+/// How `McpServer` drives a loop turn. `Blocking` needs no ambient async runtime
 /// (`futures_executor::block_on`, mirroring `drive_mock`); `Real` holds the ONE
 /// `tokio::runtime::Runtime` built at launch and reused for every subsequent
 /// `tools/call` (T-3601's reusable-provider shape, applied to the executor
 /// too — see `run_with_provider`'s doc comment).
-///
-/// Deliberately **not** folded into `backend::ResolvedBackend` (sprint 103,
-/// ADR-094), which unified the identical `chat`/`icm` copies. The difference is
-/// behavioural, not stylistic: this server builds its provider **once at
-/// launch** and reuses it across every `tools/call`, while chat and icm build a
-/// fresh mock per invocation. `MockProvider` is scripted and stateful, so *when*
-/// it is constructed is observable. Only the real-backend construction is
-/// shared, via `backend::create_provider_with_runtime`.
 pub(crate) enum Executor {
-    Mock,
+    Blocking,
     #[cfg(feature = "backend-openai")]
     Real(Runtime),
 }
 
+/// Where each MCP request gets its provider. Real providers are intentionally
+/// shared for the lifetime of the server. The built-in mock is a finite script,
+/// so each independent `tools/call` must receive a fresh instance.
+pub(crate) enum ProviderSource {
+    FreshMock,
+    Shared(Box<dyn Provider + Send + Sync>),
+}
+
 /// The long-lived state one `ferric mcp` process holds: workspace/backend/
-/// model/protocol are fixed at launch (`RunConfig`, `Workspace`, the
-/// provider) — nothing here is renegotiated per `tools/call`.
+/// model/protocol are fixed at launch (`RunConfig` and `Workspace`). Real
+/// providers are also fixed; mock scripts are reset at request boundaries.
 pub(crate) struct McpServer {
     pub workspace: Workspace,
     pub config: RunConfig,
-    pub provider: Box<dyn Provider + Send + Sync>,
+    pub provider: ProviderSource,
     pub executor: Executor,
     pub declared: Vec<Modality>,
     pub trace_dir: PathBuf,
@@ -377,19 +376,36 @@ impl McpServer {
                 );
             }
         };
-        let files: Vec<PathBuf> = arguments
-            .get("files")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(Value::as_str)
-                    .map(PathBuf::from)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let files: Vec<PathBuf> = match arguments.get("files") {
+            None => Vec::new(),
+            Some(Value::Array(values)) => {
+                let mut files = Vec::with_capacity(values.len());
+                for value in values {
+                    let Some(path) = value.as_str() else {
+                        return RpcResponse::error(
+                            id,
+                            INVALID_PARAMS,
+                            "every \"files\" item must be a string path",
+                        );
+                    };
+                    files.push(PathBuf::from(path));
+                }
+                files
+            }
+            Some(_) => {
+                return RpcResponse::error(id, INVALID_PARAMS, "\"files\" must be an array");
+            }
+        };
 
-        let (media_parts, prompt_suffix) =
-            route_files(&files, &self.declared, self.config.caps.supports_media);
+        let (media_parts, prompt_suffix) = match route_files(
+            &self.workspace,
+            &files,
+            &self.declared,
+            self.config.caps.supports_media,
+        ) {
+            Ok(routed) => routed,
+            Err(e) => return RpcResponse::success(id, tool_content(format!("files: {e}"), true)),
+        };
         let effective_prompt = if prompt_suffix.is_empty() {
             prompt
         } else {
@@ -410,22 +426,17 @@ impl McpServer {
 
         let resume_state = self.resume.lock().unwrap().take();
 
-        // A `ProviderError` stop is the only failure mode surfaced as
-        // `isError:true` — the same convention `ferric query`'s CLI already
-        // uses (`StopReason::ProviderError` ⇒ `ExitCode::FAILURE`, every other
-        // stop reason ⇒ success). This keeps the two surfaces' semantics
-        // aligned rather than inventing a second failure taxonomy.
         match self.run_one(&mut sink, &effective_prompt, media_parts, resume_state) {
-            Ok(outcome) if outcome.stop != StopReason::ProviderError => RpcResponse::success(
+            Ok(outcome) if outcome.stop.is_success() => RpcResponse::success(
                 id,
                 tool_content(outcome.final_text.unwrap_or_default(), false),
             ),
             Ok(outcome) => RpcResponse::success(
                 id,
                 tool_content(
-                    outcome
-                        .final_text
-                        .unwrap_or_else(|| "provider error".to_string()),
+                    outcome.final_text.unwrap_or_else(|| {
+                        format!("query stopped before completion: {}", outcome.stop.as_str())
+                    }),
                     true,
                 ),
             ),
@@ -474,22 +485,31 @@ impl McpServer {
             hooks: self.config.hooks.clone(),
             edit_approver: None,
         };
-        let fut = run_with_provider(
-            setup.into_run_args(self.provider.as_ref(), None),
-            sink,
-            Some(prompt),
-        );
-        match &self.executor {
-            Executor::Mock => futures_executor::block_on(fut),
-            #[cfg(feature = "backend-openai")]
-            Executor::Real(rt) => rt.block_on(fut),
+        match &self.provider {
+            ProviderSource::FreshMock => {
+                let provider = mock_provider(self.config.protocol);
+                let fut =
+                    run_with_provider(setup.into_run_args(&provider, None), sink, Some(prompt));
+                futures_executor::block_on(fut)
+            }
+            ProviderSource::Shared(provider) => {
+                let fut = run_with_provider(
+                    setup.into_run_args(provider.as_ref(), None),
+                    sink,
+                    Some(prompt),
+                );
+                match &self.executor {
+                    Executor::Blocking => futures_executor::block_on(fut),
+                    #[cfg(feature = "backend-openai")]
+                    Executor::Real(rt) => rt.block_on(fut),
+                }
+            }
         }
     }
 
-    /// Build the server: workspace + the launch-time-fixed run config + the
-    /// provider, constructed exactly once (a real backend also gets exactly
-    /// one `tokio::runtime::Runtime`, reused for every subsequent
-    /// `tools/call` — see `run_one`).
+    /// Build the server: workspace + launch-time-fixed run config. A real
+    /// backend and its `tokio::runtime::Runtime` are constructed exactly once;
+    /// the finite scripted mock is reconstructed for each `tools/call`.
     pub fn launch(args: &McpArgs) -> Result<Self, String> {
         let workspace_root = match &args.workspace {
             Some(path) => path.clone(),
@@ -617,10 +637,11 @@ impl McpServer {
             .map_err(|e| format!("cannot create trace dir {}: {e}", trace_dir.display()))?;
         let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
 
-        let (provider, executor): (Box<dyn Provider + Send + Sync>, Executor) = if args.mock {
-            (Box::new(mock_provider(config.protocol)), Executor::Mock)
+        let (provider, executor) = if args.mock {
+            (ProviderSource::FreshMock, Executor::Blocking)
         } else {
-            build_real_provider(&backend_opts)?
+            let (provider, executor) = build_real_provider(&backend_opts)?;
+            (ProviderSource::Shared(provider), executor)
         };
 
         Ok(McpServer {
@@ -887,8 +908,8 @@ mod tests {
         McpServer {
             workspace,
             config,
-            provider,
-            executor: Executor::Mock,
+            provider: ProviderSource::Shared(provider),
+            executor: Executor::Blocking,
             declared: Vec::new(),
             trace_dir,
             resume: std::sync::Mutex::new(None),
@@ -952,6 +973,21 @@ mod tests {
         let result = resp.result.unwrap();
         assert_eq!(result["isError"], false);
         assert_eq!(result["content"][0]["text"], "mock run complete");
+    }
+
+    #[test]
+    fn launched_mock_server_resets_script_for_each_tools_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = McpServer::launch(&base_mcp_args(dir.path())).unwrap();
+
+        for (id, prompt) in [(1, "first mock task"), (2, "second mock task")] {
+            let response = server
+                .dispatch(call_request(id, serde_json::json!({"prompt": prompt})))
+                .unwrap();
+            let result = response.result.unwrap();
+            assert_eq!(result["isError"], false, "request {id} failed: {result}");
+            assert_eq!(result["content"][0]["text"], "mock run complete");
+        }
     }
 
     #[test]
@@ -1037,6 +1073,160 @@ mod tests {
             chars as usize >= body.len(),
             "assembled prompt ({chars} chars) should include the {}-char file",
             body.len()
+        );
+    }
+
+    #[test]
+    fn tools_call_file_outside_selected_workspace_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let outside = dir.path().join("outside.md");
+        std::fs::write(&outside, "must not enter the prompt").unwrap();
+        let server = test_server(
+            &workspace,
+            Box::new(crate::query::mock_provider(
+                ferric_core::ActionProtocol::NativeTools,
+            )),
+        );
+
+        let resp = server
+            .dispatch(call_request(
+                1,
+                serde_json::json!({"prompt": "summarize", "files": [outside.to_str().unwrap()]}),
+            ))
+            .unwrap();
+        let result = resp.result.unwrap();
+        assert_eq!(result["isError"], true);
+        let message = result["content"][0]["text"].as_str().unwrap();
+        assert!(
+            message.contains("workspace containment") && message.contains("escapes workspace"),
+            "unexpected denial: {message}"
+        );
+    }
+
+    #[test]
+    fn tools_call_file_sensitive_and_ignored_paths_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "TOKEN=must-not-leak").unwrap();
+        std::fs::write(dir.path().join("private.md"), "private notes").unwrap();
+        std::fs::write(dir.path().join(".ferricignore"), "private.md\n").unwrap();
+        let server = test_server(
+            dir.path(),
+            Box::new(crate::query::mock_provider(
+                ferric_core::ActionProtocol::NativeTools,
+            )),
+        );
+
+        let sensitive = server
+            .dispatch(call_request(
+                1,
+                serde_json::json!({"prompt": "summarize", "files": [".env"]}),
+            ))
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(sensitive["isError"], true);
+        assert!(
+            sensitive["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("denied_read_file")
+        );
+
+        let ignored = server
+            .dispatch(call_request(
+                2,
+                serde_json::json!({"prompt": "summarize", "files": ["private.md"]}),
+            ))
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(ignored["isError"], true);
+        assert!(
+            ignored["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("ferricignore")
+        );
+    }
+
+    struct CapturesMediaProvider {
+        seen_media: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for CapturesMediaProvider {
+        fn id(&self) -> &str {
+            "captures-media"
+        }
+
+        fn capabilities(&self) -> ferric_provider::Capabilities {
+            ferric_provider::Capabilities {
+                supports_native_tool_calls: true,
+                supports_constraint: false,
+                exposes_logits: false,
+                supports_media: true,
+            }
+        }
+
+        async fn complete(
+            &self,
+            request: ferric_provider::CompletionRequest,
+            _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        ) -> Result<ferric_provider::Completion, ferric_provider::ProviderError> {
+            use ferric_core::{Role, ToolCall};
+
+            let count = request.messages.iter().map(|m| m.media.len()).sum();
+            self.seen_media
+                .store(count, std::sync::atomic::Ordering::SeqCst);
+            Ok(ferric_provider::Completion {
+                message: ferric_core::Message {
+                    role: Role::Assistant,
+                    text: None,
+                    tool_calls: vec![ToolCall {
+                        id: "media-0".to_string(),
+                        name: ferric_loop::TASK_COMPLETE.to_string(),
+                        args: serde_json::json!({"summary": "media received"}),
+                    }],
+                    tool_call_id: None,
+                    media: Vec::new(),
+                },
+                input_tokens: Some(10),
+                output_tokens: Some(5),
+                truncated: false,
+            })
+        }
+    }
+
+    #[test]
+    fn tools_call_valid_media_is_routed_to_the_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let photo = dir.path().join("photo.png");
+        std::fs::write(&photo, [0_u8, 1, 2]).unwrap();
+        let seen_media = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut server = test_server(
+            dir.path(),
+            Box::new(CapturesMediaProvider {
+                seen_media: std::sync::Arc::clone(&seen_media),
+            }),
+        );
+        server.config.caps.supports_media = true;
+        server.declared = vec![ferric_core::Modality::Image];
+
+        let result = server
+            .dispatch(call_request(
+                1,
+                serde_json::json!({"prompt": "describe", "files": ["photo.png"]}),
+            ))
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(result["isError"], false);
+        assert_eq!(
+            seen_media.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the provider must receive the routed image"
         );
     }
 

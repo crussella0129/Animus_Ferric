@@ -6,17 +6,17 @@
 //! backend constructs a tokio multi-thread runtime (the OpenAI HTTP client's
 //! async futures need ambient tokio).
 
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Args, ValueEnum};
 
 use ferric_core::{ActionProtocol, MediaPart, Message, ModelProfile, RunPolicy, policy_for};
-use ferric_guard::Workspace;
+use ferric_guard::{Decision, PermissionLevel, Workspace, check_with_ignore};
 use ferric_loop::{
-    DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, StopReason, ThreadSleeper, run,
-    select_protocol,
+    DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run, select_protocol,
 };
 use ferric_provider::{Capabilities, Completion, MockProvider, Provider, SamplingParams};
 use ferric_tools::{Registry, register_builtin_tools};
@@ -264,7 +264,7 @@ pub struct QueryArgs {
     /// Accept-edits mode (ADR-070): pause before each mutating tool call
     /// (write/edit/delete/exec), show a preview, and require `y` to apply it.
     /// A rejected edit is reported to the model, which can adapt. Requires an
-    /// interactive stdin; not for `--stream` or piped batch runs.
+    /// interactive stdin; do not enable it for unattended batch runs.
     #[arg(long)]
     pub accept_edits: bool,
 }
@@ -504,41 +504,170 @@ pub(crate) fn fold_animus_md(existing: Option<&str>, animus_md: &str) -> String 
     format!("{base}\n\n--- Animus.md (project instructions) ---\n{animus_md}")
 }
 
-/// Route each `--file` (ADR-023): text/code folds into the prompt (any model);
-/// media attaches as a gated `MediaPart`; anything skipped is surfaced
-/// (stderr), never silent. The decision logic (`classify_path`/
-/// `decide_attachment`) is pure `ferric_core`; this is the shared orchestration
-/// around it, used by both `run_query` and `ferric mcp`'s `tools/call` handler
-/// so the two call sites can't drift apart.
+/// A single externally supplied attachment is bounded before it is read. Eight
+/// MiB leaves room for ordinary source documents and demo-sized media while
+/// preventing one path from turning into an unbounded prompt allocation.
+const MAX_ATTACHMENT_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// The aggregate raw-byte budget across one request. Base64 expands media by
+/// roughly one third, so keeping the raw side at sixteen MiB also bounds the
+/// encoded prompt payload to a predictable size.
+const MAX_ATTACHMENT_TOTAL_BYTES: u64 = 16 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+struct AttachmentLimits {
+    per_file: u64,
+    total: u64,
+}
+
+const ATTACHMENT_LIMITS: AttachmentLimits = AttachmentLimits {
+    per_file: MAX_ATTACHMENT_FILE_BYTES,
+    total: MAX_ATTACHMENT_TOTAL_BYTES,
+};
+
+/// Route each externally supplied file (ADR-023): text/code folds into the
+/// prompt (any model); media attaches as a gated `MediaPart`; anything skipped
+/// is surfaced (stderr), never silent. Every path is first resolved through the
+/// selected [`Workspace`] and checked at read permission, including the
+/// hardcoded sensitive-file floor and `.ferricignore`. Boundary, permission,
+/// I/O, and size failures reject the request rather than quietly dropping a
+/// caller-supplied attachment.
 pub(crate) fn route_files(
+    workspace: &Workspace,
     files: &[PathBuf],
     declared: &[ferric_core::Modality],
     supports_media: bool,
-) -> (Vec<MediaPart>, String) {
+) -> Result<(Vec<MediaPart>, String), String> {
+    route_files_with_limits(
+        workspace,
+        files,
+        declared,
+        supports_media,
+        ATTACHMENT_LIMITS,
+    )
+}
+
+fn route_files_with_limits(
+    workspace: &Workspace,
+    files: &[PathBuf],
+    declared: &[ferric_core::Modality],
+    supports_media: bool,
+    limits: AttachmentLimits,
+) -> Result<(Vec<MediaPart>, String), String> {
     let mut media_parts = Vec::new();
     let mut prompt_suffix = String::new();
-    for path in files {
-        let kind = ferric_core::classify_path(path);
+    let mut total_bytes = 0_u64;
+
+    for requested in files {
+        let resolved = workspace.resolve(requested).map_err(|e| {
+            format!(
+                "attachment `{}` rejected by workspace containment: {e}",
+                requested.display()
+            )
+        })?;
+        if let Decision::Deny(reason) = check_with_ignore(
+            PermissionLevel::Read,
+            &resolved,
+            workspace.root(),
+            workspace.ignore(),
+        ) {
+            return Err(format!(
+                "attachment `{}` denied by read guard: {} matched {}",
+                requested.display(),
+                reason.rule,
+                reason.matched
+            ));
+        }
+
+        let label = workspace_relative_label(workspace, &resolved);
+        let kind = ferric_core::classify_path(&resolved);
         match ferric_core::decide_attachment(&kind, declared, supports_media) {
-            ferric_core::Attachment::AppendText => match std::fs::read_to_string(path) {
-                Ok(text) => {
-                    prompt_suffix.push_str(&format!("\n\n--- file: {} ---\n{text}", path.display()))
-                }
-                Err(e) => eprintln!("skip {}: cannot read as text: {e}", path.display()),
-            },
-            ferric_core::Attachment::Media(_modality, mime) => match std::fs::read(path) {
-                Ok(bytes) => media_parts.push(MediaPart {
+            ferric_core::Attachment::AppendText => {
+                let bytes = read_attachment(&resolved, &label, &mut total_bytes, limits)?;
+                let text = String::from_utf8(bytes).map_err(|e| {
+                    format!("attachment `{label}` cannot be read as UTF-8 text: {e}")
+                })?;
+                prompt_suffix.push_str(&format!("\n\n--- file: {label} ---\n{text}"));
+            }
+            ferric_core::Attachment::Media(_modality, mime) => {
+                let bytes = read_attachment(&resolved, &label, &mut total_bytes, limits)?;
+                media_parts.push(MediaPart {
                     mime,
                     data: ferric_core::base64_encode(&bytes),
-                }),
-                Err(e) => eprintln!("skip {}: cannot read: {e}", path.display()),
-            },
+                });
+            }
             ferric_core::Attachment::Skip(reason) => {
-                eprintln!("skip {}: {reason}", path.display())
+                eprintln!("skip {label}: {reason}")
             }
         }
     }
-    (media_parts, prompt_suffix)
+    Ok((media_parts, prompt_suffix))
+}
+
+fn workspace_relative_label(workspace: &Workspace, resolved: &Path) -> String {
+    resolved
+        .strip_prefix(workspace.root())
+        .unwrap_or(resolved)
+        .display()
+        .to_string()
+}
+
+/// Open and read one file without ever allocating beyond the remaining
+/// request budget. Metadata provides an early, clear failure for ordinary
+/// files; `take(limit + 1)` closes the race where a file grows after metadata
+/// is read.
+fn read_attachment(
+    path: &Path,
+    label: &str,
+    total_bytes: &mut u64,
+    limits: AttachmentLimits,
+) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("attachment `{label}` cannot be opened: {e}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("attachment `{label}` metadata cannot be read: {e}"))?;
+    if !metadata.is_file() {
+        return Err(format!("attachment `{label}` is not a regular file"));
+    }
+    if metadata.len() > limits.per_file {
+        return Err(format!(
+            "attachment `{label}` is {} bytes; per-file limit is {} bytes",
+            metadata.len(),
+            limits.per_file
+        ));
+    }
+
+    let remaining = limits.total.saturating_sub(*total_bytes);
+    if metadata.len() > remaining {
+        return Err(format!(
+            "attachment `{label}` would exceed the {}-byte aggregate limit ({} bytes already routed)",
+            limits.total, *total_bytes
+        ));
+    }
+
+    let read_limit = limits.per_file.min(remaining);
+    let capacity = usize::try_from(metadata.len().min(read_limit)).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(capacity);
+    file.take(read_limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("attachment `{label}` cannot be read: {e}"))?;
+
+    let actual = bytes.len() as u64;
+    if actual > limits.per_file {
+        return Err(format!(
+            "attachment `{label}` exceeds the {}-byte per-file limit while being read",
+            limits.per_file
+        ));
+    }
+    if actual > remaining {
+        return Err(format!(
+            "attachment `{label}` exceeds the {}-byte aggregate limit while being read ({} bytes already routed)",
+            limits.total, *total_bytes
+        ));
+    }
+    *total_bytes += actual;
+    Ok(bytes)
 }
 
 pub fn run_query(mut args: QueryArgs) -> ExitCode {
@@ -672,6 +801,20 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         );
     }
 
+    let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
+    let (media_parts, prompt_suffix) = match route_files(
+        &workspace,
+        &args.files,
+        &declared,
+        config.caps.supports_media,
+    ) {
+        Ok(routed) => routed,
+        Err(e) => {
+            eprintln!("files: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let trace_dir = workspace_root.join(".ferric").join("trace");
     if let Err(e) = std::fs::create_dir_all(&trace_dir) {
         eprintln!("cannot create trace dir {}: {e}", trace_dir.display());
@@ -707,9 +850,6 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         });
     }
 
-    let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
-    let (media_parts, prompt_suffix) =
-        route_files(&args.files, &declared, config.caps.supports_media);
     // `Option<String>`: `None` when resuming with no extra prompt/files given
     // (a pure continuation) — `run()` only requires a prompt when NOT
     // resuming, a precondition clap's `required_unless_present` guarantees.
@@ -720,7 +860,8 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         (None, false) => Some(prompt_suffix),
     };
 
-    // `--stream` (ADR-047): print `Text` deltas to stdout live, flushed per
+    // Live streaming (the default; ADR-047): print `Text` deltas to stdout,
+    // flushed per
     // delta; `ToolNamed` goes to stderr as a "which tool" activity line.
     // `streamed_anything` (an AtomicBool, not a Cell, so the sink closure
     // stays `Sync` — required since the closure is held across an `.await`
@@ -821,7 +962,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     };
 
     // Skip the final echo when streaming already displayed the text live —
-    // avoids double-printing (T-3705 EARS: `--stream` output must not
+    // avoids double-printing (T-3705 EARS: live output must not
     // duplicate).
     if !streamed_anything.load(std::sync::atomic::Ordering::Relaxed)
         && let Some(text) = &outcome.final_text
@@ -834,9 +975,10 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         outcome.turns,
         trace_path.display()
     );
-    match outcome.stop {
-        StopReason::ProviderError => ExitCode::FAILURE,
-        _ => ExitCode::SUCCESS,
+    if outcome.stop.is_success() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 
@@ -1293,6 +1435,79 @@ mod tests {
         assert!(folded.contains("project rules"));
     }
 
+    #[test]
+    fn route_files_resolves_inside_workspace_and_routes_text_and_media() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.md"), "demo notes").unwrap();
+        std::fs::write(dir.path().join("photo.png"), [0_u8, 1, 2]).unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+
+        let (media, suffix) = route_files(
+            &workspace,
+            &[PathBuf::from("notes.md"), PathBuf::from("photo.png")],
+            &[ferric_core::Modality::Image],
+            true,
+        )
+        .unwrap();
+
+        assert!(suffix.contains("--- file: notes.md ---"));
+        assert!(suffix.contains("demo notes"));
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].mime, "image/png");
+        assert_eq!(media[0].data, "AAEC");
+    }
+
+    #[test]
+    fn route_files_enforces_read_guard_and_ferricignore() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "TOKEN=secret").unwrap();
+        std::fs::write(dir.path().join("ignored.md"), "private notes").unwrap();
+        std::fs::write(dir.path().join(".ferricignore"), "ignored.md\n").unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+
+        let sensitive = route_files(&workspace, &[PathBuf::from(".env")], &[], false).unwrap_err();
+        assert!(sensitive.contains("denied_read_file"), "{sensitive}");
+
+        let ignored =
+            route_files(&workspace, &[PathBuf::from("ignored.md")], &[], false).unwrap_err();
+        assert!(ignored.contains("ferricignore"), "{ignored}");
+    }
+
+    #[test]
+    fn route_files_enforces_per_file_and_aggregate_byte_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("large.txt"), "12345").unwrap();
+        std::fs::write(dir.path().join("first.txt"), "1234").unwrap();
+        std::fs::write(dir.path().join("second.txt"), "567").unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+
+        let per_file = route_files_with_limits(
+            &workspace,
+            &[PathBuf::from("large.txt")],
+            &[],
+            false,
+            AttachmentLimits {
+                per_file: 4,
+                total: 16,
+            },
+        )
+        .unwrap_err();
+        assert!(per_file.contains("per-file limit is 4 bytes"), "{per_file}");
+
+        let aggregate = route_files_with_limits(
+            &workspace,
+            &[PathBuf::from("first.txt"), PathBuf::from("second.txt")],
+            &[],
+            false,
+            AttachmentLimits {
+                per_file: 4,
+                total: 6,
+            },
+        )
+        .unwrap_err();
+        assert!(aggregate.contains("6-byte aggregate limit"), "{aggregate}");
+    }
+
     /// T-3601: `run_with_provider` is independently callable given only a
     /// `&dyn Provider` — no `create_provider`/backend-feature dependency. This
     /// is exactly the shape `ferric mcp` needs: build a provider once, drive
@@ -1344,7 +1559,7 @@ mod tests {
         ))
         .unwrap();
 
-        assert_eq!(outcome.stop, StopReason::TaskComplete);
+        assert_eq!(outcome.stop, ferric_loop::StopReason::TaskComplete);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("ferric-mock.txt")).unwrap(),
             "mock run"

@@ -17,8 +17,8 @@ Ferric then trusts, and one of those files can carry shell commands.
 | `OPENAI_API_KEY` | `backend.rs` | provider credential | supplies a credential |
 | `FERRIC_LOG` / `RUST_LOG` | `logging.rs` | log verbosity | verbosity only |
 
-`TMPDIR`/`TEMP` are read indirectly by `std::env::temp_dir()` in
-`ferric trace verify`, which writes a scratch trace there.
+`ferric trace verify` does not read `TMPDIR`/`TEMP`: it validates the supplied
+JSONL transcript in place, writes no scratch trace, and executes no tools.
 
 ## The one chain worth understanding
 

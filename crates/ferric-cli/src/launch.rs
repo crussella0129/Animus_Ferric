@@ -116,47 +116,8 @@ pub fn run_launch(args: LaunchArgs) -> ExitCode {
                 report.branches.join(", ")
             );
             println!("Files: {}", report.files_created.join(", "));
-
-            // Increment 2: Begin Work Auto-Hand-Off
-            if let Ok(ans) = prompt_line("Begin work now? (y/N)")
-                && (ans.trim().to_lowercase() == "y" || ans.trim().to_lowercase() == "yes")
-            {
-                println!("Handing off to ferric query...");
-                let query_args = crate::query::QueryArgs {
-                    skills: Vec::new(),
-                    prompt: Some(spec.goal.clone()),
-                    files: vec![],
-                    workspace: Some(report.path.clone()),
-                    mock: false, // You could add args or let config handle backend etc.
-                    backend_opts: crate::backend::BackendOpts {
-                        model: None,
-                        api_base: None,
-                        api_key: None,
-                    },
-                    params_b: Some(7.0),
-                    quant: Some("q4".to_string()),
-                    family: Some("llama3".to_string()),
-                    ctx: Some(8192),
-                    temperature: Some(0.0),
-                    protocol: None,
-                    prompts_dir: None,
-                    max_ring: None,
-                    tier: None,
-                    profile_dir: Some(PathBuf::from(".ferric/profiles")),
-                    no_stream: false,
-                    resume: None,
-                    modality: None,
-                    research: None,
-                    research_urls: Vec::new(),
-                    allow_standard_runtime: false,
-                    sink_action: crate::query::SinkActionArg::Deny,
-                    accept_edits: false,
-                };
-                return crate::query::run_query(query_args);
-            }
             println!(
-                "Next: cd {} && begin work with the Loop.",
-                report.path.display()
+                "Next: enter the scaffolded directory and start a Ferric query with your task."
             );
             ExitCode::SUCCESS
         }

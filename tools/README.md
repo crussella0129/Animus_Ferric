@@ -1,12 +1,14 @@
 # tools/
 
-Test and benchmark runners. These drive a **live** Ferric against a real model
-or a real Docker daemon — they are the things `cargo test` deliberately does not
-do. Run them from the repository root; report paths are relative to the CWD.
+Test and benchmark runners. `demo-smoke.ps1` is the deterministic, offline
+pre-demo gate; the other runners drive Ferric against a real model or Docker
+daemon and cover behavior `cargo test` deliberately does not. Run them from the
+repository root; report paths are relative to the CWD.
 
 | Script | Shell | What it does |
 | --- | --- | --- |
-| `run-e2e.sh` | bash | End-to-end query run against a live backend. |
+| `demo-smoke.ps1` | PowerShell | Builds the release binary and exercises the Monday-safe offline query, trace, guard, skills, launch, ICM, and cron path. |
+| `run-e2e.sh` | bash | Containerized deterministic mock query with artifact and trace assertions. |
 | `run-coverage.sh` | bash | Coverage over the workspace. |
 | `e2e_test.ps1` | PowerShell | Single query end-to-end, then inspects the emitted trace. |
 | `run_benchmarks.ps1` | PowerShell | The `ferric bench` sweeps — toolbench, fleet, ring calibration, L0–L6. Writes `toolbench_*.md` and updates `benchmarks/model_profiles.json`. |

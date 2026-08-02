@@ -111,7 +111,7 @@ enum BenchCommand {
 enum TraceCommand {
     /// Render a JSONL trace as a human-readable log
     Cat { file: PathBuf },
-    /// Replay a trace file with a MockProvider to ensure execution hasn't drifted
+    /// Validate trace structure without re-executing recorded tool calls
     Verify { golden: PathBuf },
 }
 
