@@ -579,6 +579,75 @@ fn max_turns_rejects_zero() {
     assert!(!out.status.success());
 }
 
+#[test]
+fn explicit_checks_file_adds_only_the_named_check_tool() {
+    let ws = tempfile::tempdir().unwrap();
+    let checks = ws.path().join("operator-checks.toml");
+    let executable = std::env::current_exe().unwrap();
+    std::fs::write(
+        &checks,
+        format!(
+            "[[check]]\nname = 'unit'\nprogram = '{}'\nargs = ['--list']\n",
+            executable.display()
+        ),
+    )
+    .unwrap();
+
+    let out = ferric()
+        .args(["query", "--mock", "--checks-file"])
+        .arg(&checks)
+        .arg("do a task")
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("verification checks authorized: unit"));
+
+    let trace = std::fs::read_dir(ws.path().join(".ferric").join("trace"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+        .unwrap();
+    let offered = std::fs::read_to_string(trace)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value["event"]["type"] == "prompt_assembled")
+        .unwrap();
+    assert!(
+        offered["event"]["offered_tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == "run_check")
+    );
+}
+
+#[test]
+fn checks_file_failure_is_fatal_before_a_model_run() {
+    let ws = tempfile::tempdir().unwrap();
+    let missing = ws.path().join("missing-checks.toml");
+    let out = ferric()
+        .args(["query", "--mock", "--checks-file"])
+        .arg(&missing)
+        .arg("do a task")
+        .arg("--workspace")
+        .arg(ws.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read checks file"));
+    assert!(
+        !ws.path().join(".ferric").join("trace").exists(),
+        "an invalid operator policy must fail before opening a model trace"
+    );
+}
+
 /// T-3803: a CLI flag wins over the same field set in `.ferric/config.toml`.
 #[test]
 fn cli_flag_overrides_config_file() {

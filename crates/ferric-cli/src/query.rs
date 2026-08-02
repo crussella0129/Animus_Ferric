@@ -19,7 +19,7 @@ use ferric_loop::{
     DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run, select_protocol,
 };
 use ferric_provider::{Capabilities, Completion, MockProvider, Provider, SamplingParams};
-use ferric_tools::{Registry, register_builtin_tools};
+use ferric_tools::{NamedCheck, Registry, register_builtin_tools, register_run_checks};
 use ferric_trace::{Event, JsonlSink};
 
 use crate::backend::BackendOpts;
@@ -219,6 +219,13 @@ pub struct QueryArgs {
     #[arg(long)]
     pub profile_dir: Option<PathBuf>,
 
+    /// Explicit operator authorization for model-visible verification checks.
+    /// The TOML file contains fixed program/argv definitions; the model can
+    /// choose only a check name. Checks are never loaded implicitly from a
+    /// repository or the ordinary layered config.
+    #[arg(long)]
+    pub checks_file: Option<PathBuf>,
+
     /// Ignore project and user config files for this invocation. CLI flags and
     /// built-in defaults still apply. Intended for isolated benchmark runs.
     #[arg(long)]
@@ -328,6 +335,27 @@ pub(crate) struct RunConfig {
     /// responsible for recording it as a `Note` once a sink exists.
     pub prompt_composition_error: Option<String>,
     pub hooks: Option<ferric_core::HooksConfig>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NamedChecksFile {
+    #[serde(default, rename = "check")]
+    checks: Vec<NamedCheck>,
+}
+
+fn load_named_checks(path: &Path) -> Result<Vec<NamedCheck>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read checks file {}: {error}", path.display()))?;
+    let parsed: NamedChecksFile = toml::from_str(&text)
+        .map_err(|error| format!("invalid checks file {}: {error}", path.display()))?;
+    if parsed.checks.is_empty() {
+        return Err(format!(
+            "checks file {} defines no [[check]] entries",
+            path.display()
+        ));
+    }
+    Ok(parsed.checks)
 }
 
 pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
@@ -765,6 +793,25 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     });
     if let Some(max_turns) = args.max_turns {
         config.policy.max_turns = max_turns;
+    }
+    if let Some(path) = &args.checks_file {
+        let checks = match load_named_checks(path) {
+            Ok(checks) => checks,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let names = checks
+            .iter()
+            .map(|check| check.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if let Err(error) = register_run_checks(&mut config.registry, checks) {
+            eprintln!("invalid checks file {}: {error}", path.display());
+            return ExitCode::FAILURE;
+        }
+        eprintln!("verification checks authorized: {names}");
     }
 
     // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
@@ -1665,6 +1712,53 @@ mod tests {
         let (protocol_2, max_ring_2) = (config.protocol, config.policy.max_ring);
         assert_eq!(protocol_1, protocol_2);
         assert_eq!(max_ring_1, max_ring_2);
+    }
+
+    #[test]
+    fn checks_file_parses_fixed_argv_and_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checks.toml");
+        std::fs::write(
+            &path,
+            r#"
+                [[check]]
+                name = "unit"
+                program = "cargo"
+                args = ["test", "--workspace"]
+            "#,
+        )
+        .unwrap();
+
+        let checks = load_named_checks(&path).unwrap();
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].name, "unit");
+        assert_eq!(checks[0].args, ["test", "--workspace"]);
+        assert_eq!(checks[0].timeout_s, 120);
+        assert_eq!(checks[0].output_limit, 4_000);
+    }
+
+    #[test]
+    fn checks_file_is_explicit_and_fail_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let empty = directory.path().join("empty.toml");
+        std::fs::write(&empty, "# no checks\n").unwrap();
+        assert!(
+            load_named_checks(&empty)
+                .unwrap_err()
+                .contains("no [[check]]")
+        );
+
+        let unknown = directory.path().join("unknown.toml");
+        std::fs::write(
+            &unknown,
+            "[[check]]\nname='unit'\nprogram='cargo'\ncommand='arbitrary'\n",
+        )
+        .unwrap();
+        assert!(
+            load_named_checks(&unknown)
+                .unwrap_err()
+                .contains("unknown field")
+        );
     }
 
     // --- ADR-085: the allowlist is derived from the URLs, so host parsing is a
