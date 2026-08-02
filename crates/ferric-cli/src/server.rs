@@ -79,6 +79,14 @@ pub struct ServerUpArgs {
     /// Batch size (llama-server only; ignored for Ollama).
     #[arg(long)]
     pub batch_size: Option<u32>,
+    /// Sampling seed (llama-server only). Use a non-negative value for a
+    /// reproducible non-greedy run; llama.cpp reserves -1 for a random seed.
+    #[arg(long, allow_hyphen_values = true)]
+    pub seed: Option<i64>,
+    /// Number of concurrent llama-server request slots. The Sprint 113 causal
+    /// comparison uses one slot to avoid cross-request scheduling effects.
+    #[arg(long)]
+    pub parallel: Option<u32>,
     /// Securely expose the engine port over Tailscale (requires `tailscale` CLI).
     #[arg(long)]
     pub tailscale: bool,
@@ -97,6 +105,8 @@ pub struct ServerConfig {
     pub threads: Option<u32>,
     pub gpu_layers: Option<u32>,
     pub batch_size: Option<u32>,
+    pub seed: Option<i64>,
+    pub parallel: Option<u32>,
     pub tailscale: bool,
 }
 
@@ -158,6 +168,14 @@ pub fn command(cfg: &ServerConfig) -> LaunchCommand {
                 args.push("-b".to_string());
                 args.push(batch_size.to_string());
             }
+            if let Some(seed) = cfg.seed {
+                args.push("--seed".to_string());
+                args.push(seed.to_string());
+            }
+            if let Some(parallel) = cfg.parallel {
+                args.push("--parallel".to_string());
+                args.push(parallel.to_string());
+            }
             args.push("--host".to_string());
             args.push(cfg.host.clone());
             args.push("--port".to_string());
@@ -203,6 +221,16 @@ pub struct ServerRunfile {
     pub base_url: String,
     #[serde(default)]
     pub tailscale: bool,
+    /// Additive launch provenance. Old runfiles deserialize these fields as
+    /// unknown rather than silently claiming a reproducible setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_size: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling_seed: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_slots: Option<u32>,
 }
 
 /// Runfile location: `<workspace>/.ferric/server.json` (the `.ferric/` dir is
@@ -448,6 +476,8 @@ fn config_from(args: &ServerUpArgs) -> ServerConfig {
         threads: args.threads,
         gpu_layers: args.gpu_layers,
         batch_size: args.batch_size,
+        seed: args.seed,
+        parallel: args.parallel,
         tailscale: args.tailscale,
     }
 }
@@ -498,6 +528,11 @@ fn validate_launch_preconditions(
                 mmproj.display()
             ));
         }
+        if args.parallel == Some(0) {
+            return Err("--parallel must be greater than zero for llama-server".to_string());
+        }
+    } else if args.seed.is_some() || args.parallel.is_some() {
+        return Err("--seed and --parallel are supported only by llama-server".to_string());
     }
 
     require_registration_absent(&runfile_path(workspace), "local")?;
@@ -602,6 +637,10 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         port: cfg.port,
         base_url: base_url.clone(),
         tailscale: cfg.tailscale,
+        model: cfg.model.clone(),
+        context_size: (cfg.engine == Engine::LlamaServer).then_some(cfg.ctx),
+        sampling_seed: cfg.seed,
+        parallel_slots: cfg.parallel,
     };
 
     let path = runfile_path(workspace);
@@ -655,6 +694,15 @@ fn status(workspace: &Path) -> ExitCode {
                     "process absent or HTTP NOT healthy"
                 }
             );
+            if rf.sampling_seed.is_some() || rf.parallel_slots.is_some() {
+                println!(
+                    "sampling_seed={} parallel_slots={}",
+                    rf.sampling_seed
+                        .map_or_else(|| "unspecified".to_string(), |seed| seed.to_string()),
+                    rf.parallel_slots
+                        .map_or_else(|| "unspecified".to_string(), |slots| slots.to_string())
+                );
+            }
             if healthy {
                 ExitCode::SUCCESS
             } else {
@@ -756,6 +804,13 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
             );
             ok &= present;
         }
+        if args.parallel == Some(0) {
+            println!("[INVALID] --parallel must be greater than zero for llama-server");
+            ok = false;
+        }
+    } else if args.seed.is_some() || args.parallel.is_some() {
+        println!("[INVALID] --seed and --parallel are supported only by llama-server");
+        ok = false;
     }
 
     match read_runfile(workspace) {
@@ -803,6 +858,8 @@ mod tests {
             threads: None,
             gpu_layers: None,
             batch_size: None,
+            seed: None,
+            parallel: None,
             tailscale: false,
         }
     }
@@ -825,6 +882,8 @@ mod tests {
             threads: None,
             gpu_layers: Some(0),
             batch_size: None,
+            seed: None,
+            parallel: None,
             tailscale: false,
         }
     }
@@ -901,10 +960,14 @@ mod tests {
         config.threads = Some(4);
         config.gpu_layers = Some(20);
         config.batch_size = Some(512);
+        config.seed = Some(42);
+        config.parallel = Some(1);
         let c = command(&config);
         assert!(c.args.windows(2).any(|w| w == ["-t", "4"]));
         assert!(c.args.windows(2).any(|w| w == ["-ngl", "20"]));
         assert!(c.args.windows(2).any(|w| w == ["-b", "512"]));
+        assert!(c.args.windows(2).any(|w| w == ["--seed", "42"]));
+        assert!(c.args.windows(2).any(|w| w == ["--parallel", "1"]));
     }
 
     #[test]
@@ -920,6 +983,25 @@ mod tests {
             vec!["serve"],
             "edge-tuning flags must not leak into Ollama argv"
         );
+    }
+
+    #[test]
+    fn ollama_preflight_rejects_claiming_llama_sampling_controls() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"model").unwrap();
+        let mut args = llama_args(&model);
+        args.engine = Engine::Ollama;
+        args.model = Some("example-model".to_string());
+        args.seed = Some(42);
+
+        let error = validate_launch_preconditions(dir.path(), &args, None).unwrap_err();
+        assert!(error.contains("supported only by llama-server"), "{error}");
+
+        args.seed = None;
+        args.parallel = Some(1);
+        let error = validate_launch_preconditions(dir.path(), &args, None).unwrap_err();
+        assert!(error.contains("supported only by llama-server"), "{error}");
     }
 
     #[test]
@@ -1048,6 +1130,14 @@ mod tests {
                 .unwrap_err()
                 .contains("--port must be greater than zero")
         );
+
+        args.port = unused_port();
+        args.parallel = Some(0);
+        assert!(
+            validate_launch_preconditions(dir.path(), &args, None)
+                .unwrap_err()
+                .contains("--parallel must be greater than zero")
+        );
     }
 
     #[test]
@@ -1134,12 +1224,30 @@ mod tests {
             port: 8080,
             base_url: "http://127.0.0.1:8080/v1".to_string(),
             tailscale: false,
+            model: Some("model.gguf".to_string()),
+            context_size: Some(4096),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
         };
         let s = serde_json::to_string(&rf).unwrap();
         let back: ServerRunfile = serde_json::from_str(&s).unwrap();
         assert_eq!(back.pid, 4321);
         assert_eq!(back.engine, Engine::LlamaServer);
         assert_eq!(back.base_url, rf.base_url);
+        assert_eq!(back.sampling_seed, Some(42));
+        assert_eq!(back.parallel_slots, Some(1));
+        assert_eq!(back.context_size, Some(4096));
+        assert_eq!(back.model.as_deref(), Some("model.gguf"));
+    }
+
+    #[test]
+    fn old_runfile_sampling_metadata_defaults_to_unknown() {
+        let old = r#"{"engine":"llama-server","pid":4321,"port":8080,"base_url":"http://127.0.0.1:8080/v1","tailscale":false}"#;
+        let runfile: ServerRunfile = serde_json::from_str(old).unwrap();
+        assert!(runfile.model.is_none());
+        assert!(runfile.context_size.is_none());
+        assert!(runfile.sampling_seed.is_none());
+        assert!(runfile.parallel_slots.is_none());
     }
 
     #[test]
