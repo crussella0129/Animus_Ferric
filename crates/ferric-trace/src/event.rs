@@ -46,6 +46,16 @@ pub struct LineRangeV1 {
     pub end: u64,
 }
 
+/// Literal optional range arguments supplied to a file read. Keeping the two
+/// bounds independent distinguishes start-only, end-only, both, and neither.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestedLineRangeV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<u64>,
+}
+
 /// Exact metadata for a file read. The digest always describes the complete
 /// file bytes, while `returned_range` describes only the content shown.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,7 +65,7 @@ pub struct FileObservationV1 {
     pub total_bytes: u64,
     pub total_lines: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub requested_range: Option<LineRangeV1>,
+    pub requested_range: Option<RequestedLineRangeV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub returned_range: Option<LineRangeV1>,
     /// True only when the complete current file was shown to the model.
@@ -69,8 +79,8 @@ pub struct FileObservationV1 {
 pub struct NavigationObservationV1 {
     pub root: String,
     pub literal: String,
-    pub match_count: u32,
-    pub max_results: u32,
+    pub match_count: u64,
+    pub max_results: u64,
     /// True when traversal reached the end rather than stopping at the cap.
     pub exhausted: bool,
     pub result_sha256: String,
@@ -106,6 +116,64 @@ pub enum ControllerBlockReason {
     RepeatedCheck,
 }
 
+/// Redacted identity of one path while a call was prepared.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PreparedPathIdentityV1 {
+    Absent,
+    File { sha256: String, bytes: u64 },
+    Directory,
+    Other,
+}
+
+/// Before/candidate identities proving a path-level no-effect refusal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedPathStateV1 {
+    pub path: String,
+    pub before: PreparedPathIdentityV1,
+    pub candidate: PreparedPathIdentityV1,
+}
+
+/// Which typed preparation boundary proved a mutation was unsupported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnsupportedMutationKindV1 {
+    OpaqueMutation,
+    UnsupportedOperation,
+}
+
+/// Syntax status measured for a mutation preimage or candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntaxStateV1 {
+    Absent,
+    Valid,
+    Invalid,
+    Unchecked,
+}
+
+/// Typed proof for refusals whose cause cannot be reconstructed from the
+/// observation/check ledger alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+pub enum ControllerBlockWitnessV1 {
+    StaleObservation {
+        expected: PreparedPathIdentityV1,
+        current: PreparedPathIdentityV1,
+    },
+    NoEffect {
+        states: Vec<PreparedPathStateV1>,
+    },
+    SyntaxRegression {
+        before: SyntaxStateV1,
+        candidate: SyntaxStateV1,
+        diagnostic_sha256: String,
+    },
+    UnsupportedMutation {
+        control_kind: UnsupportedMutationKindV1,
+    },
+}
+
 /// Versioned controller-admission refusal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ControllerBlockV1 {
@@ -115,6 +183,10 @@ pub struct ControllerBlockV1 {
     pub paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check_name: Option<String>,
+    /// Typed witness for causes that cannot be derived from controller state.
+    /// Ledger-derived refusals omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness: Option<ControllerBlockWitnessV1>,
 }
 
 /// How one path changed during a measured workspace effect.
@@ -136,6 +208,13 @@ pub struct PathEffectV1 {
     pub before_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after_sha256: Option<String>,
+    /// Exact postimage size for effects that leave a file present. Paired with
+    /// `after_lines`; old typed-event fixtures omit both safely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_bytes: Option<u64>,
+    /// Exact logical-line count for effects that leave a file present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_lines: Option<u64>,
 }
 
 /// Versioned, measured workspace effect. One call advances the epoch once even

@@ -12,6 +12,7 @@
 
 mod backoff;
 mod compact;
+mod controller;
 mod failure;
 mod grammar;
 mod hooks_exec;
@@ -27,6 +28,7 @@ mod terminator;
 mod trace_structure;
 
 pub use backoff::{BASE_DELAY_MS, MAX_RETRIES};
+pub use controller::{ControllerError, ControllerState, MutationRequirement};
 pub use grammar::{ActionParseError, action_schema, parse_action, parse_json_action};
 pub use outcome::{LoopOutcome, NeedsInput, StopReason};
 pub use protocol::select_protocol;

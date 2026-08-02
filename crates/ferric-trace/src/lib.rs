@@ -26,12 +26,13 @@ pub fn trace_dir(workspace_root: &Path) -> PathBuf {
 
 pub use event::{
     CONTROLLER_CHECKPOINT_VERSION, CONTROLLER_RECORD_VERSION, CheckExecutionV1,
-    ControllerBlockReason, ControllerBlockV1, ControllerCheckpointV1, Event, FailedCheckV1,
-    FileEvidenceOrigin, FileEvidenceV1, FileObservationV1, GuardTurn, LineRangeV1,
-    NavigationObservationV1, ObservationDetailV1, ObservationV1, PathEffectKind, PathEffectV1,
-    RECOVERY_CHECKPOINT_VERSION, RECOVERY_PACKET_VERSION, RecoveryCheckpointV1, RecoveryPacketV1,
-    TRACE_SCHEMA_VERSION, TraceEvent, TurnBoundary, VerificationCheckV1, VerificationOutcome,
-    WorkspaceEffectV1,
+    ControllerBlockReason, ControllerBlockV1, ControllerBlockWitnessV1, ControllerCheckpointV1,
+    Event, FailedCheckV1, FileEvidenceOrigin, FileEvidenceV1, FileObservationV1, GuardTurn,
+    LineRangeV1, NavigationObservationV1, ObservationDetailV1, ObservationV1, PathEffectKind,
+    PathEffectV1, PreparedPathIdentityV1, PreparedPathStateV1, RECOVERY_CHECKPOINT_VERSION,
+    RECOVERY_PACKET_VERSION, RecoveryCheckpointV1, RecoveryPacketV1, RequestedLineRangeV1,
+    SyntaxStateV1, TRACE_SCHEMA_VERSION, TraceEvent, TurnBoundary, UnsupportedMutationKindV1,
+    VerificationCheckV1, VerificationOutcome, WorkspaceEffectV1,
 };
 pub use reader::{ParsedEvent, TraceReader, TraceRecord};
 pub use sink::JsonlSink;
@@ -178,7 +179,10 @@ mod tests {
                         sha256: "a".repeat(64),
                         total_bytes: 8,
                         total_lines: 1,
-                        requested_range: Some(LineRangeV1 { start: 1, end: 1 }),
+                        requested_range: Some(RequestedLineRangeV1 {
+                            start: Some(1),
+                            end: Some(1),
+                        }),
                         returned_range: Some(LineRangeV1 { start: 1, end: 1 }),
                         complete: true,
                         model_truncated: false,
@@ -195,6 +199,7 @@ mod tests {
                     mutation_epoch: 2,
                     paths: vec!["a.txt".to_string()],
                     check_name: None,
+                    witness: None,
                 },
             },
             Event::WorkspaceEffectRecorded {
@@ -209,6 +214,8 @@ mod tests {
                         kind: PathEffectKind::Modified,
                         before_sha256: Some("a".repeat(64)),
                         after_sha256: Some("b".repeat(64)),
+                        after_bytes: Some(9),
+                        after_lines: Some(1),
                     }],
                 },
             },
@@ -374,6 +381,117 @@ mod tests {
                 reason
             );
         }
+    }
+
+    #[test]
+    fn requested_range_shapes_and_large_navigation_counts_roundtrip_losslessly() {
+        let ranges = [
+            None,
+            Some(RequestedLineRangeV1 {
+                start: Some(2),
+                end: None,
+            }),
+            Some(RequestedLineRangeV1 {
+                start: None,
+                end: Some(7),
+            }),
+            Some(RequestedLineRangeV1 {
+                start: Some(2),
+                end: Some(7),
+            }),
+        ];
+        for requested_range in ranges {
+            let observation = ObservationV1 {
+                version: CONTROLLER_RECORD_VERSION,
+                detail: ObservationDetailV1::File(FileObservationV1 {
+                    path: "src/lib.rs".to_string(),
+                    sha256: "a".repeat(64),
+                    total_bytes: 20,
+                    total_lines: 10,
+                    requested_range,
+                    returned_range: Some(LineRangeV1 { start: 2, end: 7 }),
+                    complete: false,
+                    model_truncated: false,
+                }),
+            };
+            let encoded = serde_json::to_string(&observation).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ObservationV1>(&encoded).unwrap(),
+                observation
+            );
+        }
+
+        let navigation = NavigationObservationV1 {
+            root: ".".to_string(),
+            literal: "needle".to_string(),
+            match_count: u64::MAX - 1,
+            max_results: u64::MAX,
+            exhausted: true,
+            result_sha256: "b".repeat(64),
+        };
+        let encoded = serde_json::to_string(&navigation).unwrap();
+        assert_eq!(
+            serde_json::from_str::<NavigationObservationV1>(&encoded).unwrap(),
+            navigation
+        );
+    }
+
+    #[test]
+    fn controller_block_witnesses_roundtrip_and_old_optional_fields_remain_readable() {
+        let block = ControllerBlockV1 {
+            version: CONTROLLER_RECORD_VERSION,
+            reason: ControllerBlockReason::NoEffect,
+            mutation_epoch: 2,
+            paths: vec!["a.txt".to_string()],
+            check_name: None,
+            witness: Some(ControllerBlockWitnessV1::NoEffect {
+                states: vec![PreparedPathStateV1 {
+                    path: "a.txt".to_string(),
+                    before: PreparedPathIdentityV1::File {
+                        sha256: "a".repeat(64),
+                        bytes: 4,
+                    },
+                    candidate: PreparedPathIdentityV1::File {
+                        sha256: "a".repeat(64),
+                        bytes: 4,
+                    },
+                }],
+            }),
+        };
+        let encoded = serde_json::to_string(&block).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ControllerBlockV1>(&encoded).unwrap(),
+            block
+        );
+
+        let unsupported_check = ControllerBlockV1 {
+            version: CONTROLLER_RECORD_VERSION,
+            reason: ControllerBlockReason::UnsupportedMutation,
+            mutation_epoch: 2,
+            paths: Vec::new(),
+            check_name: Some("unknown".to_string()),
+            witness: Some(ControllerBlockWitnessV1::UnsupportedMutation {
+                control_kind: UnsupportedMutationKindV1::UnsupportedOperation,
+            }),
+        };
+        let encoded = serde_json::to_string(&unsupported_check).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ControllerBlockV1>(&encoded).unwrap(),
+            unsupported_check
+        );
+
+        let old_block =
+            r#"{"version":1,"reason":"blind_mutation","mutation_epoch":0,"paths":["a.txt"]}"#;
+        assert_eq!(
+            serde_json::from_str::<ControllerBlockV1>(old_block)
+                .unwrap()
+                .witness,
+            None
+        );
+        let old_effect = r#"{"path":"a.txt","kind":"modified","before_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","after_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#;
+        let effect: PathEffectV1 = serde_json::from_str(old_effect).unwrap();
+        assert_eq!(effect.after_bytes, None);
+        assert_eq!(effect.after_lines, None);
     }
 
     #[test]
