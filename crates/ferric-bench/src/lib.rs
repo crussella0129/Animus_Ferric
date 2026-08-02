@@ -8,16 +8,22 @@ pub mod calibrate;
 pub mod results;
 pub mod runner;
 pub mod spec;
+pub mod summary;
 pub mod verify;
 
 pub use calibrate::{
-    ModelProfileRecord, calibrate, highest_completed_level, non_monotonic_failures, read_profile,
-    write_calibrated_ring, write_profile,
+    ModelProfileRecord, calibrate, calibrate_from_evidence, highest_completed_level,
+    longest_completed_prefix, non_monotonic_failures, read_profile, write_calibrated_ring,
+    write_profile,
 };
 
 pub use results::{ResultRow, append_row, read_rows};
 pub use runner::{Invocation, OpenAiArgs, RunRecord, WorkspaceHandle, run_spec};
 pub use spec::{BenchSpec, CommandCheck, ExpectKind, Expectation, embedded_specs};
+pub use summary::{
+    BinaryProvenance, CalibrationEvidence, LevelSummary, ModelProvenance, RunIssue, RunProvenance,
+    RunSummary, SampleStats, Wilson95, required_passes, summarize_run, write_summary,
+};
 pub use verify::{
     CommandCheckResult, CommandCheckStatus, ToolVerdict, TraceMetrics, completed,
     failure_admission, parse_trace, preflight_command_checks, verify_command_checks,

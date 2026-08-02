@@ -115,3 +115,116 @@ fn bench_keep_workspace_preserves_dir() {
         "kept-workspace path must be reported: {stdout}"
     );
 }
+
+#[test]
+fn bench_three_trials_rotate_levels_retain_traces_and_write_statistics() {
+    let results = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args([
+            "bench",
+            "full",
+            "--mock",
+            "--trials",
+            "3",
+            "--min-pass-rate",
+            "0.67",
+            "--level",
+            "0",
+            "--level",
+            "1",
+            "--level",
+            "2",
+        ])
+        .arg("--results-dir")
+        .arg(results.path())
+        .output()
+        .unwrap();
+    let _ = out.status;
+
+    let rows: Vec<serde_json::Value> =
+        std::fs::read_to_string(results.path().join("results.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+    assert_eq!(rows.len(), 9);
+    let observed: Vec<(String, u64)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row["trial_id"].as_str().unwrap().to_string(),
+                row["level"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        observed,
+        vec![
+            ("trial-001".to_string(), 0),
+            ("trial-001".to_string(), 1),
+            ("trial-001".to_string(), 2),
+            ("trial-002".to_string(), 1),
+            ("trial-002".to_string(), 2),
+            ("trial-002".to_string(), 0),
+            ("trial-003".to_string(), 2),
+            ("trial-003".to_string(), 0),
+            ("trial-003".to_string(), 1),
+        ],
+        "each trial rotates its starting rung"
+    );
+    let run_id = rows[0]["run_id"].as_str().unwrap();
+    assert!(rows.iter().all(|row| row["run_id"] == run_id));
+    assert!(rows.iter().all(|row| {
+        row["started_at_unix_ms"].as_u64().is_some()
+            && row["finished_at_unix_ms"].as_u64().is_some()
+            && results
+                .path()
+                .join(row["trace_path"].as_str().unwrap())
+                .is_file()
+    }));
+
+    let summary_path = results.path().join(format!("summary-{run_id}.json"));
+    let summary: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(summary_path).unwrap()).unwrap();
+    assert_eq!(summary["trials_requested"], 3);
+    assert_eq!(summary["trials_completed"], 3);
+    assert_eq!(summary["observed_rows"], 9);
+    assert!(
+        summary["finished_at_unix_ms"].as_u64().unwrap()
+            >= summary["started_at_unix_ms"].as_u64().unwrap()
+    );
+    assert_eq!(summary["provenance"]["model"]["backend"], "mock");
+    assert!(summary["provenance"]["binary"]["path"].is_string());
+    assert_eq!(summary["provenance"]["protocol"], "ConstrainedJson");
+    assert_eq!(summary["levels"][0]["required_passes"], 3);
+    assert!(summary["levels"][0]["wilson_95"]["lower"].is_number());
+    assert!(summary["levels"][0]["wall_ms"]["median"].is_number());
+    assert_eq!(summary["levels"][0]["terminal_counts"]["task_complete"], 3);
+    assert_eq!(summary["calibration"]["eligible"], false);
+    assert_eq!(
+        summary["calibration"]["ineligible_reason"],
+        "partial ladder"
+    );
+}
+
+#[test]
+fn bench_rejects_out_of_range_trial_and_pass_rate_arguments() {
+    for args in [
+        ["--trials", "0"],
+        ["--trials", "101"],
+        ["--min-pass-rate", "0"],
+        ["--min-pass-rate", "1.01"],
+    ] {
+        let out = ferric()
+            .args(["bench", "full", "--mock", "--level", "0"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "invalid args unexpectedly succeeded");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("invalid value"),
+            "clap should explain the rejected value: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}

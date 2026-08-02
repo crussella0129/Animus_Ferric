@@ -11,6 +11,22 @@ use crate::verify::CommandCheckResult;
 /// `null` fields are metrics Ferric cannot yet source (flagged, not faked).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultRow {
+    /// Attribution fields added by summary schema v1. Legacy rows deserialize
+    /// with `None` and remain readable by calibration/inspection tooling.
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub trial_id: Option<String>,
+    #[serde(default)]
+    pub started_at_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub finished_at_unix_ms: Option<u64>,
+    /// Results-dir-relative path to the retained JSONL trace.
+    #[serde(default)]
+    pub trace_path: Option<String>,
+    /// Harness/infrastructure failure attributable to this attempt, if any.
+    #[serde(default)]
+    pub infrastructure_error: Option<String>,
     pub level: u8,
     #[serde(default = "crate::spec::default_spec_version")]
     pub spec_version: u32,
@@ -62,11 +78,20 @@ pub fn append_row(dir: &Path, row: &ResultRow) -> std::io::Result<()> {
 pub fn read_rows(dir: &Path) -> std::io::Result<Vec<ResultRow>> {
     let path = dir.join("results.jsonl");
     let text = std::fs::read_to_string(path)?;
-    Ok(text
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect())
+    let mut rows = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let row = serde_json::from_str(line).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid results.jsonl line {}: {error}", index + 1),
+            )
+        })?;
+        rows.push(row);
+    }
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -75,6 +100,12 @@ mod tests {
 
     fn row(level: u8, completed: bool) -> ResultRow {
         ResultRow {
+            run_id: Some("run-test".to_string()),
+            trial_id: Some("trial-001".to_string()),
+            started_at_unix_ms: Some(1),
+            finished_at_unix_ms: Some(2),
+            trace_path: Some("traces/run-test/trial-001-l0.jsonl".to_string()),
+            infrastructure_error: None,
             level,
             spec_version: 1,
             level_name: format!("l{level}"),
@@ -125,9 +156,35 @@ mod tests {
         let object = value.as_object_mut().unwrap();
         object.remove("spec_version");
         object.remove("command_checks");
+        object.remove("run_id");
+        object.remove("trial_id");
+        object.remove("started_at_unix_ms");
+        object.remove("finished_at_unix_ms");
+        object.remove("trace_path");
+        object.remove("infrastructure_error");
 
         let legacy: ResultRow = serde_json::from_value(value).unwrap();
         assert_eq!(legacy.spec_version, 1);
         assert!(legacy.command_checks.is_empty());
+        assert!(legacy.run_id.is_none());
+        assert!(legacy.trial_id.is_none());
+    }
+
+    #[test]
+    fn read_rows_reports_the_first_bad_physical_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let valid = serde_json::to_string(&row(0, true)).unwrap();
+        std::fs::write(
+            dir.path().join("results.jsonl"),
+            format!("{valid}\n\n{{not-json}}\n{valid}\n"),
+        )
+        .unwrap();
+
+        let error = read_rows(dir.path()).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            error.to_string().contains("line 3"),
+            "bad physical line must be attributable: {error}"
+        );
     }
 }
