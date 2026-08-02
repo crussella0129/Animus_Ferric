@@ -20,7 +20,7 @@ pub use control::{
     RequestedLineRange, StaleObservationWitness, SyntaxState, SyntaxTransition,
     SyntaxUncheckedReason, ToolObservation, ToolPreparation, UnsupportedMutationKind,
     VerificationAttempt, VerificationIntent, WorkspaceEffect, WorkspaceEffectKind,
-    WorkspaceEffectReport,
+    WorkspaceEffectReport, sha256_bytes,
 };
 pub use registry::{
     ApprovalRequest, CheckRecord, ControlledOutcome, DEFAULT_TRUNCATION_LIMIT, ExecuteOutcome,

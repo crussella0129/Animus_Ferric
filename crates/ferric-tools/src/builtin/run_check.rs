@@ -7,6 +7,9 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+use crate::control::{
+    ControlCapability, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
+};
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -136,6 +139,46 @@ impl Tool for RunCheck {
 
     fn target_paths(&self, _args: &serde_json::Value) -> Vec<String> {
         Vec::new()
+    }
+
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::Verification
+    }
+
+    fn prepare(
+        &self,
+        _ctx: &PrepareCtx<'_>,
+        args: &serde_json::Value,
+    ) -> Result<ToolPreparation, PrepareError> {
+        let object = args.as_object().ok_or_else(|| {
+            PrepareError::new(
+                PrepareErrorKind::InvalidArguments,
+                "run_check arguments must be an object containing only `name`",
+            )
+        })?;
+        if object.len() != 1 || !object.contains_key("name") {
+            return Err(PrepareError::new(
+                PrepareErrorKind::InvalidArguments,
+                "run_check arguments must contain exactly one field: `name`",
+            ));
+        }
+        let name = object
+            .get("name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                PrepareError::new(
+                    PrepareErrorKind::InvalidArguments,
+                    "missing required string argument: name",
+                )
+            })?;
+        if !self.checks.contains_key(name) {
+            return Err(PrepareError::new(
+                PrepareErrorKind::InvalidArguments,
+                format!("unknown authorized check `{name}`"),
+            ));
+        }
+
+        Ok(ToolPreparation::verification(name))
     }
 
     fn target_commands(&self, args: &serde_json::Value) -> Vec<String> {
@@ -373,8 +416,10 @@ fn canonical_executable(path: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::{PreparedIntent, WorkspaceEffectReport};
+    use crate::registry::{ControlledOutcome, PrepareOutcome, Registry};
     use crate::spec::ToolCtx;
-    use ferric_guard::Workspace;
+    use ferric_guard::{Provenance, SinkPolicy, Workspace};
 
     fn shell_check(name: &str, script: &str, timeout_s: u64, output_limit: usize) -> NamedCheck {
         #[cfg(windows)]
@@ -412,6 +457,23 @@ mod tests {
         )
     }
 
+    fn marker_check(name: &str, marker: &Path) -> NamedCheck {
+        let diagnostic = "diagnostic-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        #[cfg(windows)]
+        let script = format!(
+            "Add-Content -LiteralPath '{}' -Value spawn; [Console]::Error.Write('{}'); exit 7",
+            marker.display(),
+            diagnostic
+        );
+        #[cfg(not(windows))]
+        let script = format!(
+            "printf 'spawn\\n' >> '{}'; printf '{}' >&2; exit 7",
+            marker.display(),
+            diagnostic
+        );
+        shell_check(name, &script, 5, 512)
+    }
+
     #[test]
     fn duplicate_and_unsafe_names_are_rejected() {
         let duplicate = vec![
@@ -423,6 +485,117 @@ mod tests {
             RunCheck::new(vec![shell_check("../test", "exit 0", 5, 100)])
                 .unwrap_err()
                 .contains("invalid check name")
+        );
+    }
+
+    #[test]
+    fn controlled_preparation_is_exact_typed_and_does_not_spawn() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker_directory = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(directory.path()).unwrap();
+        let marker = marker_directory.path().join("spawn-count.txt");
+        let tool = RunCheck::new(vec![marker_check("unit", &marker)]).unwrap();
+        let ctx = PrepareCtx {
+            workspace: &workspace,
+            truncation_limit: 32,
+        };
+
+        assert_eq!(tool.control_capability(), ControlCapability::Verification);
+        for _ in 0..2 {
+            let preparation = tool.prepare(&ctx, &json!({"name": "unit"})).unwrap();
+            assert!(matches!(
+                preparation.intent,
+                PreparedIntent::Verification(ref intent) if intent.name == "unit"
+            ));
+        }
+        assert!(
+            !marker.exists(),
+            "repeated side-effect-free preparation must not spawn a check"
+        );
+
+        for invalid in [
+            json!(null),
+            json!({}),
+            json!({"name": 1}),
+            json!({"name": "unknown"}),
+            json!({"name": "unit", "extra": true}),
+        ] {
+            let error = match tool.prepare(&ctx, &invalid) {
+                Err(error) => error,
+                Ok(_) => panic!("invalid arguments unexpectedly prepared: {invalid}"),
+            };
+            assert_eq!(error.kind, PrepareErrorKind::InvalidArguments);
+        }
+        assert!(
+            !marker.exists(),
+            "rejected preparation must not spawn a check"
+        );
+    }
+
+    #[test]
+    fn admitted_commit_spawns_once_and_retains_typed_full_diagnostic() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker_directory = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(directory.path()).unwrap();
+        let marker = marker_directory.path().join("spawn-count.txt");
+        let mut registry = Registry::with_truncation_limit(32);
+        registry.register(Box::new(
+            RunCheck::new(vec![marker_check("unit", &marker)]).unwrap(),
+        ));
+
+        // A caller may prepare repeatedly while deciding policy; neither
+        // preparation is executable until one is consumed by commit_admitted.
+        let rejected_by_controller =
+            match registry.prepare_controlled(&workspace, "run_check", &json!({"name": "unit"})) {
+                PrepareOutcome::Prepared(prepared) => prepared,
+                other => panic!("expected typed preparation, got {other:?}"),
+            };
+        assert!(!marker.exists());
+        drop(rejected_by_controller);
+        assert!(!marker.exists());
+
+        let admitted =
+            match registry.prepare_controlled(&workspace, "run_check", &json!({"name": "unit"})) {
+                PrepareOutcome::Prepared(prepared) => prepared,
+                other => panic!("expected typed preparation, got {other:?}"),
+            };
+        assert!(!marker.exists());
+
+        let outcome =
+            registry.commit_admitted(admitted, Provenance::Clean, &SinkPolicy::deny(), None);
+        let ControlledOutcome::Completed {
+            output, metadata, ..
+        } = outcome
+        else {
+            panic!("expected committed verification outcome");
+        };
+
+        assert!(output.is_error);
+        assert!(output.full.contains("status 7"), "{}", output.full);
+        assert!(
+            output
+                .full
+                .contains("diagnostic-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"),
+            "{}",
+            output.full
+        );
+        assert_ne!(output.full, output.for_model);
+        assert!(output.for_model.contains("output truncated for model"));
+        let verification = metadata.verification.expect("typed verification outcome");
+        assert_eq!(verification.name, "unit");
+        assert!(!verification.passed);
+        assert!(matches!(
+            metadata.effects,
+            WorkspaceEffectReport::UnmeasuredLegacy
+        ));
+        assert_eq!(
+            metadata.failure.expect("full typed failure").message,
+            output.full
+        );
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap().lines().count(),
+            1,
+            "one admitted commit must spawn the process exactly once"
         );
     }
 

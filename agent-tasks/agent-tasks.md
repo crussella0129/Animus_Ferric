@@ -209,4 +209,5 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
   independently verify traces and teardown.
 - [ ] **T-11308 — Planner decision and durable record.** Only after the
   evidence-only result, freeze a planner orchestration addendum or reject the
-  arm; record the causal conclusion, ADR, walkthrough, commit/push/PR, and CI.
+  arm; record the causal conclusion, ADR, verification report, commit/push/PR,
+  and CI.

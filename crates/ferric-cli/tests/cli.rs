@@ -481,59 +481,75 @@ fn query_defaults_unchanged_after_clap_type_change() {
 }
 
 #[test]
-fn unavailable_harness_policies_fail_before_trace_or_workspace_mutation() {
-    for (policy, diagnostic) in [
-        (
+fn evidence_runs_and_planner_fails_before_trace_or_workspace_mutation() {
+    let evidence = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args([
+            "query",
+            "--mock",
+            "--no-config",
+            "--harness-policy",
             "evidence",
-            "evidence is not available until controller checkpoints are enabled",
-        ),
-        (
-            "evidence-planner",
-            "evidence_planner is not implemented yet",
-        ),
-    ] {
-        let ws = tempfile::tempdir().unwrap();
-        let out = ferric()
-            .args([
-                "query",
-                "--mock",
-                "--no-config",
-                "--harness-policy",
-                policy,
-                "do a task",
-            ])
-            .arg("--workspace")
-            .arg(ws.path())
-            .output()
-            .unwrap();
+            "do a task",
+        ])
+        .arg("--workspace")
+        .arg(evidence.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        policy_event(evidence.path())["event"]["harness_policy"],
+        "evidence"
+    );
+    assert!(evidence.path().join("ferric-mock.txt").is_file());
 
-        assert!(!out.status.success(), "{policy} unexpectedly ran");
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains(diagnostic), "stderr: {stderr}");
-        assert!(
-            !ws.path().join(".ferric").join("trace").exists(),
-            "{policy} must be refused before trace allocation"
-        );
-        assert!(
-            !ws.path().join("ferric-mock.txt").exists(),
-            "{policy} must be refused before tool mutation"
-        );
-    }
+    let planner = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args([
+            "query",
+            "--mock",
+            "--no-config",
+            "--harness-policy",
+            "evidence-planner",
+            "do a task",
+        ])
+        .arg("--workspace")
+        .arg(planner.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "evidence-planner unexpectedly ran");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("evidence_planner is not implemented yet"),
+        "stderr: {stderr}"
+    );
+    assert!(!planner.path().join(".ferric").join("trace").exists());
+    assert!(!planner.path().join("ferric-mock.txt").exists());
 }
 
 #[test]
 fn harness_policy_config_obeys_cli_over_project_precedence() {
-    let refused = tempfile::tempdir().unwrap();
-    write_project_config(refused.path(), "harness_policy = \"evidence\"\n");
+    let configured = tempfile::tempdir().unwrap();
+    write_project_config(configured.path(), "harness_policy = \"evidence\"\n");
     let out = ferric()
         .args(["query", "--mock", "do a task"])
         .arg("--workspace")
-        .arg(refused.path())
+        .arg(configured.path())
         .output()
         .unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("controller checkpoints"));
-    assert!(!refused.path().join(".ferric").join("trace").exists());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        policy_event(configured.path())["event"]["harness_policy"],
+        "evidence"
+    );
 
     let overridden = tempfile::tempdir().unwrap();
     write_project_config(overridden.path(), "harness_policy = \"evidence\"\n");

@@ -22,8 +22,11 @@ use super::controlled_read::{open_controlled_dir, validate_controlled_dir};
 /// Recursively search file contents for a literal substring within the
 /// workspace — the navigation primitive a small model needs to find code
 /// before reading or editing it. Results are `relpath:lineno:line`, sorted
-/// (ADR-008) and capped (ADR-018); binary/unreadable files and noise dirs
-/// (`.git`, `target`, …) are skipped.
+/// (ADR-008) and capped (ADR-018). Legacy execution keeps its compatibility
+/// behavior of skipping binary/unreadable files; controlled preparation fails
+/// on enumeration, open, or read errors so it cannot certify a false
+/// exhausted/no-match observation. Noise dirs (`.git`, `target`, …) are
+/// skipped in both modes.
 pub struct SearchFiles;
 
 const DEFAULT_MAX_RESULTS: usize = 50;
@@ -270,14 +273,33 @@ fn search_dir_controlled(
     max_results: usize,
     out: &mut Vec<String>,
 ) -> Result<(), String> {
+    search_dir_controlled_with_hook(dir, relative, query, max_results, out, &mut |_, _| {})
+}
+
+fn search_dir_controlled_with_hook<F>(
+    dir: &Dir,
+    relative: &Path,
+    query: &str,
+    max_results: usize,
+    out: &mut Vec<String>,
+    before_metadata: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(&Dir, &std::ffi::OsString),
+{
     if out.len() >= max_results {
         return Ok(());
     }
     let mut entries: Vec<_> = dir
         .entries()
         .map_err(|error| format!("search {}: {error}", relative.display()))?
-        .filter_map(Result::ok)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!(
+                "enumerate controlled search {}: {error}",
+                relative.display()
+            )
+        })?;
     entries.sort_by_key(cap_std::fs::DirEntry::file_name);
 
     for entry in entries {
@@ -285,38 +307,60 @@ fn search_dir_controlled(
             break;
         }
         let name = entry.file_name();
-        let before = match dir.symlink_metadata(&name) {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
-        };
+        let path = relative.join(&name);
+        before_metadata(dir, &name);
+        let before = dir.symlink_metadata(&name).map_err(|error| {
+            format!(
+                "inspect controlled search entry {}: {error}",
+                path.display()
+            )
+        })?;
         if before.file_type().is_symlink() {
             continue;
         }
-        let path = relative.join(&name);
         if before.is_dir() {
             let lossy_name = name.to_string_lossy();
             if NOISE_DIRS.contains(&lossy_name.as_ref()) {
                 continue;
             }
             let identity = (MetadataExt::dev(&before), MetadataExt::ino(&before));
-            let Ok(child) = dir.open_dir_nofollow(&name) else {
-                continue;
-            };
-            let Ok(opened) = child.dir_metadata() else {
-                continue;
-            };
-            let Ok(after) = dir.symlink_metadata(&name) else {
-                continue;
-            };
+            let child = dir.open_dir_nofollow(&name).map_err(|error| {
+                format!(
+                    "open controlled search directory {}: {error}",
+                    path.display()
+                )
+            })?;
+            let opened = child.dir_metadata().map_err(|error| {
+                format!(
+                    "inspect opened controlled search directory {}: {error}",
+                    path.display()
+                )
+            })?;
+            let after = dir.symlink_metadata(&name).map_err(|error| {
+                format!(
+                    "revalidate controlled search directory {}: {error}",
+                    path.display()
+                )
+            })?;
             if !opened.is_dir()
                 || after.file_type().is_symlink()
                 || !after.is_dir()
                 || (MetadataExt::dev(&opened), MetadataExt::ino(&opened)) != identity
                 || (MetadataExt::dev(&after), MetadataExt::ino(&after)) != identity
             {
-                continue;
+                return Err(format!(
+                    "controlled search directory {} changed before traversal",
+                    path.display()
+                ));
             }
-            search_dir_controlled(&child, &path, query, max_results, out)?;
+            search_dir_controlled_with_hook(
+                &child,
+                &path,
+                query,
+                max_results,
+                out,
+                before_metadata,
+            )?;
             let current = dir
                 .symlink_metadata(&name)
                 .map_err(|error| format!("revalidate controlled search directory: {error}"))?;
@@ -342,15 +386,21 @@ fn search_dir_controlled(
             options.custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK | libc::O_NOFOLLOW);
         }
         let identity = (MetadataExt::dev(&before), MetadataExt::ino(&before));
-        let Ok(mut file) = dir.open_with(&name, &options) else {
-            continue;
-        };
-        let Ok(opened) = file.metadata() else {
-            continue;
-        };
-        let Ok(after) = dir.symlink_metadata(&name) else {
-            continue;
-        };
+        let mut file = dir
+            .open_with(&name, &options)
+            .map_err(|error| format!("open controlled search file {}: {error}", path.display()))?;
+        let opened = file.metadata().map_err(|error| {
+            format!(
+                "inspect opened controlled search file {}: {error}",
+                path.display()
+            )
+        })?;
+        let after = dir.symlink_metadata(&name).map_err(|error| {
+            format!(
+                "revalidate controlled search file {}: {error}",
+                path.display()
+            )
+        })?;
         if !opened.is_file()
             || opened.file_type().is_symlink()
             || after.file_type().is_symlink()
@@ -358,12 +408,14 @@ fn search_dir_controlled(
             || (MetadataExt::dev(&opened), MetadataExt::ino(&opened)) != identity
             || (MetadataExt::dev(&after), MetadataExt::ino(&after)) != identity
         {
-            continue;
+            return Err(format!(
+                "controlled search file {} changed before reading",
+                path.display()
+            ));
         }
         let mut content = String::new();
-        if file.read_to_string(&mut content).is_err() {
-            continue;
-        }
+        file.read_to_string(&mut content)
+            .map_err(|error| format!("read controlled search file {}: {error}", path.display()))?;
         let current = dir
             .symlink_metadata(&name)
             .map_err(|error| format!("revalidate controlled search file: {error}"))?;
@@ -384,4 +436,53 @@ fn search_dir_controlled(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn controlled_search_fails_when_an_enumerated_entry_disappears() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("vanish.txt"), b"needle\n").unwrap();
+        let workspace = ferric_guard::Workspace::new(directory.path()).unwrap();
+        let (root, relative) = open_controlled_dir(&workspace, ".").unwrap();
+        let mut removed = false;
+        let mut results = Vec::new();
+
+        let error = search_dir_controlled_with_hook(
+            &root,
+            &relative,
+            "needle",
+            10,
+            &mut results,
+            &mut |dir, name| {
+                if !removed && name.to_string_lossy() == "vanish.txt" {
+                    removed = true;
+                    dir.remove_file(name).unwrap();
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert!(removed);
+        assert!(results.is_empty());
+        assert!(error.contains("inspect controlled search entry"));
+    }
+
+    #[test]
+    fn controlled_search_reports_non_utf8_read_failure_instead_of_no_matches() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("binary.dat"), [0xff, 0xfe]).unwrap();
+        let workspace = ferric_guard::Workspace::new(directory.path()).unwrap();
+        let (root, relative) = open_controlled_dir(&workspace, ".").unwrap();
+        let mut results = Vec::new();
+
+        let error =
+            search_dir_controlled(&root, &relative, "needle", 10, &mut results).unwrap_err();
+
+        assert!(results.is_empty());
+        assert!(error.contains("read controlled search file"));
+    }
 }

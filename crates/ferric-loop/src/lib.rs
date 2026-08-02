@@ -12,6 +12,7 @@
 
 mod backoff;
 mod compact;
+mod controlled_dispatch;
 mod controller;
 mod failure;
 mod grammar;

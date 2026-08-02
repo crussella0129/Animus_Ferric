@@ -34,6 +34,12 @@ For each tool call, write out your reasoning in the `thought` field before execu
 When the task is done, call task_complete with a one-sentence summary. \
 Never describe a tool call in prose - actually call the tool.";
 
+const GENERAL_EVIDENCE_GUIDANCE_V1: &str = "[Ferric general evidence guidance v1]\n\
+Inspect a complete current file in a prior turn before editing existing content; paginate incomplete reads until coverage is complete.\n\
+Genuinely absent paths may be created directly without a prior file read.\n\
+After a failed check, inspect relevant repository evidence in a later turn before attempting a repair.\n\
+Do not rerun the same named check until a material workspace mutation advances the evidence epoch.";
+
 pub type PromptLineage = (String, String, Vec<(String, String)>);
 
 /// A mutating tool call surfaced to the human for approval before it runs
@@ -95,9 +101,7 @@ pub struct LoopState<'a> {
     pub args: RunArgs<'a>,
     pub sink: &'a mut JsonlSink,
     pub projector: TraceProjector,
-    /// Prompt-independent evidence truth. `None` is mandatory for Legacy;
-    /// live Evidence dispatch remains disabled until B113-05 wires the
-    /// controlled registry chokepoint.
+    /// Prompt-independent evidence truth. `None` is mandatory for Legacy.
     pub controller: Option<ControllerState>,
     /// Absolute id assigned to the next turn across resume boundaries.
     pub turns: u32,
@@ -162,15 +166,27 @@ impl<'a> LoopState<'a> {
     }
 
     fn completion_evidence(&self) -> (Vec<String>, Vec<String>) {
-        let required = self.args.registry.required_checks().to_vec();
-        let fresh = required
-            .iter()
-            .filter(|name| {
-                self.projector.passed_checks.get(*name) == Some(&self.projector.mutation_epoch)
-            })
-            .cloned()
-            .collect();
-        (required, fresh)
+        if let Some(controller) = self.controller.as_ref() {
+            let required = controller.required_checks().to_vec();
+            let fresh = required
+                .iter()
+                .filter(|name| {
+                    controller.passed_checks().get(*name) == Some(&controller.mutation_epoch())
+                })
+                .cloned()
+                .collect();
+            (required, fresh)
+        } else {
+            let required = self.args.registry.required_checks().to_vec();
+            let fresh = required
+                .iter()
+                .filter(|name| {
+                    self.projector.passed_checks.get(*name) == Some(&self.projector.mutation_epoch)
+                })
+                .cloned()
+                .collect();
+            (required, fresh)
+        }
     }
 
     fn record_completion_gate(
@@ -179,8 +195,12 @@ impl<'a> LoopState<'a> {
         fresh_checks: Vec<String>,
         passed: bool,
     ) -> Result<(), FerricError> {
+        let mutation_epoch = self.controller.as_ref().map_or(
+            self.projector.mutation_epoch,
+            ControllerState::mutation_epoch,
+        );
         let event = Event::CompletionGate {
-            mutation_epoch: self.projector.mutation_epoch,
+            mutation_epoch,
             required_checks,
             fresh_checks,
             decision: if passed { "passed" } else { "blocked" }.to_string(),
@@ -659,6 +679,40 @@ impl<'a> LoopState<'a> {
             self.sink.write_event(tc.clone())?;
             self.projector.step(&tc);
 
+            if let Some(controller) = self.controller.as_mut() {
+                debug!(tool = %call.name, "dispatching evidence-controlled tool call");
+                let result = crate::controlled_dispatch::dispatch(
+                    turn,
+                    call,
+                    self.args.registry,
+                    self.args.workspace,
+                    self.args.provenance,
+                    &self.args.sink_policy,
+                    self.args.edit_approver,
+                    controller,
+                    self.sink,
+                    &mut self.projector,
+                )?;
+                debug!(tool = %call.name, is_error = result.is_error, duration_ms = result.duration_ms, "evidence-controlled tool call finished");
+                dispatched += 1;
+                if result.is_error {
+                    errored += 1;
+                }
+                if let Some(stream_sink) = self.args.stream_sink {
+                    let summary_line = result.full.lines().next().unwrap_or("").to_string();
+                    let summary = if result.is_error {
+                        format!("Error: {summary_line}")
+                    } else {
+                        summary_line
+                    };
+                    stream_sink(StreamDelta::ToolCompleted {
+                        name: call.name.clone(),
+                        summary,
+                    });
+                }
+                continue;
+            }
+
             // Accept-edits gate (ADR-070): a mutating call is previewed to the
             // human, who may reject it before it touches disk. Non-mutating
             // (Read) calls, and runs with no approver, are never gated.
@@ -957,18 +1011,6 @@ pub async fn run(
             ));
         }
     };
-    match effective_harness_policy {
-        HarnessPolicy::Legacy => {}
-        HarnessPolicy::Evidence => {
-            return Err(FerricError::InvalidInput(
-                "harness policy evidence is not available until controller checkpoints are enabled"
-                    .to_string(),
-            ));
-        }
-        HarnessPolicy::EvidencePlanner => {
-            unreachable!("evidence_planner returned during controller preparation")
-        }
-    }
     args.harness_policy = Some(effective_harness_policy);
 
     // The projector's model-facing cap is not set here: it comes from the
@@ -1011,7 +1053,12 @@ pub async fn run(
         projector.step(&composed);
     }
 
-    let registry_tools = registry_tools(args.registry, args.policy, args.protocol);
+    let registry_tools = registry_tools(
+        args.registry,
+        args.policy,
+        args.protocol,
+        effective_harness_policy,
+    );
 
     let turns = match &args.resume {
         Some(replayed) => {
@@ -1106,6 +1153,10 @@ pub async fn run(
                 for control in crate::terminator::control_descriptors(args.protocol) {
                     system.push_str(&format!("- {}: {}\n", control.name, control.description));
                 }
+            }
+            if effective_harness_policy == HarnessPolicy::Evidence {
+                system.push_str("\n\n");
+                system.push_str(GENERAL_EVIDENCE_GUIDANCE_V1);
             }
 
             let prompt_text = prompt.ok_or_else(|| {
@@ -1266,9 +1317,16 @@ fn registry_tools(
     registry: &Registry,
     policy: &RunPolicy,
     protocol: ActionProtocol,
+    harness_policy: HarnessPolicy,
 ) -> Vec<ToolDescriptor> {
-    registry
-        .tools_for_policy(policy)
+    let specs = match harness_policy {
+        HarnessPolicy::Legacy => registry.tools_for_policy(policy),
+        HarnessPolicy::Evidence => registry.tools_for_controlled_policy(policy),
+        HarnessPolicy::EvidencePlanner => {
+            unreachable!("evidence_planner is rejected before tool enumeration")
+        }
+    };
+    specs
         .into_iter()
         .filter(|spec| {
             if protocol == ActionProtocol::Plan {

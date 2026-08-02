@@ -565,18 +565,13 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
     }
 }
 
-/// Fail closed before a product allocates a trace. Evidence traces require
-/// controller checkpoints, so accepting either not-yet-live policy here would
-/// create a structurally invalid partial trace before `run()` could refuse it.
+/// Fail closed before a product allocates a trace for policies whose complete
+/// execution protocol is not available.
 pub(crate) fn ensure_supported_harness_policy(
     harness_policy: Option<HarnessPolicy>,
 ) -> Result<(), String> {
     match harness_policy {
-        None | Some(HarnessPolicy::Legacy) => Ok(()),
-        Some(HarnessPolicy::Evidence) => Err(
-            "harness policy evidence is not available until controller checkpoints are enabled"
-                .to_string(),
-        ),
+        None | Some(HarnessPolicy::Legacy | HarnessPolicy::Evidence) => Ok(()),
         Some(HarnessPolicy::EvidencePlanner) => {
             Err("harness policy evidence_planner is not implemented yet".to_string())
         }
