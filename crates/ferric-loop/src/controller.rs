@@ -212,9 +212,12 @@ impl ControllerState {
         let mut seen = BTreeSet::new();
         for requirement in requirements {
             let unsupported_identity = match &requirement.current {
-                PreparedPathIdentityV1::Absent => false,
+                // A directory precondition is a valid existence/type CAS with no
+                // content to observe; only a non-file, non-directory occupant
+                // (symlink, device, …) is unsupported.
+                PreparedPathIdentityV1::Absent | PreparedPathIdentityV1::Directory => false,
                 PreparedPathIdentityV1::File { sha256, .. } => !is_sha256(sha256),
-                PreparedPathIdentityV1::Directory | PreparedPathIdentityV1::Other => true,
+                PreparedPathIdentityV1::Other => true,
             };
             if validate_workspace_path(&requirement.path).is_err()
                 || !seen.insert(requirement.path.as_str())
@@ -255,10 +258,12 @@ impl ControllerState {
         }
         for requirement in requirements {
             let (current_sha256, current_bytes) = match &requirement.current {
-                PreparedPathIdentityV1::Absent => continue,
+                // Absent (create) and Directory (structural) preconditions carry
+                // no content-observation requirement.
+                PreparedPathIdentityV1::Absent | PreparedPathIdentityV1::Directory => continue,
                 PreparedPathIdentityV1::File { sha256, bytes } => (sha256.as_str(), *bytes),
-                PreparedPathIdentityV1::Directory | PreparedPathIdentityV1::Other => {
-                    unreachable!("unsupported identities returned above")
+                PreparedPathIdentityV1::Other => {
+                    unreachable!("Other identities are blocked above")
                 }
             };
             let Some(evidence) = self.file_evidence.get(&requirement.path) else {
@@ -1365,6 +1370,14 @@ fn validate_workspace_effect_shape(
                     path_effect.path
                 )));
             }
+            PathEffectKind::CreatedDirectory | PathEffectKind::DeletedDirectory
+                if path_effect.before_sha256.is_some() || path_effect.after_sha256.is_some() =>
+            {
+                return Err(ControllerError::invalid(format!(
+                    "directory effect {:?} must not carry a content digest",
+                    path_effect.path
+                )));
+            }
             PathEffectKind::Opaque => {
                 return Err(ControllerError::invalid(format!(
                     "opaque path effect {:?} is unverifiable",
@@ -2084,6 +2097,54 @@ mod tests {
                 PreparedPathIdentityV1::Absent,
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn directory_preconditions_and_effects_need_no_content_evidence() {
+        let mut state = evidence_state();
+        // A directory precondition is admitted with no prior file observation:
+        // a directory has no content to have read first.
+        let requirement = MutationRequirement {
+            path: "temp".to_string(),
+            current: PreparedPathIdentityV1::Directory,
+        };
+        assert!(state.mutation_block(1, &[requirement]).is_none());
+
+        // A measured directory creation advances the epoch and records no file
+        // evidence.
+        let created_dir = WorkspaceEffectV1 {
+            version: CONTROLLER_RECORD_VERSION,
+            mutation_epoch: 1,
+            effects: vec![PathEffectV1 {
+                path: "proj".to_string(),
+                kind: PathEffectKind::CreatedDirectory,
+                before_sha256: None,
+                after_sha256: None,
+                after_bytes: None,
+                after_lines: None,
+            }],
+        };
+        state.apply_workspace_effect(1, &created_dir).unwrap();
+        assert_eq!(state.mutation_epoch(), 1);
+
+        // A directory effect that carries a content digest is rejected.
+        let digest_on_directory = WorkspaceEffectV1 {
+            version: CONTROLLER_RECORD_VERSION,
+            mutation_epoch: 2,
+            effects: vec![PathEffectV1 {
+                path: "proj".to_string(),
+                kind: PathEffectKind::DeletedDirectory,
+                before_sha256: Some(sha('a')),
+                after_sha256: None,
+                after_bytes: None,
+                after_lines: None,
+            }],
+        };
+        assert!(
+            state
+                .apply_workspace_effect(1, &digest_on_directory)
+                .is_err()
         );
     }
 

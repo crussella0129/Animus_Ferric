@@ -15,9 +15,9 @@ use ferric_guard::Workspace;
 use crate::control::{
     CandidatePathState, ControlFailure, ControlFailureKind, ControlFailureWitness,
     FileMutationCandidate, MutationIntent, MutationKind, NoEffectKind, ObservationRequirement,
-    PathState, PrepareCtx, PrepareError, PrepareErrorKind, PrepareFailureWitness,
-    StaleObservationWitness, ToolPreparation, UnsupportedMutationKind, WorkspaceEffect,
-    WorkspaceEffectKind, WorkspaceEffectReport, logical_line_count, sha256_bytes,
+    PathMutationCandidate, PathState, PrepareCtx, PrepareError, PrepareErrorKind,
+    PrepareFailureWitness, StaleObservationWitness, ToolPreparation, UnsupportedMutationKind,
+    WorkspaceEffect, WorkspaceEffectKind, WorkspaceEffectReport, logical_line_count, sha256_bytes,
 };
 
 use super::check_syntax::candidate_syntax_transition;
@@ -252,6 +252,243 @@ pub(crate) fn compile_candidate(
     Ok(ToolPreparation::file_mutation(intent, operation))
 }
 
+/// Observe a controlled target's current nofollow state without rejecting
+/// directories (unlike [`inspect_for_prepare`], which only admits files).
+/// Returns the normalized workspace-relative path and its `PathState`.
+fn inspect_path_state(
+    ctx: &PrepareCtx<'_>,
+    requested_path: &str,
+) -> Result<(String, PathState), PrepareError> {
+    let (path, absolute) = logical_target(ctx.workspace, requested_path)?;
+    let parent = pin_parent(ctx.workspace, &absolute)
+        .map_err(|failure| unsupported_path_error(&path, failure.message))?;
+    let observed = observe_target(&parent)
+        .map_err(|message| PrepareError::new(PrepareErrorKind::Io, message))?;
+    if let Some(reason) = observed.unsupported_reason {
+        return Err(unsupported_path_error(&path, reason));
+    }
+    Ok((path, observed.state))
+}
+
+fn structural_mutation_intent(
+    kind: MutationKind,
+    states: Vec<CandidatePathState>,
+) -> MutationIntent {
+    let requirements = states
+        .iter()
+        .filter_map(|state| match &state.before {
+            PathState::File { sha256, .. } => Some(ObservationRequirement {
+                path: state.path.clone(),
+                sha256: sha256.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    MutationIntent {
+        kind,
+        requirements,
+        paths: states.iter().map(|state| state.path.clone()).collect(),
+        states,
+        syntax: None,
+    }
+}
+
+fn directory_is_empty(ctx: &PrepareCtx<'_>, path: &str) -> Result<bool, PrepareError> {
+    let absolute = ctx.workspace.root().join(Path::new(path));
+    let parent = pin_parent(ctx.workspace, &absolute)
+        .map_err(|failure| unsupported_path_error(path, failure.message))?;
+    let mut entries = parent.dir().read_dir(&parent.leaf).map_err(|error| {
+        PrepareError::new(
+            PrepareErrorKind::Io,
+            format!("inspect directory {path}: {error}"),
+        )
+    })?;
+    Ok(entries.next().is_none())
+}
+
+/// `make_dir` under evidence control: create a new directory. An existing
+/// directory is a no-effect; any other occupant is unsupported.
+pub(crate) fn prepare_make_dir(
+    ctx: &PrepareCtx<'_>,
+    path_arg: &str,
+) -> Result<ToolPreparation, PrepareError> {
+    let (path, state) = inspect_path_state(ctx, path_arg)?;
+    match state {
+        PathState::Absent => {
+            let states = vec![CandidatePathState {
+                path: path.clone(),
+                before: PathState::Absent,
+                candidate: PathState::Directory,
+            }];
+            let intent = structural_mutation_intent(MutationKind::CreateDirectory, states);
+            Ok(ToolPreparation::path_mutation(
+                intent,
+                PathMutationCandidate::CreateDir {
+                    path: path.clone(),
+                    success: format!("created directory {path}"),
+                },
+            ))
+        }
+        PathState::Directory => Err(no_effect_error(
+            NoEffectKind::Identity,
+            CandidatePathState {
+                path: path.clone(),
+                before: PathState::Directory,
+                candidate: PathState::Directory,
+            },
+            format!("directory already exists: {path}"),
+        )),
+        PathState::File { .. } | PathState::Other => Err(unsupported_path_error(
+            &path,
+            format!("{path} already exists and is not a directory"),
+        )),
+    }
+}
+
+/// `delete_path` under evidence control: remove a regular file, or an **empty**
+/// directory. A non-empty directory is unsupported (empty it first); an absent
+/// path is a no-effect.
+pub(crate) fn prepare_delete(
+    ctx: &PrepareCtx<'_>,
+    path_arg: &str,
+) -> Result<ToolPreparation, PrepareError> {
+    let (path, state) = inspect_path_state(ctx, path_arg)?;
+    match state {
+        PathState::Absent => Err(no_effect_error(
+            NoEffectKind::MatchNotFound,
+            CandidatePathState {
+                path: path.clone(),
+                before: PathState::Absent,
+                candidate: PathState::Absent,
+            },
+            format!("path not found: {path}"),
+        )),
+        PathState::File { .. } => {
+            let states = vec![CandidatePathState {
+                path: path.clone(),
+                before: state.clone(),
+                candidate: PathState::Absent,
+            }];
+            let intent = structural_mutation_intent(MutationKind::DeleteFile, states);
+            Ok(ToolPreparation::path_mutation(
+                intent,
+                PathMutationCandidate::Delete {
+                    path: path.clone(),
+                    expected: state,
+                    success: format!("deleted file {path}"),
+                },
+            ))
+        }
+        PathState::Directory => {
+            if !directory_is_empty(ctx, &path)? {
+                return Err(unsupported_path_error(
+                    &path,
+                    format!("directory {path} is not empty; delete its contents first"),
+                ));
+            }
+            let states = vec![CandidatePathState {
+                path: path.clone(),
+                before: PathState::Directory,
+                candidate: PathState::Absent,
+            }];
+            let intent = structural_mutation_intent(MutationKind::DeleteDirectory, states);
+            Ok(ToolPreparation::path_mutation(
+                intent,
+                PathMutationCandidate::Delete {
+                    path: path.clone(),
+                    expected: PathState::Directory,
+                    success: format!("deleted directory {path}"),
+                },
+            ))
+        }
+        PathState::Other => Err(unsupported_path_error(
+            &path,
+            format!("{path} is not a regular file or directory"),
+        )),
+    }
+}
+
+/// `move_path` under evidence control: rename a file or directory to an absent
+/// destination (no implicit overwrite).
+pub(crate) fn prepare_move(
+    ctx: &PrepareCtx<'_>,
+    from_arg: &str,
+    to_arg: &str,
+) -> Result<ToolPreparation, PrepareError> {
+    let (from, from_state) = inspect_path_state(ctx, from_arg)?;
+    let (to, to_state) = inspect_path_state(ctx, to_arg)?;
+    match &from_state {
+        PathState::Absent => Err(no_effect_error(
+            NoEffectKind::MatchNotFound,
+            CandidatePathState {
+                path: from.clone(),
+                before: PathState::Absent,
+                candidate: PathState::Absent,
+            },
+            format!("source not found: {from}"),
+        )),
+        PathState::Other => Err(unsupported_path_error(
+            &from,
+            format!("source {from} is not a regular file or directory"),
+        )),
+        PathState::File { .. } | PathState::Directory => {
+            if !matches!(to_state, PathState::Absent) {
+                return Err(unsupported_path_error(
+                    &to,
+                    format!("destination {to} already exists; move does not overwrite"),
+                ));
+            }
+            let destination_state = match &from_state {
+                PathState::File { .. } => from_state.clone(),
+                PathState::Directory => PathState::Directory,
+                _ => unreachable!("source state already narrowed to file or directory"),
+            };
+            let states = vec![
+                CandidatePathState {
+                    path: from.clone(),
+                    before: from_state.clone(),
+                    candidate: PathState::Absent,
+                },
+                CandidatePathState {
+                    path: to.clone(),
+                    before: PathState::Absent,
+                    candidate: destination_state,
+                },
+            ];
+            let intent = structural_mutation_intent(MutationKind::MovePath, states);
+            Ok(ToolPreparation::path_mutation(
+                intent,
+                PathMutationCandidate::Move {
+                    from: from.clone(),
+                    from_expected: from_state,
+                    to: to.clone(),
+                    success: format!("moved {from} -> {to}"),
+                },
+            ))
+        }
+    }
+}
+
+/// `copy_file` under evidence control: publish the source bytes at the
+/// destination, reusing the content-mutation commit (atomic write, CAS, and the
+/// read-before-overwrite requirement when the destination already exists).
+pub(crate) fn prepare_copy(
+    ctx: &PrepareCtx<'_>,
+    from_arg: &str,
+    to_arg: &str,
+) -> Result<ToolPreparation, PrepareError> {
+    let source = inspect_for_prepare(ctx, from_arg, false)?;
+    let bytes = source.bytes.clone().ok_or_else(|| {
+        PrepareError::new(
+            PrepareErrorKind::Io,
+            format!("copy: source {} has no readable bytes", source.path),
+        )
+    })?;
+    let destination = inspect_for_prepare(ctx, to_arg, true)?;
+    let success = format!("copied {} -> {}", source.path, destination.path);
+    compile_candidate(destination, bytes, NoEffectKind::Identity, success)
+}
+
 /// Publish exact candidate bytes through a fresh inode under a capability-pinned
 /// parent. Existing inodes are never modified, so hard-link aliases cannot turn
 /// a workspace edit into an out-of-workspace write. Directory and leaf identity
@@ -270,6 +507,184 @@ pub(crate) fn commit_candidate(
         |_, _| {},
         |_| {},
     )
+}
+
+/// Commit a structural (non-content) mutation: create/remove a directory,
+/// remove a regular file, or rename a path. Each leaf is re-observed through a
+/// capability-pinned parent immediately before the operation and CAS-checked
+/// against the prepared precondition, so a state change between preparation and
+/// commit is reported as a stale precondition rather than acted on blindly.
+pub(crate) fn commit_path_mutation(
+    workspace: &Workspace,
+    candidate: PathMutationCandidate,
+) -> FileCommitResult {
+    match candidate {
+        PathMutationCandidate::CreateDir { path, success } => {
+            let parent = match cas_leaf(workspace, &path, &PathState::Absent) {
+                Ok(parent) => parent,
+                Err(result) => return *result,
+            };
+            match parent.dir().create_dir(&parent.leaf) {
+                Ok(()) => path_success(&path, PathState::Absent, PathState::Directory, success),
+                Err(error) => failure_result(
+                    ControlFailureKind::Io,
+                    format!("create directory {path}: {error}"),
+                    None,
+                    Vec::new(),
+                ),
+            }
+        }
+        PathMutationCandidate::Delete {
+            path,
+            expected,
+            success,
+        } => {
+            let parent = match cas_leaf(workspace, &path, &expected) {
+                Ok(parent) => parent,
+                Err(result) => return *result,
+            };
+            let outcome = match &expected {
+                PathState::File { .. } => parent.dir().remove_file(&parent.leaf),
+                PathState::Directory => parent.dir().remove_dir(&parent.leaf),
+                PathState::Absent | PathState::Other => {
+                    return failure_result(
+                        ControlFailureKind::Io,
+                        format!("delete {path}: unsupported prepared state"),
+                        None,
+                        Vec::new(),
+                    );
+                }
+            };
+            match outcome {
+                Ok(()) => path_success(&path, expected, PathState::Absent, success),
+                Err(error)
+                    if matches!(expected, PathState::Directory)
+                        && error.kind() == ErrorKind::DirectoryNotEmpty =>
+                {
+                    stale_result(
+                        path,
+                        PathState::Directory,
+                        PathState::Directory,
+                        format!("directory is no longer empty: {error}"),
+                    )
+                }
+                Err(error) => failure_result(
+                    ControlFailureKind::Io,
+                    format!("delete {path}: {error}"),
+                    None,
+                    Vec::new(),
+                ),
+            }
+        }
+        PathMutationCandidate::Move {
+            from,
+            from_expected,
+            to,
+            success,
+        } => {
+            let from_parent = match cas_leaf(workspace, &from, &from_expected) {
+                Ok(parent) => parent,
+                Err(result) => return *result,
+            };
+            let to_parent = match cas_leaf(workspace, &to, &PathState::Absent) {
+                Ok(parent) => parent,
+                Err(result) => return *result,
+            };
+            match from_parent
+                .dir()
+                .rename(&from_parent.leaf, to_parent.dir(), &to_parent.leaf)
+            {
+                Ok(()) => {
+                    let effects = vec![
+                        structural_effect(&from, from_expected.clone(), PathState::Absent),
+                        structural_effect(&to, PathState::Absent, from_expected),
+                    ];
+                    FileCommitResult {
+                        full: success,
+                        is_error: false,
+                        effects: WorkspaceEffectReport::Measured(effects),
+                        failure: None,
+                    }
+                }
+                Err(error) => failure_result(
+                    ControlFailureKind::Io,
+                    format!("move {from} -> {to}: {error}"),
+                    None,
+                    Vec::new(),
+                ),
+            }
+        }
+    }
+}
+
+/// Pin the leaf's parent and re-observe the leaf, requiring it to match the
+/// prepared `expected` state (a nofollow existence/type/content CAS). Any
+/// mismatch — including a vanished parent — is a stale precondition.
+fn cas_leaf(
+    workspace: &Workspace,
+    path: &str,
+    expected: &PathState,
+) -> Result<PinnedParent, Box<FileCommitResult>> {
+    let absolute = workspace.root().join(Path::new(path));
+    let parent = pin_parent(workspace, &absolute).map_err(|failure| {
+        Box::new(stale_result(
+            path.to_string(),
+            expected.clone(),
+            failure.observed,
+            failure.message,
+        ))
+    })?;
+    let observed = observe_target(&parent).map_err(|message| {
+        Box::new(failure_result(
+            ControlFailureKind::Io,
+            message,
+            None,
+            Vec::new(),
+        ))
+    })?;
+    if observed.unsupported_reason.is_some() || &observed.state != expected {
+        return Err(Box::new(stale_result(
+            path.to_string(),
+            expected.clone(),
+            observed.state,
+            observed
+                .unsupported_reason
+                .unwrap_or_else(|| "target state changed after preparation".to_string()),
+        )));
+    }
+    Ok(parent)
+}
+
+fn path_success(
+    path: &str,
+    before: PathState,
+    after: PathState,
+    success: String,
+) -> FileCommitResult {
+    FileCommitResult {
+        full: success,
+        is_error: false,
+        effects: WorkspaceEffectReport::Measured(vec![structural_effect(path, before, after)]),
+        failure: None,
+    }
+}
+
+/// Classify a structural before/after transition. Unlike [`measured_effects`],
+/// this understands directory entries.
+fn structural_effect(path: &str, before: PathState, after: PathState) -> WorkspaceEffect {
+    let kind = match (&before, &after) {
+        (PathState::Absent, PathState::Directory) => WorkspaceEffectKind::CreatedDirectory,
+        (PathState::Directory, PathState::Absent) => WorkspaceEffectKind::DeletedDirectory,
+        (PathState::Absent, PathState::File { .. }) => WorkspaceEffectKind::Created,
+        (PathState::File { .. }, PathState::Absent) => WorkspaceEffectKind::Deleted,
+        _ => WorkspaceEffectKind::Opaque,
+    };
+    WorkspaceEffect {
+        path: path.to_string(),
+        kind,
+        before,
+        after,
+    }
 }
 
 fn commit_candidate_with<F, G, H, I>(

@@ -511,6 +511,11 @@ impl Registry {
                     crate::builtin::controlled_file::commit_candidate(workspace, operation);
                 (result.full, result.is_error, result.effects, result.failure)
             }
+            PreparedExecution::PathMutation(candidate) => {
+                let result =
+                    crate::builtin::controlled_file::commit_path_mutation(workspace, candidate);
+                (result.full, result.is_error, result.effects, result.failure)
+            }
         };
         let duration_ms =
             preparation_duration_ms.saturating_add(started.elapsed().as_millis() as u64);
