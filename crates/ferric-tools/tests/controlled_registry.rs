@@ -316,9 +316,13 @@ fn controlled_enumeration_and_preparation_use_the_exact_explicit_allowlist() {
         controlled,
         [
             "apply_patch",
+            "copy_file",
+            "delete_path",
             "edit_file",
             "find_files",
             "list_dir",
+            "make_dir",
+            "move_path",
             "multi_edit",
             "read_file",
             "run_check",
@@ -328,14 +332,10 @@ fn controlled_enumeration_and_preparation_use_the_exact_explicit_allowlist() {
     );
 
     let opaque = [
-        "copy_file",
-        "delete_path",
         "fetch_reference",
         "git_read",
         "git_write",
-        "make_dir",
         "manage_task",
-        "move_path",
         "shell_exec",
     ];
     let (_directory, workspace) = workspace();

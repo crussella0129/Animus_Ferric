@@ -211,3 +211,24 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
   evidence-only result, freeze a planner orchestration addendum or reject the
   arm; record the causal conclusion, ADR, verification report, commit/push/PR,
   and CI.
+
+## Sprint 113 follow-up — evidence mode made usable for structural ops
+- [x] **Structural filesystem ops under evidence control.** A live 7B run
+  exposed that `--harness-policy evidence` excluded every structural tool
+  (`make_dir`/`delete_path`/`move_path`/`copy_file` were `Opaque`), so it could
+  not create a directory — the model hit "unsupported controlled mutation
+  target" and gave up. Now each declares `ContentMutation` + a typed `prepare()`:
+  `copy_file` reuses the content-mutation commit (candidate = source bytes); the
+  other three use a new `commit_path_mutation` that CASes the prepared
+  precondition through a capability-pinned parent and records **measured,
+  directory-aware** effects (new `PathEffectKind::{CreatedDirectory,
+  DeletedDirectory}`). The controller's `mutation_block` now accepts a `Directory`
+  precondition (existence/type CAS, no content evidence required),
+  `validate_workspace_effect_shape` accepts the dir kinds, and
+  `trace_structure`'s effect-tool allowlist covers the structural tools. **Live:
+  the exact failing task now completes** (create `proj` + `proj/calc.py` +
+  create/delete `scratch`) with `task_complete`, correct artifacts, 2
+  `created_directory` + 1 `deleted_directory` trace effects, and a clean
+  side-effect-free `trace verify`. Deferred: recursive non-empty-directory
+  delete; implicit `move_path` overwrite; `shell_exec`/`git_*` stay opaque by
+  design.

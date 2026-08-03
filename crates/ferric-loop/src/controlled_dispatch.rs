@@ -494,14 +494,18 @@ fn path_effect(effect: &WorkspaceEffect) -> Result<PathEffectV1, String> {
         WorkspaceEffectKind::Created => PathEffectKind::Created,
         WorkspaceEffectKind::Modified => PathEffectKind::Modified,
         WorkspaceEffectKind::Deleted => PathEffectKind::Deleted,
+        WorkspaceEffectKind::CreatedDirectory => PathEffectKind::CreatedDirectory,
+        WorkspaceEffectKind::DeletedDirectory => PathEffectKind::DeletedDirectory,
         WorkspaceEffectKind::Opaque => {
             return Err(format!("workspace effect for {:?} is opaque", effect.path));
         }
     };
+    // A directory carries no content digest; it is a valid structural preimage
+    // or postimage, distinguished from a file by the effect `kind` above.
     let before_sha256 = match &effect.before {
-        PathState::Absent => None,
+        PathState::Absent | PathState::Directory => None,
         PathState::File { sha256, .. } => Some(sha256.clone()),
-        PathState::Directory | PathState::Other => {
+        PathState::Other => {
             return Err(format!(
                 "workspace effect for {:?} has a non-file preimage",
                 effect.path
@@ -509,13 +513,13 @@ fn path_effect(effect: &WorkspaceEffect) -> Result<PathEffectV1, String> {
         }
     };
     let (after_sha256, after_bytes, after_lines) = match &effect.after {
-        PathState::Absent => (None, None, None),
+        PathState::Absent | PathState::Directory => (None, None, None),
         PathState::File {
             sha256,
             bytes,
             lines,
         } => (Some(sha256.clone()), Some(*bytes), Some(*lines)),
-        PathState::Directory | PathState::Other => {
+        PathState::Other => {
             return Err(format!(
                 "workspace effect for {:?} has a non-file postimage",
                 effect.path

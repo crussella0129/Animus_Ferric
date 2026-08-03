@@ -196,6 +196,12 @@ pub enum PathEffectKind {
     Created,
     Modified,
     Deleted,
+    /// A directory came into existence (`make_dir`, or the destination of a
+    /// directory move). Structural effects carry no content digest.
+    CreatedDirectory,
+    /// A directory ceased to exist (`delete_path` on an empty directory, or the
+    /// source of a directory move).
+    DeletedDirectory,
     Opaque,
 }
 

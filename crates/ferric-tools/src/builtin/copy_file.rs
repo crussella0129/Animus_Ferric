@@ -2,6 +2,9 @@ use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
+use crate::control::{
+    ControlCapability, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
+};
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
 /// Copy a file within the workspace. BOTH endpoints are declared as target paths
@@ -37,6 +40,36 @@ impl Tool for CopyFile {
             .iter()
             .filter_map(|k| args.get(*k).and_then(|v| v.as_str()).map(String::from))
             .collect()
+    }
+
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::ContentMutation
+    }
+
+    fn prepare(
+        &self,
+        ctx: &PrepareCtx<'_>,
+        args: &serde_json::Value,
+    ) -> Result<ToolPreparation, PrepareError> {
+        let from = args
+            .get("from")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                PrepareError::new(
+                    PrepareErrorKind::InvalidArguments,
+                    "missing required string argument: from",
+                )
+            })?;
+        let to = args
+            .get("to")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                PrepareError::new(
+                    PrepareErrorKind::InvalidArguments,
+                    "missing required string argument: to",
+                )
+            })?;
+        super::controlled_file::prepare_copy(ctx, from, to)
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {

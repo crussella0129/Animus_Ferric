@@ -425,7 +425,7 @@ impl TraceStructure {
         effect: &WorkspaceEffectV1,
     ) -> Result<(), String> {
         self.ensure_evidence_harness("WorkspaceEffectRecorded")?;
-        if !is_single_target_content_tool(tool) {
+        if !is_effect_recording_tool(tool) {
             return Err(format!(
                 "WorkspaceEffectRecorded({call_id}) uses unsupported effect tool {tool:?}"
             ));
@@ -1578,6 +1578,14 @@ fn is_single_target_content_tool(name: &str) -> bool {
     )
 }
 
+/// Every tool that may legitimately record a measured `WorkspaceEffectRecorded`:
+/// the single-target content mutations plus the structural mutations. Effect
+/// paths are still validated against each call's statically known targets.
+fn is_effect_recording_tool(name: &str) -> bool {
+    is_single_target_content_tool(name)
+        || matches!(name, "make_dir" | "delete_path" | "move_path" | "copy_file")
+}
+
 fn statically_known_call_targets(call: &ToolCall) -> Result<Option<BTreeSet<String>>, String> {
     let keys: &[&str] = match call.name.as_str() {
         "write_file" | "edit_file" | "multi_edit" | "apply_patch" | "delete_path" | "make_dir" => {
@@ -1924,6 +1932,18 @@ mod tests {
                 ),
             },
         }
+    }
+
+    #[test]
+    fn structural_mutations_are_effect_recording_tools() {
+        for name in ["make_dir", "delete_path", "move_path", "copy_file"] {
+            assert!(is_effect_recording_tool(name), "{name}");
+        }
+        // Content mutations remain effect-recording; a read-only navigation and
+        // an opaque tool are not.
+        assert!(is_effect_recording_tool("write_file"));
+        assert!(!is_effect_recording_tool("search_files"));
+        assert!(!is_effect_recording_tool("shell_exec"));
     }
 
     #[test]

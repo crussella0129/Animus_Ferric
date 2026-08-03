@@ -2,6 +2,9 @@ use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
+use crate::control::{
+    ControlCapability, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
+};
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
 use super::path_arg;
@@ -30,6 +33,20 @@ impl Tool for DeletePath {
             permission: PermissionLevel::Write,
             ring: 0,
         }
+    }
+
+    fn control_capability(&self) -> ControlCapability {
+        ControlCapability::ContentMutation
+    }
+
+    fn prepare(
+        &self,
+        ctx: &PrepareCtx<'_>,
+        args: &serde_json::Value,
+    ) -> Result<ToolPreparation, PrepareError> {
+        let path = path_arg(args)
+            .map_err(|message| PrepareError::new(PrepareErrorKind::InvalidArguments, message))?;
+        super::controlled_file::prepare_delete(ctx, path)
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {

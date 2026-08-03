@@ -290,6 +290,10 @@ pub enum WorkspaceEffectKind {
     Created,
     Modified,
     Deleted,
+    /// A directory was created (structural mutation; no content digest).
+    CreatedDirectory,
+    /// An (empty) directory was removed (structural mutation; no content digest).
+    DeletedDirectory,
     Opaque,
 }
 
@@ -370,6 +374,7 @@ pub(crate) enum PreparedExecution {
         failure: Option<ControlFailure>,
     },
     FileMutation(FileMutationCandidate),
+    PathMutation(PathMutationCandidate),
 }
 
 /// Exact bytes and CAS identity sealed inside a [`ToolPreparation`].
@@ -378,6 +383,30 @@ pub(crate) struct FileMutationCandidate {
     pub expected: PathState,
     pub candidate: Vec<u8>,
     pub success: String,
+}
+
+/// A structural (non-content) mutation sealed inside a [`ToolPreparation`].
+/// Paths are normalized workspace-relative; each `expected` state is the CAS
+/// precondition revalidated against the live workspace immediately before the
+/// operation. Directory operations carry no candidate bytes.
+pub(crate) enum PathMutationCandidate {
+    /// Create a new directory. Precondition: the leaf is `Absent`.
+    CreateDir { path: String, success: String },
+    /// Remove a regular file or an empty directory. `expected` is the observed
+    /// `File` or `Directory` state; a non-empty directory is rejected at commit.
+    Delete {
+        path: String,
+        expected: PathState,
+        success: String,
+    },
+    /// Rename `from` to `to`. Precondition: `from` matches `from_expected` and
+    /// `to` is `Absent` (no implicit overwrite).
+    Move {
+        from: String,
+        from_expected: PathState,
+        to: String,
+        success: String,
+    },
 }
 
 /// Side-effect-free tool preparation returned through the controlled registry
@@ -451,6 +480,13 @@ impl ToolPreparation {
         Self {
             intent: PreparedIntent::Mutation(intent),
             execution: PreparedExecution::FileMutation(candidate),
+        }
+    }
+
+    pub(crate) fn path_mutation(intent: MutationIntent, candidate: PathMutationCandidate) -> Self {
+        Self {
+            intent: PreparedIntent::Mutation(intent),
+            execution: PreparedExecution::PathMutation(candidate),
         }
     }
 }

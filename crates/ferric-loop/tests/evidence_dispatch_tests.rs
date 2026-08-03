@@ -315,7 +315,10 @@ fn full_evidence_path_reads_edits_repairs_verifies_and_completes() {
         })
         .unwrap();
     assert!(offered.iter().any(|name| name == "run_check"));
-    for opaque in ["shell_exec", "git_write", "move_path", "delete_path"] {
+    // Structural mutations (make_dir/delete_path/move_path/copy_file) are now
+    // typed and offered under evidence control; only genuinely opaque Write/
+    // Execute tools stay excluded.
+    for opaque in ["shell_exec", "git_write"] {
         assert!(!offered.iter().any(|name| name == opaque), "{offered:?}");
     }
     validate_trace(&capture.records);
