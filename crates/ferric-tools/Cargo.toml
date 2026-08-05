@@ -12,6 +12,7 @@ cap-std = "4"
 ferric-core = { workspace = true }
 ferric-guard = { workspace = true }
 getrandom = "0.4"
+hex = { workspace = true }
 rustpython-parser = { version = "0.4", default-features = false, features = ["location", "num-bigint"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

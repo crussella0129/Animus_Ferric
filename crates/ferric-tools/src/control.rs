@@ -493,7 +493,7 @@ impl ToolPreparation {
 
 /// Return the lowercase SHA-256 digest of the exact supplied bytes.
 pub fn sha256_bytes(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 pub(crate) fn logical_line_count(bytes: &[u8]) -> u64 {
