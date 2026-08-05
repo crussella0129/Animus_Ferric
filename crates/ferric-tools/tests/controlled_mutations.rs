@@ -40,7 +40,7 @@ fn commit(registry: &Registry, prepared: PreparedCall<'_>) -> ControlledOutcome 
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 #[test]

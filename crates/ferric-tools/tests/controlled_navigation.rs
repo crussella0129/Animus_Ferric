@@ -65,7 +65,7 @@ fn body_after(full: &str, closing_envelope: &str) -> String {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn assert_lowercase_sha256(value: &str) {
