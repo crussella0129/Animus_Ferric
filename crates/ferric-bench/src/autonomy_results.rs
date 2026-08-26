@@ -1556,7 +1556,7 @@ fn strict_evidence_coordinate(row: &AutonomyResultRow) -> bool {
 
 fn strict_persisted_row_valid(row: &AutonomyResultRow) -> bool {
     row.schema_version == AUTONOMY_RESULTS_SCHEMA_VERSION
-        && retained_trace_evidence_valid(row)
+        && strict_retained_trace_evidence_valid(row)
         && valid_sha256(
             row.evaluation_provenance
                 .workspace_instance_sha256
@@ -1592,6 +1592,46 @@ fn retained_trace_evidence_valid(row: &AutonomyResultRow) -> bool {
                 && valid_sha256(segment.trace_sha256.as_deref())
                 && segment.trace_validation == Some(RetainedTraceValidation::StructureValidated)
         })
+}
+
+fn strict_retained_trace_evidence_valid(row: &AutonomyResultRow) -> bool {
+    if row.segments.is_empty() {
+        return false;
+    }
+    let mut saw_timeout = false;
+    for (index, segment) in row.segments.iter().enumerate() {
+        let retained_evidence = segment.segment == index as u32 + 1
+            && segment
+                .trace_path
+                .as_deref()
+                .is_some_and(valid_retained_trace_path)
+            && valid_sha256(segment.trace_sha256.as_deref())
+            && segment.trace_validation == Some(RetainedTraceValidation::StructureValidated);
+        if !retained_evidence {
+            return false;
+        }
+        if segment.timed_out {
+            if saw_timeout || index + 1 != row.segments.len() || segment.observed_terminal.is_some()
+            {
+                return false;
+            }
+            saw_timeout = true;
+            if segment.exit_code.is_some() {
+                return false;
+            }
+        } else if segment
+            .observed_terminal
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            return false;
+        }
+    }
+    !saw_timeout
+        || (!row.contract_passed
+            && !row.objective_completed
+            && row.final_terminal.is_none()
+            && row.command_checks.is_empty())
 }
 
 fn valid_retained_trace_path(path: &str) -> bool {
@@ -2485,6 +2525,67 @@ mod tests {
             assert!(!strict_persisted_row_valid(&tampered));
             assert!(!row_is_scoreable(&tampered));
         }
+    }
+
+    #[test]
+    fn strict_validated_timeout_is_a_scoreable_model_failure() {
+        let mut row = paired_row("H01", "recovery", 1, AutonomyArm::Candidate, false);
+        row.contract_passed = false;
+        row.objective_completed = false;
+        row.final_terminal = None;
+        row.segments[0].observed_terminal = None;
+        row.segments[0].exit_code = None;
+        row.segments[0].timed_out = true;
+
+        assert!(strict_persisted_row_valid(&row));
+        assert!(row_is_scoreable(&row));
+
+        let mut with_exit_code = row.clone();
+        with_exit_code.segments[0].exit_code = Some(1);
+        assert!(!strict_persisted_row_valid(&with_exit_code));
+
+        let mut missing_path = row.clone();
+        missing_path.segments[0].trace_path = None;
+        assert!(!strict_persisted_row_valid(&missing_path));
+
+        let mut missing_digest = row.clone();
+        missing_digest.segments[0].trace_sha256 = None;
+        assert!(!strict_persisted_row_valid(&missing_digest));
+
+        let mut unvalidated = row.clone();
+        unvalidated.segments[0].trace_validation = None;
+        assert!(!strict_persisted_row_valid(&unvalidated));
+
+        let mut with_segment_terminal = row.clone();
+        with_segment_terminal.segments[0].observed_terminal = Some("max_turns".to_string());
+        assert!(!strict_persisted_row_valid(&with_segment_terminal));
+
+        let mut with_final_terminal = row.clone();
+        with_final_terminal.final_terminal = Some("max_turns".to_string());
+        assert!(!strict_persisted_row_valid(&with_final_terminal));
+
+        let mut with_grading = row.clone();
+        with_grading.command_checks.push(CommandCheckResult {
+            name: "must be skipped".to_string(),
+            status: CommandCheckStatus::ModelFailure,
+            exit_code: Some(1),
+            timed_out: false,
+            stdout_excerpt: String::new(),
+            stderr_excerpt: String::new(),
+            reason: Some("grader ran after timeout".to_string()),
+        });
+        assert!(!strict_persisted_row_valid(&with_grading));
+
+        let mut followed_by_segment = row.clone();
+        followed_by_segment.segments.push(
+            paired_row("H01", "recovery", 1, AutonomyArm::Candidate, false).segments[0].clone(),
+        );
+        followed_by_segment.segments[1].segment = 2;
+        assert!(!strict_persisted_row_valid(&followed_by_segment));
+
+        let mut claimed_success = row;
+        claimed_success.objective_completed = true;
+        assert!(!strict_persisted_row_valid(&claimed_success));
     }
 
     #[test]

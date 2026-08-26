@@ -719,8 +719,10 @@ fn run_episode(
         if let Some(error) = process.trace_discovery_error.clone() {
             infrastructure.push(error);
         }
-        if process.timed_out {
-            infrastructure.push(format!("segment {segment} timed out"));
+        if process.timed_out && process.exit_code.is_some() {
+            infrastructure.push(format!(
+                "segment {segment} reported both timeout and an exit code"
+            ));
         }
         let mut observed = None;
         let mut retained = None;
@@ -936,19 +938,26 @@ fn run_episode(
     let final_terminal = segments
         .last()
         .and_then(|segment| segment.observed_terminal.clone());
+    let episode_timed_out = segments.iter().any(|segment| segment.timed_out);
     let requires_completed_state = expected_final == Some(TerminalOutcome::Completed);
     let check_spec = autonomy_bench_spec(task, suite_schema_version);
-    let command_checks = if requires_completed_state {
-        verify_command_checks_with_deadline(
-            workspace.path(),
-            &check_spec,
-            &args.python_bin,
-            remaining_before(deadline, task, "final grading")?,
-        )
+    let command_checks = if requires_completed_state && !episode_timed_out {
+        match remaining_before(deadline, task, "final grading") {
+            Ok(remaining) => verify_command_checks_with_deadline(
+                workspace.path(),
+                &check_spec,
+                &args.python_bin,
+                remaining,
+            ),
+            Err(error) => {
+                infrastructure.push(error);
+                Vec::new()
+            }
+        }
     } else {
         Vec::new()
     };
-    if Instant::now() > deadline {
+    if !episode_timed_out && Instant::now() > deadline {
         infrastructure.push(format!(
             "{} exceeded its {}-second total episode deadline during final grading",
             task.id, task.timeout_s
@@ -970,7 +979,8 @@ fn run_episode(
     let final_gate_passed = analyses
         .last()
         .is_some_and(|analysis| analysis.metrics.completion_gates_passed > 0);
-    let objective_completed = final_process_clean
+    let objective_completed = !episode_timed_out
+        && final_process_clean
         && final_terminal.as_deref() == Some("task_complete")
         && checks_pass
         && final_gate_passed;
@@ -1025,7 +1035,8 @@ fn run_episode(
         && (!requires_completed_state || objective_completed);
     let clarification_contract =
         (!clarification_expected || clarification_correct) && !unnecessary_clarification;
-    let contract_passed = sequence_matches
+    let contract_passed = !episode_timed_out
+        && sequence_matches
         && probes_passed
         && clarification_contract
         && (!requires_completed_state || objective_completed)
@@ -2066,6 +2077,36 @@ struct TraceAnalysis {
     failed_diagnostic_fingerprints: BTreeSet<String>,
 }
 
+#[derive(Debug)]
+struct TraceTailTurn {
+    empty_pre_response_prefix: bool,
+}
+
+impl TraceTailTurn {
+    fn is_empty_pre_response_prefix(&self) -> bool {
+        self.empty_pre_response_prefix
+    }
+}
+
+fn observe_trace_tail(event: &Event, tail: &mut Option<TraceTailTurn>) {
+    match event {
+        Event::TurnStart { .. } => {
+            *tail = Some(TraceTailTurn {
+                empty_pre_response_prefix: true,
+            });
+        }
+        Event::PromptAssembled { .. }
+        | Event::ConstraintApplied { .. }
+        | Event::HistoryCompacted { .. } => {}
+        Event::TurnCommitted { .. } | Event::SessionEnd { .. } => *tail = None,
+        _ => {
+            if let Some(tail) = tail {
+                tail.empty_pre_response_prefix = false;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 fn analyze_trace(
     path: &Path,
@@ -2109,6 +2150,7 @@ fn analyze_trace_bytes(
     let mut expected_seq = 0_u64;
     let mut saw_session_start = false;
     let mut saw_policy_selected = false;
+    let mut trace_tail = None;
     let reader = std::io::BufReader::new(std::io::Cursor::new(bytes));
     for (line_index, line) in reader.lines().enumerate() {
         let line =
@@ -2164,6 +2206,7 @@ fn analyze_trace_bytes(
         }
         expected_seq = expected_seq.saturating_add(1);
         structure.observe(&event)?;
+        observe_trace_tail(&event, &mut trace_tail);
         match &event {
             Event::SessionStart {
                 workspace,
@@ -2303,6 +2346,14 @@ fn analyze_trace_bytes(
         }
     }
     structure.finish()?;
+    if let Some(tail) = trace_tail
+        && tail.is_empty_pre_response_prefix()
+    {
+        // TurnStart is counted eagerly for complete traces. An interrupted
+        // request-side prefix has no model response and is not a completed
+        // evaluation turn.
+        metrics.turns = metrics.turns.saturating_sub(1);
+    }
     if !saw_session_start || !saw_policy_selected {
         return Err("trace is missing session_start or policy_selected".to_string());
     }
@@ -2758,6 +2809,47 @@ fn system_time_unix_ms(time: SystemTime) -> Option<u64> {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    fn evidence_analysis_prefix(workspace: &Path) -> Vec<Event> {
+        let controller =
+            ferric_loop::ControllerState::new(HarnessPolicy::Evidence, Vec::<String>::new())
+                .unwrap();
+        vec![
+            Event::SessionStart {
+                workspace: std::fs::canonicalize(workspace)
+                    .unwrap()
+                    .display()
+                    .to_string(),
+                resumed_from: None,
+            },
+            Event::PolicySelected {
+                tier: ferric_core::Tier::Small,
+                protocol: ActionProtocol::ConstrainedJson,
+                harness_policy: HarnessPolicy::Evidence,
+                max_turns: 7,
+                max_tools: 8,
+                prompt_budget_tokens: 4096,
+                max_output_tokens: 1024,
+                truncation_limit: 4000,
+                tier_source: "params".to_string(),
+            },
+            Event::SessionPrompt {
+                system: "system".to_string(),
+                user: "task".to_string(),
+                media: Vec::new(),
+            },
+            Event::ControllerCheckpoint {
+                state: controller.checkpoint(),
+            },
+        ]
+    }
+
+    fn write_analysis_trace(path: &Path, events: impl IntoIterator<Item = Event>) {
+        let mut sink = ferric_trace::JsonlSink::create_new(path, "analysis-test").unwrap();
+        for event in events {
+            sink.write_event(event).unwrap();
+        }
+    }
 
     #[test]
     fn cli_parser_keeps_paired_binary_coordinates_distinct() {
@@ -3497,6 +3589,76 @@ mod tests {
             HarnessPolicy::Evidence,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn trace_analysis_accepts_empty_pre_response_timeout_prefix_without_counting_it() {
+        let workspace = tempfile::tempdir().unwrap();
+        let trace = workspace.path().join("pre-response-timeout.jsonl");
+        let mut events = evidence_analysis_prefix(workspace.path());
+        events.extend([
+            Event::TurnStart { turn: 0 },
+            Event::PromptAssembled {
+                turn: 0,
+                message_count: 2,
+                chars: 10,
+                offered_tools: vec!["read_file".to_string()],
+            },
+            Event::ConstraintApplied {
+                kind: "json_schema".to_string(),
+            },
+        ]);
+        write_analysis_trace(&trace, events);
+
+        let analysis = analyze_trace(
+            &trace,
+            workspace.path(),
+            ActionProtocol::ConstrainedJson,
+            7,
+            HarnessPolicy::Evidence,
+        )
+        .unwrap();
+        assert_eq!(analysis.metrics.turns, 0);
+        assert!(analysis.terminal.is_none());
+    }
+
+    #[test]
+    fn trace_analysis_preserves_modern_pre_dispatch_retry_prefix() {
+        let workspace = tempfile::tempdir().unwrap();
+        let trace = workspace.path().join("pre-dispatch-timeout.jsonl");
+        let call = ferric_core::ToolCall {
+            id: "read-1".to_string(),
+            name: "read_file".to_string(),
+            args: serde_json::json!({"path": "a.txt"}),
+        };
+        let mut events = evidence_analysis_prefix(workspace.path());
+        events.extend([
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: Some(5),
+                output_tokens: Some(1),
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![call],
+            },
+        ]);
+        write_analysis_trace(&trace, events);
+
+        let analysis = analyze_trace(
+            &trace,
+            workspace.path(),
+            ActionProtocol::ConstrainedJson,
+            7,
+            HarnessPolicy::Evidence,
+        )
+        .unwrap();
+        assert_eq!(analysis.metrics.turns, 1);
+        assert!(analysis.terminal.is_none());
     }
 
     #[test]
