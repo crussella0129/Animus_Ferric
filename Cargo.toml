@@ -51,7 +51,10 @@ oovra = { git = "https://github.com/crussella0129/oovra", rev = "378abea6552f74e
 toml = "1.1"
 regex = "1"
 tempfile = "3"
-sha2 = "0.10"
+sha2 = "0.11"
+# digest 0.11's output no longer implements LowerHex; use the RustCrypto
+# ecosystem's canonical byte-to-lowercase-hex encoder instead.
+hex = "0.4"
 futures-executor = "0.3"
 rustyline = "18"
 axum = "0.8"
