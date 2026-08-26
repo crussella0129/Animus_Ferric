@@ -235,7 +235,6 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Book v2 active sprint tasks
 
-- [ ] T-11309 (sprint 113) [intent: INT-0001]: Remove the legacy write path's implicit Python child process, reuse the in-process parser for warning-only validation, and prove model-authored `sitecustomize.py` is parsed but never executed. — touches: crates/ferric-tools/src/builtin/check_syntax.rs, crates/ferric-tools/src/builtin/write_file.rs, crates/ferric-tools/tests/builtin_file_tools.rs
 - [ ] T-11310 (sprint 113) [intent: INT-0001]: Repair stale backend-feature policy tests and add bounded successful Evidence propagation coverage for API, MCP, and ICM before running the exact backend-openai gate. — touches: crates/ferric-cli/src/api.rs, crates/ferric-cli/src/mcp.rs, crates/ferric-cli/src/icm.rs, crates/ferric-cli/tests/cli.rs
 - [ ] T-11307 (sprint 113) [intent: INT-0001]: Run the frozen Qwen evidence screen; select only a candidate that clears objective, safety, mechanism, and clarification gates, or retain bounded 0/3 revisions and record falsification without inspecting held tasks. — touches: docs/sprints/s113/sprint-tests/, docs/sprints/s113/control-artifacts/, crates/ferric-loop/, crates/ferric-tools/, crates/ferric-cli/
 - [ ] T-11311 (sprint 113) [intent: INT-0001]: Freeze a qualifying candidate and run the 18-row adjacent counterbalanced paired confirmation, or record the explicit no-candidate skip path. — touches: docs/sprints/s113/sprint-tests/, .ferric/ evaluation artifacts

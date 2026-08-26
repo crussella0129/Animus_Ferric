@@ -1048,3 +1048,20 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** crates/ferric-bench/src/autonomy_results.rs,
   docs/work/tasks.md, docs/work/completed-tasks.md
 - **Commit:** `8563e4fa9837d949b784fff65ce98ec1c85815ac`
+
+## T-11309 (sprint 113)
+- **Description:** Removed the legacy Python interpreter subprocess from syntax
+  warnings. Legacy `write_file` now parses the exact candidate bytes with the
+  bounded in-process RustPython parser before publication, preserves its
+  warning-only invalid-source behavior, and never consults `PATH`, imports
+  `site`, or executes workspace code. Regression tests prove invalid source is
+  still written with a warning and a valid model-authored `sitecustomize.py`
+  cannot create its import-time marker. The full ferric-tools suite, Clippy
+  with warnings denied, workspace format, and diff checks passed.
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
+- **Completed:** 2026-08-26T14:17:39-04:00
+- **Files modified:** crates/ferric-tools/src/builtin/check_syntax.rs,
+  crates/ferric-tools/src/builtin/write_file.rs,
+  crates/ferric-tools/tests/builtin_file_tools.rs, docs/work/tasks.md,
+  docs/work/completed-tasks.md
+- **Commit:** PENDING
