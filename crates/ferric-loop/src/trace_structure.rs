@@ -89,7 +89,24 @@ pub(crate) fn validate_recovery_checkpoint_shape(
                 guarded.turn
             ));
         }
-        if guarded.dispatched as usize > guarded.calls.len() || guarded.errored > guarded.dispatched
+        let blocked_completion = u32::from(
+            guarded.dispatched > 0
+                && guarded.errored > 0
+                && guarded.calls.iter().any(|call| call.name == TASK_COMPLETE),
+        );
+        let attributed_control_errors = guarded
+            .controller_blocks
+            .checked_add(blocked_completion)
+            .ok_or_else(|| {
+            format!(
+                "checkpoint guard turn {} overflows attributed control errors",
+                guarded.turn
+            )
+        })?;
+        if guarded.dispatched as usize > guarded.calls.len()
+            || guarded.errored > guarded.dispatched
+            || attributed_control_errors > guarded.errored
+            || attributed_control_errors > guarded.dispatched
         {
             return Err(format!(
                 "checkpoint guard turn {} has incoherent dispatch/error counts",
@@ -208,6 +225,7 @@ pub struct TraceStructure {
     pending_controller_checkpoint: Option<ControllerCheckpointContext>,
     recovery_packet_seen: bool,
     resumed_pending_input: bool,
+    projected_controller_blocks: BTreeMap<u32, u32>,
 }
 
 impl TraceStructure {
@@ -547,6 +565,7 @@ impl TraceStructure {
             return Err("RecoveryCheckpoint appears inside an active turn".to_string());
         }
         validate_recovery_checkpoint_shape(state)?;
+        self.validate_checkpoint_controller_blocks(state)?;
 
         if let Some(reason) = self.ended_reason.clone() {
             if is_success_reason(&reason) {
@@ -610,6 +629,49 @@ impl TraceStructure {
     fn import_checkpoint(&mut self, state: &RecoveryCheckpointV1) {
         self.mutation_epoch = state.mutation_epoch;
         self.passed_checks = state.passed_checks.clone();
+        if !self.saw_turn {
+            self.projected_controller_blocks = state
+                .guard_history
+                .iter()
+                .map(|guarded| (guarded.turn, guarded.controller_blocks))
+                .collect();
+        }
+    }
+
+    fn validate_checkpoint_controller_blocks(
+        &self,
+        state: &RecoveryCheckpointV1,
+    ) -> Result<(), String> {
+        if self.harness_policy != Some(HarnessPolicy::Evidence)
+            && state
+                .guard_history
+                .iter()
+                .any(|guarded| guarded.controller_blocks != 0)
+        {
+            return Err("non-evidence checkpoint contains a controller-block count".to_string());
+        }
+
+        for guarded in &state.guard_history {
+            let Some(projected) = self.projected_controller_blocks.get(&guarded.turn) else {
+                continue;
+            };
+            if !guarded.controller_blocks_was_present {
+                if guarded.controller_blocks != 0 {
+                    return Err(format!(
+                        "checkpoint guard turn {} has an absent but nonzero controller-block count",
+                        guarded.turn
+                    ));
+                }
+                continue;
+            }
+            if guarded.controller_blocks != *projected {
+                return Err(format!(
+                    "checkpoint guard turn {} controller-block count {} differs from typed event count {projected}",
+                    guarded.turn, guarded.controller_blocks
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn validate_core_controller_parity(&self, state: &RecoveryCheckpointV1) -> Result<(), String> {
@@ -1266,6 +1328,16 @@ impl TraceStructure {
                 "TurnCommitted({turn}) reports {dispatched}/{errored} dispatched/errors, recorded {result_count}/{error_count}"
             ));
         }
+        let controller_blocks = active
+            .calls
+            .iter()
+            .filter(|recorded| {
+                matches!(
+                    &recorded.controller_record,
+                    Some(ControllerCallRecord::Blocked(_))
+                )
+            })
+            .count() as u32;
 
         if stop_reason == Some("needs_input")
             && (proposed.len() != 1
@@ -1308,6 +1380,8 @@ impl TraceStructure {
             }
         }
 
+        self.projected_controller_blocks
+            .insert(turn, controller_blocks);
         self.last_turn = Some(turn);
         if let Some(reason) = stop_reason {
             self.awaiting_end = Some(reason.to_string());
@@ -1891,6 +1965,22 @@ mod tests {
         }
     }
 
+    fn checkpoint_with_controller_blocks(
+        controller_blocks: u32,
+        controller_blocks_was_present: bool,
+    ) -> RecoveryCheckpointV1 {
+        let mut checkpoint = core_checkpoint(1, None);
+        checkpoint.guard_history = vec![ferric_trace::GuardTurn {
+            turn: 0,
+            calls: vec![call("blocked", "write_file")],
+            dispatched: 1,
+            errored: 1,
+            controller_blocks,
+            controller_blocks_was_present,
+        }];
+        checkpoint
+    }
+
     fn resumed_evidence_base(
         validator: &mut TraceStructure,
         pause_reason: &str,
@@ -1944,6 +2034,37 @@ mod tests {
         assert!(is_effect_recording_tool("write_file"));
         assert!(!is_effect_recording_tool("search_files"));
         assert!(!is_effect_recording_tool("shell_exec"));
+    }
+
+    #[test]
+    fn checkpoint_controller_block_counts_match_policy_and_typed_history() {
+        let mut evidence = TraceStructure {
+            harness_policy: Some(HarnessPolicy::Evidence),
+            ..TraceStructure::default()
+        };
+        evidence.projected_controller_blocks.insert(0, 1);
+
+        let legacy_omission = checkpoint_with_controller_blocks(0, false);
+        evidence
+            .validate_checkpoint_controller_blocks(&legacy_omission)
+            .unwrap();
+        let explicit_zero = checkpoint_with_controller_blocks(0, true);
+        assert!(
+            evidence
+                .validate_checkpoint_controller_blocks(&explicit_zero)
+                .unwrap_err()
+                .contains("differs from typed event count")
+        );
+
+        let mut legacy = TraceStructure::new();
+        legacy.observe(&policy(HarnessPolicy::Legacy)).unwrap();
+        let forged = checkpoint_with_controller_blocks(1, true);
+        assert!(
+            legacy
+                .observe(&Event::RecoveryCheckpoint { state: forged })
+                .unwrap_err()
+                .contains("non-evidence checkpoint")
+        );
     }
 
     #[test]

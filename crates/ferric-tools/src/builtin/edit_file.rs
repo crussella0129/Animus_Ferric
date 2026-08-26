@@ -21,15 +21,23 @@ impl Tool for EditFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "edit_file".to_string(),
-            description: "Replace the first occurrence of old_string with new_string in a file. \
-                Args: {\"path\": string, \"old_string\": string, \"new_string\": string}"
+            description: "Replace only the first exact old_string span with new_string; all bytes \
+                outside that matched span remain untouched. To rewrite a whole function or class, \
+                include its full current definition in old_string. Args: {\"path\": string, \
+                \"old_string\": string, \"new_string\": string}"
                 .to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "File path relative to the workspace root" },
-                    "old_string": { "type": "string", "description": "Exact text to find; the first occurrence is replaced" },
-                    "new_string": { "type": "string", "description": "Replacement text" }
+                    "old_string": {
+                        "type": "string",
+                        "description": "Exact current text to match; only its first occurrence is replaced. Include the full current function or class definition when rewriting that whole definition"
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "Replacement for the matched span; all surrounding bytes remain untouched"
+                    }
                 },
                 "required": ["path", "old_string", "new_string"]
             }),
@@ -124,5 +132,36 @@ impl Tool for EditFile {
         let edited = content.replacen(old_string, new_string, 1);
         std::fs::write(&resolved, &edited).map_err(|e| format!("write {path}: {e}"))?;
         Ok(format!("edited {path} (replaced 1 occurrence)"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn descriptor_explains_exact_span_and_whole_definition_rewrites() {
+        let spec = EditFile.spec();
+
+        assert!(
+            spec.description
+                .contains("Replace only the first exact old_string span")
+        );
+        assert!(
+            spec.description
+                .contains("all bytes outside that matched span remain untouched")
+        );
+        assert!(
+            spec.description
+                .contains("include its full current definition in old_string")
+        );
+
+        let properties = spec.input_schema["properties"].as_object().unwrap();
+        let old_string = properties["old_string"]["description"].as_str().unwrap();
+        assert!(old_string.contains("only its first occurrence is replaced"));
+        assert!(old_string.contains("full current function or class definition"));
+
+        let new_string = properties["new_string"]["description"].as_str().unwrap();
+        assert!(new_string.contains("all surrounding bytes remain untouched"));
     }
 }

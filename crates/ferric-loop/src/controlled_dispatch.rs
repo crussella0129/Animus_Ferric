@@ -9,10 +9,10 @@ use ferric_core::{FerricError, ToolCall};
 use ferric_guard::{PermissionLevel, Provenance, SinkPolicy, Workspace};
 use ferric_tools::{
     CandidatePathState, CheckRecord, ControlFailureKind, ControlFailureWitness, ControlledOutcome,
-    FileObservation, MutationIntent, NavigationKind, NavigationObservation, PathState,
-    PrepareError, PrepareErrorKind, PrepareFailureWitness, PrepareOutcome, PreparedIntent,
-    Registry, SyntaxState, ToolObservation, UnsupportedMutationKind, WorkspaceEffect,
-    WorkspaceEffectKind, WorkspaceEffectReport, sha256_bytes,
+    FileObservation, MutationIntent, NavigationKind, NavigationObservation, NoEffectKind,
+    PathState, PrepareError, PrepareErrorKind, PrepareFailureWitness, PrepareOutcome,
+    PreparedIntent, Registry, SyntaxState, ToolObservation, UnsupportedMutationKind,
+    WorkspaceEffect, WorkspaceEffectKind, WorkspaceEffectReport, sha256_bytes,
 };
 use ferric_trace::{
     CONTROLLER_RECORD_VERSION, ControllerBlockReason, ControllerBlockV1, Event, FileObservationV1,
@@ -30,6 +30,7 @@ pub(crate) struct DispatchResult {
     pub full: String,
     pub is_error: bool,
     pub duration_ms: u64,
+    pub controller_blocked: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -57,9 +58,9 @@ pub(crate) fn dispatch(
         } => {
             record_permission_checks(&checks, sink, projector)?;
             if let Some(block) = preparation_block(controller, workspace, call, &error)? {
-                let feedback = format_controller_block(&block);
+                let feedback = format_preparation_block(&block, &call.name, &error)?;
                 record_block(turn, call, block, sink, projector)?;
-                return record_result(call, feedback, true, duration_ms, sink, projector);
+                return record_blocked_result(call, feedback, duration_ms, sink, projector);
             }
             return record_result(call, error.message, true, duration_ms, sink, projector);
         }
@@ -86,7 +87,7 @@ pub(crate) fn dispatch(
             if let Some(block) = controller.mutation_block(turn, &requirements) {
                 let feedback = format_controller_block(&block);
                 record_block(turn, call, block, sink, projector)?;
-                return record_result(call, feedback, true, 0, sink, projector);
+                return record_blocked_result(call, feedback, 0, sink, projector);
             }
             None
         }
@@ -95,7 +96,7 @@ pub(crate) fn dispatch(
             Err(block) => {
                 let feedback = format_controller_block(&block);
                 record_block(turn, call, *block, sink, projector)?;
-                return record_result(call, feedback, true, 0, sink, projector);
+                return record_blocked_result(call, feedback, 0, sink, projector);
             }
         },
         PreparedIntent::ReadOnly
@@ -140,6 +141,7 @@ pub(crate) fn dispatch(
     };
     let mut result_full = output.full;
     let result_is_error = output.is_error;
+    let mut controller_blocked = false;
 
     match &intent {
         PreparedIntent::ReadOnly => {
@@ -187,6 +189,7 @@ pub(crate) fn dispatch(
                 projector,
             )? {
                 result_full = feedback;
+                controller_blocked = true;
             }
         }
         PreparedIntent::Verification(intent) => {
@@ -227,14 +230,24 @@ pub(crate) fn dispatch(
         }
     }
 
-    record_result(
-        call,
-        result_full,
-        result_is_error,
-        duration_ms,
-        sink,
-        projector,
-    )
+    if controller_blocked {
+        if !result_is_error {
+            return Err(contract_error(
+                &call.name,
+                "controller-blocked mutation returned a successful result",
+            ));
+        }
+        record_blocked_result(call, result_full, duration_ms, sink, projector)
+    } else {
+        record_result(
+            call,
+            result_full,
+            result_is_error,
+            duration_ms,
+            sink,
+            projector,
+        )
+    }
 }
 
 fn mutation_requirements(intent: &MutationIntent) -> Vec<MutationRequirement> {
@@ -323,6 +336,26 @@ fn preparation_block(
                 .map_err(|error| contract_error(&call.name, error.to_string()))
         }
     }
+}
+
+fn format_preparation_block(
+    block: &ControllerBlockV1,
+    tool: &str,
+    error: &PrepareError,
+) -> Result<String, FerricError> {
+    if block.reason != ControllerBlockReason::NoEffect {
+        return Ok(format_controller_block(block));
+    }
+    let Some(PrepareFailureWitness::NoEffect { kind, .. }) = error.witness.as_ref() else {
+        return Err(contract_error(
+            tool,
+            "no-effect feedback lacks its typed kind",
+        ));
+    };
+    Ok(format_controller_block_with_no_effect(
+        block,
+        Some((*kind, tool, error.message.as_str())),
+    ))
 }
 
 fn apply_observation(
@@ -422,39 +455,51 @@ fn apply_mutation_outcome(
 /// makes clear that retrying does not depend on a person, and gives exactly
 /// the next controller-compatible action for the recorded reason.
 pub(crate) fn format_controller_block(block: &ControllerBlockV1) -> String {
-    let (reason, next_action) = match block.reason {
-        ControllerBlockReason::BlindMutation => (
-            "blind_mutation",
-            "completely read every existing target path, then retry the mutation in a later turn",
-        ),
-        ControllerBlockReason::SameTurnObservation => (
-            "same_turn_observation",
-            "retry the mutation in a later turn; a same-turn observation cannot admit it",
-        ),
-        ControllerBlockReason::StaleObservation => (
-            "stale_observation",
-            "reread the current target path, then retry against that current state in a later turn",
-        ),
-        ControllerBlockReason::UnsupportedMutation => (
-            "unsupported_mutation",
-            "use a supported controlled operation or check",
-        ),
-        ControllerBlockReason::RepairInspectionRequired => (
-            "repair_inspection_required",
-            "after the failed check, read the current relevant path in a later turn, then make a material repair before rerunning the check",
-        ),
-        ControllerBlockReason::NoEffect => (
-            "no_effect",
-            "the candidate produced no measured change; make a material change before retrying",
-        ),
-        ControllerBlockReason::SyntaxRegression => (
-            "syntax_regression",
-            "repair the candidate syntax before retrying the mutation",
-        ),
-        ControllerBlockReason::RepeatedCheck => (
-            "repeated_check",
-            "the check already ran at the unchanged mutation epoch; do not rerun it now. If it failed, read the current relevant path in a later turn, then make a material repair before rerunning. If it passed and all required checks are current, call task_complete",
-        ),
+    format_controller_block_with_no_effect(block, None)
+}
+
+fn format_controller_block_with_no_effect(
+    block: &ControllerBlockV1,
+    no_effect: Option<(NoEffectKind, &str, &str)>,
+) -> String {
+    let reason = match block.reason {
+        ControllerBlockReason::BlindMutation => "blind_mutation",
+        ControllerBlockReason::SameTurnObservation => "same_turn_observation",
+        ControllerBlockReason::StaleObservation => "stale_observation",
+        ControllerBlockReason::UnsupportedMutation => "unsupported_mutation",
+        ControllerBlockReason::RepairInspectionRequired => "repair_inspection_required",
+        ControllerBlockReason::NoEffect => "no_effect",
+        ControllerBlockReason::SyntaxRegression => "syntax_regression",
+        ControllerBlockReason::RepeatedCheck => "repeated_check",
+    };
+    let next_action = match block.reason {
+        ControllerBlockReason::BlindMutation => {
+            "completely read every existing target path, then retry the mutation in a later turn"
+                .to_string()
+        }
+        ControllerBlockReason::SameTurnObservation => {
+            "retry the mutation in a later turn; a same-turn observation cannot admit it"
+                .to_string()
+        }
+        ControllerBlockReason::StaleObservation => {
+            "reread the current target path, then retry against that current state in a later turn"
+                .to_string()
+        }
+        ControllerBlockReason::UnsupportedMutation => {
+            "use a supported controlled operation or check".to_string()
+        }
+        ControllerBlockReason::RepairInspectionRequired => {
+            "after the failed check, read the current relevant path in a later turn, then make a material repair before rerunning the check"
+                .to_string()
+        }
+        ControllerBlockReason::NoEffect => no_effect_next_action(no_effect),
+        ControllerBlockReason::SyntaxRegression => {
+            "repair the candidate syntax before retrying the mutation".to_string()
+        }
+        ControllerBlockReason::RepeatedCheck => {
+            "the check already ran at the unchanged mutation epoch; do not rerun it now. If it failed, read the current relevant path in a later turn, then make a material repair before rerunning. If it passed and all required checks are current, call task_complete"
+                .to_string()
+        }
     };
 
     let mut details = vec![
@@ -480,6 +525,44 @@ pub(crate) fn format_controller_block(block: &ControllerBlockV1) -> String {
     format!(
         "CONTROLLER_BLOCKED: {}. No human approval is required. Next action: {next_action}.",
         details.join("; ")
+    )
+}
+
+fn no_effect_next_action(no_effect: Option<(NoEffectKind, &str, &str)>) -> String {
+    let cause = match no_effect {
+        Some((NoEffectKind::MatchNotFound, "edit_file" | "multi_edit" | "apply_patch", _)) => {
+            "the exact requested match was absent; reread the current file and copy the exact current span into the mutation request before retrying"
+        }
+        Some((NoEffectKind::MatchNotFound, _, diagnostic)) => {
+            return no_effect_repair_condition(format!(
+                "{diagnostic}; the requested path or source was absent, so inspect its current state and revise the structural operation before retrying"
+            ));
+        }
+        Some((NoEffectKind::Identity, "make_dir", diagnostic)) => {
+            return no_effect_repair_condition(format!(
+                "{diagnostic}; the requested result already equals the current path state, so do not retry the same operation"
+            ));
+        }
+        Some((NoEffectKind::Identity, _, _)) => {
+            "the requested result already equals the current bytes; do not retry the same mutation"
+        }
+        Some((NoEffectKind::NetZeroBatch, _, _)) => {
+            "the requested batch edits cancel each other and produce no net byte change; revise the batch so its combined result is material"
+        }
+        Some((NoEffectKind::NetZeroPatch, _, _)) => {
+            "the requested patch changes cancel each other and produce no net byte change; revise the patch so its combined result is material"
+        }
+        None => {
+            "the candidate produced no measured change; do not retry the same unchanged mutation"
+        }
+    };
+    no_effect_repair_condition(cause)
+}
+
+fn no_effect_repair_condition(cause: impl AsRef<str>) -> String {
+    format!(
+        "{}. If an authorized check just failed, inspect the relevant implementation implicated by its diagnostic in a later turn before making a material repair; changing unrelated or unchanged files does not repair the check",
+        cause.as_ref().trim_end_matches(['.', ' '])
     )
 }
 
@@ -748,7 +831,20 @@ fn record_result(
         full,
         is_error,
         duration_ms,
+        controller_blocked: false,
     })
+}
+
+fn record_blocked_result(
+    call: &ToolCall,
+    full: String,
+    duration_ms: u64,
+    sink: &mut JsonlSink,
+    projector: &mut TraceProjector,
+) -> Result<DispatchResult, FerricError> {
+    let mut result = record_result(call, full, true, duration_ms, sink, projector)?;
+    result.controller_blocked = true;
+    Ok(result)
 }
 
 fn record_permission_checks(
@@ -951,7 +1047,7 @@ mod tests {
             (
                 ControllerBlockReason::NoEffect,
                 "no_effect",
-                "the candidate produced no measured change; make a material change before retrying",
+                "the candidate produced no measured change; do not retry the same unchanged mutation. If an authorized check just failed, inspect the relevant implementation implicated by its diagnostic in a later turn before making a material repair; changing unrelated or unchanged files does not repair the check",
             ),
             (
                 ControllerBlockReason::SyntaxRegression,
@@ -983,6 +1079,75 @@ mod tests {
                 format!(
                     "CONTROLLER_BLOCKED: reason={label}; mutation_epoch=7; paths=[\"a.txt\",\"z.txt\"]; check_name=\"unit\". No human approval is required. Next action: {next_action}."
                 )
+            );
+        }
+    }
+
+    #[test]
+    fn no_effect_feedback_distinguishes_typed_causes_and_structural_operations() {
+        let block = ControllerBlockV1 {
+            version: CONTROLLER_RECORD_VERSION,
+            reason: ControllerBlockReason::NoEffect,
+            mutation_epoch: 4,
+            paths: vec!["target.txt".to_string()],
+            check_name: Some("unit".to_string()),
+            witness: None,
+        };
+        let cases = [
+            (
+                NoEffectKind::MatchNotFound,
+                "edit_file",
+                "match not found",
+                "the exact requested match was absent; reread the current file and copy the exact current span",
+            ),
+            (
+                NoEffectKind::Identity,
+                "write_file",
+                "same bytes",
+                "the requested result already equals the current bytes",
+            ),
+            (
+                NoEffectKind::NetZeroBatch,
+                "multi_edit",
+                "net zero",
+                "batch edits cancel each other and produce no net byte change",
+            ),
+            (
+                NoEffectKind::NetZeroPatch,
+                "apply_patch",
+                "net zero",
+                "patch changes cancel each other and produce no net byte change",
+            ),
+            (
+                NoEffectKind::MatchNotFound,
+                "delete_path",
+                "path not found: absent.txt",
+                "path not found: absent.txt; the requested path or source was absent",
+            ),
+            (
+                NoEffectKind::Identity,
+                "make_dir",
+                "directory already exists: present",
+                "requested result already equals the current path state",
+            ),
+        ];
+
+        for (kind, tool, diagnostic, expected) in cases {
+            let feedback =
+                format_controller_block_with_no_effect(&block, Some((kind, tool, diagnostic)));
+            assert!(feedback.contains(expected), "{feedback}");
+            assert!(
+                feedback.contains("If an authorized check just failed"),
+                "{feedback}"
+            );
+            assert!(
+                feedback
+                    .contains("changing unrelated or unchanged files does not repair the check"),
+                "{feedback}"
+            );
+            assert!(
+                feedback.contains("No human approval is required"),
+                "{feedback}"
             );
         }
     }

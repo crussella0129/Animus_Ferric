@@ -146,6 +146,16 @@ fn parse_line(line: &str) -> Result<TraceRecord, serde_json::Error> {
     let raw: RawRecord = serde_json::from_str(line)?;
     let event = match Event::deserialize(&raw.event) {
         Ok(event) => ParsedEvent::Known(event),
+        Err(error)
+            if raw.event.get("type").and_then(serde_json::Value::as_str)
+                == Some("recovery_checkpoint") =>
+        {
+            // Recovery checkpoints are executable resume state, not merely
+            // additive telemetry. A malformed known checkpoint must fail
+            // strict verification and replay rather than masquerade as an
+            // unknown future event.
+            return Err(error);
+        }
         Err(_) => ParsedEvent::Unknown(raw.event),
     };
     Ok(TraceRecord {
@@ -186,6 +196,14 @@ mod tests {
         let mut reader = TraceReader::open(path).expect("open trace");
         assert!(reader.next().expect("first record").is_ok());
         assert!(reader.next().expect("truncated record error").is_err());
+    }
+
+    #[test]
+    fn malformed_known_recovery_checkpoint_is_not_downgraded_to_unknown() {
+        let line = r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"recovery_checkpoint","state":{"version":1,"messages":[],"next_turn":1,"last_text":null,"head_len":0,"committed_turn_starts":[],"guard_history":[{"turn":0,"calls":[{"id":"c","name":"edit_file","args":{}}],"dispatched":1,"errored":1,"controller_blocks":null}],"nudged_for_no_action":false,"truncated_once":false,"last_input_tokens":null,"pending_input":null,"mutation_epoch":0,"passed_checks":{}}}}"#;
+        let (_dir, path) = write_trace(line);
+        let mut reader = TraceReader::open(path).unwrap();
+        assert!(reader.next().unwrap().is_err());
     }
 
     #[test]
