@@ -1,0 +1,397 @@
+{
+  "schema_version": 1,
+  "run_id": "autonomy-1785678826061-46124-0",
+  "suite_id": "ferric-autonomy-v1",
+  "suite_schema_version": 1,
+  "suite_sha256": "bb0ce1ec3f12a917096690e5a286232bfa05394c3c3d22d0589cb25542446323",
+  "started_at_unix_ms": 1785678826061,
+  "finished_at_unix_ms": 1785679413804,
+  "trials_requested": 1,
+  "expected_tasks": [
+    "H01",
+    "H04",
+    "H08"
+  ],
+  "expected_variants": [
+    "recovery"
+  ],
+  "expected_rows": 3,
+  "observed_rows": 3,
+  "complete": true,
+  "infrastructure_clean": true,
+  "internal_baseline_only": true,
+  "provenance": {
+    "ferric_version": "0.1.0",
+    "git_commit": null,
+    "binary": {
+      "path": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\sprints\\s113\\control-artifacts\\ferric-control-cabe236.exe",
+      "size_bytes": 13771776,
+      "modified_at_unix_ms": 1785659239822,
+      "sha256": "f6e636f80ad3af22920c91a22ab0c5a1f0f4e8afe56dfecee77822061c8320f4"
+    },
+    "model": {
+      "backend": "openai",
+      "model": "C:\\Users\\charl\\Animus_Ferric\\models\\qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "api_base": "http://127.0.0.1:8080/v1",
+      "params_b": 7.6156163,
+      "ctx": 8192,
+      "sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c"
+    },
+    "protocol": "ConstrainedJson",
+    "variant": "autonomy_matrix",
+    "python_bin": "python"
+  },
+  "server_states": [
+    "cold"
+  ],
+  "issues": [],
+  "overall": {
+    "key": "all",
+    "expected": 3,
+    "observed": 3,
+    "scoreable": 3,
+    "infrastructure_failures": 0,
+    "contract_passes": 0,
+    "objective_completions": 0,
+    "contract_rate": 0.0,
+    "objective_rate": 0.0,
+    "contract_wilson_95": {
+      "lower": 4.8683609171202235e-17,
+      "upper": 0.5614970317550455
+    },
+    "objective_wilson_95": {
+      "lower": 4.8683609171202235e-17,
+      "upper": 0.5614970317550455
+    }
+  },
+  "by_task": [
+    {
+      "key": "H01",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "key": "H04",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "key": "H08",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    }
+  ],
+  "by_task_variant": [
+    {
+      "key": "H01/recovery",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "key": "H04/recovery",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "key": "H08/recovery",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    }
+  ],
+  "by_category": [
+    {
+      "key": "long_horizon",
+      "expected": 3,
+      "observed": 3,
+      "scoreable": 3,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      },
+      "objective_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    }
+  ],
+  "by_variant": [
+    {
+      "key": "recovery",
+      "expected": 3,
+      "observed": 3,
+      "scoreable": 3,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      },
+      "objective_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    }
+  ],
+  "by_tool": [
+    {
+      "tool": "edit_file",
+      "episodes_used": 2,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 0.0,
+        "upper": 0.6576197724933469
+      }
+    },
+    {
+      "tool": "find_files",
+      "episodes_used": 1,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "tool": "read_file",
+      "episodes_used": 1,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "tool": "request_user_input",
+      "episodes_used": 1,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "tool": "run_check",
+      "episodes_used": 3,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    },
+    {
+      "tool": "write_file",
+      "episodes_used": 2,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 0.0,
+        "upper": 0.6576197724933469
+      }
+    }
+  ],
+  "clarification": {
+    "required": 0,
+    "observed": 1,
+    "correct": 0,
+    "missed": 0,
+    "unnecessary": 1,
+    "precision": 0.0,
+    "recall": null
+  },
+  "recovery": {
+    "resumes_expected": 0,
+    "resumes_observed": 0,
+    "episodes_expected": 0,
+    "episodes_succeeded": 0,
+    "success_rate": 0.0,
+    "wilson_95": {
+      "lower": 0.0,
+      "upper": 1.0
+    },
+    "refusal_probes": 0,
+    "refusal_probes_rejected": 0
+  },
+  "resolved_at_1": {
+    "key": "trial_1",
+    "expected": 3,
+    "observed": 3,
+    "scoreable": 3,
+    "infrastructure_failures": 0,
+    "contract_passes": 0,
+    "objective_completions": 0,
+    "contract_rate": 0.0,
+    "objective_rate": 0.0,
+    "contract_wilson_95": {
+      "lower": 4.8683609171202235e-17,
+      "upper": 0.5614970317550455
+    },
+    "objective_wilson_95": {
+      "lower": 4.8683609171202235e-17,
+      "upper": 0.5614970317550455
+    }
+  },
+  "pass_power_3": {
+    "eligible_groups": 0,
+    "successful_groups": 0,
+    "rate": null,
+    "wilson_95": null
+  },
+  "repository_brief_ab": {
+    "paired_episodes": 0,
+    "recovery_wins": 0,
+    "repository_brief_wins": 0,
+    "both_completed": 0,
+    "neither_completed": 0,
+    "objective_rate_delta": null
+  },
+  "turns": {
+    "samples": 3,
+    "mean": 9.333333333333334,
+    "median": 11.0,
+    "standard_deviation": 4.725815626252608,
+    "iqr": 4.5
+  },
+  "input_tokens": {
+    "samples": 3,
+    "mean": 17398.0,
+    "median": 21752.0,
+    "standard_deviation": 10690.088680642457,
+    "iqr": 10003.0
+  },
+  "output_tokens": {
+    "samples": 3,
+    "mean": 1434.3333333333333,
+    "median": 1423.0,
+    "standard_deviation": 554.0869366203586,
+    "iqr": 554.0
+  },
+  "tool_calls": {
+    "samples": 3,
+    "mean": 9.0,
+    "median": 11.0,
+    "standard_deviation": 4.358898943540674,
+    "iqr": 4.0
+  },
+  "wall_ms": {
+    "samples": 3,
+    "mean": 195898.66666666666,
+    "median": 191244.0,
+    "standard_deviation": 77478.93466829119,
+    "iqr": 77374.0
+  },
+  "horizon_80_turn": {
+    "samples": 3,
+    "mean": 6.666666666666667,
+    "median": 8.0,
+    "standard_deviation": 3.214550253664318,
+    "iqr": 3.0
+  },
+  "terminal_counts": {
+    "needs_input": 1,
+    "oscillation": 1,
+    "repeated_failure": 1
+  },
+  "failure_counts": {
+    "check": 3,
+    "contract": 3,
+    "objective_incomplete": 3,
+    "unnecessary_clarification": 1
+  }
+}

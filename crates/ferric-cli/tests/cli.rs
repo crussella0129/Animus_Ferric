@@ -1772,7 +1772,17 @@ fn launch_noninteractive_scaffolds() {
     // A real repo with the skeleton.
     assert!(target.join(".git").is_dir());
     assert!(target.join("README.md").exists());
-    assert!(target.join("agent-tasks").join("agent-tasks.md").exists());
+    assert!(target.join("docs").join(".sprint-loop-book").exists());
+    assert!(
+        target
+            .join("docs")
+            .join("intents")
+            .join("INT-0001-initial-project-goal.md")
+            .exists()
+    );
+    assert!(target.join("docs").join("work").join("tasks.md").exists());
+    assert!(!target.join("agent-tasks").exists());
+    assert!(!target.join("decisions.md").exists());
     // main + dev exist.
     let branches = std::process::Command::new("git")
         .args(["branch", "--format=%(refname:short)"])

@@ -1858,6 +1858,46 @@ mod tests {
     }
 
     #[test]
+    fn pre_evidence_trace_fixture_replays_as_legacy() {
+        // Literal wire data copied in the shape emitted before Sprint 113:
+        // PolicySelected has no `harness_policy`, and the trace contains no
+        // controller events or controller checkpoint from which to invent
+        // evidence state.
+        const PRE_EVIDENCE_TRACE: &str = concat!(
+            r#"{"v":1,"ts_ms":1,"session":"pre-evidence","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":2,"session":"pre-evidence","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"constrained_json","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512,"truncation_limit":4000,"tier_source":"params"}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":3,"session":"pre-evidence","seq":2,"event":{"type":"session_prompt","system":"You are Ferric.","user":"do the task"}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":4,"session":"pre-evidence","seq":3,"event":{"type":"turn_start","turn":0}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":5,"session":"pre-evidence","seq":4,"event":{"type":"turn_end","turn":0,"text":"{\"tool\":\"read_file\",\"args\":{\"path\":\"a.txt\"}}","tool_call_count":0,"input_tokens":50,"output_tokens":10,"truncated":false}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":6,"session":"pre-evidence","seq":5,"event":{"type":"tool_call","id":"g-0-0","name":"read_file","args":{"path":"a.txt"}}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":7,"session":"pre-evidence","seq":6,"event":{"type":"tool_result","id":"g-0-0","name":"read_file","output":"contents","is_error":false,"duration_ms":1}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":8,"session":"pre-evidence","seq":7,"event":{"type":"turn_start","turn":1}}"#,
+            "\n",
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pre-evidence.jsonl");
+        std::fs::write(&path, PRE_EVIDENCE_TRACE).unwrap();
+
+        let replayed = replay(&path).unwrap();
+        assert_eq!(replayed.harness_policy, HarnessPolicy::Legacy);
+        assert_eq!(replayed.controller_checkpoint, None);
+        assert_eq!(replayed.mutation_epoch, 0);
+        assert!(replayed.passed_checks.is_empty());
+        assert_eq!(replayed.turns, 1);
+        assert_eq!(replayed.next_turn, 1);
+        assert_eq!(replayed.protocol, ActionProtocol::ConstrainedJson);
+        assert_eq!(replayed.messages.len(), 4);
+    }
+
+    #[test]
     fn replay_preserves_native_multi_tool_call_order() {
         let events = vec![
             Event::SessionStart {

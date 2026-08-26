@@ -165,8 +165,11 @@ try {
     foreach ($Relative in @(
         "README.md",
         ".gitignore",
-        "agent-tasks\agent-tasks.md",
-        "decisions.md"
+        "docs\.sprint-loop-book",
+        "docs\README.md",
+        "docs\intents\INT-0001-initial-project-goal.md",
+        "docs\work\tasks.md",
+        "docs\work\completed-tasks.md"
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $LaunchWorkspace $Relative) -PathType Leaf)) {
             throw "launch omitted $Relative"

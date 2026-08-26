@@ -1132,3 +1132,31 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Verification:** independent trace verification was side-effect-free; no
   held artifact exists; teardown checks found no managed server residue.
 - **Commit:** `9ed4a962d9d2acedd862d3cde239bd9b0a38f6a9`
+
+## T-11308 (sprint 113)
+- **Description:** Closed the Build outcome honestly. The frozen evidence-only
+  hypothesis remained 0/3 through both permitted revisions, so INT-0001 is
+  `abandoned` and `evidence_planner` is explicitly rejected and fail-closed.
+  Migrated the legacy Sprint Loop state into the tracked Book-v2 authority with
+  lossless provenance and no live root-ledger split brain; modernized Animus
+  Launch to create deterministic, race-safe, hostile-input-safe Book-v2
+  projects with exact tracked inventories and Cargo-safe Rust names; removed
+  the low-value sprint timeline from the README; documented the opt-in Evidence
+  policy and its falsified performance status; and closed the finalized plan's
+  missing literal legacy-trace and malformed controller-event tests. The
+  wider-field audit records default verification, requirement state,
+  prompt/schema genealogy, trace integrity, syntax breadth, and audit ergonomics
+  as new-intent work rather than silently widening this experiment.
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
+- **Completed:** 2026-08-26T18:42:41-04:00
+- **Files modified:** README.md, AGENTS.md, CLAUDE.md, .agents/, .gitignore,
+  .dockerignore, crates/animus-launch/, crates/ferric-loop/src/{replay.rs,trace_structure.rs},
+  crates/ferric-cli/tests/cli.rs, docs/, tools/demo-smoke.ps1; retired root
+  ledgers: agent-tasks/, confidence.txt, decisions.md
+- **Verification:** `cargo test -p animus-launch` passed 22 tests;
+  `cargo test -p ferric-loop --lib` passed 131 tests; the backend-openai Launch
+  CLI test and all three template-hygiene tests passed; strict scoped Clippy,
+  workspace formatting, Book-v2 validation, mdBook build, and diff checks
+  passed. Final whole-workspace and CI confirmation remain formal Test/Loop
+  evidence and are not claimed here.
+- **Commit:** PENDING

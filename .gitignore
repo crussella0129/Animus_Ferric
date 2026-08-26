@@ -1,18 +1,11 @@
-# >>> sprint-loops >>>
-# Ephemeral sprint working memory — regenerable; the real outcome lives in the
-# per-task git commits + decisions.md. KEEP tracked (long-term memory the
-# protocol depends on): decisions.md, agent-tasks/, confidence.txt.
-sprints/
-*.tmp
-# <<< sprint-loops <<<
 
 # Rust
 target/
 
 # Stray build artifacts / scratch outputs (sprint 72 cleanup). Compiled
 # binaries and debug symbols never belong in source; the *.txt/*.json below
-# are one-off manual-test scratch. `confidence.txt` is protocol state and is
-# force-kept via the sprint-loops allowlist above, so it is unaffected.
+# are one-off manual-test scratch. Sprint Loop confidence state lives at
+# `docs/work/confidence.txt` and is tracked explicitly.
 *.exe
 *.pdb
 /payload.json
@@ -69,3 +62,11 @@ docker/.env
 
 # mdBook build output (source is docs/ + book.toml)
 /book
+
+# Local assistant session state.
+/.claude/
+# >>> sprint-loops >>>
+# The Book is tracked. Ignore only transient helper output.
+*.tmp
+/guards-report.ndjson
+# <<< sprint-loops <<<

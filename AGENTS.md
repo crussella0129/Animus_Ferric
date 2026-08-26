@@ -38,9 +38,11 @@ close-out order: commit → push and CONFIRM → PR → verify the commit count.
 
 ## Sprint records
 
-`sprints/` is **gitignored and untracked** (ADR-096) — it is ephemeral working
-memory. The durable record is `decisions.md` (ADRs), `agent-tasks/`, and the
-per-sprint commit message. Do not re-add `sprints/` to version control.
+Sprint Loops Book v2 is tracked under `docs/`. `docs/intents/` owns durable
+semantic intent, `docs/work/tasks.md` and `docs/work/completed-tasks.md` own
+work state, and `docs/sprints/` owns sprint provenance. `docs/SUMMARY.md` is a
+navigation view only; `docs/history/` preserves migrated legacy records and is
+not authoritative. Do not recreate the retired root-level sprint ledgers.
 
 ## Template hygiene
 

@@ -182,10 +182,10 @@ The exact-model control is complete at 0/3 objective and contract completions.
 These work packages implement and causally evaluate the approved general
 intervention through repository-native Rust, tests, runtime evidence, and Git.
 
-- [ ] **T-11302 — Typed tool preparation and measured effects.** Add navigation
+- [x] **T-11302 — Typed tool preparation and measured effects.** Add navigation
   envelopes, content fingerprints, prepare/commit/effect contracts, stale and
   no-effect rejection, syntax admission, and fail-closed opaque mutation.
-- [ ] **T-11303 — Evidence controller.** Enforce prior-turn complete observation,
+- [x] **T-11303 — Evidence controller.** Enforce prior-turn complete observation,
   actual-effect epochs, failed-check fingerprints, repair inspection, and
   unchanged-check process refusal through the registry/loop chokepoint.
 - [x] **T-11304 — Durable recovery.** Persist controller checkpoints separately
@@ -194,7 +194,7 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
   controller replay, byte-stable recovery packets, exact checkpoint parity,
   recovery-only torn-tail handling, ambiguous mixed-control tails, and
   panic-safe compaction are covered by trace/loop tests.)*
-- [ ] **T-11305 — Controlled dispatch and product surfaces.** Integrate the
+- [x] **T-11305 — Controlled dispatch and product surfaces.** Integrate the
   controller/approval/commit order, general evidence prompt guidance, typed trace
   emission, and compatible query/API/MCP/chat/ICM policy plumbing.
 - [x] **T-11306 — Reproducible paired runner.** Record managed-server sampling
@@ -203,14 +203,18 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
   infrastructure-clean paired scoring. *(Done: strict managed-server
   attestation, immutable per-arm executables, adjacent counterbalanced pairs,
   retained-trace provenance, and fail-closed paired result scoring.)*
-- [ ] **T-11307 — Real-model causal evaluation.** Pass Rust gates; run the exact
+- [x] **T-11307 — Real-model causal evaluation.** Pass Rust gates; run the exact
   Qwen evidence screen; allow no more than two retained general revisions;
   freeze the candidate; run paired stability and untouched held-task comparisons;
-  independently verify traces and teardown.
-- [ ] **T-11308 — Planner decision and durable record.** Only after the
+  independently verify traces and teardown. *(Done through the finalized
+  no-candidate path: three complete screens remained 0/3 after both permitted
+  revisions, so paired and held runs were explicitly skipped.)*
+- [x] **T-11308 — Planner decision and durable record.** Only after the
   evidence-only result, freeze a planner orchestration addendum or reject the
   arm; record the causal conclusion, ADR, verification report, commit/push/PR,
-  and CI.
+  and CI. *(Build closeout complete: planner rejected, intent abandoned,
+  Book-v2 record migrated, and final repository/CI confirmation delegated to
+  the formal Test and Loop phases.)*
 
 ## Sprint 113 follow-up — evidence mode made usable for structural ops
 - [x] **Structural filesystem ops under evidence control.** A live 7B run
@@ -234,5 +238,3 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
   design.
 
 ## Book v2 active sprint tasks
-
-- [ ] T-11308 (sprint 113) [intent: INT-0001]: Decide the planner boundary as an explicit evidence-based design or rejection and close the intent, work ledger, sprint report, and durable architectural record without silently enabling a fallback. — touches: docs/intents/INT-0001-evidence-bound-autonomous-recovery.md, docs/work/, docs/sprints/s113/, crates/ferric-loop/

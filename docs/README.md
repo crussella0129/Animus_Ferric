@@ -41,8 +41,16 @@ Ferric is built on three ideas, each visible in the docs above:
 
 ## Project records
 
-The durable engineering record lives outside `docs/`:
+The Sprint Loops Book under `docs/` is the sole writable engineering record:
 
-- **`../decisions.md`** — the full ADR log (every architectural decision).
-- **`../agent-tasks/`** — the task ledger.
-- **`../README.md`** — the project overview + the sprint-by-sprint timeline.
+- **[Intents](intents/README.md)** — desired outcomes and their lifecycle.
+- **[Current work](work/tasks.md)** and **[completed work](work/completed-tasks.md)**
+  — the execution ledgers.
+- **[Sprint records](sprints/README.md)** — plans, evidence, tests, and closeout
+  metadata.
+- **[Legacy decisions](history/decisions-legacy.md)** and
+  **[migration provenance](history/migration-provenance.md)** — immutable,
+  non-authoritative history retained from the pre-Book layout.
+
+The root [README](../README.md) is the concise project overview; it is not a
+sprint history ledger.

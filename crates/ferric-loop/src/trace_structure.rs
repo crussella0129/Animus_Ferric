@@ -2100,6 +2100,57 @@ mod tests {
     }
 
     #[test]
+    fn evidence_event_versions_and_order_fail_closed() {
+        let read = call("read-1", "read_file");
+
+        let mut unsupported_record = TraceStructure::new();
+        evidence_base(&mut unsupported_record, &[]);
+        begin_turn(&mut unsupported_record, 0, vec![read.clone()]);
+        unsupported_record.observe(&tool_call_event(&read)).unwrap();
+        let mut observation_event = full_file_observation(0, "read-1", "a.txt", 'a');
+        let Event::ObservationRecorded { observation, .. } = &mut observation_event else {
+            unreachable!();
+        };
+        observation.version += 1;
+        let error = unsupported_record.observe(&observation_event).unwrap_err();
+        assert!(
+            error.contains("unsupported controller observation version"),
+            "{error}"
+        );
+
+        let mut unsupported_checkpoint = TraceStructure::new();
+        unsupported_checkpoint
+            .observe(&policy(HarnessPolicy::Evidence))
+            .unwrap();
+        unsupported_checkpoint
+            .observe(&Event::SessionPrompt {
+                system: "system".to_string(),
+                user: "task".to_string(),
+                media: Vec::new(),
+            })
+            .unwrap();
+        let mut checkpoint = ControllerState::new(HarnessPolicy::Evidence, Vec::new())
+            .unwrap()
+            .checkpoint();
+        checkpoint.version += 1;
+        let error = unsupported_checkpoint
+            .observe(&Event::ControllerCheckpoint { state: checkpoint })
+            .unwrap_err();
+        assert!(
+            error.contains("unsupported controller checkpoint version"),
+            "{error}"
+        );
+
+        let mut misplaced = TraceStructure::new();
+        evidence_base(&mut misplaced, &[]);
+        begin_turn(&mut misplaced, 0, vec![read]);
+        let error = misplaced
+            .observe(&full_file_observation(0, "read-1", "a.txt", 'a'))
+            .unwrap_err();
+        assert!(error.contains("no matching ToolCall"), "{error}");
+    }
+
+    #[test]
     fn history_compaction_does_not_change_projected_controller_truth() {
         let mut validator = TraceStructure::new();
         evidence_base(&mut validator, &[]);
