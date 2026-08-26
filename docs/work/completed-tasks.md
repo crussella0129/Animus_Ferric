@@ -1099,4 +1099,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-08-26T18:22:45-04:00
 - **Files modified:** crates/ferric-loop/src/{controlled_dispatch.rs,failure.rs,projector.rs,replay.rs,run.rs,trace_structure.rs}, crates/ferric-loop/tests/{evidence_dispatch_tests.rs,resume_tests.rs}, crates/ferric-tools/src/builtin/edit_file.rs, crates/ferric-trace/src/{event.rs,lib.rs,reader.rs}, docs/sprints/s113/sprint-tests/development-screen.md, docs/sprints/s113/control-artifacts/{artifact-archive.md,evidence-screens/}, docs/work/{tasks.md,completed-tasks.md}
 - **Verification:** affected trace/loop tests and strict Clippy passed; screen 004 produced 3/3 scoreable rows with no infrastructure failure; all frozen traces verified; candidate, result, summary, model, corpus, and engine hashes were independently reconciled.
-- **Commit:** PENDING
+- **Commit:** `3db3b8ad8e0523129261bb568f7756f8c23551f1`
