@@ -325,6 +325,75 @@ fn full_evidence_path_reads_edits_repairs_verifies_and_completes() {
 }
 
 #[test]
+fn multi_path_effect_advances_one_epoch_and_trace_verifies() {
+    let directory = tempfile::tempdir().unwrap();
+    init_workspace(&directory, &[("source.txt", "payload\n")]);
+    let capture = run_policy(
+        &directory,
+        vec![
+            tool_completion(vec![("read", "read_file", json!({"path": "source.txt"}))]),
+            tool_completion(vec![(
+                "move",
+                "move_path",
+                json!({"from": "source.txt", "to": "destination.txt"}),
+            )]),
+        ],
+        HarnessPolicy::Evidence,
+        Vec::new(),
+        2,
+        None,
+        None,
+    );
+
+    assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
+    assert!(!directory.path().join("source.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("destination.txt")).unwrap(),
+        "payload\n"
+    );
+
+    let recorded_effects: Vec<_> = capture
+        .records
+        .iter()
+        .filter_map(|record| match &record.event {
+            ParsedEvent::Known(Event::WorkspaceEffectRecorded {
+                call_id,
+                tool,
+                effect,
+                ..
+            }) => Some((call_id, tool, effect)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(recorded_effects.len(), 1);
+    let (call_id, tool, effect) = recorded_effects[0];
+    assert_eq!(call_id, "move");
+    assert_eq!(tool, "move_path");
+    assert_eq!(effect.mutation_epoch, 1);
+    assert_eq!(effect.effects.len(), 2);
+    assert!(effect.effects.iter().any(|path_effect| {
+        path_effect.path == "source.txt"
+            && path_effect.kind == ferric_trace::PathEffectKind::Deleted
+    }));
+    assert!(effect.effects.iter().any(|path_effect| {
+        path_effect.path == "destination.txt"
+            && path_effect.kind == ferric_trace::PathEffectKind::Created
+    }));
+
+    let final_controller_epoch = capture
+        .records
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::ControllerCheckpoint { state }) => Some(state.mutation_epoch),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(final_controller_epoch, 1);
+    validate_trace(&capture.records);
+}
+
+#[test]
 fn blind_and_same_turn_mutations_are_rejected_before_the_callback() {
     for (same_turn, expected) in [
         (false, ferric_trace::ControllerBlockReason::BlindMutation),

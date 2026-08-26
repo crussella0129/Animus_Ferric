@@ -235,7 +235,6 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Book v2 active sprint tasks
 
-- [ ] T-11303 (sprint 113) [intent: INT-0001]: Reconcile and verify the landed causal observation, mutation-epoch, repair-inspection, and unchanged-check controller invariants. — touches: crates/ferric-loop/src/controller.rs, crates/ferric-loop/src/controlled_dispatch.rs, crates/ferric-loop/src/trace_structure.rs, crates/ferric-loop/tests/evidence_dispatch_tests.rs
 - [ ] T-11304 (sprint 113) [intent: INT-0001]: Reconcile and verify the landed replay, resume, crash-prefix, recovery-packet, and compaction invariants. — touches: crates/ferric-loop/src/replay.rs, crates/ferric-loop/src/run.rs, crates/ferric-loop/src/compact.rs, crates/ferric-loop/tests/
 - [ ] T-11305 (sprint 113) [intent: INT-0001]: Reconcile and verify controlled dispatch ordering, policy propagation, resume compatibility, and fail-closed planner behavior across supported product surfaces. — touches: crates/ferric-loop/src/, crates/ferric-cli/src/, crates/ferric-cli/tests/cli.rs
 - [ ] T-11306 (sprint 113) [intent: INT-0001]: Reconcile and verify the landed frozen-arm, counterbalanced, collision-safe, provenance-bound paired autonomy runner and scoreability gate. — touches: crates/ferric-cli/src/autonomy_cmd.rs, crates/ferric-cli/src/server.rs, crates/ferric-cli/src/backend.rs, crates/ferric-bench/src/

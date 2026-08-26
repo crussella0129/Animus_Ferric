@@ -990,3 +990,17 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-08-26T13:51:05-04:00
 - **Files modified:** docs/work/tasks.md, docs/work/completed-tasks.md
 - **Commit:** `e79ca9babef863d202958ca9821e3a038dee0639`
+
+## T-11303 (sprint 113)
+- **Description:** Reconciled the causal controller and added the missing
+  multi-path invariant test through the real Evidence dispatch path. A single
+  admitted `move_path` call now has explicit regression coverage proving its
+  delete/create effects advance one mutation epoch—not one per path—and the
+  resulting complete trace passes shared structural validation. The complete
+  ferric-loop test suite, affected Clippy with warnings denied, and workspace
+  format check passed.
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
+- **Completed:** 2026-08-26T13:58:44-04:00
+- **Files modified:** crates/ferric-loop/tests/evidence_dispatch_tests.rs,
+  docs/work/tasks.md, docs/work/completed-tasks.md
+- **Commit:** PENDING
