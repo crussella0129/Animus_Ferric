@@ -1159,4 +1159,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   workspace formatting, Book-v2 validation, mdBook build, and diff checks
   passed. Final whole-workspace and CI confirmation remain formal Test/Loop
   evidence and are not claimed here.
-- **Commit:** PENDING
+- **Commit:** `bd937383ac17b25cebd0c742b5522cc983bcf896`
