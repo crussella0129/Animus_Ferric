@@ -1100,3 +1100,18 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** crates/ferric-loop/src/{controlled_dispatch.rs,failure.rs,projector.rs,replay.rs,run.rs,trace_structure.rs}, crates/ferric-loop/tests/{evidence_dispatch_tests.rs,resume_tests.rs}, crates/ferric-tools/src/builtin/edit_file.rs, crates/ferric-trace/src/{event.rs,lib.rs,reader.rs}, docs/sprints/s113/sprint-tests/development-screen.md, docs/sprints/s113/control-artifacts/{artifact-archive.md,evidence-screens/}, docs/work/{tasks.md,completed-tasks.md}
 - **Verification:** affected trace/loop tests and strict Clippy passed; screen 004 produced 3/3 scoreable rows with no infrastructure failure; all frozen traces verified; candidate, result, summary, model, corpus, and engine hashes were independently reconciled.
 - **Commit:** `3db3b8ad8e0523129261bb568f7756f8c23551f1`
+
+## T-11311 (sprint 113)
+- **Description:** Recorded the fixed no-candidate skip path for paired
+  confirmation. The complete, infrastructure-clean development screens ended
+  0/3 after both permitted general revisions, so no candidate qualified for a
+  frozen confirmation hash. No paired row, pair identifier, confirmation
+  workspace, or confirmation trace was created; running the 18-row comparison
+  would have violated the finalized selection rule.
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
+- **Completed:** 2026-08-26T18:28:41-04:00
+- **Files modified:** docs/sprints/s113/sprint-tests/confirmation-skip.md,
+  docs/work/tasks.md, docs/work/completed-tasks.md
+- **Verification:** the archived evaluation tree contains only single-arm
+  Evidence screens 001–004 and no paired or confirmation artifact.
+- **Commit:** PENDING
