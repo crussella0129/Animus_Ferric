@@ -238,3 +238,12 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
   design.
 
 ## Book v2 active sprint tasks
+
+## Book v2 carry-forward from Sprint 113
+
+- [ ] T-11401 (backlog) [intent: INT-0002]: Design and implement a deterministic operator-authored project check profile that Launch can scaffold and supported surfaces can load without a repeated `--checks-file`, while preserving the no-implicit-execution boundary. — touches: `crates/animus-launch`, `crates/ferric-cli/src/query.rs`, `crates/ferric-tools/src/builtin/run_check.rs`, `docs/commands.md`, `docs/configuration.md`
+- [ ] T-11402 (backlog) [intent: INT-0003]: Specify and experimentally evaluate a typed requirement ledger with causal evidence transitions and completion gating, without reviving the rejected planner label. — touches: `crates/ferric-trace`, `crates/ferric-loop`, `crates/ferric-bench`, `crates/ferric-cli`
+- [ ] T-11403 (backlog) [intent: INT-0004]: Bind effective prompt layers, Evidence guidance, tool descriptions, action schema, backend capabilities, and sampling configuration into portable trace genealogy. — touches: `crates/ferric-prompt`, `crates/ferric-loop`, `crates/ferric-trace`, `crates/ferric-provider`
+- [ ] T-11404 (backlog) [intent: INT-0004]: Design an ordinary-trace manifest/hash chain and deterministic session-list, per-turn-diff, and explicit resume-last/fork audit surfaces. — touches: `crates/ferric-trace`, `crates/ferric-cli/src/trace_cmd.rs`, `crates/ferric-cli/src/trace_verify.rs`, `crates/ferric-vcs`
+- [ ] T-11405 (backlog) [intent: INT-0005]: Add bounded in-process Rust and JavaScript/TypeScript candidate parsing with typed unchecked outcomes and no subprocess/import/temp side effects. — touches: `crates/ferric-tools/src/builtin/check_syntax.rs`, `crates/ferric-tools/tests/controlled_mutations.rs`, `crates/ferric-trace`
+- [ ] T-11406 (backlog) [intent: INT-0006]: Audit every public run-policy field; wire, explicitly reserve, or compatibly retire inert planner, plan-budget, and subagent claims across runtime, wire, CLI, and docs. — touches: `crates/ferric-core/src/scale.rs`, `crates/ferric-loop`, `crates/ferric-cli`, `docs/configuration.md`, `docs/commands.md`
