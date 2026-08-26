@@ -1032,3 +1032,19 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-08-26T14:05:56-04:00
 - **Files modified:** docs/work/tasks.md, docs/work/completed-tasks.md
 - **Commit:** `7543d085c9ee1fa48e3960e811cfe3b100932b31`
+
+## T-11306 (sprint 113)
+- **Description:** Reconciled the paired autonomy runner and closed two
+  fail-open scoring holes. Paired eligibility is now derived once and applied
+  to every model-attributable rate, policy/arm slice, tool/mechanism statistic,
+  recovery/clarification/resource aggregate, and failure count, so neither arm
+  of a missing or dirty pair can leak into model scoring. Pair provenance now
+  requires canonical IDs and valid distinct workspace/equal-tree SHA-256
+  identities. Infrastructure and terminal diagnostics still retain every
+  observed row. The ferric-bench suite, Clippy with warnings denied, format,
+  and diff checks passed.
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
+- **Completed:** 2026-08-26T14:16:09-04:00
+- **Files modified:** crates/ferric-bench/src/autonomy_results.rs,
+  docs/work/tasks.md, docs/work/completed-tasks.md
+- **Commit:** PENDING
