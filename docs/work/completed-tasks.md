@@ -1004,3 +1004,18 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** crates/ferric-loop/tests/evidence_dispatch_tests.rs,
   docs/work/tasks.md, docs/work/completed-tasks.md
 - **Commit:** `a44dc9269250927db926709869e419492c40f660`
+
+## T-11304 (sprint 113)
+- **Description:** Reconciled replay and recovery behavior and added the missing
+  successful live Evidence-resume round trip. The test proves inherited file
+  coverage is conservatively stale, the literal `RecoveryPacketInjected`
+  message is byte-identical to what the mock provider receives, and the full
+  run-produced continuation trace passes `TraceStructure`. Existing tests also
+  cover pause/crash prefixes, resume-of-resume, clarification, canonical
+  packets, and compaction independence. The complete ferric-loop suite,
+  affected Clippy with warnings denied, and workspace format check passed.
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
+- **Completed:** 2026-08-26T13:59:23-04:00
+- **Files modified:** crates/ferric-loop/tests/resume_tests.rs,
+  docs/work/tasks.md, docs/work/completed-tasks.md
+- **Commit:** PENDING

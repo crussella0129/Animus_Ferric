@@ -7,12 +7,15 @@ use common::*;
 use ferric_core::{ActionProtocol, HarnessPolicy, Message};
 use ferric_guard::Workspace;
 use ferric_loop::{
-    ControllerState, ReplayError, ReplayedState, RunArgs, StopReason, replay, run,
+    ControllerState, ReplayError, ReplayedState, RunArgs, StopReason, TraceStructure, replay, run,
     validate_resume_target,
 };
 use ferric_provider::{MockProvider, SamplingParams};
 use ferric_tools::{Registry, register_builtin_tools};
-use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
+use ferric_trace::{
+    CONTROLLER_RECORD_VERSION, Event, FileObservationV1, JsonlSink, LineRangeV1,
+    ObservationDetailV1, ObservationV1, ParsedEvent, TraceReader,
+};
 
 fn base_replayed(turns: u32, workspace: &std::path::Path) -> ReplayedState {
     ReplayedState {
@@ -179,6 +182,125 @@ fn evidence_resume_rejects_required_check_drift_before_trace_or_dispatch() {
     drop(sink);
     assert_eq!(std::fs::read_to_string(&trace_path).unwrap(), "");
     assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn live_evidence_resume_injects_byte_identical_stale_recovery_packet_and_verifies() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new(dir.path()).unwrap();
+    let registry = Registry::new();
+    let trace_path = dir.path().join("evidence-resume.jsonl");
+    let mut sink = JsonlSink::open(&trace_path, "evidence-resume").unwrap();
+    let provider = MockProvider::new(vec![text_completion("done after recovery")]);
+    let sleeper = RecordingSleeper::new();
+
+    let mut controller = ControllerState::new(HarnessPolicy::Evidence, Vec::new()).unwrap();
+    controller
+        .apply_observation(
+            0,
+            &ObservationV1 {
+                version: CONTROLLER_RECORD_VERSION,
+                detail: ObservationDetailV1::File(FileObservationV1 {
+                    path: "a.rs".to_string(),
+                    sha256: "a".repeat(64),
+                    total_bytes: 2,
+                    total_lines: 1,
+                    requested_range: None,
+                    returned_range: Some(LineRangeV1 { start: 1, end: 1 }),
+                    complete: true,
+                    model_truncated: false,
+                }),
+            },
+        )
+        .unwrap();
+
+    let mut replayed = base_replayed(0, dir.path());
+    replayed.harness_policy = HarnessPolicy::Evidence;
+    replayed.pause_reason = Some("max_turns".to_string());
+    replayed.controller_checkpoint = Some(controller.checkpoint_for_pause("max_turns").unwrap());
+
+    let outcome = futures_executor::block_on(run(
+        RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            provenance: ferric_guard::Provenance::Clean,
+            provider: &provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &nano_policy(),
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
+            sampling: SamplingParams::default(),
+            sleeper: &sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: Some(replayed),
+            answer: None,
+            hooks: None,
+        },
+        &mut sink,
+        None,
+    ))
+    .unwrap();
+    assert_eq!(outcome.stop, StopReason::FinalText);
+    drop(sink);
+
+    let records = TraceReader::open(&trace_path)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let (packet, packet_message) = records
+        .iter()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::RecoveryPacketInjected { packet, message }) => {
+                Some((packet, message))
+            }
+            _ => None,
+        })
+        .expect("live resume must write a recovery packet");
+    assert_eq!(packet.reread_paths, ["a.rs"]);
+
+    let resumed_controller = records
+        .iter()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::ControllerCheckpoint { state }) => Some(state),
+            _ => None,
+        })
+        .expect("live resume must write a controller recovery base");
+    let inherited = resumed_controller
+        .file_evidence
+        .iter()
+        .find(|evidence| evidence.path == "a.rs")
+        .expect("controller recovery base must retain the observed identity");
+    assert!(!inherited.fresh);
+    assert!(!inherited.complete);
+    assert!(inherited.covered_ranges.is_empty());
+
+    let requests = provider.requests();
+    let injected_messages: Vec<_> = requests[0]
+        .messages
+        .iter()
+        .filter_map(|message| message.text.as_deref())
+        .filter(|message| *message == packet_message)
+        .collect();
+    assert_eq!(injected_messages, [packet_message.as_str()]);
+
+    let mut structure = TraceStructure::new();
+    for record in &records {
+        let ParsedEvent::Known(event) = &record.event else {
+            panic!("live resume trace contains an unknown event")
+        };
+        structure.observe(event).unwrap_or_else(|error| {
+            panic!(
+                "event {} failed structural verification: {error}",
+                record.seq
+            )
+        });
+    }
+    structure.finish().unwrap();
 }
 
 #[test]
