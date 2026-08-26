@@ -1114,4 +1114,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   docs/work/tasks.md, docs/work/completed-tasks.md
 - **Verification:** the archived evaluation tree contains only single-arm
   Evidence screens 001–004 and no paired or confirmation artifact.
-- **Commit:** PENDING
+- **Commit:** `dd6791bd48e2c61b3a3a2ec4f3b9e6c13cc3b9e6`
