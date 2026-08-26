@@ -951,6 +951,57 @@ mod tests {
         assert_eq!(server.config.policy.tier, ferric_core::Tier::Nano);
     }
 
+    #[test]
+    fn bounded_mcp_request_preserves_explicit_evidence_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut args = base_mcp_args(dir.path());
+        args.harness_policy = Some(HarnessPolicyArg::Evidence);
+        let server = McpServer::launch(&args).unwrap();
+        assert_eq!(
+            server.config.harness_policy,
+            Some(ferric_core::HarnessPolicy::Evidence)
+        );
+
+        let response = server
+            .dispatch(call_request(
+                1,
+                serde_json::json!({"prompt": "complete one bounded mock task"}),
+            ))
+            .unwrap();
+        assert_eq!(response.result.as_ref().unwrap()["isError"], false);
+
+        let trace = std::fs::read_dir(&server.trace_dir)
+            .unwrap()
+            .next()
+            .expect("one bounded MCP request trace")
+            .unwrap()
+            .path();
+        let selected = ferric_trace::TraceReader::open(trace)
+            .unwrap()
+            .find_map(|record| match record.unwrap().event {
+                ferric_trace::ParsedEvent::Known(ferric_trace::Event::PolicySelected {
+                    harness_policy,
+                    ..
+                }) => Some(harness_policy),
+                _ => None,
+            })
+            .expect("a policy_selected event");
+        assert_eq!(selected, ferric_core::HarnessPolicy::Evidence);
+    }
+
+    #[test]
+    fn unsupported_planner_fails_before_mcp_trace_or_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut args = base_mcp_args(dir.path());
+        args.harness_policy = Some(HarnessPolicyArg::EvidencePlanner);
+
+        let error = McpServer::launch(&args)
+            .err()
+            .expect("planner is unavailable");
+        assert!(error.contains("evidence_planner"), "{error}");
+        assert!(!dir.path().join(".ferric/trace").exists());
+    }
+
     /// C-001 (plan-critic): same shape as `cli::config_only_model_still_
     /// resolves_profile`, scoped to `ferric mcp` — `model` set ONLY via
     /// config.toml must still hit the persisted `calibrated_ring` lookup.

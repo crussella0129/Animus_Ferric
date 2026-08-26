@@ -1065,3 +1065,21 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   crates/ferric-tools/tests/builtin_file_tools.rs, docs/work/tasks.md,
   docs/work/completed-tasks.md
 - **Commit:** `380be3402022fb35fbfadf1a40a0174c3ce21b53`
+
+## T-11310 (sprint 113)
+- **Description:** Closed the feature-gated API, MCP, and ICM policy surface
+  verification gap. Bounded production seams and requests prove explicit and
+  project-configured Evidence policy remains Evidence, while unavailable
+  EvidencePlanner fails before bind, provider/stage work, trace allocation, or
+  workspace mutation. The Book-v2 migration compatibility guard now preserves
+  immutable history and sprint evidence while asserting that canonical Book
+  ledgers replace legacy root paths. The complete backend-openai CLI target
+  passed (158 unit, 6 bench-mock, 62 CLI integration, and 3 template-hygiene
+  tests), as did feature-gated Clippy with warnings denied and workspace format.
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
+- **Completed:** 2026-08-26T14:28:22-04:00
+- **Files modified:** crates/ferric-cli/src/api.rs,
+  crates/ferric-cli/src/mcp.rs, crates/ferric-cli/src/icm.rs,
+  crates/ferric-cli/tests/template_hygiene.rs, docs/work/tasks.md,
+  docs/work/completed-tasks.md
+- **Commit:** PENDING
