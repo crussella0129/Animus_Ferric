@@ -1115,3 +1115,20 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Verification:** the archived evaluation tree contains only single-arm
   Evidence screens 001–004 and no paired or confirmation artifact.
 - **Commit:** `dd6791bd48e2c61b3a3a2ec4f3b9e6c13cc3b9e6`
+
+## T-11312 (sprint 113)
+- **Description:** Preserved the held-task seal on the falsified path and
+  recorded the managed-server teardown. Because no candidate qualified, no
+  H02/H03/H05/H06/H07 evaluation episode, held result row, workspace, or trace
+  was created. The record discloses a read-only migration search that surfaced
+  one H03 prompt line without exposing a held outcome or informing candidate
+  development; H02 and H05–H07 remained wholly uninspected. The final server
+  PID, listener, local and global runfiles, and health endpoint were all
+  independently confirmed absent.
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
+- **Completed:** 2026-08-26T18:29:17-04:00
+- **Files modified:** docs/sprints/s113/sprint-tests/held-and-teardown.md,
+  docs/work/tasks.md, docs/work/completed-tasks.md
+- **Verification:** independent trace verification was side-effect-free; no
+  held artifact exists; teardown checks found no managed server residue.
+- **Commit:** PENDING

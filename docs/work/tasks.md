@@ -235,5 +235,4 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Book v2 active sprint tasks
 
-- [ ] T-11312 (sprint 113) [intent: INT-0001]: Evaluate frozen arms on sealed H02/H03/H05/H06/H07 with a measurable promotion verdict and prove trace integrity and teardown, or preserve the held-task seal on the falsified path. — touches: docs/sprints/s113/sprint-tests/, .ferric/ evaluation artifacts
 - [ ] T-11308 (sprint 113) [intent: INT-0001]: Decide the planner boundary as an explicit evidence-based design or rejection and close the intent, work ledger, sprint report, and durable architectural record without silently enabling a fallback. — touches: docs/intents/INT-0001-evidence-bound-autonomous-recovery.md, docs/work/, docs/sprints/s113/, crates/ferric-loop/
