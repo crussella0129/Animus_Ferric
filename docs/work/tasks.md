@@ -235,7 +235,6 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Book v2 active sprint tasks
 
-- [ ] T-11307 (sprint 113) [intent: INT-0001]: Run the frozen Qwen evidence screen; select only a candidate that clears objective, safety, mechanism, and clarification gates, or retain bounded 0/3 revisions and record falsification without inspecting held tasks. — touches: docs/sprints/s113/sprint-tests/, docs/sprints/s113/control-artifacts/, crates/ferric-loop/, crates/ferric-tools/, crates/ferric-cli/
 - [ ] T-11311 (sprint 113) [intent: INT-0001]: Freeze a qualifying candidate and run the 18-row adjacent counterbalanced paired confirmation, or record the explicit no-candidate skip path. — touches: docs/sprints/s113/sprint-tests/, .ferric/ evaluation artifacts
 - [ ] T-11312 (sprint 113) [intent: INT-0001]: Evaluate frozen arms on sealed H02/H03/H05/H06/H07 with a measurable promotion verdict and prove trace integrity and teardown, or preserve the held-task seal on the falsified path. — touches: docs/sprints/s113/sprint-tests/, .ferric/ evaluation artifacts
 - [ ] T-11308 (sprint 113) [intent: INT-0001]: Decide the planner boundary as an explicit evidence-based design or rejection and close the intent, work ledger, sprint report, and durable architectural record without silently enabling a fallback. — touches: docs/intents/INT-0001-evidence-bound-autonomous-recovery.md, docs/work/, docs/sprints/s113/, crates/ferric-loop/
