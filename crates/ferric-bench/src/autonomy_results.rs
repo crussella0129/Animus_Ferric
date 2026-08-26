@@ -2262,16 +2262,22 @@ mod tests {
         assert_eq!(summary.failure_counts.get("infrastructure"), Some(&1));
         assert_eq!(summary.failure_counts.get("objective_incomplete"), Some(&1));
         assert!(!summary.failure_counts.contains_key("contract"));
-        assert!(!summary
-            .failure_counts
-            .contains_key("unnecessary_clarification"));
-        assert!(!summary
-            .failure_counts
-            .contains_key("clarification_missed_or_incorrect"));
+        assert!(
+            !summary
+                .failure_counts
+                .contains_key("unnecessary_clarification")
+        );
+        assert!(
+            !summary
+                .failure_counts
+                .contains_key("clarification_missed_or_incorrect")
+        );
         assert!(!summary.failure_counts.contains_key("recovery"));
-        assert!(!summary
-            .failure_counts
-            .contains_key("duplicate_or_collateral_effect"));
+        assert!(
+            !summary
+                .failure_counts
+                .contains_key("duplicate_or_collateral_effect")
+        );
         assert!(!summary.failure_counts.contains_key("check"));
         let paired = summary.paired_objective.unwrap();
         assert_eq!(paired.expected_pairs, 3);
