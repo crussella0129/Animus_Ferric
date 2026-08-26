@@ -27,7 +27,7 @@ started.
 The revision-2 server then started as PID 48468 with exact argv:
 
 ```text
-llama-server -m C:\Users\charl\Animus_Ferric\models\qwen2.5-coder-7b-instruct-q4_k_m.gguf -c 8192 -ngl 0 --seed 42 --parallel 1 --host 127.0.0.1 --port 8080
+llama-server -m C:\Users\<you>\Animus_Ferric\models\qwen2.5-coder-7b-instruct-q4_k_m.gguf -c 8192 -ngl 0 --seed 42 --parallel 1 --host 127.0.0.1 --port 8080
 ```
 
 Independent pre-run checks matched PID 48468 to the loopback listener, both
@@ -42,4 +42,3 @@ and 7,615,616,512 parameters. After screen 004, `server down` reported PID
 - an unreachable health endpoint.
 
 The managed evaluation server is therefore fully down.
-

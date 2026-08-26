@@ -154,7 +154,7 @@ real Ferric-managed server runs below.
 Exact immutable inputs:
 
 - model:
-  `C:\Users\charl\Animus_Ferric\models\qwen2.5-coder-7b-instruct-q4_k_m.gguf`
+  `C:\Users\<you>\Animus_Ferric\models\qwen2.5-coder-7b-instruct-q4_k_m.gguf`
 - model SHA-256:
   `509287F78CB4D4CF6B3843734733B914B2C158E43E22A7F4BF5E963800894D3C`
 - parameters: `7.615616512B`

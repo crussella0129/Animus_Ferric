@@ -48,7 +48,13 @@ not authoritative. Do not recreate the retired root-level sprint ledgers.
 
 This repo is meant to be usable as a template (ADR-096). Machine identity —
 real tailnet addresses, MagicDNS suffixes, hostnames, account handles, concrete
-home directories, LAN IPs — must not enter tracked sources.
+home directories, LAN IPs — must not enter the live template surface.
 `crates/ferric-cli/tests/template_hygiene.rs` enforces this and will fail the
 suite. Use documentation values instead: `tailnet-example.ts.net`,
 `100.64.0.x`, `example-host`, `C:\Users\<you>`.
+
+Immutable migration history and sprint evidence under `docs/history/` and
+`docs/sprints/` are excluded from the executable template-hygiene scan because
+rewriting byte-bound provenance would falsify its hashes. New human-authored
+sprint prose must still use documentation values; only retained raw evidence
+may preserve machine-specific values when those bytes are themselves evidence.

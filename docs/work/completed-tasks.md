@@ -968,6 +968,7 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   events instead of silently accepting them before the causal validator is
   implemented, including an explicit legacy-policy rejection.
 - **Completed:** 2026-08-02
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
 - **Files modified:** crates/ferric-core/src/{harness.rs,lib.rs},
   crates/ferric-trace/src/{event.rs,lib.rs},
   crates/ferric-loop/src/{run.rs,replay.rs,trace_structure.rs},
@@ -975,8 +976,11 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   crates/ferric-cli/src/{autonomy_cmd.rs,trace_cmd.rs,trace_verify.rs},
   crates/ferric-cli/tests/cli.rs, agent-tasks/*
 - **Verification:** `cargo check --workspace`; core/trace, loop, and CLI tests;
-  affected clippy with `-D warnings`; workspace format check.
-- **Commit:** pending
+  affected clippy with `-D warnings`; workspace format check; literal
+  pre-Evidence replay and malformed controller version/order cases added during
+  final reconciliation.
+- **Commit:** `8fc7c4f5469ff85f17c626369231e0f3881195c0` (foundation),
+  `bd937383ac17b25cebd0c742b5522cc983bcf896` (final negative fixtures)
 
 ## T-11302 (sprint 113)
 - **Description:** Reconciled the landed typed navigation, controlled mutation,
