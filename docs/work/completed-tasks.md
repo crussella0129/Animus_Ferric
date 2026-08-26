@@ -1131,4 +1131,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   docs/work/tasks.md, docs/work/completed-tasks.md
 - **Verification:** independent trace verification was side-effect-free; no
   held artifact exists; teardown checks found no managed server residue.
-- **Commit:** PENDING
+- **Commit:** `9ed4a962d9d2acedd862d3cde239bd9b0a38f6a9`
