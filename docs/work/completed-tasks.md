@@ -1019,3 +1019,16 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** crates/ferric-loop/tests/resume_tests.rs,
   docs/work/tasks.md, docs/work/completed-tasks.md
 - **Commit:** `17d328c23e4d55a60ab7e1027be7dad92b661362`
+
+## T-11305 (sprint 113)
+- **Description:** Reconciled the landed Evidence dispatcher and product-policy
+  plumbing. The shared path enforces prepare → controller → approval → commit
+  → measured record → tool result ordering; resume validation and inheritance
+  precede new trace state; unsupported planner policy fails closed; and custom
+  prompts retain general Evidence guidance. Existing named loop, resume, and
+  chat tests passed, as did affected CLI Clippy with warnings denied. Bounded
+  positive API/MCP/ICM propagation remains deliberately queued as T-11310.
+- **Intent:** [INT-0001](../intents/INT-0001-evidence-bound-autonomous-recovery.md)
+- **Completed:** 2026-08-26T14:05:56-04:00
+- **Files modified:** docs/work/tasks.md, docs/work/completed-tasks.md
+- **Commit:** PENDING

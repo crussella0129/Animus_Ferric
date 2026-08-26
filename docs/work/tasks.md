@@ -235,7 +235,6 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Book v2 active sprint tasks
 
-- [ ] T-11305 (sprint 113) [intent: INT-0001]: Reconcile and verify controlled dispatch ordering, policy propagation, resume compatibility, and fail-closed planner behavior across supported product surfaces. — touches: crates/ferric-loop/src/, crates/ferric-cli/src/, crates/ferric-cli/tests/cli.rs
 - [ ] T-11306 (sprint 113) [intent: INT-0001]: Reconcile and verify the landed frozen-arm, counterbalanced, collision-safe, provenance-bound paired autonomy runner and scoreability gate. — touches: crates/ferric-cli/src/autonomy_cmd.rs, crates/ferric-cli/src/server.rs, crates/ferric-cli/src/backend.rs, crates/ferric-bench/src/
 - [ ] T-11309 (sprint 113) [intent: INT-0001]: Remove the legacy write path's implicit Python child process, reuse the in-process parser for warning-only validation, and prove model-authored `sitecustomize.py` is parsed but never executed. — touches: crates/ferric-tools/src/builtin/check_syntax.rs, crates/ferric-tools/src/builtin/write_file.rs, crates/ferric-tools/tests/builtin_file_tools.rs
 - [ ] T-11310 (sprint 113) [intent: INT-0001]: Repair stale backend-feature policy tests and add bounded successful Evidence propagation coverage for API, MCP, and ICM before running the exact backend-openai gate. — touches: crates/ferric-cli/src/api.rs, crates/ferric-cli/src/mcp.rs, crates/ferric-cli/src/icm.rs, crates/ferric-cli/tests/cli.rs
