@@ -3,13 +3,13 @@
 - **Sprint number:** 113
 - **Book schema version:** 2
 - **Start timestamp:** 2026-08-02T13:51:38Z
-- **End timestamp:** pending
+- **End timestamp:** 2026-08-26T23:19:20Z
 - **Model:** Codex (GPT-5)
-- **Exit status:** in-progress
+- **Exit status:** success
 - **Token count:** unavailable across the legacy-to-Book migration
 - **Summary:** Make small-model repository work causally evidence-bound, verify the intervention against a frozen real-model control, and decide the planner boundary.
 - **Intents:** [INT-0001](../../intents/INT-0001-evidence-bound-autonomous-recovery.md)
-- **Completion evidence:** pending
+- **Completion evidence:** [Sprint 113 Test report](sprint-tests/test-report.md) - local gates passed; the Evidence intervention was falsified at 0/3; accepted caveats and follow-up intents are preserved.
 
 ## Legacy approval provenance
 
