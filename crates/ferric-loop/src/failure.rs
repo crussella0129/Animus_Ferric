@@ -23,6 +23,23 @@ const WARN_AT: u8 = 2;
 /// rarely self-corrects past a nudge, so a faster stop saves more compute.
 const STOP_AT: u8 = 3;
 
+/// Remove the synthetic error result produced by a blocked completion gate
+/// from the result-bearing execution counts used by [`FailureGuard`]. A
+/// `task_complete` gate is a control transition, not executed work. When it is
+/// the only result in a turn this deliberately yields `(0, 0)`, which resets
+/// the consecutive execution-failure streak.
+pub(crate) fn execution_counts(
+    dispatched: usize,
+    errored: usize,
+    completion_was_blocked: bool,
+) -> (usize, usize) {
+    if completion_was_blocked {
+        (dispatched.saturating_sub(1), errored.saturating_sub(1))
+    } else {
+        (dispatched, errored)
+    }
+}
+
 pub struct FailureGuard {
     consecutive_failed_turns: u8,
 }
@@ -101,5 +118,31 @@ mod tests {
         assert_eq!(g.observe_turn(1, 1), Verdict::Proceed); // streak 1
         assert_eq!(g.observe_turn(3, 3), Verdict::Warn); // streak 2 — all 3 errored
         assert_eq!(g.observe_turn(2, 2), Verdict::Stop); // streak 3 — all 2 errored
+    }
+
+    #[test]
+    fn blocked_completion_is_removed_from_execution_counts() {
+        assert_eq!(execution_counts(1, 1, true), (0, 0));
+        assert_eq!(execution_counts(2, 2, true), (1, 1));
+        assert_eq!(execution_counts(2, 1, true), (1, 0));
+        assert_eq!(execution_counts(2, 2, false), (2, 2));
+    }
+
+    #[test]
+    fn control_only_turn_breaks_a_consecutive_failure_streak() {
+        let mut g = FailureGuard::new();
+        assert_eq!(g.observe_turn(1, 1), Verdict::Proceed);
+        assert_eq!(g.observe_turn(1, 1), Verdict::Warn);
+        assert_eq!(g.observe_turn(0, 0), Verdict::Proceed);
+        assert_eq!(g.observe_turn(1, 1), Verdict::Proceed);
+    }
+
+    #[test]
+    fn mixed_execution_error_and_blocked_completion_keeps_the_real_failure() {
+        let mut g = FailureGuard::new();
+        assert_eq!(g.observe_turn(1, 1), Verdict::Proceed);
+        let (dispatched, errored) = execution_counts(2, 2, true);
+        assert_eq!((dispatched, errored), (1, 1));
+        assert_eq!(g.observe_turn(dispatched, errored), Verdict::Warn);
     }
 }

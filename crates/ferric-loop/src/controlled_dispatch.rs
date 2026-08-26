@@ -15,10 +15,11 @@ use ferric_tools::{
     WorkspaceEffectKind, WorkspaceEffectReport, sha256_bytes,
 };
 use ferric_trace::{
-    CONTROLLER_RECORD_VERSION, ControllerBlockV1, Event, FileObservationV1, JsonlSink, LineRangeV1,
-    NavigationObservationV1, ObservationDetailV1, ObservationV1, PathEffectKind, PathEffectV1,
-    PreparedPathIdentityV1, PreparedPathStateV1, RequestedLineRangeV1, SyntaxStateV1,
-    UnsupportedMutationKindV1, VerificationCheckV1, VerificationOutcome, WorkspaceEffectV1,
+    CONTROLLER_RECORD_VERSION, ControllerBlockReason, ControllerBlockV1, Event, FileObservationV1,
+    JsonlSink, LineRangeV1, NavigationObservationV1, ObservationDetailV1, ObservationV1,
+    PathEffectKind, PathEffectV1, PreparedPathIdentityV1, PreparedPathStateV1,
+    RequestedLineRangeV1, SyntaxStateV1, UnsupportedMutationKindV1, VerificationCheckV1,
+    VerificationOutcome, WorkspaceEffectV1,
 };
 
 use crate::controller::{ControllerState, MutationRequirement};
@@ -56,7 +57,9 @@ pub(crate) fn dispatch(
         } => {
             record_permission_checks(&checks, sink, projector)?;
             if let Some(block) = preparation_block(controller, workspace, call, &error)? {
+                let feedback = format_controller_block(&block);
                 record_block(turn, call, block, sink, projector)?;
+                return record_result(call, feedback, true, duration_ms, sink, projector);
             }
             return record_result(call, error.message, true, duration_ms, sink, projector);
         }
@@ -81,30 +84,18 @@ pub(crate) fn dispatch(
         PreparedIntent::Mutation(intent) => {
             let requirements = mutation_requirements(intent);
             if let Some(block) = controller.mutation_block(turn, &requirements) {
+                let feedback = format_controller_block(&block);
                 record_block(turn, call, block, sink, projector)?;
-                return record_result(
-                    call,
-                    "controller blocked mutation before approval".to_string(),
-                    true,
-                    0,
-                    sink,
-                    projector,
-                );
+                return record_result(call, feedback, true, 0, sink, projector);
             }
             None
         }
         PreparedIntent::Verification(intent) => match controller.admit_check(&intent.name) {
             Ok(attempt) => Some(attempt),
             Err(block) => {
+                let feedback = format_controller_block(&block);
                 record_block(turn, call, *block, sink, projector)?;
-                return record_result(
-                    call,
-                    "controller blocked verification before execution".to_string(),
-                    true,
-                    0,
-                    sink,
-                    projector,
-                );
+                return record_result(call, feedback, true, 0, sink, projector);
             }
         },
         PreparedIntent::ReadOnly
@@ -147,6 +138,8 @@ pub(crate) fn dispatch(
             return record_result(call, format!("DENIED: {reason}"), true, 0, sink, projector);
         }
     };
+    let mut result_full = output.full;
+    let result_is_error = output.is_error;
 
     match &intent {
         PreparedIntent::ReadOnly => {
@@ -184,7 +177,7 @@ pub(crate) fn dispatch(
             apply_observation(turn, call, observation, controller, sink, projector)?;
         }
         PreparedIntent::Mutation(_) => {
-            apply_mutation_outcome(
+            if let Some(feedback) = apply_mutation_outcome(
                 turn,
                 call,
                 &metadata.effects,
@@ -192,7 +185,9 @@ pub(crate) fn dispatch(
                 controller,
                 sink,
                 projector,
-            )?;
+            )? {
+                result_full = feedback;
+            }
         }
         PreparedIntent::Verification(intent) => {
             let attempt = admitted_check_attempt.ok_or_else(|| {
@@ -203,12 +198,12 @@ pub(crate) fn dispatch(
                 &metadata.effects,
                 &metadata.observation,
                 metadata.failure.as_ref(),
-                output.is_error,
+                result_is_error,
             )?;
             let verification = metadata.verification.as_ref().ok_or_else(|| {
                 contract_error(&call.name, "verification outcome metadata is missing")
             })?;
-            if verification.name != intent.name || verification.passed == output.is_error {
+            if verification.name != intent.name || verification.passed == result_is_error {
                 return Err(contract_error(
                     &call.name,
                     "verification outcome disagrees with its prepared intent or result",
@@ -223,7 +218,7 @@ pub(crate) fn dispatch(
                 &intent.name,
                 attempt,
                 verification.passed,
-                &output.full,
+                &result_full,
                 workspace,
                 controller,
                 sink,
@@ -234,8 +229,8 @@ pub(crate) fn dispatch(
 
     record_result(
         call,
-        output.full,
-        output.is_error,
+        result_full,
+        result_is_error,
         duration_ms,
         sink,
         projector,
@@ -363,7 +358,7 @@ fn apply_mutation_outcome(
     controller: &mut ControllerState,
     sink: &mut JsonlSink,
     projector: &mut TraceProjector,
-) -> Result<(), FerricError> {
+) -> Result<Option<String>, FerricError> {
     let WorkspaceEffectReport::Measured(effects) = report else {
         return Err(contract_error(
             &call.name,
@@ -382,8 +377,9 @@ fn apply_mutation_outcome(
                     prepared_identity(&witness.observed),
                 )
                 .map_err(|error| contract_error(&call.name, error.to_string()))?;
+            let feedback = format_controller_block(&block);
             record_block(turn, call, block, sink, projector)?;
-            return Ok(());
+            return Ok(Some(feedback));
         }
         return Err(contract_error(
             &call.name,
@@ -416,7 +412,75 @@ fn apply_mutation_outcome(
         projector,
     )?;
     *controller = next;
-    Ok(())
+    Ok(None)
+}
+
+/// Render one typed controller refusal as deterministic, actionable feedback.
+///
+/// The typed event remains the durable source of truth. This text is the
+/// model-facing projection: it names the current epoch and relevant targets,
+/// makes clear that retrying does not depend on a person, and gives exactly
+/// the next controller-compatible action for the recorded reason.
+pub(crate) fn format_controller_block(block: &ControllerBlockV1) -> String {
+    let (reason, next_action) = match block.reason {
+        ControllerBlockReason::BlindMutation => (
+            "blind_mutation",
+            "completely read every existing target path, then retry the mutation in a later turn",
+        ),
+        ControllerBlockReason::SameTurnObservation => (
+            "same_turn_observation",
+            "retry the mutation in a later turn; a same-turn observation cannot admit it",
+        ),
+        ControllerBlockReason::StaleObservation => (
+            "stale_observation",
+            "reread the current target path, then retry against that current state in a later turn",
+        ),
+        ControllerBlockReason::UnsupportedMutation => (
+            "unsupported_mutation",
+            "use a supported controlled operation or check",
+        ),
+        ControllerBlockReason::RepairInspectionRequired => (
+            "repair_inspection_required",
+            "after the failed check, read the current relevant path in a later turn, then make a material repair before rerunning the check",
+        ),
+        ControllerBlockReason::NoEffect => (
+            "no_effect",
+            "the candidate produced no measured change; make a material change before retrying",
+        ),
+        ControllerBlockReason::SyntaxRegression => (
+            "syntax_regression",
+            "repair the candidate syntax before retrying the mutation",
+        ),
+        ControllerBlockReason::RepeatedCheck => (
+            "repeated_check",
+            "the check already ran at the unchanged mutation epoch; do not rerun it now. If it failed, read the current relevant path in a later turn, then make a material repair before rerunning. If it passed and all required checks are current, call task_complete",
+        ),
+    };
+
+    let mut details = vec![
+        format!("reason={reason}"),
+        format!("mutation_epoch={}", block.mutation_epoch),
+    ];
+    let mut paths = block.paths.clone();
+    paths.sort();
+    paths.dedup();
+    if !paths.is_empty() {
+        details.push(format!(
+            "paths={}",
+            serde_json::to_string(&paths).expect("serializing strings cannot fail")
+        ));
+    }
+    if let Some(check_name) = &block.check_name {
+        details.push(format!(
+            "check_name={}",
+            serde_json::to_string(check_name).expect("serializing a string cannot fail")
+        ));
+    }
+
+    format!(
+        "CONTROLLER_BLOCKED: {}. No human approval is required. Next action: {next_action}.",
+        details.join("; ")
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -855,6 +919,73 @@ mod tests {
     use ferric_core::HarnessPolicy;
     use ferric_tools::ControlFailure;
     use ferric_trace::{ParsedEvent, TraceReader};
+
+    #[test]
+    fn controller_block_feedback_is_stable_and_actionable_for_every_reason() {
+        let cases = [
+            (
+                ControllerBlockReason::BlindMutation,
+                "blind_mutation",
+                "completely read every existing target path, then retry the mutation in a later turn",
+            ),
+            (
+                ControllerBlockReason::SameTurnObservation,
+                "same_turn_observation",
+                "retry the mutation in a later turn; a same-turn observation cannot admit it",
+            ),
+            (
+                ControllerBlockReason::StaleObservation,
+                "stale_observation",
+                "reread the current target path, then retry against that current state in a later turn",
+            ),
+            (
+                ControllerBlockReason::UnsupportedMutation,
+                "unsupported_mutation",
+                "use a supported controlled operation or check",
+            ),
+            (
+                ControllerBlockReason::RepairInspectionRequired,
+                "repair_inspection_required",
+                "after the failed check, read the current relevant path in a later turn, then make a material repair before rerunning the check",
+            ),
+            (
+                ControllerBlockReason::NoEffect,
+                "no_effect",
+                "the candidate produced no measured change; make a material change before retrying",
+            ),
+            (
+                ControllerBlockReason::SyntaxRegression,
+                "syntax_regression",
+                "repair the candidate syntax before retrying the mutation",
+            ),
+            (
+                ControllerBlockReason::RepeatedCheck,
+                "repeated_check",
+                "the check already ran at the unchanged mutation epoch; do not rerun it now. If it failed, read the current relevant path in a later turn, then make a material repair before rerunning. If it passed and all required checks are current, call task_complete",
+            ),
+        ];
+
+        for (reason, label, next_action) in cases {
+            let block = ControllerBlockV1 {
+                version: CONTROLLER_RECORD_VERSION,
+                reason,
+                mutation_epoch: 7,
+                paths: vec![
+                    "z.txt".to_string(),
+                    "a.txt".to_string(),
+                    "a.txt".to_string(),
+                ],
+                check_name: Some("unit".to_string()),
+                witness: None,
+            };
+            assert_eq!(
+                format_controller_block(&block),
+                format!(
+                    "CONTROLLER_BLOCKED: reason={label}; mutation_epoch=7; paths=[\"a.txt\",\"z.txt\"]; check_name=\"unit\". No human approval is required. Next action: {next_action}."
+                )
+            );
+        }
+    }
 
     #[test]
     fn diagnostic_normalization_is_platform_and_workspace_stable() {

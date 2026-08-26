@@ -648,6 +648,7 @@ impl<'a> LoopState<'a> {
         let mut plan_terminate_with: Option<String> = None;
         let mut dispatched = 0usize;
         let mut errored = 0usize;
+        let mut completion_was_blocked = false;
         for call in &actions {
             if crate::terminator::is_task_complete(&call.name) {
                 terminate_with = Some((call.clone(), crate::terminator::summary_of(&call.args)));
@@ -858,6 +859,7 @@ impl<'a> LoopState<'a> {
             self.projector.step(&result);
             dispatched += 1;
             errored += 1;
+            completion_was_blocked = true;
         }
 
         if let Some(plan) = plan_terminate_with {
@@ -876,7 +878,12 @@ impl<'a> LoopState<'a> {
         }
 
         if dispatched > 0 {
-            match self.failure.observe_turn(dispatched, errored) {
+            let (execution_dispatched, execution_errored) =
+                crate::failure::execution_counts(dispatched, errored, completion_was_blocked);
+            match self
+                .failure
+                .observe_turn(execution_dispatched, execution_errored)
+            {
                 crate::repetition::Verdict::Proceed => {}
                 crate::repetition::Verdict::Warn => {
                     let evt = Event::FailureGuard {
@@ -1200,8 +1207,25 @@ pub async fn run(
         let _ = repetition.observe(&guarded.calls);
         let _ = progress.observe(&guarded.calls);
         let _ = oscillation.observe(&guarded.calls);
+        // A task_complete proposal with a recorded error result is a blocked
+        // completion gate: a passed gate ends successfully and is not
+        // resumable. A 0/0 task_complete turn was stopped by an action-shape
+        // guard before dispatch, so it must not touch the failure streak.
+        // Keep GuardTurn's counts literal and derive the same execution-only
+        // view used by the live path.
+        let completion_was_blocked = guarded.dispatched > 0
+            && guarded.errored > 0
+            && guarded
+                .calls
+                .iter()
+                .any(|call| crate::terminator::is_task_complete(&call.name));
+        let (execution_dispatched, execution_errored) = crate::failure::execution_counts(
+            guarded.dispatched as usize,
+            guarded.errored as usize,
+            completion_was_blocked,
+        );
         if guarded.dispatched > 0 {
-            let _ = failure.observe_turn(guarded.dispatched as usize, guarded.errored as usize);
+            let _ = failure.observe_turn(execution_dispatched, execution_errored);
         }
     }
 

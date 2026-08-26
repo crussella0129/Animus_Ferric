@@ -537,6 +537,29 @@ fn no_effect_and_syntax_regression_are_typed_before_approval() {
         assert_eq!(capture.result.unwrap().stop, StopReason::FinalText);
         assert_eq!(callbacks.load(Ordering::SeqCst), 0);
         assert_eq!(blocks(&capture.records), [expected]);
+        let feedback = capture
+            .records
+            .iter()
+            .find_map(|record| match &record.event {
+                ParsedEvent::Known(Event::ToolResult {
+                    id,
+                    output,
+                    is_error: true,
+                    ..
+                }) if id == "write" => Some(output),
+                _ => None,
+            })
+            .expect("typed preparation block should have model-facing feedback");
+        let reason = match expected {
+            ferric_trace::ControllerBlockReason::NoEffect => "reason=no_effect",
+            ferric_trace::ControllerBlockReason::SyntaxRegression => "reason=syntax_regression",
+            _ => unreachable!(),
+        };
+        assert!(feedback.contains(reason), "{feedback}");
+        assert!(
+            feedback.contains("No human approval is required"),
+            "{feedback}"
+        );
         assert_eq!(
             std::fs::read_to_string(directory.path().join(path)).unwrap(),
             original
@@ -579,6 +602,229 @@ fn repeated_check_is_blocked_before_a_second_process_starts() {
             ))
             .count(),
         1
+    );
+    let feedback = capture
+        .records
+        .iter()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::ToolResult {
+                id,
+                output,
+                is_error: true,
+                ..
+            }) if id == "check-2" => Some(output),
+            _ => None,
+        })
+        .expect("repeated check should have model-facing feedback");
+    assert!(feedback.contains("reason=repeated_check"), "{feedback}");
+    assert!(feedback.contains("mutation_epoch=0"), "{feedback}");
+    assert!(feedback.contains("check_name=\"unit\""), "{feedback}");
+    assert!(
+        feedback.contains("If it failed, read the current relevant path in a later turn"),
+        "{feedback}"
+    );
+    assert!(feedback.contains("make a material repair"), "{feedback}");
+    assert!(
+        feedback.contains("If it passed and all required checks are current, call task_complete"),
+        "{feedback}"
+    );
+    assert!(
+        feedback.contains("No human approval is required"),
+        "{feedback}"
+    );
+    validate_trace(&capture.records);
+}
+
+#[test]
+fn repeated_passed_check_points_to_completion_instead_of_mutation() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker_directory = tempfile::tempdir().unwrap();
+    let marker = marker_directory.path().join("check-spawns.txt");
+    init_workspace(&directory, &[("evidence_target.txt", "value = 3\n")]);
+    let capture = run_policy(
+        &directory,
+        vec![
+            tool_completion(vec![("check-1", "run_check", json!({"name": "unit"}))]),
+            tool_completion(vec![("check-2", "run_check", json!({"name": "unit"}))]),
+        ],
+        HarnessPolicy::Evidence,
+        vec![evidence_check(&marker)],
+        2,
+        None,
+        None,
+    );
+
+    assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    let feedback = capture
+        .records
+        .iter()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::ToolResult {
+                id,
+                output,
+                is_error: true,
+                ..
+            }) if id == "check-2" => Some(output),
+            _ => None,
+        })
+        .expect("repeated passed check should have model-facing feedback");
+    assert!(feedback.contains("reason=repeated_check"), "{feedback}");
+    assert!(
+        feedback.contains("If it passed and all required checks are current, call task_complete"),
+        "{feedback}"
+    );
+    assert!(
+        !feedback.contains("Next action: make a material mutation"),
+        "{feedback}"
+    );
+    validate_trace(&capture.records);
+}
+
+#[test]
+fn failed_check_repair_block_explains_the_model_recovery_sequence() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker_directory = tempfile::tempdir().unwrap();
+    let marker = marker_directory.path().join("check-spawns.txt");
+    init_workspace(&directory, &[("evidence_target.txt", "value = 1\n")]);
+    let capture = run_policy(
+        &directory,
+        vec![
+            tool_completion(vec![(
+                "read",
+                "read_file",
+                json!({"path": "evidence_target.txt"}),
+            )]),
+            tool_completion(vec![(
+                "edit",
+                "edit_file",
+                json!({"path": "evidence_target.txt", "old_string": "1", "new_string": "2"}),
+            )]),
+            tool_completion(vec![("check", "run_check", json!({"name": "unit"}))]),
+            tool_completion(vec![(
+                "premature-repair",
+                "edit_file",
+                json!({"path": "evidence_target.txt", "old_string": "2", "new_string": "3"}),
+            )]),
+            tool_completion(vec![(
+                "repair-inspection",
+                "read_file",
+                json!({"path": "evidence_target.txt"}),
+            )]),
+        ],
+        HarnessPolicy::Evidence,
+        vec![evidence_check(&marker)],
+        5,
+        None,
+        None,
+    );
+
+    assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
+    let feedback = capture
+        .records
+        .iter()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::ToolResult {
+                id,
+                output,
+                is_error: true,
+                ..
+            }) if id == "premature-repair" => Some(output),
+            _ => None,
+        })
+        .expect("premature repair should have model-facing feedback");
+    assert!(
+        feedback.contains("reason=repair_inspection_required"),
+        "{feedback}"
+    );
+    assert!(
+        feedback.contains("paths=[\"evidence_target.txt\"]"),
+        "{feedback}"
+    );
+    assert!(
+        feedback.contains("read the current relevant path in a later turn"),
+        "{feedback}"
+    );
+    assert!(feedback.contains("make a material repair"), "{feedback}");
+    assert!(
+        feedback.contains("No human approval is required"),
+        "{feedback}"
+    );
+    validate_trace(&capture.records);
+}
+
+#[test]
+fn blocked_task_complete_breaks_execution_failure_streak_before_recovery() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker_directory = tempfile::tempdir().unwrap();
+    let marker = marker_directory.path().join("check-spawns.txt");
+    init_workspace(&directory, &[("evidence_target.txt", "value = 1\n")]);
+    let capture = run_policy(
+        &directory,
+        vec![
+            tool_completion(vec![(
+                "missing",
+                "read_file",
+                json!({"path": "missing.txt"}),
+            )]),
+            tool_completion(vec![("failed-check", "run_check", json!({"name": "unit"}))]),
+            tool_completion(vec![(
+                "premature-completion",
+                ferric_loop::TASK_COMPLETE,
+                json!({"summary": "not verified"}),
+            )]),
+            tool_completion(vec![(
+                "blocked-repair",
+                "edit_file",
+                json!({"path": "evidence_target.txt", "old_string": "1", "new_string": "3"}),
+            )]),
+            tool_completion(vec![(
+                "recovery-read",
+                "read_file",
+                json!({"path": "evidence_target.txt"}),
+            )]),
+        ],
+        HarnessPolicy::Evidence,
+        vec![evidence_check(&marker)],
+        5,
+        None,
+        None,
+    );
+
+    assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
+    assert!(capture.records.iter().any(|record| matches!(
+        &record.event,
+        ParsedEvent::Known(Event::ToolResult {
+            id,
+            is_error: false,
+            ..
+        }) if id == "recovery-read"
+    )));
+    assert!(!capture.records.iter().any(|record| matches!(
+        &record.event,
+        ParsedEvent::Known(Event::FailureGuard { action }) if action == "stopped"
+    )));
+    let guard_history = capture
+        .records
+        .iter()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::RecoveryCheckpoint { state }) => Some(&state.guard_history),
+            _ => None,
+        })
+        .expect("max-turns stop should record guard reconstruction state");
+    let completion_turn = guard_history
+        .iter()
+        .find(|guarded| {
+            guarded
+                .calls
+                .iter()
+                .any(|call| call.id == "premature-completion")
+        })
+        .expect("blocked completion turn should remain in guard history");
+    assert_eq!(
+        (completion_turn.dispatched, completion_turn.errored),
+        (1, 1),
+        "GuardTurn must preserve the raw synthetic result counts; restoration derives execution-only counts from the task_complete call"
     );
     validate_trace(&capture.records);
 }

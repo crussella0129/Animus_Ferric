@@ -119,6 +119,7 @@ pub enum SyntaxUncheckedReason {
     UnsupportedExtension,
     InterpreterUnavailable,
     InputTooLarge,
+    CompilerFailure,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,9 +142,18 @@ pub struct SyntaxTransition {
 }
 
 impl SyntaxTransition {
+    /// Reject a proven-invalid candidate unless the preimage was already
+    /// proven invalid. A compiler-failure preimage is unknown rather than
+    /// invalid, so replacing it with invalid source fails closed. An unchecked
+    /// candidate remains nonblocking regardless of the preimage.
     pub fn blocks_mutation(&self) -> bool {
         matches!(self.candidate, SyntaxState::Invalid)
-            && matches!(self.before, SyntaxState::Absent | SyntaxState::Valid)
+            && matches!(
+                self.before,
+                SyntaxState::Absent
+                    | SyntaxState::Valid
+                    | SyntaxState::Unchecked(SyntaxUncheckedReason::CompilerFailure)
+            )
     }
 }
 
