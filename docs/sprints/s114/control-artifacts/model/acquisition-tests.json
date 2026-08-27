@@ -1,6 +1,6 @@
 {
   "schema": "animus-ferric-model-acquisition-tests-v1",
-  "completed_at_utc": "2026-08-27T04:07:19.4193175Z",
+  "completed_at_utc": "2026-08-27T09:46:08.4118630Z",
   "passed": true,
   "tests": [
     {
@@ -38,13 +38,12 @@
           "passed": true,
           "record": {
             "schema": "animus-ferric-model-acquisition-v1",
-            "started_at_utc": "2026-08-27T04:07:18.7162446Z",
-            "completed_at_utc": "2026-08-27T04:07:18.861628Z",
+            "started_at_utc": "2026-08-27T09:46:05.9076088Z",
+            "completed_at_utc": "2026-08-27T09:46:06.4531464Z",
             "quant": "Q4_K_M",
             "verified": false,
             "published": false,
             "failure": "partial_file_failed_verification",
-            "path": "models/tiny.gguf.part",
             "verification": {
               "schema": "animus-ferric-model-verification-v1",
               "path": "models/tiny.gguf.part",
@@ -54,7 +53,8 @@
               "actual_sha256": "55e5509f8052998294266ee5b50cb592938191fb5d67f73cac2e60b0276b1bdd",
               "verified": false,
               "failure": "sha256_mismatch"
-            }
+            },
+            "path": "models/tiny.gguf.part"
           },
           "final_exists": false,
           "partial_exists": true
@@ -63,20 +63,19 @@
           "passed": true,
           "record": {
             "schema": "animus-ferric-model-acquisition-v1",
-            "started_at_utc": "2026-08-27T04:07:19.0104524Z",
-            "completed_at_utc": "2026-08-27T04:07:19.1534517Z",
+            "started_at_utc": "2026-08-27T09:46:06.6036676Z",
+            "completed_at_utc": "2026-08-27T09:46:07.5105821Z",
             "quant": "Q4_K_M",
             "verified": false,
             "published": false,
-            "failure": "unhandled_acquisition_error",
-            "error_type": "System.IO.IOException",
-            "error_message": "injected post-publication verification I/O failure",
-            "quarantine": "models/tiny.gguf.rejected-20260827T0407191498294Z-10352",
-            "quarantine_error": null
+            "failure": "post_publish_verification_failed",
+            "quarantine": "models/tiny.gguf.rejected-20260827T0946075049460Z-55384",
+            "path": "models/tiny.gguf",
+            "verification": null
           },
           "final_exists": false,
           "quarantine": [
-            "tiny.gguf.rejected-20260827T0407191498294Z-10352"
+            "tiny.gguf.rejected-20260827T0946075049460Z-55384"
           ]
         }
       }
@@ -89,35 +88,24 @@
         "git_tracked": false,
         "model_blob_in_status": false,
         "status": [
-          " M docs/SUMMARY.md",
-          " M docs/work/completed-tasks.md",
-          " M docs/work/tasks.md",
-          "?? docs/intents/INT-0007-hardware-calibrated-autonomous-development.md",
-          "?? docs/sprints/s114/control-artifacts/model/README.md",
-          "?? docs/sprints/s114/control-artifacts/model/acquire-model.ps1",
-          "?? docs/sprints/s114/control-artifacts/model/acquisition-Q3_K_XL-20260827T0401380650092Z-17832.json",
-          "?? docs/sprints/s114/control-artifacts/model/acquisition-Q4_K_M.json",
-          "?? docs/sprints/s114/control-artifacts/model/acquisition-tests.json",
-          "?? docs/sprints/s114/control-artifacts/model/fixtures/throw-after-part-verifier.ps1",
-          "?? docs/sprints/s114/control-artifacts/model/model-spec.json",
-          "?? docs/sprints/s114/control-artifacts/model/sandboxed-transport-failure.json",
-          "?? docs/sprints/s114/control-artifacts/model/test-acquisition.ps1",
-          "?? docs/sprints/s114/control-artifacts/model/test-q3-gate.json",
-          "?? docs/sprints/s114/control-artifacts/model/verify-model.ps1",
-          "?? docs/sprints/s114/sprint-meta.md",
-          "?? docs/sprints/s114/sprint-plans/build-plan.md",
-          "?? docs/sprints/s114/sprint-plans/critique-initial.md",
-          "?? docs/sprints/s114/sprint-plans/critique.md",
-          "?? docs/sprints/s114/sprint-plans/test-plan.md",
-          "?? docs/sprints/s114/sprint-research/experiment-design.md",
-          "?? docs/sprints/s114/sprint-research/hardware-inventory.md",
-          "?? docs/sprints/s114/sprint-research/model-selection.md",
-          "?? docs/sprints/s114/sprint-research/research-report.md",
-          "?? docs/sprints/s114/sprint-research/sprint-loops-capability-audit.md",
-          "?? docs/sprints/s114/sprint-tests/e2e-tests.md",
-          "?? docs/sprints/s114/sprint-tests/integration-tests.md",
-          "?? docs/sprints/s114/sprint-tests/test-report.md",
-          "?? docs/sprints/s114/sprint-tests/unit-tests.md"
+          " M docs/sprints/s114/control-artifacts/model/acquire-model.ps1",
+          " M docs/sprints/s114/control-artifacts/model/acquisition-tests.json",
+          " M docs/sprints/s114/control-artifacts/model/test-acquisition.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/.gitattributes",
+          "?? docs/sprints/s114/control-artifacts/runtime/README.md",
+          "?? docs/sprints/s114/control-artifacts/runtime/finalize-selection.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/freeze-runtime.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/nonce.txt",
+          "?? docs/sprints/s114/control-artifacts/runtime/record-q4-verdict.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/run-coordinate.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/runtime-common.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/runtime-plan.json",
+          "?? docs/sprints/s114/control-artifacts/runtime/smoke-prompt.txt",
+          "?? docs/sprints/s114/control-artifacts/runtime/test-runtime.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/throughput-request.template.json",
+          "?? docs/sprints/s114/control-artifacts/runtime/trace-selftest-fixture.jsonl",
+          "?? docs/sprints/s114/control-artifacts/runtime/verify-q4-gate.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/verify-runtime.ps1"
         ]
       }
     },
@@ -139,6 +127,63 @@
           "gate": "T-11409/E09-D"
         },
         "two_bit_artifacts": []
+      }
+    },
+    {
+      "name": "forged_q4_gate_cannot_authorize_q3_download",
+      "passed": true,
+      "evidence": {
+        "passed": true,
+        "forged_claim": {
+          "q4_verdict": "non_viable",
+          "q3_fallback_authorized": true,
+          "selected_attempt": "01-q4-32768",
+          "attempt_chain": [
+            {
+              "id": "01-q4-32768",
+              "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            }
+          ]
+        },
+        "acquisition_exit_code": 3,
+        "acquisition_record": {
+          "schema": "animus-ferric-model-acquisition-v1",
+          "started_at_utc": "2026-08-27T09:46:07.862024Z",
+          "completed_at_utc": "2026-08-27T09:46:08.3939569Z",
+          "quant": "Q3_K_XL",
+          "verified": false,
+          "published": false,
+          "failure": "q3_fallback_not_authorized",
+          "gate_verification": {
+            "schema": "animus-ferric-q4-gate-verification-v1",
+            "mode": "verify_gate",
+            "passed": false,
+            "derivation": {
+              "attempt_chain": [],
+              "attempt_verifications": [],
+              "selected_attempt": null,
+              "q4_verdict": "blocked",
+              "q3_fallback_authorized": false,
+              "fallback_basis": null,
+              "reason_codes": null,
+              "median_decoded_tokens_per_second": null,
+              "attempt_manifest_sha256": null,
+              "attempt_verification": null,
+              "runtime_plan_sha256": "4db43a2b704a9b1190a407ebdc417c846063b4ad54eef8225e516608aa4ff015",
+              "validator_sha256": "7e4c249c9d06c6873f395b3c4972d9604659a765149ac91067efd934c9690d63"
+            },
+            "errors": [
+              "Q4 attempt evidence is absent: 01-q4-32768",
+              "Q4 gate fields do not equal fresh attempt-chain derivation"
+            ]
+          },
+          "authorization_record": "invalid",
+          "gate": "T-11409/E09-D"
+        },
+        "q3_final_exists": false,
+        "seeded_q3_partial_preserved": true,
+        "seeded_q3_partial_sha256": "e1e853684a206f162ee800a54b695c9cc1a8d1d554a47fcb13fe51229c17773f",
+        "q3_quarantine": []
       }
     }
   ]

@@ -13,8 +13,12 @@ for ($index = 0; $index -lt 5; $index++) {
     $repoRoot = Split-Path -Parent $repoRoot
 }
 $repoRoot = (Resolve-Path -LiteralPath $repoRoot).Path
+. (Join-Path $repoRoot `
+    'docs/sprints/s114/control-artifacts/runtime/runtime-common.ps1')
 $specPath = Join-Path $artifactDir 'model-spec.json'
 $verifyScript = Join-Path $artifactDir 'verify-model.ps1'
+$q4GateVerifier = Join-Path $repoRoot `
+    'docs/sprints/s114/control-artifacts/runtime/verify-q4-gate.ps1'
 $startedAt = (Get-Date).ToUniversalTime().ToString('o')
 $recordStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffffffZ')
 $RecordName = "acquisition-$Quant-$recordStamp-$PID.json"
@@ -65,12 +69,15 @@ function Invoke-Verification {
         [Parameter(Mandatory = $true)]$SelectedSpec
     )
 
-    $json = & $verifyScript -Path $CandidatePath `
-        -ExpectedBytes ([UInt64]$SelectedSpec.bytes) `
-        -ExpectedSha256 $SelectedSpec.sha256 `
-        -DisplayPath $CandidateDisplayPath
-    $code = $LASTEXITCODE
-    $result = $json | ConvertFrom-Json
+    $verificationProcess = Invoke-PowerShellFileBounded `
+        -ScriptPath $verifyScript -Arguments @(
+            '-Path', $CandidatePath,
+            '-ExpectedBytes', [string][UInt64]$SelectedSpec.bytes,
+            '-ExpectedSha256', [string]$SelectedSpec.sha256,
+            '-DisplayPath', $CandidateDisplayPath
+        )
+    $code = $verificationProcess.exit_code
+    $result = $verificationProcess.stdout | ConvertFrom-Json
     [pscustomobject]@{ Code = $code; Result = $result }
 }
 
@@ -83,29 +90,6 @@ function Move-ToQuarantine {
     [System.IO.Path]::GetFileName($quarantinePath)
 }
 
-function Test-Q3Authorization {
-    param(
-        [Parameter(Mandatory = $true)]$Authorization,
-        [Parameter(Mandatory = $true)]$PrimarySpec
-    )
-
-    $required = @(
-        'schema', 'gate', 'q4_verdict', 'q3_fallback_authorized',
-        'q4_file', 'q4_sha256'
-    )
-    foreach ($name in $required) {
-        if ($Authorization.PSObject.Properties.Name -notcontains $name) {
-            return $false
-        }
-    }
-    ($Authorization.schema -eq 'animus-ferric-qwen38-viability-v1') -and
-        ($Authorization.gate -eq 'E09-D') -and
-        ($Authorization.q4_verdict -eq 'non_viable') -and
-        ($Authorization.q3_fallback_authorized -eq $true) -and
-        ($Authorization.q4_file -eq $PrimarySpec.file) -and
-        ($Authorization.q4_sha256 -eq $PrimarySpec.sha256)
-}
-
 try {
     $spec = Get-Content -Raw -LiteralPath $specPath | ConvertFrom-Json
     if ($Quant -eq 'Q3_K_XL') {
@@ -115,12 +99,31 @@ try {
             Stop-Acquisition -Failure 'q3_fallback_not_authorized' -ExitCode 3 `
                 -Extra @{ gate = $spec.fallback.authorization_gate; authorization_record = 'missing' }
         }
-        $authorization = Get-Content -Raw -LiteralPath $authorizationPath | ConvertFrom-Json
-        $authorized = Test-Q3Authorization -Authorization $authorization `
-            -PrimarySpec $spec.primary
-        if (-not $authorized) {
+        if (-not (Test-Path -LiteralPath $q4GateVerifier -PathType Leaf)) {
             Stop-Acquisition -Failure 'q3_fallback_not_authorized' -ExitCode 3 `
-                -Extra @{ gate = $spec.fallback.authorization_gate; authorization_record = 'invalid' }
+                -Extra @{ gate = $spec.fallback.authorization_gate; authorization_record = 'verifier_missing' }
+        }
+        $gateVerificationProcess = Invoke-PowerShellFileBounded `
+            -ScriptPath $q4GateVerifier
+        $gateVerificationCode = $gateVerificationProcess.exit_code
+        try {
+            $gateVerification = $gateVerificationProcess.stdout |
+                ConvertFrom-Json
+        }
+        catch {
+            $gateVerification = $null
+        }
+        if ($gateVerificationCode -ne 0 -or
+            $null -eq $gateVerification -or
+            -not $gateVerification.passed -or
+            $gateVerification.derivation.q4_verdict -ne 'non_viable' -or
+            -not $gateVerification.derivation.q3_fallback_authorized) {
+            Stop-Acquisition -Failure 'q3_fallback_not_authorized' -ExitCode 3 `
+                -Extra @{
+                    gate = $spec.fallback.authorization_gate
+                    authorization_record = 'invalid'
+                    gate_verification = $gateVerification
+                }
         }
         $selected = $spec.fallback
     }

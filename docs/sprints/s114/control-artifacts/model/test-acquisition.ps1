@@ -46,8 +46,11 @@ function New-IsolatedAcquisitionCase {
     )
     $caseArtifactDir = Join-Path $caseRoot `
         'docs/sprints/s114/control-artifacts/model'
+    $caseRuntimeDir = Join-Path $caseRoot `
+        'docs/sprints/s114/control-artifacts/runtime'
     $caseModelsDir = Join-Path $caseRoot 'models'
     [System.IO.Directory]::CreateDirectory($caseArtifactDir) | Out-Null
+    [System.IO.Directory]::CreateDirectory($caseRuntimeDir) | Out-Null
     [System.IO.Directory]::CreateDirectory($caseModelsDir) | Out-Null
     [System.IO.File]::WriteAllText(
         (Join-Path $caseRoot '.gitignore'),
@@ -63,6 +66,9 @@ function New-IsolatedAcquisitionCase {
         -Destination (Join-Path $caseArtifactDir 'acquire-model.ps1')
     Copy-Item -LiteralPath $VerifierSource `
         -Destination (Join-Path $caseArtifactDir 'verify-model.ps1')
+    Copy-Item -LiteralPath (
+        Join-Path (Split-Path -Parent $artifactDir) 'runtime/runtime-common.ps1'
+    ) -Destination (Join-Path $caseRuntimeDir 'runtime-common.ps1')
 
     $tinySpec = [ordered]@{
         schema = 'animus-ferric-model-spec-v1'
@@ -101,34 +107,127 @@ function New-IsolatedAcquisitionCase {
     [pscustomobject]@{
         Root = $caseRoot
         ArtifactDir = $caseArtifactDir
+        RuntimeDir = $caseRuntimeDir
         FinalPath = Join-Path $caseModelsDir 'tiny.gguf'
         PartialPath = Join-Path $caseModelsDir 'tiny.gguf.part'
+        Q3FinalPath = Join-Path $caseModelsDir 'tiny-q3.gguf'
+        Q3PartialPath = Join-Path $caseModelsDir 'tiny-q3.gguf.part'
         AcquireScript = Join-Path $caseArtifactDir 'acquire-model.ps1'
     }
 }
 
 function Invoke-IsolatedAcquisitionCase {
-    param([Parameter(Mandatory = $true)]$Case)
+    param(
+        [Parameter(Mandatory = $true)]$Case,
+        [ValidateSet('Q4_K_M', 'Q3_K_XL')]
+        [string]$Quant = 'Q4_K_M'
+    )
 
-    $output = & $Case.AcquireScript -Quant Q4_K_M
+    $output = & $Case.AcquireScript -Quant $Quant
     $code = $LASTEXITCODE
     $recordFile = Get-ChildItem -LiteralPath $Case.ArtifactDir `
-        -Filter 'acquisition-Q4_K_M-*.json' -File |
+        -Filter "acquisition-$Quant-*.json" -File |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1
     $record = Get-Content -Raw -LiteralPath $recordFile.FullName | ConvertFrom-Json
+    $finalPath = if ($Quant -eq 'Q3_K_XL') {
+        $Case.Q3FinalPath
+    }
+    else {
+        $Case.FinalPath
+    }
+    $partialPath = if ($Quant -eq 'Q3_K_XL') {
+        $Case.Q3PartialPath
+    }
+    else {
+        $Case.PartialPath
+    }
     [pscustomobject]@{
         Code = $code
         Output = @($output)
         RecordFile = $recordFile.Name
         Record = $record
-        FinalExists = Test-Path -LiteralPath $Case.FinalPath -PathType Leaf
-        PartialExists = Test-Path -LiteralPath $Case.PartialPath -PathType Leaf
+        FinalExists = Test-Path -LiteralPath $finalPath -PathType Leaf
+        PartialExists = Test-Path -LiteralPath $partialPath -PathType Leaf
         Quarantine = @(
-            Get-ChildItem -LiteralPath (Split-Path -Parent $Case.FinalPath) `
-                -Filter 'tiny.gguf.rejected-*' -File |
+            Get-ChildItem -LiteralPath (Split-Path -Parent $finalPath) `
+                -Filter "$([System.IO.Path]::GetFileName($finalPath)).rejected-*" `
+                -File |
                 Select-Object -ExpandProperty Name
         )
+    }
+}
+
+function New-ForgedQ3GateCase {
+    param(
+        [Parameter(Mandatory = $true)][byte[]]$FallbackBytes,
+        [Parameter(Mandatory = $true)][string]$FallbackSha256
+    )
+
+    $case = New-IsolatedAcquisitionCase -Name 'forged-q3-gate' `
+        -VerifierSource $verifyScript -PartialBytes ([byte[]](1, 2, 3, 4)) `
+        -ExpectedSha256 ('0' * 64)
+    $runtimeSource = Join-Path (Split-Path -Parent $artifactDir) 'runtime'
+    foreach ($name in @(
+        'runtime-plan.json',
+        'verify-q4-gate.ps1',
+        'verify-runtime.ps1'
+    )) {
+        Copy-Item -LiteralPath (Join-Path $runtimeSource $name) `
+            -Destination (Join-Path $case.RuntimeDir $name)
+    }
+
+    $tinySpecPath = Join-Path $case.ArtifactDir 'model-spec.json'
+    $tinySpec = Get-Content -Raw -LiteralPath $tinySpecPath | ConvertFrom-Json
+    $tinySpec.fallback.bytes = [UInt64]$FallbackBytes.Length
+    $tinySpec.fallback.sha256 = $FallbackSha256
+    [System.IO.File]::WriteAllText(
+        $tinySpecPath,
+        (($tinySpec | ConvertTo-Json -Depth 8) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.File]::WriteAllBytes($case.Q3PartialPath, $FallbackBytes)
+
+    $runtimePlanPath = Join-Path $case.RuntimeDir 'runtime-plan.json'
+    $runtimePlan = Get-Content -Raw -LiteralPath $runtimePlanPath |
+        ConvertFrom-Json
+    $runtimeValidatorPath = Join-Path $case.RuntimeDir 'verify-runtime.ps1'
+    $forgedGate = [ordered]@{
+        schema = 'animus-ferric-qwen38-viability-v1'
+        gate = 'E09-D'
+        q4_file = $runtimePlan.models.Q4_K_M.file
+        q4_sha256 = $runtimePlan.models.Q4_K_M.sha256
+        selected_attempt = '01-q4-32768'
+        q4_verdict = 'non_viable'
+        q3_fallback_authorized = $true
+        fallback_basis = 'q4_functional_smoke_failed'
+        reason_codes = @('functional_smoke_failed')
+        median_decoded_tokens_per_second = $null
+        attempt_chain = @(
+            [ordered]@{
+                id = '01-q4-32768'
+                manifest_sha256 = ('f' * 64)
+            }
+        )
+        attempt_verifications = @()
+        attempt_verification = $null
+        attempt_manifest_sha256 = ('f' * 64)
+        runtime_plan_sha256 = (
+            Get-FileHash -LiteralPath $runtimePlanPath -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        validator_sha256 = (
+            Get-FileHash -LiteralPath $runtimeValidatorPath -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $case.RuntimeDir 'q4-viability.json'),
+        (($forgedGate | ConvertTo-Json -Depth 12) + "`n"),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+
+    [pscustomobject]@{
+        Case = $case
+        ForgedGate = $forgedGate
     }
 }
 
@@ -184,12 +283,11 @@ $sameSizePassed = ($sameSize.Code -ne 0) -and (-not $sameSize.FinalExists) -and
     ($sameSize.Record.failure -eq 'partial_file_failed_verification') -and
     ([UInt64]$sameSize.Record.verification.actual_bytes -eq $goodBytes.Length) -and
     ($sameSize.Record.verification.failure -eq 'sha256_mismatch')
-$throwPassed = ($throwResult.Code -ne 0) -and (-not $throwResult.FinalExists) -and
+$throwPassed = ($throwResult.Code -eq 6) -and (-not $throwResult.FinalExists) -and
     (-not $throwResult.Record.verified) -and
     (-not $throwResult.Record.published) -and
-    ($throwResult.Record.failure -eq 'unhandled_acquisition_error') -and
-    ($throwResult.Record.error_message -eq
-        'injected post-publication verification I/O failure') -and
+    ($throwResult.Record.failure -eq 'post_publish_verification_failed') -and
+    ($null -eq $throwResult.Record.verification) -and
     ($throwResult.Quarantine.Count -eq 1)
 Add-Result -Name 'model_acquisition_failure_is_not_verified' `
     -Passed (($negativeCode -ne 0) -and (-not $negative.verified) -and
@@ -257,6 +355,57 @@ Add-Result -Name 'q3_fallback_download_is_gated_and_attested' `
         two_bit_artifacts = $twoBit
     })
 
+$forgedFallbackBytes = [byte[]](9, 10, 11, 12)
+$forgedFallbackSha256 = [System.Convert]::ToHexString(
+    [System.Security.Cryptography.SHA256]::HashData($forgedFallbackBytes)
+).ToLowerInvariant()
+$forgedCaseBundle = New-ForgedQ3GateCase `
+    -FallbackBytes $forgedFallbackBytes `
+    -FallbackSha256 $forgedFallbackSha256
+$forgedResult = Invoke-IsolatedAcquisitionCase `
+    -Case $forgedCaseBundle.Case -Quant Q3_K_XL
+$forgedPartialSha256 = if ($forgedResult.PartialExists) {
+    (Get-FileHash -LiteralPath $forgedCaseBundle.Case.Q3PartialPath `
+        -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+else {
+    $null
+}
+$forgedGateErrors = @($forgedResult.Record.gate_verification.errors)
+$forgedGatePassed =
+    ($forgedResult.Code -eq 3) -and
+    (-not $forgedResult.Record.verified) -and
+    (-not $forgedResult.Record.published) -and
+    ($forgedResult.Record.failure -eq 'q3_fallback_not_authorized') -and
+    ($forgedResult.Record.authorization_record -eq 'invalid') -and
+    ($forgedResult.Record.gate_verification.passed -eq $false) -and
+    ($forgedGateErrors -contains
+        'Q4 attempt evidence is absent: 01-q4-32768') -and
+    ($forgedGateErrors -contains
+        'Q4 gate fields do not equal fresh attempt-chain derivation') -and
+    (-not $forgedResult.FinalExists) -and
+    $forgedResult.PartialExists -and
+    ($forgedPartialSha256 -eq $forgedFallbackSha256) -and
+    ($forgedResult.Quarantine.Count -eq 0)
+Add-Result -Name 'forged_q4_gate_cannot_authorize_q3_download' `
+    -Passed $forgedGatePassed `
+    -Evidence ([ordered]@{
+        passed = $forgedGatePassed
+        forged_claim = [ordered]@{
+            q4_verdict = $forgedCaseBundle.ForgedGate.q4_verdict
+            q3_fallback_authorized =
+                $forgedCaseBundle.ForgedGate.q3_fallback_authorized
+            selected_attempt = $forgedCaseBundle.ForgedGate.selected_attempt
+            attempt_chain = $forgedCaseBundle.ForgedGate.attempt_chain
+        }
+        acquisition_exit_code = $forgedResult.Code
+        acquisition_record = $forgedResult.Record
+        q3_final_exists = $forgedResult.FinalExists
+        seeded_q3_partial_preserved = $forgedResult.PartialExists
+        seeded_q3_partial_sha256 = $forgedPartialSha256
+        q3_quarantine = $forgedResult.Quarantine
+    })
+
 $allPassed = @($results | Where-Object { -not $_.passed }).Count -eq 0
 $report = [ordered]@{
     schema = 'animus-ferric-model-acquisition-tests-v1'
@@ -264,7 +413,8 @@ $report = [ordered]@{
     passed = $allPassed
     tests = $results
 }
-$json = $report | ConvertTo-Json -Depth 12
+$json = ($report | ConvertTo-Json -Depth 12).
+    Replace("`r`n", "`n").Replace("`r", "`n")
 $reportPath = Join-Path $artifactDir 'acquisition-tests.json'
 $temporaryPath = "$reportPath.tmp-$PID"
 [System.IO.File]::WriteAllText(

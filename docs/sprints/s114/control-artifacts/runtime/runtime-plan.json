@@ -1,0 +1,178 @@
+{
+  "schema": "animus-ferric-runtime-plan-v1",
+  "task": "T-11409",
+  "frozen_at": "2026-08-27T03:49:25.3048525-04:00",
+  "repository_commit_before_runtime_controls": "5dae354b209e9a98a8f1d94e6e961bc06cd0c689",
+  "port": 8080,
+  "quant_wall_cap_seconds": 5400,
+  "server_request_timeout_seconds": 720,
+  "startup_wait_seconds": 330,
+  "teardown_safety_grace_seconds": 120,
+  "minimum_gpu_free_mib_before_launch": 7000,
+  "forbidden_inherited_environment": [
+    "FERRIC_*",
+    "GGML_*",
+    "CUDA_*",
+    "OMP_*",
+    "MKL_*",
+    "OPENAI_API_KEY",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY"
+  ],
+  "smoke": {
+    "nonce_file": "nonce.txt",
+    "prompt_file": "smoke-prompt.txt",
+    "temperature": 1.0,
+    "protocol": "grammar",
+    "harness_policy": "legacy",
+    "tier": "ultra",
+    "max_ring": 0,
+    "max_turns": 4,
+    "require_read_file_before_task_complete": true,
+    "require_exact_summary": "AF-S114-QWEN38-NONCE-7F3C19A2",
+    "forbidden_tools": [
+      "copy_file",
+      "delete_path",
+      "edit_file",
+      "git_write",
+      "make_dir",
+      "move_path",
+      "request_user_input",
+      "run_check",
+      "write_file"
+    ]
+  },
+  "throughput": {
+    "request_template": "throughput-request.template.json",
+    "sequence": ["warmup", "trial-01", "trial-02", "trial-03"],
+    "scored_samples": 3,
+    "replacement_samples": 0,
+    "max_tokens": 256,
+    "minimum_decoded_tokens": 128,
+    "minimum_median_decoded_tokens_per_second": 2.0,
+    "rate_source": "timings.predicted_n / (timings.predicted_ms / 1000)",
+    "counter_cross_check": "usage.completion_tokens == timings.predicted_n"
+  },
+  "models": {
+    "Q4_K_M": {
+      "file": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "relative_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "bytes": 16464440224,
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+      "requested_gpu_layers": 24
+    },
+    "Q3_K_XL": {
+      "file": "Qwen3.8-27B-UD-Q3_K_XL.gguf",
+      "relative_path": "models/Qwen3.8-27B-UD-Q3_K_XL.gguf",
+      "bytes": 13146393504,
+      "sha256": "8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e",
+      "requested_gpu_layers": 32,
+      "authorization_gate": "q4-viability.json"
+    }
+  },
+  "coordinates": [
+    {
+      "id": "01-q4-32768",
+      "quant": "Q4_K_M",
+      "context": 32768,
+      "predecessor": null,
+      "authorization": "primary"
+    },
+    {
+      "id": "02-q4-16384",
+      "quant": "Q4_K_M",
+      "context": 16384,
+      "predecessor": "01-q4-32768",
+      "authorization": "predecessor_startup_memory_pressure_only"
+    },
+    {
+      "id": "03-q3-32768",
+      "quant": "Q3_K_XL",
+      "context": 32768,
+      "predecessor": null,
+      "authorization": "verified_q4_non_viability_gate"
+    },
+    {
+      "id": "04-q3-16384",
+      "quant": "Q3_K_XL",
+      "context": 16384,
+      "predecessor": "03-q3-32768",
+      "authorization": "predecessor_startup_memory_pressure_only"
+    }
+  ],
+  "server": {
+    "engine": "llama-server",
+    "threads": 12,
+    "batch_size": 512,
+    "parallel_slots": 1,
+    "seed": 42,
+    "environment": {
+      "LLAMA_ARG_CACHE_TYPE_K": "q8_0",
+      "LLAMA_ARG_CACHE_TYPE_V": "q8_0",
+      "LLAMA_ARG_FLASH_ATTN": "on",
+      "LLAMA_ARG_FIT": "on",
+      "LLAMA_ARG_FIT_TARGET": "1024",
+      "LLAMA_ARG_REASONING": "on",
+      "LLAMA_ARG_THINK_BUDGET": "1024",
+      "LLAMA_ARG_REASONING_PRESERVE": "true",
+      "LLAMA_ARG_CHAT_TEMPLATE_KWARGS": "{\"enable_thinking\":true,\"preserve_thinking\":true}",
+      "LLAMA_ARG_TIMEOUT": "720"
+    },
+    "logging_environment": {
+      "LLAMA_ARG_LOG_COLORS": "off",
+      "LLAMA_ARG_LOG_TIMESTAMPS": "on",
+      "LLAMA_ARG_LOG_VERBOSITY": "4"
+    }
+  },
+  "llama_cpp": {
+    "release": "b10516",
+    "commit": "b95502ba9",
+    "main_asset": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10516/llama-b10516-bin-win-cuda-12.4-x64.zip",
+      "bytes": 250892658,
+      "sha256": "96d64faeb5b8e655341f32b26ad3e51fbea8bff0bc8120ad3dbffdc0b05b8ad3",
+      "ignored_archive_relative_path": "target/s114-experiment/runtime/llama-b10516-cuda12.4/llama-b10516-bin-win-cuda-12.4-x64.zip"
+    },
+    "cuda_runtime_asset": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10516/cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "bytes": 391443627,
+      "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+      "ignored_archive_relative_path": "target/s114-experiment/runtime/cudart-llama-bin-win-cuda-12.4-x64.zip"
+    },
+    "expected_server_sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+    "expected_cuda_backend_sha256": "fc45d8f6a73f46231e0e04d6aa8260c7e366b974a18cab4bc53ed35248c2ff82",
+    "ignored_runtime_relative_path": "target/s114-experiment/runtime/llama-b10516-cuda12.4/bin"
+  },
+  "ferric": {
+    "build_command": "cargo build --locked --release -p ferric-cli --features backend-openai",
+    "relative_path": "target/release/ferric.exe",
+    "expected_sha256_at_freeze": "af75612b3498a1721e5b5f1b2f6309bf851d65b9bd13ad45e76cf8e370cf10f2",
+    "cargo_lock_sha256": "1eb0bf1703aab2677efd8c6da79632b4df7f81cb7d30c69dc32dbd500e62c31d"
+  },
+  "startup_memory_patterns": [
+    "CUDA(?: error)?:[^\\r\\n]*out of memory",
+    "cudaMalloc[^\\r\\n]*(?:failed|out of memory)",
+    "(?:failed to allocate|allocation failed|not enough memory|insufficient memory)[^\\r\\n]*(?:memory|MiB|GiB|bytes)",
+    "std::bad_alloc"
+  ],
+  "selection": {
+    "q4_viable": "smoke passes AND all three scored samples are valid AND median >= 2.0",
+    "q3_authorized": "Q4 is non_viable from exactly one declared functional or throughput reason",
+    "q3_authorizing_reason_codes": [
+      "functional_smoke_failed",
+      "invalid_throughput_sample_set",
+      "throughput_median_below_floor"
+    ],
+    "q3_authorizing_trial_failure_causes": [
+      "request_error",
+      "timeout",
+      "decoded_length_below_minimum"
+    ],
+    "q3_viable": "smoke passes AND all three scored samples are valid AND median >= 2.0",
+    "terminal_failure": "no_viable_qwen38_coordinate",
+    "context_retry": "only a retained startup_memory_pressure classification at 32768",
+    "terminal_memory_pressure": "infrastructure_blocked_no_q3"
+  }
+}
