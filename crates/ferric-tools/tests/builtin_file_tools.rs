@@ -67,6 +67,43 @@ fn write_then_read_roundtrip() {
 }
 
 #[test]
+fn legacy_python_warning_is_in_process_and_does_not_execute_sitecustomize() {
+    let (dir, ws, registry) = setup();
+    let marker = dir.path().join("sitecustomize-executed.txt");
+    let source = format!(
+        "from pathlib import Path\nPath({:?}).write_text('executed')\n",
+        marker.to_string_lossy()
+    );
+
+    let (write_out, write_err) = expect_completed(registry.execute_test(
+        &ws,
+        "write_file",
+        &json!({"path": "sitecustomize.py", "content": source}),
+    ));
+    assert!(!write_err, "valid Python write failed: {write_out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("sitecustomize.py")).unwrap(),
+        source
+    );
+    assert!(
+        !marker.exists(),
+        "syntax validation must not import model-authored sitecustomize.py"
+    );
+
+    let (warning, warning_is_error) = expect_completed(registry.execute_test(
+        &ws,
+        "write_file",
+        &json!({"path": "broken.py", "content": "def broken(:\n    pass\n"}),
+    ));
+    assert!(!warning_is_error, "legacy syntax remains warning-only");
+    assert!(warning.contains("syntax check:"), "{warning}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("broken.py")).unwrap(),
+        "def broken(:\n    pass\n"
+    );
+}
+
+#[test]
 fn tools_refuse_outside_workspace() {
     let (dir, ws, registry) = setup();
     let outside = dir.path().parent().unwrap().join("escape.txt");

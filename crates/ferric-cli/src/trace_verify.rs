@@ -16,6 +16,10 @@ struct TurnState {
     number: u32,
     ended: bool,
     modern: bool,
+    /// True while an interrupted writer has recorded only the request-side
+    /// prefix of this turn. Once a response or any dispatch-side event is
+    /// present, EOF is no longer an unambiguous retry boundary.
+    pre_response_only: bool,
     declared_calls: u32,
     calls: BTreeMap<String, RecordedCall>,
     pre_dispatch_stop: Option<PreDispatchStop>,
@@ -132,7 +136,10 @@ fn verify_trace(path: &Path) -> Result<VerificationSummary, String> {
 
         match record.event {
             ParsedEvent::Known(event) => validate_event(index, event, &mut state)?,
-            ParsedEvent::Unknown(_) => state.summary.unknown_events += 1,
+            ParsedEvent::Unknown(_) => {
+                mark_open_turn_ambiguous(&mut state);
+                state.summary.unknown_events += 1;
+            }
         }
     }
 
@@ -164,7 +171,10 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
     if state.summary.stop_reason.is_some()
         && !matches!(
             event,
-            Event::Note { .. } | Event::RecoveryCheckpoint { .. } | Event::SessionPaused { .. }
+            Event::Note { .. }
+                | Event::RecoveryCheckpoint { .. }
+                | Event::ControllerCheckpoint { .. }
+                | Event::SessionPaused { .. }
         )
     {
         return Err(format!(
@@ -218,6 +228,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
                 number: turn,
                 ended: false,
                 modern: false,
+                pre_response_only: true,
                 declared_calls: 0,
                 calls: BTreeMap::new(),
                 pre_dispatch_stop: None,
@@ -252,6 +263,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
             if current.ended {
                 return Err(format!("turn {turn} has more than one turn_end"));
             }
+            current.pre_response_only = false;
             current.ended = true;
             current.declared_calls = tool_call_count;
         }
@@ -467,8 +479,10 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
         Event::OscillationGuard { action } => {
             record_pre_dispatch_stop(index, state, &action, PreDispatchStop::Oscillation)?
         }
-        Event::ConstraintApplied { .. }
-        | Event::FailureGuard { .. }
+        Event::ConstraintApplied { .. } | Event::HistoryCompacted { .. } => {
+            require_started(index, state)?;
+        }
+        Event::FailureGuard { .. }
         | Event::PermissionCheck { .. }
         | Event::ObservationRecorded { .. }
         | Event::ControllerBlocked { .. }
@@ -476,9 +490,9 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
         | Event::VerificationCheckRecorded { .. }
         | Event::ControllerCheckpoint { .. }
         | Event::RecoveryPacketInjected { .. }
-        | Event::HistoryCompacted { .. }
         | Event::Note { .. } => {
             require_started(index, state)?;
+            mark_open_turn_ambiguous(state);
         }
     }
     Ok(())
@@ -506,6 +520,14 @@ fn current_turn_mut(index: usize, state: &mut VerificationState) -> Result<&mut 
         .current_turn
         .as_mut()
         .ok_or_else(|| format!("record {index} is turn-scoped but no turn is active"))
+}
+
+fn mark_open_turn_ambiguous(state: &mut VerificationState) {
+    if let Some(turn) = state.current_turn.as_mut()
+        && !turn.ended
+    {
+        turn.pre_response_only = false;
+    }
 }
 
 fn record_pre_dispatch_stop(
@@ -546,6 +568,13 @@ fn finish_turn(state: &mut VerificationState, eof: bool) -> Result<(), String> {
         return Ok(());
     };
     if !turn.ended {
+        if eof && state.summary.stop_reason.is_none() && turn.pre_response_only {
+            // A process may be killed while the provider request is in
+            // flight. TurnStart plus request-side prompt/constraint metadata
+            // contains no response, action, or effect, so it is a precise
+            // interrupted prefix and is deliberately not counted as a turn.
+            return Ok(());
+        }
         if state.summary.stop_reason.as_deref() == Some("provider_error") && turn.calls.is_empty() {
             state.summary.turns += 1;
             return Ok(());
@@ -801,6 +830,135 @@ mod tests {
         let summary = verify_trace(&trace).unwrap();
         assert_eq!(summary.turns, 1);
         assert!(summary.stop_reason.is_none());
+    }
+
+    #[test]
+    fn accepts_only_an_empty_pre_response_interrupted_prefix_without_counting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("pre-response-prefix.jsonl");
+        let mut events = prefix(dir.path());
+        events.extend([
+            Event::TurnStart { turn: 0 },
+            Event::PromptAssembled {
+                turn: 0,
+                message_count: 2,
+                chars: 10,
+                offered_tools: vec!["read_file".to_string()],
+            },
+            Event::ConstraintApplied {
+                kind: "json_schema".to_string(),
+            },
+        ]);
+        write_trace(&trace, events);
+
+        let summary = verify_trace(&trace).unwrap();
+        assert_eq!(summary.turns, 0);
+        assert!(summary.stop_reason.is_none());
+    }
+
+    #[test]
+    fn rejects_an_interrupted_prefix_after_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("dispatched-prefix.jsonl");
+        let call = modern_call("read-1", "read_file");
+        let mut events = prefix(dir.path());
+        events.extend([
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: None,
+                output_tokens: None,
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![call.clone()],
+            },
+            Event::ToolCall {
+                id: call.id,
+                name: call.name,
+                args: call.args,
+            },
+        ]);
+        write_trace(&trace, events);
+
+        let error = verify_trace(&trace).unwrap_err();
+        assert!(error.contains("has no tool_result"), "{error}");
+    }
+
+    #[test]
+    fn accepts_an_evidence_intentional_pause_controller_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("evidence-pause.jsonl");
+        let controller = ferric_loop::ControllerState::new(
+            ferric_core::HarnessPolicy::Evidence,
+            Vec::<String>::new(),
+        )
+        .unwrap();
+        let mut recovery = checkpoint();
+        recovery.next_turn = 1;
+        let mut events = vec![
+            Event::SessionStart {
+                workspace: dir.path().display().to_string(),
+                resumed_from: None,
+            },
+            Event::PolicySelected {
+                tier: Tier::Nano,
+                protocol: ActionProtocol::NativeTools,
+                harness_policy: ferric_core::HarnessPolicy::Evidence,
+                max_turns: 1,
+                max_tools: 8,
+                prompt_budget_tokens: 2_800,
+                max_output_tokens: 512,
+                truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
+                tier_source: TierSource::Params.label().to_string(),
+            },
+            Event::SessionPrompt {
+                system: "system".to_string(),
+                user: "user".to_string(),
+                media: Vec::new(),
+            },
+            Event::ControllerCheckpoint {
+                state: controller.checkpoint(),
+            },
+            Event::TurnStart { turn: 0 },
+            Event::TurnEnd {
+                turn: 0,
+                text: Some("continue".to_string()),
+                tool_call_count: 0,
+                input_tokens: Some(5),
+                output_tokens: Some(1),
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: Vec::new(),
+            },
+            Event::TurnCommitted {
+                turn: 0,
+                dispatched: 0,
+                errored: 0,
+                stop_reason: None,
+                snapshot_commit: None,
+            },
+            Event::SessionEnd {
+                reason: "max_turns".to_string(),
+            },
+            Event::RecoveryCheckpoint { state: recovery },
+            Event::ControllerCheckpoint {
+                state: controller.checkpoint_for_pause("max_turns").unwrap(),
+            },
+            Event::SessionPaused {
+                reason: "max_turns".to_string(),
+            },
+        ];
+        write_trace(&trace, events.drain(..));
+
+        let summary = verify_trace(&trace).unwrap();
+        assert_eq!(summary.turns, 1);
+        assert_eq!(summary.stop_reason.as_deref(), Some("max_turns"));
     }
 
     #[test]

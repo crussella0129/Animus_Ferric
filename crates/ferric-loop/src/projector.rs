@@ -84,6 +84,7 @@ pub struct PendingTurn {
     pub actions_proposed: Option<Vec<ToolCall>>,
     pub tool_calls: Vec<ToolCall>,
     pub tool_results: Vec<(String, String, String, bool)>,
+    pub controller_blocks: u32,
     pub repetition_warned: bool,
     pub no_progress_warned: bool,
     pub failure_warned: bool,
@@ -315,6 +316,13 @@ impl TraceProjector {
                         .push((id.clone(), name.clone(), output.clone(), *is_error));
                 }
             }
+            Event::ControllerBlocked { turn, .. } => {
+                if let Some(p) = &mut self.pending
+                    && p.turn == *turn
+                {
+                    p.controller_blocks = p.controller_blocks.saturating_add(1);
+                }
+            }
             Event::WorkspaceMutation { mutation_epoch, .. } => {
                 self.mutation_epoch = self.mutation_epoch.max(*mutation_epoch);
             }
@@ -460,6 +468,7 @@ impl TraceProjector {
             let proposed = p.actions_proposed.clone().unwrap_or_default();
             let truncated = p.turn_end.as_ref().is_some_and(|(_, value)| *value);
             let completion_was_blocked = p.completion_gate_feedback.is_some();
+            let controller_blocks = p.controller_blocks;
             if stop_reason == Some("needs_input") && self.pending_input.is_none() {
                 self.pending_input = proposed
                     .iter()
@@ -491,6 +500,8 @@ impl TraceProjector {
                         calls: proposed,
                         dispatched,
                         errored,
+                        controller_blocks,
+                        controller_blocks_was_present: true,
                     });
                 }
             }

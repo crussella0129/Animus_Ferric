@@ -709,27 +709,37 @@ pub fn summarize_autonomy_run_with_coordinates(
     let policy_keys: BTreeSet<_> = coordinate_keys.iter().map(|(_, policy)| *policy).collect();
     let arm_keys: BTreeSet<_> = coordinate_keys.iter().map(|(arm, _)| *arm).collect();
     let category_keys: BTreeSet<String> = expected_task_categories.values().cloned().collect();
-    let scoreable_rows: Vec<_> = run_rows
-        .iter()
-        .copied()
-        .filter(|row| row_is_scoreable(row))
-        .collect();
+    // A paired experiment has one statistical unit: the complete control /
+    // candidate pair. Derive that eligibility once and use the resulting rows
+    // for every model-attributable statistic below. Otherwise a clean-looking
+    // survivor of a missing or infrastructure-dirty arm could still leak into
+    // the overall/policy/mechanism rates even though the paired delta excludes
+    // it.
+    let eligible_pairs = (coordinate_count == 2).then(|| eligible_paired_rows(&run_rows));
+    let scoreable_rows: Vec<_> = match &eligible_pairs {
+        Some(pairs) => pairs
+            .iter()
+            .flat_map(|(control, candidate)| [*control, *candidate])
+            .collect(),
+        None => run_rows
+            .iter()
+            .copied()
+            .filter(|row| row_is_scoreable(row))
+            .collect(),
+    };
 
-    let overall = rate_summary("all", expected_rows, &run_rows);
+    let overall = rate_summary("all", expected_rows, &run_rows, &scoreable_rows, |_| true);
     let by_task = task_keys
         .iter()
         .map(|key| {
-            let selected: Vec<_> = run_rows
-                .iter()
-                .copied()
-                .filter(|row| &row.task_id == key)
-                .collect();
             rate_summary(
                 key,
                 trials_requested
                     .saturating_mul(variant_keys.len() as u32)
                     .saturating_mul(coordinate_count),
-                &selected,
+                &run_rows,
+                &scoreable_rows,
+                |row| &row.task_id == key,
             )
         })
         .collect();
@@ -737,16 +747,14 @@ pub fn summarize_autonomy_run_with_coordinates(
         .iter()
         .flat_map(|task| {
             let rows = &run_rows;
+            let scoreable = &scoreable_rows;
             variant_keys.iter().map(move |variant| {
-                let selected: Vec<_> = rows
-                    .iter()
-                    .copied()
-                    .filter(|row| &row.task_id == task && &row.variant == variant)
-                    .collect();
                 rate_summary(
                     &format!("{task}/{variant}"),
                     trials_requested.saturating_mul(coordinate_count),
-                    &selected,
+                    rows,
+                    scoreable,
+                    |row| &row.task_id == task && &row.variant == variant,
                 )
             })
         })
@@ -754,11 +762,6 @@ pub fn summarize_autonomy_run_with_coordinates(
     let by_category = category_keys
         .iter()
         .map(|key| {
-            let selected: Vec<_> = run_rows
-                .iter()
-                .copied()
-                .filter(|row| &row.category == key)
-                .collect();
             let tasks_in_category = task_keys
                 .iter()
                 .filter(|task| expected_task_categories.get(*task) == Some(key))
@@ -769,35 +772,29 @@ pub fn summarize_autonomy_run_with_coordinates(
                     .saturating_mul(variant_keys.len() as u32)
                     .saturating_mul(tasks_in_category)
                     .saturating_mul(coordinate_count),
-                &selected,
+                &run_rows,
+                &scoreable_rows,
+                |row| &row.category == key,
             )
         })
         .collect();
     let by_variant = variant_keys
         .iter()
         .map(|key| {
-            let selected: Vec<_> = run_rows
-                .iter()
-                .copied()
-                .filter(|row| &row.variant == key)
-                .collect();
             rate_summary(
                 key,
                 trials_requested
                     .saturating_mul(task_keys.len() as u32)
                     .saturating_mul(coordinate_count),
-                &selected,
+                &run_rows,
+                &scoreable_rows,
+                |row| &row.variant == key,
             )
         })
         .collect();
     let by_harness_policy = policy_keys
         .iter()
         .map(|policy| {
-            let selected: Vec<_> = run_rows
-                .iter()
-                .copied()
-                .filter(|row| row.harness_policy == *policy)
-                .collect();
             let policy_coordinate_count = expected_coordinates
                 .iter()
                 .filter(|coordinate| coordinate.harness_policy == *policy)
@@ -808,18 +805,15 @@ pub fn summarize_autonomy_run_with_coordinates(
                     .saturating_mul(task_keys.len() as u32)
                     .saturating_mul(variant_keys.len() as u32)
                     .saturating_mul(policy_coordinate_count),
-                &selected,
+                &run_rows,
+                &scoreable_rows,
+                |row| row.harness_policy == *policy,
             )
         })
         .collect();
     let by_arm = arm_keys
         .iter()
         .map(|arm| {
-            let selected: Vec<_> = run_rows
-                .iter()
-                .copied()
-                .filter(|row| row.arm == *arm)
-                .collect();
             let arm_coordinate_count = expected_coordinates
                 .iter()
                 .filter(|coordinate| coordinate.arm == *arm)
@@ -830,14 +824,16 @@ pub fn summarize_autonomy_run_with_coordinates(
                     .saturating_mul(task_keys.len() as u32)
                     .saturating_mul(variant_keys.len() as u32)
                     .saturating_mul(arm_coordinate_count),
-                &selected,
+                &run_rows,
+                &scoreable_rows,
+                |row| row.arm == *arm,
             )
         })
         .collect();
-    let by_tool = summarize_tools(&run_rows);
+    let by_tool = summarize_tools(&scoreable_rows);
     let by_policy_mechanisms = policy_keys
         .iter()
-        .map(|policy| summarize_policy_mechanisms(*policy, &run_rows))
+        .map(|policy| summarize_policy_mechanisms(*policy, &scoreable_rows))
         .collect();
 
     let required = scoreable_rows
@@ -899,25 +895,22 @@ pub fn summarize_autonomy_run_with_coordinates(
         refusal_probes_rejected: probes_rejected,
     };
 
-    let resolved_rows: Vec<_> = run_rows
-        .iter()
-        .copied()
-        .filter(|row| row.trial == 1)
-        .collect();
     let resolved_at_1 = rate_summary(
         "trial_1",
         (task_keys.len() as u32)
             .saturating_mul(variant_keys.len() as u32)
             .saturating_mul(coordinate_count),
-        &resolved_rows,
+        &run_rows,
+        &scoreable_rows,
+        |row| row.trial == 1,
     );
-    let aggregate_pass_power_3 = pass_power_3(&run_rows);
+    let aggregate_pass_power_3 = pass_power_3(&scoreable_rows);
     let pass_power_3_by_policy = policy_keys
         .iter()
         .map(|policy| PolicyPassPowerSummary {
             harness_policy: *policy,
             summary: pass_power_3(
-                &run_rows
+                &scoreable_rows
                     .iter()
                     .copied()
                     .filter(|row| row.harness_policy == *policy)
@@ -925,13 +918,13 @@ pub fn summarize_autonomy_run_with_coordinates(
             ),
         })
         .collect();
-    let repository_brief_ab = repository_brief_comparison(&run_rows);
+    let repository_brief_ab = repository_brief_comparison(&scoreable_rows);
     let repository_brief_ab_by_policy = policy_keys
         .iter()
         .map(|policy| PolicyRepositoryBriefComparison {
             harness_policy: *policy,
             comparison: repository_brief_comparison(
-                &run_rows
+                &scoreable_rows
                     .iter()
                     .copied()
                     .filter(|row| row.harness_policy == *policy)
@@ -939,12 +932,12 @@ pub fn summarize_autonomy_run_with_coordinates(
             ),
         })
         .collect();
-    let paired_objective = (coordinate_count == 2).then(|| {
+    let paired_objective = eligible_pairs.as_ref().map(|pairs| {
         summarize_paired_objective(
             trials_requested
                 .saturating_mul(task_keys.len() as u32)
                 .saturating_mul(variant_keys.len() as u32),
-            &run_rows,
+            pairs,
         )
     });
 
@@ -955,14 +948,21 @@ pub fn summarize_autonomy_run_with_coordinates(
             &mut terminal_counts,
             row.final_terminal.as_deref().unwrap_or("missing"),
         );
+        if row.infrastructure_error.is_some() {
+            increment(&mut failure_counts, "infrastructure");
+        }
+        for check in &row.command_checks {
+            if check.status == CommandCheckStatus::InfrastructureError {
+                increment(&mut failure_counts, "check_infrastructure");
+            }
+        }
+    }
+    for row in &scoreable_rows {
         if !row.contract_passed {
             increment(&mut failure_counts, "contract");
         }
         if !row.objective_completed {
             increment(&mut failure_counts, "objective_incomplete");
-        }
-        if row.infrastructure_error.is_some() {
-            increment(&mut failure_counts, "infrastructure");
         }
         if row.unnecessary_clarification {
             increment(&mut failure_counts, "unnecessary_clarification");
@@ -983,9 +983,7 @@ pub fn summarize_autonomy_run_with_coordinates(
             match check.status {
                 CommandCheckStatus::Passed => {}
                 CommandCheckStatus::ModelFailure => increment(&mut failure_counts, "check"),
-                CommandCheckStatus::InfrastructureError => {
-                    increment(&mut failure_counts, "check_infrastructure")
-                }
+                CommandCheckStatus::InfrastructureError => {}
             }
         }
     }
@@ -1054,12 +1052,18 @@ pub fn write_autonomy_summary(
     Ok(path)
 }
 
-fn rate_summary(key: &str, expected: u32, rows: &[&AutonomyResultRow]) -> AutonomyRateSummary {
-    let observed = rows.len() as u32;
-    let scoreable_rows: Vec<_> = rows
+fn rate_summary(
+    key: &str,
+    expected: u32,
+    observed_rows: &[&AutonomyResultRow],
+    scoreable_rows: &[&AutonomyResultRow],
+    include: impl Fn(&AutonomyResultRow) -> bool,
+) -> AutonomyRateSummary {
+    let observed = observed_rows.iter().filter(|row| include(row)).count() as u32;
+    let scoreable_rows: Vec<_> = scoreable_rows
         .iter()
         .copied()
-        .filter(|row| row_is_scoreable(row))
+        .filter(|row| include(row))
         .collect();
     let scoreable = scoreable_rows.len() as u32;
     let contract_passes = scoreable_rows
@@ -1345,6 +1349,25 @@ fn paired_metadata_matches(rows: &[&AutonomyResultRow], coordinate_count: usize)
     pairs.values().all(|pair| paired_rows(pair).is_some())
 }
 
+type EligiblePair<'a> = (&'a AutonomyResultRow, &'a AutonomyResultRow);
+
+fn eligible_paired_rows<'a>(rows: &[&'a AutonomyResultRow]) -> Vec<EligiblePair<'a>> {
+    let mut groups: BTreeMap<&str, Vec<&AutonomyResultRow>> = BTreeMap::new();
+    for row in rows {
+        if let Some(pair_id) = row.evaluation_provenance.pair_id.as_deref() {
+            groups.entry(pair_id).or_default().push(row);
+        }
+    }
+    groups
+        .values()
+        .filter_map(|group| {
+            let (control, candidate) = paired_rows(group)?;
+            (row_is_scoreable(control) && row_is_scoreable(candidate))
+                .then_some((control, candidate))
+        })
+        .collect()
+}
+
 fn paired_rows<'a>(
     rows: &[&'a AutonomyResultRow],
 ) -> Option<(&'a AutonomyResultRow, &'a AutonomyResultRow)> {
@@ -1357,6 +1380,15 @@ fn paired_rows<'a>(
     let candidate = rows.iter().copied().find(|row| {
         row.arm == AutonomyArm::Candidate && row.harness_policy == HarnessPolicy::Evidence
     })?;
+    let canonical_pair_id = format!(
+        "trial-{:03}-{}-{}",
+        control.trial, control.task_id, control.variant
+    );
+    if control.evaluation_provenance.pair_id.as_deref() != Some(canonical_pair_id.as_str())
+        || candidate.evaluation_provenance.pair_id.as_deref() != Some(canonical_pair_id.as_str())
+    {
+        return None;
+    }
     let order = control.evaluation_provenance.pair_order.as_deref()?;
     if candidate.evaluation_provenance.pair_order.as_deref() != Some(order) {
         return None;
@@ -1376,17 +1408,27 @@ fn paired_rows<'a>(
         || control.task_id != candidate.task_id
         || control.variant != candidate.variant
         || control.trial != candidate.trial
-        || control
-            .evaluation_provenance
-            .workspace_instance_sha256
-            .is_none()
-        || candidate
-            .evaluation_provenance
-            .workspace_instance_sha256
-            .is_none()
+        || !valid_sha256(
+            control
+                .evaluation_provenance
+                .workspace_instance_sha256
+                .as_deref(),
+        )
+        || !valid_sha256(
+            candidate
+                .evaluation_provenance
+                .workspace_instance_sha256
+                .as_deref(),
+        )
         || control.evaluation_provenance.workspace_instance_sha256
             == candidate.evaluation_provenance.workspace_instance_sha256
-        || control.evaluation_provenance.initial_tree_sha256.is_none()
+        || !valid_sha256(control.evaluation_provenance.initial_tree_sha256.as_deref())
+        || !valid_sha256(
+            candidate
+                .evaluation_provenance
+                .initial_tree_sha256
+                .as_deref(),
+        )
         || control.evaluation_provenance.initial_tree_sha256
             != candidate.evaluation_provenance.initial_tree_sha256
         || control.evaluation_provenance.child_binary_sha256.is_none()
@@ -1426,26 +1468,14 @@ fn paired_rows<'a>(
 
 fn summarize_paired_objective(
     expected_pairs: u32,
-    rows: &[&AutonomyResultRow],
+    pairs: &[EligiblePair<'_>],
 ) -> PairedObjectiveSummary {
-    let mut groups: BTreeMap<&str, Vec<&AutonomyResultRow>> = BTreeMap::new();
-    for row in rows {
-        if let Some(pair_id) = row.evaluation_provenance.pair_id.as_deref() {
-            groups.entry(pair_id).or_default().push(row);
-        }
-    }
     let mut control_wins = 0_u32;
     let mut candidate_wins = 0_u32;
     let mut both_completed = 0_u32;
     let mut neither_completed = 0_u32;
     let mut task_trials: BTreeMap<(&str, &str), BTreeMap<u32, bool>> = BTreeMap::new();
-    for group in groups.values() {
-        let Some((control, candidate)) = paired_rows(group) else {
-            continue;
-        };
-        if !row_is_scoreable(control) || !row_is_scoreable(candidate) {
-            continue;
-        }
+    for &(control, candidate) in pairs {
         match (control.objective_completed, candidate.objective_completed) {
             (true, false) => control_wins = control_wins.saturating_add(1),
             (false, true) => candidate_wins = candidate_wins.saturating_add(1),
@@ -1526,7 +1556,13 @@ fn strict_evidence_coordinate(row: &AutonomyResultRow) -> bool {
 
 fn strict_persisted_row_valid(row: &AutonomyResultRow) -> bool {
     row.schema_version == AUTONOMY_RESULTS_SCHEMA_VERSION
-        && retained_trace_evidence_valid(row)
+        && strict_retained_trace_evidence_valid(row)
+        && valid_sha256(
+            row.evaluation_provenance
+                .workspace_instance_sha256
+                .as_deref(),
+        )
+        && valid_sha256(row.evaluation_provenance.initial_tree_sha256.as_deref())
         && valid_sha256(row.provenance.binary.sha256.as_deref())
         && row.evaluation_provenance.child_binary_sha256 == row.provenance.binary.sha256
         && valid_sha256(row.evaluation_provenance.corpus_sha256.as_deref())
@@ -1556,6 +1592,46 @@ fn retained_trace_evidence_valid(row: &AutonomyResultRow) -> bool {
                 && valid_sha256(segment.trace_sha256.as_deref())
                 && segment.trace_validation == Some(RetainedTraceValidation::StructureValidated)
         })
+}
+
+fn strict_retained_trace_evidence_valid(row: &AutonomyResultRow) -> bool {
+    if row.segments.is_empty() {
+        return false;
+    }
+    let mut saw_timeout = false;
+    for (index, segment) in row.segments.iter().enumerate() {
+        let retained_evidence = segment.segment == index as u32 + 1
+            && segment
+                .trace_path
+                .as_deref()
+                .is_some_and(valid_retained_trace_path)
+            && valid_sha256(segment.trace_sha256.as_deref())
+            && segment.trace_validation == Some(RetainedTraceValidation::StructureValidated);
+        if !retained_evidence {
+            return false;
+        }
+        if segment.timed_out {
+            if saw_timeout || index + 1 != row.segments.len() || segment.observed_terminal.is_some()
+            {
+                return false;
+            }
+            saw_timeout = true;
+            if segment.exit_code.is_some() {
+                return false;
+            }
+        } else if segment
+            .observed_terminal
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            return false;
+        }
+    }
+    !saw_timeout
+        || (!row.contract_passed
+            && !row.objective_completed
+            && row.final_terminal.is_none()
+            && row.command_checks.is_empty())
 }
 
 fn valid_retained_trace_path(path: &str) -> bool {
@@ -1876,8 +1952,10 @@ mod tests {
             pair_id: Some(format!("trial-{trial:03}-{task}-{variant}")),
             pair_slot: Some(slot),
             pair_order: Some("control_candidate".to_string()),
-            workspace_instance_sha256: Some(format!("{workspace}-{trial}-{variant}")),
-            initial_tree_sha256: Some("initial-tree".to_string()),
+            workspace_instance_sha256: Some(crate::sha256_bytes(
+                format!("{workspace}-{trial}-{variant}").as_bytes(),
+            )),
+            initial_tree_sha256: Some("9".repeat(64)),
             child_binary_sha256: Some(binary_sha),
             corpus_sha256: Some("5".repeat(64)),
             model_sha256: Some("b".repeat(64)),
@@ -2002,7 +2080,13 @@ mod tests {
         infrastructure.contract_passed = false;
         infrastructure.objective_completed = false;
         infrastructure.infrastructure_error = Some("trace unavailable".to_string());
-        let summary = rate_summary("test", 1, &[&infrastructure]);
+        let observed = [&infrastructure];
+        let scoreable = observed
+            .iter()
+            .copied()
+            .filter(|row| row_is_scoreable(row))
+            .collect::<Vec<_>>();
+        let summary = rate_summary("test", 1, &observed, &scoreable, |_| true);
         assert_eq!(summary.observed, 1);
         assert_eq!(summary.scoreable, 0);
         assert_eq!(summary.infrastructure_failures, 1);
@@ -2112,13 +2196,37 @@ mod tests {
     fn invalid_trace_or_unpaired_rows_are_excluded_not_scored_as_losses() {
         let mut rows = vec![
             paired_row("H01", "recovery", 1, AutonomyArm::Control, false),
-            paired_row("H01", "recovery", 1, AutonomyArm::Candidate, true),
+            paired_row("H01", "recovery", 1, AutonomyArm::Candidate, false),
             paired_row("H01", "recovery", 2, AutonomyArm::Control, false),
             paired_row("H01", "recovery", 2, AutonomyArm::Candidate, true),
-            paired_row("H01", "recovery", 3, AutonomyArm::Candidate, true),
+            paired_row("H01", "recovery", 3, AutonomyArm::Candidate, false),
         ];
         rows[0].infrastructure_error =
             Some("trace structure finish rejected the trace".to_string());
+        for index in [0, 1, 4] {
+            rows[index].contract_passed = false;
+            rows[index].clarification_expected = true;
+            rows[index].clarification_observed = true;
+            rows[index].clarification_correct = false;
+            rows[index].unnecessary_clarification = true;
+            rows[index].resumes_expected = 1;
+            rows[index].resumes_observed = 0;
+            rows[index].recovery_succeeded = false;
+            rows[index].duplicate_effects_within_limit = Some(false);
+            rows[index].command_checks.push(CommandCheckResult {
+                name: "excluded model failure".to_string(),
+                status: CommandCheckStatus::ModelFailure,
+                exit_code: Some(1),
+                timed_out: false,
+                stdout_excerpt: String::new(),
+                stderr_excerpt: String::new(),
+                reason: Some("excluded pair".to_string()),
+            });
+            rows[index].metrics.observations_recorded = 10;
+            rows[index].metrics.tools_called = vec!["excluded_tool".to_string()];
+        }
+        rows[3].metrics.observations_recorded = 1;
+        rows[3].metrics.tools_called = vec!["eligible_tool".to_string()];
         let summary = summarize_autonomy_run_with_coordinates(
             "run",
             "autonomy-v1",
@@ -2135,6 +2243,82 @@ mod tests {
             Vec::new(),
         );
         assert!(!summary.complete);
+        assert_eq!(summary.overall.observed, 5);
+        assert_eq!(summary.overall.scoreable, 2);
+        assert_eq!(summary.overall.infrastructure_failures, 3);
+        assert_eq!(summary.overall.contract_passes, 2);
+        assert_eq!(summary.overall.objective_completions, 1);
+
+        let legacy = summary
+            .by_harness_policy
+            .iter()
+            .find(|rate| rate.key == HarnessPolicy::Legacy.label())
+            .unwrap();
+        assert_eq!((legacy.observed, legacy.scoreable), (2, 1));
+        assert_eq!(legacy.objective_completions, 0);
+        let evidence = summary
+            .by_harness_policy
+            .iter()
+            .find(|rate| rate.key == HarnessPolicy::Evidence.label())
+            .unwrap();
+        assert_eq!((evidence.observed, evidence.scoreable), (3, 1));
+        assert_eq!(evidence.objective_completions, 1);
+
+        let control = summary
+            .by_arm
+            .iter()
+            .find(|rate| rate.key == AutonomyArm::Control.label())
+            .unwrap();
+        assert_eq!((control.observed, control.scoreable), (2, 1));
+        let candidate = summary
+            .by_arm
+            .iter()
+            .find(|rate| rate.key == AutonomyArm::Candidate.label())
+            .unwrap();
+        assert_eq!((candidate.observed, candidate.scoreable), (3, 1));
+
+        let evidence_mechanisms = summary
+            .by_policy_mechanisms
+            .iter()
+            .find(|mechanisms| mechanisms.harness_policy == HarnessPolicy::Evidence)
+            .unwrap();
+        assert_eq!(evidence_mechanisms.scoreable_episodes, 1);
+        assert_eq!(evidence_mechanisms.observations_recorded, 1);
+        assert!(
+            summary
+                .by_tool
+                .iter()
+                .any(|tool| tool.tool == "eligible_tool")
+        );
+        assert!(
+            !summary
+                .by_tool
+                .iter()
+                .any(|tool| tool.tool == "excluded_tool")
+        );
+        assert_eq!(summary.clarification.required, 0);
+        assert_eq!(summary.recovery.episodes_expected, 0);
+        assert_eq!(summary.turns.samples, 2);
+        assert_eq!(summary.failure_counts.get("infrastructure"), Some(&1));
+        assert_eq!(summary.failure_counts.get("objective_incomplete"), Some(&1));
+        assert!(!summary.failure_counts.contains_key("contract"));
+        assert!(
+            !summary
+                .failure_counts
+                .contains_key("unnecessary_clarification")
+        );
+        assert!(
+            !summary
+                .failure_counts
+                .contains_key("clarification_missed_or_incorrect")
+        );
+        assert!(!summary.failure_counts.contains_key("recovery"));
+        assert!(
+            !summary
+                .failure_counts
+                .contains_key("duplicate_or_collateral_effect")
+        );
+        assert!(!summary.failure_counts.contains_key("check"));
         let paired = summary.paired_objective.unwrap();
         assert_eq!(paired.expected_pairs, 3);
         assert_eq!(paired.eligible_pairs, 1);
@@ -2195,10 +2379,34 @@ mod tests {
             .clone();
         assert!(paired_rows(&[&control, &candidate]).is_none());
 
-        candidate.evaluation_provenance.workspace_instance_sha256 =
-            Some("different-workspace".to_string());
-        candidate.evaluation_provenance.initial_tree_sha256 = Some("different-tree".to_string());
+        candidate.evaluation_provenance.workspace_instance_sha256 = Some("7".repeat(64));
+        candidate.evaluation_provenance.initial_tree_sha256 = Some("8".repeat(64));
         assert!(paired_rows(&[&control, &candidate]).is_none());
+    }
+
+    #[test]
+    fn paired_provenance_requires_valid_digests_and_canonical_pair_id() {
+        let control = paired_row("H01", "recovery", 1, AutonomyArm::Control, false);
+        let candidate = paired_row("H01", "recovery", 1, AutonomyArm::Candidate, true);
+        assert!(paired_rows(&[&control, &candidate]).is_some());
+
+        let mut bad_workspace = candidate.clone();
+        bad_workspace
+            .evaluation_provenance
+            .workspace_instance_sha256 = Some("not-a-digest".to_string());
+        assert!(paired_rows(&[&control, &bad_workspace]).is_none());
+        assert!(!strict_persisted_row_valid(&bad_workspace));
+
+        let mut bad_tree = candidate.clone();
+        bad_tree.evaluation_provenance.initial_tree_sha256 = Some("not-a-digest".to_string());
+        assert!(paired_rows(&[&control, &bad_tree]).is_none());
+        assert!(!strict_persisted_row_valid(&bad_tree));
+
+        let mut wrong_control_id = control.clone();
+        let mut wrong_candidate_id = candidate;
+        wrong_control_id.evaluation_provenance.pair_id = Some("pair-1".to_string());
+        wrong_candidate_id.evaluation_provenance.pair_id = Some("pair-1".to_string());
+        assert!(paired_rows(&[&wrong_control_id, &wrong_candidate_id]).is_none());
     }
 
     #[test]
@@ -2317,6 +2525,67 @@ mod tests {
             assert!(!strict_persisted_row_valid(&tampered));
             assert!(!row_is_scoreable(&tampered));
         }
+    }
+
+    #[test]
+    fn strict_validated_timeout_is_a_scoreable_model_failure() {
+        let mut row = paired_row("H01", "recovery", 1, AutonomyArm::Candidate, false);
+        row.contract_passed = false;
+        row.objective_completed = false;
+        row.final_terminal = None;
+        row.segments[0].observed_terminal = None;
+        row.segments[0].exit_code = None;
+        row.segments[0].timed_out = true;
+
+        assert!(strict_persisted_row_valid(&row));
+        assert!(row_is_scoreable(&row));
+
+        let mut with_exit_code = row.clone();
+        with_exit_code.segments[0].exit_code = Some(1);
+        assert!(!strict_persisted_row_valid(&with_exit_code));
+
+        let mut missing_path = row.clone();
+        missing_path.segments[0].trace_path = None;
+        assert!(!strict_persisted_row_valid(&missing_path));
+
+        let mut missing_digest = row.clone();
+        missing_digest.segments[0].trace_sha256 = None;
+        assert!(!strict_persisted_row_valid(&missing_digest));
+
+        let mut unvalidated = row.clone();
+        unvalidated.segments[0].trace_validation = None;
+        assert!(!strict_persisted_row_valid(&unvalidated));
+
+        let mut with_segment_terminal = row.clone();
+        with_segment_terminal.segments[0].observed_terminal = Some("max_turns".to_string());
+        assert!(!strict_persisted_row_valid(&with_segment_terminal));
+
+        let mut with_final_terminal = row.clone();
+        with_final_terminal.final_terminal = Some("max_turns".to_string());
+        assert!(!strict_persisted_row_valid(&with_final_terminal));
+
+        let mut with_grading = row.clone();
+        with_grading.command_checks.push(CommandCheckResult {
+            name: "must be skipped".to_string(),
+            status: CommandCheckStatus::ModelFailure,
+            exit_code: Some(1),
+            timed_out: false,
+            stdout_excerpt: String::new(),
+            stderr_excerpt: String::new(),
+            reason: Some("grader ran after timeout".to_string()),
+        });
+        assert!(!strict_persisted_row_valid(&with_grading));
+
+        let mut followed_by_segment = row.clone();
+        followed_by_segment.segments.push(
+            paired_row("H01", "recovery", 1, AutonomyArm::Candidate, false).segments[0].clone(),
+        );
+        followed_by_segment.segments[1].segment = 2;
+        assert!(!strict_persisted_row_valid(&followed_by_segment));
+
+        let mut claimed_success = row;
+        claimed_success.objective_completed = true;
+        assert!(!strict_persisted_row_valid(&claimed_success));
     }
 
     #[test]

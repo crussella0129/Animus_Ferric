@@ -653,7 +653,7 @@ fn python_syntax_matrix_blocks_regressions_and_warns_on_invalid_repairs() {
     let (directory, workspace, registry) = setup();
     let valid_path = directory.path().join("valid.py");
     std::fs::write(&valid_path, b"value = 1\n").unwrap();
-    let invalid_candidate = json!({"path": "valid.py", "content": "def broken(:\n    pass\n"});
+    let invalid_candidate = json!({"path": "valid.py", "content": "return\n"});
 
     let error = rejected(&registry, &workspace, "write_file", &invalid_candidate);
     assert_eq!(error.kind, PrepareErrorKind::SyntaxRejected);
@@ -668,7 +668,7 @@ fn python_syntax_matrix_blocks_regressions_and_warns_on_invalid_repairs() {
         &registry,
         &workspace,
         "write_file",
-        &json!({"path": "absent.py", "content": "def broken(:\n    pass\n"}),
+        &json!({"path": "absent.py", "content": "return\n"}),
     );
     assert!(matches!(
         error.witness,
@@ -734,6 +734,55 @@ fn python_syntax_matrix_blocks_regressions_and_warns_on_invalid_repairs() {
             .to_string_lossy()
             .contains("ferric-candidate")
     }));
+}
+
+#[test]
+fn compiler_failure_baseline_blocks_invalid_but_not_unchecked_candidates() {
+    let (directory, workspace, registry) = setup();
+    let path = directory.path().join("compiler-limited.py");
+    let compiler_unsupported = b"try:\n    pass\nexcept* Exception:\n    pass\n";
+    std::fs::write(&path, compiler_unsupported).unwrap();
+
+    let error = rejected(
+        &registry,
+        &workspace,
+        "write_file",
+        &json!({"path": "compiler-limited.py", "content": "return\n"}),
+    );
+    assert_eq!(error.kind, PrepareErrorKind::SyntaxRejected);
+    assert!(matches!(
+        error.witness,
+        Some(PrepareFailureWitness::SyntaxRegression(ref syntax))
+            if syntax.before
+                == SyntaxState::Unchecked(SyntaxUncheckedReason::CompilerFailure)
+                && syntax.candidate == SyntaxState::Invalid
+                && syntax.blocks_mutation()
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), compiler_unsupported);
+
+    let prepared = prepare(
+        &registry,
+        &workspace,
+        "write_file",
+        &json!({
+            "path": "compiler-limited.py",
+            "content": "try:\n    pass\nexcept* RuntimeError:\n    pass\n"
+        }),
+    );
+    assert!(matches!(
+        prepared.intent(),
+        PreparedIntent::Mutation(intent)
+            if matches!(
+                intent.syntax.as_ref(),
+                Some(syntax)
+                    if syntax.before
+                        == SyntaxState::Unchecked(SyntaxUncheckedReason::CompilerFailure)
+                        && syntax.candidate
+                            == SyntaxState::Unchecked(SyntaxUncheckedReason::CompilerFailure)
+                        && !syntax.blocks_mutation()
+            )
+    ));
+    drop(prepared);
 }
 
 #[test]

@@ -36,6 +36,7 @@ temperature = 0.0              # 0.0 = deterministic sampler
 
 # Behavior
 max_ring    = 1                # cap the active tool ring (restrict-only)
+harness_policy = "legacy"      # legacy | evidence | evidence_planner
 profile_dir = "benchmarks"     # where model_profiles.json lives (ADR-029)
 stream      = true             # stream output by default
 

@@ -183,7 +183,7 @@ deterministically and **LLM-free**:
 ```sh
 ferric launch --name demo-proj --path /tmp/demo-proj \
   --goal "a CLI that formats JSON" --project-type Rust
-ls -la /tmp/demo-proj        # README, .gitignore, agent-tasks/, decisions.md, git repo
+ls -la /tmp/demo-proj        # README, .gitignore, docs/ Book v2, git repo
 git -C /tmp/demo-proj log --oneline --all
 ```
 

@@ -88,11 +88,14 @@ impl Tool for WriteFile {
         if let Some(parent) = resolved.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for {path}: {e}"))?;
         }
+        let syntax_warning =
+            super::check_syntax::legacy_syntax_warning(&resolved, content.as_bytes());
         std::fs::write(&resolved, content).map_err(|e| format!("write {path}: {e}"))?;
         let mut result = format!("wrote {} bytes to {path}", content.len());
-        // Best-effort syntax check: append a warning if the written code has
-        // obvious syntax errors, so the model can self-correct.
-        if let Some(warning) = super::check_syntax::check_syntax(&resolved) {
+        // Legacy compatibility: invalid Python is still published with a
+        // best-effort warning. The candidate was parsed in-process before the
+        // write, so validation cannot import or execute workspace code.
+        if let Some(warning) = syntax_warning {
             result.push_str(&format!("\n⚠ {warning}"));
         }
         Ok(result)

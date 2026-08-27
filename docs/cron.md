@@ -74,7 +74,7 @@ A job's `command` is **not** an arbitrary shell string. It is one of a fixed set
 of Ferric subcommands (`dream`, `query`), so every scheduled action is an
 operation Ferric already contains: a `query` runs the workspace-scoped,
 guard-checked agent loop; `dream` reads traces and writes `MEMORY.md`. This is
-deliberately narrower than the [hooks](../decisions.md) system (arbitrary scripts
+deliberately narrower than the [hooks](configuration.md#hooks) system (arbitrary scripts
 the user writes per workspace) — a scheduled, standing trigger should not be able
 to run arbitrary commands. New capabilities extend the command set, never open it
 to a shell.

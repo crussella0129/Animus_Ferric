@@ -8,9 +8,6 @@ target/
 .git/
 .github/
 
-# Ephemeral sprint-loop working memory (gitignored; not needed to build).
-sprints/
-
 # Editor/OS cruft.
 .vscode/
 .idea/

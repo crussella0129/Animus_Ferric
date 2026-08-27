@@ -105,6 +105,8 @@ mod tests {
                         }],
                         dispatched: 1,
                         errored: 0,
+                        controller_blocks: 0,
+                        controller_blocks_was_present: true,
                     }],
                     nudged_for_no_action: false,
                     truncated_once: false,
@@ -545,6 +547,55 @@ mod tests {
         };
         assert!(state.guard_history.is_empty());
         assert!(state.pending_input.is_none());
+    }
+
+    #[test]
+    fn guard_turn_controller_blocks_are_additive_and_zero_omitted() {
+        let old = r#"{
+            "turn":3,
+            "calls":[{"id":"c","name":"edit_file","args":{"path":"a.txt"}}],
+            "dispatched":1,
+            "errored":1
+        }"#;
+        let parsed: GuardTurn = serde_json::from_str(old).unwrap();
+        assert_eq!(parsed.controller_blocks, 0);
+        assert!(!parsed.controller_blocks_was_present);
+        assert!(
+            !serde_json::to_string(&parsed)
+                .unwrap()
+                .contains("controller_blocks")
+        );
+
+        let with_block = GuardTurn {
+            controller_blocks: 1,
+            ..parsed
+        };
+        let encoded = serde_json::to_string(&with_block).unwrap();
+        assert!(encoded.contains("\"controller_blocks\":1"), "{encoded}");
+        let reparsed = serde_json::from_str::<GuardTurn>(&encoded).unwrap();
+        assert_eq!(reparsed, with_block);
+        assert!(reparsed.controller_blocks_was_present);
+
+        let explicit_zero: GuardTurn = serde_json::from_str(
+            r#"{
+                "turn":3,
+                "calls":[{"id":"c","name":"edit_file","args":{"path":"a.txt"}}],
+                "dispatched":1,
+                "errored":1,
+                "controller_blocks":0
+            }"#,
+        )
+        .unwrap();
+        assert!(explicit_zero.controller_blocks_was_present);
+
+        let explicit_null = r#"{
+            "turn":3,
+            "calls":[{"id":"c","name":"edit_file","args":{"path":"a.txt"}}],
+            "dispatched":1,
+            "errored":1,
+            "controller_blocks":null
+        }"#;
+        assert!(serde_json::from_str::<GuardTurn>(explicit_null).is_err());
     }
 
     /// ADR-093 added `truncation_limit`, and Sprint 113 added

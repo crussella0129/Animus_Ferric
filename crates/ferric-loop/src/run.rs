@@ -34,10 +34,10 @@ For each tool call, write out your reasoning in the `thought` field before execu
 When the task is done, call task_complete with a one-sentence summary. \
 Never describe a tool call in prose - actually call the tool.";
 
-const GENERAL_EVIDENCE_GUIDANCE_V1: &str = "[Ferric general evidence guidance v1]\n\
-Inspect a complete current file in a prior turn before editing existing content; paginate incomplete reads until coverage is complete.\n\
+const GENERAL_EVIDENCE_GUIDANCE_V2: &str = "[Ferric general evidence guidance v2]\n\
+Before the first mutation, completely inspect every existing task-scoped workspace file explicitly named by the task and permitted for modification; paginate incomplete reads until coverage is complete.\n\
 Genuinely absent paths may be created directly without a prior file read.\n\
-After a failed check, inspect relevant repository evidence in a later turn before attempting a repair.\n\
+After a failed authorized check, inspect and repair the implementation implicated by its diagnostic in a later turn; do not change unrelated tests or files.\n\
 Do not rerun the same named check until a material workspace mutation advances the evidence epoch.";
 
 pub type PromptLineage = (String, String, Vec<(String, String)>);
@@ -648,6 +648,8 @@ impl<'a> LoopState<'a> {
         let mut plan_terminate_with: Option<String> = None;
         let mut dispatched = 0usize;
         let mut errored = 0usize;
+        let mut controller_blocks = 0usize;
+        let mut completion_was_blocked = false;
         for call in &actions {
             if crate::terminator::is_task_complete(&call.name) {
                 terminate_with = Some((call.clone(), crate::terminator::summary_of(&call.args)));
@@ -697,6 +699,9 @@ impl<'a> LoopState<'a> {
                 dispatched += 1;
                 if result.is_error {
                     errored += 1;
+                }
+                if result.controller_blocked {
+                    controller_blocks += 1;
                 }
                 if let Some(stream_sink) = self.args.stream_sink {
                     let summary_line = result.full.lines().next().unwrap_or("").to_string();
@@ -858,6 +863,7 @@ impl<'a> LoopState<'a> {
             self.projector.step(&result);
             dispatched += 1;
             errored += 1;
+            completion_was_blocked = true;
         }
 
         if let Some(plan) = plan_terminate_with {
@@ -875,8 +881,16 @@ impl<'a> LoopState<'a> {
             return Ok(TurnOutcome::Stop(StopReason::PlanSubmitted));
         }
 
-        if dispatched > 0 {
-            match self.failure.observe_turn(dispatched, errored) {
+        if let Some((execution_dispatched, execution_errored)) = crate::failure::failure_observation(
+            dispatched,
+            errored,
+            controller_blocks,
+            completion_was_blocked,
+        ) {
+            match self
+                .failure
+                .observe_turn(execution_dispatched, execution_errored)
+            {
                 crate::repetition::Verdict::Proceed => {}
                 crate::repetition::Verdict::Warn => {
                     let evt = Event::FailureGuard {
@@ -1156,7 +1170,7 @@ pub async fn run(
             }
             if effective_harness_policy == HarnessPolicy::Evidence {
                 system.push_str("\n\n");
-                system.push_str(GENERAL_EVIDENCE_GUIDANCE_V1);
+                system.push_str(GENERAL_EVIDENCE_GUIDANCE_V2);
             }
 
             let prompt_text = prompt.ok_or_else(|| {
@@ -1200,8 +1214,25 @@ pub async fn run(
         let _ = repetition.observe(&guarded.calls);
         let _ = progress.observe(&guarded.calls);
         let _ = oscillation.observe(&guarded.calls);
-        if guarded.dispatched > 0 {
-            let _ = failure.observe_turn(guarded.dispatched as usize, guarded.errored as usize);
+        // A task_complete proposal with a recorded error result is a blocked
+        // completion gate: a passed gate ends successfully and is not
+        // resumable. A 0/0 task_complete turn was stopped by an action-shape
+        // guard before dispatch, so it must not touch the failure streak.
+        // Keep GuardTurn's counts literal and derive the same execution-only
+        // view used by the live path.
+        let completion_was_blocked = guarded.dispatched > 0
+            && guarded.errored > 0
+            && guarded
+                .calls
+                .iter()
+                .any(|call| crate::terminator::is_task_complete(&call.name));
+        if let Some((execution_dispatched, execution_errored)) = crate::failure::failure_observation(
+            guarded.dispatched as usize,
+            guarded.errored as usize,
+            guarded.controller_blocks as usize,
+            completion_was_blocked,
+        ) {
+            let _ = failure.observe_turn(execution_dispatched, execution_errored);
         }
     }
 

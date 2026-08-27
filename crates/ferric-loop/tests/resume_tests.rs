@@ -7,12 +7,15 @@ use common::*;
 use ferric_core::{ActionProtocol, HarnessPolicy, Message};
 use ferric_guard::Workspace;
 use ferric_loop::{
-    ControllerState, ReplayError, ReplayedState, RunArgs, StopReason, replay, run,
+    ControllerState, ReplayError, ReplayedState, RunArgs, StopReason, TraceStructure, replay, run,
     validate_resume_target,
 };
 use ferric_provider::{MockProvider, SamplingParams};
-use ferric_tools::{Registry, register_builtin_tools};
-use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
+use ferric_tools::{NamedCheck, Registry, register_builtin_tools, register_run_checks};
+use ferric_trace::{
+    CONTROLLER_RECORD_VERSION, Event, FileObservationV1, JsonlSink, LineRangeV1,
+    ObservationDetailV1, ObservationV1, ParsedEvent, TraceReader,
+};
 
 fn base_replayed(turns: u32, workspace: &std::path::Path) -> ReplayedState {
     ReplayedState {
@@ -39,6 +42,16 @@ fn base_replayed(turns: u32, workspace: &std::path::Path) -> ReplayedState {
         passed_checks: std::collections::BTreeMap::new(),
         pause_reason: None,
         controller_checkpoint: None,
+    }
+}
+
+fn inert_required_check() -> NamedCheck {
+    NamedCheck {
+        name: "unit".to_string(),
+        program: std::env::current_exe().unwrap(),
+        args: Vec::new(),
+        timeout_s: 1,
+        output_limit: 1_000,
     }
 }
 
@@ -179,6 +192,506 @@ fn evidence_resume_rejects_required_check_drift_before_trace_or_dispatch() {
     drop(sink);
     assert_eq!(std::fs::read_to_string(&trace_path).unwrap(), "");
     assert!(provider.requests().is_empty());
+}
+
+#[test]
+fn resume_rebuilds_failure_streak_with_blocked_completion_as_control() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new(dir.path()).unwrap();
+
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+    register_run_checks(&mut registry, vec![inert_required_check()]).unwrap();
+    let original_trace = dir.path().join("blocked-completion-origin.jsonl");
+    let mut original_sink = JsonlSink::open(&original_trace, "blocked-completion-origin").unwrap();
+    let original_provider = MockProvider::new(vec![
+        tool_completion(vec![(
+            "failure-1",
+            "read_file",
+            serde_json::json!({"path": "missing-1.txt"}),
+        )]),
+        tool_completion(vec![(
+            "failure-2",
+            "list_dir",
+            serde_json::json!({"path": "missing-2"}),
+        )]),
+        tool_completion(vec![(
+            "blocked-completion",
+            ferric_loop::TASK_COMPLETE,
+            serde_json::json!({"summary": "not verified"}),
+        )]),
+    ]);
+    let original_sleeper = RecordingSleeper::new();
+    let mut original_policy = nano_policy();
+    original_policy.max_turns = 3;
+    let original = futures_executor::block_on(run(
+        RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            provenance: ferric_guard::Provenance::Clean,
+            provider: &original_provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &original_policy,
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: Some(HarnessPolicy::Legacy),
+            sampling: SamplingParams::default(),
+            sleeper: &original_sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+            answer: None,
+            hooks: None,
+        },
+        &mut original_sink,
+        Some("complete after verification"),
+    ))
+    .unwrap();
+    assert_eq!(original.stop, StopReason::MaxTurns);
+    drop(original_sink);
+
+    let replayed = replay(&original_trace).unwrap();
+    let completion_turn = replayed
+        .guard_history
+        .iter()
+        .find(|guarded| {
+            guarded
+                .calls
+                .iter()
+                .any(|call| call.id == "blocked-completion")
+        })
+        .unwrap();
+    assert_eq!(
+        (completion_turn.dispatched, completion_turn.errored),
+        (1, 1),
+        "replay must retain the raw trace counts"
+    );
+
+    let resumed_trace = dir.path().join("blocked-completion-resume.jsonl");
+    let mut resumed_sink = JsonlSink::open(&resumed_trace, "blocked-completion-resume").unwrap();
+    let resumed_provider = MockProvider::new(vec![
+        tool_completion(vec![(
+            "post-resume-failure",
+            "read_file",
+            serde_json::json!({"path": "missing-3.txt"}),
+        )]),
+        tool_completion(vec![(
+            "post-resume-recovery",
+            "list_dir",
+            serde_json::json!({"path": "."}),
+        )]),
+    ]);
+    let resumed_sleeper = RecordingSleeper::new();
+    let mut resumed_policy = nano_policy();
+    resumed_policy.max_turns = 2;
+    let resumed = futures_executor::block_on(run(
+        RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            provenance: ferric_guard::Provenance::Clean,
+            provider: &resumed_provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &resumed_policy,
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
+            sampling: SamplingParams::default(),
+            sleeper: &resumed_sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: Some(replayed),
+            answer: None,
+            hooks: None,
+        },
+        &mut resumed_sink,
+        None,
+    ))
+    .unwrap();
+
+    assert_eq!(resumed.stop, StopReason::MaxTurns);
+    assert_eq!(resumed_provider.requests().len(), 2);
+}
+
+#[test]
+fn resume_preserves_failure_streak_across_a_controller_only_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("existing.txt"), "before\n").unwrap();
+    let workspace = Workspace::new(dir.path()).unwrap();
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+
+    let original_trace = dir.path().join("controller-only-origin.jsonl");
+    let mut original_sink = JsonlSink::open(&original_trace, "controller-only-origin").unwrap();
+    let original_provider = MockProvider::new(vec![
+        tool_completion(vec![(
+            "failure-before-block",
+            "read_file",
+            serde_json::json!({"path": "missing-before.txt"}),
+        )]),
+        tool_completion(vec![(
+            "controller-only",
+            "write_file",
+            serde_json::json!({"path": "existing.txt", "content": "after\n"}),
+        )]),
+    ]);
+    let original_sleeper = RecordingSleeper::new();
+    let mut original_policy = nano_policy();
+    original_policy.max_turns = 2;
+    let original = futures_executor::block_on(run(
+        RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            provenance: ferric_guard::Provenance::Clean,
+            provider: &original_provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &original_policy,
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: Some(HarnessPolicy::Evidence),
+            sampling: SamplingParams::default(),
+            sleeper: &original_sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+            answer: None,
+            hooks: None,
+        },
+        &mut original_sink,
+        Some("update existing.txt"),
+    ))
+    .unwrap();
+    assert_eq!(original.stop, StopReason::MaxTurns);
+    drop(original_sink);
+
+    let replayed = replay(&original_trace).unwrap();
+    let blocked = replayed
+        .guard_history
+        .iter()
+        .find(|guarded| {
+            guarded
+                .calls
+                .iter()
+                .any(|call| call.id == "controller-only")
+        })
+        .unwrap();
+    assert_eq!(
+        (
+            blocked.dispatched,
+            blocked.errored,
+            blocked.controller_blocks
+        ),
+        (1, 1, 1)
+    );
+
+    let resumed_trace = dir.path().join("controller-only-resume.jsonl");
+    let mut resumed_sink = JsonlSink::open(&resumed_trace, "controller-only-resume").unwrap();
+    let resumed_provider = MockProvider::new(vec![
+        tool_completion(vec![(
+            "failure-after-block-1",
+            "list_dir",
+            serde_json::json!({"path": "missing-after"}),
+        )]),
+        tool_completion(vec![(
+            "failure-after-block-2",
+            "read_file",
+            serde_json::json!({"path": "missing-after.txt"}),
+        )]),
+    ]);
+    let resumed_sleeper = RecordingSleeper::new();
+    let mut resumed_policy = nano_policy();
+    resumed_policy.max_turns = 3;
+    let resumed = futures_executor::block_on(run(
+        RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            provenance: ferric_guard::Provenance::Clean,
+            provider: &resumed_provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &resumed_policy,
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
+            sampling: SamplingParams::default(),
+            sleeper: &resumed_sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: Some(replayed),
+            answer: None,
+            hooks: None,
+        },
+        &mut resumed_sink,
+        None,
+    ))
+    .unwrap();
+
+    assert_eq!(resumed.stop, StopReason::RepeatedFailure);
+    assert_eq!(resumed_provider.requests().len(), 2);
+}
+
+#[test]
+fn resume_does_not_reset_failure_streak_for_predispatch_task_complete_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new(dir.path()).unwrap();
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+    register_run_checks(&mut registry, vec![inert_required_check()]).unwrap();
+
+    // Alternate one real execution failure with one blocked completion. The
+    // eighth proposal is stopped by the oscillation guard before dispatch,
+    // immediately after a real failure left the live failure streak at one.
+    let script = (0..8)
+        .map(|turn| {
+            if turn % 2 == 0 {
+                tool_completion(vec![(
+                    "cycle-read",
+                    "read_file",
+                    serde_json::json!({"path": "missing-cycle.txt"}),
+                )])
+            } else {
+                tool_completion(vec![(
+                    "cycle-completion",
+                    ferric_loop::TASK_COMPLETE,
+                    serde_json::json!({"summary": "not verified"}),
+                )])
+            }
+        })
+        .collect();
+    let original_trace = dir.path().join("predispatch-completion-origin.jsonl");
+    let mut original_sink =
+        JsonlSink::open(&original_trace, "predispatch-completion-origin").unwrap();
+    let original_provider = MockProvider::new(script);
+    let original_sleeper = RecordingSleeper::new();
+    let mut original_policy = nano_policy();
+    original_policy.max_turns = 12;
+    let original = futures_executor::block_on(run(
+        RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            provenance: ferric_guard::Provenance::Clean,
+            provider: &original_provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &original_policy,
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: Some(HarnessPolicy::Legacy),
+            sampling: SamplingParams::default(),
+            sleeper: &original_sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+            answer: None,
+            hooks: None,
+        },
+        &mut original_sink,
+        Some("complete after verification"),
+    ))
+    .unwrap();
+    assert_eq!(original.stop, StopReason::Oscillation);
+    drop(original_sink);
+
+    let replayed = replay(&original_trace).unwrap();
+    let stopped = replayed.guard_history.last().unwrap();
+    assert!(
+        stopped
+            .calls
+            .iter()
+            .any(|call| call.name == ferric_loop::TASK_COMPLETE)
+    );
+    assert_eq!(
+        (stopped.dispatched, stopped.errored),
+        (0, 0),
+        "the durable counts prove this task_complete never reached its completion gate"
+    );
+
+    let resumed_trace = dir.path().join("predispatch-completion-resume.jsonl");
+    let mut resumed_sink =
+        JsonlSink::open(&resumed_trace, "predispatch-completion-resume").unwrap();
+    let resumed_provider = MockProvider::new(vec![
+        tool_completion(vec![(
+            "post-resume-failure-1",
+            "list_dir",
+            serde_json::json!({"path": "missing-new-directory"}),
+        )]),
+        tool_completion(vec![(
+            "post-resume-failure-2",
+            "read_file",
+            serde_json::json!({"path": "missing-new-file.txt"}),
+        )]),
+    ]);
+    let resumed_sleeper = RecordingSleeper::new();
+    let mut resumed_policy = nano_policy();
+    resumed_policy.max_turns = 4;
+    let resumed = futures_executor::block_on(run(
+        RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            provenance: ferric_guard::Provenance::Clean,
+            provider: &resumed_provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &resumed_policy,
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
+            sampling: SamplingParams::default(),
+            sleeper: &resumed_sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: Some(replayed),
+            answer: None,
+            hooks: None,
+        },
+        &mut resumed_sink,
+        None,
+    ))
+    .unwrap();
+
+    assert_eq!(resumed.stop, StopReason::RepeatedFailure);
+    assert_eq!(resumed_provider.requests().len(), 2);
+}
+
+#[test]
+fn live_evidence_resume_injects_byte_identical_stale_recovery_packet_and_verifies() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new(dir.path()).unwrap();
+    let registry = Registry::new();
+    let trace_path = dir.path().join("evidence-resume.jsonl");
+    let mut sink = JsonlSink::open(&trace_path, "evidence-resume").unwrap();
+    let provider = MockProvider::new(vec![text_completion("done after recovery")]);
+    let sleeper = RecordingSleeper::new();
+
+    let mut controller = ControllerState::new(HarnessPolicy::Evidence, Vec::new()).unwrap();
+    controller
+        .apply_observation(
+            0,
+            &ObservationV1 {
+                version: CONTROLLER_RECORD_VERSION,
+                detail: ObservationDetailV1::File(FileObservationV1 {
+                    path: "a.rs".to_string(),
+                    sha256: "a".repeat(64),
+                    total_bytes: 2,
+                    total_lines: 1,
+                    requested_range: None,
+                    returned_range: Some(LineRangeV1 { start: 1, end: 1 }),
+                    complete: true,
+                    model_truncated: false,
+                }),
+            },
+        )
+        .unwrap();
+
+    let mut replayed = base_replayed(0, dir.path());
+    replayed.harness_policy = HarnessPolicy::Evidence;
+    replayed.pause_reason = Some("max_turns".to_string());
+    replayed.controller_checkpoint = Some(controller.checkpoint_for_pause("max_turns").unwrap());
+
+    let outcome = futures_executor::block_on(run(
+        RunArgs {
+            edit_approver: None,
+            cancel_flag: None,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            provenance: ferric_guard::Provenance::Clean,
+            provider: &provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &nano_policy(),
+            protocol: ActionProtocol::NativeTools,
+            harness_policy: None,
+            sampling: SamplingParams::default(),
+            sleeper: &sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: Some(replayed),
+            answer: None,
+            hooks: None,
+        },
+        &mut sink,
+        None,
+    ))
+    .unwrap();
+    assert_eq!(outcome.stop, StopReason::FinalText);
+    drop(sink);
+
+    let records = TraceReader::open(&trace_path)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let resumed_base = records
+        .iter()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::RecoveryCheckpoint { state }) => Some(state),
+            _ => None,
+        })
+        .expect("resume must anchor its inherited message history");
+    assert_eq!(resumed_base.messages[0], Message::system("You are Ferric."));
+    let (packet, packet_message) = records
+        .iter()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::RecoveryPacketInjected { packet, message }) => {
+                Some((packet, message))
+            }
+            _ => None,
+        })
+        .expect("live resume must write a recovery packet");
+    assert_eq!(packet.reread_paths, ["a.rs"]);
+
+    let resumed_controller = records
+        .iter()
+        .find_map(|record| match &record.event {
+            ParsedEvent::Known(Event::ControllerCheckpoint { state }) => Some(state),
+            _ => None,
+        })
+        .expect("live resume must write a controller recovery base");
+    let inherited = resumed_controller
+        .file_evidence
+        .iter()
+        .find(|evidence| evidence.path == "a.rs")
+        .expect("controller recovery base must retain the observed identity");
+    assert!(!inherited.fresh);
+    assert!(!inherited.complete);
+    assert!(inherited.covered_ranges.is_empty());
+
+    let requests = provider.requests();
+    let injected_messages: Vec<_> = requests[0]
+        .messages
+        .iter()
+        .filter_map(|message| message.text.as_deref())
+        .filter(|message| *message == packet_message)
+        .collect();
+    assert_eq!(injected_messages, [packet_message.as_str()]);
+
+    let mut structure = TraceStructure::new();
+    for record in &records {
+        let ParsedEvent::Known(event) = &record.event else {
+            panic!("live resume trace contains an unknown event")
+        };
+        structure.observe(event).unwrap_or_else(|error| {
+            panic!(
+                "event {} failed structural verification: {error}",
+                record.seq
+            )
+        });
+    }
+    structure.finish().unwrap();
 }
 
 #[test]

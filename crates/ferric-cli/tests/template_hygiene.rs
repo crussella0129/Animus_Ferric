@@ -19,17 +19,17 @@
 
 use std::path::{Path, PathBuf};
 
-/// Directories that carry the project's *history* rather than its template
-/// surface. `decisions.md` and `agent-tasks/` record what was measured and on
-/// what — rewriting them to remove the machine would falsify the evidence they
-/// cite, so they are excluded by decision, not by oversight (ADR-096).
+/// Directories that carry the project's *history* rather than its live
+/// template surface. Book v2 keeps immutable migration provenance under
+/// `docs/history/` and sprint evidence under `docs/sprints/`; rewriting either
+/// would falsify the evidence it cites, so both are excluded by decision, not
+/// by oversight (ADR-096).
 const EXCLUDED: &[&str] = &[
     "target",
     ".git",
-    "sprints",
     "benchmarks",
-    "decisions.md",
-    "agent-tasks",
+    "history",
+    "sprints",
     // This file states the forbidden shapes in order to forbid them.
     "template_hygiene.rs",
 ];
@@ -157,6 +157,32 @@ fn tracked_sources_carry_no_machine_identity() {
          (tailnet-example.ts.net, 100.64.0.x, example-host, C:\\Users\\<you>):\n{}",
         findings.join("\n")
     );
+}
+
+#[test]
+fn canonical_book_layout_replaces_legacy_live_ledgers() {
+    let root = repo_root();
+
+    for legacy in ["decisions.md", "agent-tasks", "confidence.txt", "sprints"] {
+        assert!(
+            !root.join(legacy).exists(),
+            "legacy live ledger still exists at repository root: {legacy}"
+        );
+    }
+
+    for canonical in [
+        "docs/.sprint-loop-book",
+        "docs/intents",
+        "docs/sprints",
+        "docs/work/tasks.md",
+        "docs/work/completed-tasks.md",
+        "docs/history/decisions-legacy.md",
+    ] {
+        assert!(
+            root.join(canonical).exists(),
+            "Book v2 canonical path is missing: {canonical}"
+        );
+    }
 }
 
 fn scan_file(path: &Path, findings: &mut Vec<String>) {

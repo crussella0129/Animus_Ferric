@@ -1,0 +1,582 @@
+{
+  "schema_version": 2,
+  "run_id": "autonomy-1787781412661-27096-0",
+  "suite_id": "ferric-autonomy-v1",
+  "suite_schema_version": 1,
+  "suite_sha256": "bb0ce1ec3f12a917096690e5a286232bfa05394c3c3d22d0589cb25542446323",
+  "started_at_unix_ms": 1787781412661,
+  "finished_at_unix_ms": 1787782425059,
+  "trials_requested": 1,
+  "expected_tasks": [
+    "H01",
+    "H04",
+    "H08"
+  ],
+  "expected_variants": [
+    "recovery"
+  ],
+  "expected_coordinates": [
+    {
+      "arm": "single",
+      "harness_policy": "evidence"
+    }
+  ],
+  "expected_rows": 3,
+  "observed_rows": 3,
+  "complete": true,
+  "infrastructure_clean": true,
+  "internal_baseline_only": true,
+  "provenance": {
+    "ferric_version": "0.1.0",
+    "git_commit": null,
+    "binary": {
+      "path": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\.ferric\\evaluations\\s113\\screen-004\\artifacts\\autonomy-1787781412661-27096-0\\single-evidence-ferric.exe",
+      "size_bytes": 21127168,
+      "modified_at_unix_ms": 1787781412708,
+      "sha256": "f98c4875bc272b8c17b26e3dda1f5d414ae3e23e03514319dda06a2801708f53"
+    },
+    "model": {
+      "backend": "openai",
+      "model": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\models\\qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "api_base": "http://127.0.0.1:8080/v1",
+      "params_b": 7.6156163,
+      "ctx": 8192,
+      "sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c"
+    },
+    "protocol": "ConstrainedJson",
+    "variant": "autonomy_matrix",
+    "python_bin": "python"
+  },
+  "provenance_by_coordinate": [
+    {
+      "coordinate": {
+        "arm": "single",
+        "harness_policy": "evidence"
+      },
+      "provenance": {
+        "ferric_version": "0.1.0",
+        "git_commit": null,
+        "binary": {
+          "path": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\.ferric\\evaluations\\s113\\screen-004\\artifacts\\autonomy-1787781412661-27096-0\\single-evidence-ferric.exe",
+          "size_bytes": 21127168,
+          "modified_at_unix_ms": 1787781412708,
+          "sha256": "f98c4875bc272b8c17b26e3dda1f5d414ae3e23e03514319dda06a2801708f53"
+        },
+        "model": {
+          "backend": "openai",
+          "model": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\models\\qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+          "api_base": "http://127.0.0.1:8080/v1",
+          "params_b": 7.6156163,
+          "ctx": 8192,
+          "sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c"
+        },
+        "protocol": "ConstrainedJson",
+        "variant": "autonomy_matrix",
+        "python_bin": "python"
+      },
+      "evaluation_provenance": {
+        "arm": "single",
+        "harness_policy": "evidence",
+        "pair_id": null,
+        "pair_slot": null,
+        "pair_order": null,
+        "workspace_instance_sha256": null,
+        "initial_tree_sha256": null,
+        "child_binary_sha256": "f98c4875bc272b8c17b26e3dda1f5d414ae3e23e03514319dda06a2801708f53",
+        "corpus_sha256": "bb0ce1ec3f12a917096690e5a286232bfa05394c3c3d22d0589cb25542446323",
+        "model_sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c",
+        "query_temperature": "0.0",
+        "managed_server": {
+          "engine": "llama-server",
+          "listener_base_url": "http://127.0.0.1:8080/v1",
+          "model": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\models\\qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+          "model_launch_argument": "C:\\Users\\charl\\Animus_Ferric\\models\\qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+          "model_sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c",
+          "context_size": 8192,
+          "sampling_seed": 42,
+          "parallel_slots": 1,
+          "gpu_layers": 0,
+          "pid": 48468,
+          "listener_owner_pid": 48468,
+          "listener_port": 8080,
+          "engine_executable": "C:\\Users\\charl\\.cargo\\bin\\llama-server.exe",
+          "engine_executable_sha256": "05db01f06449ddf2ac178efb761e5229b9e097170fae81ee08ee3a2dbe1fd976",
+          "engine_version": "version: 10034 (505b1ed15)\r\nbuilt with Clang 20.1.8 for Windows x86_64",
+          "engine_argv": [
+            "llama-server",
+            "-m",
+            "C:\\Users\\charl\\Animus_Ferric\\models\\qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+            "-c",
+            "8192",
+            "-ngl",
+            "0",
+            "--seed",
+            "42",
+            "--parallel",
+            "1",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8080"
+          ]
+        }
+      }
+    }
+  ],
+  "server_states": [
+    "cold"
+  ],
+  "issues": [],
+  "overall": {
+    "key": "all",
+    "expected": 3,
+    "observed": 3,
+    "scoreable": 3,
+    "infrastructure_failures": 0,
+    "contract_passes": 0,
+    "objective_completions": 0,
+    "contract_rate": 0.0,
+    "objective_rate": 0.0,
+    "contract_wilson_95": {
+      "lower": 4.8683609171202235e-17,
+      "upper": 0.5614970317550455
+    },
+    "objective_wilson_95": {
+      "lower": 4.8683609171202235e-17,
+      "upper": 0.5614970317550455
+    }
+  },
+  "by_task": [
+    {
+      "key": "H01",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "key": "H04",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "key": "H08",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    }
+  ],
+  "by_task_variant": [
+    {
+      "key": "H01/recovery",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "key": "H04/recovery",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "key": "H08/recovery",
+      "expected": 1,
+      "observed": 1,
+      "scoreable": 1,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      },
+      "objective_wilson_95": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    }
+  ],
+  "by_category": [
+    {
+      "key": "long_horizon",
+      "expected": 3,
+      "observed": 3,
+      "scoreable": 3,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      },
+      "objective_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    }
+  ],
+  "by_variant": [
+    {
+      "key": "recovery",
+      "expected": 3,
+      "observed": 3,
+      "scoreable": 3,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      },
+      "objective_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    }
+  ],
+  "by_harness_policy": [
+    {
+      "key": "evidence",
+      "expected": 3,
+      "observed": 3,
+      "scoreable": 3,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      },
+      "objective_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    }
+  ],
+  "by_arm": [
+    {
+      "key": "single",
+      "expected": 3,
+      "observed": 3,
+      "scoreable": 3,
+      "infrastructure_failures": 0,
+      "contract_passes": 0,
+      "objective_completions": 0,
+      "contract_rate": 0.0,
+      "objective_rate": 0.0,
+      "contract_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      },
+      "objective_wilson_95": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    }
+  ],
+  "by_tool": [
+    {
+      "tool": "edit_file",
+      "episodes_used": 3,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    },
+    {
+      "tool": "find_files",
+      "episodes_used": 1,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "tool": "make_dir",
+      "episodes_used": 1,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "tool": "read_file",
+      "episodes_used": 3,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    },
+    {
+      "tool": "run_check",
+      "episodes_used": 3,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 4.8683609171202235e-17,
+        "upper": 0.5614970317550455
+      }
+    },
+    {
+      "tool": "task_complete",
+      "episodes_used": 1,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    },
+    {
+      "tool": "write_file",
+      "episodes_used": 1,
+      "objective_completions_when_used": 0,
+      "objective_completion_rate_when_used": 0.0,
+      "objective_wilson_95_when_used": {
+        "lower": 0.0,
+        "upper": 0.7934506856227626
+      }
+    }
+  ],
+  "by_policy_mechanisms": [
+    {
+      "harness_policy": "evidence",
+      "scoreable_episodes": 3,
+      "observations_recorded": 13,
+      "file_observations": 12,
+      "search_observations": 0,
+      "find_observations": 1,
+      "controller_blocks": 12,
+      "blind_mutation_blocks": 0,
+      "same_turn_observation_blocks": 0,
+      "stale_observation_blocks": 0,
+      "unsupported_mutation_blocks": 0,
+      "repair_inspection_blocks": 2,
+      "no_effect_blocks": 1,
+      "syntax_regression_blocks": 0,
+      "repeated_check_blocks": 9,
+      "workspace_effects_recorded": 7,
+      "workspace_effect_paths": 7,
+      "verification_checks_recorded": 3,
+      "verification_checks_passed": 0,
+      "verification_checks_failed": 3,
+      "verification_repair_attempts": 0,
+      "distinct_failed_diagnostic_fingerprints": 3,
+      "controller_checkpoints": 6,
+      "recovery_packets_injected": 0
+    }
+  ],
+  "clarification": {
+    "required": 0,
+    "observed": 0,
+    "correct": 0,
+    "missed": 0,
+    "unnecessary": 0,
+    "precision": null,
+    "recall": null
+  },
+  "recovery": {
+    "resumes_expected": 0,
+    "resumes_observed": 0,
+    "episodes_expected": 0,
+    "episodes_succeeded": 0,
+    "success_rate": 0.0,
+    "wilson_95": {
+      "lower": 0.0,
+      "upper": 1.0
+    },
+    "refusal_probes": 0,
+    "refusal_probes_rejected": 0
+  },
+  "resolved_at_1": {
+    "key": "trial_1",
+    "expected": 3,
+    "observed": 3,
+    "scoreable": 3,
+    "infrastructure_failures": 0,
+    "contract_passes": 0,
+    "objective_completions": 0,
+    "contract_rate": 0.0,
+    "objective_rate": 0.0,
+    "contract_wilson_95": {
+      "lower": 4.8683609171202235e-17,
+      "upper": 0.5614970317550455
+    },
+    "objective_wilson_95": {
+      "lower": 4.8683609171202235e-17,
+      "upper": 0.5614970317550455
+    }
+  },
+  "pass_power_3": {
+    "eligible_groups": 0,
+    "successful_groups": 0,
+    "rate": null,
+    "wilson_95": null
+  },
+  "pass_power_3_by_policy": [
+    {
+      "harness_policy": "evidence",
+      "summary": {
+        "eligible_groups": 0,
+        "successful_groups": 0,
+        "rate": null,
+        "wilson_95": null
+      }
+    }
+  ],
+  "repository_brief_ab": {
+    "paired_episodes": 0,
+    "recovery_wins": 0,
+    "repository_brief_wins": 0,
+    "both_completed": 0,
+    "neither_completed": 0,
+    "objective_rate_delta": null
+  },
+  "repository_brief_ab_by_policy": [
+    {
+      "harness_policy": "evidence",
+      "comparison": {
+        "paired_episodes": 0,
+        "recovery_wins": 0,
+        "repository_brief_wins": 0,
+        "both_completed": 0,
+        "neither_completed": 0,
+        "objective_rate_delta": null
+      }
+    }
+  ],
+  "paired_objective": null,
+  "turns": {
+    "samples": 3,
+    "mean": 14.666666666666666,
+    "median": 15.0,
+    "standard_deviation": 0.5773502691896257,
+    "iqr": 0.5
+  },
+  "input_tokens": {
+    "samples": 3,
+    "mean": 37102.666666666664,
+    "median": 39266.0,
+    "standard_deviation": 3852.2674275461895,
+    "iqr": 3366.0
+  },
+  "output_tokens": {
+    "samples": 3,
+    "mean": 1831.0,
+    "median": 2052.0,
+    "standard_deviation": 480.2822087065062,
+    "iqr": 440.5
+  },
+  "tool_calls": {
+    "samples": 3,
+    "mean": 13.666666666666666,
+    "median": 14.0,
+    "standard_deviation": 0.5773502691896257,
+    "iqr": 0.5
+  },
+  "wall_ms": {
+    "samples": 3,
+    "mean": 335427.0,
+    "median": 350072.0,
+    "standard_deviation": 82884.61492339819,
+    "iqr": 81908.5
+  },
+  "horizon_80_turn": {
+    "samples": 3,
+    "mean": 10.666666666666666,
+    "median": 11.0,
+    "standard_deviation": 0.5773502691896257,
+    "iqr": 0.5
+  },
+  "terminal_counts": {
+    "oscillation": 2,
+    "repetition_guard": 1
+  },
+  "failure_counts": {
+    "check": 3,
+    "contract": 3,
+    "objective_incomplete": 3
+  }
+}

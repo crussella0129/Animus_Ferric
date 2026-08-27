@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use ferric_core::{ActionProtocol, FerricError, HarnessPolicy, Message, UserInputRequest};
 use ferric_trace::{
     ControllerCheckpointV1, Event, GuardTurn, ParsedEvent, RECOVERY_CHECKPOINT_VERSION,
-    TraceReadMode, TraceReader,
+    RecoveryCheckpointV1, TraceReadMode, TraceReader,
 };
 use thiserror::Error;
 
@@ -111,6 +111,48 @@ pub enum ReplayError {
     },
 }
 
+/// Reconcile the one additive count introduced after recovery checkpoint v1
+/// without weakening checkpoint anchoring. Only an actually omitted legacy
+/// zero may inherit a nonzero count proven by typed `ControllerBlocked`
+/// events already projected from the same trace. Explicit zeroes, nonzero
+/// disagreements, raw-count changes, and every other state difference remain
+/// hard errors.
+fn reconcile_legacy_controller_block_counts(
+    recorded: &RecoveryCheckpointV1,
+    derived: &RecoveryCheckpointV1,
+) -> Option<RecoveryCheckpointV1> {
+    if recorded.guard_history.len() != derived.guard_history.len() {
+        return None;
+    }
+
+    let mut reconciled = recorded.clone();
+    for (stored, projected) in reconciled
+        .guard_history
+        .iter_mut()
+        .zip(&derived.guard_history)
+    {
+        if stored.turn != projected.turn
+            || stored.calls != projected.calls
+            || stored.dispatched != projected.dispatched
+            || stored.errored != projected.errored
+        {
+            return None;
+        }
+        if stored.controller_blocks != projected.controller_blocks {
+            if stored.controller_blocks != 0
+                || stored.controller_blocks_was_present
+                || projected.controller_blocks == 0
+            {
+                return None;
+            }
+            stored.controller_blocks = projected.controller_blocks;
+            stored.controller_blocks_was_present = true;
+        }
+    }
+
+    (reconciled == *derived).then_some(reconciled)
+}
+
 pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     let mut source_session: Option<String> = None;
     let mut workspace: Option<PathBuf> = None;
@@ -137,7 +179,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
             Some(_) => {}
         }
 
-        let event = match record.event {
+        let mut event = match record.event {
             ParsedEvent::Known(event) => event,
             ParsedEvent::Unknown(_) => return Err(ReplayError::UnknownEvent { seq: record.seq }),
         };
@@ -150,13 +192,20 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
             .observe(&event)
             .map_err(ReplayError::InvalidStructure)?;
 
-        if let Event::RecoveryCheckpoint { state } = &event
+        if let Event::RecoveryCheckpoint { state } = &mut event
             && saw_state_base
-            && *state != projector.checkpoint()
         {
-            return Err(ReplayError::InvalidStructure(
-                "recovery checkpoint differs from the projector-derived state anchor".to_string(),
-            ));
+            let derived = projector.checkpoint();
+            if *state != derived {
+                *state =
+                    reconcile_legacy_controller_block_counts(state, &derived).ok_or_else(|| {
+                        ReplayError::InvalidStructure(
+                            "recovery checkpoint differs from the projector-derived state anchor"
+                                .to_string(),
+                        )
+                    })?;
+                validate_checkpoint(state)?;
+            }
         }
 
         match &event {
@@ -616,12 +665,16 @@ mod tests {
                     calls: calls(0),
                     dispatched: 1,
                     errored: 0,
+                    controller_blocks: 0,
+                    controller_blocks_was_present: true,
                 },
                 GuardTurn {
                     turn: 2,
                     calls: calls(2),
                     dispatched: 1,
                     errored: 0,
+                    controller_blocks: 0,
+                    controller_blocks_was_present: true,
                 },
             ],
             nudged_for_no_action: false,
@@ -796,6 +849,64 @@ mod tests {
                 dispatched: 1,
                 errored: 0,
                 stop_reason: Some("needs_input".to_string()),
+                snapshot_commit: None,
+            },
+        ]);
+    }
+
+    fn append_controller_blocked_turn(
+        events: &mut Vec<Event>,
+        controller: &ControllerState,
+        turn: u32,
+    ) {
+        let call = ferric_core::ToolCall {
+            id: format!("blocked-{turn}"),
+            name: "unsupported_mutation".to_string(),
+            args: json!({"path": "target.txt"}),
+        };
+        let block = controller
+            .unsupported_mutation_block(
+                vec!["target.txt".to_string()],
+                ferric_trace::UnsupportedMutationKindV1::UnsupportedOperation,
+            )
+            .unwrap();
+        events.extend([
+            Event::TurnStart { turn },
+            Event::TurnEnd {
+                turn,
+                text: None,
+                tool_call_count: 1,
+                input_tokens: Some(20),
+                output_tokens: Some(5),
+                truncated: false,
+            },
+            Event::ActionsProposed {
+                turn,
+                calls: vec![call.clone()],
+            },
+            Event::ToolCall {
+                id: call.id.clone(),
+                name: call.name.clone(),
+                args: call.args.clone(),
+            },
+            Event::ControllerBlocked {
+                turn,
+                call_id: call.id.clone(),
+                tool: call.name.clone(),
+                block,
+            },
+            Event::ToolResult {
+                id: call.id,
+                name: call.name,
+                output: "controller blocked".to_string(),
+                is_error: true,
+                duration_ms: 0,
+            },
+            Event::TurnCommitted {
+                turn,
+                dispatched: 1,
+                errored: 1,
+                stop_reason: None,
                 snapshot_commit: None,
             },
         ]);
@@ -1095,6 +1206,14 @@ mod tests {
         let mut checkpoint = valid.clone();
         checkpoint.guard_history[0].dispatched = 2;
         invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.guard_history[0].controller_blocks = 1;
+        invalid.push(checkpoint);
+        let mut checkpoint = valid.clone();
+        checkpoint.guard_history[0].calls[0].name = crate::terminator::TASK_COMPLETE.to_string();
+        checkpoint.guard_history[0].errored = 1;
+        checkpoint.guard_history[0].controller_blocks = 1;
+        invalid.push(checkpoint);
         let mut checkpoint = valid;
         checkpoint.guard_history[0].errored = 2;
         invalid.push(checkpoint);
@@ -1253,6 +1372,66 @@ mod tests {
 
         assert_eq!(replayed.pause_reason.as_deref(), Some("max_turns"));
         assert_eq!(replayed.controller_checkpoint, Some(expected));
+    }
+
+    #[test]
+    fn old_checkpoint_omission_recovers_only_typed_controller_block_counts() {
+        let (mut events, controller) = evidence_fresh_prefix(&[]);
+        append_controller_blocked_turn(&mut events, &controller, 0);
+        append_pause(&mut events, &controller, "max_turns");
+        let (_dir, path) = write_trace(&events);
+        let modern = std::fs::read_to_string(&path).unwrap();
+        assert!(modern.contains("\"controller_blocks\":1"));
+
+        let legacy = modern.replace(",\"controller_blocks\":1", "");
+        std::fs::write(&path, legacy).unwrap();
+        let replayed = replay(&path).unwrap();
+        assert_eq!(replayed.guard_history[0].controller_blocks, 1);
+        assert!(replayed.guard_history[0].controller_blocks_was_present);
+
+        let explicit_zero = modern.replace("\"controller_blocks\":1", "\"controller_blocks\":0");
+        std::fs::write(&path, explicit_zero).unwrap();
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::InvalidStructure(message))
+                if message.contains("differs from typed event count")
+        ));
+
+        let explicit_null = modern.replace("\"controller_blocks\":1", "\"controller_blocks\":null");
+        std::fs::write(&path, explicit_null).unwrap();
+        let error = replay(&path).unwrap_err();
+        assert!(matches!(error, ReplayError::Trace(_)), "{error:?}");
+
+        let wrong_nonzero = modern.replace("\"controller_blocks\":1", "\"controller_blocks\":2");
+        std::fs::write(&path, wrong_nonzero).unwrap();
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::InvalidStructure(message))
+                if message.contains("incoherent dispatch/error counts")
+        ));
+    }
+
+    #[test]
+    fn fully_resulted_eof_tail_projects_controller_block_count() {
+        let (mut events, controller) = evidence_fresh_prefix(&[]);
+        append_controller_blocked_turn(&mut events, &controller, 0);
+        assert!(matches!(
+            events.pop(),
+            Some(Event::TurnCommitted { turn: 0, .. })
+        ));
+        let (_dir, path) = write_trace(&events);
+        let replayed = replay(&path).unwrap();
+
+        assert_eq!(replayed.next_turn, 1);
+        assert_eq!(replayed.guard_history.len(), 1);
+        assert_eq!(
+            (
+                replayed.guard_history[0].dispatched,
+                replayed.guard_history[0].errored,
+                replayed.guard_history[0].controller_blocks,
+            ),
+            (1, 1, 1)
+        );
     }
 
     #[test]
@@ -1676,6 +1855,46 @@ mod tests {
         assert_eq!(replayed.source_session, "s-1");
         assert_eq!(replayed.pause_reason, None);
         assert_eq!(replayed.controller_checkpoint, None);
+    }
+
+    #[test]
+    fn pre_evidence_trace_fixture_replays_as_legacy() {
+        // Literal wire data copied in the shape emitted before Sprint 113:
+        // PolicySelected has no `harness_policy`, and the trace contains no
+        // controller events or controller checkpoint from which to invent
+        // evidence state.
+        const PRE_EVIDENCE_TRACE: &str = concat!(
+            r#"{"v":1,"ts_ms":1,"session":"pre-evidence","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":2,"session":"pre-evidence","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"constrained_json","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512,"truncation_limit":4000,"tier_source":"params"}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":3,"session":"pre-evidence","seq":2,"event":{"type":"session_prompt","system":"You are Ferric.","user":"do the task"}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":4,"session":"pre-evidence","seq":3,"event":{"type":"turn_start","turn":0}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":5,"session":"pre-evidence","seq":4,"event":{"type":"turn_end","turn":0,"text":"{\"tool\":\"read_file\",\"args\":{\"path\":\"a.txt\"}}","tool_call_count":0,"input_tokens":50,"output_tokens":10,"truncated":false}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":6,"session":"pre-evidence","seq":5,"event":{"type":"tool_call","id":"g-0-0","name":"read_file","args":{"path":"a.txt"}}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":7,"session":"pre-evidence","seq":6,"event":{"type":"tool_result","id":"g-0-0","name":"read_file","output":"contents","is_error":false,"duration_ms":1}}"#,
+            "\n",
+            r#"{"v":1,"ts_ms":8,"session":"pre-evidence","seq":7,"event":{"type":"turn_start","turn":1}}"#,
+            "\n",
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pre-evidence.jsonl");
+        std::fs::write(&path, PRE_EVIDENCE_TRACE).unwrap();
+
+        let replayed = replay(&path).unwrap();
+        assert_eq!(replayed.harness_policy, HarnessPolicy::Legacy);
+        assert_eq!(replayed.controller_checkpoint, None);
+        assert_eq!(replayed.mutation_epoch, 0);
+        assert!(replayed.passed_checks.is_empty());
+        assert_eq!(replayed.turns, 1);
+        assert_eq!(replayed.next_turn, 1);
+        assert_eq!(replayed.protocol, ActionProtocol::ConstrainedJson);
+        assert_eq!(replayed.messages.len(), 4);
     }
 
     #[test]

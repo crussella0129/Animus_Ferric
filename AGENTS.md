@@ -38,15 +38,23 @@ close-out order: commit → push and CONFIRM → PR → verify the commit count.
 
 ## Sprint records
 
-`sprints/` is **gitignored and untracked** (ADR-096) — it is ephemeral working
-memory. The durable record is `decisions.md` (ADRs), `agent-tasks/`, and the
-per-sprint commit message. Do not re-add `sprints/` to version control.
+Sprint Loops Book v2 is tracked under `docs/`. `docs/intents/` owns durable
+semantic intent, `docs/work/tasks.md` and `docs/work/completed-tasks.md` own
+work state, and `docs/sprints/` owns sprint provenance. `docs/SUMMARY.md` is a
+navigation view only; `docs/history/` preserves migrated legacy records and is
+not authoritative. Do not recreate the retired root-level sprint ledgers.
 
 ## Template hygiene
 
 This repo is meant to be usable as a template (ADR-096). Machine identity —
 real tailnet addresses, MagicDNS suffixes, hostnames, account handles, concrete
-home directories, LAN IPs — must not enter tracked sources.
+home directories, LAN IPs — must not enter the live template surface.
 `crates/ferric-cli/tests/template_hygiene.rs` enforces this and will fail the
 suite. Use documentation values instead: `tailnet-example.ts.net`,
 `100.64.0.x`, `example-host`, `C:\Users\<you>`.
+
+Immutable migration history and sprint evidence under `docs/history/` and
+`docs/sprints/` are excluded from the executable template-hygiene scan because
+rewriting byte-bound provenance would falsify its hashes. New human-authored
+sprint prose must still use documentation values; only retained raw evidence
+may preserve machine-specific values when those bytes are themselves evidence.

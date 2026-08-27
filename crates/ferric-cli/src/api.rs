@@ -315,45 +315,8 @@ pub mod server {
     ) -> Result<QueryResponse, ApiQueryError> {
         let mode = request_mode(request)?;
         let args = &state.args;
-        let loaded_config = crate::config::load_layered(state.workspace.root());
-        let cfg = loaded_config.config;
-        let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
+        let (backend_opts, config) = api_run_config(&state.workspace, args);
 
-        let config = build_run_config(&RunConfigArgs {
-            // The HTTP caller is not necessarily the workspace owner, so a
-            // workspace-level allowlist is not evidence that *this* requester
-            // authorized anything. Skills stay off here until the API has a notion
-            // of who is asking (ADR-091).
-            workspace_root: state.workspace.root().to_path_buf(),
-            requested_skills: Vec::new(),
-            allowed_skills: Vec::new(),
-            mock: args.mock,
-            params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
-            quant: args
-                .quant
-                .clone()
-                .or(cfg.quant)
-                .unwrap_or_else(|| "Q4_K_M".to_string()),
-            family: args
-                .family
-                .clone()
-                .or(cfg.family)
-                .unwrap_or_else(|| "unknown".to_string()),
-            ctx: args.ctx.or(cfg.ctx).unwrap_or(4096),
-            temperature: args.temperature.or(cfg.temperature).unwrap_or(0.0),
-            protocol_override: args.protocol,
-            harness_policy: args.harness_policy.map(Into::into).or(cfg.harness_policy),
-            prompts_dir: args.prompts_dir.clone(), // not in Config
-            max_ring: args.max_ring.or(cfg.max_ring),
-            tier_override: args.tier.or(cfg.tier).map(Into::into),
-            profile_dir: args
-                .profile_dir
-                .clone()
-                .or(cfg.profile_dir)
-                .unwrap_or_else(|| PathBuf::from("benchmarks")),
-            model_key: backend_opts.model.clone(),
-            hooks: None,
-        });
         let trace_dir = ferric_trace::trace_dir(state.workspace.root());
         let (effective_prompt, media, resume, answer) = match mode {
             RequestMode::New { prompt } => {
@@ -440,6 +403,56 @@ pub mod server {
             stop_reason: outcome.stop.as_str().to_string(),
             needs_input: outcome.needs_input.clone(),
         })
+    }
+
+    /// Resolve one API request's effective run configuration without allocating
+    /// a trace, constructing a provider, binding a socket, or entering the
+    /// server future. Keeping this seam shared with `run_query` makes
+    /// surface-policy propagation directly testable and bounded.
+    fn api_run_config(
+        workspace: &Workspace,
+        args: &ApiArgs,
+    ) -> (BackendOpts, crate::query::RunConfig) {
+        let loaded_config = crate::config::load_layered(workspace.root());
+        let cfg = loaded_config.config;
+        let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
+
+        let config = build_run_config(&RunConfigArgs {
+            // The HTTP caller is not necessarily the workspace owner, so a
+            // workspace-level allowlist is not evidence that *this* requester
+            // authorized anything. Skills stay off here until the API has a notion
+            // of who is asking (ADR-091).
+            workspace_root: workspace.root().to_path_buf(),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
+            mock: args.mock,
+            params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
+            quant: args
+                .quant
+                .clone()
+                .or(cfg.quant)
+                .unwrap_or_else(|| "Q4_K_M".to_string()),
+            family: args
+                .family
+                .clone()
+                .or(cfg.family)
+                .unwrap_or_else(|| "unknown".to_string()),
+            ctx: args.ctx.or(cfg.ctx).unwrap_or(4096),
+            temperature: args.temperature.or(cfg.temperature).unwrap_or(0.0),
+            protocol_override: args.protocol,
+            harness_policy: args.harness_policy.map(Into::into).or(cfg.harness_policy),
+            prompts_dir: args.prompts_dir.clone(), // not in Config
+            max_ring: args.max_ring.or(cfg.max_ring),
+            tier_override: args.tier.or(cfg.tier).map(Into::into),
+            profile_dir: args
+                .profile_dir
+                .clone()
+                .or(cfg.profile_dir)
+                .unwrap_or_else(|| PathBuf::from("benchmarks")),
+            model_key: backend_opts.model.clone(),
+            hooks: None,
+        });
+        (backend_opts, config)
     }
 
     /// Entry point for `ferric api`.
@@ -562,7 +575,7 @@ pub mod server {
         }
 
         #[test]
-        fn unsupported_cli_and_project_policies_fail_before_api_bind_or_trace() {
+        fn unsupported_planner_fails_before_api_bind_or_trace() {
             let runtime = tokio::runtime::Runtime::new().unwrap();
 
             let cli_workspace = tempfile::tempdir().unwrap();
@@ -578,12 +591,41 @@ pub mod server {
             std::fs::create_dir_all(config_workspace.path().join(".ferric")).unwrap();
             std::fs::write(
                 config_workspace.path().join(".ferric/config.toml"),
-                "harness_policy = \"evidence\"\n",
+                "harness_policy = \"evidence_planner\"\n",
             )
             .unwrap();
             assert_eq!(
                 runtime.block_on(run_api(api_args(config_workspace.path()))),
                 std::process::ExitCode::FAILURE
+            );
+            assert!(!config_workspace.path().join(".ferric/trace").exists());
+        }
+
+        #[test]
+        fn backend_surface_policy_propagation() {
+            let cli_workspace = tempfile::tempdir().unwrap();
+            let workspace = Workspace::new(cli_workspace.path()).unwrap();
+            let mut explicit = api_args(cli_workspace.path());
+            explicit.harness_policy = Some(HarnessPolicyArg::Evidence);
+            let (_, config) = api_run_config(&workspace, &explicit);
+            assert_eq!(
+                config.harness_policy,
+                Some(ferric_core::HarnessPolicy::Evidence)
+            );
+            assert!(!cli_workspace.path().join(".ferric/trace").exists());
+
+            let config_workspace = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(config_workspace.path().join(".ferric")).unwrap();
+            std::fs::write(
+                config_workspace.path().join(".ferric/config.toml"),
+                "harness_policy = \"evidence\"\n",
+            )
+            .unwrap();
+            let workspace = Workspace::new(config_workspace.path()).unwrap();
+            let (_, config) = api_run_config(&workspace, &api_args(config_workspace.path()));
+            assert_eq!(
+                config.harness_policy,
+                Some(ferric_core::HarnessPolicy::Evidence)
             );
             assert!(!config_workspace.path().join(".ferric/trace").exists());
         }

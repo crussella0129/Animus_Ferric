@@ -439,3 +439,79 @@ fn review_gate(stage_index: u32) -> bool {
         Err(_) => true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mock_run_args(workspace: &Path, harness_policy: HarnessPolicyArg) -> IcmRunArgs {
+        IcmRunArgs {
+            workspace: workspace.to_path_buf(),
+            auto: true,
+            from: Some(1),
+            to: Some(1),
+            backend_opts: BackendOpts {
+                model: None,
+                api_base: None,
+                api_key: None,
+            },
+            mock: true,
+            params_b: None,
+            ctx: None,
+            tier: None,
+            max_ring: None,
+            harness_policy: Some(harness_policy),
+            fetch_references: false,
+        }
+    }
+
+    #[test]
+    fn bounded_icm_stage_preserves_explicit_evidence_policy() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("pipeline");
+        scaffold_workspace(&root).unwrap();
+
+        assert_eq!(
+            run_pipeline(mock_run_args(&root, HarnessPolicyArg::Evidence)),
+            ExitCode::SUCCESS
+        );
+
+        let trace_dir = ferric_trace::trace_dir(&root);
+        let traces: Vec<_> = std::fs::read_dir(trace_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(traces.len(), 1);
+        let selected = ferric_trace::TraceReader::open(&traces[0])
+            .unwrap()
+            .find_map(|record| match record.unwrap().event {
+                ferric_trace::ParsedEvent::Known(ferric_trace::Event::PolicySelected {
+                    harness_policy,
+                    ..
+                }) => Some(harness_policy),
+                _ => None,
+            })
+            .expect("a policy_selected event");
+        assert_eq!(selected, ferric_core::HarnessPolicy::Evidence);
+    }
+
+    #[test]
+    fn unsupported_planner_fails_before_icm_trace_or_stage_run() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("pipeline");
+        scaffold_workspace(&root).unwrap();
+
+        assert_eq!(
+            run_pipeline(mock_run_args(&root, HarnessPolicyArg::EvidencePlanner)),
+            ExitCode::FAILURE
+        );
+        assert!(!ferric_trace::trace_dir(&root).exists());
+        assert_eq!(
+            std::fs::read_dir(root.join("stages/01_research/output"))
+                .unwrap()
+                .count(),
+            1,
+            "planner preflight must leave the scaffolded stage output untouched"
+        );
+    }
+}

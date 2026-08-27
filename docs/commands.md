@@ -27,8 +27,10 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--params-b <N>` · `--quant <Q>` · `--family <F>` · `--ctx <N>` | model profile → run policy (defaults 1.2 / Q4_K_M / unknown / 4096) |
 | `--temperature <T>` | sampling temperature (0.0 = deterministic) |
 | `--protocol native\|grammar\|xml` | override the action protocol (default: from backend caps) |
+| `--harness-policy legacy\|evidence\|evidence-planner` | autonomous control policy; fresh runs default to `legacy`, omitted resumes inherit the source trace |
 | `--max-ring <N>` | cap the active tool ring (`0` = core only); restrict-only |
 | `--profile-dir <DIR>` | read `model_profiles.json` for the earned tier/ring (default `benchmarks`) |
+| `--checks-file <PATH>` | explicitly authorize fixed named verification commands and expose `run_check`; no checks are inferred when omitted |
 | `--prompts-dir <DIR>` | prompt-element library for the system prompt |
 | `--file <PATH>` | attach a file (repeatable); text folds into the prompt |
 | `--modality image,audio,video` | declare media modalities for `--file` attachments |
@@ -37,6 +39,14 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--resume <TRACE>` | continue an interrupted, incomplete session |
 | `--research <QUERY>` | run the Ornstein research phase first (quarantined) |
 | `--sink-action requireapproval\|deny\|warn` | CaMeL sink policy for tainted data (default requireapproval) |
+
+`evidence` is an opt-in experimental policy that binds supported mutations and
+named checks to recorded workspace evidence. Its Sprint 113 frozen Qwen screen
+remained 0/3 after both permitted revisions, so it is not presented as a
+performance promotion. `evidence-planner` has no implementation and fails
+before trace allocation or workspace mutation; it never falls back to
+evidence-only execution. See the
+[measured decision](sprints/s113/planner-decision.md).
 
 ---
 
@@ -56,6 +66,8 @@ An interactive REPL. At the `you>` prompt:
 
 Flags mirror `query` (`--workspace`, `--mock`, backend/model, `--protocol`,
 `--max-ring`, …) plus `--no-stream` (streaming is on by default in chat).
+Plain talk remains available under `evidence`, but `/do` refuses that policy
+until chat can construct a truthful evidence continuation.
 
 ---
 

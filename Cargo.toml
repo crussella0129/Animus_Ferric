@@ -52,11 +52,8 @@ toml = "1.1"
 regex = "1"
 tempfile = "3"
 sha2 = "0.11"
-# hex (shipped with the sha2 0.11 bump): digest 0.11 changed the hash output
-# type from generic-array's `GenericArray` (which impl'd `LowerHex`) to
-# `hybrid_array::Array` (which does not), so `format!("{:x}", ..)` no longer
-# compiles. `hex::encode` is the canonical RustCrypto replacement -- zero
-# transitive deps, produces the same lowercase concatenated hex.
+# digest 0.11's output no longer implements LowerHex; use the RustCrypto
+# ecosystem's canonical byte-to-lowercase-hex encoder instead.
 hex = "0.4"
 futures-executor = "0.3"
 rustyline = "18"
