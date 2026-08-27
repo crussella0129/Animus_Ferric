@@ -1164,3 +1164,30 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   passed. Final whole-workspace and CI confirmation remain formal Test/Loop
   evidence and are not claimed here.
 - **Commit:** `bd937383ac17b25cebd0c742b5522cc983bcf896`
+
+## T-11407 (sprint 114)
+- **Description:** Acquired the pinned third-party Unsloth Qwen3.8-27B
+  `UD-Q4_K_M` conversion into the ignored repository `models/` directory and
+  published it only after exact 16,464,440,224-byte and SHA-256 verification.
+  Added append-only fail-closed acquisition controls, quarantine behavior,
+  fixed retained E09-D authorization for the sole Q3 fallback, complete source
+  and Apache-2.0 provenance, and all four named acquisition tests. The Q3 and
+  every 2-bit quant remain absent.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-27T04:07:19Z
+- **Files modified:** ignored
+  `models/Qwen3.8-27B-UD-Q4_K_M.gguf`,
+  `docs/intents/INT-0007-hardware-calibrated-autonomous-development.md`,
+  `docs/sprints/s114/`, `docs/SUMMARY.md`, `docs/work/tasks.md`,
+  `docs/work/completed-tasks.md`
+- **Verification:** `test-acquisition.ps1` passed
+  `model_download_and_sha256_attestation`,
+  `model_acquisition_failure_is_not_verified`,
+  `model_is_ignored_evidence_is_tracked`, and
+  `q3_fallback_download_is_gated_and_attested`; the negative acquisition test
+  also proved same-length/wrong-hash rejection and quarantine after an injected
+  post-publication verification I/O failure. All PowerShell controls parsed,
+  all retained JSON parsed, the final local hash matched
+  `322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482`,
+  and Git reported the GGUF ignored and untracked.
+- **Commit:** PENDING

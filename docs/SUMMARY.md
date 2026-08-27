@@ -53,6 +53,7 @@
   - [INT-0004 — Auditable session provenance](intents/INT-0004-auditable-session-provenance.md)
   - [INT-0005 — Safe multi-language syntax admission](intents/INT-0005-safe-multilanguage-syntax-admission.md)
   - [INT-0006 — Truthful policy contract](intents/INT-0006-truthful-policy-contract.md)
+  - [INT-0007 — Hardware-calibrated autonomous development](intents/INT-0007-hardware-calibrated-autonomous-development.md)
 - [Tasks](work/tasks.md)
 - [Completed tasks](work/completed-tasks.md)
 - [Legacy decision archive](history/decisions-legacy.md)
@@ -150,3 +151,4 @@
 - [Sprint 97](sprints/s97/sprint-meta.md)
 - [Sprint 98](sprints/s98/sprint-meta.md)
 - [Sprint 99](sprints/s99/sprint-meta.md)
+- [Sprint 114](sprints/s114/sprint-meta.md)

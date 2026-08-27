@@ -1,0 +1,16 @@
+{
+  "schema": "animus-ferric-model-transport-attempt-v1",
+  "attempt": "sandboxed_connectivity_probe",
+  "classification": "infrastructure_network_restriction",
+  "transport": "curl.exe 8.21.0",
+  "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/313447f257f7ebde0b968e4778feef774546ed81/Qwen3.8-27B-UD-Q4_K_M.gguf?download=true",
+  "partial_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf.part",
+  "retry_count": 5,
+  "curl_error": 7,
+  "shell_exit": 1,
+  "message": "Failed to connect to huggingface.co:443: Could not connect to server",
+  "bytes_received": 0,
+  "verified": false,
+  "published": false,
+  "resolution": "Retried with operator-approved network access; see acquisition-Q4_K_M.json."
+}

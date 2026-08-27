@@ -1,0 +1,145 @@
+{
+  "schema": "animus-ferric-model-acquisition-tests-v1",
+  "completed_at_utc": "2026-08-27T04:07:19.4193175Z",
+  "passed": true,
+  "tests": [
+    {
+      "name": "model_download_and_sha256_attestation",
+      "passed": true,
+      "evidence": {
+        "verification": {
+          "schema": "animus-ferric-model-verification-v1",
+          "path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "expected_bytes": 16464440224,
+          "actual_bytes": 16464440224,
+          "expected_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+          "actual_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+          "verified": true,
+          "failure": null
+        },
+        "source_tuple_matches": true
+      }
+    },
+    {
+      "name": "model_acquisition_failure_is_not_verified",
+      "passed": true,
+      "evidence": {
+        "short_transfer": {
+          "schema": "animus-ferric-model-verification-v1",
+          "path": "model-spec.json",
+          "expected_bytes": 16464440224,
+          "actual_bytes": 1021,
+          "expected_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+          "actual_sha256": "2d4a13df3a37e3b7c9bb3ac6c47c4b8bab77b532c647437e3531f42bc7e7b0dd",
+          "verified": false,
+          "failure": "size_mismatch"
+        },
+        "same_size_wrong_hash": {
+          "passed": true,
+          "record": {
+            "schema": "animus-ferric-model-acquisition-v1",
+            "started_at_utc": "2026-08-27T04:07:18.7162446Z",
+            "completed_at_utc": "2026-08-27T04:07:18.861628Z",
+            "quant": "Q4_K_M",
+            "verified": false,
+            "published": false,
+            "failure": "partial_file_failed_verification",
+            "path": "models/tiny.gguf.part",
+            "verification": {
+              "schema": "animus-ferric-model-verification-v1",
+              "path": "models/tiny.gguf.part",
+              "expected_bytes": 4,
+              "actual_bytes": 4,
+              "expected_sha256": "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+              "actual_sha256": "55e5509f8052998294266ee5b50cb592938191fb5d67f73cac2e60b0276b1bdd",
+              "verified": false,
+              "failure": "sha256_mismatch"
+            }
+          },
+          "final_exists": false,
+          "partial_exists": true
+        },
+        "post_publish_verifier_error": {
+          "passed": true,
+          "record": {
+            "schema": "animus-ferric-model-acquisition-v1",
+            "started_at_utc": "2026-08-27T04:07:19.0104524Z",
+            "completed_at_utc": "2026-08-27T04:07:19.1534517Z",
+            "quant": "Q4_K_M",
+            "verified": false,
+            "published": false,
+            "failure": "unhandled_acquisition_error",
+            "error_type": "System.IO.IOException",
+            "error_message": "injected post-publication verification I/O failure",
+            "quarantine": "models/tiny.gguf.rejected-20260827T0407191498294Z-10352",
+            "quarantine_error": null
+          },
+          "final_exists": false,
+          "quarantine": [
+            "tiny.gguf.rejected-20260827T0407191498294Z-10352"
+          ]
+        }
+      }
+    },
+    {
+      "name": "model_is_ignored_evidence_is_tracked",
+      "passed": true,
+      "evidence": {
+        "ignore_rule": "warning: unable to access 'C:\\Users\\charl/.config/git/ignore': Permission denied\r\n.gitignore:33:models/\tmodels/Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "git_tracked": false,
+        "model_blob_in_status": false,
+        "status": [
+          " M docs/SUMMARY.md",
+          " M docs/work/completed-tasks.md",
+          " M docs/work/tasks.md",
+          "?? docs/intents/INT-0007-hardware-calibrated-autonomous-development.md",
+          "?? docs/sprints/s114/control-artifacts/model/README.md",
+          "?? docs/sprints/s114/control-artifacts/model/acquire-model.ps1",
+          "?? docs/sprints/s114/control-artifacts/model/acquisition-Q3_K_XL-20260827T0401380650092Z-17832.json",
+          "?? docs/sprints/s114/control-artifacts/model/acquisition-Q4_K_M.json",
+          "?? docs/sprints/s114/control-artifacts/model/acquisition-tests.json",
+          "?? docs/sprints/s114/control-artifacts/model/fixtures/throw-after-part-verifier.ps1",
+          "?? docs/sprints/s114/control-artifacts/model/model-spec.json",
+          "?? docs/sprints/s114/control-artifacts/model/sandboxed-transport-failure.json",
+          "?? docs/sprints/s114/control-artifacts/model/test-acquisition.ps1",
+          "?? docs/sprints/s114/control-artifacts/model/test-q3-gate.json",
+          "?? docs/sprints/s114/control-artifacts/model/verify-model.ps1",
+          "?? docs/sprints/s114/sprint-meta.md",
+          "?? docs/sprints/s114/sprint-plans/build-plan.md",
+          "?? docs/sprints/s114/sprint-plans/critique-initial.md",
+          "?? docs/sprints/s114/sprint-plans/critique.md",
+          "?? docs/sprints/s114/sprint-plans/test-plan.md",
+          "?? docs/sprints/s114/sprint-research/experiment-design.md",
+          "?? docs/sprints/s114/sprint-research/hardware-inventory.md",
+          "?? docs/sprints/s114/sprint-research/model-selection.md",
+          "?? docs/sprints/s114/sprint-research/research-report.md",
+          "?? docs/sprints/s114/sprint-research/sprint-loops-capability-audit.md",
+          "?? docs/sprints/s114/sprint-tests/e2e-tests.md",
+          "?? docs/sprints/s114/sprint-tests/integration-tests.md",
+          "?? docs/sprints/s114/sprint-tests/test-report.md",
+          "?? docs/sprints/s114/sprint-tests/unit-tests.md"
+        ]
+      }
+    },
+    {
+      "name": "q3_fallback_download_is_gated_and_attested",
+      "passed": true,
+      "evidence": {
+        "q3_absent": true,
+        "gate_record_file": "acquisition-Q3_K_XL-20260827T0401380650092Z-17832.json",
+        "gate_record": {
+          "schema": "animus-ferric-model-acquisition-v1",
+          "started_at_utc": "2026-08-27T04:01:38.0604058Z",
+          "completed_at_utc": "2026-08-27T04:01:38.084113Z",
+          "quant": "Q3_K_XL",
+          "verified": false,
+          "published": false,
+          "failure": "q3_fallback_not_authorized",
+          "authorization_record": "missing",
+          "gate": "T-11409/E09-D"
+        },
+        "two_bit_artifacts": []
+      }
+    }
+  ]
+}
