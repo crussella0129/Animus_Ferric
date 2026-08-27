@@ -1217,4 +1217,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   Clippy, Rust formatting, PowerShell parsing, and Bash syntax checks passed;
   six Ferric `run_check` unit tests and two checks-file CLI integration tests
   passed; no source-local grader target exists.
-- **Commit:** PENDING
+- **Commit:** `41e6bcaa8e9a924b28f8090ef20acfb9b958d26e`
