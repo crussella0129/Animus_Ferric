@@ -1218,3 +1218,19 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   six Ferric `run_check` unit tests and two checks-file CLI integration tests
   passed; no source-local grader target exists.
 - **Commit:** `41e6bcaa8e9a924b28f8090ef20acfb9b958d26e`
+
+## T-11413 (sprint 114)
+- **Description:** Removed fixed numeric benchmark results and Sprint 113 score
+  narrative from the landing README. The page now explains current benchmark
+  and policy behavior without duplicating low-value historical results, and
+  routes readers to the canonical Sprint Loops Book records for durable
+  evidence.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-27T16:59:18Z
+- **Files modified:** `README.md`, `docs/work/tasks.md`,
+  `docs/work/completed-tasks.md`
+- **Verification:** no numeric sprint narratives or direct `docs/sprints/sN/`
+  links remain in `README.md`; all local README links resolve; canonical Book,
+  intents, current-work, and completed-work links remain; `git diff --check --
+  README.md` passed.
+- **Commit:** PENDING
