@@ -41,3 +41,24 @@
   exact tail-argument comparison, live-shaped positive fixtures, and negative
   path/argument tamper tests. The same recovery analysis records the retained
   evidence and protocol.
+
+## Resolution
+
+- **T-11409 — resolved:** epoch 3's `e03-01-q4-32768` attempt passed the
+  corrected process-command attestation, real grammar-protocol nonce smoke,
+  all three timed samples, and clean teardown. The Q4_K_M model remained at
+  context 32,768 with 24 effective GPU layers and produced a retained median
+  of `3.2064850358228254` decoded tokens per second. The frozen gate selected
+  Q4 as viable; context 16,384 and Q3_K_XL were never authorized.
+- Publication completed through separately frozen epochs 4 through 6 after a
+  timestamp-protocol repair, a source-plan binding incident, and an
+  `OrderedDictionary`/JSON-object incident. Those failed controls and the
+  first failed epoch-6 pre-control self-test remain immutable evidence; no
+  recovery epoch repeated model execution or changed the measured attempt.
+- The final selection bundle passed all four runtime verification groups and
+  cold teardown. Manifest
+  `60cac4761f5276d05fe9f1be296925e4d9e0e7e667706564b8478bb792167f40`
+  covers 213 runtime files without mismatch or residual staging state. See the
+  retained [selection](control-artifacts/runtime/epoch-4/final/selection.json),
+  [runtime verification](control-artifacts/runtime/epoch-4/final/runtime-verification.json),
+  and [recovery analysis](sprint-research/runtime-attestation-recovery.md).

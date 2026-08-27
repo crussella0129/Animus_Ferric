@@ -1,0 +1,92 @@
+{
+  "schema": "animus-ferric-runtime-recovery-publication-v4",
+  "task": "T-11409",
+  "operation_id": "r04-publish-e03-01-q4-32768",
+  "execution_epoch": 3,
+  "publication_epoch": 4,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "published_at_utc": "2026-08-27T23:33:28.7817197Z",
+  "control_manifest_sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+  "source": {
+    "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49
+  },
+  "destination": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49
+  },
+  "stage_verification": {
+    "schema": "animus-ferric-runtime-recovery-verification-v4",
+    "task": "T-11409",
+    "operation_id": "r04-publish-e03-01-q4-32768",
+    "execution_epoch": 3,
+    "publication_epoch": 4,
+    "source_attempt_schema": "animus-ferric-runtime-attempt-v3",
+    "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+    "control_epoch": 3,
+    "attestation_protocol": "apply-template-differential-v1",
+    "process_command_protocol": "windows-bound-process-command-v1",
+    "live_model_identity": {
+      "checked": true,
+      "mode": "checked_in_verifier",
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+    },
+    "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-3\\attempts\\e03-01-q4-32768",
+    "coordinate": "e03-01-q4-32768",
+    "verdict": "viable",
+    "passed": true,
+    "manifest": {
+      "passed": true,
+      "entries": 49,
+      "errors": []
+    },
+    "recovery_anchor": {
+      "applicable": true,
+      "passed": true,
+      "expected_entries": 49,
+      "observed_entries": 49
+    },
+    "control_anchor_mode": "epoch_4_frozen_recovery",
+    "throughput_rows": 4,
+    "errors": []
+  },
+  "published_verification": {
+    "schema": "animus-ferric-runtime-recovery-verification-v4",
+    "task": "T-11409",
+    "operation_id": "r04-publish-e03-01-q4-32768",
+    "execution_epoch": 3,
+    "publication_epoch": 4,
+    "source_attempt_schema": "animus-ferric-runtime-attempt-v3",
+    "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+    "control_epoch": 3,
+    "attestation_protocol": "apply-template-differential-v1",
+    "process_command_protocol": "windows-bound-process-command-v1",
+    "live_model_identity": {
+      "checked": true,
+      "mode": "checked_in_verifier",
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+    },
+    "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-3\\attempts\\e03-01-q4-32768",
+    "coordinate": "e03-01-q4-32768",
+    "verdict": "viable",
+    "passed": true,
+    "manifest": {
+      "passed": true,
+      "entries": 49,
+      "errors": []
+    },
+    "recovery_anchor": {
+      "applicable": true,
+      "passed": true,
+      "expected_entries": 49,
+      "observed_entries": 49
+    },
+    "control_anchor_mode": "epoch_4_frozen_recovery",
+    "throughput_rows": 4,
+    "errors": []
+  },
+  "resumed_existing_destination": true,
+  "passed": true
+}

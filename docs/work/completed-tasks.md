@@ -1234,3 +1234,35 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   intents, current-work, and completed-work links remain; `git diff --check --
   README.md` passed.
 - **Commit:** `5485a0d0da27ee7b01a2623afb472d1a28a7b26a`
+
+## T-11409 (sprint 114)
+- **Description:** Recovered two false-negative managed-server attestation
+  controls without changing their immutable evidence, then completed the
+  bounded Qwen3.8-27B Q4_K_M calibration. The exact context-32,768,
+  24-GPU-layer coordinate passed the real grammar nonce smoke and all three
+  timed samples at a 3.206485 decoded-token/s median. Separately frozen
+  publication epochs materialized the exact attempt and correction evidence;
+  the final gate selected Q4 and never authorized the context or Q3 fallback.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-27T23:43:08Z
+- **Files modified:** ignored
+  `target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/`;
+  `docs/sprints/s114/control-artifacts/runtime/epoch-3/` through `epoch-6/`;
+  `docs/sprints/s114/sprint-research/runtime-attestation-recovery.md`;
+  `docs/sprints/s114/sprint-meta.md`; `docs/work/tasks.md`;
+  `docs/work/completed-tasks.md`
+- **Verification:** epoch-3, epoch-4, epoch-5, and corrected epoch-6 self-tests
+  passed 55/55, 33/33, 25/25, and 23/23 checks respectively; the first failed
+  epoch-6 report remains exact incident evidence. The retained attempt passed
+  `managed_server_coordinate_attestation`, `qwen38_grammar_nonce_smoke`,
+  `runtime_failure_classification_and_context_fallback`, and
+  `qwen38_quant_viability_selection`, kept an exact
+  49-entry/437,140-byte tree, and verified model SHA-256
+  `322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482`.
+  Epoch 6 froze control manifest
+  `a63f9dff611974a2c5bdf3e63e6bd09853ff29fab0684bd4b3f5af662d8b6930`,
+  and proved byte-preserving materializer re-entry. The independent Q4 gate
+  passed; final runtime verification passed four groups and cold teardown; and
+  manifest `60cac4761f5276d05fe9f1be296925e4d9e0e7e667706564b8478bb792167f40`
+  matched all 213 covered files with no residual stage.
+- **Commit:** PENDING

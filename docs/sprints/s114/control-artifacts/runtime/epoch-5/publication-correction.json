@@ -1,0 +1,34 @@
+{
+  "schema": "animus-ferric-runtime-publication-correction-v5",
+  "task": "T-11409",
+  "operation_id": "r05-publish-e03-01-q4-32768-after-e04-wrapper-failure",
+  "failed_operation_id": "r04-publish-e03-01-q4-32768",
+  "execution_epoch": 3,
+  "failed_publication_epoch": 4,
+  "correction_epoch": 5,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "corrected_at_utc": "2026-08-27T23:33:28.8301995Z",
+  "control_manifest_sha256": "35597956361fc4308f5829362d8a9f79eb4edf5eb164ef049674c85bd377d675",
+  "failed_epoch_control_manifest_sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+  "legacy_envelope": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recovery-publication.json",
+    "bytes": 3390,
+    "sha256": "1903c1447ae4d4eef36e811996f4cc44ebf353615c94cc1f4257774978590411"
+  },
+  "source": {
+    "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49
+  },
+  "destination": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49
+  },
+  "resumed_existing_destination": true,
+  "legacy_envelope_validation": {
+    "contract": "animus-ferric-runtime-recovery-publication-v4",
+    "passed": true
+  },
+  "passed": true
+}

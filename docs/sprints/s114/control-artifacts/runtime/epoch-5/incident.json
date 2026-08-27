@@ -1,0 +1,38 @@
+{
+  "schema": "animus-ferric-runtime-publication-incident-v5",
+  "task": "T-11409",
+  "operation_id": "r05-publish-e03-01-q4-32768-after-e04-wrapper-failure",
+  "failed_operation_id": "r04-publish-e03-01-q4-32768",
+  "execution_epoch": 3,
+  "failed_publication_epoch": 4,
+  "correction_epoch": 5,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "failed_control_manifest_sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+  "failure": {
+    "stage": "post_copy_stage_verifier_wrapper_validation",
+    "script_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recover-e03-publication.ps1",
+    "script_bytes": 21381,
+    "script_sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61",
+    "message": "corrected publication verification failed after the exact source tree was copied to an isolated stage",
+    "cause": "the frozen wrapper read template_attestation and process_command_attestation from the epoch-4 recovery plan instead of the anchored epoch-3 source runtime plan",
+    "incorrect_binding": "$plan.template_attestation.protocol and $plan.process_command_attestation.protocol",
+    "required_binding": "$sourcePlan.template_attestation.protocol and $sourcePlan.process_command_attestation.protocol"
+  },
+  "state_after_failure": {
+    "source_raw_retained": true,
+    "source_manifest_entries": 49,
+    "destination_absent": true,
+    "legacy_epoch_4_publication_envelope_absent": true,
+    "epoch_5_correction_evidence_absent": true,
+    "stage_not_promoted": true,
+    "model_execution_repeated": false
+  },
+  "resolution": {
+    "kind": "separately_frozen_exact_byte_publication_correction",
+    "preserve_epoch_4_immutable": true,
+    "reuse_epoch_4_verifier": true,
+    "bind_source_protocols_from_epoch_3_plan": true,
+    "publish_legacy_epoch_4_envelope": true,
+    "correction_evidence_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-correction.json"
+  }
+}

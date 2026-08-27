@@ -1,0 +1,41 @@
+{
+  "schema": "animus-ferric-qwen38-selection-v4",
+  "task": "T-11409",
+  "operation_id": "r04-publish-e03-01-q4-32768",
+  "execution_epoch": 3,
+  "publication_epoch": 4,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "attestation_protocol": "apply-template-differential-v1",
+  "process_command_protocol": "windows-bound-process-command-v1",
+  "result": "selected_q4",
+  "selected_attempt": "e03-01-q4-32768",
+  "terminal_attempt": "e03-01-q4-32768",
+  "selected_quant": "Q4_K_M",
+  "selected_context": 32768,
+  "requested_gpu_layers": 24,
+  "effective_gpu_layers": 24,
+  "median_decoded_tokens_per_second": 3.2064850358228254,
+  "q4_verdict": "viable",
+  "q4_fallback_basis": null,
+  "q3_verdict": "not_authorized",
+  "q3_non_viability_basis": null,
+  "attempt_ids": [
+    "e03-01-q4-32768"
+  ],
+  "attempt_chain": [
+    {
+      "id": "e03-01-q4-32768",
+      "quant": "Q4_K_M",
+      "context": 32768,
+      "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a"
+    }
+  ],
+  "recovery_plan_sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d",
+  "source_runtime_plan_sha256": "a33f5e73e2ec5ac7118efc4b4f3394581c696827d1859a17b3683509f7e2b905",
+  "control_inputs_sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+  "recovery_publication_sha256": "1903c1447ae4d4eef36e811996f4cc44ebf353615c94cc1f4257774978590411",
+  "q4_gate_sha256": "8901d1374a137e7a48e3e30a2c4237348fa46c02918fad92155108d7b46d9fd9",
+  "validator_sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d",
+  "q4_gate_validator_sha256": "4b982fffe4c131f31b0b71fef94b68046c2753a0ff9255f196aa113430926370",
+  "finalized_at_utc": "2026-08-27T23:37:16.9651916Z"
+}

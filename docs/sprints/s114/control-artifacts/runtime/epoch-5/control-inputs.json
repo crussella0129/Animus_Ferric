@@ -1,0 +1,115 @@
+{
+  "schema": "animus-ferric-runtime-publication-correction-control-inputs-v5",
+  "task": "T-11409",
+  "operation_id": "r05-publish-e03-01-q4-32768-after-e04-wrapper-failure",
+  "failed_operation_id": "r04-publish-e03-01-q4-32768",
+  "execution_epoch": 3,
+  "failed_publication_epoch": 4,
+  "correction_epoch": 5,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "frozen_at_utc": "2026-08-27T22:25:47.9654701Z",
+  "runtime_plan_sha256": "18fb3be97ba79d0e04ee67f1e3e77ebb92b76fdfc5b3b087013f613e7fa9575c",
+  "incident_sha256": "0d4f6801e9be40dce5bb6e71d81fd12314f3c9ba3d4d1c55c2721e9ea8fa45f0",
+  "repository": {
+    "head_at_freeze": "a1306e5191591600551ef7c2c8676f061e8d554f",
+    "epoch_5_pre_control_base": "a1306e5191591600551ef7c2c8676f061e8d554f"
+  },
+  "static_controls": [
+    {
+      "path": ".gitattributes",
+      "bytes": 27,
+      "sha256": "6b98748bce4e756cb59c88e22c82d53951931491c29e0d54436e1cf7daa4b026"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2911,
+      "sha256": "41a9172b307757d4ba74a05fbab1dda569813c5ed2ac43b12d1574ed1af910d0"
+    },
+    {
+      "path": "incident.json",
+      "bytes": 2000,
+      "sha256": "0d4f6801e9be40dce5bb6e71d81fd12314f3c9ba3d4d1c55c2721e9ea8fa45f0"
+    },
+    {
+      "path": "runtime-plan.json",
+      "bytes": 5477,
+      "sha256": "18fb3be97ba79d0e04ee67f1e3e77ebb92b76fdfc5b3b087013f613e7fa9575c"
+    },
+    {
+      "path": "publication-common.ps1",
+      "bytes": 39136,
+      "sha256": "332475b8b83d5668ed9d7cb5d34fddfd720e4fb1328b91f9cbc7c44e64f994f1"
+    },
+    {
+      "path": "test-publication.ps1",
+      "bytes": 50683,
+      "sha256": "d7c583283aac8afb03c30a46850a35a07f7dc46f665db8e642a04614dd292e81"
+    },
+    {
+      "path": "freeze-publication.ps1",
+      "bytes": 31156,
+      "sha256": "327658d89a7cb18fc0c4e2f76ab144d83bcc3c5a366dfbdb7333f98f166b1214"
+    },
+    {
+      "path": "publish-e04-correction.ps1",
+      "bytes": 43717,
+      "sha256": "529c4e96e9b20d7ae31a6a75d3b8dc5d0d231d83caa7cb661c4f1d7ef3197b06"
+    }
+  ],
+  "publication_self_test": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-self-test.json",
+    "bytes": 23339,
+    "sha256": "0d065cf15ffbe07ba7aad0faca8e1784b040893c3172dbfead01042c6456b011",
+    "passed": true
+  },
+  "epoch_4": {
+    "runtime_plan_sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d",
+    "raw_source_anchor_sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e",
+    "control_manifest_sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+    "control_digest_sha256": "4358031fe24ebe96e06582fe64617928a181af4d28c0eb874ec76902a2ce33bd",
+    "runtime_self_test_sha256": "62a1f797cc1ca58eb18446ddea8792745456e2f35f8b147293fdd304ddc64579",
+    "verifier_sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d",
+    "frozen_failed_publisher_sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61",
+    "control_manifest_digest_line": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f  control-inputs.json",
+    "static_controls_checked": 12,
+    "transitive_epoch_3_controls_checked": 20,
+    "passed": true
+  },
+  "raw_source": {
+    "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49,
+    "payload_bytes": 437140,
+    "attempt_sha256": "167a964e471fec93bc7e58ff0ec76bbba45f3025f18c2fe84060248732b4fae4",
+    "attestation_sha256": "792ae02c6323deafcaae9b89b247b43fccdc07cabb3ff470a0b7edfee78b0a99",
+    "terminal_facts_passed": true,
+    "passed": true
+  },
+  "model": {
+    "relative_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "bytes": 16464440224,
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "independently_rehashed": true,
+    "passed": true
+  },
+  "cold_state": {
+    "passed": true,
+    "state": {
+      "local_runfile_absent": true,
+      "global_runfile_absent": true,
+      "listener_absent": true,
+      "llama_server_process_absent": true
+    },
+    "errors": []
+  },
+  "publication_preconditions": {
+    "destination_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "destination_absent_at_freeze": true,
+    "legacy_envelope_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recovery-publication.json",
+    "legacy_envelope_absent_at_freeze": true,
+    "correction_evidence_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-correction.json",
+    "correction_evidence_absent_at_freeze": true,
+    "passed": true
+  },
+  "passed": true
+}

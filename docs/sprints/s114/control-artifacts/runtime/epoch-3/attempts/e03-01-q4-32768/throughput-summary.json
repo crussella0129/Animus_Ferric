@@ -1,0 +1,292 @@
+{
+  "schema": "animus-ferric-throughput-summary-v1",
+  "passed": true,
+  "reason": "viable",
+  "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+  "template_sha256": "59dc2169673a085e5ea82e62b1bc85b29ad33b0e50a9181291ba5625ffa797e3",
+  "scheduled_samples": [
+    "warmup",
+    "trial-01",
+    "trial-02",
+    "trial-03"
+  ],
+  "observed_samples": 4,
+  "valid_request_count": 4,
+  "valid_trial_count": 3,
+  "median_decoded_tokens_per_second": 3.2064850358228254,
+  "minimum_required": 2.0,
+  "samples": [
+    {
+      "schema": "animus-ferric-throughput-sample-v1",
+      "ordinal": 1,
+      "label": "warmup",
+      "scored": false,
+      "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+      "request_bytes": 811,
+      "quant_elapsed_before_request_seconds": 197.641277,
+      "remaining_wall_ms_before_request": 5202358,
+      "exchange": {
+        "method": "POST",
+        "uri": "http://127.0.0.1:8080/v1/chat/completions",
+        "started_at_utc": "2026-08-27T20:39:23.2809419Z",
+        "completed_at_utc": "2026-08-27T20:40:46.3169408Z",
+        "wall_ms": 83035.698,
+        "timeout_seconds": 720,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Server": [
+            "llama.cpp"
+          ],
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Content-Length": [
+            "1901"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ]
+        },
+        "error": null,
+        "response_file": "throughput-warmup.response.json",
+        "response_bytes": 1901,
+        "response_sha256": "adc7c556aba4d61ffe8fc5d97bda0a0fe00dda031c6c7ceaf6693d3f091e0ded"
+      },
+      "usage_completion_tokens": 256,
+      "timings_predicted_n": 256,
+      "timings_predicted_ms": 79916.51,
+      "timings_reported_per_second": 3.1908300299900483,
+      "computed_decoded_tokens_per_second": 3.2033430889311862,
+      "counter_consistent": true,
+      "rate_consistent": true,
+      "failure_cause": null,
+      "valid": true,
+      "raw_response": "{\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"We need to answer user's request: continuous technical essay at least 500 words, no headings, lists, code fences, tools, or a conclusion. They want analyze dependency-free Rust release scheduler design. Cover parsing invariants, dependency-graph validation, topological readiness, deterministic numeric-priority and lexicographic tie-breaking, cycle reporting, immutable inputs, command-line error behavior, focused tests, and safety. No headings, lists, code fences, tools, or conclusion. Keep elaborating until generation limit stops. Need ensure no code fences. No lists. No headings. No conclusion. Need at least 500 words. We can produce continuous prose. Need avoid \\\"conclusion\\\" as section? They say or a conclusion; likely don't end with conclusion. Just keep elaborating, maybe end abruptly? But should be coherent. Need ensure no bullet list, no numbered. No code fences. Can mention Rust terms. No headings. Continuous technical essay. At least 500 words. Let's craft maybe 900-1200 words. Need no explicit conclusion. Could end while elaborating on safety or tests. Need avoid headings like \\\"Safety\\\". Just inline. Ensure no lists. Let's draft in one paragraph? Continuous\"}}],\"created\":1787863246,\"model\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"system_fingerprint\":\"b10516-b95502ba9\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":256,\"prompt_tokens\":161,\"total_tokens\":417,\"prompt_tokens_details\":{\"cached_tokens\":0}},\"id\":\"chatcmpl-RXv1T64r9VqLXCp2dEf91OHYrWNYobso\",\"timings\":{\"cache_n\":0,\"prompt_n\":161,\"prompt_ms\":2714.222,\"prompt_per_token_ms\":16.858521739130435,\"prompt_per_second\":59.3171818664796,\"predicted_n\":256,\"predicted_ms\":79916.51,\"predicted_per_token_ms\":313.39807843137254,\"predicted_per_second\":3.1908300299900483}}"
+    },
+    {
+      "schema": "animus-ferric-throughput-sample-v1",
+      "ordinal": 2,
+      "label": "trial-01",
+      "scored": true,
+      "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+      "request_bytes": 811,
+      "quant_elapsed_before_request_seconds": 280.703847,
+      "remaining_wall_ms_before_request": 5119297,
+      "exchange": {
+        "method": "POST",
+        "uri": "http://127.0.0.1:8080/v1/chat/completions",
+        "started_at_utc": "2026-08-27T20:40:46.3388772Z",
+        "completed_at_utc": "2026-08-27T20:42:06.8726517Z",
+        "wall_ms": 80533.488,
+        "timeout_seconds": 720,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Server": [
+            "llama.cpp"
+          ],
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Content-Length": [
+            "1894"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ]
+        },
+        "error": null,
+        "response_file": "throughput-trial-01.response.json",
+        "response_bytes": 1894,
+        "response_sha256": "9e9fe5ac136ca76c759215800940aa3a03d131839b80ef618d4ab997dad1992e"
+      },
+      "usage_completion_tokens": 256,
+      "timings_predicted_n": 256,
+      "timings_predicted_ms": 79838.202,
+      "timings_reported_per_second": 3.1939597036516423,
+      "computed_decoded_tokens_per_second": 3.2064850358228254,
+      "counter_consistent": true,
+      "rate_consistent": true,
+      "failure_cause": null,
+      "valid": true,
+      "raw_response": "{\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"We need to answer user's request: continuous technical essay at least 500 words, no headings, lists, code fences, tools, or a conclusion. They want analyze dependency-free Rust release scheduler design. Cover parsing invariants, dependency-graph validation, topological readiness, deterministic numeric-priority and lexicographic tie-breaking, cycle reporting, immutable inputs, command-line error behavior, focused tests, and safety. No headings, lists, code fences, tools, or conclusion. Keep elaborating until generation limit stops. Need ensure no code fences. No lists. No headings. No conclusion. Need at least 500 words. We can produce continuous prose. Need avoid \\\"conclusion\\\" as section? They say or a conclusion; likely don't end with conclusion. Just keep elaborating, maybe end abruptly? But should be coherent. Need ensure no bullet list, no numbered. No code fences. Can mention Rust terms. No headings. Continuous technical essay. At least 500 words. Let's craft maybe 900-1200 words. Need no explicit conclusion. Could end while elaborating on safety or tests. Need avoid headings like \\\"Safety\\\". Just inline. Ensure no lists. Let's draft in one paragraph? Continuous\"}}],\"created\":1787863326,\"model\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"system_fingerprint\":\"b10516-b95502ba9\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":256,\"prompt_tokens\":161,\"total_tokens\":417,\"prompt_tokens_details\":{\"cached_tokens\":157}},\"id\":\"chatcmpl-Vmcejh21DAZRFCb5fsobVGHMJ0jKEMZw\",\"timings\":{\"cache_n\":157,\"prompt_n\":4,\"prompt_ms\":480.098,\"prompt_per_token_ms\":120.0245,\"prompt_per_second\":8.331632291740435,\"predicted_n\":256,\"predicted_ms\":79838.202,\"predicted_per_token_ms\":313.09098823529416,\"predicted_per_second\":3.1939597036516423}}"
+    },
+    {
+      "schema": "animus-ferric-throughput-sample-v1",
+      "ordinal": 3,
+      "label": "trial-02",
+      "scored": true,
+      "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+      "request_bytes": 811,
+      "quant_elapsed_before_request_seconds": 361.26057,
+      "remaining_wall_ms_before_request": 5038740,
+      "exchange": {
+        "method": "POST",
+        "uri": "http://127.0.0.1:8080/v1/chat/completions",
+        "started_at_utc": "2026-08-27T20:42:06.8954030Z",
+        "completed_at_utc": "2026-08-27T20:43:26.6815231Z",
+        "wall_ms": 79785.836,
+        "timeout_seconds": 720,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Server": [
+            "llama.cpp"
+          ],
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Content-Length": [
+            "1892"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ]
+        },
+        "error": null,
+        "response_file": "throughput-trial-02.response.json",
+        "response_bytes": 1892,
+        "response_sha256": "f4c6e55023fae0741e6ea8dedae704bec7554caa6e5e53cb5c81ea611fc8a981"
+      },
+      "usage_completion_tokens": 256,
+      "timings_predicted_n": 256,
+      "timings_predicted_ms": 79287.617,
+      "timings_reported_per_second": 3.2161390346742293,
+      "computed_decoded_tokens_per_second": 3.2287513446141283,
+      "counter_consistent": true,
+      "rate_consistent": true,
+      "failure_cause": null,
+      "valid": true,
+      "raw_response": "{\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"We need to answer user's request: continuous technical essay at least 500 words, no headings, lists, code fences, tools, or a conclusion. They want analyze dependency-free Rust release scheduler design. Cover parsing invariants, dependency-graph validation, topological readiness, deterministic numeric-priority and lexicographic tie-breaking, cycle reporting, immutable inputs, command-line error behavior, focused tests, and safety. No headings, lists, code fences, tools, or conclusion. Keep elaborating until generation limit stops. Need ensure no code fences. No lists. No headings. No conclusion. Need at least 500 words. We can produce continuous prose. Need avoid \\\"conclusion\\\" as section? They say or a conclusion; likely don't end with conclusion. Just keep elaborating, maybe end abruptly? But should be coherent. Need ensure no bullet list, no numbered. No code fences. Can mention Rust terms. No headings. Continuous technical essay. At least 500 words. Let's craft maybe 900-1200 words. Need no explicit conclusion. Could end while elaborating on safety or tests. Need avoid headings like \\\"Safety\\\". Just inline. Ensure no lists. Let's draft in one paragraph? Continuous\"}}],\"created\":1787863406,\"model\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"system_fingerprint\":\"b10516-b95502ba9\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":256,\"prompt_tokens\":161,\"total_tokens\":417,\"prompt_tokens_details\":{\"cached_tokens\":157}},\"id\":\"chatcmpl-4WeDriEm1eWoSY0oS8uLvJryb4MiGAJj\",\"timings\":{\"cache_n\":157,\"prompt_n\":4,\"prompt_ms\":490.843,\"prompt_per_token_ms\":122.71075,\"prompt_per_second\":8.14924527802169,\"predicted_n\":256,\"predicted_ms\":79287.617,\"predicted_per_token_ms\":310.931831372549,\"predicted_per_second\":3.2161390346742293}}"
+    },
+    {
+      "schema": "animus-ferric-throughput-sample-v1",
+      "ordinal": 4,
+      "label": "trial-03",
+      "scored": true,
+      "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+      "request_bytes": 811,
+      "quant_elapsed_before_request_seconds": 441.059386,
+      "remaining_wall_ms_before_request": 4958941,
+      "exchange": {
+        "method": "POST",
+        "uri": "http://127.0.0.1:8080/v1/chat/completions",
+        "started_at_utc": "2026-08-27T20:43:26.6941685Z",
+        "completed_at_utc": "2026-08-27T20:44:47.8770524Z",
+        "wall_ms": 81182.608,
+        "timeout_seconds": 720,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Server": [
+            "llama.cpp"
+          ],
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Content-Length": [
+            "1885"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ]
+        },
+        "error": null,
+        "response_file": "throughput-trial-03.response.json",
+        "response_bytes": 1885,
+        "response_sha256": "52ac479eeac681602b7bd07898c501e2fc7f3c39f8d46bdc355bc948bd19ae56"
+      },
+      "usage_completion_tokens": 256,
+      "timings_predicted_n": 256,
+      "timings_predicted_ms": 80675.931,
+      "timings_reported_per_second": 3.1607940167433584,
+      "computed_decoded_tokens_per_second": 3.173189287397254,
+      "counter_consistent": true,
+      "rate_consistent": true,
+      "failure_cause": null,
+      "valid": true,
+      "raw_response": "{\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"We need to answer user's request: continuous technical essay at least 500 words, no headings, lists, code fences, tools, or a conclusion. They want analyze dependency-free Rust release scheduler design. Cover parsing invariants, dependency-graph validation, topological readiness, deterministic numeric-priority and lexicographic tie-breaking, cycle reporting, immutable inputs, command-line error behavior, focused tests, and safety. No headings, lists, code fences, tools, or conclusion. Keep elaborating until generation limit stops. Need ensure no code fences. No lists. No headings. No conclusion. Need at least 500 words. We can produce continuous prose. Need avoid \\\"conclusion\\\" as section? They say or a conclusion; likely don't end with conclusion. Just keep elaborating, maybe end abruptly? But should be coherent. Need ensure no bullet list, no numbered. No code fences. Can mention Rust terms. No headings. Continuous technical essay. At least 500 words. Let's craft maybe 900-1200 words. Need no explicit conclusion. Could end while elaborating on safety or tests. Need avoid headings like \\\"Safety\\\". Just inline. Ensure no lists. Let's draft in one paragraph? Continuous\"}}],\"created\":1787863487,\"model\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"system_fingerprint\":\"b10516-b95502ba9\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":256,\"prompt_tokens\":161,\"total_tokens\":417,\"prompt_tokens_details\":{\"cached_tokens\":157}},\"id\":\"chatcmpl-MRjr7UyHyAFOpkBr2yICf2u9wgeJ0IMJ\",\"timings\":{\"cache_n\":157,\"prompt_n\":4,\"prompt_ms\":499.617,\"prompt_per_token_ms\":124.90425,\"prompt_per_second\":8.006132697646397,\"predicted_n\":256,\"predicted_ms\":80675.931,\"predicted_per_token_ms\":316.3762,\"predicted_per_second\":3.1607940167433584}}"
+    }
+  ],
+  "memory_after_measurement": {
+    "captured_at_utc": "2026-08-27T20:44:48.0773609Z",
+    "ram": {
+      "total_visible_bytes": 34281484288,
+      "free_physical_bytes": 1062125568,
+      "total_virtual_bytes": 140737488224256,
+      "free_virtual_bytes": 138464536248320
+    },
+    "nvidia_smi_gpu_csv": [
+      "NVIDIA GeForce RTX 2080 Ti, GPU-ba084980-69e2-8d7e-07d9-c291d42030df, 596.49, 11264, 1043, 9985, 14"
+    ],
+    "nvidia_smi_compute_apps_csv": [
+      "15308, [Insufficient Permissions], [N/A]",
+      "42784, C:\\Windows\\System32\\ShellHost.exe, [N/A]",
+      "13908, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+      "23508, C:\\Windows\\explorer.exe, [N/A]",
+      "31404, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+      "28756, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+      "13156, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+      "37808, C:\\Program Files\\WindowsApps\\Microsoft.YourPhone_1.26071.164.0_x64__8wekyb3d8bbwe\\PhoneExperienceHost.exe, [N/A]",
+      "28252, C:\\Users\\charl\\AppData\\Local\\Discord\\app-1.0.9253\\Discord.exe, [N/A]",
+      "16256, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+      "32656, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+      "5556, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+      "7748, C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe, [N/A]",
+      "10652, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+      "43036, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+      "15208, C:\\Program Files (x86)\\GOG Galaxy\\GOG Galaxy Notifications Renderer.exe, [N/A]",
+      "42176, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EACefSubProcess.exe, [N/A]",
+      "34032, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EADesktop.exe, [N/A]",
+      "2540, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+      "37664, C:\\Users\\charl\\AppData\\Local\\Programs\\zima-client\\Zima.exe, [N/A]",
+      "6308, C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe, [N/A]",
+      "25068, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudHome.exe, [N/A]",
+      "11064, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudPhotos.exe, [N/A]",
+      "27440, C:\\Program Files\\WindowsApps\\SpotifyAB.SpotifyMusic_1.297.270.0_x64__zpdnekdrzrea0\\Spotify.exe, [N/A]",
+      "18824, C:\\Program Files\\Adobe\\Adobe Creative Cloud\\ACC\\Creative Cloud UI Helper.exe, [N/A]",
+      "28220, C:\\Program Files\\Common Files\\Adobe\\Adobe OS Extension\\AdobeNotificationClient.exe, [N/A]",
+      "10184, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+      "7484, C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe, [N/A]",
+      "39908, C:\\Program Files\\WindowsApps\\Microsoft.MicrosoftOfficeHub_19.2608.49021.0_x64__8wekyb3d8bbwe\\M365Copilot.exe, [N/A]",
+      "26960, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+      "34124, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.820.7780.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+      "30988, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+      "46548, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+      "33892, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+      "50756, C:\\Program Files\\WindowsApps\\Microsoft.ScreenSketch_11.2605.36.0_x64__8wekyb3d8bbwe\\SnippingTool\\SnippingTool.exe, [N/A]",
+      "7324, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+      "47984, [Insufficient Permissions], [N/A]",
+      "29184, C:\\Program Files\\Malwarebytes\\Anti-Malware\\Malwarebytes.exe, [N/A]",
+      "19000, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+      "17848, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+      "41828, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+      "8576, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+      "42988, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+      "49752, C:\\Users\\charl\\AppData\\Local\\Packages\\Microsoft.4297127D64EC6_8wekyb3d8bbwe\\LocalCache\\Local\\runtime\\java-runtime-epsilon\\windows-x64\\java-runtime-epsilon\\bin\\javaw.exe, [N/A]",
+      "34132, C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe, [N/A]"
+    ],
+    "gpu": {
+      "name": "NVIDIA GeForce RTX 2080 Ti",
+      "uuid": "GPU-ba084980-69e2-8d7e-07d9-c291d42030df",
+      "driver_version": "596.49",
+      "total_mib": 11264,
+      "free_mib": 1043,
+      "used_mib": 9985,
+      "utilization_percent": 14
+    }
+  }
+}

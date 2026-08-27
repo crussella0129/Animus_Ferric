@@ -1,0 +1,1188 @@
+{
+  "schema": "animus-ferric-runtime-materialization-self-test-v6",
+  "task": "T-11409",
+  "operation_id": "r06-materialize-e05-publication-evidence",
+  "execution_epoch": 3,
+  "failed_publication_epoch": 4,
+  "failed_correction_epoch": 5,
+  "materialization_epoch": 6,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "tested_at_utc": "2026-08-27T23:26:49.0054773Z",
+  "passed": true,
+  "test_count": 23,
+  "exact_model_hashes": 1,
+  "static_controls": [
+    {
+      "path": ".gitattributes",
+      "bytes": 27,
+      "sha256": "6b98748bce4e756cb59c88e22c82d53951931491c29e0d54436e1cf7daa4b026"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3504,
+      "sha256": "e1336838275832baa355e9c4daa59a5d104061f0ae255efacca0478fd6161c17"
+    },
+    {
+      "path": "incident.json",
+      "bytes": 3424,
+      "sha256": "ce7c1ff5c2c2606295d043a50f6b2f516ddce90663267f3c2e21bf4eb02b46c0"
+    },
+    {
+      "path": "runtime-plan.json",
+      "bytes": 9411,
+      "sha256": "86deff9c8ddd17993e25adb89ba7505afb40db5646ef67449a4ff1fb6165dab0"
+    },
+    {
+      "path": "materialization-common.ps1",
+      "bytes": 58891,
+      "sha256": "491a77b4190227f060d47c06664080beb4d5c2cdd2a0f3be0f4282a98bc265df"
+    },
+    {
+      "path": "test-materialization.ps1",
+      "bytes": 79529,
+      "sha256": "1935f17e0bd5086a6c58eeede2124a0945397b12af7a5c1d4f4178880cad2a9b"
+    },
+    {
+      "path": "freeze-materialization.ps1",
+      "bytes": 43767,
+      "sha256": "61b4e99a3a005e22343201f05932fca98afabd0e88e06291dcfa27f5cce350c6"
+    },
+    {
+      "path": "materialize-e05-evidence.ps1",
+      "bytes": 40574,
+      "sha256": "1ab6ebcc375e59a9774154261c267960518788d89486a32135185f22679ef5f5"
+    }
+  ],
+  "direct_anchors": [
+    {
+      "label": "plan.model",
+      "relative_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "bytes": 16464440224,
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.operation.manifest",
+      "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/files.sha256",
+      "bytes": 4445,
+      "sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.operation.attempt",
+      "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attempt.json",
+      "bytes": 75608,
+      "sha256": "167a964e471fec93bc7e58ff0ec76bbba45f3025f18c2fe84060248732b4fae4",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.operation.attestation",
+      "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attestation.json",
+      "bytes": 30991,
+      "sha256": "792ae02c6323deafcaae9b89b247b43fccdc07cabb3ff470a0b7edfee78b0a99",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.prefreeze_self_test_failure",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization-self-test.failed-01.json",
+      "bytes": 39692,
+      "sha256": "de7ce31a000cd78abe55455db5d6ed5b6931ef00e76c18a2c5e25b03822e27ce",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_5.runtime_plan",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/runtime-plan.json",
+      "bytes": 5477,
+      "sha256": "18fb3be97ba79d0e04ee67f1e3e77ebb92b76fdfc5b3b087013f613e7fa9575c",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_5.control_manifest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/control-inputs.json",
+      "bytes": 4746,
+      "sha256": "35597956361fc4308f5829362d8a9f79eb4edf5eb164ef049674c85bd377d675",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_5.control_digest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/control-inputs.sha256",
+      "bytes": 86,
+      "sha256": "e9384eb392fadc858248b979495df6fcd0ea092eafd8601c201c498c762427be",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_5.publication_self_test",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-self-test.json",
+      "bytes": 23339,
+      "sha256": "0d065cf15ffbe07ba7aad0faca8e1784b040893c3172dbfead01042c6456b011",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_5.publication_common",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-common.ps1",
+      "bytes": 39136,
+      "sha256": "332475b8b83d5668ed9d7cb5d34fddfd720e4fb1328b91f9cbc7c44e64f994f1",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_5.frozen_failed_publisher",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publish-e04-correction.ps1",
+      "bytes": 43717,
+      "sha256": "529c4e96e9b20d7ae31a6a75d3b8dc5d0d231d83caa7cb661c4f1d7ef3197b06",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_4.runtime_plan",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-plan.json",
+      "bytes": 3109,
+      "sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_4.raw_source_anchor",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/raw-source-anchor.json",
+      "bytes": 8701,
+      "sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_4.runtime_common",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-common.ps1",
+      "bytes": 87625,
+      "sha256": "322407fc52e2192cedf320d65e9c8029c75d1190e732e3d76a27394614eaf59c",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_4.control_manifest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.json",
+      "bytes": 10507,
+      "sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_4.control_digest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.sha256",
+      "bytes": 86,
+      "sha256": "4358031fe24ebe96e06582fe64617928a181af4d28c0eb874ec76902a2ce33bd",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_4.runtime_self_test",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-self-test.json",
+      "bytes": 25552,
+      "sha256": "62a1f797cc1ca58eb18446ddea8792745456e2f35f8b147293fdd304ddc64579",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_4.verifier",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/verify-runtime.ps1",
+      "bytes": 138977,
+      "sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_4.frozen_failed_publisher",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recover-e03-publication.ps1",
+      "bytes": 21381,
+      "sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_3.control_manifest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.json",
+      "bytes": 33083,
+      "sha256": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_3.control_digest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.sha256",
+      "bytes": 86,
+      "sha256": "5350312a4e4d19275cc95d9d2b367f168a73e641d79e3b4ab06e3ca2cfe0197e",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_3.runtime_plan",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-plan.json",
+      "bytes": 13777,
+      "sha256": "a33f5e73e2ec5ac7118efc4b4f3394581c696827d1859a17b3683509f7e2b905",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "plan.epoch_3.runtime_self_test",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-self-test.json",
+      "bytes": 112414,
+      "sha256": "dcd7efb280a2a4f6bca4435c56d84b93498f4cc76fc8c4deefbb38807c854a12",
+      "passed": true,
+      "errors": []
+    }
+  ],
+  "dependency_verification": {
+    "epoch_5_static_controls_checked": 8,
+    "epoch_4_static_controls_checked": 12,
+    "transitive_epoch_3_controls_checked": 20,
+    "passed": true,
+    "errors": []
+  },
+  "source_verification": {
+    "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49,
+    "payload_bytes": 437140,
+    "passed": true,
+    "errors": []
+  },
+  "destination_verification": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49,
+    "payload_bytes": 437140,
+    "report": {
+      "schema": "animus-ferric-runtime-recovery-verification-v4",
+      "task": "T-11409",
+      "operation_id": "r04-publish-e03-01-q4-32768",
+      "execution_epoch": 3,
+      "publication_epoch": 4,
+      "source_attempt_schema": "animus-ferric-runtime-attempt-v3",
+      "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+      "control_epoch": 3,
+      "attestation_protocol": "apply-template-differential-v1",
+      "process_command_protocol": "windows-bound-process-command-v1",
+      "live_model_identity": {
+        "checked": true,
+        "mode": "checked_in_verifier",
+        "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+      },
+      "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-3\\attempts\\e03-01-q4-32768",
+      "coordinate": "e03-01-q4-32768",
+      "verdict": "viable",
+      "passed": true,
+      "manifest": {
+        "passed": true,
+        "entries": 49,
+        "errors": []
+      },
+      "recovery_anchor": {
+        "applicable": true,
+        "passed": true,
+        "expected_entries": 49,
+        "observed_entries": 49
+      },
+      "control_anchor_mode": "epoch_4_frozen_recovery",
+      "throughput_rows": 4,
+      "errors": []
+    },
+    "passed": true,
+    "errors": []
+  },
+  "frozen_epoch_4_verifier": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/verify-runtime.ps1",
+    "invocations": 1,
+    "direct_get_file_hash_invocations": 0,
+    "live_model_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "report": {
+      "schema": "animus-ferric-runtime-recovery-verification-v4",
+      "task": "T-11409",
+      "operation_id": "r04-publish-e03-01-q4-32768",
+      "execution_epoch": 3,
+      "publication_epoch": 4,
+      "source_attempt_schema": "animus-ferric-runtime-attempt-v3",
+      "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+      "control_epoch": 3,
+      "attestation_protocol": "apply-template-differential-v1",
+      "process_command_protocol": "windows-bound-process-command-v1",
+      "live_model_identity": {
+        "checked": true,
+        "mode": "checked_in_verifier",
+        "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+      },
+      "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-3\\attempts\\e03-01-q4-32768",
+      "coordinate": "e03-01-q4-32768",
+      "verdict": "viable",
+      "passed": true,
+      "manifest": {
+        "passed": true,
+        "entries": 49,
+        "errors": []
+      },
+      "recovery_anchor": {
+        "applicable": true,
+        "passed": true,
+        "expected_entries": 49,
+        "observed_entries": 49
+      },
+      "control_anchor_mode": "epoch_4_frozen_recovery",
+      "throughput_rows": 4,
+      "errors": []
+    },
+    "passed": true,
+    "errors": []
+  },
+  "duplicate_test_names": [],
+  "results": [
+    {
+      "name": "all_23_direct_plan_anchors_are_exact",
+      "passed": true,
+      "evidence": {
+        "expected": 23,
+        "observed": 23,
+        "anchors": [
+          {
+            "label": "plan.model",
+            "relative_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+            "bytes": 16464440224,
+            "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.operation.manifest",
+            "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/files.sha256",
+            "bytes": 4445,
+            "sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.operation.attempt",
+            "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attempt.json",
+            "bytes": 75608,
+            "sha256": "167a964e471fec93bc7e58ff0ec76bbba45f3025f18c2fe84060248732b4fae4",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.operation.attestation",
+            "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attestation.json",
+            "bytes": 30991,
+            "sha256": "792ae02c6323deafcaae9b89b247b43fccdc07cabb3ff470a0b7edfee78b0a99",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.prefreeze_self_test_failure",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization-self-test.failed-01.json",
+            "bytes": 39692,
+            "sha256": "de7ce31a000cd78abe55455db5d6ed5b6931ef00e76c18a2c5e25b03822e27ce",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_5.runtime_plan",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/runtime-plan.json",
+            "bytes": 5477,
+            "sha256": "18fb3be97ba79d0e04ee67f1e3e77ebb92b76fdfc5b3b087013f613e7fa9575c",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_5.control_manifest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/control-inputs.json",
+            "bytes": 4746,
+            "sha256": "35597956361fc4308f5829362d8a9f79eb4edf5eb164ef049674c85bd377d675",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_5.control_digest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/control-inputs.sha256",
+            "bytes": 86,
+            "sha256": "e9384eb392fadc858248b979495df6fcd0ea092eafd8601c201c498c762427be",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_5.publication_self_test",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-self-test.json",
+            "bytes": 23339,
+            "sha256": "0d065cf15ffbe07ba7aad0faca8e1784b040893c3172dbfead01042c6456b011",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_5.publication_common",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-common.ps1",
+            "bytes": 39136,
+            "sha256": "332475b8b83d5668ed9d7cb5d34fddfd720e4fb1328b91f9cbc7c44e64f994f1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_5.frozen_failed_publisher",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publish-e04-correction.ps1",
+            "bytes": 43717,
+            "sha256": "529c4e96e9b20d7ae31a6a75d3b8dc5d0d231d83caa7cb661c4f1d7ef3197b06",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_4.runtime_plan",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-plan.json",
+            "bytes": 3109,
+            "sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_4.raw_source_anchor",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/raw-source-anchor.json",
+            "bytes": 8701,
+            "sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_4.runtime_common",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-common.ps1",
+            "bytes": 87625,
+            "sha256": "322407fc52e2192cedf320d65e9c8029c75d1190e732e3d76a27394614eaf59c",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_4.control_manifest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.json",
+            "bytes": 10507,
+            "sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_4.control_digest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.sha256",
+            "bytes": 86,
+            "sha256": "4358031fe24ebe96e06582fe64617928a181af4d28c0eb874ec76902a2ce33bd",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_4.runtime_self_test",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-self-test.json",
+            "bytes": 25552,
+            "sha256": "62a1f797cc1ca58eb18446ddea8792745456e2f35f8b147293fdd304ddc64579",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_4.verifier",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/verify-runtime.ps1",
+            "bytes": 138977,
+            "sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_4.frozen_failed_publisher",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recover-e03-publication.ps1",
+            "bytes": 21381,
+            "sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_3.control_manifest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.json",
+            "bytes": 33083,
+            "sha256": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_3.control_digest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.sha256",
+            "bytes": 86,
+            "sha256": "5350312a4e4d19275cc95d9d2b367f168a73e641d79e3b4ab06e3ca2cfe0197e",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_3.runtime_plan",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-plan.json",
+            "bytes": 13777,
+            "sha256": "a33f5e73e2ec5ac7118efc4b4f3394581c696827d1859a17b3683509f7e2b905",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "plan.epoch_3.runtime_self_test",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-self-test.json",
+            "bytes": 112414,
+            "sha256": "dcd7efb280a2a4f6bca4435c56d84b93498f4cc76fc8c4deefbb38807c854a12",
+            "passed": true,
+            "errors": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "canonical_result_is_absent_and_archived_failed_self_test_is_exact_non_reparse",
+      "passed": true,
+      "evidence": {
+        "canonical_result_absent": true,
+        "archive_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization-self-test.failed-01.json",
+        "archive_exact_non_reparse": true,
+        "archived_report_contract_passed": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "shared_dependency_rewalk_checks_epoch_5_and_12_20_transitive_controls",
+      "passed": true,
+      "evidence": {
+        "epoch_5_static_controls_checked": 8,
+        "epoch_4_static_controls_checked": 12,
+        "transitive_epoch_3_controls_checked": 20,
+        "errors": []
+      }
+    },
+    {
+      "name": "plan_identity_rejects_operation_protocol_anchor_and_destination_mutations",
+      "passed": true,
+      "evidence": {
+        "cross_operation_rejected": true,
+        "wrong_protocol_rejected": true,
+        "missing_anchor_rejected": true,
+        "wrong_published_destination_rejected": true
+      }
+    },
+    {
+      "name": "raw_source_tree_remains_exact",
+      "passed": true,
+      "evidence": {
+        "passed": true,
+        "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+        "entries": 49,
+        "payload_bytes": 437140,
+        "errors": []
+      }
+    },
+    {
+      "name": "published_destination_tree_is_exact_before_materialization",
+      "passed": true,
+      "evidence": {
+        "passed": true,
+        "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+        "entries": 49,
+        "payload_bytes": 437140,
+        "errors": []
+      }
+    },
+    {
+      "name": "all_three_official_evidence_outputs_are_absent_before_freeze",
+      "passed": true,
+      "evidence": {
+        "legacy_envelope_absent": true,
+        "correction_evidence_absent": true,
+        "materialization_evidence_absent": true
+      }
+    },
+    {
+      "name": "frozen_epoch_5_ordered_dictionary_bug_remains_exact_incident_evidence",
+      "passed": true,
+      "evidence": {
+        "incident_identity_passed": true,
+        "frozen_ordered_constructor_present": true,
+        "frozen_validator_follows_constructor": true,
+        "frozen_publisher_sha256": "529c4e96e9b20d7ae31a6a75d3b8dc5d0d231d83caa7cb661c4f1d7ef3197b06"
+      }
+    },
+    {
+      "name": "epoch_6_static_control_identities_are_exact_ordered_and_unique",
+      "passed": true,
+      "evidence": {
+        "expected_count": 8,
+        "observed_count": 8,
+        "duplicate_names": [],
+        "expected_names": [
+          ".gitattributes",
+          "README.md",
+          "incident.json",
+          "runtime-plan.json",
+          "materialization-common.ps1",
+          "test-materialization.ps1",
+          "freeze-materialization.ps1",
+          "materialize-e05-evidence.ps1"
+        ],
+        "observed_names": [
+          ".gitattributes",
+          "README.md",
+          "incident.json",
+          "runtime-plan.json",
+          "materialization-common.ps1",
+          "test-materialization.ps1",
+          "freeze-materialization.ps1",
+          "materialize-e05-evidence.ps1"
+        ]
+      }
+    },
+    {
+      "name": "all_epoch_6_static_controls_use_lf_without_bom",
+      "passed": true,
+      "evidence": {
+        "files": [
+          {
+            "path": ".gitattributes",
+            "passed": true,
+            "utf8_bom_absent": true,
+            "utf16_bom_absent": true,
+            "carriage_return_absent": true,
+            "trailing_lf_present": true
+          },
+          {
+            "path": "README.md",
+            "passed": true,
+            "utf8_bom_absent": true,
+            "utf16_bom_absent": true,
+            "carriage_return_absent": true,
+            "trailing_lf_present": true
+          },
+          {
+            "path": "incident.json",
+            "passed": true,
+            "utf8_bom_absent": true,
+            "utf16_bom_absent": true,
+            "carriage_return_absent": true,
+            "trailing_lf_present": true
+          },
+          {
+            "path": "runtime-plan.json",
+            "passed": true,
+            "utf8_bom_absent": true,
+            "utf16_bom_absent": true,
+            "carriage_return_absent": true,
+            "trailing_lf_present": true
+          },
+          {
+            "path": "materialization-common.ps1",
+            "passed": true,
+            "utf8_bom_absent": true,
+            "utf16_bom_absent": true,
+            "carriage_return_absent": true,
+            "trailing_lf_present": true
+          },
+          {
+            "path": "test-materialization.ps1",
+            "passed": true,
+            "utf8_bom_absent": true,
+            "utf16_bom_absent": true,
+            "carriage_return_absent": true,
+            "trailing_lf_present": true
+          },
+          {
+            "path": "freeze-materialization.ps1",
+            "passed": true,
+            "utf8_bom_absent": true,
+            "utf16_bom_absent": true,
+            "carriage_return_absent": true,
+            "trailing_lf_present": true
+          },
+          {
+            "path": "materialize-e05-evidence.ps1",
+            "passed": true,
+            "utf8_bom_absent": true,
+            "utf16_bom_absent": true,
+            "carriage_return_absent": true,
+            "trailing_lf_present": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "all_epoch_6_json_and_powershell_controls_parse",
+      "passed": true,
+      "evidence": {
+        "json": [
+          {
+            "path": "incident.json",
+            "passed": true,
+            "error": null
+          },
+          {
+            "path": "runtime-plan.json",
+            "passed": true,
+            "error": null
+          }
+        ],
+        "powershell": [
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization-common.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/test-materialization.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/freeze-materialization.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialize-e05-evidence.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/verify-runtime.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publish-e04-correction.ps1",
+            "passed": true,
+            "errors": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "existing_destination_uses_the_frozen_epoch_4_verifier_exactly_once",
+      "passed": true,
+      "evidence": {
+        "report_validation_errors": [],
+        "invocation_error": null
+      }
+    },
+    {
+      "name": "constructors_regress_ordered_dictionary_to_json_object_contracts",
+      "passed": true,
+      "evidence": {
+        "json_object_types": true,
+        "exact_top_and_nested_sequences": true,
+        "legacy_errors": [],
+        "correction_errors": [],
+        "materialization_errors": []
+      }
+    },
+    {
+      "name": "legacy_v4_validator_accepts_exact_and_rejects_all_adversarial_mutations",
+      "passed": true,
+      "evidence": {
+        "exact_accepted": true,
+        "mutations": [
+          {
+            "name": "missing",
+            "rejected": true,
+            "errors": [
+              "legacy envelope does not have the exact 14-field contract",
+              "legacy envelope is malformed: The property 'passed' cannot be found on this object. Verify that the property exists."
+            ]
+          },
+          {
+            "name": "extra",
+            "rejected": true,
+            "errors": [
+              "legacy envelope does not have the exact 14-field contract"
+            ]
+          },
+          {
+            "name": "reordered",
+            "rejected": true,
+            "errors": [
+              "legacy envelope does not have the exact 14-field contract"
+            ]
+          },
+          {
+            "name": "cross_operation",
+            "rejected": true,
+            "errors": [
+              "legacy envelope identity differs"
+            ]
+          },
+          {
+            "name": "wrong_timestamp",
+            "rejected": true,
+            "errors": [
+              "legacy envelope identity differs"
+            ]
+          },
+          {
+            "name": "wrong_protocol",
+            "rejected": true,
+            "errors": [
+              "legacy envelope identity differs"
+            ]
+          },
+          {
+            "name": "wrong_report",
+            "rejected": true,
+            "errors": [
+              "legacy stage verification differs from the frozen report"
+            ]
+          },
+          {
+            "name": "wrong_path",
+            "rejected": true,
+            "errors": [
+              "legacy source binding differs"
+            ]
+          },
+          {
+            "name": "wrong_hash",
+            "rejected": true,
+            "errors": [
+              "legacy source binding differs"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "correction_v5_validator_accepts_exact_and_rejects_all_adversarial_mutations",
+      "passed": true,
+      "evidence": {
+        "exact_accepted": true,
+        "mutations": [
+          {
+            "name": "missing",
+            "rejected": true,
+            "errors": [
+              "correction evidence does not have the exact v5 field contract",
+              "correction evidence is malformed: The property 'passed' cannot be found on this object. Verify that the property exists."
+            ]
+          },
+          {
+            "name": "extra",
+            "rejected": true,
+            "errors": [
+              "correction evidence does not have the exact v5 field contract"
+            ]
+          },
+          {
+            "name": "reordered",
+            "rejected": true,
+            "errors": [
+              "correction evidence does not have the exact v5 field contract"
+            ]
+          },
+          {
+            "name": "cross_operation",
+            "rejected": true,
+            "errors": [
+              "correction evidence identity differs"
+            ]
+          },
+          {
+            "name": "wrong_timestamp",
+            "rejected": true,
+            "errors": [
+              "correction evidence identity differs"
+            ]
+          },
+          {
+            "name": "wrong_protocol",
+            "rejected": true,
+            "errors": [
+              "correction evidence identity differs"
+            ]
+          },
+          {
+            "name": "wrong_path",
+            "rejected": true,
+            "errors": [
+              "correction legacy-envelope binding differs"
+            ]
+          },
+          {
+            "name": "wrong_hash",
+            "rejected": true,
+            "errors": [
+              "correction legacy-envelope binding differs"
+            ]
+          },
+          {
+            "name": "wrong_control_hash",
+            "rejected": true,
+            "errors": [
+              "correction evidence identity differs"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "materialization_v6_validator_accepts_exact_and_rejects_mutations",
+      "passed": true,
+      "evidence": {
+        "exact_accepted": true,
+        "mutations": [
+          {
+            "name": "missing",
+            "rejected": true,
+            "errors": [
+              "materialization evidence does not have the exact v6 field contract",
+              "materialization evidence is malformed: The property 'passed' cannot be found on this object. Verify that the property exists."
+            ]
+          },
+          {
+            "name": "extra",
+            "rejected": true,
+            "errors": [
+              "materialization evidence does not have the exact v6 field contract"
+            ]
+          },
+          {
+            "name": "reordered",
+            "rejected": true,
+            "errors": [
+              "materialization evidence does not have the exact v6 field contract"
+            ]
+          },
+          {
+            "name": "cross_operation",
+            "rejected": true,
+            "errors": [
+              "materialization evidence identity differs"
+            ]
+          },
+          {
+            "name": "wrong_timestamp",
+            "rejected": true,
+            "errors": [
+              "materialization evidence identity differs"
+            ]
+          },
+          {
+            "name": "wrong_hash",
+            "rejected": true,
+            "errors": [
+              "materialization correction binding differs"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "state_machine_covers_destination_resume_legacy_completion_and_revalidation",
+      "passed": true,
+      "evidence": {
+        "exact_destination_resume": "materialize_legacy_correction_and_record",
+        "legacy_only_completion": "materialize_correction_and_record",
+        "both_exact_materialization_missing": "revalidate_and_record",
+        "already_complete": "revalidate_complete"
+      }
+    },
+    {
+      "name": "state_machine_rejects_partial_wrong_type_reparse_and_differing_states",
+      "passed": true,
+      "evidence": {
+        "states": [
+          {
+            "name": "destination_absent",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "the exact non-reparse destination must already exist"
+            ]
+          },
+          {
+            "name": "destination_wrong_type",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "the exact non-reparse destination must already exist"
+            ]
+          },
+          {
+            "name": "destination_reparse",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "the exact non-reparse destination must already exist"
+            ]
+          },
+          {
+            "name": "destination_differing",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "the exact non-reparse destination must already exist"
+            ]
+          },
+          {
+            "name": "correction_without_legacy",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "correction evidence exists without its legacy envelope"
+            ]
+          },
+          {
+            "name": "materialization_without_predecessors",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "materialization evidence exists without both predecessor records"
+            ]
+          },
+          {
+            "name": "legacy_wrong_type",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "existing legacy envelope is not an exact non-reparse file"
+            ]
+          },
+          {
+            "name": "legacy_reparse",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "existing legacy envelope is not an exact non-reparse file"
+            ]
+          },
+          {
+            "name": "legacy_differing",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "existing legacy envelope is not an exact non-reparse file"
+            ]
+          },
+          {
+            "name": "correction_wrong_type",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "existing correction evidence is not an exact non-reparse file"
+            ]
+          },
+          {
+            "name": "correction_reparse",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "existing correction evidence is not an exact non-reparse file"
+            ]
+          },
+          {
+            "name": "correction_differing",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "existing correction evidence is not an exact non-reparse file"
+            ]
+          },
+          {
+            "name": "materialization_wrong_type",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "existing materialization evidence is not an exact non-reparse file"
+            ]
+          },
+          {
+            "name": "materialization_reparse",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "existing materialization evidence is not an exact non-reparse file"
+            ]
+          },
+          {
+            "name": "materialization_differing",
+            "rejected": true,
+            "action": null,
+            "errors": [
+              "existing materialization evidence is not an exact non-reparse file"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "atomic_writer_uses_lf_no_bom_refuses_overwrite_and_cleans_temp",
+      "passed": true,
+      "evidence": {
+        "formatting": {
+          "passed": true,
+          "utf8_bom_absent": true,
+          "utf16_bom_absent": true,
+          "carriage_return_absent": true,
+          "trailing_lf_present": true
+        },
+        "json_round_trip": true,
+        "overwrite_refused": true,
+        "owned_workspace_absent": true
+      }
+    },
+    {
+      "name": "temporary_workflows_enforce_non_reparse_parent_owner_and_cleanup_boundaries",
+      "passed": true,
+      "evidence": {
+        "self_test_parent_components_checked": 4,
+        "self_test_base_components_checked": 3,
+        "self_test_owner_components_checked": 5,
+        "freeze_stage_guards_present": true,
+        "freeze_verifier_invocations": 1,
+        "freeze_direct_get_file_hash_invocations": 0,
+        "freeze_cold_state_invocations": 2,
+        "freeze_dependency_rewalk_invocations": 2,
+        "freeze_epoch_4_rewalk_invocations": 2,
+        "freeze_exact_tree_invocations": 4,
+        "freeze_report_validation_invocations": 1,
+        "freeze_post_verifier_refresh_precedes_manifest": true
+      }
+    },
+    {
+      "name": "one_frozen_verifier_call_performs_the_only_live_model_hash",
+      "passed": true,
+      "evidence": {
+        "verifier_invocations_in_self_test": 1,
+        "direct_get_file_hash_invocations_in_self_test": 0,
+        "live_model_identity_checked": true,
+        "model_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+      }
+    },
+    {
+      "name": "materializer_invokes_frozen_publisher_only_after_both_exact_outputs",
+      "passed": true,
+      "evidence": {
+        "legacy_write_index": 33768,
+        "legacy_post_write_validation_index": 33919,
+        "correction_write_index": 35879,
+        "correction_post_write_validation_index": 36056,
+        "frozen_publisher_invocation_index": 37107,
+        "publisher_json_equivalence_index": 37461,
+        "materialization_write_index": 39664,
+        "bounded_publisher_invocation_count": 1,
+        "destination_mutation_command_count": 0
+      }
+    },
+    {
+      "name": "self_test_does_not_materialize_official_outputs_or_controls",
+      "passed": true,
+      "evidence": {
+        "legacy_envelope_absent": true,
+        "correction_evidence_absent": true,
+        "materialization_evidence_absent": true,
+        "control_manifest_absent": true,
+        "control_digest_absent": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,340 @@
+{
+  "schema": "animus-ferric-runtime-plan-v3",
+  "task": "T-11409",
+  "control_epoch": 3,
+  "authored_at_utc": "2026-08-27T19:19:49.7923231Z",
+  "repository_commit_before_epoch_1_runtime_controls": "5dae354b209e9a98a8f1d94e6e961bc06cd0c689",
+  "repository_commit_before_epoch_2_runtime_controls": "3e2a5dd61c4c745b752870f0c326e931d1d0a284",
+  "repository_commit_before_epoch_3_runtime_controls": "a1306e5191591600551ef7c2c8676f061e8d554f",
+  "process_command_attestation": {
+    "protocol": "windows-bound-process-command-v1",
+    "parser": "CommandLineToArgvW",
+    "declared_bare_argv0": "llama-server",
+    "absolute_argv0_policy": "exact_frozen_executable_only",
+    "tail_comparison": "ordinal_elementwise_exact",
+    "creation_time_tolerance_seconds": 5
+  },
+  "recovery": {
+    "reason": "epoch-2 proved the replacement template protocol but both online and offline process checks replaced Ferric's declared llama-server argv[0] with the independently resolved absolute ExecutablePath",
+    "prior_evidence_checkpoint": "a1306e5191591600551ef7c2c8676f061e8d554f",
+    "allowed_changes": [
+      "parse retained process command lines with CommandLineToArgvW after rejecting empty, leading-whitespace, NUL, and unmatched-quote input",
+      "bind the captured absolute ExecutablePath and recomputed SHA-256 before accepting the exact declared bare argv[0] or exact frozen absolute argv[0]",
+      "compare every post-argv[0] argument ordinally, element by element, with exact count and order",
+      "normalize the bound process creation time to UTC and require it to fall inside the preflight-to-attestation launch window",
+      "retain the empty preflight listener and llama-server process snapshots from which uncontended-state claims are derived",
+      "make the positive self-test fixture use Ferric's observed bare llama-server argv[0] and add path, hash, parser, boundary, and tail-tamper regressions",
+      "separate epoch-3 raw, archived, coordinate, schema, and provenance identities from prior epochs",
+      "anchor and transitively validate immutable epoch-1 and epoch-2 controls and attempts",
+      "cover epoch-1, epoch-2, and epoch-3 runtime evidence in final artifact manifests"
+    ],
+    "prior_epochs": [
+      {
+        "epoch": 1,
+        "expected": {
+          "control_schema": "animus-ferric-runtime-control-inputs-v1",
+          "attempt_schema": "animus-ferric-runtime-attempt-v1",
+          "coordinate": "01-q4-32768",
+          "failure_classification": "managed_server_attestation_failed",
+          "verdict": "infrastructure_blocked",
+          "evidence_complete": false,
+          "teardown_passed": true
+        },
+        "anchors": [
+          {
+            "role": "text_policy",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/.gitattributes",
+            "bytes": 15,
+            "sha256": "38ad0f3d409005e82afa59e937866a22fc33080b101089fac079ff4c4398eeba"
+          },
+          {
+            "role": "control_manifest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/control-inputs.json",
+            "bytes": 20470,
+            "sha256": "0b16c7850397d0c62d28eaaea782467694b2b596c54341f3b33207aca62743f6"
+          },
+          {
+            "role": "control_digest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/control-inputs.sha256",
+            "bytes": 86,
+            "sha256": "ffc309d3e200360220f8263c3bd4efa6965743a47238d13657d0033554300d97"
+          },
+          {
+            "role": "attempt_text_policy",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/attempts/.gitattributes",
+            "bytes": 8,
+            "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+          },
+          {
+            "role": "attempt_manifest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/attempts/01-q4-32768/files.sha256",
+            "bytes": 1939,
+            "sha256": "d3da37b28f8df3102be512afd6e7e7cfa3e2e8f28b9ede8fa5751d91c6349f45"
+          },
+          {
+            "role": "attempt",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/attempts/01-q4-32768/attempt.json",
+            "bytes": 39488,
+            "sha256": "11d890c82187ab02491c3490e553a72e22582e1cc3924bd10ae9f9e6ca58b886"
+          }
+        ]
+      },
+      {
+        "epoch": 2,
+        "expected": {
+          "control_schema": "animus-ferric-runtime-control-inputs-v2",
+          "control_task": "T-11409",
+          "control_epoch": 2,
+          "attestation_protocol": "apply-template-differential-v1",
+          "attempt_schema": "animus-ferric-runtime-attempt-v2",
+          "coordinate": "e02-01-q4-32768",
+          "failure_classification": "managed_server_attestation_failed",
+          "verdict": "infrastructure_blocked",
+          "evidence_complete": false,
+          "teardown_passed": true
+        },
+        "anchors": [
+          {
+            "role": "text_policy",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-2/.gitattributes",
+            "bytes": 32,
+            "sha256": "2b4a3840c3903389ceb19fedd520c0b4ed8a4012394423f54c79113cd1c1032d"
+          },
+          {
+            "role": "control_manifest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-2/control-inputs.json",
+            "bytes": 22165,
+            "sha256": "14c825ec2b6cfb5c048e18e4f7ec5fdaee9ab325ff29c0277c0e24b1d9901fcb"
+          },
+          {
+            "role": "control_digest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-2/control-inputs.sha256",
+            "bytes": 86,
+            "sha256": "84bcfa1c3ac6a8642dfc1436dec28e5e11a87680219e44d70b846c381d601f37"
+          },
+          {
+            "role": "attempt_manifest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-2/attempts/e02-01-q4-32768/files.sha256",
+            "bytes": 2775,
+            "sha256": "dac29960dc45eea371ba9eafaddaa69e385f0761a9b1b11e5f29fa91f1111269"
+          },
+          {
+            "role": "attempt",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-2/attempts/e02-01-q4-32768/attempt.json",
+            "bytes": 48371,
+            "sha256": "ea87476961e46eb4995f462f0a406718e6e77fc4f98ca250dde296e29881ba24"
+          }
+        ]
+      }
+    ]
+  },
+  "raw_attempt_root": "target/s114-experiment/runtime-epoch-3/smoke",
+  "port": 8080,
+  "quant_wall_cap_seconds": 5400,
+  "server_request_timeout_seconds": 720,
+  "startup_wait_seconds": 330,
+  "teardown_safety_grace_seconds": 120,
+  "minimum_gpu_free_mib_before_launch": 7000,
+  "forbidden_inherited_environment": [
+    "FERRIC_*",
+    "GGML_*",
+    "CUDA_*",
+    "OMP_*",
+    "MKL_*",
+    "OPENAI_API_KEY",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY"
+  ],
+  "smoke": {
+    "nonce_file": "nonce.txt",
+    "prompt_file": "smoke-prompt.txt",
+    "temperature": 1.0,
+    "protocol": "grammar",
+    "harness_policy": "legacy",
+    "tier": "ultra",
+    "max_ring": 0,
+    "max_turns": 4,
+    "require_read_file_before_task_complete": true,
+    "require_exact_summary": "AF-S114-QWEN38-NONCE-7F3C19A2",
+    "forbidden_tools": [
+      "copy_file",
+      "delete_path",
+      "edit_file",
+      "git_write",
+      "make_dir",
+      "move_path",
+      "request_user_input",
+      "run_check",
+      "write_file"
+    ]
+  },
+  "throughput": {
+    "request_template": "throughput-request.template.json",
+    "sequence": ["warmup", "trial-01", "trial-02", "trial-03"],
+    "scored_samples": 3,
+    "replacement_samples": 0,
+    "max_tokens": 256,
+    "minimum_decoded_tokens": 128,
+    "minimum_median_decoded_tokens_per_second": 2.0,
+    "rate_source": "timings.predicted_n / (timings.predicted_ms / 1000)",
+    "counter_cross_check": "usage.completion_tokens == timings.predicted_n"
+  },
+  "template_attestation": {
+    "protocol": "apply-template-differential-v1",
+    "endpoint": "/apply-template",
+    "expected_chat_template_sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce",
+    "user_prior_sentinel": "AF-S114-E02-TEMPLATE-USER-PRIOR-7C91",
+    "reasoning_sentinel": "AF-S114-E02-TEMPLATE-REASONING-5B2D",
+    "content_sentinel": "AF-S114-E02-TEMPLATE-CONTENT-4E68",
+    "user_latest_sentinel": "AF-S114-E02-TEMPLATE-USER-LATEST-A3F7",
+    "arms": [
+      {
+        "name": "defaults",
+        "request_file": "template-probe-defaults.json",
+        "expect_reasoning": true
+      },
+      {
+        "name": "alias-false",
+        "request_file": "template-probe-alias-false.json",
+        "expect_reasoning": true
+      },
+      {
+        "name": "all-false",
+        "request_file": "template-probe-all-false.json",
+        "expect_reasoning": false
+      },
+      {
+        "name": "all-true",
+        "request_file": "template-probe-all-true.json",
+        "expect_reasoning": true
+      }
+    ]
+  },
+  "models": {
+    "Q4_K_M": {
+      "file": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "relative_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "bytes": 16464440224,
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+      "requested_gpu_layers": 24
+    },
+    "Q3_K_XL": {
+      "file": "Qwen3.8-27B-UD-Q3_K_XL.gguf",
+      "relative_path": "models/Qwen3.8-27B-UD-Q3_K_XL.gguf",
+      "bytes": 13146393504,
+      "sha256": "8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e",
+      "requested_gpu_layers": 32,
+      "authorization_gate": "q4-viability.json"
+    }
+  },
+  "coordinates": [
+    {
+      "id": "e03-01-q4-32768",
+      "quant": "Q4_K_M",
+      "context": 32768,
+      "predecessor": null,
+      "authorization": "primary"
+    },
+    {
+      "id": "e03-02-q4-16384",
+      "quant": "Q4_K_M",
+      "context": 16384,
+      "predecessor": "e03-01-q4-32768",
+      "authorization": "predecessor_startup_memory_pressure_only"
+    },
+    {
+      "id": "e03-03-q3-32768",
+      "quant": "Q3_K_XL",
+      "context": 32768,
+      "predecessor": null,
+      "authorization": "verified_q4_non_viability_gate"
+    },
+    {
+      "id": "e03-04-q3-16384",
+      "quant": "Q3_K_XL",
+      "context": 16384,
+      "predecessor": "e03-03-q3-32768",
+      "authorization": "predecessor_startup_memory_pressure_only"
+    }
+  ],
+  "server": {
+    "engine": "llama-server",
+    "threads": 12,
+    "batch_size": 512,
+    "parallel_slots": 1,
+    "seed": 42,
+    "environment": {
+      "LLAMA_ARG_CACHE_TYPE_K": "q8_0",
+      "LLAMA_ARG_CACHE_TYPE_V": "q8_0",
+      "LLAMA_ARG_FLASH_ATTN": "on",
+      "LLAMA_ARG_FIT": "on",
+      "LLAMA_ARG_FIT_TARGET": "1024",
+      "LLAMA_ARG_REASONING": "on",
+      "LLAMA_ARG_THINK_BUDGET": "1024",
+      "LLAMA_ARG_REASONING_PRESERVE": "true",
+      "LLAMA_ARG_CHAT_TEMPLATE_KWARGS": "{\"enable_thinking\":true,\"preserve_thinking\":true}",
+      "LLAMA_ARG_TIMEOUT": "720"
+    },
+    "logging_environment": {
+      "LLAMA_ARG_LOG_COLORS": "off",
+      "LLAMA_ARG_LOG_TIMESTAMPS": "on",
+      "LLAMA_ARG_LOG_VERBOSITY": "4"
+    }
+  },
+  "llama_cpp": {
+    "release": "b10516",
+    "commit": "b95502ba9",
+    "main_asset": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10516/llama-b10516-bin-win-cuda-12.4-x64.zip",
+      "bytes": 250892658,
+      "sha256": "96d64faeb5b8e655341f32b26ad3e51fbea8bff0bc8120ad3dbffdc0b05b8ad3",
+      "ignored_archive_relative_path": "target/s114-experiment/runtime/llama-b10516-cuda12.4/llama-b10516-bin-win-cuda-12.4-x64.zip"
+    },
+    "cuda_runtime_asset": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10516/cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "bytes": 391443627,
+      "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+      "ignored_archive_relative_path": "target/s114-experiment/runtime/cudart-llama-bin-win-cuda-12.4-x64.zip"
+    },
+    "expected_server_sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+    "expected_cuda_backend_sha256": "fc45d8f6a73f46231e0e04d6aa8260c7e366b974a18cab4bc53ed35248c2ff82",
+    "ignored_runtime_relative_path": "target/s114-experiment/runtime/llama-b10516-cuda12.4/bin",
+    "expected_device": {
+      "backend_id": "CUDA0",
+      "name": "NVIDIA GeForce RTX 2080 Ti",
+      "total_mib": 11263
+    }
+  },
+  "ferric": {
+    "build_command": "cargo build --locked --release -p ferric-cli --features backend-openai",
+    "relative_path": "target/release/ferric.exe",
+    "expected_sha256_at_freeze": "af75612b3498a1721e5b5f1b2f6309bf851d65b9bd13ad45e76cf8e370cf10f2",
+    "cargo_lock_sha256": "1eb0bf1703aab2677efd8c6da79632b4df7f81cb7d30c69dc32dbd500e62c31d"
+  },
+  "startup_memory_patterns": [
+    "CUDA(?: error)?:[^\\r\\n]*out of memory",
+    "cudaMalloc[^\\r\\n]*(?:failed|out of memory)",
+    "(?:failed to allocate|allocation failed|not enough memory|insufficient memory)[^\\r\\n]*(?:memory|MiB|GiB|bytes)",
+    "std::bad_alloc"
+  ],
+  "selection": {
+    "q4_viable": "smoke passes AND all three scored samples are valid AND median >= 2.0",
+    "q3_authorized": "Q4 is non_viable from exactly one declared functional or throughput reason",
+    "q3_authorizing_reason_codes": [
+      "functional_smoke_failed",
+      "invalid_throughput_sample_set",
+      "throughput_median_below_floor"
+    ],
+    "q3_authorizing_trial_failure_causes": [
+      "request_error",
+      "timeout",
+      "decoded_length_below_minimum"
+    ],
+    "q3_viable": "smoke passes AND all three scored samples are valid AND median >= 2.0",
+    "terminal_failure": "no_viable_qwen38_coordinate",
+    "context_retry": "only a retained startup_memory_pressure classification at 32768",
+    "terminal_memory_pressure": "infrastructure_blocked_no_q3"
+  }
+}

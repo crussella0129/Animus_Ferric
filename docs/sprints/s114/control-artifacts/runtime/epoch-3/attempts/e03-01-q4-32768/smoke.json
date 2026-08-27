@@ -1,0 +1,126 @@
+{
+  "schema": "animus-ferric-qwen38-smoke-v1",
+  "passed": true,
+  "process": {
+    "file": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+    "arguments": [
+      "query",
+      "--workspace",
+      "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-epoch-3\\smoke\\e03-01-q4-32768\\smoke-workspace",
+      "--model",
+      "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "--api-base",
+      "http://127.0.0.1:8080/v1",
+      "--params-b",
+      "27",
+      "--quant",
+      "Q4_K_M",
+      "--family",
+      "qwen3.8",
+      "--ctx",
+      "32768",
+      "--temperature",
+      "1",
+      "--protocol",
+      "grammar",
+      "--harness-policy",
+      "legacy",
+      "--tier",
+      "ultra",
+      "--max-ring",
+      "0",
+      "--max-turns",
+      "4",
+      "--profile-dir",
+      "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-epoch-3\\smoke\\e03-01-q4-32768\\empty-profile",
+      "--no-config",
+      "--no-stream",
+      "Read nonce.txt using the read_file tool. Then call task_complete with summary exactly `AF-S114-QWEN38-NONCE-7F3C19A2`. Do not call any mutating tool and do not request clarification."
+    ],
+    "pid": 46236,
+    "started_at_utc": "2026-08-27T20:37:19.0112178Z",
+    "completed_at_utc": "2026-08-27T20:39:23.1692074Z",
+    "duration_ms": 124155.982,
+    "timed_out": false,
+    "execution_timed_out": false,
+    "kill_attempted": false,
+    "kill_succeeded": false,
+    "post_process_alive": false,
+    "output_drain_timed_out": false,
+    "exit_code": 0,
+    "stdout_file": "smoke.stdout.log",
+    "stderr_file": "smoke.stderr.log"
+  },
+  "trace_count": 1,
+  "trace_sha256": "d7b373edc31b52b11096d715cd3802298514b63e3a83fa389705bb1cc23d8942",
+  "trace_verify": {
+    "file": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+    "arguments": [
+      "trace",
+      "verify",
+      "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-epoch-3\\smoke\\e03-01-q4-32768\\smoke.trace.jsonl"
+    ],
+    "pid": 3040,
+    "started_at_utc": "2026-08-27T20:39:23.1778133Z",
+    "completed_at_utc": "2026-08-27T20:39:23.2271233Z",
+    "duration_ms": 48.012,
+    "timed_out": false,
+    "execution_timed_out": false,
+    "kill_attempted": false,
+    "kill_succeeded": false,
+    "post_process_alive": false,
+    "output_drain_timed_out": false,
+    "exit_code": 0,
+    "stdout_file": "smoke-trace-verify.stdout.log",
+    "stderr_file": "smoke-trace-verify.stderr.log"
+  },
+  "trace_verify_not_run_reason": null,
+  "trace_facts": {
+    "record_count": 22,
+    "policy_count": 1,
+    "protocol": "constrained_json",
+    "turn_count": 2,
+    "constraint_count": 2,
+    "all_turns_json_schema_constrained": true,
+    "tool_calls": [
+      {
+        "name": "read_file",
+        "args": {
+          "path": "nonce.txt"
+        }
+      },
+      {
+        "name": "task_complete",
+        "args": {
+          "summary": "AF-S114-QWEN38-NONCE-7F3C19A2"
+        }
+      }
+    ],
+    "read_file_before_task_complete": true,
+    "exact_nonce_read_result_count": 1,
+    "exact_nonce_read_file_pairs": [
+      {
+        "call_id": "g-0-0",
+        "path": "nonce.txt",
+        "call_event_index": 9,
+        "result_event_index": 11
+      }
+    ],
+    "exact_task_complete_summary": true,
+    "forbidden_tools_observed": [],
+    "session_end_count": 1,
+    "session_end_reason": "task_complete"
+  },
+  "trace_parse_error": null,
+  "workspace_unchanged": true,
+  "before_manifest": {
+    "path": "nonce.txt",
+    "bytes": 31,
+    "sha256": "c1e0330d8afe369909c7637a033d1cab36ac7155262b6008c1e28efeb75b0dd9"
+  },
+  "after_manifest": {
+    "path": "nonce.txt",
+    "bytes": 31,
+    "sha256": "c1e0330d8afe369909c7637a033d1cab36ac7155262b6008c1e28efeb75b0dd9"
+  }
+}
