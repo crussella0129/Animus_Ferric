@@ -1,0 +1,70 @@
+Complete the dependency-free Rust release-plan application.
+
+Before changing source:
+
+1. Completely inspect `Cargo.toml`, `README.md`, `src/lib.rs`, and
+   `tests/contract.rs`.
+2. Run the authorized check once and use its failure as the baseline.
+3. Create `PLAN.md` before any Rust-source mutation. It must contain
+   `## Contract`, `## File plan`, and `## Verification`, with a checklist
+   covering every required module and test. The checklist must have a checked
+   (`- [x]`) item naming each of `src/model.rs`, `src/parser.rs`,
+   `src/scheduler.rs`, `src/main.rs`, and `tests/agent_tests.rs`, plus a checked
+   item for the authorized test run; completion permits no unchecked
+   (`- [ ]`) item.
+
+The input format is `id | priority | state | dependencies`. Ignore blank
+lines and lines whose trimmed form starts with `#`. Each other line must have
+exactly four fields. Trim fields. IDs must be non-empty and unique; priority
+is an integer from 0 through 9; state is exactly `pending` or `done`. A wholly
+empty trimmed dependencies field is the valid empty dependency list.
+Otherwise, dependencies are comma-separated IDs; reject empty items produced
+by leading, trailing, or consecutive commas, as well as duplicate, self, or
+unknown dependencies. Forward references are valid.
+
+Expose `parse_manifest(&str) -> Result<Vec<Job>, PlanError>` and
+`build_plan(&[Job]) -> Result<Vec<String>, PlanError>`. The exact public
+`Job`, `JobState`, `DependencyError`, and `PlanError` definitions are frozen in
+`README.md` and re-exported by `src/lib.rs`; implement those definitions
+without changing the re-exports.
+
+Completed jobs satisfy dependencies and are omitted from output. Repeatedly
+choose a ready pending job by highest numeric priority, breaking ties by
+lexicographically smallest ID. Return `PlanError::Cycle` containing the
+remaining IDs in sorted order. Do not mutate inputs.
+
+The CLI accepts exactly one manifest path. On success, print planned IDs one
+per line with a trailing newline when non-empty; an empty plan prints no bytes.
+On an argument, I/O, or contract failure, print an `error:` diagnostic to
+stderr and exit nonzero.
+
+Add at least six focused tests in `tests/agent_tests.rs`, including parsing,
+invalid dependencies, completed prerequisites, priority ordering, lexical
+tie-breaking, cycles, and input preservation. Do not edit `Cargo.toml`,
+`Cargo.lock`, `README.md`, `src/lib.rs`, or `tests/contract.rs`; add no
+dependency, build script, Cargo configuration, unsafe code, shell execution,
+or network access.
+
+The deterministic test gate described in `README.md` is part of the contract.
+Use distinct, descriptive `#[test] fn` names that collectively contain the
+documented stems for all seven topics. Every topical test body must use the
+documented absolute external-crate API path
+(`::release_plan::parse_manifest(...)` for parsing/dependency tests,
+`::release_plan::build_plan(...)` for planning tests) and couple that call to
+its oracle exactly as the README describes; a bare import, local same-named
+function, function pointer, or unrelated oracle does not count. Do not alias
+an oracle macro name. Every test body must contain one of the documented
+built-in assertion/oracle forms. The suite must reference both public APIs,
+dynamically register at least six tests, and cover all seven topics in the
+runtime-registered names; do not ignore or conditionally disable them.
+
+Honor the README's exact lexical source-safety list as well, including its
+restriction on otherwise ordinary identifier names outside `src/main.rs`.
+Do not use source-inclusion or assembly macros, `#[path = ...]`, or local
+`macro_rules` definitions. Keep library modules and tests pure: only
+`src/main.rs` may use filesystem or environment APIs for CLI I/O, and no
+candidate source may use process-command, network, FFI, or unsafe APIs.
+
+Update `PLAN.md` as work completes. Run the authorized check after material
+changes until it passes, then call `task_complete`. The task is fully
+specified; do not request clarification.

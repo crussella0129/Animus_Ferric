@@ -241,7 +241,6 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ### Sprint 114 — hardware-calibrated autonomous development
 
-- [ ] T-11408 (sprint 114) [intent: INT-0007]: Build and self-test the immutable Rust app seed, explicit check profile, hidden grader, Bubblewrap sandbox, and run journal. — touches: `docs/sprints/s114/control-artifacts/app-harness/`, `target/s114-experiment/`
 - [ ] T-11409 (sprint 114) [intent: INT-0007]: Prove managed-server compatibility and calibrate a bounded context-32768 Qwen3.8 coordinate with a frozen Q3 fallback and measured throughput floor. — touches: `docs/sprints/s114/control-artifacts/runtime/`, `target/s114-experiment/smoke/`
 - [ ] T-11410 (sprint 114) [intent: INT-0007]: Run the frozen MH-RS01 app task through Ferric with a forced linked continuation, mutation reconciliation, no Codex repair, and a clearly labeled existing-model simulation only if Qwen3.8 is non-viable. — touches: `target/s114-experiment/app-workspace/`, `docs/sprints/s114/control-artifacts/app-run/`
 - [ ] T-11411 (sprint 114) [intent: INT-0007]: Pin, install, and probe the Animus Sprint Loops adapter layer by layer, separating prompt injection, resource loading, unavailable helper execution, operator-materialized typed-tool advancement, and remote authority. — touches: `target/s114-experiment/sprint-loop-source/`, `target/s114-experiment/sprint-loop-workspace/`, `docs/sprints/s114/control-artifacts/sprint-loop-run/`

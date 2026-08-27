@@ -1,0 +1,15 @@
+[package]
+name = "mh-rs01-grader"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "mh_rs01_grader"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mh-rs01-grader"
+path = "src/main.rs"
+
+[workspace]

@@ -1,0 +1,155 @@
+{
+  "schema": "mh-rs01-frozen-inputs-v1",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 14,
+      "sha256": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9"
+    },
+    {
+      "path": "checks.toml",
+      "bytes": 191,
+      "sha256": "5c0fa470b4939dea582f9ed140a9336f19b35c134565f37413b35918d85bd4f7"
+    },
+    {
+      "path": "fixtures/good/PLAN.md",
+      "bytes": 516,
+      "sha256": "e4c8d0b21c1f480c1999d6075f12023f702700d8751d3875faf7c7b086552010"
+    },
+    {
+      "path": "fixtures/good/src/main.rs",
+      "bytes": 875,
+      "sha256": "fbb6586c3e84043c2549d58a51e472ba432ddede82494a23853ec26ec4c7c234"
+    },
+    {
+      "path": "fixtures/good/src/model.rs",
+      "bytes": 3792,
+      "sha256": "e6e41513c019aa061687d219746e3846c038b997eeebfe1d9cd7d9aafe6f1e4b"
+    },
+    {
+      "path": "fixtures/good/src/parser.rs",
+      "bytes": 2205,
+      "sha256": "2bcb70834495efeb457747d37060a2996b74070edd35c2a30cc3a8871f0843b2"
+    },
+    {
+      "path": "fixtures/good/src/scheduler.rs",
+      "bytes": 1433,
+      "sha256": "0e4dd38c2f53ab8fdaadd1d1160622a9af71844a3f4d8d0d7a8f1fefa0fb1000"
+    },
+    {
+      "path": "fixtures/good/tests/agent_tests.rs",
+      "bytes": 3189,
+      "sha256": "ee5f90810364862d7172b2b83f4b41526d3e7c239cab54971c8d3343ce743198"
+    },
+    {
+      "path": "freeze-inputs.ps1",
+      "bytes": 4564,
+      "sha256": "2804e48d3b039905f9e904cafb38eba81bc8302382af4e15eda3418acafe8679"
+    },
+    {
+      "path": "grader/Cargo.lock",
+      "bytes": 158,
+      "sha256": "6117005748570f4046e431ffd8e07d921270a42d1950d231392982f90bfdf2a5"
+    },
+    {
+      "path": "grader/Cargo.toml",
+      "bytes": 203,
+      "sha256": "dfb7a841defd8adda774aa3bae90283b688a48e3854140b650bdae4e9227980b"
+    },
+    {
+      "path": "grader/hidden-tests/Cargo.lock",
+      "bytes": 253,
+      "sha256": "ce1150b9df9804c1543f7fce68262a07feb643efdb88b963b7a4268237c8efb0"
+    },
+    {
+      "path": "grader/hidden-tests/Cargo.toml",
+      "bytes": 159,
+      "sha256": "d18e7a635474de66cfb24ebcd454d7c7d9b37083d0b2deb8d9f1c5462667d762"
+    },
+    {
+      "path": "grader/hidden-tests/src/lib.rs",
+      "bytes": 3815,
+      "sha256": "d784e5a614b67120d3a75c253152d36a5f08a2d2c828cccbae816891938c45aa"
+    },
+    {
+      "path": "grader/src/lib.rs",
+      "bytes": 72678,
+      "sha256": "3dc6be7dcc1900c5606a069863650b0d27574f71474f90f37da3a945eaa4b108"
+    },
+    {
+      "path": "grader/src/main.rs",
+      "bytes": 4073,
+      "sha256": "1414cee63e39aa868403d2b9d051c1b778eaff138f2cc2514d8d7c2934946b82"
+    },
+    {
+      "path": "grader/tests/harness.rs",
+      "bytes": 40333,
+      "sha256": "01c28067db1440776b373ae61e716ac9d4cdc57cf13328a3b080ae42dd274d9b"
+    },
+    {
+      "path": "journal-schema.md",
+      "bytes": 4611,
+      "sha256": "3f154d8c11e8a9f0f0a1821bbe65262e67b70b5426af2c9b54405879b984435b"
+    },
+    {
+      "path": "prompt.txt",
+      "bytes": 4029,
+      "sha256": "c186a88969f750ae41ead8120d204b844437e67dbb2a6b78f00a80a3593c26ba"
+    },
+    {
+      "path": "README.md",
+      "bytes": 7947,
+      "sha256": "8b5b20b2187fcd2e3c8ee34575d8c1a23e164e15147daea245074263a31961e1"
+    },
+    {
+      "path": "scripts/build-grader.sh",
+      "bytes": 3393,
+      "sha256": "02d8f67c62637c48bad87aed51787e30fda539b2f63019a2c9ca907abc1c9202"
+    },
+    {
+      "path": "scripts/common.sh",
+      "bytes": 46944,
+      "sha256": "2646b31243fd2252aae715c16009507cf6d0f090a50c1f9a0a08bb0c4260dda2"
+    },
+    {
+      "path": "scripts/preflight.sh",
+      "bytes": 6784,
+      "sha256": "bf066a9e2eae9638dd40118aa6d5731186120fdee4fe1ff11fa95041d37fdad1"
+    },
+    {
+      "path": "scripts/run-check.sh",
+      "bytes": 37896,
+      "sha256": "765c17d6a5c2a981d0ddf956ee0c555991296da6af293e1f10a3cc2350e4e216"
+    },
+    {
+      "path": "scripts/self-test.sh",
+      "bytes": 27151,
+      "sha256": "4d32986043b3c146063167d2f7da691e1a5b1acbbea51e29f8769028dc4b7cbc"
+    },
+    {
+      "path": "seed/Cargo.lock",
+      "bytes": 156,
+      "sha256": "4dd0311acfef0a8f1bb902ab0bd3c78e76cf189ea225ab5722bbbced2051bb58"
+    },
+    {
+      "path": "seed/Cargo.toml",
+      "bytes": 112,
+      "sha256": "d51f5f232377414c01d46caee9d999fa67055895337abc51bf440733f034408a"
+    },
+    {
+      "path": "seed/README.md",
+      "bytes": 8521,
+      "sha256": "a651576fc76e4900d59d374f463929b43d954074ab80997fa5e4c4451455d86f"
+    },
+    {
+      "path": "seed/src/lib.rs",
+      "bytes": 174,
+      "sha256": "38671d0142061e5ad3b572fdb97f8aed0d65e00d9c30f962b691d447da848eac"
+    },
+    {
+      "path": "seed/tests/contract.rs",
+      "bytes": 6349,
+      "sha256": "020c330403ffb9b215b00ebf95789bb137af9bea46cf5bae6d25321d8416997f"
+    }
+  ]
+}

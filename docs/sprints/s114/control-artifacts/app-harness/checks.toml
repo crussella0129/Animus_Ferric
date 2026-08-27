@@ -1,0 +1,6 @@
+[[check]]
+name = "mh-rs01"
+program = "wsl.exe"
+args = ["--exec", "bash", "../../../docs/sprints/s114/control-artifacts/app-harness/scripts/run-check.sh"]
+timeout_s = 900
+output_limit = 12000

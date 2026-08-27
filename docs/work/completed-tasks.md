@@ -1191,3 +1191,30 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   `322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482`,
   and Git reported the GGUF ignored and untracked.
 - **Commit:** `23d9f766280b7ccb0698355fd9b135028d45a277`
+
+## T-11408 (sprint 114)
+- **Description:** Built and sealed the dependency-free Rust 2024 MH-RS01
+  medium-horizon application harness: immutable incomplete seed, explicit
+  nine-dimension check profile, disclosed visible contract, separately compiled
+  hidden contract, exact CLI matrix, model-test registration/oracle gates,
+  fail-closed Bubblewrap containment, bounded diagnostics, and append-only
+  command provenance. The canonical clean-state self-test proved the intended
+  seed failure, repeated byte-deterministic known-good grading, spoof resistance,
+  infrastructure mapping, fixed resource-policy enforcement, 13 static
+  violations, five dynamic violations, two model-registration violations, and
+  full historical journal closure before retaining content-addressed evidence.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-27T03:15:00-04:00
+- **Files modified:** `docs/sprints/s114/control-artifacts/app-harness/`,
+  `docs/work/tasks.md`, `docs/work/completed-tasks.md`
+- **Verification:** the checkout-stable 30-file frozen-input profile re-verified
+  at `532cd39a9fec557816929bcf12e5ae539c8a30c0f4c4829a9d6f89b0ca9f358b`;
+  the canonical WSL/Bubblewrap self-test passed all three named groups and
+  retained journal
+  `a902f9cd4b1a604a76870aad3065ca23d5d4c59a2810c21ea3a9b173d48febb4`;
+  its summary and companions independently reconciled; the grader's six unit
+  tests and known-good/violation integration matrix passed; strict grader
+  Clippy, Rust formatting, PowerShell parsing, and Bash syntax checks passed;
+  six Ferric `run_check` unit tests and two checks-file CLI integration tests
+  passed; no source-local grader target exists.
+- **Commit:** PENDING
