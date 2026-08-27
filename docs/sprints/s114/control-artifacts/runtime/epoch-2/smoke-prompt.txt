@@ -1,0 +1,2 @@
+Read nonce.txt using the read_file tool. Then call task_complete with summary exactly `AF-S114-QWEN38-NONCE-7F3C19A2`. Do not call any mutating tool and do not request clarification.
+

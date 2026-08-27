@@ -1,0 +1,545 @@
+{
+  "schema": "animus-ferric-runtime-control-inputs-v2",
+  "task": "T-11409",
+  "control_epoch": 2,
+  "attestation_protocol": "apply-template-differential-v1",
+  "frozen_at_utc": "2026-08-27T18:54:09.8534419Z",
+  "runtime_plan_sha256": "8283fbcf50ee7e8c3b8348037068a68a3c1c29faf2c4d1578227d9a2c22862ca",
+  "epoch_1_anchors": [
+    {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/control-inputs.json",
+      "sha256": "0b16c7850397d0c62d28eaaea782467694b2b596c54341f3b33207aca62743f6"
+    },
+    {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/attempts/01-q4-32768/files.sha256",
+      "sha256": "d3da37b28f8df3102be512afd6e7e7cfa3e2e8f28b9ede8fa5751d91c6349f45"
+    },
+    {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/attempts/01-q4-32768/attempt.json",
+      "sha256": "11d890c82187ab02491c3490e553a72e22582e1cc3924bd10ae9f9e6ca58b886"
+    },
+    {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/attempts/.gitattributes",
+      "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+    }
+  ],
+  "repository": {
+    "head_at_freeze": "3e2a5dd61c4c745b752870f0c326e931d1d0a284",
+    "epoch_1_pre_control_baseline": "5dae354b209e9a98a8f1d94e6e961bc06cd0c689",
+    "epoch_2_pre_control_base": "3e2a5dd61c4c745b752870f0c326e931d1d0a284"
+  },
+  "controls": [
+    {
+      "path": ".gitattributes",
+      "bytes": 32,
+      "sha256": "2b4a3840c3903389ceb19fedd520c0b4ed8a4012394423f54c79113cd1c1032d"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3794,
+      "sha256": "08048ac02a720ca104fed4919e98712c3b2e9f4d30f52ff7b485eeb36b9792fa"
+    },
+    {
+      "path": "runtime-plan.json",
+      "bytes": 9379,
+      "sha256": "8283fbcf50ee7e8c3b8348037068a68a3c1c29faf2c4d1578227d9a2c22862ca"
+    },
+    {
+      "path": "nonce.txt",
+      "bytes": 31,
+      "sha256": "c1e0330d8afe369909c7637a033d1cab36ac7155262b6008c1e28efeb75b0dd9"
+    },
+    {
+      "path": "smoke-prompt.txt",
+      "bytes": 184,
+      "sha256": "5a9f3f0d01e0231b7f438d2c8204b75c7ae09be9b7e69cddd64b533c2f8a667c"
+    },
+    {
+      "path": "trace-selftest-fixture.jsonl",
+      "bytes": 3430,
+      "sha256": "a9c79afbd8a759a827fe75070d1761f1161dfb618edf1a1852d16c39aeee3dfd"
+    },
+    {
+      "path": "throughput-request.template.json",
+      "bytes": 763,
+      "sha256": "59dc2169673a085e5ea82e62b1bc85b29ad33b0e50a9181291ba5625ffa797e3"
+    },
+    {
+      "path": "template-probe-defaults.json",
+      "bytes": 398,
+      "sha256": "e4131b0778ef439935685eed326748f2238c483ba77634e2946a7b3d329acf70"
+    },
+    {
+      "path": "template-probe-alias-false.json",
+      "bytes": 463,
+      "sha256": "5de76d4275d22277337d7eab11afd11e368c65359f2b11479cc7e52afa98bf1c"
+    },
+    {
+      "path": "template-probe-all-false.json",
+      "bytes": 495,
+      "sha256": "9de8a989efcf3cc56c2f9939c749e8cfcfe0bd21b03460106214eedf6878d136"
+    },
+    {
+      "path": "template-probe-all-true.json",
+      "bytes": 493,
+      "sha256": "84e5dd67e6df47e6e7ed5194e4582b867257b15ac4ada91fe4736596c3ed18c8"
+    },
+    {
+      "path": "runtime-common.ps1",
+      "bytes": 53757,
+      "sha256": "3356d3b20dd7d3b64da6b10239d7189ae0865d5cd204049fa1023790f59baf01"
+    },
+    {
+      "path": "freeze-runtime.ps1",
+      "bytes": 13749,
+      "sha256": "6689f9b3816f42a0ac7419f43cbc48fdea80534ce35fcb7876aa0ddc007276c8"
+    },
+    {
+      "path": "run-coordinate.ps1",
+      "bytes": 83402,
+      "sha256": "33f640b404b5cd44805ed059decebb0566a4d0ff614cbf167fe34493c3d54e1e"
+    },
+    {
+      "path": "verify-runtime.ps1",
+      "bytes": 110952,
+      "sha256": "c2fa49d087237de79a710f620fd6804947b03bfd739c3bd0fb9b365c4df07c1d"
+    },
+    {
+      "path": "verify-q4-gate.ps1",
+      "bytes": 10187,
+      "sha256": "22ef4d7d5fe283e24dfedd0abe0acb063f4331de7cbf24d411bdcfb73dcaacfb"
+    },
+    {
+      "path": "test-runtime.ps1",
+      "bytes": 64683,
+      "sha256": "1dd35b2828bb21b510496c2d89aff1dbbfae67ee2419a19d45491010beaf9ca6"
+    },
+    {
+      "path": "record-q4-verdict.ps1",
+      "bytes": 3080,
+      "sha256": "a7e69b9dd5c7a3259d745bb6ec8d1e061eb14594051f8d305eda981f443a39a7"
+    },
+    {
+      "path": "finalize-selection.ps1",
+      "bytes": 31133,
+      "sha256": "515c1ab5da9ae8243c74677d8c630e479e77f3f074ac5612ff20e16a5dccecdb"
+    },
+    {
+      "path": "runtime-self-test.json",
+      "bytes": 44664,
+      "sha256": "00644b6ecc986839fe898d50127fd95783edf922dbed0c6ca604ed02419fb58e"
+    }
+  ],
+  "binaries": {
+    "ferric": {
+      "display_path": "target/release/ferric.exe",
+      "bytes": 21132800,
+      "sha256": "af75612b3498a1721e5b5f1b2f6309bf851d65b9bd13ad45e76cf8e370cf10f2",
+      "version_output": [
+        "ferric 0.1.0"
+      ]
+    },
+    "llama_server": {
+      "display_path": "target/s114-experiment/runtime/llama-b10516-cuda12.4/bin/llama-server.exe",
+      "bytes": 9216,
+      "sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+      "version_output": [],
+      "device_identity": {
+        "backend_id": "CUDA0",
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "total_mib": 11263
+      },
+      "device_output_at_freeze": [
+        "Available devices:",
+        "  CUDA0: NVIDIA GeForce RTX 2080 Ti (11263 MiB, 10123 MiB free)"
+      ],
+      "device_free_mib_at_freeze": 10123,
+      "help_output_sha256": "a54b7573409f0c639197d571c46315aed086fa591e339c68937bd0c23d1b7544",
+      "option_environment_mappings": {
+        "reasoning": "(?s)--reasoning \\[on\\|off\\|auto\\].*?LLAMA_ARG_REASONING",
+        "reasoning_budget": "(?s)--reasoning-budget N.*?LLAMA_ARG_THINK_BUDGET",
+        "reasoning_preserve": "(?s)--reasoning-preserve.*?LLAMA_ARG_REASONING_PRESERVE",
+        "chat_template_kwargs": "(?s)--chat-template-kwargs STRING.*?LLAMA_ARG_CHAT_TEMPLATE_KWARGS",
+        "timeout": "(?s)--timeout N.*?LLAMA_ARG_TIMEOUT"
+      }
+    },
+    "cuda_backend": {
+      "display_path": "target/s114-experiment/runtime/llama-b10516-cuda12.4/bin/ggml-cuda.dll",
+      "bytes": 538308608,
+      "sha256": "fc45d8f6a73f46231e0e04d6aa8260c7e366b974a18cab4bc53ed35248c2ff82"
+    },
+    "llama_runtime": {
+      "display_root": "target/s114-experiment/runtime/llama-b10516-cuda12.4/bin",
+      "file_count": 55,
+      "files": [
+        {
+          "path": "cublas64_12.dll",
+          "bytes": 100033536,
+          "sha256": "e40202fe4223c1cd2d2dce7beec59e1ed61c7801bd827309183be9b50e358f4c"
+        },
+        {
+          "path": "cublasLt64_12.dll",
+          "bytes": 473551360,
+          "sha256": "2a896460bef60ed57ef32b0875812f355a6984e671d638bb632f5e8c1d7a831f"
+        },
+        {
+          "path": "cudart64_12.dll",
+          "bytes": 553984,
+          "sha256": "d28e42265da7462162a54da6b7a99ea4fa2caf8139d862bb500db875d0b32dfc"
+        },
+        {
+          "path": "ggml-base.dll",
+          "bytes": 773632,
+          "sha256": "8f5626f4f2a736caab94c5120bb6ace15592b47ac3cab9b023e1247b5e877bf7"
+        },
+        {
+          "path": "ggml-cpu-alderlake.dll",
+          "bytes": 1182208,
+          "sha256": "97a6792627470fdf5fd99dd2775b32eed3e30b87dfa79a5d2add9d92853eea8e"
+        },
+        {
+          "path": "ggml-cpu-cannonlake.dll",
+          "bytes": 1397248,
+          "sha256": "12999cc7f6b0ac0ba38a3b2407b4ec16f7d1397cdebaaec59ae0b9a22e7503ba"
+        },
+        {
+          "path": "ggml-cpu-cascadelake.dll",
+          "bytes": 1383936,
+          "sha256": "a04d9637bccbb4911a6b3868a2019696a5aadfeac714e769a1741fb234c3f013"
+        },
+        {
+          "path": "ggml-cpu-cooperlake.dll",
+          "bytes": 1384960,
+          "sha256": "f706fcedce98737fd404fc275ae2fe31e3c49890df7ebc3e0beb8efb8e618031"
+        },
+        {
+          "path": "ggml-cpu-haswell.dll",
+          "bytes": 1186304,
+          "sha256": "fce3cfad5c965a7dbc87ee78ce9dcaa727c3f267339541bfae6721b60207642d"
+        },
+        {
+          "path": "ggml-cpu-icelake.dll",
+          "bytes": 1390592,
+          "sha256": "3c0178ac4d7db0f1340125c8e8b83f5944491550a3b4ef6df19133bd813d622e"
+        },
+        {
+          "path": "ggml-cpu-ivybridge.dll",
+          "bytes": 1075712,
+          "sha256": "8156b645b6ecb08c3e33ad7b15e601d1b6965e3dfbfbadf37941fe82015acb8e"
+        },
+        {
+          "path": "ggml-cpu-piledriver.dll",
+          "bytes": 1079808,
+          "sha256": "895c1f15d42f8765fafd358e725512b7b9025b162b22f49a84880bf421f615aa"
+        },
+        {
+          "path": "ggml-cpu-sandybridge.dll",
+          "bytes": 1055744,
+          "sha256": "567f6f16a90fbb60a08916ce0f18b22603f12ed682f7388ae8858ba649a63a61"
+        },
+        {
+          "path": "ggml-cpu-sapphirerapids.dll",
+          "bytes": 1661440,
+          "sha256": "4648680f5473a9573c0ff2b476b688a0fb9738f98462b48dad2bda52e275581e"
+        },
+        {
+          "path": "ggml-cpu-skylakex.dll",
+          "bytes": 1391104,
+          "sha256": "8520bb806f38cfadab30d7946424eee1191e59732cc0843b137cfb4315227a4f"
+        },
+        {
+          "path": "ggml-cpu-sse42.dll",
+          "bytes": 878592,
+          "sha256": "f85253f981c2372fdd4add30260232fa0e6c9922d1796c47bbc03e84b9010d62"
+        },
+        {
+          "path": "ggml-cpu-x64.dll",
+          "bytes": 871424,
+          "sha256": "9dd11256f6a7a57c6fd6b6a99ba3bd50abfa6ba9accdc24f4906fb96441e1c28"
+        },
+        {
+          "path": "ggml-cpu-zen4.dll",
+          "bytes": 1391616,
+          "sha256": "87b24bdbbdcdd76eed9064e2c21e3e147ee08f0e1708016e3089a517df1ad7ee"
+        },
+        {
+          "path": "ggml-cuda.dll",
+          "bytes": 538308608,
+          "sha256": "fc45d8f6a73f46231e0e04d6aa8260c7e366b974a18cab4bc53ed35248c2ff82"
+        },
+        {
+          "path": "ggml-rpc-server.exe",
+          "bytes": 101376,
+          "sha256": "c85ade0212bbeb4d37b98c66300f44d63e1b87ee2ab099e0b44c364a3572530c"
+        },
+        {
+          "path": "ggml-rpc.dll",
+          "bytes": 138752,
+          "sha256": "fc7f723d04a5e0971489850556740014afa5fedb90ffb8b4c668c8f95d1d7006"
+        },
+        {
+          "path": "ggml.dll",
+          "bytes": 86016,
+          "sha256": "a6149283ebbb41190a5172395a367086dd88ff6dee3350ee964e5a63bccd4b6f"
+        },
+        {
+          "path": "libomp140.x86_64.dll",
+          "bytes": 661856,
+          "sha256": "4a20c1e5c115c29771a12324513eb109badac72180f79481527ad79d996ffb33"
+        },
+        {
+          "path": "llama-batched-bench-impl.dll",
+          "bytes": 61440,
+          "sha256": "b205b4edf4eaded5a3d81c4a8b624a32ee2916296ad491d11b9c5f0072446894"
+        },
+        {
+          "path": "llama-batched-bench.exe",
+          "bytes": 9216,
+          "sha256": "e2d8ab4fa81395b5f3928175c196966b2563f9bf9417923b2c409578ae936194"
+        },
+        {
+          "path": "llama-bench-impl.dll",
+          "bytes": 395264,
+          "sha256": "48818a75742e056c57fa685dc5bf23d7fe05736689832a0ecb3d7f5b9b122c2b"
+        },
+        {
+          "path": "llama-bench.exe",
+          "bytes": 9216,
+          "sha256": "75e025a9b0a616c3d99c1cfdb7dc1d74fff96cf109612f68dd5c92e44ca19eb9"
+        },
+        {
+          "path": "llama-cli-impl.dll",
+          "bytes": 3496960,
+          "sha256": "f76a25a54a35941a2017b944fcc5db1ebf0a6f8b718f97acc32a0fab975eadc5"
+        },
+        {
+          "path": "llama-cli.exe",
+          "bytes": 9216,
+          "sha256": "d5d41ed1dc845b728b54f9b78c458d3a6baa0824e45c25b8100c096f81035884"
+        },
+        {
+          "path": "llama-common.dll",
+          "bytes": 8079872,
+          "sha256": "32575744205de1b6a69d46e9097a3b17f2ea996c0feddd3086ed378f459114dd"
+        },
+        {
+          "path": "llama-completion-impl.dll",
+          "bytes": 133120,
+          "sha256": "818a22d381611e47e6206e095a79b4b5c37ecfe1c0ce8d63cfa0f02d8fc9113b"
+        },
+        {
+          "path": "llama-completion.exe",
+          "bytes": 9216,
+          "sha256": "4b87621b0090e91babd75f06df36df6400b746451e6089539fd2d9aeb23ac123"
+        },
+        {
+          "path": "llama-fit-params-impl.dll",
+          "bytes": 40960,
+          "sha256": "3775970ef0575d2ae13e49bcd1e7de3d22029deaa13a2d24a429bc6db48a49b9"
+        },
+        {
+          "path": "llama-fit-params.exe",
+          "bytes": 9216,
+          "sha256": "91bcf323f3ffeaedc8e3513947ba0f71d26881e5163f0aaaa83e26c966cc1bca"
+        },
+        {
+          "path": "llama-gemma3-cli.exe",
+          "bytes": 27136,
+          "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+        },
+        {
+          "path": "llama-gguf-split.exe",
+          "bytes": 60416,
+          "sha256": "d6a8e4015ffa52824a1bcb7e422fd3498fc2b4f27cd7b4ad0c6d1506026fd939"
+        },
+        {
+          "path": "llama-imatrix.exe",
+          "bytes": 253952,
+          "sha256": "00156faadfd757c7baec2e357d43444f82af1aef95cf3e5461ede64069d4ecca"
+        },
+        {
+          "path": "llama-llava-cli.exe",
+          "bytes": 27136,
+          "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+        },
+        {
+          "path": "llama-minicpmv-cli.exe",
+          "bytes": 27136,
+          "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+        },
+        {
+          "path": "llama-mtmd-cli.exe",
+          "bytes": 84480,
+          "sha256": "4a15f13665cdc7085008698b6fdfbffb5f842ccc26a0f8c368424a6dd2785200"
+        },
+        {
+          "path": "llama-mtmd-debug.exe",
+          "bytes": 55296,
+          "sha256": "2e5964bb2087ab5a610d6b701b5565c5d397ca840acf27a757aaf27ba87feeed"
+        },
+        {
+          "path": "llama-perplexity-impl.dll",
+          "bytes": 194048,
+          "sha256": "cf41fa78ee7ceda727d8e577ad4b4e062261f62c7ba4d7fa88e93d91e6b3e872"
+        },
+        {
+          "path": "llama-perplexity.exe",
+          "bytes": 9216,
+          "sha256": "ad519d81fe372951a1d84c032e90da192876b93532bae0c5b71b3e37591d2e4e"
+        },
+        {
+          "path": "llama-quantize-impl.dll",
+          "bytes": 137216,
+          "sha256": "cb26315d9601c9cca27e8f5c7c49e20ebf656a8400cd4a2c3800954c0476f8be"
+        },
+        {
+          "path": "llama-quantize.exe",
+          "bytes": 9216,
+          "sha256": "b90413d2f8749c0cb044bfb81c12b72b757e6f221b96463963475b47bccb6ba4"
+        },
+        {
+          "path": "llama-qwen2vl-cli.exe",
+          "bytes": 27136,
+          "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+        },
+        {
+          "path": "llama-results.exe",
+          "bytes": 45568,
+          "sha256": "d228c1540bf480df3b06f8271dd37dc452891e7769c52a2f663801f3ea2081fd"
+        },
+        {
+          "path": "llama-server-impl.dll",
+          "bytes": 9982976,
+          "sha256": "b4590de3b49eb7c2bb4d1e4774760f202828d5749c37eec34347398c45779550"
+        },
+        {
+          "path": "llama-server.exe",
+          "bytes": 9216,
+          "sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c"
+        },
+        {
+          "path": "llama-template-analysis.exe",
+          "bytes": 270848,
+          "sha256": "b8c914da60edca0aa9c40e2610186a63e56f913a171fefce7cf69938ec7e0bc7"
+        },
+        {
+          "path": "llama-tokenize.exe",
+          "bytes": 57344,
+          "sha256": "3221b8210022462438d7e587bb17b1a4ad260fea645537aa2d2a2fea285b6429"
+        },
+        {
+          "path": "llama-tts.exe",
+          "bytes": 41472,
+          "sha256": "861726a31a9ac43d18381f6dcf80905be14f02a087e1854d518e73cbd17588cf"
+        },
+        {
+          "path": "llama.dll",
+          "bytes": 2958848,
+          "sha256": "fdabe60bdb0673411688572f752939de80d50d998331e4efe94fe28f24fc504d"
+        },
+        {
+          "path": "llama.exe",
+          "bytes": 83968,
+          "sha256": "89a47a0fe9d26898da099749c52382adcc30a3dd4a2dc55bd7fda927c20cd7ad"
+        },
+        {
+          "path": "mtmd.dll",
+          "bytes": 1716736,
+          "sha256": "dcda852c814ab85a4d5cd78d7c3daaab4a512d163d2d10858769065347a1364b"
+        }
+      ]
+    }
+  },
+  "archives": {
+    "main": {
+      "display_path": "target/s114-experiment/runtime/llama-b10516-cuda12.4/llama-b10516-bin-win-cuda-12.4-x64.zip",
+      "bytes": 250892658,
+      "sha256": "96d64faeb5b8e655341f32b26ad3e51fbea8bff0bc8120ad3dbffdc0b05b8ad3",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10516/llama-b10516-bin-win-cuda-12.4-x64.zip"
+    },
+    "cuda_runtime": {
+      "display_path": "target/s114-experiment/runtime/cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "bytes": 391443627,
+      "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10516/cudart-llama-bin-win-cuda-12.4-x64.zip"
+    }
+  },
+  "models": {
+    "q4": {
+      "display_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "bytes": 16464440224,
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+    },
+    "q3_present_at_freeze": false
+  },
+  "cold_state": {
+    "local_runfile_absent": true,
+    "global_runfile_absent": true,
+    "listener_absent": true,
+    "memory": {
+      "captured_at_utc": "2026-08-27T18:54:09.8454037Z",
+      "ram": {
+        "total_visible_bytes": 34281484288,
+        "free_physical_bytes": 16327036928,
+        "total_virtual_bytes": 140737488224256,
+        "free_virtual_bytes": 138464591978496
+      },
+      "nvidia_smi_gpu_csv": [
+        "NVIDIA GeForce RTX 2080 Ti, GPU-ba084980-69e2-8d7e-07d9-c291d42030df, 596.49, 11264, 8576, 2452, 12"
+      ],
+      "nvidia_smi_compute_apps_csv": [
+        "15308, [Insufficient Permissions], [N/A]",
+        "42784, C:\\Windows\\System32\\ShellHost.exe, [N/A]",
+        "13908, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+        "23508, C:\\Windows\\explorer.exe, [N/A]",
+        "31404, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+        "28756, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+        "13156, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37808, C:\\Program Files\\WindowsApps\\Microsoft.YourPhone_1.26071.164.0_x64__8wekyb3d8bbwe\\PhoneExperienceHost.exe, [N/A]",
+        "28252, C:\\Users\\charl\\AppData\\Local\\Discord\\app-1.0.9253\\Discord.exe, [N/A]",
+        "16256, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+        "32656, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+        "5556, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "7748, C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe, [N/A]",
+        "10652, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "43036, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "15208, C:\\Program Files (x86)\\GOG Galaxy\\GOG Galaxy Notifications Renderer.exe, [N/A]",
+        "42176, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EACefSubProcess.exe, [N/A]",
+        "34032, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EADesktop.exe, [N/A]",
+        "2540, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37664, C:\\Users\\charl\\AppData\\Local\\Programs\\zima-client\\Zima.exe, [N/A]",
+        "6308, C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe, [N/A]",
+        "25068, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudHome.exe, [N/A]",
+        "11064, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudPhotos.exe, [N/A]",
+        "27440, C:\\Program Files\\WindowsApps\\SpotifyAB.SpotifyMusic_1.297.270.0_x64__zpdnekdrzrea0\\Spotify.exe, [N/A]",
+        "18824, C:\\Program Files\\Adobe\\Adobe Creative Cloud\\ACC\\Creative Cloud UI Helper.exe, [N/A]",
+        "28220, C:\\Program Files\\Common Files\\Adobe\\Adobe OS Extension\\AdobeNotificationClient.exe, [N/A]",
+        "10184, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+        "7484, C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe, [N/A]",
+        "39908, C:\\Program Files\\WindowsApps\\Microsoft.MicrosoftOfficeHub_19.2608.49021.0_x64__8wekyb3d8bbwe\\M365Copilot.exe, [N/A]",
+        "26960, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "34124, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.820.7780.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+        "30988, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "46548, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "33892, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "50756, C:\\Program Files\\WindowsApps\\Microsoft.ScreenSketch_11.2605.36.0_x64__8wekyb3d8bbwe\\SnippingTool\\SnippingTool.exe, [N/A]",
+        "7324, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "47984, [Insufficient Permissions], [N/A]",
+        "29184, C:\\Program Files\\Malwarebytes\\Anti-Malware\\Malwarebytes.exe, [N/A]",
+        "19000, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "42988, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "17848, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]"
+      ],
+      "gpu": {
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "uuid": "GPU-ba084980-69e2-8d7e-07d9-c291d42030df",
+        "driver_version": "596.49",
+        "total_mib": 11264,
+        "free_mib": 8576,
+        "used_mib": 2452,
+        "utilization_percent": 12
+      }
+    },
+    "minimum_gpu_free_mib": 7000
+  }
+}

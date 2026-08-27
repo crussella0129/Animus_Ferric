@@ -1,0 +1,50 @@
+{
+  "healthy": true,
+  "classification": "healthy",
+  "memory_match": {
+    "matched": false,
+    "matches": []
+  },
+  "classification_input_file": "startup-classification.log",
+  "classification_input_bytes": 43353,
+  "classification_input_sha256": "c4708b80cd5e64ee047f0b30e06189fa13630782a17b2734ede7a1cce382dc46",
+  "launch_process": {
+    "file": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+    "arguments": [
+      "server",
+      "up",
+      "--engine",
+      "llama-server",
+      "--model",
+      "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "--ctx",
+      "32768",
+      "--threads",
+      "12",
+      "--gpu-layers",
+      "24",
+      "--batch-size",
+      "512",
+      "--seed",
+      "42",
+      "--parallel",
+      "1",
+      "--port",
+      "8080"
+    ],
+    "pid": 36308,
+    "argument_line": "server up --engine llama-server --model C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf --ctx 32768 --threads 12 --gpu-layers 24 --batch-size 512 --seed 42 --parallel 1 --port 8080",
+    "started_at_utc": "2026-08-27T18:56:07.3523357Z",
+    "completed_at_utc": "2026-08-27T18:56:34.0251255Z",
+    "duration_ms": 26670.733,
+    "timed_out": false,
+    "execution_timed_out": false,
+    "post_kill_wait_timed_out": false,
+    "kill_attempted": false,
+    "kill_succeeded": false,
+    "post_process_alive": false,
+    "exit_code": 0,
+    "stdout_file": "launch.stdout.log",
+    "stderr_file": "launch.stderr.log"
+  }
+}
