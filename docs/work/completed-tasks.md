@@ -1164,3 +1164,140 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   passed. Final whole-workspace and CI confirmation remain formal Test/Loop
   evidence and are not claimed here.
 - **Commit:** `bd937383ac17b25cebd0c742b5522cc983bcf896`
+
+## T-11407 (sprint 114)
+- **Description:** Acquired the pinned third-party Unsloth Qwen3.8-27B
+  `UD-Q4_K_M` conversion into the ignored repository `models/` directory and
+  published it only after exact 16,464,440,224-byte and SHA-256 verification.
+  Added append-only fail-closed acquisition controls, quarantine behavior,
+  fixed retained E09-D authorization for the sole Q3 fallback, complete source
+  and Apache-2.0 provenance, and all four named acquisition tests. The Q3 and
+  every 2-bit quant remain absent.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-27T04:07:19Z
+- **Files modified:** ignored
+  `models/Qwen3.8-27B-UD-Q4_K_M.gguf`,
+  `docs/intents/INT-0007-hardware-calibrated-autonomous-development.md`,
+  `docs/sprints/s114/`, `docs/SUMMARY.md`, `docs/work/tasks.md`,
+  `docs/work/completed-tasks.md`
+- **Verification:** `test-acquisition.ps1` passed
+  `model_download_and_sha256_attestation`,
+  `model_acquisition_failure_is_not_verified`,
+  `model_is_ignored_evidence_is_tracked`, and
+  `q3_fallback_download_is_gated_and_attested`; the negative acquisition test
+  also proved same-length/wrong-hash rejection and quarantine after an injected
+  post-publication verification I/O failure. All PowerShell controls parsed,
+  all retained JSON parsed, the final local hash matched
+  `322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482`,
+  and Git reported the GGUF ignored and untracked.
+- **Commit:** `23d9f766280b7ccb0698355fd9b135028d45a277`
+
+## T-11408 (sprint 114)
+- **Description:** Built and sealed the dependency-free Rust 2024 MH-RS01
+  medium-horizon application harness: immutable incomplete seed, explicit
+  nine-dimension check profile, disclosed visible contract, separately compiled
+  hidden contract, exact CLI matrix, model-test registration/oracle gates,
+  fail-closed Bubblewrap containment, bounded diagnostics, and append-only
+  command provenance. The canonical clean-state self-test proved the intended
+  seed failure, repeated byte-deterministic known-good grading, spoof resistance,
+  infrastructure mapping, fixed resource-policy enforcement, 13 static
+  violations, five dynamic violations, two model-registration violations, and
+  full historical journal closure before retaining content-addressed evidence.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-27T03:15:00-04:00
+- **Files modified:** `docs/sprints/s114/control-artifacts/app-harness/`,
+  `docs/work/tasks.md`, `docs/work/completed-tasks.md`
+- **Verification:** the checkout-stable 30-file frozen-input profile re-verified
+  at `532cd39a9fec557816929bcf12e5ae539c8a30c0f4c4829a9d6f89b0ca9f358b`;
+  the canonical WSL/Bubblewrap self-test passed all three named groups and
+  retained journal
+  `a902f9cd4b1a604a76870aad3065ca23d5d4c59a2810c21ea3a9b173d48febb4`;
+  its summary and companions independently reconciled; the grader's six unit
+  tests and known-good/violation integration matrix passed; strict grader
+  Clippy, Rust formatting, PowerShell parsing, and Bash syntax checks passed;
+  six Ferric `run_check` unit tests and two checks-file CLI integration tests
+  passed; no source-local grader target exists.
+- **Commit:** `41e6bcaa8e9a924b28f8090ef20acfb9b958d26e`
+
+## T-11413 (sprint 114)
+- **Description:** Removed fixed numeric benchmark results and Sprint 113 score
+  narrative from the landing README. The page now explains current benchmark
+  and policy behavior without duplicating low-value historical results, and
+  routes readers to the canonical Sprint Loops Book records for durable
+  evidence.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-27T16:59:18Z
+- **Files modified:** `README.md`, `docs/work/tasks.md`,
+  `docs/work/completed-tasks.md`
+- **Verification:** no numeric sprint narratives or direct `docs/sprints/sN/`
+  links remain in `README.md`; all local README links resolve; canonical Book,
+  intents, current-work, and completed-work links remain; `git diff --check --
+  README.md` passed.
+- **Commit:** `5485a0d0da27ee7b01a2623afb472d1a28a7b26a`
+
+## T-11409 (sprint 114)
+- **Description:** Recovered two false-negative managed-server attestation
+  controls without changing their immutable evidence, then completed the
+  bounded Qwen3.8-27B Q4_K_M calibration. The exact context-32,768,
+  24-GPU-layer coordinate passed the real grammar nonce smoke and all three
+  timed samples at a 3.206485 decoded-token/s median. Separately frozen
+  publication epochs materialized the exact attempt and correction evidence;
+  the final gate selected Q4 and never authorized the context or Q3 fallback.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-27T23:43:08Z
+- **Files modified:** ignored
+  `target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/`;
+  `docs/sprints/s114/control-artifacts/runtime/epoch-3/` through `epoch-6/`;
+  `docs/sprints/s114/sprint-research/runtime-attestation-recovery.md`;
+  `docs/sprints/s114/sprint-meta.md`; `docs/work/tasks.md`;
+  `docs/work/completed-tasks.md`
+- **Verification:** epoch-3, epoch-4, epoch-5, and corrected epoch-6 self-tests
+  passed 55/55, 33/33, 25/25, and 23/23 checks respectively; the first failed
+  epoch-6 report remains exact incident evidence. The retained attempt passed
+  `managed_server_coordinate_attestation`, `qwen38_grammar_nonce_smoke`,
+  `runtime_failure_classification_and_context_fallback`, and
+  `qwen38_quant_viability_selection`, kept an exact
+  49-entry/437,140-byte tree, and verified model SHA-256
+  `322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482`.
+  Epoch 6 froze control manifest
+  `a63f9dff611974a2c5bdf3e63e6bd09853ff29fab0684bd4b3f5af662d8b6930`,
+  and proved byte-preserving materializer re-entry. The independent Q4 gate
+  passed; final runtime verification passed four groups and cold teardown; and
+  manifest `60cac4761f5276d05fe9f1be296925e4d9e0e7e667706564b8478bb792167f40`
+  matched all 213 covered files with no residual stage.
+- **Commit:** `ce3d74370fff8f3d1ee1f4b958a2fa6d516f9d31`
+
+## T-11411 (sprint 114)
+- **Description:** Pinned and installed the upstream runtime-neutral Animus
+  Sprint Loops adapter in an isolated Git workspace, then tested Ferric
+  discovery and every capability layer allowed after the observed packaging
+  failure. The installer produced an exact 28-script helper copy, but the
+  adapter contained no Ferric-formatted `SKILL.md`, so Ferric discovered no
+  skill and all model-behavior arms stopped rather than substituting a
+  different adapter.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-28T00:56:18Z
+- **Files modified:** ignored
+  `target/s114-experiment/sprint-loop-source/`, ignored
+  `target/s114-experiment/sprint-loop-workspace/`,
+  `docs/sprints/s114/control-artifacts/sprint-loop-run/`,
+  `docs/sprints/s114/sprint-meta.md`, `docs/work/tasks.md`,
+  `docs/work/completed-tasks.md`
+- **Verification:** source commit
+  `4acc1fd6e0b964ea4bcbedd17c44cb2ca8ca0066` and tree
+  `3420c3d9858b6d3049b81f2334ca21a9d1fdaade` were clean and pinned; the
+  52-file source manifest and full 28-file disposable-workspace manifest were
+  bound to their raw Git trees, and the 28-file install manifest reverified;
+  installed helper bytes matched source and an idempotent reinstall left the
+  disposable Git tree clean. `ferric skills list` returned success and exactly
+  reported no installed skills; the pinned router returned `uninitialized`;
+  the validator
+  reported an uninitialized Book; static source bindings proved `git_write`
+  registered at Ring 2 with `shell_exec` and `manage_task` excluded from the
+  query registry. `verify-probe.ps1` passed 46 assertions with exact
+  coverage of all 38 evidence payloads (excluding the self-manifest); the
+  verifier rejected seven adversarial mutation cases; the Ferric skill parser
+  passed 16/16 unit tests, template hygiene passed 3/3, and the Book v2
+  validator passed with
+  eight intent chapters. No model request or remote mutation ran.
+- **Commit:** `86b10b82a00f555364c0e837374b39cadb61aeae`

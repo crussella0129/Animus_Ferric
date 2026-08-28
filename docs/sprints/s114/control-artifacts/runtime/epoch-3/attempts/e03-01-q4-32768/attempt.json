@@ -1,0 +1,1506 @@
+{
+  "schema": "animus-ferric-runtime-attempt-v3",
+  "control_epoch": 3,
+  "attestation_protocol": "apply-template-differential-v1",
+  "process_command_protocol": "windows-bound-process-command-v1",
+  "task": "T-11409",
+  "coordinate": "e03-01-q4-32768",
+  "quant": "Q4_K_M",
+  "context": 32768,
+  "requested_gpu_layers": 24,
+  "started_at_utc": "2026-08-27T20:36:05.6338551Z",
+  "completed_at_utc": "2026-08-27T20:44:53.6921728Z",
+  "duration_seconds": 528.057,
+  "prior_quant_elapsed_seconds": 0.0,
+  "quant_elapsed_seconds": 528.057,
+  "wall_cap_seconds": 5400,
+  "wall_cap_breached": false,
+  "startup": {
+    "healthy": true,
+    "classification": "healthy",
+    "memory_match": {
+      "matched": false,
+      "matches": []
+    },
+    "classification_input_file": "startup-classification.log",
+    "classification_input_bytes": 43354,
+    "classification_input_sha256": "525c7f6a8fd2039c8e2a1a373c71b82cca06f6c621fc9cf236d5cc8e01b04515",
+    "launch_process": {
+      "file": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "arguments": [
+        "server",
+        "up",
+        "--engine",
+        "llama-server",
+        "--model",
+        "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "--ctx",
+        "32768",
+        "--threads",
+        "12",
+        "--gpu-layers",
+        "24",
+        "--batch-size",
+        "512",
+        "--seed",
+        "42",
+        "--parallel",
+        "1",
+        "--port",
+        "8080"
+      ],
+      "pid": 30652,
+      "argument_line": "server up --engine llama-server --model C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf --ctx 32768 --threads 12 --gpu-layers 24 --batch-size 512 --seed 42 --parallel 1 --port 8080",
+      "started_at_utc": "2026-08-27T20:36:43.0124589Z",
+      "completed_at_utc": "2026-08-27T20:37:14.1648125Z",
+      "duration_ms": 31150.987,
+      "timed_out": false,
+      "execution_timed_out": false,
+      "post_kill_wait_timed_out": false,
+      "kill_attempted": false,
+      "kill_succeeded": false,
+      "post_process_alive": false,
+      "exit_code": 0,
+      "stdout_file": "launch.stdout.log",
+      "stderr_file": "launch.stderr.log"
+    }
+  },
+  "attestation": {
+    "schema": "animus-ferric-managed-server-attestation-v3",
+    "control_epoch": 3,
+    "attestation_protocol": "apply-template-differential-v1",
+    "process_command_protocol": "windows-bound-process-command-v1",
+    "passed": true,
+    "coordinate": "e03-01-q4-32768",
+    "captured_at_utc": "2026-08-27T20:37:18.7359014Z",
+    "runfiles": {
+      "local_path": "C:\\Users\\charl\\Animus_Ferric\\.ferric\\server.json",
+      "global_path": "C:\\Users\\charl\\AppData\\Roaming\\ferric\\server.json",
+      "byte_identical": true,
+      "value": {
+        "engine": "llama-server",
+        "pid": 34132,
+        "port": 8080,
+        "base_url": "http://127.0.0.1:8080/v1",
+        "tailscale": false,
+        "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "context_size": 32768,
+        "sampling_seed": 42,
+        "parallel_slots": 1
+      }
+    },
+    "process": {
+      "pid": 34132,
+      "executable_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe",
+      "executable_sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+      "command_line": "\"llama-server\" -m C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf -c 32768 -t 12 -ngl 24 -b 512 --seed 42 --parallel 1 --host 127.0.0.1 --port 8080",
+      "command_binding": {
+        "schema": "animus-ferric-windows-process-command-binding-v1",
+        "passed": true,
+        "executable_path_passed": true,
+        "recorded_executable_sha256_passed": true,
+        "live_executable_sha256_passed": true,
+        "argv0_passed": true,
+        "argv0_mode": "declared_bare_alias",
+        "argument_tail_passed": true,
+        "expected_argc": 19,
+        "observed_argc": 19,
+        "observed_argv": [
+          "llama-server",
+          "-m",
+          "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "-c",
+          "32768",
+          "-t",
+          "12",
+          "-ngl",
+          "24",
+          "-b",
+          "512",
+          "--seed",
+          "42",
+          "--parallel",
+          "1",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "8080"
+        ],
+        "errors": []
+      },
+      "creation_date_utc": "2026-08-27T20:36:43.5679640+00:00",
+      "creation_binding": {
+        "schema": "animus-ferric-process-creation-window-v1",
+        "passed": true,
+        "tolerance_seconds": 5,
+        "creation_date_utc": "2026-08-27T20:36:43.5679640+00:00",
+        "preflight_captured_utc": "2026-08-27T20:36:42.9337429+00:00",
+        "attestation_captured_utc": "2026-08-27T20:37:18.7359014+00:00",
+        "errors": []
+      }
+    },
+    "listener": {
+      "owners": [
+        34132
+      ],
+      "records": [
+        {
+          "LocalAddress": "127.0.0.1",
+          "LocalPort": 8080,
+          "State": 2,
+          "OwningProcess": 34132
+        }
+      ]
+    },
+    "endpoints": {
+      "health": {
+        "method": "GET",
+        "uri": "http://127.0.0.1:8080/health",
+        "started_at_utc": "2026-08-27T20:37:15.5030688Z",
+        "completed_at_utc": "2026-08-27T20:37:15.5595117Z",
+        "wall_ms": 52.652,
+        "timeout_seconds": 30,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Server": [
+            "llama.cpp"
+          ],
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Content-Length": [
+            "15"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ]
+        },
+        "error": null,
+        "response_file": "health.body",
+        "response_bytes": 15,
+        "response_sha256": "a29ee2b15c494311c52521766e44af56a3ad2248e7a8ab465e5206463c13d288"
+      },
+      "models": {
+        "method": "GET",
+        "uri": "http://127.0.0.1:8080/v1/models",
+        "started_at_utc": "2026-08-27T20:37:15.5611641Z",
+        "completed_at_utc": "2026-08-27T20:37:15.5704839Z",
+        "wall_ms": 9.007,
+        "timeout_seconds": 30,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Server": [
+            "llama.cpp"
+          ],
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Content-Length": [
+            "826"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ]
+        },
+        "error": null,
+        "response_file": "models.body.json",
+        "response_bytes": 826,
+        "response_sha256": "2447834db75faf909b47fca41e9dd15dfc251589804e42d9b24b6fad425203bd"
+      },
+      "props": {
+        "method": "GET",
+        "uri": "http://127.0.0.1:8080/props",
+        "started_at_utc": "2026-08-27T20:37:15.5758799Z",
+        "completed_at_utc": "2026-08-27T20:37:15.5807225Z",
+        "wall_ms": 4.647,
+        "timeout_seconds": 30,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Server": [
+            "llama.cpp"
+          ],
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Content-Length": [
+            "12178"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ]
+        },
+        "error": null,
+        "response_file": "props.body.json",
+        "response_bytes": 12178,
+        "response_sha256": "0f643c9cfe3deec7176f54039f9598457e141d32eb0219170314bdee8857d621"
+      },
+      "served_model_id": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "served_n_ctx": 32768,
+      "served_n_ctx_source": "props.default_generation_settings.n_ctx",
+      "served_n_params": 27320697856,
+      "total_slots": 1,
+      "chat_template_caps": {
+        "supports_object_arguments": true,
+        "supports_parallel_tool_calls": true,
+        "supports_preserve_reasoning": true,
+        "supports_reasoning_effort": true,
+        "supports_string_content": true,
+        "supports_system_role": true,
+        "supports_tool_calls": true,
+        "supports_tools": true,
+        "supports_typed_content": false
+      },
+      "template_probe_exchanges": [
+        {
+          "name": "defaults",
+          "exchange": {
+            "method": "POST",
+            "uri": "http://127.0.0.1:8080/apply-template",
+            "started_at_utc": "2026-08-27T20:37:15.5974437Z",
+            "completed_at_utc": "2026-08-27T20:37:15.6065635Z",
+            "wall_ms": 8.884,
+            "timeout_seconds": 30,
+            "status_code": 200,
+            "reason": "OK",
+            "headers": {
+              "Keep-Alive": [
+                "timeout=5, max=100"
+              ],
+              "Server": [
+                "llama.cpp"
+              ],
+              "Content-Type": [
+                "application/json; charset=utf-8"
+              ],
+              "Content-Length": [
+                "543"
+              ],
+              "Access-Control-Allow-Origin": [
+                ""
+              ]
+            },
+            "error": null,
+            "response_file": "template-probe.defaults.response.json",
+            "response_bytes": 543,
+            "response_sha256": "81aa6a5d0085dcdbca523f2b3a1af41effc6d764880d5e8b7627ed1f9977fc6f"
+          }
+        },
+        {
+          "name": "alias-false",
+          "exchange": {
+            "method": "POST",
+            "uri": "http://127.0.0.1:8080/apply-template",
+            "started_at_utc": "2026-08-27T20:37:15.6166919Z",
+            "completed_at_utc": "2026-08-27T20:37:15.6221891Z",
+            "wall_ms": 5.257,
+            "timeout_seconds": 30,
+            "status_code": 200,
+            "reason": "OK",
+            "headers": {
+              "Keep-Alive": [
+                "timeout=5, max=100"
+              ],
+              "Server": [
+                "llama.cpp"
+              ],
+              "Content-Type": [
+                "application/json; charset=utf-8"
+              ],
+              "Content-Length": [
+                "543"
+              ],
+              "Access-Control-Allow-Origin": [
+                ""
+              ]
+            },
+            "error": null,
+            "response_file": "template-probe.alias-false.response.json",
+            "response_bytes": 543,
+            "response_sha256": "81aa6a5d0085dcdbca523f2b3a1af41effc6d764880d5e8b7627ed1f9977fc6f"
+          }
+        },
+        {
+          "name": "all-false",
+          "exchange": {
+            "method": "POST",
+            "uri": "http://127.0.0.1:8080/apply-template",
+            "started_at_utc": "2026-08-27T20:37:15.6264366Z",
+            "completed_at_utc": "2026-08-27T20:37:15.6305083Z",
+            "wall_ms": 3.894,
+            "timeout_seconds": 30,
+            "status_code": 200,
+            "reason": "OK",
+            "headers": {
+              "Keep-Alive": [
+                "timeout=5, max=100"
+              ],
+              "Server": [
+                "llama.cpp"
+              ],
+              "Content-Type": [
+                "application/json; charset=utf-8"
+              ],
+              "Content-Length": [
+                "485"
+              ],
+              "Access-Control-Allow-Origin": [
+                ""
+              ]
+            },
+            "error": null,
+            "response_file": "template-probe.all-false.response.json",
+            "response_bytes": 485,
+            "response_sha256": "b2a35737e410c47b06df81acbc18456be004fd30556c84640ca7b3945d09eedd"
+          }
+        },
+        {
+          "name": "all-true",
+          "exchange": {
+            "method": "POST",
+            "uri": "http://127.0.0.1:8080/apply-template",
+            "started_at_utc": "2026-08-27T20:37:15.6463317Z",
+            "completed_at_utc": "2026-08-27T20:37:15.6527397Z",
+            "wall_ms": 6.129,
+            "timeout_seconds": 30,
+            "status_code": 200,
+            "reason": "OK",
+            "headers": {
+              "Keep-Alive": [
+                "timeout=5, max=100"
+              ],
+              "Server": [
+                "llama.cpp"
+              ],
+              "Content-Type": [
+                "application/json; charset=utf-8"
+              ],
+              "Content-Length": [
+                "543"
+              ],
+              "Access-Control-Allow-Origin": [
+                ""
+              ]
+            },
+            "error": null,
+            "response_file": "template-probe.all-true.response.json",
+            "response_bytes": 543,
+            "response_sha256": "81aa6a5d0085dcdbca523f2b3a1af41effc6d764880d5e8b7627ed1f9977fc6f"
+          }
+        }
+      ]
+    },
+    "requested": {
+      "context": 32768,
+      "gpu_layers": 24,
+      "cache_type_k": "q8_0",
+      "cache_type_v": "q8_0",
+      "flash_attention": "on",
+      "fit": "on",
+      "fit_target_mib": 1024,
+      "reasoning": "on",
+      "reasoning_budget": 1024,
+      "reasoning_preserve": "true",
+      "timeout_seconds": 720,
+      "threads": 12,
+      "batch_size": 512,
+      "parallel_slots": 1,
+      "seed": 42
+    },
+    "effective": {
+      "context": 32768,
+      "gpu_layers": 24,
+      "total_layers_reported": 66,
+      "cache_type_k": "q8_0",
+      "cache_type_v": "q8_0",
+      "kv_cache_attestation_lines": [
+        "K (q8_0):  544.00 MiB, V (q8_0):"
+      ],
+      "flash_attention": "enabled",
+      "flash_attention_attestation_lines": [
+        "flash_attn            = enabled"
+      ],
+      "reasoning_enabled": true,
+      "reasoning_attestation_lines": [
+        "chat template, thinking = 1"
+      ],
+      "preserve_reasoning_supported": true,
+      "preserve_reasoning_enabled": true,
+      "preserve_reasoning_evidence_source": "apply-template-differential-v1",
+      "thinking_generation_prefix_enabled": true,
+      "template_attestation": {
+        "schema": "animus-ferric-template-attestation-v1",
+        "protocol": "apply-template-differential-v1",
+        "passed": true,
+        "errors": [],
+        "source": {
+          "expected_chat_template_sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce",
+          "actual_chat_template_sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce",
+          "exact_source_passed": true,
+          "supports_preserve_reasoning": true
+        },
+        "arms": [
+          {
+            "name": "defaults",
+            "expected_reasoning": true,
+            "passed": true,
+            "errors": [],
+            "request_file": "template-probe.defaults.request.json",
+            "request_sha256": "e4131b0778ef439935685eed326748f2238c483ba77634e2946a7b3d329acf70",
+            "response_file": "template-probe.defaults.response.json",
+            "response_sha256": "81aa6a5d0085dcdbca523f2b3a1af41effc6d764880d5e8b7627ed1f9977fc6f",
+            "request_identity_passed": true,
+            "request_shape_passed": true,
+            "reasoning_sentinel_count": 1,
+            "reasoning_block_count": 1,
+            "content_sentinel_count": 1,
+            "prior_user_sentinel_count": 1,
+            "latest_user_sentinel_count": 1,
+            "generation_prefix_passed": true
+          },
+          {
+            "name": "alias-false",
+            "expected_reasoning": true,
+            "passed": true,
+            "errors": [],
+            "request_file": "template-probe.alias-false.request.json",
+            "request_sha256": "5de76d4275d22277337d7eab11afd11e368c65359f2b11479cc7e52afa98bf1c",
+            "response_file": "template-probe.alias-false.response.json",
+            "response_sha256": "81aa6a5d0085dcdbca523f2b3a1af41effc6d764880d5e8b7627ed1f9977fc6f",
+            "request_identity_passed": true,
+            "request_shape_passed": true,
+            "reasoning_sentinel_count": 1,
+            "reasoning_block_count": 1,
+            "content_sentinel_count": 1,
+            "prior_user_sentinel_count": 1,
+            "latest_user_sentinel_count": 1,
+            "generation_prefix_passed": true
+          },
+          {
+            "name": "all-false",
+            "expected_reasoning": false,
+            "passed": true,
+            "errors": [],
+            "request_file": "template-probe.all-false.request.json",
+            "request_sha256": "9de8a989efcf3cc56c2f9939c749e8cfcfe0bd21b03460106214eedf6878d136",
+            "response_file": "template-probe.all-false.response.json",
+            "response_sha256": "b2a35737e410c47b06df81acbc18456be004fd30556c84640ca7b3945d09eedd",
+            "request_identity_passed": true,
+            "request_shape_passed": true,
+            "reasoning_sentinel_count": 0,
+            "reasoning_block_count": 0,
+            "content_sentinel_count": 1,
+            "prior_user_sentinel_count": 1,
+            "latest_user_sentinel_count": 1,
+            "generation_prefix_passed": true
+          },
+          {
+            "name": "all-true",
+            "expected_reasoning": true,
+            "passed": true,
+            "errors": [],
+            "request_file": "template-probe.all-true.request.json",
+            "request_sha256": "84e5dd67e6df47e6e7ed5194e4582b867257b15ac4ada91fe4736596c3ed18c8",
+            "response_file": "template-probe.all-true.response.json",
+            "response_sha256": "81aa6a5d0085dcdbca523f2b3a1af41effc6d764880d5e8b7627ed1f9977fc6f",
+            "request_identity_passed": true,
+            "request_shape_passed": true,
+            "reasoning_sentinel_count": 1,
+            "reasoning_block_count": 1,
+            "content_sentinel_count": 1,
+            "prior_user_sentinel_count": 1,
+            "latest_user_sentinel_count": 1,
+            "generation_prefix_passed": true
+          }
+        ],
+        "differential": {
+          "positive_arms_byte_identical": true,
+          "negative_arm_is_positive_without_reasoning": true,
+          "preserve_thinking_default_effective": true,
+          "thinking_generation_prefix_effective": true
+        }
+      },
+      "reasoning_budget": 1024,
+      "reasoning_budget_evidence_source": "frozen_llama_help_env_mapping_and_launch_environment",
+      "request_timeout_seconds": 720,
+      "request_timeout_evidence_source": "frozen_llama_help_env_mapping_and_launch_environment",
+      "llama_help_sha256": "a54b7573409f0c639197d571c46315aed086fa591e339c68937bd0c23d1b7544",
+      "preserve_disabled_warning_count": 0,
+      "llama_runtime_identity": {
+        "passed": true,
+        "expected_file_count": 55,
+        "actual_file_count": 55,
+        "errors": [],
+        "actual": [
+          {
+            "path": "cublas64_12.dll",
+            "bytes": 100033536,
+            "sha256": "e40202fe4223c1cd2d2dce7beec59e1ed61c7801bd827309183be9b50e358f4c"
+          },
+          {
+            "path": "cublasLt64_12.dll",
+            "bytes": 473551360,
+            "sha256": "2a896460bef60ed57ef32b0875812f355a6984e671d638bb632f5e8c1d7a831f"
+          },
+          {
+            "path": "cudart64_12.dll",
+            "bytes": 553984,
+            "sha256": "d28e42265da7462162a54da6b7a99ea4fa2caf8139d862bb500db875d0b32dfc"
+          },
+          {
+            "path": "ggml-base.dll",
+            "bytes": 773632,
+            "sha256": "8f5626f4f2a736caab94c5120bb6ace15592b47ac3cab9b023e1247b5e877bf7"
+          },
+          {
+            "path": "ggml-cpu-alderlake.dll",
+            "bytes": 1182208,
+            "sha256": "97a6792627470fdf5fd99dd2775b32eed3e30b87dfa79a5d2add9d92853eea8e"
+          },
+          {
+            "path": "ggml-cpu-cannonlake.dll",
+            "bytes": 1397248,
+            "sha256": "12999cc7f6b0ac0ba38a3b2407b4ec16f7d1397cdebaaec59ae0b9a22e7503ba"
+          },
+          {
+            "path": "ggml-cpu-cascadelake.dll",
+            "bytes": 1383936,
+            "sha256": "a04d9637bccbb4911a6b3868a2019696a5aadfeac714e769a1741fb234c3f013"
+          },
+          {
+            "path": "ggml-cpu-cooperlake.dll",
+            "bytes": 1384960,
+            "sha256": "f706fcedce98737fd404fc275ae2fe31e3c49890df7ebc3e0beb8efb8e618031"
+          },
+          {
+            "path": "ggml-cpu-haswell.dll",
+            "bytes": 1186304,
+            "sha256": "fce3cfad5c965a7dbc87ee78ce9dcaa727c3f267339541bfae6721b60207642d"
+          },
+          {
+            "path": "ggml-cpu-icelake.dll",
+            "bytes": 1390592,
+            "sha256": "3c0178ac4d7db0f1340125c8e8b83f5944491550a3b4ef6df19133bd813d622e"
+          },
+          {
+            "path": "ggml-cpu-ivybridge.dll",
+            "bytes": 1075712,
+            "sha256": "8156b645b6ecb08c3e33ad7b15e601d1b6965e3dfbfbadf37941fe82015acb8e"
+          },
+          {
+            "path": "ggml-cpu-piledriver.dll",
+            "bytes": 1079808,
+            "sha256": "895c1f15d42f8765fafd358e725512b7b9025b162b22f49a84880bf421f615aa"
+          },
+          {
+            "path": "ggml-cpu-sandybridge.dll",
+            "bytes": 1055744,
+            "sha256": "567f6f16a90fbb60a08916ce0f18b22603f12ed682f7388ae8858ba649a63a61"
+          },
+          {
+            "path": "ggml-cpu-sapphirerapids.dll",
+            "bytes": 1661440,
+            "sha256": "4648680f5473a9573c0ff2b476b688a0fb9738f98462b48dad2bda52e275581e"
+          },
+          {
+            "path": "ggml-cpu-skylakex.dll",
+            "bytes": 1391104,
+            "sha256": "8520bb806f38cfadab30d7946424eee1191e59732cc0843b137cfb4315227a4f"
+          },
+          {
+            "path": "ggml-cpu-sse42.dll",
+            "bytes": 878592,
+            "sha256": "f85253f981c2372fdd4add30260232fa0e6c9922d1796c47bbc03e84b9010d62"
+          },
+          {
+            "path": "ggml-cpu-x64.dll",
+            "bytes": 871424,
+            "sha256": "9dd11256f6a7a57c6fd6b6a99ba3bd50abfa6ba9accdc24f4906fb96441e1c28"
+          },
+          {
+            "path": "ggml-cpu-zen4.dll",
+            "bytes": 1391616,
+            "sha256": "87b24bdbbdcdd76eed9064e2c21e3e147ee08f0e1708016e3089a517df1ad7ee"
+          },
+          {
+            "path": "ggml-cuda.dll",
+            "bytes": 538308608,
+            "sha256": "fc45d8f6a73f46231e0e04d6aa8260c7e366b974a18cab4bc53ed35248c2ff82"
+          },
+          {
+            "path": "ggml-rpc-server.exe",
+            "bytes": 101376,
+            "sha256": "c85ade0212bbeb4d37b98c66300f44d63e1b87ee2ab099e0b44c364a3572530c"
+          },
+          {
+            "path": "ggml-rpc.dll",
+            "bytes": 138752,
+            "sha256": "fc7f723d04a5e0971489850556740014afa5fedb90ffb8b4c668c8f95d1d7006"
+          },
+          {
+            "path": "ggml.dll",
+            "bytes": 86016,
+            "sha256": "a6149283ebbb41190a5172395a367086dd88ff6dee3350ee964e5a63bccd4b6f"
+          },
+          {
+            "path": "libomp140.x86_64.dll",
+            "bytes": 661856,
+            "sha256": "4a20c1e5c115c29771a12324513eb109badac72180f79481527ad79d996ffb33"
+          },
+          {
+            "path": "llama-batched-bench-impl.dll",
+            "bytes": 61440,
+            "sha256": "b205b4edf4eaded5a3d81c4a8b624a32ee2916296ad491d11b9c5f0072446894"
+          },
+          {
+            "path": "llama-batched-bench.exe",
+            "bytes": 9216,
+            "sha256": "e2d8ab4fa81395b5f3928175c196966b2563f9bf9417923b2c409578ae936194"
+          },
+          {
+            "path": "llama-bench-impl.dll",
+            "bytes": 395264,
+            "sha256": "48818a75742e056c57fa685dc5bf23d7fe05736689832a0ecb3d7f5b9b122c2b"
+          },
+          {
+            "path": "llama-bench.exe",
+            "bytes": 9216,
+            "sha256": "75e025a9b0a616c3d99c1cfdb7dc1d74fff96cf109612f68dd5c92e44ca19eb9"
+          },
+          {
+            "path": "llama-cli-impl.dll",
+            "bytes": 3496960,
+            "sha256": "f76a25a54a35941a2017b944fcc5db1ebf0a6f8b718f97acc32a0fab975eadc5"
+          },
+          {
+            "path": "llama-cli.exe",
+            "bytes": 9216,
+            "sha256": "d5d41ed1dc845b728b54f9b78c458d3a6baa0824e45c25b8100c096f81035884"
+          },
+          {
+            "path": "llama-common.dll",
+            "bytes": 8079872,
+            "sha256": "32575744205de1b6a69d46e9097a3b17f2ea996c0feddd3086ed378f459114dd"
+          },
+          {
+            "path": "llama-completion-impl.dll",
+            "bytes": 133120,
+            "sha256": "818a22d381611e47e6206e095a79b4b5c37ecfe1c0ce8d63cfa0f02d8fc9113b"
+          },
+          {
+            "path": "llama-completion.exe",
+            "bytes": 9216,
+            "sha256": "4b87621b0090e91babd75f06df36df6400b746451e6089539fd2d9aeb23ac123"
+          },
+          {
+            "path": "llama-fit-params-impl.dll",
+            "bytes": 40960,
+            "sha256": "3775970ef0575d2ae13e49bcd1e7de3d22029deaa13a2d24a429bc6db48a49b9"
+          },
+          {
+            "path": "llama-fit-params.exe",
+            "bytes": 9216,
+            "sha256": "91bcf323f3ffeaedc8e3513947ba0f71d26881e5163f0aaaa83e26c966cc1bca"
+          },
+          {
+            "path": "llama-gemma3-cli.exe",
+            "bytes": 27136,
+            "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+          },
+          {
+            "path": "llama-gguf-split.exe",
+            "bytes": 60416,
+            "sha256": "d6a8e4015ffa52824a1bcb7e422fd3498fc2b4f27cd7b4ad0c6d1506026fd939"
+          },
+          {
+            "path": "llama-imatrix.exe",
+            "bytes": 253952,
+            "sha256": "00156faadfd757c7baec2e357d43444f82af1aef95cf3e5461ede64069d4ecca"
+          },
+          {
+            "path": "llama-llava-cli.exe",
+            "bytes": 27136,
+            "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+          },
+          {
+            "path": "llama-minicpmv-cli.exe",
+            "bytes": 27136,
+            "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+          },
+          {
+            "path": "llama-mtmd-cli.exe",
+            "bytes": 84480,
+            "sha256": "4a15f13665cdc7085008698b6fdfbffb5f842ccc26a0f8c368424a6dd2785200"
+          },
+          {
+            "path": "llama-mtmd-debug.exe",
+            "bytes": 55296,
+            "sha256": "2e5964bb2087ab5a610d6b701b5565c5d397ca840acf27a757aaf27ba87feeed"
+          },
+          {
+            "path": "llama-perplexity-impl.dll",
+            "bytes": 194048,
+            "sha256": "cf41fa78ee7ceda727d8e577ad4b4e062261f62c7ba4d7fa88e93d91e6b3e872"
+          },
+          {
+            "path": "llama-perplexity.exe",
+            "bytes": 9216,
+            "sha256": "ad519d81fe372951a1d84c032e90da192876b93532bae0c5b71b3e37591d2e4e"
+          },
+          {
+            "path": "llama-quantize-impl.dll",
+            "bytes": 137216,
+            "sha256": "cb26315d9601c9cca27e8f5c7c49e20ebf656a8400cd4a2c3800954c0476f8be"
+          },
+          {
+            "path": "llama-quantize.exe",
+            "bytes": 9216,
+            "sha256": "b90413d2f8749c0cb044bfb81c12b72b757e6f221b96463963475b47bccb6ba4"
+          },
+          {
+            "path": "llama-qwen2vl-cli.exe",
+            "bytes": 27136,
+            "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+          },
+          {
+            "path": "llama-results.exe",
+            "bytes": 45568,
+            "sha256": "d228c1540bf480df3b06f8271dd37dc452891e7769c52a2f663801f3ea2081fd"
+          },
+          {
+            "path": "llama-server-impl.dll",
+            "bytes": 9982976,
+            "sha256": "b4590de3b49eb7c2bb4d1e4774760f202828d5749c37eec34347398c45779550"
+          },
+          {
+            "path": "llama-server.exe",
+            "bytes": 9216,
+            "sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c"
+          },
+          {
+            "path": "llama-template-analysis.exe",
+            "bytes": 270848,
+            "sha256": "b8c914da60edca0aa9c40e2610186a63e56f913a171fefce7cf69938ec7e0bc7"
+          },
+          {
+            "path": "llama-tokenize.exe",
+            "bytes": 57344,
+            "sha256": "3221b8210022462438d7e587bb17b1a4ad260fea645537aa2d2a2fea285b6429"
+          },
+          {
+            "path": "llama-tts.exe",
+            "bytes": 41472,
+            "sha256": "861726a31a9ac43d18381f6dcf80905be14f02a087e1854d518e73cbd17588cf"
+          },
+          {
+            "path": "llama.dll",
+            "bytes": 2958848,
+            "sha256": "fdabe60bdb0673411688572f752939de80d50d998331e4efe94fe28f24fc504d"
+          },
+          {
+            "path": "llama.exe",
+            "bytes": 83968,
+            "sha256": "89a47a0fe9d26898da099749c52382adcc30a3dd4a2dc55bd7fda927c20cd7ad"
+          },
+          {
+            "path": "mtmd.dll",
+            "bytes": 1716736,
+            "sha256": "dcda852c814ab85a4d5cd78d7c3daaab4a512d163d2d10858769065347a1364b"
+          }
+        ]
+      },
+      "startup_log_sha256": "fa1de415b7817308cd4d7d27432b4ad0410c34668e05f17509c8381486e8c48d"
+    },
+    "memory_after_load": {
+      "captured_at_utc": "2026-08-27T20:37:18.9817644Z",
+      "ram": {
+        "total_visible_bytes": 34281484288,
+        "free_physical_bytes": 484880384,
+        "total_virtual_bytes": 140737488224256,
+        "free_virtual_bytes": 138464493375488
+      },
+      "nvidia_smi_gpu_csv": [
+        "NVIDIA GeForce RTX 2080 Ti, GPU-ba084980-69e2-8d7e-07d9-c291d42030df, 596.49, 11264, 945, 10083, 11"
+      ],
+      "nvidia_smi_compute_apps_csv": [
+        "15308, [Insufficient Permissions], [N/A]",
+        "42784, C:\\Windows\\System32\\ShellHost.exe, [N/A]",
+        "13908, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+        "23508, C:\\Windows\\explorer.exe, [N/A]",
+        "31404, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+        "28756, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+        "13156, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37808, C:\\Program Files\\WindowsApps\\Microsoft.YourPhone_1.26071.164.0_x64__8wekyb3d8bbwe\\PhoneExperienceHost.exe, [N/A]",
+        "28252, C:\\Users\\charl\\AppData\\Local\\Discord\\app-1.0.9253\\Discord.exe, [N/A]",
+        "16256, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+        "32656, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+        "5556, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "7748, C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe, [N/A]",
+        "10652, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "43036, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "15208, C:\\Program Files (x86)\\GOG Galaxy\\GOG Galaxy Notifications Renderer.exe, [N/A]",
+        "42176, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EACefSubProcess.exe, [N/A]",
+        "34032, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EADesktop.exe, [N/A]",
+        "2540, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37664, C:\\Users\\charl\\AppData\\Local\\Programs\\zima-client\\Zima.exe, [N/A]",
+        "6308, C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe, [N/A]",
+        "25068, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudHome.exe, [N/A]",
+        "11064, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudPhotos.exe, [N/A]",
+        "27440, C:\\Program Files\\WindowsApps\\SpotifyAB.SpotifyMusic_1.297.270.0_x64__zpdnekdrzrea0\\Spotify.exe, [N/A]",
+        "18824, C:\\Program Files\\Adobe\\Adobe Creative Cloud\\ACC\\Creative Cloud UI Helper.exe, [N/A]",
+        "28220, C:\\Program Files\\Common Files\\Adobe\\Adobe OS Extension\\AdobeNotificationClient.exe, [N/A]",
+        "10184, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+        "7484, C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe, [N/A]",
+        "39908, C:\\Program Files\\WindowsApps\\Microsoft.MicrosoftOfficeHub_19.2608.49021.0_x64__8wekyb3d8bbwe\\M365Copilot.exe, [N/A]",
+        "26960, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "34124, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.820.7780.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+        "30988, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "46548, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "33892, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "50756, C:\\Program Files\\WindowsApps\\Microsoft.ScreenSketch_11.2605.36.0_x64__8wekyb3d8bbwe\\SnippingTool\\SnippingTool.exe, [N/A]",
+        "7324, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "47984, [Insufficient Permissions], [N/A]",
+        "29184, C:\\Program Files\\Malwarebytes\\Anti-Malware\\Malwarebytes.exe, [N/A]",
+        "19000, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "17848, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "41828, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "8576, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "42988, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "49752, C:\\Users\\charl\\AppData\\Local\\Packages\\Microsoft.4297127D64EC6_8wekyb3d8bbwe\\LocalCache\\Local\\runtime\\java-runtime-epsilon\\windows-x64\\java-runtime-epsilon\\bin\\javaw.exe, [N/A]",
+        "34132, C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe, [N/A]"
+      ],
+      "gpu": {
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "uuid": "GPU-ba084980-69e2-8d7e-07d9-c291d42030df",
+        "driver_version": "596.49",
+        "total_mib": 11264,
+        "free_mib": 945,
+        "used_mib": 10083,
+        "utilization_percent": 11
+      }
+    }
+  },
+  "smoke": {
+    "schema": "animus-ferric-qwen38-smoke-v1",
+    "passed": true,
+    "process": {
+      "file": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "arguments": [
+        "query",
+        "--workspace",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-epoch-3\\smoke\\e03-01-q4-32768\\smoke-workspace",
+        "--model",
+        "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "--api-base",
+        "http://127.0.0.1:8080/v1",
+        "--params-b",
+        "27",
+        "--quant",
+        "Q4_K_M",
+        "--family",
+        "qwen3.8",
+        "--ctx",
+        "32768",
+        "--temperature",
+        "1",
+        "--protocol",
+        "grammar",
+        "--harness-policy",
+        "legacy",
+        "--tier",
+        "ultra",
+        "--max-ring",
+        "0",
+        "--max-turns",
+        "4",
+        "--profile-dir",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-epoch-3\\smoke\\e03-01-q4-32768\\empty-profile",
+        "--no-config",
+        "--no-stream",
+        "Read nonce.txt using the read_file tool. Then call task_complete with summary exactly `AF-S114-QWEN38-NONCE-7F3C19A2`. Do not call any mutating tool and do not request clarification."
+      ],
+      "pid": 46236,
+      "started_at_utc": "2026-08-27T20:37:19.0112178Z",
+      "completed_at_utc": "2026-08-27T20:39:23.1692074Z",
+      "duration_ms": 124155.982,
+      "timed_out": false,
+      "execution_timed_out": false,
+      "kill_attempted": false,
+      "kill_succeeded": false,
+      "post_process_alive": false,
+      "output_drain_timed_out": false,
+      "exit_code": 0,
+      "stdout_file": "smoke.stdout.log",
+      "stderr_file": "smoke.stderr.log"
+    },
+    "trace_count": 1,
+    "trace_sha256": "d7b373edc31b52b11096d715cd3802298514b63e3a83fa389705bb1cc23d8942",
+    "trace_verify": {
+      "file": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "arguments": [
+        "trace",
+        "verify",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-epoch-3\\smoke\\e03-01-q4-32768\\smoke.trace.jsonl"
+      ],
+      "pid": 3040,
+      "started_at_utc": "2026-08-27T20:39:23.1778133Z",
+      "completed_at_utc": "2026-08-27T20:39:23.2271233Z",
+      "duration_ms": 48.012,
+      "timed_out": false,
+      "execution_timed_out": false,
+      "kill_attempted": false,
+      "kill_succeeded": false,
+      "post_process_alive": false,
+      "output_drain_timed_out": false,
+      "exit_code": 0,
+      "stdout_file": "smoke-trace-verify.stdout.log",
+      "stderr_file": "smoke-trace-verify.stderr.log"
+    },
+    "trace_verify_not_run_reason": null,
+    "trace_facts": {
+      "record_count": 22,
+      "policy_count": 1,
+      "protocol": "constrained_json",
+      "turn_count": 2,
+      "constraint_count": 2,
+      "all_turns_json_schema_constrained": true,
+      "tool_calls": [
+        {
+          "name": "read_file",
+          "args": {
+            "path": "nonce.txt"
+          }
+        },
+        {
+          "name": "task_complete",
+          "args": {
+            "summary": "AF-S114-QWEN38-NONCE-7F3C19A2"
+          }
+        }
+      ],
+      "read_file_before_task_complete": true,
+      "exact_nonce_read_result_count": 1,
+      "exact_nonce_read_file_pairs": [
+        {
+          "call_id": "g-0-0",
+          "path": "nonce.txt",
+          "call_event_index": 9,
+          "result_event_index": 11
+        }
+      ],
+      "exact_task_complete_summary": true,
+      "forbidden_tools_observed": [],
+      "session_end_count": 1,
+      "session_end_reason": "task_complete"
+    },
+    "trace_parse_error": null,
+    "workspace_unchanged": true,
+    "before_manifest": {
+      "path": "nonce.txt",
+      "bytes": 31,
+      "sha256": "c1e0330d8afe369909c7637a033d1cab36ac7155262b6008c1e28efeb75b0dd9"
+    },
+    "after_manifest": {
+      "path": "nonce.txt",
+      "bytes": 31,
+      "sha256": "c1e0330d8afe369909c7637a033d1cab36ac7155262b6008c1e28efeb75b0dd9"
+    }
+  },
+  "throughput": {
+    "schema": "animus-ferric-throughput-summary-v1",
+    "passed": true,
+    "reason": "viable",
+    "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+    "template_sha256": "59dc2169673a085e5ea82e62b1bc85b29ad33b0e50a9181291ba5625ffa797e3",
+    "scheduled_samples": [
+      "warmup",
+      "trial-01",
+      "trial-02",
+      "trial-03"
+    ],
+    "observed_samples": 4,
+    "valid_request_count": 4,
+    "valid_trial_count": 3,
+    "median_decoded_tokens_per_second": 3.2064850358228254,
+    "minimum_required": 2.0,
+    "samples": [
+      {
+        "schema": "animus-ferric-throughput-sample-v1",
+        "ordinal": 1,
+        "label": "warmup",
+        "scored": false,
+        "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+        "request_bytes": 811,
+        "quant_elapsed_before_request_seconds": 197.641277,
+        "remaining_wall_ms_before_request": 5202358,
+        "exchange": {
+          "method": "POST",
+          "uri": "http://127.0.0.1:8080/v1/chat/completions",
+          "started_at_utc": "2026-08-27T20:39:23.2809419Z",
+          "completed_at_utc": "2026-08-27T20:40:46.3169408Z",
+          "wall_ms": 83035.698,
+          "timeout_seconds": 720,
+          "status_code": 200,
+          "reason": "OK",
+          "headers": {
+            "Keep-Alive": [
+              "timeout=5, max=100"
+            ],
+            "Server": [
+              "llama.cpp"
+            ],
+            "Content-Type": [
+              "application/json; charset=utf-8"
+            ],
+            "Content-Length": [
+              "1901"
+            ],
+            "Access-Control-Allow-Origin": [
+              ""
+            ]
+          },
+          "error": null,
+          "response_file": "throughput-warmup.response.json",
+          "response_bytes": 1901,
+          "response_sha256": "adc7c556aba4d61ffe8fc5d97bda0a0fe00dda031c6c7ceaf6693d3f091e0ded"
+        },
+        "usage_completion_tokens": 256,
+        "timings_predicted_n": 256,
+        "timings_predicted_ms": 79916.51,
+        "timings_reported_per_second": 3.1908300299900483,
+        "computed_decoded_tokens_per_second": 3.2033430889311862,
+        "counter_consistent": true,
+        "rate_consistent": true,
+        "failure_cause": null,
+        "valid": true,
+        "raw_response": "{\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"We need to answer user's request: continuous technical essay at least 500 words, no headings, lists, code fences, tools, or a conclusion. They want analyze dependency-free Rust release scheduler design. Cover parsing invariants, dependency-graph validation, topological readiness, deterministic numeric-priority and lexicographic tie-breaking, cycle reporting, immutable inputs, command-line error behavior, focused tests, and safety. No headings, lists, code fences, tools, or conclusion. Keep elaborating until generation limit stops. Need ensure no code fences. No lists. No headings. No conclusion. Need at least 500 words. We can produce continuous prose. Need avoid \\\"conclusion\\\" as section? They say or a conclusion; likely don't end with conclusion. Just keep elaborating, maybe end abruptly? But should be coherent. Need ensure no bullet list, no numbered. No code fences. Can mention Rust terms. No headings. Continuous technical essay. At least 500 words. Let's craft maybe 900-1200 words. Need no explicit conclusion. Could end while elaborating on safety or tests. Need avoid headings like \\\"Safety\\\". Just inline. Ensure no lists. Let's draft in one paragraph? Continuous\"}}],\"created\":1787863246,\"model\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"system_fingerprint\":\"b10516-b95502ba9\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":256,\"prompt_tokens\":161,\"total_tokens\":417,\"prompt_tokens_details\":{\"cached_tokens\":0}},\"id\":\"chatcmpl-RXv1T64r9VqLXCp2dEf91OHYrWNYobso\",\"timings\":{\"cache_n\":0,\"prompt_n\":161,\"prompt_ms\":2714.222,\"prompt_per_token_ms\":16.858521739130435,\"prompt_per_second\":59.3171818664796,\"predicted_n\":256,\"predicted_ms\":79916.51,\"predicted_per_token_ms\":313.39807843137254,\"predicted_per_second\":3.1908300299900483}}"
+      },
+      {
+        "schema": "animus-ferric-throughput-sample-v1",
+        "ordinal": 2,
+        "label": "trial-01",
+        "scored": true,
+        "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+        "request_bytes": 811,
+        "quant_elapsed_before_request_seconds": 280.703847,
+        "remaining_wall_ms_before_request": 5119297,
+        "exchange": {
+          "method": "POST",
+          "uri": "http://127.0.0.1:8080/v1/chat/completions",
+          "started_at_utc": "2026-08-27T20:40:46.3388772Z",
+          "completed_at_utc": "2026-08-27T20:42:06.8726517Z",
+          "wall_ms": 80533.488,
+          "timeout_seconds": 720,
+          "status_code": 200,
+          "reason": "OK",
+          "headers": {
+            "Keep-Alive": [
+              "timeout=5, max=100"
+            ],
+            "Server": [
+              "llama.cpp"
+            ],
+            "Content-Type": [
+              "application/json; charset=utf-8"
+            ],
+            "Content-Length": [
+              "1894"
+            ],
+            "Access-Control-Allow-Origin": [
+              ""
+            ]
+          },
+          "error": null,
+          "response_file": "throughput-trial-01.response.json",
+          "response_bytes": 1894,
+          "response_sha256": "9e9fe5ac136ca76c759215800940aa3a03d131839b80ef618d4ab997dad1992e"
+        },
+        "usage_completion_tokens": 256,
+        "timings_predicted_n": 256,
+        "timings_predicted_ms": 79838.202,
+        "timings_reported_per_second": 3.1939597036516423,
+        "computed_decoded_tokens_per_second": 3.2064850358228254,
+        "counter_consistent": true,
+        "rate_consistent": true,
+        "failure_cause": null,
+        "valid": true,
+        "raw_response": "{\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"We need to answer user's request: continuous technical essay at least 500 words, no headings, lists, code fences, tools, or a conclusion. They want analyze dependency-free Rust release scheduler design. Cover parsing invariants, dependency-graph validation, topological readiness, deterministic numeric-priority and lexicographic tie-breaking, cycle reporting, immutable inputs, command-line error behavior, focused tests, and safety. No headings, lists, code fences, tools, or conclusion. Keep elaborating until generation limit stops. Need ensure no code fences. No lists. No headings. No conclusion. Need at least 500 words. We can produce continuous prose. Need avoid \\\"conclusion\\\" as section? They say or a conclusion; likely don't end with conclusion. Just keep elaborating, maybe end abruptly? But should be coherent. Need ensure no bullet list, no numbered. No code fences. Can mention Rust terms. No headings. Continuous technical essay. At least 500 words. Let's craft maybe 900-1200 words. Need no explicit conclusion. Could end while elaborating on safety or tests. Need avoid headings like \\\"Safety\\\". Just inline. Ensure no lists. Let's draft in one paragraph? Continuous\"}}],\"created\":1787863326,\"model\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"system_fingerprint\":\"b10516-b95502ba9\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":256,\"prompt_tokens\":161,\"total_tokens\":417,\"prompt_tokens_details\":{\"cached_tokens\":157}},\"id\":\"chatcmpl-Vmcejh21DAZRFCb5fsobVGHMJ0jKEMZw\",\"timings\":{\"cache_n\":157,\"prompt_n\":4,\"prompt_ms\":480.098,\"prompt_per_token_ms\":120.0245,\"prompt_per_second\":8.331632291740435,\"predicted_n\":256,\"predicted_ms\":79838.202,\"predicted_per_token_ms\":313.09098823529416,\"predicted_per_second\":3.1939597036516423}}"
+      },
+      {
+        "schema": "animus-ferric-throughput-sample-v1",
+        "ordinal": 3,
+        "label": "trial-02",
+        "scored": true,
+        "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+        "request_bytes": 811,
+        "quant_elapsed_before_request_seconds": 361.26057,
+        "remaining_wall_ms_before_request": 5038740,
+        "exchange": {
+          "method": "POST",
+          "uri": "http://127.0.0.1:8080/v1/chat/completions",
+          "started_at_utc": "2026-08-27T20:42:06.8954030Z",
+          "completed_at_utc": "2026-08-27T20:43:26.6815231Z",
+          "wall_ms": 79785.836,
+          "timeout_seconds": 720,
+          "status_code": 200,
+          "reason": "OK",
+          "headers": {
+            "Keep-Alive": [
+              "timeout=5, max=100"
+            ],
+            "Server": [
+              "llama.cpp"
+            ],
+            "Content-Type": [
+              "application/json; charset=utf-8"
+            ],
+            "Content-Length": [
+              "1892"
+            ],
+            "Access-Control-Allow-Origin": [
+              ""
+            ]
+          },
+          "error": null,
+          "response_file": "throughput-trial-02.response.json",
+          "response_bytes": 1892,
+          "response_sha256": "f4c6e55023fae0741e6ea8dedae704bec7554caa6e5e53cb5c81ea611fc8a981"
+        },
+        "usage_completion_tokens": 256,
+        "timings_predicted_n": 256,
+        "timings_predicted_ms": 79287.617,
+        "timings_reported_per_second": 3.2161390346742293,
+        "computed_decoded_tokens_per_second": 3.2287513446141283,
+        "counter_consistent": true,
+        "rate_consistent": true,
+        "failure_cause": null,
+        "valid": true,
+        "raw_response": "{\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"We need to answer user's request: continuous technical essay at least 500 words, no headings, lists, code fences, tools, or a conclusion. They want analyze dependency-free Rust release scheduler design. Cover parsing invariants, dependency-graph validation, topological readiness, deterministic numeric-priority and lexicographic tie-breaking, cycle reporting, immutable inputs, command-line error behavior, focused tests, and safety. No headings, lists, code fences, tools, or conclusion. Keep elaborating until generation limit stops. Need ensure no code fences. No lists. No headings. No conclusion. Need at least 500 words. We can produce continuous prose. Need avoid \\\"conclusion\\\" as section? They say or a conclusion; likely don't end with conclusion. Just keep elaborating, maybe end abruptly? But should be coherent. Need ensure no bullet list, no numbered. No code fences. Can mention Rust terms. No headings. Continuous technical essay. At least 500 words. Let's craft maybe 900-1200 words. Need no explicit conclusion. Could end while elaborating on safety or tests. Need avoid headings like \\\"Safety\\\". Just inline. Ensure no lists. Let's draft in one paragraph? Continuous\"}}],\"created\":1787863406,\"model\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"system_fingerprint\":\"b10516-b95502ba9\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":256,\"prompt_tokens\":161,\"total_tokens\":417,\"prompt_tokens_details\":{\"cached_tokens\":157}},\"id\":\"chatcmpl-4WeDriEm1eWoSY0oS8uLvJryb4MiGAJj\",\"timings\":{\"cache_n\":157,\"prompt_n\":4,\"prompt_ms\":490.843,\"prompt_per_token_ms\":122.71075,\"prompt_per_second\":8.14924527802169,\"predicted_n\":256,\"predicted_ms\":79287.617,\"predicted_per_token_ms\":310.931831372549,\"predicted_per_second\":3.2161390346742293}}"
+      },
+      {
+        "schema": "animus-ferric-throughput-sample-v1",
+        "ordinal": 4,
+        "label": "trial-03",
+        "scored": true,
+        "request_sha256": "165132a694bcd0890225c7aee4237632a3325f1baa38773dd48bd99ecf39abdb",
+        "request_bytes": 811,
+        "quant_elapsed_before_request_seconds": 441.059386,
+        "remaining_wall_ms_before_request": 4958941,
+        "exchange": {
+          "method": "POST",
+          "uri": "http://127.0.0.1:8080/v1/chat/completions",
+          "started_at_utc": "2026-08-27T20:43:26.6941685Z",
+          "completed_at_utc": "2026-08-27T20:44:47.8770524Z",
+          "wall_ms": 81182.608,
+          "timeout_seconds": 720,
+          "status_code": 200,
+          "reason": "OK",
+          "headers": {
+            "Keep-Alive": [
+              "timeout=5, max=100"
+            ],
+            "Server": [
+              "llama.cpp"
+            ],
+            "Content-Type": [
+              "application/json; charset=utf-8"
+            ],
+            "Content-Length": [
+              "1885"
+            ],
+            "Access-Control-Allow-Origin": [
+              ""
+            ]
+          },
+          "error": null,
+          "response_file": "throughput-trial-03.response.json",
+          "response_bytes": 1885,
+          "response_sha256": "52ac479eeac681602b7bd07898c501e2fc7f3c39f8d46bdc355bc948bd19ae56"
+        },
+        "usage_completion_tokens": 256,
+        "timings_predicted_n": 256,
+        "timings_predicted_ms": 80675.931,
+        "timings_reported_per_second": 3.1607940167433584,
+        "computed_decoded_tokens_per_second": 3.173189287397254,
+        "counter_consistent": true,
+        "rate_consistent": true,
+        "failure_cause": null,
+        "valid": true,
+        "raw_response": "{\"choices\":[{\"finish_reason\":\"length\",\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"We need to answer user's request: continuous technical essay at least 500 words, no headings, lists, code fences, tools, or a conclusion. They want analyze dependency-free Rust release scheduler design. Cover parsing invariants, dependency-graph validation, topological readiness, deterministic numeric-priority and lexicographic tie-breaking, cycle reporting, immutable inputs, command-line error behavior, focused tests, and safety. No headings, lists, code fences, tools, or conclusion. Keep elaborating until generation limit stops. Need ensure no code fences. No lists. No headings. No conclusion. Need at least 500 words. We can produce continuous prose. Need avoid \\\"conclusion\\\" as section? They say or a conclusion; likely don't end with conclusion. Just keep elaborating, maybe end abruptly? But should be coherent. Need ensure no bullet list, no numbered. No code fences. Can mention Rust terms. No headings. Continuous technical essay. At least 500 words. Let's craft maybe 900-1200 words. Need no explicit conclusion. Could end while elaborating on safety or tests. Need avoid headings like \\\"Safety\\\". Just inline. Ensure no lists. Let's draft in one paragraph? Continuous\"}}],\"created\":1787863487,\"model\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"system_fingerprint\":\"b10516-b95502ba9\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":256,\"prompt_tokens\":161,\"total_tokens\":417,\"prompt_tokens_details\":{\"cached_tokens\":157}},\"id\":\"chatcmpl-MRjr7UyHyAFOpkBr2yICf2u9wgeJ0IMJ\",\"timings\":{\"cache_n\":157,\"prompt_n\":4,\"prompt_ms\":499.617,\"prompt_per_token_ms\":124.90425,\"prompt_per_second\":8.006132697646397,\"predicted_n\":256,\"predicted_ms\":80675.931,\"predicted_per_token_ms\":316.3762,\"predicted_per_second\":3.1607940167433584}}"
+      }
+    ],
+    "memory_after_measurement": {
+      "captured_at_utc": "2026-08-27T20:44:48.0773609Z",
+      "ram": {
+        "total_visible_bytes": 34281484288,
+        "free_physical_bytes": 1062125568,
+        "total_virtual_bytes": 140737488224256,
+        "free_virtual_bytes": 138464536248320
+      },
+      "nvidia_smi_gpu_csv": [
+        "NVIDIA GeForce RTX 2080 Ti, GPU-ba084980-69e2-8d7e-07d9-c291d42030df, 596.49, 11264, 1043, 9985, 14"
+      ],
+      "nvidia_smi_compute_apps_csv": [
+        "15308, [Insufficient Permissions], [N/A]",
+        "42784, C:\\Windows\\System32\\ShellHost.exe, [N/A]",
+        "13908, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+        "23508, C:\\Windows\\explorer.exe, [N/A]",
+        "31404, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+        "28756, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+        "13156, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37808, C:\\Program Files\\WindowsApps\\Microsoft.YourPhone_1.26071.164.0_x64__8wekyb3d8bbwe\\PhoneExperienceHost.exe, [N/A]",
+        "28252, C:\\Users\\charl\\AppData\\Local\\Discord\\app-1.0.9253\\Discord.exe, [N/A]",
+        "16256, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+        "32656, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+        "5556, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "7748, C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe, [N/A]",
+        "10652, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "43036, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "15208, C:\\Program Files (x86)\\GOG Galaxy\\GOG Galaxy Notifications Renderer.exe, [N/A]",
+        "42176, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EACefSubProcess.exe, [N/A]",
+        "34032, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EADesktop.exe, [N/A]",
+        "2540, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37664, C:\\Users\\charl\\AppData\\Local\\Programs\\zima-client\\Zima.exe, [N/A]",
+        "6308, C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe, [N/A]",
+        "25068, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudHome.exe, [N/A]",
+        "11064, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudPhotos.exe, [N/A]",
+        "27440, C:\\Program Files\\WindowsApps\\SpotifyAB.SpotifyMusic_1.297.270.0_x64__zpdnekdrzrea0\\Spotify.exe, [N/A]",
+        "18824, C:\\Program Files\\Adobe\\Adobe Creative Cloud\\ACC\\Creative Cloud UI Helper.exe, [N/A]",
+        "28220, C:\\Program Files\\Common Files\\Adobe\\Adobe OS Extension\\AdobeNotificationClient.exe, [N/A]",
+        "10184, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+        "7484, C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe, [N/A]",
+        "39908, C:\\Program Files\\WindowsApps\\Microsoft.MicrosoftOfficeHub_19.2608.49021.0_x64__8wekyb3d8bbwe\\M365Copilot.exe, [N/A]",
+        "26960, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "34124, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.820.7780.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+        "30988, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "46548, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "33892, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "50756, C:\\Program Files\\WindowsApps\\Microsoft.ScreenSketch_11.2605.36.0_x64__8wekyb3d8bbwe\\SnippingTool\\SnippingTool.exe, [N/A]",
+        "7324, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "47984, [Insufficient Permissions], [N/A]",
+        "29184, C:\\Program Files\\Malwarebytes\\Anti-Malware\\Malwarebytes.exe, [N/A]",
+        "19000, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "17848, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "41828, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "8576, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "42988, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "49752, C:\\Users\\charl\\AppData\\Local\\Packages\\Microsoft.4297127D64EC6_8wekyb3d8bbwe\\LocalCache\\Local\\runtime\\java-runtime-epsilon\\windows-x64\\java-runtime-epsilon\\bin\\javaw.exe, [N/A]",
+        "34132, C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe, [N/A]"
+      ],
+      "gpu": {
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "uuid": "GPU-ba084980-69e2-8d7e-07d9-c291d42030df",
+        "driver_version": "596.49",
+        "total_mib": 11264,
+        "free_mib": 1043,
+        "used_mib": 9985,
+        "utilization_percent": 14
+      }
+    }
+  },
+  "teardown": {
+    "schema": "animus-ferric-runtime-teardown-v1",
+    "passed": true,
+    "cleanup_duration_ms": 5610.367,
+    "cleanup_grace_seconds": 120,
+    "down_attempts": [
+      {
+        "file": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+        "arguments": [
+          "server",
+          "down"
+        ],
+        "pid": 18404,
+        "started_at_utc": "2026-08-27T20:44:48.2016645Z",
+        "completed_at_utc": "2026-08-27T20:44:50.1176434Z",
+        "duration_ms": 1914.721,
+        "timed_out": false,
+        "execution_timed_out": false,
+        "kill_attempted": false,
+        "kill_succeeded": false,
+        "post_process_alive": false,
+        "output_drain_timed_out": false,
+        "exit_code": 0,
+        "stdout_file": "down-1.stdout.log",
+        "stderr_file": "down-1.stderr.log",
+        "teardown_label": "down-1"
+      }
+    ],
+    "saved_pid": 34132,
+    "saved_pid_alive": false,
+    "listener_records": [],
+    "local_runfile_absent": true,
+    "global_runfile_absent": true,
+    "matching_model_processes": [],
+    "live_wrapper_process_records": [],
+    "wrapper_process_cleanup": [],
+    "wrapper_processes_alive": [],
+    "memory_before_teardown": {
+      "captured_at_utc": "2026-08-27T20:44:48.1998436Z",
+      "ram": {
+        "total_visible_bytes": 34281484288,
+        "free_physical_bytes": 1062322176,
+        "total_virtual_bytes": 140737488224256,
+        "free_virtual_bytes": 138464533102592
+      },
+      "nvidia_smi_gpu_csv": [
+        "NVIDIA GeForce RTX 2080 Ti, GPU-ba084980-69e2-8d7e-07d9-c291d42030df, 596.49, 11264, 1043, 9985, 14"
+      ],
+      "nvidia_smi_compute_apps_csv": [
+        "15308, [Insufficient Permissions], [N/A]",
+        "42784, C:\\Windows\\System32\\ShellHost.exe, [N/A]",
+        "13908, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+        "23508, C:\\Windows\\explorer.exe, [N/A]",
+        "31404, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+        "28756, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+        "13156, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37808, C:\\Program Files\\WindowsApps\\Microsoft.YourPhone_1.26071.164.0_x64__8wekyb3d8bbwe\\PhoneExperienceHost.exe, [N/A]",
+        "28252, C:\\Users\\charl\\AppData\\Local\\Discord\\app-1.0.9253\\Discord.exe, [N/A]",
+        "16256, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+        "32656, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+        "5556, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "7748, C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe, [N/A]",
+        "10652, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "43036, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "15208, C:\\Program Files (x86)\\GOG Galaxy\\GOG Galaxy Notifications Renderer.exe, [N/A]",
+        "42176, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EACefSubProcess.exe, [N/A]",
+        "34032, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EADesktop.exe, [N/A]",
+        "2540, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37664, C:\\Users\\charl\\AppData\\Local\\Programs\\zima-client\\Zima.exe, [N/A]",
+        "6308, C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe, [N/A]",
+        "25068, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudHome.exe, [N/A]",
+        "11064, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudPhotos.exe, [N/A]",
+        "27440, C:\\Program Files\\WindowsApps\\SpotifyAB.SpotifyMusic_1.297.270.0_x64__zpdnekdrzrea0\\Spotify.exe, [N/A]",
+        "18824, C:\\Program Files\\Adobe\\Adobe Creative Cloud\\ACC\\Creative Cloud UI Helper.exe, [N/A]",
+        "28220, C:\\Program Files\\Common Files\\Adobe\\Adobe OS Extension\\AdobeNotificationClient.exe, [N/A]",
+        "10184, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+        "7484, C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe, [N/A]",
+        "39908, C:\\Program Files\\WindowsApps\\Microsoft.MicrosoftOfficeHub_19.2608.49021.0_x64__8wekyb3d8bbwe\\M365Copilot.exe, [N/A]",
+        "26960, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "34124, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.820.7780.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+        "30988, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "46548, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "33892, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "50756, C:\\Program Files\\WindowsApps\\Microsoft.ScreenSketch_11.2605.36.0_x64__8wekyb3d8bbwe\\SnippingTool\\SnippingTool.exe, [N/A]",
+        "7324, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "47984, [Insufficient Permissions], [N/A]",
+        "29184, C:\\Program Files\\Malwarebytes\\Anti-Malware\\Malwarebytes.exe, [N/A]",
+        "19000, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "17848, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "41828, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "8576, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "42988, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "49752, C:\\Users\\charl\\AppData\\Local\\Packages\\Microsoft.4297127D64EC6_8wekyb3d8bbwe\\LocalCache\\Local\\runtime\\java-runtime-epsilon\\windows-x64\\java-runtime-epsilon\\bin\\javaw.exe, [N/A]",
+        "34132, C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe, [N/A]"
+      ],
+      "gpu": {
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "uuid": "GPU-ba084980-69e2-8d7e-07d9-c291d42030df",
+        "driver_version": "596.49",
+        "total_mib": 11264,
+        "free_mib": 1043,
+        "used_mib": 9985,
+        "utilization_percent": 14
+      }
+    },
+    "health_after_teardown": {
+      "method": "GET",
+      "uri": "http://127.0.0.1:8080/health",
+      "started_at_utc": "2026-08-27T20:44:51.5393003Z",
+      "completed_at_utc": "2026-08-27T20:44:53.5600189Z",
+      "wall_ms": 2020.522,
+      "timeout_seconds": 2,
+      "status_code": null,
+      "reason": null,
+      "headers": {},
+      "error": "System.Management.Automation.MethodInvocationException: Exception calling \"GetResult\" with \"0\" argument(s): \"The request was canceled due to the configured HttpClient.Timeout of 2 seconds elapsing.\"\r\n ---> System.Threading.Tasks.TaskCanceledException: The request was canceled due to the configured HttpClient.Timeout of 2 seconds elapsing.\r\n ---> System.TimeoutException: A task was canceled.\r\n ---> System.Threading.Tasks.TaskCanceledException: A task was canceled.\r\n   at System.Threading.Tasks.TaskCompletionSourceWithCancellation`1.WaitWithCancellationAsync(CancellationToken cancellationToken)\r\n   at System.Net.Http.HttpConnectionPool.SendWithVersionDetectionAndRetryAsync(HttpRequestMessage request, Boolean async, Boolean doRequestAuth, CancellationToken cancellationToken)\r\n   at System.Net.Http.RedirectHandler.SendAsync(HttpRequestMessage request, Boolean async, CancellationToken cancellationToken)\r\n   at System.Net.Http.SocketsHttpHandler.<SendAsync>g__CreateHandlerAndSendAsync|115_0(HttpRequestMessage request, CancellationToken cancellationToken)\r\n   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)\r\n   --- End of inner exception stack trace ---\r\n   --- End of inner exception stack trace ---\r\n   at System.Net.Http.HttpClient.HandleFailure(Exception e, Boolean telemetryStarted, HttpResponseMessage response, CancellationTokenSource cts, CancellationToken cancellationToken, CancellationTokenSource pendingRequestsCts)\r\n   at System.Net.Http.HttpClient.<SendAsync>g__Core|83_0(HttpRequestMessage request, HttpCompletionOption completionOption, CancellationTokenSource cts, Boolean disposeCts, CancellationTokenSource pendingRequestsCts, CancellationToken originalCancellationToken)\r\n   at CallSite.Target(Closure, CallSite, Object)\r\n   --- End of inner exception stack trace ---\r\n   at System.Management.Automation.ExceptionHandlingOps.CheckActionPreference(FunctionContext funcContext, Exception exception)\r\n   at System.Management.Automation.Interpreter.ActionCallInstruction`2.Run(InterpretedFrame frame)\r\n   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)\r\n   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)",
+      "response_file": "health-after-teardown.body",
+      "response_bytes": 0,
+      "response_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "memory_after_teardown": {
+      "captured_at_utc": "2026-08-27T20:44:53.6879134Z",
+      "ram": {
+        "total_visible_bytes": 34281484288,
+        "free_physical_bytes": 16378781696,
+        "total_virtual_bytes": 140737488224256,
+        "free_virtual_bytes": 138464516997120
+      },
+      "nvidia_smi_gpu_csv": [
+        "NVIDIA GeForce RTX 2080 Ti, GPU-ba084980-69e2-8d7e-07d9-c291d42030df, 596.49, 11264, 8037, 2991, 12"
+      ],
+      "nvidia_smi_compute_apps_csv": [
+        "15308, [Insufficient Permissions], [N/A]",
+        "42784, C:\\Windows\\System32\\ShellHost.exe, [N/A]",
+        "13908, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+        "23508, C:\\Windows\\explorer.exe, [N/A]",
+        "31404, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+        "28756, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+        "13156, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37808, C:\\Program Files\\WindowsApps\\Microsoft.YourPhone_1.26071.164.0_x64__8wekyb3d8bbwe\\PhoneExperienceHost.exe, [N/A]",
+        "28252, C:\\Users\\charl\\AppData\\Local\\Discord\\app-1.0.9253\\Discord.exe, [N/A]",
+        "16256, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+        "32656, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+        "5556, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "7748, C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe, [N/A]",
+        "10652, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "43036, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "15208, C:\\Program Files (x86)\\GOG Galaxy\\GOG Galaxy Notifications Renderer.exe, [N/A]",
+        "42176, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EACefSubProcess.exe, [N/A]",
+        "34032, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EADesktop.exe, [N/A]",
+        "2540, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37664, C:\\Users\\charl\\AppData\\Local\\Programs\\zima-client\\Zima.exe, [N/A]",
+        "6308, C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe, [N/A]",
+        "25068, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudHome.exe, [N/A]",
+        "11064, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudPhotos.exe, [N/A]",
+        "27440, C:\\Program Files\\WindowsApps\\SpotifyAB.SpotifyMusic_1.297.270.0_x64__zpdnekdrzrea0\\Spotify.exe, [N/A]",
+        "18824, C:\\Program Files\\Adobe\\Adobe Creative Cloud\\ACC\\Creative Cloud UI Helper.exe, [N/A]",
+        "28220, C:\\Program Files\\Common Files\\Adobe\\Adobe OS Extension\\AdobeNotificationClient.exe, [N/A]",
+        "10184, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+        "7484, C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe, [N/A]",
+        "39908, C:\\Program Files\\WindowsApps\\Microsoft.MicrosoftOfficeHub_19.2608.49021.0_x64__8wekyb3d8bbwe\\M365Copilot.exe, [N/A]",
+        "26960, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "34124, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.820.7780.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+        "30988, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "46548, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "33892, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "50756, C:\\Program Files\\WindowsApps\\Microsoft.ScreenSketch_11.2605.36.0_x64__8wekyb3d8bbwe\\SnippingTool\\SnippingTool.exe, [N/A]",
+        "7324, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "47984, [Insufficient Permissions], [N/A]",
+        "29184, C:\\Program Files\\Malwarebytes\\Anti-Malware\\Malwarebytes.exe, [N/A]",
+        "19000, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "17848, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "41828, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "8576, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "42988, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "49752, C:\\Users\\charl\\AppData\\Local\\Packages\\Microsoft.4297127D64EC6_8wekyb3d8bbwe\\LocalCache\\Local\\runtime\\java-runtime-epsilon\\windows-x64\\java-runtime-epsilon\\bin\\javaw.exe, [N/A]"
+      ],
+      "gpu": {
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "uuid": "GPU-ba084980-69e2-8d7e-07d9-c291d42030df",
+        "driver_version": "596.49",
+        "total_mib": 11264,
+        "free_mib": 8037,
+        "used_mib": 2991,
+        "utilization_percent": 12
+      }
+    },
+    "errors": []
+  },
+  "failure_classification": null,
+  "reason_codes": [],
+  "verdict": "viable",
+  "evidence_complete": true,
+  "fatal_error": null
+}

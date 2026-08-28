@@ -1,0 +1,440 @@
+{
+  "schema": "animus-ferric-s114-sprint-loop-capability-verdict-v1",
+  "task": "T-11411",
+  "captured_at_utc": "2026-08-28T00:53:34.8827587+00:00",
+  "result": "packaging_failure",
+  "source": {
+    "repository": "https://github.com/crussella0129/Animus_Sprint_Loops.git",
+    "commit": "4acc1fd6e0b964ea4bcbedd17c44cb2ca8ca0066",
+    "tree": "3420c3d9858b6d3049b81f2334ca21a9d1fdaade",
+    "clean": true,
+    "adapter": "open-harnesses",
+    "source_manifest_file": "evidence/source-manifest.json",
+    "source_manifest_sha256": "07dfa0e4dd1713aea691e982f47fdc53f235bcac26ff0c85c688c4968c66fbb7",
+    "source_content_tree_sha256": "18320a0ce36cf41895c20b08606f85d3c71bcf90f78f5791d17ceec09cde907b"
+  },
+  "runtime": {
+    "ferric_display_path": "target/release/ferric.exe",
+    "ferric_sha256": "af75612b3498a1721e5b5f1b2f6309bf851d65b9bd13ad45e76cf8e370cf10f2",
+    "qwen38_selection": "selected_q4",
+    "behavioral_model_run": false,
+    "fallback_control_activated": false
+  },
+  "installation": {
+    "installer_exit_code": 0,
+    "installed_script_count": 28,
+    "pinned_source_script_count": 28,
+    "installed_bytes_match_pinned_source": true,
+    "installed_manifest_file": "evidence/installed-scripts-manifest.json",
+    "installed_manifest_sha256": "773525fbdf3b8ba0faaeda0ed81df86737e15da5d56c1a8496f3c68bc597da3c",
+    "workspace_manifest_file": "evidence/workspace-manifest.json",
+    "workspace_manifest_sha256": "cb96aa08d9d52dc445a80555ec5f5be3f9741ccd50d8a4917d3ca7f88573b690",
+    "workspace_content_tree_sha256": "8fd0cda95ab8f53a3d154af224f4e57116e07ecfd669865ee7831cae88f289bc",
+    "disposable_git_commit": "545e86177a86622e27b194e4aeae81dca09f2aad",
+    "disposable_git_tree": "30270ba61b7d3985ac2c21915d25aec8be898d4c",
+    "disposable_git_clean_after_idempotent_reinstall": true
+  },
+  "packaging": {
+    "open_harness_root_skill_md_present": false,
+    "ferric_skill_root_present": false,
+    "ferric_sprint_loop_skill_md_present": false,
+    "ferric_skills_list_exit_code": 0,
+    "ferric_skills_list_reports_none": true,
+    "classification": "not_discovered_open_harness_has_no_ferric_skill_package"
+  },
+  "capability_layers": {
+    "installed": "yes_operator_helpers_only",
+    "discovered": "no",
+    "authorized": "not-runnable-after-packaging-failure",
+    "top_level_instruction_injected": "not-runnable-after-packaging-failure",
+    "resource_accessible_natively": "not-runnable-after-packaging-failure",
+    "resource_accessible_after_operator_materialization": "not-runnable-after-packaging-failure",
+    "helper_tool_exposed": "not-runnable-after-packaging-failure",
+    "book_advanced_with_typed_tools": "not-runnable-after-packaging-failure",
+    "book_operator_validated": "no_book_initialized",
+    "cross_run_resumed": "not-runnable-after-packaging-failure",
+    "git_write_registered": true,
+    "git_write_offered": "not-runnable-after-packaging-failure",
+    "git_write_attempted": "not-runnable-after-packaging-failure",
+    "git_write_succeeded": "not-runnable-after-packaging-failure",
+    "remote_checkpoint": "no_native_remote_tool_registered"
+  },
+  "operator_validation": {
+    "check_book_exit_code": 1,
+    "check_book_result": "not_initialized",
+    "router_exit_code": 0,
+    "router_result": "uninitialized",
+    "remote_mutation_attempted": false
+  },
+  "static_tool_boundary": {
+    "facts": {
+      "query_uses_builtin_registry": true,
+      "query_uses_human_registry": false,
+      "builtin_registered_types": [
+        "ReadFile",
+        "WriteFile",
+        "EditFile",
+        "ListDir",
+        "MovePath",
+        "MakeDir",
+        "SearchFiles",
+        "DeletePath",
+        "FindFiles",
+        "CopyFile",
+        "MultiEdit",
+        "ApplyPatch",
+        "GitRead",
+        "GitWrite"
+      ],
+      "builtin_registered_types_exact": true,
+      "conditional_run_check_registration": true,
+      "git_write_registered_for_query": true,
+      "git_write_ring": 2,
+      "shell_exec_registered_for_query": false,
+      "manage_task_registered_for_query": false,
+      "human_registered_types": [
+        "ShellExec",
+        "ManageTask"
+      ],
+      "human_registered_types_exact": true,
+      "shell_exec_is_human_surface": true,
+      "manage_task_is_human_surface": true,
+      "native_remote_tool_registered": false
+    },
+    "builtin_registry_source": "crates/ferric-tools/src/builtin/mod.rs",
+    "builtin_registry_sha256": "6bcddcf33dbbf8cde14302434c24dcb0fa5bb0b8588fa3886b0bf7129a488e52",
+    "git_write_source": "crates/ferric-tools/src/builtin/git_write.rs",
+    "git_write_sha256": "b5a2b87e8d15a579b076423122f3b41463ea55f8efbdaae90b6fa4fd7500253d",
+    "query_source": "crates/ferric-cli/src/query.rs",
+    "query_sha256": "971e5cee430d9c9f58f03e7619b363ba7a488d9ff06184f14895bb51c62943b7",
+    "remote_adapter_source": "open-harnesses/scripts/remote-adapter.sh",
+    "remote_adapter_sha256": "0c3ebeee205c1a9b71035912171a600f86123af957cfa65809a45f44cecb5ce5"
+  },
+  "controls": {
+    "provider_request_capture": "not-runnable-after-packaging-failure",
+    "native_resource_arm": "not-runnable-after-packaging-failure",
+    "assisted_resource_arm": "not-runnable-after-packaging-failure",
+    "typed_book_arm": "not-runnable-after-packaging-failure",
+    "evidence_ring2_git_arm": "not-runnable-after-packaging-failure",
+    "legacy_ring2_git_arm": "not-runnable-after-packaging-failure",
+    "qwen25_fallback_arm": "not_authorized_qwen38_is_viable"
+  },
+  "commands": [
+    {
+      "name": "source-commit",
+      "executable": "git",
+      "arguments": [
+        "-c",
+        "safe.directory=C:/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-source",
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-source",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/source-commit.stdout.txt",
+      "stdout_sha256": "06c5def58f715b45c2b785bdcb1a03b7d468bcd505f6ab934a5f7279b16feb6f",
+      "stderr_file": "evidence/source-commit.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "source-tree",
+      "executable": "git",
+      "arguments": [
+        "-c",
+        "safe.directory=C:/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-source",
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-source",
+        "rev-parse",
+        "HEAD^{tree}"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/source-tree.stdout.txt",
+      "stdout_sha256": "35d4ba2163d04a209a10e247d8c56ed79664e483793375113be42d453d4c79a5",
+      "stderr_file": "evidence/source-tree.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "source-status",
+      "executable": "git",
+      "arguments": [
+        "-c",
+        "safe.directory=C:/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-source",
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-source",
+        "status",
+        "--porcelain=v1"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/source-status.stdout.txt",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_file": "evidence/source-status.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "source-remote",
+      "executable": "git",
+      "arguments": [
+        "-c",
+        "safe.directory=C:/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-source",
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-source",
+        "remote",
+        "get-url",
+        "origin"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/source-remote.stdout.txt",
+      "stdout_sha256": "c0ccd6b0196042aa620c26a10496542028375e774e497b539300401b351782d1",
+      "stderr_file": "evidence/source-remote.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "source-ls-tree",
+      "executable": "git",
+      "arguments": [
+        "-c",
+        "safe.directory=C:/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-source",
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-source",
+        "ls-tree",
+        "-r",
+        "--full-tree",
+        "4acc1fd6e0b964ea4bcbedd17c44cb2ca8ca0066",
+        "--",
+        "open-harnesses"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/source-ls-tree.stdout.txt",
+      "stdout_sha256": "0c2b213d610344376f7ae41e0d72bd7ad0a98a0a7ca92689ff1d2f0c299eef7f",
+      "stderr_file": "evidence/source-ls-tree.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "workspace-commit",
+      "executable": "git",
+      "arguments": [
+        "-c",
+        "safe.directory=C:/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-workspace",
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-workspace",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/workspace-commit.stdout.txt",
+      "stdout_sha256": "f08dcd11b1e57a68de32cfc93013e496fefb9570016a3eb1b23a1d650a0c8384",
+      "stderr_file": "evidence/workspace-commit.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "workspace-tree",
+      "executable": "git",
+      "arguments": [
+        "-c",
+        "safe.directory=C:/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-workspace",
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-workspace",
+        "rev-parse",
+        "HEAD^{tree}"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/workspace-tree.stdout.txt",
+      "stdout_sha256": "2fb9649a0f0e459ceb0ef8649383c5ebaee56e97da4acf7a75423c51956087c0",
+      "stderr_file": "evidence/workspace-tree.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "workspace-ls-tree",
+      "executable": "git",
+      "arguments": [
+        "-c",
+        "safe.directory=C:/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-workspace",
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-workspace",
+        "ls-tree",
+        "-r",
+        "--full-tree",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/workspace-ls-tree.stdout.txt",
+      "stdout_sha256": "8d66a86bb0b43ef1afe5c27cffe4f1e07c8b9dde592cab22bb363e795234391b",
+      "stderr_file": "evidence/workspace-ls-tree.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "wsl-source-path",
+      "executable": "wsl.exe",
+      "arguments": [
+        "--exec",
+        "wslpath",
+        "-a",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-source"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/wsl-source-path.stdout.txt",
+      "stdout_sha256": "dee67e1f98f0f38524f7874a41c313cc8542ef797ed74cb53f0bc5a243e3d136",
+      "stderr_file": "evidence/wsl-source-path.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "wsl-workspace-path",
+      "executable": "wsl.exe",
+      "arguments": [
+        "--exec",
+        "wslpath",
+        "-a",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-workspace"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/wsl-workspace-path.stdout.txt",
+      "stdout_sha256": "2e40045aabbc31f8cd544b125b16f485c173dddd294a7e70d3c1ec315bd01c42",
+      "stderr_file": "evidence/wsl-workspace-path.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "wsl-source-roundtrip",
+      "executable": "wsl.exe",
+      "arguments": [
+        "--exec",
+        "wslpath",
+        "-w",
+        "/mnt/c/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-source"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/wsl-source-roundtrip.stdout.txt",
+      "stdout_sha256": "84a56d2a250634af09b32a35a0c8e9ac0dcc39a1695f1a95d8883aca8df8071a",
+      "stderr_file": "evidence/wsl-source-roundtrip.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "wsl-workspace-roundtrip",
+      "executable": "wsl.exe",
+      "arguments": [
+        "--exec",
+        "wslpath",
+        "-w",
+        "/mnt/c/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-workspace"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/wsl-workspace-roundtrip.stdout.txt",
+      "stdout_sha256": "ffdd230d25e1cbc3d3c1276a651180e6ff607da694e3dfe41f6a91588ca07a27",
+      "stderr_file": "evidence/wsl-workspace-roundtrip.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "install",
+      "executable": "wsl.exe",
+      "arguments": [
+        "--exec",
+        "bash",
+        "/mnt/c/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-source/open-harnesses/install.sh",
+        "/mnt/c/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-workspace"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/install.stdout.txt",
+      "stdout_sha256": "1bb3195b4f5fe354befb386482b4618af54a74b8728a735f522146ea57fb0f58",
+      "stderr_file": "evidence/install.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "skills-list",
+      "executable": "ferric.exe",
+      "arguments": [
+        "skills",
+        "list",
+        "--workspace",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-workspace"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/skills-list.stdout.txt",
+      "stdout_sha256": "236725fedeaac3b44b8edc0def14f18b283d96d49ad8cce72f1cb4cebca324eb",
+      "stderr_file": "evidence/skills-list.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "check-book",
+      "executable": "wsl.exe",
+      "arguments": [
+        "--cd",
+        "/mnt/c/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-workspace",
+        "--exec",
+        "bash",
+        "scripts/check-book.sh"
+      ],
+      "exit_code": 1,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/check-book.stdout.txt",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_file": "evidence/check-book.stderr.txt",
+      "stderr_sha256": "54c7219a4c430749d204c8940a33577b9ae7187283a4337f763fd70fb3f136bd"
+    },
+    {
+      "name": "current-phase",
+      "executable": "wsl.exe",
+      "arguments": [
+        "--cd",
+        "/mnt/c/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-workspace",
+        "--exec",
+        "bash",
+        "scripts/current-phase.sh"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/current-phase.stdout.txt",
+      "stdout_sha256": "b1f1319607d3ec9e0bf8c817dffcb1cd9a9b81f588760bada66755561a65d697",
+      "stderr_file": "evidence/current-phase.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "workspace-status",
+      "executable": "git",
+      "arguments": [
+        "-c",
+        "safe.directory=C:/Users/charl/Animus_Ferric/target/s114-experiment/sprint-loop-workspace",
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\sprint-loop-workspace",
+        "status",
+        "--porcelain=v1"
+      ],
+      "exit_code": 0,
+      "timeout_milliseconds": 120000,
+      "timed_out": false,
+      "stdout_file": "evidence/workspace-status.stdout.txt",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_file": "evidence/workspace-status.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

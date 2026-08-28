@@ -1,0 +1,526 @@
+{
+  "schema": "animus-ferric-runtime-self-test-v1",
+  "completed_at_utc": "2026-08-27T10:15:22.5037401Z",
+  "passed": true,
+  "test_root": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z",
+  "inputs": [
+    {
+      "path": ".gitattributes",
+      "bytes": 15,
+      "sha256": "38ad0f3d409005e82afa59e937866a22fc33080b101089fac079ff4c4398eeba"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2670,
+      "sha256": "57125b4988fac6ff7372fde9e58e7d93a7fee82b1bc8af0aab855606c0f99c80"
+    },
+    {
+      "path": "runtime-plan.json",
+      "bytes": 6287,
+      "sha256": "4db43a2b704a9b1190a407ebdc417c846063b4ad54eef8225e516608aa4ff015"
+    },
+    {
+      "path": "nonce.txt",
+      "bytes": 31,
+      "sha256": "c1e0330d8afe369909c7637a033d1cab36ac7155262b6008c1e28efeb75b0dd9"
+    },
+    {
+      "path": "smoke-prompt.txt",
+      "bytes": 184,
+      "sha256": "5a9f3f0d01e0231b7f438d2c8204b75c7ae09be9b7e69cddd64b533c2f8a667c"
+    },
+    {
+      "path": "trace-selftest-fixture.jsonl",
+      "bytes": 3430,
+      "sha256": "a9c79afbd8a759a827fe75070d1761f1161dfb618edf1a1852d16c39aeee3dfd"
+    },
+    {
+      "path": "throughput-request.template.json",
+      "bytes": 763,
+      "sha256": "59dc2169673a085e5ea82e62b1bc85b29ad33b0e50a9181291ba5625ffa797e3"
+    },
+    {
+      "path": "runtime-common.ps1",
+      "bytes": 30811,
+      "sha256": "6b1d294564d36733a09ba9b008a8e7035b05d912b1b851bde82f75c6ce71277d"
+    },
+    {
+      "path": "freeze-runtime.ps1",
+      "bytes": 10741,
+      "sha256": "b2974ad04155c54752a1c6a195231d1324a648766278cac3d3d211b447ede431"
+    },
+    {
+      "path": "run-coordinate.ps1",
+      "bytes": 79450,
+      "sha256": "8b2c0fa6c1220d2b02fabd1f2a8c42d81c0de12ed5976d8c03d81539411f53bb"
+    },
+    {
+      "path": "verify-runtime.ps1",
+      "bytes": 103516,
+      "sha256": "ffa8cdfc0580f7f558b6a9433c291f2963324b269bc88b0bb5b2fb07b2623048"
+    },
+    {
+      "path": "verify-q4-gate.ps1",
+      "bytes": 9741,
+      "sha256": "bca5ec5c123ddc3059ecd2a820be3737b28bb5304b66f3e26c102fbaf9a36519"
+    },
+    {
+      "path": "test-runtime.ps1",
+      "bytes": 41749,
+      "sha256": "aa3e2cc1c36907903405b56294aaddc82981d2f96a66ee57ce967c2cd81cf5c0"
+    },
+    {
+      "path": "record-q4-verdict.ps1",
+      "bytes": 2544,
+      "sha256": "7f80c37840b4137e1627dc740b9a5e698fcccfedbdd48a566cd52f544c296eb0"
+    },
+    {
+      "path": "finalize-selection.ps1",
+      "bytes": 31486,
+      "sha256": "7b92014c91579f58e924532cc306b663118f254ffc7018f17bbed73d0f547a3b"
+    }
+  ],
+  "tests": [
+    {
+      "name": "valid_full_fixture_passes",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\base\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": true,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": []
+      },
+      "stderr": ""
+    },
+    {
+      "name": "missing_trace_is_valid_functional_non_viability",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\functional-missing-trace\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "non_viable",
+        "passed": true,
+        "manifest": {
+          "passed": true,
+          "entries": 30,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 0,
+        "errors": []
+      },
+      "stderr": ""
+    },
+    {
+      "name": "malformed_trace_is_valid_functional_non_viability",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\functional-malformed-trace\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "non_viable",
+        "passed": true,
+        "manifest": {
+          "passed": true,
+          "entries": 34,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 0,
+        "errors": []
+      },
+      "stderr": ""
+    },
+    {
+      "name": "workspace_mutation_is_valid_functional_non_viability",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\functional-workspace-mutation\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "non_viable",
+        "passed": true,
+        "manifest": {
+          "passed": true,
+          "entries": 34,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 0,
+        "errors": []
+      },
+      "stderr": ""
+    },
+    {
+      "name": "request_body_tamper_rejected",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\request-drift\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "throughput request bytes do not derive from the frozen template",
+          "throughput summary request hash mismatch",
+          "request drift in sample warmup",
+          "exchange metadata drift in sample warmup",
+          "request drift in sample trial-01",
+          "exchange metadata drift in sample trial-01",
+          "request drift in sample trial-02",
+          "exchange metadata drift in sample trial-02",
+          "request drift in sample trial-03",
+          "exchange metadata drift in sample trial-03"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "missing_or_replaced_sample_rejected",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\missing-row\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 3,
+        "errors": [
+          "throughput sequence is not exactly warmup plus three fixed trials",
+          "valid trial count is not derivable from raw rows",
+          "valid request count is not derivable from raw rows",
+          "invalid sample set must have a null median",
+          "throughput pass flag is not derivable from raw rows",
+          "throughput summary is not an exact derivation of raw samples"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "non_derivable_median_rejected",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\median-drift\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "throughput median is not derivable from raw rows"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "unlisted_extra_artifact_rejected",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\extra-file\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "manifest does not cover exactly every retained non-manifest file"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "raw_counter_drift_rejected",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\counter-drift\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "sample counters are not derived from raw response trial-01"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "scoring_drift_rejected",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\scoring-drift\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "ordinal/scoring drift in sample warmup"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "invalid_warmup_cannot_claim_pass",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\warmup-invalid-pass-claim\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "throughput pass flag is not derivable from raw rows"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "shortened_trial_timeout_rejected",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\timeout-drift\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "exchange metadata drift in sample trial-01"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "runtime_version_tamper_rejected",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\version-drift\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "preflight does not bind the frozen launch/runtime coordinate",
+          "preflight does not establish a frozen uncontended coordinate",
+          "managed-server attestation pass flag is not derivable from raw evidence"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "wall_clock_duration_drift_rejected",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\duration-drift\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "attempt duration is not derivable from its UTC timestamps",
+          "command journal chronology is invalid"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "prelaunch_shape_returns_failed_json",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\prelaunch_shape\\01-q4-32768\\attempt.json",
+        "passed": false,
+        "errors": [
+          "validator exception: The property 'launch_process' cannot be found on this object. Verify that the property exists.",
+          "validator location: At C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\verify-runtime.ps1:728 char:9\r\n+     if (-not (Test-JsonEquivalent -Left $startupFileEvidence `\r\n+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+          "validator stack: at <ScriptBlock>, C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\verify-runtime.ps1: line 728"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "null_process_returns_failed_json",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\null_process\\01-q4-32768\\attempt.json",
+        "passed": false,
+        "errors": [
+          "validator exception: The property 'process' cannot be found on this object. Verify that the property exists.",
+          "validator location: At C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\verify-runtime.ps1:953 char:17\r\n+             if ($null -eq $teardownEvidence.saved_pid -or\r\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+          "validator stack: at <ScriptBlock>, C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\verify-runtime.ps1: line 953"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "attestation_exception_returns_failed_json",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\attestation_exception\\01-q4-32768\\attempt.json",
+        "passed": false,
+        "errors": [
+          "validator exception: The property 'endpoints' cannot be found on this object. Verify that the property exists.",
+          "validator location: At C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\verify-runtime.ps1:1193 char:5\r\n+     $healthBodyOk = Test-ExchangeFile `\r\n+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+          "validator stack: at <ScriptBlock>, C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\verify-runtime.ps1: line 1193"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "smoke_exception_returns_failed_json",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\smoke_exception\\01-q4-32768",
+        "coordinate": "01-q4-32768",
+        "verdict": "viable",
+        "passed": false,
+        "manifest": {
+          "passed": true,
+          "entries": 41,
+          "errors": []
+        },
+        "control_anchor_mode": "unfrozen_pure_evidence_self_test",
+        "throughput_rows": 4,
+        "errors": [
+          "missing trace-verifier process lacks a valid wall-cap cause",
+          "smoke pass flag is not derivable from retained trace evidence"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "teardown_exception_returns_failed_json",
+      "passed": true,
+      "report": {
+        "schema": "animus-ferric-runtime-verification-v1",
+        "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-selftest\\55320-20260827T0957182928525Z\\teardown_exception\\01-q4-32768\\attempt.json",
+        "passed": false,
+        "errors": [
+          "validator exception: The property 'health_after_teardown' cannot be found on this object. Verify that the property exists.",
+          "validator location: At C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\verify-runtime.ps1:816 char:5\r\n+     $postHealthBound = Test-ExchangeFile `\r\n+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+          "validator stack: at <ScriptBlock>, C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\verify-runtime.ps1: line 816"
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "name": "memory_classifier_is_specific",
+      "passed": true,
+      "evidence": {
+        "positive": {
+          "matched": true,
+          "matches": [
+            {
+              "pattern": "CUDA(?: error)?:[^\\r\\n]*out of memory",
+              "offset": 0,
+              "line": "CUDA error: out of memory while allocating weights"
+            }
+          ]
+        },
+        "negative": {
+          "matched": false,
+          "matches": []
+        }
+      }
+    },
+    {
+      "name": "exclusive_calibration_lock_rejects_contention",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "Exception: C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\run-coordinate.ps1:57\r\nLine |\r\n  57 |      throw 'another Sprint 114 calibration process holds the exclusive .\r\n     |      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n     | another Sprint 114 calibration process holds the exclusive runtime lock\r\n"
+      }
+    },
+    {
+      "name": "early_failure_releases_calibration_lock",
+      "passed": true,
+      "evidence": {
+        "process": {
+          "exit_code": 1,
+          "stdout": "",
+          "stderr": "Exception: C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\run-coordinate.ps1:162\r\nLine |\r\n 162 |          throw 'runtime controls have not been frozen'\r\n     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n     | runtime controls have not been frozen\r\n"
+        },
+        "lock_reacquired": true
+      }
+    }
+  ]
+}

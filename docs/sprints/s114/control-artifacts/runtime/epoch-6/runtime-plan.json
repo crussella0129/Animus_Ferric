@@ -1,0 +1,196 @@
+{
+  "schema": "animus-ferric-runtime-evidence-materialization-plan-v6",
+  "task": "T-11409",
+  "execution_epoch": 3,
+  "failed_publication_epoch": 4,
+  "failed_correction_epoch": 5,
+  "materialization_epoch": 6,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "repository_commit_before_epoch_6_controls": "a1306e5191591600551ef7c2c8676f061e8d554f",
+  "source_artifact_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3",
+  "publication_artifact_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4",
+  "correction_artifact_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5",
+  "materialization_artifact_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6",
+  "model": {
+    "relative_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "bytes": 16464440224,
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+  },
+  "operation": {
+    "id": "r06-materialize-e05-publication-evidence",
+    "correction_operation_id": "r05-publish-e03-01-q4-32768-after-e04-wrapper-failure",
+    "failed_operation_id": "r04-publish-e03-01-q4-32768",
+    "coordinate": "e03-01-q4-32768",
+    "source_attempt_schema": "animus-ferric-runtime-attempt-v3",
+    "source_raw_relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768",
+    "destination_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "legacy_envelope_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recovery-publication.json",
+    "correction_evidence_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-correction.json",
+    "materialization_evidence_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization.json",
+    "exact_manifest_entries": 49,
+    "manifest": {
+      "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/files.sha256",
+      "bytes": 4445,
+      "sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a"
+    },
+    "attempt": {
+      "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attempt.json",
+      "bytes": 75608,
+      "sha256": "167a964e471fec93bc7e58ff0ec76bbba45f3025f18c2fe84060248732b4fae4"
+    },
+    "attestation": {
+      "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attestation.json",
+      "bytes": 30991,
+      "sha256": "792ae02c6323deafcaae9b89b247b43fccdc07cabb3ff470a0b7edfee78b0a99"
+    },
+    "expected_terminal": {
+      "quant": "Q4_K_M",
+      "context": 32768,
+      "verdict": "viable",
+      "evidence_complete": true,
+      "startup_healthy": true,
+      "attestation_passed": true,
+      "smoke_passed": true,
+      "throughput_passed": true,
+      "teardown_passed": true,
+      "median_decoded_tokens_per_second": 3.2064850358228254
+    }
+  },
+  "published_destination": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49,
+    "payload_bytes": 437140,
+    "attempt_sha256": "167a964e471fec93bc7e58ff0ec76bbba45f3025f18c2fe84060248732b4fae4",
+    "attestation_sha256": "792ae02c6323deafcaae9b89b247b43fccdc07cabb3ff470a0b7edfee78b0a99",
+    "verdict": "viable",
+    "evidence_complete": true
+  },
+  "prefreeze_self_test_failure": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization-self-test.failed-01.json",
+    "bytes": 39692,
+    "sha256": "de7ce31a000cd78abe55455db5d6ed5b6931ef00e76c18a2c5e25b03822e27ce",
+    "schema": "animus-ferric-runtime-materialization-self-test-v6",
+    "tested_at_utc": "2026-08-27T23:05:55.6845975Z",
+    "passed": false,
+    "test_count": 22,
+    "exact_model_hashes": 1,
+    "sole_failed_test": "frozen_epoch_5_ordered_dictionary_bug_remains_exact_incident_evidence",
+    "cause": "ambiguous_first_occurrence_text_search",
+    "controls_frozen": false,
+    "official_outputs_created": false
+  },
+  "epoch_5": {
+    "runtime_plan": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/runtime-plan.json",
+      "bytes": 5477,
+      "sha256": "18fb3be97ba79d0e04ee67f1e3e77ebb92b76fdfc5b3b087013f613e7fa9575c"
+    },
+    "control_manifest": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/control-inputs.json",
+      "bytes": 4746,
+      "sha256": "35597956361fc4308f5829362d8a9f79eb4edf5eb164ef049674c85bd377d675"
+    },
+    "control_digest": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/control-inputs.sha256",
+      "bytes": 86,
+      "sha256": "e9384eb392fadc858248b979495df6fcd0ea092eafd8601c201c498c762427be"
+    },
+    "publication_self_test": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-self-test.json",
+      "bytes": 23339,
+      "sha256": "0d065cf15ffbe07ba7aad0faca8e1784b040893c3172dbfead01042c6456b011"
+    },
+    "publication_common": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-common.ps1",
+      "bytes": 39136,
+      "sha256": "332475b8b83d5668ed9d7cb5d34fddfd720e4fb1328b91f9cbc7c44e64f994f1"
+    },
+    "frozen_failed_publisher": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publish-e04-correction.ps1",
+      "bytes": 43717,
+      "sha256": "529c4e96e9b20d7ae31a6a75d3b8dc5d0d231d83caa7cb661c4f1d7ef3197b06"
+    },
+    "control_manifest_digest_line": "35597956361fc4308f5829362d8a9f79eb4edf5eb164ef049674c85bd377d675  control-inputs.json"
+  },
+  "epoch_4": {
+    "runtime_plan": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-plan.json",
+      "bytes": 3109,
+      "sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d"
+    },
+    "raw_source_anchor": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/raw-source-anchor.json",
+      "bytes": 8701,
+      "sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e"
+    },
+    "runtime_common": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-common.ps1",
+      "bytes": 87625,
+      "sha256": "322407fc52e2192cedf320d65e9c8029c75d1190e732e3d76a27394614eaf59c"
+    },
+    "control_manifest": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.json",
+      "bytes": 10507,
+      "sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f"
+    },
+    "control_digest": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.sha256",
+      "bytes": 86,
+      "sha256": "4358031fe24ebe96e06582fe64617928a181af4d28c0eb874ec76902a2ce33bd"
+    },
+    "runtime_self_test": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-self-test.json",
+      "bytes": 25552,
+      "sha256": "62a1f797cc1ca58eb18446ddea8792745456e2f35f8b147293fdd304ddc64579"
+    },
+    "verifier": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/verify-runtime.ps1",
+      "bytes": 138977,
+      "sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d"
+    },
+    "frozen_failed_publisher": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recover-e03-publication.ps1",
+      "bytes": 21381,
+      "sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61"
+    },
+    "control_manifest_digest_line": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f  control-inputs.json"
+  },
+  "epoch_3": {
+    "control_manifest": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.json",
+      "bytes": 33083,
+      "sha256": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d"
+    },
+    "control_digest": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.sha256",
+      "bytes": 86,
+      "sha256": "5350312a4e4d19275cc95d9d2b367f168a73e641d79e3b4ab06e3ca2cfe0197e"
+    },
+    "runtime_plan": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-plan.json",
+      "bytes": 13777,
+      "sha256": "a33f5e73e2ec5ac7118efc4b4f3394581c696827d1859a17b3683509f7e2b905"
+    },
+    "runtime_self_test": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-self-test.json",
+      "bytes": 112414,
+      "sha256": "dcd7efb280a2a4f6bca4435c56d84b93498f4cc76fc8c4deefbb38807c854a12"
+    },
+    "control_manifest_digest_line": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d  control-inputs.json"
+  },
+  "outputs": {
+    "legacy_envelope": {
+      "schema": "animus-ferric-runtime-recovery-publication-v4",
+      "path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recovery-publication.json"
+    },
+    "correction_evidence": {
+      "schema": "animus-ferric-runtime-publication-correction-v5",
+      "path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-correction.json"
+    },
+    "materialization_evidence": {
+      "schema": "animus-ferric-runtime-evidence-materialization-v6",
+      "path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization.json"
+    }
+  }
+}

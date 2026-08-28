@@ -1,0 +1,172 @@
+{
+  "schema": "animus-ferric-runtime-evidence-materialization-control-inputs-v6",
+  "task": "T-11409",
+  "operation_id": "r06-materialize-e05-publication-evidence",
+  "correction_operation_id": "r05-publish-e03-01-q4-32768-after-e04-wrapper-failure",
+  "failed_operation_id": "r04-publish-e03-01-q4-32768",
+  "execution_epoch": 3,
+  "failed_publication_epoch": 4,
+  "failed_correction_epoch": 5,
+  "materialization_epoch": 6,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "frozen_at_utc": "2026-08-27T23:29:01.2208296Z",
+  "runtime_plan_sha256": "86deff9c8ddd17993e25adb89ba7505afb40db5646ef67449a4ff1fb6165dab0",
+  "incident_sha256": "ce7c1ff5c2c2606295d043a50f6b2f516ddce90663267f3c2e21bf4eb02b46c0",
+  "repository": {
+    "head_at_freeze": "a1306e5191591600551ef7c2c8676f061e8d554f",
+    "epoch_6_pre_control_base": "a1306e5191591600551ef7c2c8676f061e8d554f"
+  },
+  "static_controls": [
+    {
+      "path": ".gitattributes",
+      "bytes": 27,
+      "sha256": "6b98748bce4e756cb59c88e22c82d53951931491c29e0d54436e1cf7daa4b026"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3504,
+      "sha256": "e1336838275832baa355e9c4daa59a5d104061f0ae255efacca0478fd6161c17"
+    },
+    {
+      "path": "incident.json",
+      "bytes": 3424,
+      "sha256": "ce7c1ff5c2c2606295d043a50f6b2f516ddce90663267f3c2e21bf4eb02b46c0"
+    },
+    {
+      "path": "runtime-plan.json",
+      "bytes": 9411,
+      "sha256": "86deff9c8ddd17993e25adb89ba7505afb40db5646ef67449a4ff1fb6165dab0"
+    },
+    {
+      "path": "materialization-common.ps1",
+      "bytes": 58891,
+      "sha256": "491a77b4190227f060d47c06664080beb4d5c2cdd2a0f3be0f4282a98bc265df"
+    },
+    {
+      "path": "test-materialization.ps1",
+      "bytes": 79529,
+      "sha256": "1935f17e0bd5086a6c58eeede2124a0945397b12af7a5c1d4f4178880cad2a9b"
+    },
+    {
+      "path": "freeze-materialization.ps1",
+      "bytes": 43767,
+      "sha256": "61b4e99a3a005e22343201f05932fca98afabd0e88e06291dcfa27f5cce350c6"
+    },
+    {
+      "path": "materialize-e05-evidence.ps1",
+      "bytes": 40574,
+      "sha256": "1ab6ebcc375e59a9774154261c267960518788d89486a32135185f22679ef5f5"
+    }
+  ],
+  "prefreeze_self_test_failure_archive": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization-self-test.failed-01.json",
+    "bytes": 39692,
+    "sha256": "de7ce31a000cd78abe55455db5d6ed5b6931ef00e76c18a2c5e25b03822e27ce",
+    "schema": "animus-ferric-runtime-materialization-self-test-v6",
+    "tested_at_utc": "2026-08-27T23:05:55.6845975Z",
+    "test_count": 22,
+    "exact_model_hashes": 1,
+    "sole_failed_test": "frozen_epoch_5_ordered_dictionary_bug_remains_exact_incident_evidence",
+    "report_passed": false,
+    "semantic_validation_passed": true
+  },
+  "materialization_self_test": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization-self-test.json",
+    "bytes": 40822,
+    "sha256": "69b98fc9bb81be32759b079c16eed71aa05530df5ad613bf10b742f5d6319844",
+    "test_count": 23,
+    "exact_model_hashes": 1,
+    "passed": true
+  },
+  "dependency_verification": {
+    "epoch_5_static_controls_checked": 8,
+    "epoch_4_static_controls_checked": 12,
+    "transitive_epoch_3_controls_checked": 20,
+    "frozen_epoch_4_rewalk_static_controls_checked": 12,
+    "frozen_epoch_3_rewalk_controls_checked": 20,
+    "passed": true
+  },
+  "source_verification": {
+    "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49,
+    "payload_bytes": 437140,
+    "attempt_sha256": "167a964e471fec93bc7e58ff0ec76bbba45f3025f18c2fe84060248732b4fae4",
+    "attestation_sha256": "792ae02c6323deafcaae9b89b247b43fccdc07cabb3ff470a0b7edfee78b0a99",
+    "terminal_facts_passed": true,
+    "passed": true
+  },
+  "destination_verification": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49,
+    "payload_bytes": 437140,
+    "verifier_invocations": 1,
+    "report": {
+      "schema": "animus-ferric-runtime-recovery-verification-v4",
+      "task": "T-11409",
+      "operation_id": "r04-publish-e03-01-q4-32768",
+      "execution_epoch": 3,
+      "publication_epoch": 4,
+      "source_attempt_schema": "animus-ferric-runtime-attempt-v3",
+      "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+      "control_epoch": 3,
+      "attestation_protocol": "apply-template-differential-v1",
+      "process_command_protocol": "windows-bound-process-command-v1",
+      "live_model_identity": {
+        "checked": true,
+        "mode": "checked_in_verifier",
+        "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+      },
+      "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-3\\attempts\\e03-01-q4-32768",
+      "coordinate": "e03-01-q4-32768",
+      "verdict": "viable",
+      "passed": true,
+      "manifest": {
+        "passed": true,
+        "entries": 49,
+        "errors": []
+      },
+      "recovery_anchor": {
+        "applicable": true,
+        "passed": true,
+        "expected_entries": 49,
+        "observed_entries": 49
+      },
+      "control_anchor_mode": "epoch_4_frozen_recovery",
+      "throughput_rows": 4,
+      "errors": []
+    },
+    "passed": true
+  },
+  "model": {
+    "relative_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "bytes": 16464440224,
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "hash_mode": "checked_in_verifier",
+    "independently_rehashed_by_frozen_verifier": true,
+    "passed": true
+  },
+  "cold_state": {
+    "passed": true,
+    "state": {
+      "local_runfile_absent": true,
+      "global_runfile_absent": true,
+      "listener_absent": true,
+      "llama_server_process_absent": true
+    },
+    "errors": []
+  },
+  "materialization_preconditions": {
+    "destination_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "destination_exact_at_freeze": true,
+    "legacy_envelope_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recovery-publication.json",
+    "legacy_envelope_absent_at_freeze": true,
+    "correction_evidence_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-correction.json",
+    "correction_evidence_absent_at_freeze": true,
+    "materialization_evidence_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-6/materialization.json",
+    "materialization_evidence_absent_at_freeze": true,
+    "passed": true
+  },
+  "passed": true
+}

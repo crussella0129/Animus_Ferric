@@ -1,0 +1,40 @@
+{
+  "schema": "animus-ferric-runtime-evidence-materialization-v6",
+  "task": "T-11409",
+  "operation_id": "r06-materialize-e05-publication-evidence",
+  "correction_operation_id": "r05-publish-e03-01-q4-32768-after-e04-wrapper-failure",
+  "failed_operation_id": "r04-publish-e03-01-q4-32768",
+  "execution_epoch": 3,
+  "failed_publication_epoch": 4,
+  "failed_correction_epoch": 5,
+  "materialization_epoch": 6,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "materialized_at_utc": "2026-08-27T23:33:30.1614484Z",
+  "control_manifest_sha256": "a63f9dff611974a2c5bdf3e63e6bd09853ff29fab0684bd4b3f5af662d8b6930",
+  "correction_epoch_control_manifest_sha256": "35597956361fc4308f5829362d8a9f79eb4edf5eb164ef049674c85bd377d675",
+  "legacy_envelope": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recovery-publication.json",
+    "bytes": 3390,
+    "sha256": "1903c1447ae4d4eef36e811996f4cc44ebf353615c94cc1f4257774978590411"
+  },
+  "correction_evidence": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-correction.json",
+    "bytes": 1489,
+    "sha256": "3037b824a9f8b91b2645463f87acd231ddddf3007b030a1af4d4592075a609af"
+  },
+  "destination": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49
+  },
+  "resumed_existing_destination": true,
+  "authoritative_revalidation": {
+    "publisher_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publish-e04-correction.ps1",
+    "publisher_bytes": 43717,
+    "publisher_sha256": "529c4e96e9b20d7ae31a6a75d3b8dc5d0d231d83caa7cb661c4f1d7ef3197b06",
+    "exit_code": 0,
+    "correction_json_equivalent": true,
+    "passed": true
+  },
+  "passed": true
+}

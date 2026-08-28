@@ -1,0 +1,190 @@
+{
+  "schema": "animus-ferric-model-acquisition-tests-v1",
+  "completed_at_utc": "2026-08-27T09:46:08.4118630Z",
+  "passed": true,
+  "tests": [
+    {
+      "name": "model_download_and_sha256_attestation",
+      "passed": true,
+      "evidence": {
+        "verification": {
+          "schema": "animus-ferric-model-verification-v1",
+          "path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "expected_bytes": 16464440224,
+          "actual_bytes": 16464440224,
+          "expected_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+          "actual_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+          "verified": true,
+          "failure": null
+        },
+        "source_tuple_matches": true
+      }
+    },
+    {
+      "name": "model_acquisition_failure_is_not_verified",
+      "passed": true,
+      "evidence": {
+        "short_transfer": {
+          "schema": "animus-ferric-model-verification-v1",
+          "path": "model-spec.json",
+          "expected_bytes": 16464440224,
+          "actual_bytes": 1021,
+          "expected_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+          "actual_sha256": "2d4a13df3a37e3b7c9bb3ac6c47c4b8bab77b532c647437e3531f42bc7e7b0dd",
+          "verified": false,
+          "failure": "size_mismatch"
+        },
+        "same_size_wrong_hash": {
+          "passed": true,
+          "record": {
+            "schema": "animus-ferric-model-acquisition-v1",
+            "started_at_utc": "2026-08-27T09:46:05.9076088Z",
+            "completed_at_utc": "2026-08-27T09:46:06.4531464Z",
+            "quant": "Q4_K_M",
+            "verified": false,
+            "published": false,
+            "failure": "partial_file_failed_verification",
+            "verification": {
+              "schema": "animus-ferric-model-verification-v1",
+              "path": "models/tiny.gguf.part",
+              "expected_bytes": 4,
+              "actual_bytes": 4,
+              "expected_sha256": "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+              "actual_sha256": "55e5509f8052998294266ee5b50cb592938191fb5d67f73cac2e60b0276b1bdd",
+              "verified": false,
+              "failure": "sha256_mismatch"
+            },
+            "path": "models/tiny.gguf.part"
+          },
+          "final_exists": false,
+          "partial_exists": true
+        },
+        "post_publish_verifier_error": {
+          "passed": true,
+          "record": {
+            "schema": "animus-ferric-model-acquisition-v1",
+            "started_at_utc": "2026-08-27T09:46:06.6036676Z",
+            "completed_at_utc": "2026-08-27T09:46:07.5105821Z",
+            "quant": "Q4_K_M",
+            "verified": false,
+            "published": false,
+            "failure": "post_publish_verification_failed",
+            "quarantine": "models/tiny.gguf.rejected-20260827T0946075049460Z-55384",
+            "path": "models/tiny.gguf",
+            "verification": null
+          },
+          "final_exists": false,
+          "quarantine": [
+            "tiny.gguf.rejected-20260827T0946075049460Z-55384"
+          ]
+        }
+      }
+    },
+    {
+      "name": "model_is_ignored_evidence_is_tracked",
+      "passed": true,
+      "evidence": {
+        "ignore_rule": "warning: unable to access 'C:\\Users\\charl/.config/git/ignore': Permission denied\r\n.gitignore:33:models/\tmodels/Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "git_tracked": false,
+        "model_blob_in_status": false,
+        "status": [
+          " M docs/sprints/s114/control-artifacts/model/acquire-model.ps1",
+          " M docs/sprints/s114/control-artifacts/model/acquisition-tests.json",
+          " M docs/sprints/s114/control-artifacts/model/test-acquisition.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/.gitattributes",
+          "?? docs/sprints/s114/control-artifacts/runtime/README.md",
+          "?? docs/sprints/s114/control-artifacts/runtime/finalize-selection.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/freeze-runtime.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/nonce.txt",
+          "?? docs/sprints/s114/control-artifacts/runtime/record-q4-verdict.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/run-coordinate.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/runtime-common.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/runtime-plan.json",
+          "?? docs/sprints/s114/control-artifacts/runtime/smoke-prompt.txt",
+          "?? docs/sprints/s114/control-artifacts/runtime/test-runtime.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/throughput-request.template.json",
+          "?? docs/sprints/s114/control-artifacts/runtime/trace-selftest-fixture.jsonl",
+          "?? docs/sprints/s114/control-artifacts/runtime/verify-q4-gate.ps1",
+          "?? docs/sprints/s114/control-artifacts/runtime/verify-runtime.ps1"
+        ]
+      }
+    },
+    {
+      "name": "q3_fallback_download_is_gated_and_attested",
+      "passed": true,
+      "evidence": {
+        "q3_absent": true,
+        "gate_record_file": "acquisition-Q3_K_XL-20260827T0401380650092Z-17832.json",
+        "gate_record": {
+          "schema": "animus-ferric-model-acquisition-v1",
+          "started_at_utc": "2026-08-27T04:01:38.0604058Z",
+          "completed_at_utc": "2026-08-27T04:01:38.084113Z",
+          "quant": "Q3_K_XL",
+          "verified": false,
+          "published": false,
+          "failure": "q3_fallback_not_authorized",
+          "authorization_record": "missing",
+          "gate": "T-11409/E09-D"
+        },
+        "two_bit_artifacts": []
+      }
+    },
+    {
+      "name": "forged_q4_gate_cannot_authorize_q3_download",
+      "passed": true,
+      "evidence": {
+        "passed": true,
+        "forged_claim": {
+          "q4_verdict": "non_viable",
+          "q3_fallback_authorized": true,
+          "selected_attempt": "01-q4-32768",
+          "attempt_chain": [
+            {
+              "id": "01-q4-32768",
+              "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            }
+          ]
+        },
+        "acquisition_exit_code": 3,
+        "acquisition_record": {
+          "schema": "animus-ferric-model-acquisition-v1",
+          "started_at_utc": "2026-08-27T09:46:07.862024Z",
+          "completed_at_utc": "2026-08-27T09:46:08.3939569Z",
+          "quant": "Q3_K_XL",
+          "verified": false,
+          "published": false,
+          "failure": "q3_fallback_not_authorized",
+          "gate_verification": {
+            "schema": "animus-ferric-q4-gate-verification-v1",
+            "mode": "verify_gate",
+            "passed": false,
+            "derivation": {
+              "attempt_chain": [],
+              "attempt_verifications": [],
+              "selected_attempt": null,
+              "q4_verdict": "blocked",
+              "q3_fallback_authorized": false,
+              "fallback_basis": null,
+              "reason_codes": null,
+              "median_decoded_tokens_per_second": null,
+              "attempt_manifest_sha256": null,
+              "attempt_verification": null,
+              "runtime_plan_sha256": "4db43a2b704a9b1190a407ebdc417c846063b4ad54eef8225e516608aa4ff015",
+              "validator_sha256": "7e4c249c9d06c6873f395b3c4972d9604659a765149ac91067efd934c9690d63"
+            },
+            "errors": [
+              "Q4 attempt evidence is absent: 01-q4-32768",
+              "Q4 gate fields do not equal fresh attempt-chain derivation"
+            ]
+          },
+          "authorization_record": "invalid",
+          "gate": "T-11409/E09-D"
+        },
+        "q3_final_exists": false,
+        "seeded_q3_partial_preserved": true,
+        "seeded_q3_partial_sha256": "e1e853684a206f162ee800a54b695c9cc1a8d1d554a47fcb13fe51229c17773f",
+        "q3_quarantine": []
+      }
+    }
+  ]
+}

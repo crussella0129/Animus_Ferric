@@ -1,0 +1,11 @@
+{
+  "schema": "animus-ferric-model-acquisition-v1",
+  "started_at_utc": "2026-08-27T04:01:38.0604058Z",
+  "completed_at_utc": "2026-08-27T04:01:38.0841130Z",
+  "quant": "Q3_K_XL",
+  "verified": false,
+  "published": false,
+  "failure": "q3_fallback_not_authorized",
+  "authorization_record": "missing",
+  "gate": "T-11409/E09-D"
+}

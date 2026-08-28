@@ -1,0 +1,11 @@
+{
+  "engine": "llama-server",
+  "pid": 1796,
+  "port": 8080,
+  "base_url": "http://127.0.0.1:8080/v1",
+  "tailscale": false,
+  "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+  "context_size": 32768,
+  "sampling_seed": 42,
+  "parallel_slots": 1
+}

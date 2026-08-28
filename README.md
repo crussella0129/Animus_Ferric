@@ -131,16 +131,9 @@ ferric bench ltd --model <name> --protocol grammar --iterations 20 --report repo
 ferric bench ltd --models qwen2.5-coder:7b,llama3.1:8b,llama3.2:1b --protocol grammar --report fleet.md
 ```
 
-```
-# Fleet Leaderboard
-| Model              | Protocol        | Success | Rate   | Verdict |
-|--------------------|-----------------|---------|--------|---------|
-| qwen2.5-coder:7b   | ConstrainedJson | 50/50   | 100.0% | solid   |
-| llama3.1:8b        | ConstrainedJson | 50/50   | 100.0% | solid   |
-| llama3.2:1b        | ConstrainedJson | 50/50   | 100.0% | solid   |
-```
-
-That run is real: the constrained path holds at **100% down to a 1B model**, where the same model's *native* tool-calling collapses to 22% — which is the whole point of harness-owned decoding.
+The generated leaderboard records success rates and verdicts for the exact
+models and protocols you ran, so current results stay with their evidence
+instead of becoming stale claims on this landing page.
 
 **5. Calibrate the rings.** `--calibrate-rings` benches a model **ring by ring** and reports the highest ring it reliably drives — the recommended `--max-ring` to run it at (`ferric bench ltd … --calibrate-rings`). It's the demonstrated-reliability promotion: a model *earns* a wider grammar by proving it on the bench. Full walkthrough: [docs/testbench.md](docs/testbench.md).
 
@@ -155,10 +148,9 @@ Active development. The single inference backend used by Ferric:
 - **`backend-openai`** — an OpenAI-compatible HTTP valve (`llama.cpp` / vLLM) that enforces a harness-authored JSON-Schema constraint server-side. This is the constrained-decoding thesis working for small GGUF models — out-of-process, with pure Rust on Ferric's side. **It's the default and the reliable path.**
 
 `--harness-policy evidence` is an opt-in experimental controller, not a
-promotion claim: its frozen Sprint 113 Qwen screen remained 0/3 after both
-permitted revisions. The default stays `legacy`, and the unimplemented
-`evidence-planner` policy fails closed with no fallback. See the
-[measured decision](docs/sprints/s113/planner-decision.md).
+promotion claim. The default stays `legacy`, and the unimplemented
+`evidence-planner` policy fails closed with no fallback. Its evaluation history
+remains in the Sprint Loops Book records linked below.
 
 The action protocol (`NativeTools` / `ConstrainedJson` / `TextXml`) is chosen
 from the backend's real capabilities. Development follows the tracked

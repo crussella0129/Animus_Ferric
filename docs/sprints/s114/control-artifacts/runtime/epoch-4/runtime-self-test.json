@@ -1,0 +1,731 @@
+{
+  "schema": "animus-ferric-runtime-recovery-self-test-v4",
+  "task": "T-11409",
+  "publication_epoch": 4,
+  "execution_epoch": 3,
+  "source_attempt_schema": "animus-ferric-runtime-attempt-v3",
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "generated_at_utc": "2026-08-27T21:29:40.3226650+00:00",
+  "passed": true,
+  "test_count": 33,
+  "duplicate_test_names": [],
+  "static_controls": [
+    {
+      "path": ".gitattributes",
+      "bytes": 27,
+      "sha256": "6b98748bce4e756cb59c88e22c82d53951931491c29e0d54436e1cf7daa4b026"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2543,
+      "sha256": "c8e4f70d997b85f0cfd26e1e02ffe6304fb18f58afbeb494f58cea55882f80df"
+    },
+    {
+      "path": "runtime-plan.json",
+      "bytes": 3109,
+      "sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d"
+    },
+    {
+      "path": "raw-source-anchor.json",
+      "bytes": 8701,
+      "sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e"
+    },
+    {
+      "path": "runtime-common.ps1",
+      "bytes": 87625,
+      "sha256": "322407fc52e2192cedf320d65e9c8029c75d1190e732e3d76a27394614eaf59c"
+    },
+    {
+      "path": "freeze-runtime.ps1",
+      "bytes": 24994,
+      "sha256": "219adf69c089f02801a8b29d382067e3a43600739d18b9de0473d26a01430d4d"
+    },
+    {
+      "path": "verify-runtime.ps1",
+      "bytes": 138977,
+      "sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d"
+    },
+    {
+      "path": "recover-e03-publication.ps1",
+      "bytes": 21381,
+      "sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61"
+    },
+    {
+      "path": "test-runtime.ps1",
+      "bytes": 44357,
+      "sha256": "b35fd7e0047271e0a8b18b04c8ccc8dbb1d7e41c2075cb1a505ec1d95e512926"
+    },
+    {
+      "path": "verify-q4-gate.ps1",
+      "bytes": 19499,
+      "sha256": "4b982fffe4c131f31b0b71fef94b68046c2753a0ff9255f196aa113430926370"
+    },
+    {
+      "path": "record-q4-verdict.ps1",
+      "bytes": 4661,
+      "sha256": "9ba87b91c65a092a1ffdd5842efb07a365cb828cb912e41f98742f2e6bf4128c"
+    },
+    {
+      "path": "finalize-selection.ps1",
+      "bytes": 36620,
+      "sha256": "cbd04a73dc29c78f5eee98ef8c406a485c9f5d060adbb7ef33ca987323335263"
+    }
+  ],
+  "static_input_identities": [
+    {
+      "path": ".gitattributes",
+      "bytes": 27,
+      "sha256": "6b98748bce4e756cb59c88e22c82d53951931491c29e0d54436e1cf7daa4b026"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2543,
+      "sha256": "c8e4f70d997b85f0cfd26e1e02ffe6304fb18f58afbeb494f58cea55882f80df"
+    },
+    {
+      "path": "runtime-plan.json",
+      "bytes": 3109,
+      "sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d"
+    },
+    {
+      "path": "raw-source-anchor.json",
+      "bytes": 8701,
+      "sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e"
+    },
+    {
+      "path": "runtime-common.ps1",
+      "bytes": 87625,
+      "sha256": "322407fc52e2192cedf320d65e9c8029c75d1190e732e3d76a27394614eaf59c"
+    },
+    {
+      "path": "freeze-runtime.ps1",
+      "bytes": 24994,
+      "sha256": "219adf69c089f02801a8b29d382067e3a43600739d18b9de0473d26a01430d4d"
+    },
+    {
+      "path": "verify-runtime.ps1",
+      "bytes": 138977,
+      "sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d"
+    },
+    {
+      "path": "recover-e03-publication.ps1",
+      "bytes": 21381,
+      "sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61"
+    },
+    {
+      "path": "test-runtime.ps1",
+      "bytes": 44357,
+      "sha256": "b35fd7e0047271e0a8b18b04c8ccc8dbb1d7e41c2075cb1a505ec1d95e512926"
+    },
+    {
+      "path": "verify-q4-gate.ps1",
+      "bytes": 19499,
+      "sha256": "4b982fffe4c131f31b0b71fef94b68046c2753a0ff9255f196aa113430926370"
+    },
+    {
+      "path": "record-q4-verdict.ps1",
+      "bytes": 4661,
+      "sha256": "9ba87b91c65a092a1ffdd5842efb07a365cb828cb912e41f98742f2e6bf4128c"
+    },
+    {
+      "path": "finalize-selection.ps1",
+      "bytes": 36620,
+      "sha256": "cbd04a73dc29c78f5eee98ef8c406a485c9f5d060adbb7ef33ca987323335263"
+    }
+  ],
+  "live_q4_identity": {
+    "path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "bytes": 16464440224,
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "passed": true
+  },
+  "source_manifest": {
+    "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/files.sha256",
+    "bytes": 4445,
+    "sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49,
+    "passed": true
+  },
+  "results": [
+    {
+      "name": "source_anchors_match_plan",
+      "passed": true,
+      "evidence": {
+        "manifest": {
+          "passed": true,
+          "entries": 49,
+          "errors": []
+        },
+        "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+        "manifest_bytes": 4445,
+        "payload_bytes": 437140,
+        "payload_files": 49
+      }
+    },
+    {
+      "name": "destination_is_absent_before_publication",
+      "passed": true,
+      "evidence": {
+        "destination_relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+        "exists": false
+      }
+    },
+    {
+      "name": "live_q4_identity_matches_plan",
+      "passed": true,
+      "evidence": {
+        "path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "bytes": 16464440224,
+        "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+        "passed": true
+      }
+    },
+    {
+      "name": "exact_copy_identity_helper_accepts_unchanged_tree",
+      "passed": true,
+      "evidence": {
+        "passed": true,
+        "source_manifest": {
+          "passed": true,
+          "entries": 49,
+          "errors": []
+        },
+        "destination_manifest": {
+          "passed": true,
+          "entries": 49,
+          "errors": []
+        },
+        "manifest_bytes_equal": true,
+        "payload_identities_equal": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "self_consistent_attempt_rewrite_breaks_exact_source_anchor",
+      "passed": true,
+      "evidence": {
+        "passed": false,
+        "source_manifest": {
+          "passed": true,
+          "entries": 49,
+          "errors": []
+        },
+        "destination_manifest": {
+          "passed": true,
+          "entries": 49,
+          "errors": []
+        },
+        "manifest_bytes_equal": false,
+        "payload_identities_equal": false,
+        "errors": [
+          "source and destination manifest bytes differ",
+          "source and destination payload identities differ"
+        ]
+      }
+    },
+    {
+      "name": "self_consistent_attestation_rewrite_breaks_exact_source_anchor",
+      "passed": true,
+      "evidence": {
+        "passed": false,
+        "source_manifest": {
+          "passed": true,
+          "entries": 49,
+          "errors": []
+        },
+        "destination_manifest": {
+          "passed": true,
+          "entries": 49,
+          "errors": []
+        },
+        "manifest_bytes_equal": false,
+        "payload_identities_equal": false,
+        "errors": [
+          "source and destination manifest bytes differ",
+          "source and destination payload identities differ"
+        ]
+      }
+    },
+    {
+      "name": "publication_stage_policy_accepts_exact_owned_stage",
+      "passed": true,
+      "evidence": {
+        "path_policy": {
+          "passed": true,
+          "stage_parent": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\recovery-stage",
+          "candidate": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\recovery-stage\\76aa17198376480ea150de734bd38bb4\\e03-01-q4-32768",
+          "relative": "76aa17198376480ea150de734bd38bb4/e03-01-q4-32768",
+          "errors": []
+        },
+        "exact_tree": {
+          "passed": true,
+          "source_manifest": {
+            "passed": true,
+            "entries": 49,
+            "errors": []
+          },
+          "destination_manifest": {
+            "passed": true,
+            "entries": 49,
+            "errors": []
+          },
+          "manifest_bytes_equal": true,
+          "payload_identities_equal": true,
+          "errors": []
+        },
+        "verifier_integration_deferred_until_frozen_controls": true
+      }
+    },
+    {
+      "name": "publication_stage_policy_rejects_arbitrary_wrong_leaf_and_traversal",
+      "passed": true,
+      "evidence": {
+        "arbitrary": {
+          "passed": false,
+          "stage_parent": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\recovery-stage",
+          "candidate": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-epoch-4-selftest\\23448-20260827T2128215348101Z\\arbitrary-stage\\e03-01-q4-32768",
+          "relative": "../runtime-epoch-4-selftest/23448-20260827T2128215348101Z/arbitrary-stage/e03-01-q4-32768",
+          "errors": [
+            "stage path is outside the recovery-stage root",
+            "stage path is not owner/coordinate depth"
+          ]
+        },
+        "wrong_leaf": {
+          "passed": false,
+          "stage_parent": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\recovery-stage",
+          "candidate": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\recovery-stage\\b88a257d58444b7581ab7ec791cb91e0\\wrong-coordinate",
+          "relative": "b88a257d58444b7581ab7ec791cb91e0/wrong-coordinate",
+          "errors": [
+            "stage leaf is not the exact recovery coordinate"
+          ]
+        },
+        "traversal": {
+          "passed": false,
+          "stage_parent": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\recovery-stage",
+          "candidate": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\escape\\e03-01-q4-32768",
+          "relative": "../escape/e03-01-q4-32768",
+          "errors": [
+            "stage path is outside the recovery-stage root",
+            "stage path is not owner/coordinate depth"
+          ]
+        }
+      }
+    },
+    {
+      "name": "publication_stage_policy_rejects_reparse_owner_when_feasible",
+      "passed": true,
+      "evidence": {
+        "feasible": true,
+        "rejected": true,
+        "setup_error": null
+      }
+    },
+    {
+      "name": "valid_unchanged_raw_copy_passes",
+      "passed": true,
+      "evidence": {
+        "exit_code": 0,
+        "parseable": true,
+        "report": {
+          "schema": "animus-ferric-runtime-recovery-verification-v4",
+          "task": "T-11409",
+          "operation_id": "r04-publish-e03-01-q4-32768",
+          "execution_epoch": 3,
+          "publication_epoch": 4,
+          "source_attempt_schema": "animus-ferric-runtime-attempt-v3",
+          "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+          "control_epoch": 3,
+          "attestation_protocol": "apply-template-differential-v1",
+          "process_command_protocol": "windows-bound-process-command-v1",
+          "live_model_identity": {
+            "checked": false,
+            "mode": "deferred_to_freeze",
+            "sha256": null
+          },
+          "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-epoch-4-selftest\\23448-20260827T2128215348101Z\\valid\\e03-01-q4-32768",
+          "coordinate": "e03-01-q4-32768",
+          "verdict": "viable",
+          "passed": true,
+          "manifest": {
+            "passed": true,
+            "entries": 49,
+            "errors": []
+          },
+          "recovery_anchor": {
+            "applicable": false,
+            "passed": true,
+            "expected_entries": 49,
+            "observed_entries": 49
+          },
+          "control_anchor_mode": "unfrozen_epoch_4_self_test",
+          "throughput_rows": 4,
+          "errors": []
+        },
+        "stderr": ""
+      }
+    },
+    {
+      "name": "model_hash_deferral_rejected_outside_selftest",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "errors": [
+          "validator exception: model-hash deferral is restricted to epoch-4 self-test attempts",
+          "validator location: At C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-4\\verify-runtime.ps1:637 char:13\r\n+             throw 'model-hash deferral is restricted to epoch-4 self- .\r\n+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+          "validator stack: at <ScriptBlock>, C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-4\\verify-runtime.ps1: line 637"
+        ],
+        "stderr": ""
+      }
+    },
+    {
+      "name": "publication_stage_mode_is_exclusive_with_model_hash_deferral",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "errors": [
+          "validator exception: recovery verifier modes are mutually exclusive",
+          "validator location: At C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-4\\verify-runtime.ps1:623 char:5\r\n+     throw 'recovery verifier modes are mutually exclusive'\r\n+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+          "validator stack: at <ScriptBlock>, C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-4\\verify-runtime.ps1: line 623"
+        ],
+        "stderr": ""
+      }
+    },
+    {
+      "name": "publication_stage_mode_is_exclusive_with_unfrozen_source",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "errors": [
+          "validator exception: recovery verifier modes are mutually exclusive",
+          "validator location: At C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-4\\verify-runtime.ps1:623 char:5\r\n+     throw 'recovery verifier modes are mutually exclusive'\r\n+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+          "validator stack: at <ScriptBlock>, C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-4\\verify-runtime.ps1: line 623"
+        ],
+        "stderr": ""
+      }
+    },
+    {
+      "name": "model_hash_deferral_requires_absent_controls",
+      "passed": true,
+      "evidence": {
+        "method": "parsed_source_guard_without_mutating_control_paths",
+        "parse_errors": [],
+        "deferral_assignment": "$deferLiveModelHash =\n    [bool]$DeferLiveModelHashToFreeze -and\n    $controlsAbsent -and\n    -not $isOfficialAttempt -and\n    $isSelfTestAttempt",
+        "controls_absent_guard_present": true
+      }
+    },
+    {
+      "name": "verifier_enforces_exact_anchors_outside_fixture_mode",
+      "passed": true,
+      "evidence": {
+        "method": "parsed_frozen_verifier_source",
+        "exact_anchor_guard_present": true
+      }
+    },
+    {
+      "name": "verifier_publication_stage_mode_is_exactly_path_scoped",
+      "passed": true,
+      "evidence": {
+        "method": "parsed_frozen_verifier_source",
+        "stage_path_guard_present": true
+      }
+    },
+    {
+      "name": "json_datekind_string_preserves_equivalent_offsets",
+      "passed": true,
+      "evidence": {
+        "preserved": {
+          "z": "2026-08-27T20:36:42.9337429Z",
+          "plus": "2026-08-27T20:36:42.9337429+00:00",
+          "minus": "2026-08-27T16:36:42.9337429-04:00"
+        },
+        "normalized": [
+          "2026-08-27T20:36:42.9337429+00:00",
+          "2026-08-27T20:36:42.9337429+00:00",
+          "2026-08-27T20:36:42.9337429+00:00"
+        ]
+      }
+    },
+    {
+      "name": "strict_instant_parser_accepts_offsets_and_rejects_ambiguous_text",
+      "passed": true,
+      "evidence": {
+        "accepted": [
+          "2026-08-27T20:36:42.0000000+00:00",
+          "2026-08-27T20:36:42.9337429+00:00",
+          "2026-08-27T20:36:42.9337429+00:00"
+        ],
+        "rejected": [
+          {
+            "value": "2026-08-27T20:36:42.9337429",
+            "rejected": true
+          },
+          {
+            "value": "08/27/2026 20:36:42",
+            "rejected": true
+          },
+          {
+            "value": "2026-08-27 20:36:42Z",
+            "rejected": true
+          },
+          {
+            "value": "not-an-instant",
+            "rejected": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "mixed_offset_valid_chronology_passes",
+      "passed": true,
+      "evidence": {
+        "exit_code": 0,
+        "report": {
+          "schema": "animus-ferric-runtime-recovery-verification-v4",
+          "task": "T-11409",
+          "operation_id": "r04-publish-e03-01-q4-32768",
+          "execution_epoch": 3,
+          "publication_epoch": 4,
+          "source_attempt_schema": "animus-ferric-runtime-attempt-v3",
+          "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+          "control_epoch": 3,
+          "attestation_protocol": "apply-template-differential-v1",
+          "process_command_protocol": "windows-bound-process-command-v1",
+          "live_model_identity": {
+            "checked": false,
+            "mode": "deferred_to_freeze",
+            "sha256": null
+          },
+          "attempt_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime-epoch-4-selftest\\23448-20260827T2128215348101Z\\mixed-format-chronology\\e03-01-q4-32768",
+          "coordinate": "e03-01-q4-32768",
+          "verdict": "viable",
+          "passed": true,
+          "manifest": {
+            "passed": true,
+            "entries": 49,
+            "errors": []
+          },
+          "recovery_anchor": {
+            "applicable": false,
+            "passed": true,
+            "expected_entries": 49,
+            "observed_entries": 49
+          },
+          "control_anchor_mode": "unfrozen_epoch_4_self_test",
+          "throughput_rows": 4,
+          "errors": []
+        },
+        "stderr": ""
+      }
+    },
+    {
+      "name": "attempt_timestamp_reversal_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "attempt duration is not derivable from its UTC timestamps",
+          "process attestation timestamps are outside the attempt chronology (attempt=False; preflight_parsed=True; attestation_parsed=True; start=2026-08-27T20:44:53.6921728+00:00; preflight=2026-08-27T20:36:42.9337429+00:00; attestation=2026-08-27T20:37:18.7359014+00:00; completed=2026-08-27T20:37:18.7359014+00:00)",
+          "managed-server attestation pass flag is not derivable from raw evidence"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "attempt|chronolog|timestamp"
+      }
+    },
+    {
+      "name": "preflight_attestation_reversal_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "recorded process-creation binding is not derivable from evidence",
+          "process attestation timestamps are outside the attempt chronology (attempt=True; preflight_parsed=True; attestation_parsed=True; start=2026-08-27T20:36:05.6338551+00:00; preflight=2026-08-27T20:37:19.7359014+00:00; attestation=2026-08-27T20:37:18.7359014+00:00; completed=2026-08-27T20:44:53.6921728+00:00)",
+          "managed-server attestation pass flag is not derivable from raw evidence"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "preflight|chronolog|timestamp|creation"
+      }
+    },
+    {
+      "name": "attestation_preflight_reversal_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "recorded process-creation binding is not derivable from evidence",
+          "process attestation timestamps are outside the attempt chronology (attempt=True; preflight_parsed=True; attestation_parsed=True; start=2026-08-27T20:36:05.6338551+00:00; preflight=2026-08-27T20:36:42.9337429+00:00; attestation=2026-08-27T20:36:05.6338551+00:00; completed=2026-08-27T20:44:53.6921728+00:00)",
+          "managed-server attestation pass flag is not derivable from raw evidence"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "attestation|preflight|chronolog|timestamp|creation"
+      }
+    },
+    {
+      "name": "process_record_timestamp_tamper_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "startup summary differs from retained launch evidence",
+          "server launch process timing is invalid",
+          "launch evidence does not prove the frozen coordinate",
+          "server launch process timing is invalid",
+          "managed-server attestation pass flag is not derivable from raw evidence"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "process|timing|timestamp|launch"
+      }
+    },
+    {
+      "name": "journal_timestamp_tamper_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": "command journal chronology is invalid",
+        "stderr": "",
+        "expected_error_pattern": "journal|chronolog|timestamp"
+      }
+    },
+    {
+      "name": "exchange_timestamp_tamper_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "health timing metadata is invalid",
+          "managed-server attestation pass flag is not derivable from raw evidence"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "exchange|timestamp|health|attestation"
+      }
+    },
+    {
+      "name": "memory_timestamp_tamper_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "preflight memory timestamp is invalid",
+          "before launch memory timestamp is invalid"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "memory|timestamp|captur"
+      }
+    },
+    {
+      "name": "manifest_missing_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": "files.sha256 is absent",
+        "stderr": "",
+        "expected_error_pattern": "manifest|files.sha256"
+      }
+    },
+    {
+      "name": "manifest_extra_file_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "manifest: unlisted: unlisted-evidence.txt",
+          "manifest does not cover exactly every retained non-manifest file"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "unlisted|manifest"
+      }
+    },
+    {
+      "name": "manifest_path_traversal_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "manifest: unsafe manifest path: ../outside-evidence.json",
+          "manifest: unlisted: down-1.stdout.log",
+          "manifest does not cover exactly every retained non-manifest file"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "unsafe|manifest|path"
+      }
+    },
+    {
+      "name": "manifest_case_collision_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "manifest: duplicate manifest path: DOWN-1.STDOUT.LOG",
+          "manifest does not cover exactly every retained non-manifest file"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "duplicate|manifest"
+      }
+    },
+    {
+      "name": "manifest_content_tamper_rejected",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": "manifest: hash mismatch: down-1.stdout.log",
+        "stderr": "",
+        "expected_error_pattern": "hash mismatch|manifest"
+      }
+    },
+    {
+      "name": "arbitrary_v3_source_path_not_authorized",
+      "passed": true,
+      "evidence": {
+        "exit_code": 1,
+        "parseable": true,
+        "errors": [
+          "validator exception: unfrozen recovery is restricted to the exact raw source attempt",
+          "validator location: At C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-4\\verify-runtime.ps1:631 char:13\r\n+             throw 'unfrozen recovery is restricted to the exact raw s .\r\n+             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+          "validator stack: at <ScriptBlock>, C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s114\\control-artifacts\\runtime\\epoch-4\\verify-runtime.ps1: line 631"
+        ],
+        "stderr": "",
+        "expected_error_pattern": "source|raw|authoriz|exact"
+      }
+    },
+    {
+      "name": "existing_differing_destination_publication_guard_fails_closed",
+      "passed": true,
+      "evidence": {
+        "passed": true,
+        "publication_allowed": false,
+        "destination_exists": true,
+        "exact_copy": {
+          "passed": false,
+          "source_manifest": {
+            "passed": true,
+            "entries": 49,
+            "errors": []
+          },
+          "destination_manifest": {
+            "passed": true,
+            "entries": 49,
+            "errors": []
+          },
+          "manifest_bytes_equal": false,
+          "payload_identities_equal": false,
+          "errors": [
+            "source and destination manifest bytes differ",
+            "source and destination payload identities differ"
+          ]
+        },
+        "reason": "destination_exists_with_different_tree"
+      }
+    }
+  ]
+}

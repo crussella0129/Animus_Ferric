@@ -1,0 +1,206 @@
+{
+  "schema": "animus-ferric-runtime-recovery-control-inputs-v4",
+  "task": "T-11409",
+  "operation_id": "r04-publish-e03-01-q4-32768",
+  "execution_epoch": 3,
+  "publication_epoch": 4,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "frozen_at_utc": "2026-08-27T21:31:09.6455800Z",
+  "runtime_plan_sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d",
+  "raw_source_anchor_sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e",
+  "repository": {
+    "head_at_freeze": "a1306e5191591600551ef7c2c8676f061e8d554f",
+    "epoch_4_pre_control_base": "a1306e5191591600551ef7c2c8676f061e8d554f"
+  },
+  "epoch_3": {
+    "control_manifest": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.json",
+      "bytes": 33083,
+      "sha256": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d"
+    },
+    "control_digest": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.sha256",
+      "bytes": 86,
+      "sha256": "5350312a4e4d19275cc95d9d2b367f168a73e641d79e3b4ab06e3ca2cfe0197e"
+    },
+    "runtime_plan": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-plan.json",
+      "bytes": 13777,
+      "sha256": "a33f5e73e2ec5ac7118efc4b4f3394581c696827d1859a17b3683509f7e2b905"
+    },
+    "runtime_self_test": {
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-self-test.json",
+      "bytes": 112414,
+      "sha256": "dcd7efb280a2a4f6bca4435c56d84b93498f4cc76fc8c4deefbb38807c854a12"
+    },
+    "control_manifest_digest_line": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d  control-inputs.json",
+    "transitive_controls_checked": 20,
+    "passed": true
+  },
+  "static_controls": [
+    {
+      "path": ".gitattributes",
+      "bytes": 27,
+      "sha256": "6b98748bce4e756cb59c88e22c82d53951931491c29e0d54436e1cf7daa4b026"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2543,
+      "sha256": "c8e4f70d997b85f0cfd26e1e02ffe6304fb18f58afbeb494f58cea55882f80df"
+    },
+    {
+      "path": "runtime-plan.json",
+      "bytes": 3109,
+      "sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d"
+    },
+    {
+      "path": "raw-source-anchor.json",
+      "bytes": 8701,
+      "sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e"
+    },
+    {
+      "path": "runtime-common.ps1",
+      "bytes": 87625,
+      "sha256": "322407fc52e2192cedf320d65e9c8029c75d1190e732e3d76a27394614eaf59c"
+    },
+    {
+      "path": "freeze-runtime.ps1",
+      "bytes": 24994,
+      "sha256": "219adf69c089f02801a8b29d382067e3a43600739d18b9de0473d26a01430d4d"
+    },
+    {
+      "path": "verify-runtime.ps1",
+      "bytes": 138977,
+      "sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d"
+    },
+    {
+      "path": "recover-e03-publication.ps1",
+      "bytes": 21381,
+      "sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61"
+    },
+    {
+      "path": "test-runtime.ps1",
+      "bytes": 44357,
+      "sha256": "b35fd7e0047271e0a8b18b04c8ccc8dbb1d7e41c2075cb1a505ec1d95e512926"
+    },
+    {
+      "path": "verify-q4-gate.ps1",
+      "bytes": 19499,
+      "sha256": "4b982fffe4c131f31b0b71fef94b68046c2753a0ff9255f196aa113430926370"
+    },
+    {
+      "path": "record-q4-verdict.ps1",
+      "bytes": 4661,
+      "sha256": "9ba87b91c65a092a1ffdd5842efb07a365cb828cb912e41f98742f2e6bf4128c"
+    },
+    {
+      "path": "finalize-selection.ps1",
+      "bytes": 36620,
+      "sha256": "cbd04a73dc29c78f5eee98ef8c406a485c9f5d060adbb7ef33ca987323335263"
+    }
+  ],
+  "runtime_self_test": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-self-test.json",
+    "bytes": 25552,
+    "sha256": "62a1f797cc1ca58eb18446ddea8792745456e2f35f8b147293fdd304ddc64579",
+    "passed": true
+  },
+  "raw_source": {
+    "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768",
+    "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+    "entries": 49,
+    "payload_bytes": 437140,
+    "terminal_facts_passed": true
+  },
+  "source_verification": {
+    "schema": "animus-ferric-runtime-recovery-verification-v4",
+    "operation_id": "r04-publish-e03-01-q4-32768",
+    "passed": true,
+    "report_sha256": "6349a0491a22f84cd10cf88ae7819eb2c2aa39964a63f4a9368a61bb7ecb06ff",
+    "hash_deferral_used": false
+  },
+  "model": {
+    "relative_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "bytes": 16464440224,
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "independently_rehashed": true,
+    "passed": true
+  },
+  "cold_state": {
+    "local_runfile_absent": true,
+    "global_runfile_absent": true,
+    "listener_absent": true,
+    "llama_server_process_absent": true,
+    "memory": {
+      "captured_at_utc": "2026-08-27T21:30:36.9286731Z",
+      "ram": {
+        "total_visible_bytes": 34281484288,
+        "free_physical_bytes": 16228560896,
+        "total_virtual_bytes": 140737488224256,
+        "free_virtual_bytes": 138464596828160
+      },
+      "nvidia_smi_gpu_csv": [
+        "NVIDIA GeForce RTX 2080 Ti, GPU-ba084980-69e2-8d7e-07d9-c291d42030df, 596.49, 11264, 8005, 3023, 11"
+      ],
+      "nvidia_smi_compute_apps_csv": [
+        "15308, [Insufficient Permissions], [N/A]",
+        "42784, C:\\Windows\\System32\\ShellHost.exe, [N/A]",
+        "13908, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+        "23508, C:\\Windows\\explorer.exe, [N/A]",
+        "31404, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+        "28756, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+        "13156, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37808, C:\\Program Files\\WindowsApps\\Microsoft.YourPhone_1.26071.164.0_x64__8wekyb3d8bbwe\\PhoneExperienceHost.exe, [N/A]",
+        "28252, C:\\Users\\charl\\AppData\\Local\\Discord\\app-1.0.9253\\Discord.exe, [N/A]",
+        "16256, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+        "32656, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+        "5556, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "7748, C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe, [N/A]",
+        "10652, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "43036, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "15208, C:\\Program Files (x86)\\GOG Galaxy\\GOG Galaxy Notifications Renderer.exe, [N/A]",
+        "42176, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EACefSubProcess.exe, [N/A]",
+        "34032, C:\\Program Files\\Electronic Arts\\EA Desktop\\13.778.0.6291-1787611158\\EA Desktop\\EADesktop.exe, [N/A]",
+        "2540, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "37664, C:\\Users\\charl\\AppData\\Local\\Programs\\zima-client\\Zima.exe, [N/A]",
+        "6308, C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe, [N/A]",
+        "25068, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudHome.exe, [N/A]",
+        "11064, C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.9.60.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudPhotos.exe, [N/A]",
+        "27440, C:\\Program Files\\WindowsApps\\SpotifyAB.SpotifyMusic_1.297.270.0_x64__zpdnekdrzrea0\\Spotify.exe, [N/A]",
+        "18824, C:\\Program Files\\Adobe\\Adobe Creative Cloud\\ACC\\Creative Cloud UI Helper.exe, [N/A]",
+        "28220, C:\\Program Files\\Common Files\\Adobe\\Adobe OS Extension\\AdobeNotificationClient.exe, [N/A]",
+        "10184, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+        "7484, C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe, [N/A]",
+        "39908, C:\\Program Files\\WindowsApps\\Microsoft.MicrosoftOfficeHub_19.2608.49021.0_x64__8wekyb3d8bbwe\\M365Copilot.exe, [N/A]",
+        "26960, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\151.0.4129.107\\msedgewebview2.exe, [N/A]",
+        "34124, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.820.7780.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+        "30988, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "46548, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "33892, C:\\Program Files\\WindowsApps\\Claude_1.37937.3.0_x64__pzs8sxrjxfjjc\\app\\claude.exe, [N/A]",
+        "50756, C:\\Program Files\\WindowsApps\\Microsoft.ScreenSketch_11.2605.36.0_x64__8wekyb3d8bbwe\\SnippingTool\\SnippingTool.exe, [N/A]",
+        "7324, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "47984, [Insufficient Permissions], [N/A]",
+        "29184, C:\\Program Files\\Malwarebytes\\Anti-Malware\\Malwarebytes.exe, [N/A]",
+        "19000, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+        "17848, C:\\Program Files\\WindowsApps\\MSTeams_26213.1006.5014.9784_x64__8wekyb3d8bbwe\\ms-teams.exe, [N/A]",
+        "41828, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "8576, C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe, [N/A]",
+        "42988, C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\CEF\\NVIDIA Overlay.exe, [N/A]",
+        "49752, C:\\Users\\charl\\AppData\\Local\\Packages\\Microsoft.4297127D64EC6_8wekyb3d8bbwe\\LocalCache\\Local\\runtime\\java-runtime-epsilon\\windows-x64\\java-runtime-epsilon\\bin\\javaw.exe, [N/A]"
+      ],
+      "gpu": {
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "uuid": "GPU-ba084980-69e2-8d7e-07d9-c291d42030df",
+        "driver_version": "596.49",
+        "total_mib": 11264,
+        "free_mib": 8005,
+        "used_mib": 3023,
+        "utilization_percent": 11
+      }
+    }
+  },
+  "destination": {
+    "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/attempts/e03-01-q4-32768",
+    "absent_at_freeze": true
+  }
+}

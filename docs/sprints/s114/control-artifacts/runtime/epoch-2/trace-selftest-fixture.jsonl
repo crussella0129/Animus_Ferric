@@ -1,0 +1,19 @@
+{"v":1,"ts_ms":1787800000000,"session":"s114-trace-fixture","seq":0,"event":{"type":"session_start","workspace":"C:\\workspace"}}
+{"v":1,"ts_ms":1787800000001,"session":"s114-trace-fixture","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"constrained_json","harness_policy":"legacy","max_turns":4,"max_tools":6,"prompt_budget_tokens":2800,"max_output_tokens":512,"truncation_limit":4000,"tier_source":"override"}}
+{"v":1,"ts_ms":1787800000002,"session":"s114-trace-fixture","seq":2,"event":{"type":"session_prompt","system":"Use constrained tool actions and finish with task_complete.","user":"Read nonce.txt and return its exact content."}}
+{"v":1,"ts_ms":1787800000003,"session":"s114-trace-fixture","seq":3,"event":{"type":"turn_start","turn":0}}
+{"v":1,"ts_ms":1787800000004,"session":"s114-trace-fixture","seq":4,"event":{"type":"prompt_assembled","turn":0,"message_count":2,"chars":105,"offered_tools":["read_file","task_complete"]}}
+{"v":1,"ts_ms":1787800000005,"session":"s114-trace-fixture","seq":5,"event":{"type":"constraint_applied","kind":"json_schema"}}
+{"v":1,"ts_ms":1787800000006,"session":"s114-trace-fixture","seq":6,"event":{"type":"turn_end","turn":0,"text":"{\"tool\":\"read_file\",\"args\":{\"path\":\"nonce.txt\"}}","tool_call_count":1,"input_tokens":20,"output_tokens":16,"truncated":false}}
+{"v":1,"ts_ms":1787800000007,"session":"s114-trace-fixture","seq":7,"event":{"type":"actions_proposed","turn":0,"calls":[{"id":"g-0-0","name":"read_file","args":{"path":"nonce.txt"}}]}}
+{"v":1,"ts_ms":1787800000008,"session":"s114-trace-fixture","seq":8,"event":{"type":"tool_call","id":"g-0-0","name":"read_file","args":{"path":"nonce.txt"}}}
+{"v":1,"ts_ms":1787800000009,"session":"s114-trace-fixture","seq":9,"event":{"type":"tool_result","id":"g-0-0","name":"read_file","output":"AF-S114-QWEN38-NONCE-7F3C19A2\n","is_error":false,"duration_ms":1}}
+{"v":1,"ts_ms":1787800000010,"session":"s114-trace-fixture","seq":10,"event":{"type":"turn_committed","turn":0,"dispatched":1,"errored":0}}
+{"v":1,"ts_ms":1787800000011,"session":"s114-trace-fixture","seq":11,"event":{"type":"turn_start","turn":1}}
+{"v":1,"ts_ms":1787800000012,"session":"s114-trace-fixture","seq":12,"event":{"type":"prompt_assembled","turn":1,"message_count":4,"chars":170,"offered_tools":["read_file","task_complete"]}}
+{"v":1,"ts_ms":1787800000013,"session":"s114-trace-fixture","seq":13,"event":{"type":"constraint_applied","kind":"json_schema"}}
+{"v":1,"ts_ms":1787800000014,"session":"s114-trace-fixture","seq":14,"event":{"type":"turn_end","turn":1,"text":"{\"tool\":\"task_complete\",\"args\":{\"summary\":\"AF-S114-QWEN38-NONCE-7F3C19A2\"}}","tool_call_count":1,"input_tokens":30,"output_tokens":24,"truncated":false}}
+{"v":1,"ts_ms":1787800000015,"session":"s114-trace-fixture","seq":15,"event":{"type":"actions_proposed","turn":1,"calls":[{"id":"g-1-0","name":"task_complete","args":{"summary":"AF-S114-QWEN38-NONCE-7F3C19A2"}}]}}
+{"v":1,"ts_ms":1787800000016,"session":"s114-trace-fixture","seq":16,"event":{"type":"tool_call","id":"g-1-0","name":"task_complete","args":{"summary":"AF-S114-QWEN38-NONCE-7F3C19A2"}}}
+{"v":1,"ts_ms":1787800000017,"session":"s114-trace-fixture","seq":17,"event":{"type":"turn_committed","turn":1,"dispatched":0,"errored":0,"stop_reason":"task_complete"}}
+{"v":1,"ts_ms":1787800000018,"session":"s114-trace-fixture","seq":18,"event":{"type":"session_end","reason":"task_complete"}}

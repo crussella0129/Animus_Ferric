@@ -1,0 +1,664 @@
+{
+  "schema": "animus-ferric-runtime-publication-correction-self-test-v5",
+  "task": "T-11409",
+  "operation_id": "r05-publish-e03-01-q4-32768-after-e04-wrapper-failure",
+  "execution_epoch": 3,
+  "failed_publication_epoch": 4,
+  "correction_epoch": 5,
+  "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+  "generated_at_utc": "2026-08-27T22:25:03.4189694+00:00",
+  "passed": true,
+  "test_count": 25,
+  "duplicate_test_names": [],
+  "static_controls": [
+    {
+      "path": ".gitattributes",
+      "bytes": 27,
+      "sha256": "6b98748bce4e756cb59c88e22c82d53951931491c29e0d54436e1cf7daa4b026"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2911,
+      "sha256": "41a9172b307757d4ba74a05fbab1dda569813c5ed2ac43b12d1574ed1af910d0"
+    },
+    {
+      "path": "incident.json",
+      "bytes": 2000,
+      "sha256": "0d4f6801e9be40dce5bb6e71d81fd12314f3c9ba3d4d1c55c2721e9ea8fa45f0"
+    },
+    {
+      "path": "runtime-plan.json",
+      "bytes": 5477,
+      "sha256": "18fb3be97ba79d0e04ee67f1e3e77ebb92b76fdfc5b3b087013f613e7fa9575c"
+    },
+    {
+      "path": "publication-common.ps1",
+      "bytes": 39136,
+      "sha256": "332475b8b83d5668ed9d7cb5d34fddfd720e4fb1328b91f9cbc7c44e64f994f1"
+    },
+    {
+      "path": "test-publication.ps1",
+      "bytes": 50683,
+      "sha256": "d7c583283aac8afb03c30a46850a35a07f7dc46f665db8e642a04614dd292e81"
+    },
+    {
+      "path": "freeze-publication.ps1",
+      "bytes": 31156,
+      "sha256": "327658d89a7cb18fc0c4e2f76ab144d83bcc3c5a366dfbdb7333f98f166b1214"
+    },
+    {
+      "path": "publish-e04-correction.ps1",
+      "bytes": 43717,
+      "sha256": "529c4e96e9b20d7ae31a6a75d3b8dc5d0d231d83caa7cb661c4f1d7ef3197b06"
+    }
+  ],
+  "plan_dependency_anchors": [
+    {
+      "label": "raw manifest",
+      "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/files.sha256",
+      "bytes": 4445,
+      "sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "raw attempt",
+      "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attempt.json",
+      "bytes": 75608,
+      "sha256": "167a964e471fec93bc7e58ff0ec76bbba45f3025f18c2fe84060248732b4fae4",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "raw attestation",
+      "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attestation.json",
+      "bytes": 30991,
+      "sha256": "792ae02c6323deafcaae9b89b247b43fccdc07cabb3ff470a0b7edfee78b0a99",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-4 runtime plan",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-plan.json",
+      "bytes": 3109,
+      "sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-4 raw source anchor",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/raw-source-anchor.json",
+      "bytes": 8701,
+      "sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-4 control manifest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.json",
+      "bytes": 10507,
+      "sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-4 control digest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.sha256",
+      "bytes": 86,
+      "sha256": "4358031fe24ebe96e06582fe64617928a181af4d28c0eb874ec76902a2ce33bd",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-4 runtime self-test",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-self-test.json",
+      "bytes": 25552,
+      "sha256": "62a1f797cc1ca58eb18446ddea8792745456e2f35f8b147293fdd304ddc64579",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-4 verifier",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/verify-runtime.ps1",
+      "bytes": 138977,
+      "sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-4 frozen failed publisher",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recover-e03-publication.ps1",
+      "bytes": 21381,
+      "sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-3 control manifest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.json",
+      "bytes": 33083,
+      "sha256": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-3 control digest",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.sha256",
+      "bytes": 86,
+      "sha256": "5350312a4e4d19275cc95d9d2b367f168a73e641d79e3b4ab06e3ca2cfe0197e",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-3 source runtime plan",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-plan.json",
+      "bytes": 13777,
+      "sha256": "a33f5e73e2ec5ac7118efc4b4f3394581c696827d1859a17b3683509f7e2b905",
+      "passed": true,
+      "errors": []
+    },
+    {
+      "label": "epoch-3 runtime self-test",
+      "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-self-test.json",
+      "bytes": 112414,
+      "sha256": "dcd7efb280a2a4f6bca4435c56d84b93498f4cc76fc8c4deefbb38807c854a12",
+      "passed": true,
+      "errors": []
+    }
+  ],
+  "stage_verification": {
+    "schema": "animus-ferric-runtime-recovery-verification-v4",
+    "operation_id": "r04-publish-e03-01-q4-32768",
+    "execution_epoch": 3,
+    "publication_epoch": 4,
+    "timestamp_protocol": "powershell-json-datekind-string-rfc3339-v1",
+    "attestation_protocol": "apply-template-differential-v1",
+    "process_command_protocol": "windows-bound-process-command-v1",
+    "control_anchor_mode": "epoch_4_frozen_publication_stage",
+    "coordinate": "e03-01-q4-32768",
+    "verdict": "viable",
+    "live_model_identity": {
+      "checked": true,
+      "mode": "checked_in_verifier",
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+    },
+    "manifest": {
+      "passed": true,
+      "entries": 49,
+      "errors": []
+    },
+    "recovery_anchor": {
+      "applicable": true,
+      "passed": true,
+      "expected_entries": 49,
+      "observed_entries": 49
+    },
+    "passed": true,
+    "errors": []
+  },
+  "live_q4_identity": {
+    "relative_path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "bytes": 16464440224,
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "checked": true,
+    "passed": true
+  },
+  "results": [
+    {
+      "name": "epoch_5_plan_and_dependency_anchors_are_exact",
+      "passed": true,
+      "evidence": {
+        "plan_identity": true,
+        "anchor_count": 14,
+        "anchors": [
+          {
+            "label": "raw manifest",
+            "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/files.sha256",
+            "bytes": 4445,
+            "sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "raw attempt",
+            "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attempt.json",
+            "bytes": 75608,
+            "sha256": "167a964e471fec93bc7e58ff0ec76bbba45f3025f18c2fe84060248732b4fae4",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "raw attestation",
+            "relative_path": "target/s114-experiment/runtime-epoch-3/smoke/e03-01-q4-32768/attestation.json",
+            "bytes": 30991,
+            "sha256": "792ae02c6323deafcaae9b89b247b43fccdc07cabb3ff470a0b7edfee78b0a99",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-4 runtime plan",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-plan.json",
+            "bytes": 3109,
+            "sha256": "4f07e26120b30689a16690bfdc0ef927bb8d26477bb450f14b866bc7fc6e2d7d",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-4 raw source anchor",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/raw-source-anchor.json",
+            "bytes": 8701,
+            "sha256": "d62ce8d5610545b0187edd8791bb5f399f1d50c58a1adb28e0e3613c72fd151e",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-4 control manifest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.json",
+            "bytes": 10507,
+            "sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-4 control digest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/control-inputs.sha256",
+            "bytes": 86,
+            "sha256": "4358031fe24ebe96e06582fe64617928a181af4d28c0eb874ec76902a2ce33bd",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-4 runtime self-test",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/runtime-self-test.json",
+            "bytes": 25552,
+            "sha256": "62a1f797cc1ca58eb18446ddea8792745456e2f35f8b147293fdd304ddc64579",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-4 verifier",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/verify-runtime.ps1",
+            "bytes": 138977,
+            "sha256": "99566ab9fb37a2a78692f89e48893d13a17d96a672bb0efd62a789f8d2fe152d",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-4 frozen failed publisher",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recover-e03-publication.ps1",
+            "bytes": 21381,
+            "sha256": "eb9b1399fbe3b7961beee9a3133557790fc94e38c6f33c6aa1b4ea0c88051c61",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-3 control manifest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.json",
+            "bytes": 33083,
+            "sha256": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-3 control digest",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.sha256",
+            "bytes": 86,
+            "sha256": "5350312a4e4d19275cc95d9d2b367f168a73e641d79e3b4ab06e3ca2cfe0197e",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-3 source runtime plan",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-plan.json",
+            "bytes": 13777,
+            "sha256": "a33f5e73e2ec5ac7118efc4b4f3394581c696827d1859a17b3683509f7e2b905",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "label": "epoch-3 runtime self-test",
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-self-test.json",
+            "bytes": 112414,
+            "sha256": "dcd7efb280a2a4f6bca4435c56d84b93498f4cc76fc8c4deefbb38807c854a12",
+            "passed": true,
+            "errors": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared_dependency_rewalk_checks_all_frozen_epoch_4_and_epoch_3_controls",
+      "passed": true,
+      "evidence": {
+        "static_controls_checked": 12,
+        "transitive_epoch_3_controls_checked": 20,
+        "errors": []
+      }
+    },
+    {
+      "name": "plan_identity_rejects_cross_operation_protocol_and_missing_anchor_mutations",
+      "passed": true,
+      "evidence": {
+        "cross_operation_rejected": true,
+        "wrong_protocol_rejected": true,
+        "missing_epoch_3_anchor_rejected": true
+      }
+    },
+    {
+      "name": "recovery_and_source_plan_roles_are_explicitly_separated",
+      "passed": true,
+      "evidence": {
+        "recovery_schema": "animus-ferric-runtime-recovery-plan-v4",
+        "recovery_operation_id": "r04-publish-e03-01-q4-32768",
+        "recovery_has_source_protocol_objects": false,
+        "source_schema": "animus-ferric-runtime-plan-v3",
+        "epoch_3_anchors_match_recovery_plan": true,
+        "source_template_protocol": "apply-template-differential-v1",
+        "source_process_protocol": "windows-bound-process-command-v1"
+      }
+    },
+    {
+      "name": "raw_source_anchor_and_exact_tree_match_the_correction_plan",
+      "passed": true,
+      "evidence": {
+        "anchor_matches_plan": true,
+        "tree": {
+          "passed": true,
+          "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+          "entries": 49,
+          "payload_bytes": 437140,
+          "errors": []
+        }
+      }
+    },
+    {
+      "name": "epoch_4_static_and_control_hashes_are_frozen_before_testing",
+      "passed": true,
+      "evidence": {
+        "control_manifest_sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f",
+        "control_digest_line": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f  control-inputs.json",
+        "static_count": 12,
+        "errors": []
+      }
+    },
+    {
+      "name": "destination_and_both_publication_envelopes_are_absent",
+      "passed": true,
+      "evidence": {
+        "destination_absent": true,
+        "legacy_epoch_4_envelope_absent": true,
+        "epoch_5_correction_evidence_absent": true
+      }
+    },
+    {
+      "name": "shared_publication_state_machine_covers_fresh_resume_and_invalid_partial_states",
+      "passed": true,
+      "evidence": {
+        "fresh_action": "publish_fresh",
+        "exact_destination_resume_action": "resume_exact_destination",
+        "exact_legacy_resume_action": "complete_correction_evidence",
+        "already_complete_action": "already_complete",
+        "legacy_only_errors": [
+          "publication evidence exists without its destination"
+        ],
+        "correction_without_legacy_errors": [
+          "correction evidence exists without its legacy envelope"
+        ],
+        "differing_destination_errors": [
+          "existing destination is not exact"
+        ],
+        "differing_legacy_errors": [
+          "existing legacy envelope is not exact"
+        ],
+        "differing_correction_errors": [
+          "existing correction evidence is not exact"
+        ]
+      }
+    },
+    {
+      "name": "present_nonleaf_or_reparse_evidence_is_never_treated_as_absent",
+      "passed": true,
+      "evidence": {
+        "production_mapping": "present=true, exact=false for non-leaf or reparse evidence paths",
+        "nonleaf_legacy_errors": [
+          "existing legacy envelope is not exact",
+          "publication evidence exists without its destination"
+        ],
+        "reparse_legacy_errors": [
+          "existing legacy envelope is not exact",
+          "publication evidence exists without its destination"
+        ],
+        "nonleaf_correction_errors": [
+          "existing correction evidence is not exact",
+          "publication evidence exists without its destination",
+          "correction evidence exists without its legacy envelope"
+        ],
+        "reparse_correction_errors": [
+          "existing correction evidence is not exact",
+          "publication evidence exists without its destination",
+          "correction evidence exists without its legacy envelope"
+        ]
+      }
+    },
+    {
+      "name": "epoch_5_static_control_identities_are_exact_ordered_and_unique",
+      "passed": true,
+      "evidence": {
+        "expected_count": 8,
+        "observed_count": 8,
+        "duplicate_names": [],
+        "names": [
+          ".gitattributes",
+          "README.md",
+          "incident.json",
+          "runtime-plan.json",
+          "publication-common.ps1",
+          "test-publication.ps1",
+          "freeze-publication.ps1",
+          "publish-e04-correction.ps1"
+        ]
+      }
+    },
+    {
+      "name": "all_epoch_5_and_invoked_frozen_powershell_files_parse",
+      "passed": true,
+      "evidence": {
+        "files": [
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publication-common.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/test-publication.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/freeze-publication.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-5/publish-e04-correction.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/verify-runtime.ps1",
+            "passed": true,
+            "errors": []
+          },
+          {
+            "relative_path": "docs/sprints/s114/control-artifacts/runtime/epoch-4/recover-e03-publication.ps1",
+            "passed": true,
+            "errors": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "frozen_publisher_bug_is_preserved_only_as_incident_evidence",
+      "passed": true,
+      "evidence": {
+        "incident_identity_passed": true,
+        "frozen_publisher_contains_recorded_incorrect_binding": true,
+        "corrected_common_contains_source_plan_binding": true,
+        "corrected_publisher_avoids_recorded_incorrect_binding": true
+      }
+    },
+    {
+      "name": "publisher_maps_present_nonleaf_and_reparse_evidence_before_any_destination_move",
+      "passed": true,
+      "evidence": {
+        "plain_legacy_presence_check": true,
+        "plain_correction_presence_check": true,
+        "leaf_and_reparse_guard_precedes_state_decision": true,
+        "state_decision_precedes_destination_move": true
+      }
+    },
+    {
+      "name": "exact_tree_rejects_self_consistent_attempt_rewrite",
+      "passed": true,
+      "evidence": {
+        "passed": false,
+        "manifest_sha256": "88f039d8fe3ac5b13f93a628a5679afa8d1793a46d123377ecd4746803d6393e",
+        "entries": 49,
+        "payload_bytes": 361532,
+        "errors": [
+          "exact-tree manifest differs from its anchor",
+          "exact-tree file differs: attempt.json",
+          "exact-tree payload byte total differs"
+        ]
+      }
+    },
+    {
+      "name": "exact_tree_rejects_self_consistent_attestation_rewrite",
+      "passed": true,
+      "evidence": {
+        "passed": false,
+        "manifest_sha256": "30424156088e2610684f5b99b3c2e665c225dd5401d60d57c8d6ede0c4da9b44",
+        "entries": 49,
+        "payload_bytes": 330541,
+        "errors": [
+          "exact-tree manifest differs from its anchor",
+          "exact-tree file differs: attempt.json",
+          "exact-tree file differs: attestation.json",
+          "exact-tree payload byte total differs"
+        ]
+      }
+    },
+    {
+      "name": "exact_tree_rejects_an_unlisted_extra_file",
+      "passed": true,
+      "evidence": {
+        "passed": false,
+        "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+        "entries": 49,
+        "payload_bytes": 437140,
+        "errors": [
+          "exact-tree manifest: unlisted: unlisted-evidence.txt",
+          "exact-tree total file count differs"
+        ]
+      }
+    },
+    {
+      "name": "adversarial_exact_tree_workspace_was_cleaned",
+      "passed": true,
+      "evidence": {
+        "owner_absent": true
+      }
+    },
+    {
+      "name": "stage_policy_accepts_only_the_exact_owned_coordinate_shape",
+      "passed": true,
+      "evidence": {
+        "valid_errors": [],
+        "arbitrary_errors": [
+          "stage path is outside the exact recovery-stage parent"
+        ],
+        "wrong_owner_errors": [
+          "stage owner is not a lowercase 32-hex GUID"
+        ],
+        "wrong_leaf_errors": [
+          "stage leaf is not the exact recovery coordinate"
+        ]
+      }
+    },
+    {
+      "name": "owned_stage_uses_the_shared_epoch_4_verifier_wrapper_once",
+      "passed": true,
+      "evidence": {
+        "exact_tree": {
+          "passed": true,
+          "manifest_sha256": "4ba753e79f59d2441eade7d7e7bab7131f7f6cfeed6a702bcf719faf8fde430a",
+          "entries": 49,
+          "payload_bytes": 437140,
+          "errors": []
+        },
+        "report_validation_errors": [],
+        "invocation_error": null,
+        "owned_stage_cleaned": true
+      }
+    },
+    {
+      "name": "pure_report_validator_rejects_missing_required_fields",
+      "passed": true,
+      "evidence": {
+        "errors": [
+          "verifier report is malformed: The property 'operation_id' cannot be found on this object. Verify that the property exists."
+        ]
+      }
+    },
+    {
+      "name": "pure_report_validator_rejects_cross_operation_fields",
+      "passed": true,
+      "evidence": {
+        "errors": [
+          "verifier operation differs",
+          "verifier coordinate or verdict differs"
+        ]
+      }
+    },
+    {
+      "name": "pure_report_validator_rejects_wrong_protocols",
+      "passed": true,
+      "evidence": {
+        "errors": [
+          "verifier timestamp protocol differs",
+          "verifier template-attestation protocol differs",
+          "verifier process-command protocol differs"
+        ]
+      }
+    },
+    {
+      "name": "pure_report_validator_rejects_wrong_anchor_mode",
+      "passed": true,
+      "evidence": {
+        "errors": [
+          "verifier control-anchor mode differs"
+        ]
+      }
+    },
+    {
+      "name": "single_live_model_hash_is_delegated_to_the_one_shared_verifier_call",
+      "passed": true,
+      "evidence": {
+        "verifier_wrapper_invocations_in_self_test": 1,
+        "direct_get_file_hash_invocations_in_self_test": 0,
+        "verifier_hash_mode": "checked_in_verifier"
+      }
+    },
+    {
+      "name": "epoch_4_static_and_control_hashes_remain_unchanged_after_testing",
+      "passed": true,
+      "evidence": {
+        "before_passed": true,
+        "after_passed": true,
+        "before_errors": [],
+        "after_errors": [],
+        "control_manifest_sha256": "5d0c7afc4ed8275ef2dc274d611c0d034917144a2f6ded95019c8db0365b420f"
+      }
+    }
+  ]
+}

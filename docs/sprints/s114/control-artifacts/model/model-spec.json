@@ -1,0 +1,27 @@
+{
+  "schema": "animus-ferric-model-spec-v1",
+  "upstream": {
+    "repository": "Qwen/Qwen3.8-27B",
+    "license": "Apache-2.0"
+  },
+  "conversion": {
+    "repository": "unsloth/Qwen3.8-27B-GGUF",
+    "third_party": true,
+    "revision": "313447f257f7ebde0b968e4778feef774546ed81"
+  },
+  "primary": {
+    "quant": "Q4_K_M",
+    "file": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "bytes": 16464440224,
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/313447f257f7ebde0b968e4778feef774546ed81/Qwen3.8-27B-UD-Q4_K_M.gguf?download=true"
+  },
+  "fallback": {
+    "quant": "Q3_K_XL",
+    "file": "Qwen3.8-27B-UD-Q3_K_XL.gguf",
+    "bytes": 13146393504,
+    "sha256": "8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e",
+    "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/313447f257f7ebde0b968e4778feef774546ed81/Qwen3.8-27B-UD-Q3_K_XL.gguf?download=true",
+    "authorization_gate": "T-11409/E09-D"
+  }
+}
