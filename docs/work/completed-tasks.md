@@ -1385,4 +1385,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   Before/after manifests were byte-identical for every moved root, all four
   canonical roots were absent at handoff, the tracked worktree effect and
   known unrelated Sprint 114 edit were unchanged, and no model inference ran.
-- **Commit:** PENDING
+- **Commit:** `5e1ad3852c0e1f8d5dce984eb196cf7dd9fbfdcc`
