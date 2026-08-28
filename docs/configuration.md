@@ -49,6 +49,19 @@ on_error  = "scripts/err.sh"
 The field list is fixed and bounded on purpose — config can configure behavior,
 but it can never reach the guard, denylists, or workspace boundary.
 
+`--trace-dir` is deliberately not a config field. It is an explicit,
+query-only filesystem boundary. Omitting it uses
+`<workspace>/.ferric/trace`; a relative value is resolved from the invocation
+directory. An external value must be disjoint from the canonical workspace and
+must not resolve through a symbolic link or Windows reparse point. Resume from
+an external source trace requires the operator to repeat the same
+`--trace-dir` and `--workspace` explicitly. Every supported incomplete,
+resumable query stop prints a command targeting PowerShell on Windows or POSIX
+`sh` on Unix, not `cmd.exe`; clarification alone adds the `--answer` argument.
+Successful terminal traces are rejected by `--resume`, but an incomplete
+resumable `session_end` remains valid. This low-level control is not a
+high-level run/resume/evidence workflow.
+
 ---
 
 ## `Animus.md` — freeform instructions
@@ -136,12 +149,14 @@ bounded enum, not arbitrary shell.
 
 ## Data & runtime files
 
-Written under `.ferric/` in the workspace (all git-ignorable):
+Written under `.ferric/` in the workspace (all git-ignorable), except that an
+individual `ferric query --trace-dir <DIR>` writes that query's trace to the
+validated external directory instead:
 
 | Path | What |
 |---|---|
 | `.ferric/server.json` | running server runfile (auto-discovery) |
-| `.ferric/trace/*.jsonl` | per-session traces (the source of truth) |
+| `.ferric/trace/*.jsonl` | default per-session traces (the source of truth); query traces may use explicit `--trace-dir` |
 | `.ferric/cron/*.toml` + `.state.json` | cron jobs + last-run state |
 | `.ferric/MEMORY.md` | dream-mode consolidated memory |
 | `.ferric/tasks/` | background-task stdout/stderr redirects |

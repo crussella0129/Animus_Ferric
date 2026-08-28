@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0007
 - **State:** active
-- **Work evidence:** [T-11407 through T-11413 build plan](../sprints/s114/sprint-plans/build-plan.md#execution-sequence)
+- **Work evidence:** [Sprint 114 T-11407 through T-11413](../sprints/s114/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 continuation plan](../sprints/s115/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none

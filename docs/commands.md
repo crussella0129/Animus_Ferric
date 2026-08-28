@@ -20,6 +20,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | Flag | Meaning |
 |---|---|
 | `--workspace <DIR>` | containment boundary (default: current dir) |
+| `--trace-dir <DIR>` | query-only trace root; default `<workspace>/.ferric/trace`; relative paths resolve from the invocation directory |
 | `--mock` | use the built-in scripted model — **no engine needed** |
 | `--model <NAME>` | model id (required for a real backend) |
 | `--api-base <URL>` | server URL (default: the running `ferric server`, else `http://localhost:1234/v1`) |
@@ -39,6 +40,19 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--resume <TRACE>` | continue an interrupted, incomplete session |
 | `--research <QUERY>` | run the Ornstein research phase first (quarantined) |
 | `--sink-action requireapproval\|deny\|warn` | CaMeL sink policy for tainted data (default requireapproval) |
+
+An explicit `--trace-dir` must be disjoint from the canonical workspace in
+both directions, and its existing components cannot be symbolic links or
+Windows reparse points. Ferric validates it before and after directory
+creation. A continuation of an externally stored trace must explicitly repeat
+the same `--trace-dir` and `--workspace`; omission fails instead of falling
+back to the workspace default. Every supported incomplete, resumable query
+stop prints a `Resume:` command. Clarification alone adds
+`--answer '<answer>'`. The command uses PowerShell syntax on Windows and POSIX-`sh`
+syntax on Unix (`cmd.exe` is not supported). Successful terminal traces are
+rejected by `--resume`, while an incomplete resumable `session_end` remains a
+valid source. This is a low-level `query` option, not a high-level
+run/status/resume/evidence workflow.
 
 `evidence` is an opt-in experimental policy that binds supported mutations and
 named checks to recorded workspace evidence. Its Sprint 113 frozen Qwen screen
@@ -64,8 +78,9 @@ An interactive REPL. At the `you>` prompt:
   through the guarded `shell_exec` denylist
 - `/help`, `/exit`, `/quit`
 
-Flags mirror `query` (`--workspace`, `--mock`, backend/model, `--protocol`,
-`--max-ring`, …) plus `--no-stream` (streaming is on by default in chat).
+Flags mirror `query`'s model and run controls (`--workspace`, `--mock`,
+backend/model, `--protocol`, `--max-ring`, …) plus `--no-stream` (streaming is
+on by default in chat). The query-only `--trace-dir` is not a chat option.
 Plain talk remains available under `evidence`, but `/do` refuses that policy
 until chat can construct a truthful evidence continuation.
 
@@ -173,7 +188,8 @@ ferric mcp [OPTIONS]
 ```
 
 Exposes exactly one MCP tool, `ferric_query`. Workspace/backend/model are
-launch-time-fixed. Options mirror `query` plus `--resume` and `--modality`.
+launch-time-fixed. Its model/run options parallel `query` and add `--resume`
+and `--modality`; the query-only `--trace-dir` is not an MCP option.
 
 ---
 
@@ -186,7 +202,8 @@ ferric api [--host 127.0.0.1] [--port 3581] [OPTIONS]
 Bound to loopback by default. Requires the `backend-openai` build. Routes:
 `GET /health`, `POST /v1/query` (one JSON response), and `POST /v1/query/stream`
 (SSE stream of `StreamDelta`s). Body: `{"prompt": "..."}`. Other options mirror
-`query`.
+`query`'s model/run controls; the query-only `--trace-dir` is not an API
+option.
 
 ---
 
@@ -248,7 +265,7 @@ overrides with a per-crate filter, e.g. `FERRIC_LOG=ferric_loop=debug`. Quiet
 | Path | What |
 |---|---|
 | `.ferric/server.json` | the running server's runfile (auto-discovery) |
-| `.ferric/trace/*.jsonl` | per-session traces |
+| `.ferric/trace/*.jsonl` | default per-session traces; `query --trace-dir` can place only query traces in a validated external directory |
 | `.ferric/config.toml` | project config (backend, model, hooks, …) |
 | `.ferric/cron/*.toml` | cron job definitions |
 | `.ferric/MEMORY.md` | dream-mode consolidated memory |

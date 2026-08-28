@@ -142,6 +142,536 @@ fn mock_query_end_to_end() {
     );
 }
 
+// ---- T-11414 (sprint 115): query-only external trace roots ---------------
+
+fn q_trace_paths(trace_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut paths = std::fs::read_dir(trace_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("q-"))
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
+fn first_session_start(path: &std::path::Path) -> serde_json::Value {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value["event"]["type"] == "session_start")
+        .expect("trace contains session_start")
+}
+
+#[test]
+fn query_default_trace_root_is_compatible() {
+    let fresh = tempfile::tempdir().unwrap();
+    let out = ferric()
+        .args(["query", "--mock", "--no-config", "do a mock task"])
+        .arg("--workspace")
+        .arg(fresh.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        q_trace_paths(&fresh.path().join(".ferric").join("trace")).len(),
+        1,
+        "an omitted --trace-dir must retain the workspace-local default"
+    );
+
+    let resumed = tempfile::tempdir().unwrap();
+    let source = write_interrupted_trace_fixture(resumed.path(), "default-root-source");
+    let out = ferric()
+        .args(["query", "--mock", "--no-config", "--resume"])
+        .arg(&source)
+        .arg("--workspace")
+        .arg(resumed.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let trace_dir = resumed.path().join(".ferric").join("trace");
+    let continuation = q_trace_paths(&trace_dir)
+        .into_iter()
+        .next()
+        .expect("default-root continuation trace");
+    assert_eq!(
+        first_session_start(&continuation)["event"]["resumed_from"],
+        "default-root-source"
+    );
+}
+
+#[test]
+fn query_external_trace_root_leaves_workspace_clean() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+
+    // The nonexistent relative tail proves that --trace-dir is resolved from
+    // the invocation CWD, rather than from --workspace.
+    let relative_trace_root = std::path::Path::new("evidence").join("query traces");
+    let expected_trace_root = root.path().join(&relative_trace_root);
+    let out = ferric()
+        .args(["query", "--mock", "--no-config", "do a mock task"])
+        .arg("--workspace")
+        .arg(&workspace)
+        .arg("--trace-dir")
+        .arg(&relative_trace_root)
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(q_trace_paths(&expected_trace_root).len(), 1);
+    assert!(workspace.join("ferric-mock.txt").is_file());
+    assert!(
+        !workspace.join(".ferric").exists(),
+        "an external query trace root must not leak workspace .ferric state"
+    );
+}
+
+fn assert_precreate_trace_root_rejected(workspace: &std::path::Path, trace_root: &std::path::Path) {
+    let before_kind = std::fs::symlink_metadata(trace_root)
+        .ok()
+        .map(|metadata| metadata.file_type());
+    let out = ferric()
+        .args(["query", "--mock", "--no-config", "do a mock task"])
+        .arg("--workspace")
+        .arg(workspace)
+        .arg("--trace-dir")
+        .arg(trace_root)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "unsafe trace root unexpectedly accepted: {}",
+        trace_root.display()
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).to_ascii_lowercase();
+    assert!(
+        stderr.contains("trace")
+            && (stderr.contains("workspace")
+                || stderr.contains("file")
+                || stderr.contains("link")
+                || stderr.contains("reparse")),
+        "unsafe-root diagnostic lost its reason: {stderr}"
+    );
+    assert!(
+        !workspace.join("ferric-mock.txt").exists(),
+        "rejection must precede the mock/model artifact"
+    );
+    assert!(
+        !workspace.join(".ferric").exists(),
+        "rejection must not fall back to the default trace root"
+    );
+    match before_kind {
+        None => assert!(
+            !trace_root.exists(),
+            "rejection must precede creation of the requested trace directory"
+        ),
+        Some(kind) if kind.is_dir() => assert!(
+            q_trace_paths(trace_root).is_empty(),
+            "rejection must precede JSONL allocation"
+        ),
+        Some(_) => assert!(
+            !trace_root.is_dir(),
+            "an existing non-directory trace root must remain a non-directory"
+        ),
+    }
+}
+
+#[test]
+fn external_trace_root_precreate_rejection_matrix() {
+    // Equal to the workspace.
+    let equal = tempfile::tempdir().unwrap();
+    let equal_workspace = equal.path().join("workspace");
+    std::fs::create_dir(&equal_workspace).unwrap();
+    assert_precreate_trace_root_rejected(&equal_workspace, &equal_workspace);
+
+    // Below the workspace, including a nonexistent tail.
+    let descendant = tempfile::tempdir().unwrap();
+    let descendant_workspace = descendant.path().join("workspace");
+    std::fs::create_dir(&descendant_workspace).unwrap();
+    assert_precreate_trace_root_rejected(
+        &descendant_workspace,
+        &descendant_workspace.join("evidence").join("traces"),
+    );
+
+    // An overlap cannot evade the containment check through a lexical `..`
+    // alias. `existing-hop` must exist so the OS can resolve the hop; the
+    // normalized destination is `<root>/workspace/aliased-traces`.
+    let lexical = tempfile::tempdir().unwrap();
+    let lexical_workspace = lexical.path().join("workspace");
+    std::fs::create_dir(&lexical_workspace).unwrap();
+    let lexical_hop = lexical.path().join("existing-hop");
+    std::fs::create_dir(&lexical_hop).unwrap();
+    let lexical_root = lexical_hop
+        .join("..")
+        .join("workspace")
+        .join("aliased-traces");
+    assert_precreate_trace_root_rejected(&lexical_workspace, &lexical_root);
+    assert!(lexical_hop.is_dir(), "pre-existing hop must remain intact");
+    assert!(!lexical_workspace.join("aliased-traces").exists());
+
+    // Above the workspace.
+    let ancestor = tempfile::tempdir().unwrap();
+    let ancestor_workspace = ancestor.path().join("workspace");
+    std::fs::create_dir(&ancestor_workspace).unwrap();
+    assert_precreate_trace_root_rejected(&ancestor_workspace, ancestor.path());
+
+    // An existing file cannot become a trace directory.
+    let file_case = tempfile::tempdir().unwrap();
+    let file_workspace = file_case.path().join("workspace");
+    std::fs::create_dir(&file_workspace).unwrap();
+    let file_root = file_case.path().join("trace-file");
+    std::fs::write(&file_root, b"sentinel").unwrap();
+    assert_precreate_trace_root_rejected(&file_workspace, &file_root);
+    assert_eq!(std::fs::read(&file_root).unwrap(), b"sentinel");
+
+    assert_platform_reparse_trace_root_is_rejected();
+}
+
+#[test]
+fn query_help_documents_trace_dir() {
+    let out = ferric().args(["query", "--help"]).output().unwrap();
+    assert!(out.status.success());
+    let help = String::from_utf8(out.stdout).unwrap().to_ascii_lowercase();
+    assert!(
+        help.contains("--trace-dir"),
+        "help omits --trace-dir: {help}"
+    );
+    assert!(
+        help.contains("<workspace>/.ferric/trace"),
+        "help omits the compatibility default: {help}"
+    );
+    assert!(
+        help.contains("disjoint") && help.contains("reparse"),
+        "help omits the overlap/reparse safety boundary: {help}"
+    );
+    assert!(
+        help.contains("resume") && help.contains("explicit"),
+        "help omits explicit external-root repetition on resume: {help}"
+    );
+    #[cfg(windows)]
+    assert!(
+        help.contains("powershell"),
+        "Windows help must name its supported shell: {help}"
+    );
+    #[cfg(unix)]
+    assert!(
+        help.contains("posix-sh") || help.contains("posix sh"),
+        "Unix help must name its supported shell: {help}"
+    );
+}
+
+#[cfg(unix)]
+fn assert_platform_reparse_trace_root_is_rejected() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let real = root.path().join("real-traces");
+    let alias = root.path().join("trace-alias");
+    std::fs::create_dir(&workspace).unwrap();
+    std::fs::create_dir(&real).unwrap();
+    symlink(&real, &alias).unwrap();
+    assert_precreate_trace_root_rejected(&workspace, &alias.join("tail"));
+}
+
+#[cfg(feature = "backend-openai")]
+fn clarification_server() -> (String, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut request = [0_u8; 16 * 1024];
+        let read = stream.read(&mut request).unwrap();
+        assert!(
+            String::from_utf8_lossy(&request[..read]).contains("POST /v1/chat/completions"),
+            "fixture received an unexpected request"
+        );
+
+        let arguments = serde_json::json!({
+            "question": "Which database should this target?",
+            "context": "Both adapters exist and no default is documented.",
+            "options": ["SQLite", "PostgreSQL"]
+        })
+        .to_string();
+        let body = serde_json::json!({
+            "id": "clarification-fixture",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "ask-1",
+                        "type": "function",
+                        "function": {
+                            "name": "request_user_input",
+                            "arguments": arguments
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 10}
+        })
+        .to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    (format!("http://{address}/v1"), handle)
+}
+
+#[cfg(unix)]
+fn execute_resume_hint(command: &str, root: &std::path::Path) -> Vec<String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin = root.join("capture-bin");
+    let capture = root.join("captured-argv");
+    std::fs::create_dir(&bin).unwrap();
+    let shim = bin.join("ferric");
+    std::fs::write(
+        &shim,
+        "#!/bin/sh\n: > \"$FERRIC_ARGV_CAPTURE\"\nfor arg do printf '%s\\n' \"$arg\" >> \"$FERRIC_ARGV_CAPTURE\"; done\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&original_path)))
+            .unwrap();
+    let out = Command::new("/bin/sh")
+        .args(["-c", command])
+        .env("PATH", path)
+        .env("FERRIC_ARGV_CAPTURE", &capture)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "emitted POSIX-sh command failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::read_to_string(capture)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(windows)]
+fn execute_resume_hint(command: &str, root: &std::path::Path) -> Vec<String> {
+    let capture = root.join("captured-argv.json");
+    let system_root = std::env::var_os("SystemRoot").expect("SystemRoot");
+    let powershell = std::path::PathBuf::from(system_root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    let script = format!(
+        "function ferric {{ $args | ConvertTo-Json -Compress | Set-Content -LiteralPath $env:FERRIC_ARGV_CAPTURE -Encoding utf8 }}\n{command}"
+    );
+    let out = Command::new(powershell)
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
+        .arg(script)
+        .env("FERRIC_ARGV_CAPTURE", &capture)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "emitted PowerShell command failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = std::fs::read_to_string(capture).unwrap();
+    serde_json::from_str(json.trim_start_matches('\u{feff}').trim()).unwrap()
+}
+
+#[test]
+fn incomplete_mock_resume_hint_round_trips_in_documented_shell() {
+    let root = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let workspace_name = "work space 'double\" $dollar `tick`; & end";
+    #[cfg(windows)]
+    let workspace_name = "work space ' $dollar `tick`; & end";
+    #[cfg(unix)]
+    let trace_name = "trace space 'double\" $dollar `tick`; & end";
+    #[cfg(windows)]
+    let trace_name = "trace space ' $dollar `tick`; & end";
+    let workspace = root.path().join(workspace_name);
+    let trace_root = root.path().join(trace_name);
+    std::fs::create_dir(&workspace).unwrap();
+
+    let out = ferric()
+        .args([
+            "query",
+            "--mock",
+            "--no-config",
+            "--max-turns",
+            "1",
+            "do a mock task",
+        ])
+        .arg("--workspace")
+        .arg(&workspace)
+        .arg("--trace-dir")
+        .arg(&trace_root)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "max_turns is an incomplete stop");
+    assert!(
+        !workspace.join(".ferric").exists(),
+        "external incomplete run must not leak a default trace root"
+    );
+
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    let command = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("Resume: "))
+        .expect("every supported incomplete stop prints a public Resume command");
+    let trace = q_trace_paths(&trace_root)
+        .into_iter()
+        .next()
+        .expect("incomplete external trace");
+    let expected = vec![
+        "query".to_string(),
+        "--resume".to_string(),
+        std::fs::canonicalize(&trace).unwrap().display().to_string(),
+        "--workspace".to_string(),
+        std::fs::canonicalize(&workspace)
+            .unwrap()
+            .display()
+            .to_string(),
+        "--trace-dir".to_string(),
+        std::fs::canonicalize(&trace_root)
+            .unwrap()
+            .display()
+            .to_string(),
+    ];
+    let captured = execute_resume_hint(command, root.path());
+    assert_eq!(captured, expected);
+    assert!(
+        !captured.iter().any(|arg| arg == "--answer"),
+        "an ordinary incomplete stop must not add clarification-only argv"
+    );
+}
+
+#[cfg(feature = "backend-openai")]
+#[test]
+fn resume_hint_round_trips_in_documented_shell() {
+    let root = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let workspace_name = "work space 'double\" $dollar `tick`; & end";
+    #[cfg(windows)]
+    let workspace_name = "work space ' $dollar `tick`; & end";
+    #[cfg(unix)]
+    let trace_name = "trace space 'double\" $dollar `tick`; & end";
+    #[cfg(windows)]
+    let trace_name = "trace space ' $dollar `tick`; & end";
+    let workspace = root.path().join(workspace_name);
+    let trace_root = root.path().join(trace_name);
+    std::fs::create_dir(&workspace).unwrap();
+
+    let (api_base, server) = clarification_server();
+    let out = ferric()
+        .args([
+            "query",
+            "--no-config",
+            "--no-stream",
+            "--protocol",
+            "native",
+            "--model",
+            "clarification-fixture",
+            "--api-base",
+        ])
+        .arg(api_base)
+        .arg("--workspace")
+        .arg(&workspace)
+        .arg("--trace-dir")
+        .arg(&trace_root)
+        .arg("ask for a database choice")
+        .output()
+        .unwrap();
+    server.join().unwrap();
+    assert!(!out.status.success(), "needs_input is a non-success stop");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    let command = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("Resume: "))
+        .expect("public output contains a Resume command");
+
+    let trace = q_trace_paths(&trace_root)
+        .into_iter()
+        .next()
+        .expect("clarification trace");
+    let expected = vec![
+        "query".to_string(),
+        "--resume".to_string(),
+        std::fs::canonicalize(&trace).unwrap().display().to_string(),
+        "--workspace".to_string(),
+        std::fs::canonicalize(&workspace)
+            .unwrap()
+            .display()
+            .to_string(),
+        "--trace-dir".to_string(),
+        std::fs::canonicalize(&trace_root)
+            .unwrap()
+            .display()
+            .to_string(),
+        "--answer".to_string(),
+        "<answer>".to_string(),
+    ];
+    assert_eq!(execute_resume_hint(command, root.path()), expected);
+}
+
+#[cfg(windows)]
+fn assert_platform_reparse_trace_root_is_rejected() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("WorkSpace");
+    std::fs::create_dir(&workspace).unwrap();
+
+    // Windows lexical/case aliases must not evade the overlap check.
+    assert_precreate_trace_root_rejected(&workspace, &root.path().join("workspace"));
+
+    let real = root.path().join("real-traces");
+    let alias = root.path().join("trace-junction");
+    std::fs::create_dir(&real).unwrap();
+    let junction = Command::new("cmd.exe")
+        .args(["/D", "/C", "mklink", "/J"])
+        .arg(&alias)
+        .arg(&real)
+        .output()
+        .unwrap();
+    assert!(
+        junction.status.success(),
+        "could not create test junction: {}",
+        String::from_utf8_lossy(&junction.stderr)
+    );
+    assert_precreate_trace_root_rejected(&workspace, &alias.join("tail"));
+}
+
 /// T-3705: streaming (now default-on) must not duplicate output. The `--mock`
 /// script's completions are native tool calls with no `message.text`
 /// (`text: None`), so the default `complete_streaming` impl fires zero deltas
@@ -1062,7 +1592,15 @@ fn animus_md_present_traces_note() {
 /// process (crashed after turn 0, before turn 1 started).
 fn write_interrupted_trace_fixture(ws: &std::path::Path, session: &str) -> std::path::PathBuf {
     let trace_dir = ws.join(".ferric").join("trace");
-    std::fs::create_dir_all(&trace_dir).unwrap();
+    write_interrupted_trace_fixture_in(&trace_dir, ws, session)
+}
+
+fn write_interrupted_trace_fixture_in(
+    trace_dir: &std::path::Path,
+    ws: &std::path::Path,
+    session: &str,
+) -> std::path::PathBuf {
+    std::fs::create_dir_all(trace_dir).unwrap();
     let path = trace_dir.join(format!("{session}.jsonl"));
     let workspace = serde_json::to_string(&ws.display().to_string()).unwrap();
     let lines = [
@@ -1210,6 +1748,65 @@ fn resume_continues_an_interrupted_session() {
         .find(|value| value["event"]["type"] == "policy_selected")
         .expect("resumed trace policy selection");
     assert_eq!(selected["event"]["harness_policy"], "legacy");
+}
+
+#[test]
+fn external_trace_resume_requires_and_reuses_explicit_root() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let trace_root = root.path().join("external-traces");
+    std::fs::create_dir(&workspace).unwrap();
+    let source =
+        write_interrupted_trace_fixture_in(&trace_root, &workspace, "external-root-source");
+
+    let omitted = ferric()
+        .args(["query", "--mock", "--no-config", "--resume"])
+        .arg(&source)
+        .arg("--workspace")
+        .arg(&workspace)
+        .output()
+        .unwrap();
+    assert!(!omitted.status.success());
+    let omitted_stderr = String::from_utf8_lossy(&omitted.stderr).to_ascii_lowercase();
+    assert!(
+        omitted_stderr.contains("trace")
+            && omitted_stderr.contains("resume")
+            && (omitted_stderr.contains("explicit") || omitted_stderr.contains("--trace-dir")),
+        "missing-root diagnostic must explain the explicit resume contract: {omitted_stderr}"
+    );
+    assert_eq!(
+        std::fs::read_dir(&trace_root).unwrap().count(),
+        1,
+        "refusal must not allocate an external continuation"
+    );
+    assert!(!workspace.join(".ferric").exists());
+    assert!(!workspace.join("ferric-mock.txt").exists());
+
+    let resumed = ferric()
+        .args(["query", "--mock", "--no-config", "--resume"])
+        .arg(&source)
+        .arg("--workspace")
+        .arg(&workspace)
+        .arg("--trace-dir")
+        .arg(&trace_root)
+        .output()
+        .unwrap();
+    assert!(
+        resumed.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let continuations = q_trace_paths(&trace_root);
+    assert_eq!(continuations.len(), 1, "one linked q- continuation");
+    assert_eq!(
+        first_session_start(&continuations[0])["event"]["resumed_from"],
+        "external-root-source"
+    );
+    assert!(workspace.join("ferric-mock.txt").is_file());
+    assert!(
+        !workspace.join(".ferric").exists(),
+        "explicit external resume must remain outside the workspace"
+    );
 }
 
 /// The first (turn 1, since the fixture resumes at turn 1) `prompt_assembled`

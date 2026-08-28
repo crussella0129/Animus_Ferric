@@ -1301,3 +1301,32 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   validator passed with
   eight intent chapters. No model request or remote mutation ran.
 - **Commit:** `86b10b82a00f555364c0e837374b39cadb61aeae`
+
+## T-11414 (sprint 115)
+- **Description:** Added the query-only `--trace-dir` boundary while preserving
+  the workspace-local default. External roots are normalized from the
+  invocation directory, resolved through the deepest existing canonical
+  ancestor, rejected for workspace overlap, non-directory components,
+  symlinks, Windows reparse points, and case aliases, and revalidated after
+  creation before trace allocation. External continuations must repeat the
+  same canonical root, and every resumable incomplete query stop now prints a
+  PowerShell- or POSIX-sh-safe command with the exact trace/workspace/root
+  arguments; clarification alone adds `--answer`. Public docs distinguish
+  resumable incomplete traces from successful terminal traces.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-28T00:15:38-04:00
+- **Files modified:** `crates/ferric-cli/src/query.rs`,
+  `crates/ferric-cli/tests/cli.rs`, `docs/basics-query.md`,
+  `docs/commands.md`, `docs/configuration.md`, `docs/demo-guide.md`,
+  `docs/SUMMARY.md`, `docs/intents/INT-0007-hardware-calibrated-autonomous-development.md`,
+  `docs/intents/INT-0008-unified-local-model-workflow.md`,
+  `docs/sprints/s115/`, `docs/work/tasks.md`, and
+  `docs/work/completed-tasks.md`
+- **Verification:** query unit tests passed 35/35; default and
+  `backend-openai` CLI suites passed 68/68 and 69/69; the full Ferric binary
+  suite passed 176/176 outside the restricted Windows process-inspection
+  sandbox; backend-enabled all-target Clippy passed with warnings denied;
+  workspace formatting and `git diff --check` passed. Independent adversarial
+  review closed clean after explicit MaxTurns shell round-trip, lexical `..`
+  overlap, and production-path post-create assurance revisions.
+- **Commit:** PENDING
