@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$ControlSelfTest
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -248,7 +250,7 @@ function Invoke-CapturedCommand {
     $stderrTask = $process.StandardError.ReadToEndAsync()
     $timedOut = $false
     try {
-        $process.WaitForExitAsync().WaitAsync(
+        $null = $process.WaitForExitAsync().WaitAsync(
             [TimeSpan]::FromSeconds($TimeoutSeconds)
         ).GetAwaiter().GetResult()
     }
@@ -261,7 +263,7 @@ function Invoke-CapturedCommand {
             # Preserve the original timeout classification; postconditions
             # below still require the process to exit before evidence moves.
         }
-        $process.WaitForExitAsync().WaitAsync(
+        $null = $process.WaitForExitAsync().WaitAsync(
             [TimeSpan]::FromSeconds(15)
         ).GetAwaiter().GetResult()
     }
@@ -299,6 +301,121 @@ function Invoke-CapturedCommand {
     }
     Add-JournalRecord $JournalPath $record
     return [pscustomobject]$record
+}
+
+function Assert-CapturedCommandRecordCollection {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Records,
+        [Parameter(Mandatory)][int]$ExpectedCount,
+        [Parameter(Mandatory)][string]$Label
+    )
+    if ($Records.Count -ne $ExpectedCount) {
+        $types = @($Records | ForEach-Object {
+                if ($null -eq $_) { '<null>' } else { $_.GetType().FullName }
+            }) -join ', '
+        throw "$Label emitted $($Records.Count) objects instead of $ExpectedCount; types: $types"
+    }
+    foreach ($record in $Records) {
+        $properties = @($record.PSObject.Properties.Name)
+        foreach ($required in @(
+                'schema', 'gate', 'timed_out', 'exit_code',
+                'stdout_bytes', 'stderr_bytes', 'stdout_sha256', 'stderr_sha256'
+            )) {
+            if ($properties -notcontains $required) {
+                throw "$Label record omits required property $required; type: $($record.GetType().FullName)"
+            }
+        }
+        if ([string]$record.schema -cne 's115-harness-command-v1') {
+            throw "$Label contains a record with an unexpected schema"
+        }
+    }
+}
+
+function Assert-CapturedCommandParity {
+    param(
+        [Parameter(Mandatory)][object[]]$Before,
+        [Parameter(Mandatory)][object[]]$After,
+        [Parameter(Mandatory)][string]$Label
+    )
+    $records = @($Before) + @($After)
+    Assert-CapturedCommandRecordCollection -Records $records -ExpectedCount 2 -Label $Label
+    $beforeRecord = $records[0]
+    $afterRecord = $records[1]
+    if ($beforeRecord.timed_out -or $afterRecord.timed_out -or
+        $beforeRecord.exit_code -ne 0 -or $afterRecord.exit_code -ne 0 -or
+        $beforeRecord.stdout_sha256 -cne $afterRecord.stdout_sha256 -or
+        $beforeRecord.stdout_bytes -ne $afterRecord.stdout_bytes -or
+        $beforeRecord.stderr_sha256 -cne $afterRecord.stderr_sha256 -or
+        $beforeRecord.stderr_bytes -ne $afterRecord.stderr_bytes) {
+        throw "$Label command records do not have byte-identical successful output"
+    }
+    return [pscustomobject]@{
+        schema = 's115-command-record-parity-v1'
+        status = 'pass'
+        label = $Label
+        before_gate = [string]$beforeRecord.gate
+        after_gate = [string]$afterRecord.gate
+    }
+}
+
+function Invoke-CommandRecordSemanticSelfTest {
+    $emptySha = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    $before = [pscustomobject]@{
+        schema = 's115-harness-command-v1'; gate = 'semantic-before'
+        timed_out = $false; exit_code = 0
+        stdout_bytes = 0; stderr_bytes = 0
+        stdout_sha256 = $emptySha; stderr_sha256 = $emptySha
+    }
+    $after = [pscustomobject]@{
+        schema = 's115-harness-command-v1'; gate = 'semantic-after'
+        timed_out = $false; exit_code = 0
+        stdout_bytes = 0; stderr_bytes = 0
+        stdout_sha256 = $emptySha; stderr_sha256 = $emptySha
+    }
+    Assert-CapturedCommandRecordCollection -Records @($before, $after) `
+        -ExpectedCount 2 -Label 'semantic valid collection'
+    $parity = Assert-CapturedCommandParity -Before $before -After $after `
+        -Label 'semantic valid parity'
+
+    $voidTaskResultRejected = $false
+    $leakedCollection = @(
+        [System.Threading.Tasks.Task]::CompletedTask.GetAwaiter().GetResult()
+        $before
+    )
+    try {
+        Assert-CapturedCommandRecordCollection -Records $leakedCollection `
+            -ExpectedCount 1 -Label 'semantic leaked task result'
+    }
+    catch {
+        $voidTaskResultRejected = $true
+    }
+    if (-not $voidTaskResultRejected) {
+        throw 'semantic control did not reject an extra task-result output object'
+    }
+
+    $mismatchRejected = $false
+    $mismatch = $after.PSObject.Copy()
+    $mismatch.stdout_bytes = 1
+    try {
+        Assert-CapturedCommandParity -Before $before -After $mismatch `
+            -Label 'semantic mismatch' | Out-Null
+    }
+    catch {
+        $mismatchRejected = $true
+    }
+    if (-not $mismatchRejected) {
+        throw 'semantic control did not reject command-record byte mismatch'
+    }
+    return [pscustomobject]@{
+        schema = 's115-command-record-semantic-selftest-v1'
+        status = 'pass'
+        valid_collection_count = 2
+        parity_status = [string]$parity.status
+        extra_task_result_rejected = $voidTaskResultRejected
+        byte_mismatch_rejected = $mismatchRejected
+        attempt_created = $false
+        preservation_move_run = $false
+    }
 }
 
 function Get-LinkTarget([System.IO.FileSystemInfo]$Item) {
@@ -1352,6 +1469,7 @@ function Write-TerminalFailureRecord {
         [Parameter(Mandatory)][string]$AttemptName,
         [Parameter(Mandatory)][string]$Phase,
         [Parameter(Mandatory)][string]$Message,
+        [Parameter(Mandatory)][System.Management.Automation.ErrorRecord]$ErrorRecord,
         [Parameter(Mandatory)][bool]$CompactEvidencePublished,
         [Parameter(Mandatory)][string]$CompactEvidencePath
     )
@@ -1364,6 +1482,8 @@ function Write-TerminalFailureRecord {
         phase = $Phase
         captured_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
         message = $Message
+        diagnostic = ConvertTo-FailureDiagnostic -ErrorRecord $ErrorRecord `
+            -Scope 'terminal' -Context $Phase
         compact_evidence_published = $CompactEvidencePublished
         compact_evidence = $CompactEvidencePath
         rollback_attempted = $false
@@ -1371,6 +1491,49 @@ function Write-TerminalFailureRecord {
     }
     Write-NewJson $recordPath $record 8
     Write-NewText $hashPath ((Get-Sha256 $recordPath) + "  terminal-failure.json`n")
+}
+
+function ConvertTo-FailureDiagnostic {
+    param(
+        [Parameter(Mandatory)][System.Management.Automation.ErrorRecord]$ErrorRecord,
+        [Parameter(Mandatory)][string]$Scope,
+        [Parameter(Mandatory)][string]$Context
+    )
+    return [pscustomobject][ordered]@{
+        scope = $Scope
+        context = $Context
+        message = [string]$ErrorRecord.Exception.Message
+        exception_type = $ErrorRecord.Exception.GetType().FullName
+        inner_exception_type = if ($null -eq $ErrorRecord.Exception.InnerException) {
+            $null
+        }
+        else {
+            $ErrorRecord.Exception.InnerException.GetType().FullName
+        }
+        inner_exception_message = if ($null -eq $ErrorRecord.Exception.InnerException) {
+            $null
+        }
+        else {
+            [string]$ErrorRecord.Exception.InnerException.Message
+        }
+        error_record_type = $ErrorRecord.GetType().FullName
+        fully_qualified_error_id = [string]$ErrorRecord.FullyQualifiedErrorId
+        category = [string]$ErrorRecord.CategoryInfo.Category
+        target_object_type = if ($null -eq $ErrorRecord.TargetObject) {
+            $null
+        }
+        else {
+            $ErrorRecord.TargetObject.GetType().FullName
+        }
+        invocation_name = [string]$ErrorRecord.InvocationInfo.InvocationName
+        position_message = [string]$ErrorRecord.InvocationInfo.PositionMessage
+        script_stack_trace = [string]$ErrorRecord.ScriptStackTrace
+    }
+}
+
+if ($ControlSelfTest) {
+    Invoke-CommandRecordSemanticSelfTest | ConvertTo-Json -Depth 5
+    return
 }
 
 Assert-RealDirectory $repoRoot 'repository root' | Out-Null
@@ -1409,6 +1572,8 @@ $postBatchKey = '003-post-selftest'
 $failures = [System.Collections.Generic.List[string]]::new()
 $primaryFailures = [System.Collections.Generic.List[string]]::new()
 $preservationFailures = [System.Collections.Generic.List[string]]::new()
+$primaryFailureDetails = [System.Collections.Generic.List[object]]::new()
+$preservationFailureDetails = [System.Collections.Generic.List[object]]::new()
 $preOperations = [System.Collections.Generic.List[object]]::new()
 $postOperations = [System.Collections.Generic.List[object]]::new()
 $copyOperation = $null
@@ -1457,11 +1622,14 @@ try {
         -Arguments @('-C', $repoRoot, 'diff', '--cached', '--no-ext-diff', '--binary', '--') `
         -WorkingDirectory $repoRoot -TimeoutSeconds $script:CommandTimeoutSeconds `
         -LogsRoot $logsRoot -JournalPath $journalPath
-    foreach ($trackedBaselineGate in @(
-            $trackedWorktreeStatusBefore,
-            $trackedWorktreeDiffBefore,
-            $trackedWorktreeCachedDiffBefore
-        )) {
+    $trackedBaselineRecords = @(
+        $trackedWorktreeStatusBefore,
+        $trackedWorktreeDiffBefore,
+        $trackedWorktreeCachedDiffBefore
+    )
+    Assert-CapturedCommandRecordCollection -Records $trackedBaselineRecords `
+        -ExpectedCount 3 -Label 'tracked-worktree Git baseline'
+    foreach ($trackedBaselineGate in $trackedBaselineRecords) {
         if ($trackedBaselineGate.timed_out -or $trackedBaselineGate.exit_code -ne 0) {
             throw 'could not capture the complete tracked-worktree Git baseline'
         }
@@ -1617,23 +1785,22 @@ try {
         -Arguments @('-C', $repoRoot, 'diff', '--cached', '--no-ext-diff', '--binary', '--') `
         -WorkingDirectory $repoRoot -TimeoutSeconds $script:CommandTimeoutSeconds `
         -LogsRoot $logsRoot -JournalPath $journalPath
-    foreach ($gitEffectPair in @(
-            @($trackedWorktreeStatusBefore, $trackedWorktreeStatusAfter),
-            @($trackedWorktreeDiffBefore, $trackedWorktreeDiffAfter),
-            @($trackedWorktreeCachedDiffBefore, $trackedWorktreeCachedDiffAfter)
-        )) {
-        if ($gitEffectPair[0].timed_out -or $gitEffectPair[1].timed_out -or
-            $gitEffectPair[0].exit_code -ne 0 -or $gitEffectPair[1].exit_code -ne 0 -or
-            $gitEffectPair[0].stdout_sha256 -ne $gitEffectPair[1].stdout_sha256 -or
-            $gitEffectPair[0].stdout_bytes -ne $gitEffectPair[1].stdout_bytes -or
-            $gitEffectPair[0].stderr_sha256 -ne $gitEffectPair[1].stderr_sha256 -or
-            $gitEffectPair[0].stderr_bytes -ne $gitEffectPair[1].stderr_bytes) {
-            throw 'the complete tracked worktree Git effect changed during qualification'
-        }
-    }
+    Assert-CapturedCommandRecordCollection -Records @(
+        $trackedWorktreeStatusAfter,
+        $trackedWorktreeDiffAfter,
+        $trackedWorktreeCachedDiffAfter
+    ) -ExpectedCount 3 -Label 'tracked-worktree Git final state'
+    Assert-CapturedCommandParity -Before $trackedWorktreeStatusBefore `
+        -After $trackedWorktreeStatusAfter -Label 'tracked-worktree status' | Out-Null
+    Assert-CapturedCommandParity -Before $trackedWorktreeDiffBefore `
+        -After $trackedWorktreeDiffAfter -Label 'tracked-worktree unstaged diff' | Out-Null
+    Assert-CapturedCommandParity -Before $trackedWorktreeCachedDiffBefore `
+        -After $trackedWorktreeCachedDiffAfter -Label 'tracked-worktree cached diff' | Out-Null
 }
 catch {
     $primaryFailures.Add($_.Exception.Message)
+    $primaryFailureDetails.Add((ConvertTo-FailureDiagnostic -ErrorRecord $_ `
+                -Scope 'primary' -Context 'qualification body')) | Out-Null
 }
 finally {
 
@@ -1679,6 +1846,8 @@ try {
 }
 catch {
     $preservationFailures.Add("copied harness preservation failed: $($_.Exception.Message)")
+    $preservationFailureDetails.Add((ConvertTo-FailureDiagnostic -ErrorRecord $_ `
+                -Scope 'preservation' -Context 'copied harness preservation')) | Out-Null
 }
 
 try {
@@ -1691,6 +1860,9 @@ try {
         }
         catch {
             $preservationFailures.Add("post-selftest preservation failed for $($entry.Key): $($_.Exception.Message)")
+            $preservationFailureDetails.Add((ConvertTo-FailureDiagnostic -ErrorRecord $_ `
+                        -Scope 'preservation' `
+                        -Context "post-selftest preservation for $($entry.Key)")) | Out-Null
         }
     }
     foreach ($entry in $canonicalRoots.GetEnumerator()) {
@@ -1699,11 +1871,16 @@ try {
         }
         catch {
             $preservationFailures.Add($_.Exception.Message)
+            $preservationFailureDetails.Add((ConvertTo-FailureDiagnostic -ErrorRecord $_ `
+                        -Scope 'preservation' `
+                        -Context "canonical-root absence for $($entry.Key)")) | Out-Null
         }
     }
 }
 catch {
     $preservationFailures.Add("post-selftest batch setup failed: $($_.Exception.Message)")
+    $preservationFailureDetails.Add((ConvertTo-FailureDiagnostic -ErrorRecord $_ `
+                -Scope 'preservation' -Context 'post-selftest batch setup')) | Out-Null
 }
 
 if ($primaryFailures.Count -eq 0 -and $preservationFailures.Count -eq 0) {
@@ -1760,6 +1937,8 @@ if ($primaryFailures.Count -eq 0 -and $preservationFailures.Count -eq 0) {
     }
     catch {
         $preservationFailures.Add("self-test live-journal cross-link failed: $($_.Exception.Message)")
+        $preservationFailureDetails.Add((ConvertTo-FailureDiagnostic -ErrorRecord $_ `
+                    -Scope 'preservation' -Context 'self-test live-journal cross-link')) | Out-Null
     }
 }
 }
@@ -1785,6 +1964,8 @@ if ($failures.Count -gt 0) {
         captured_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
         primary_failures = @($primaryFailures)
         preservation_failures = @($preservationFailures)
+        primary_failure_details = @($primaryFailureDetails)
+        preservation_failure_details = @($preservationFailureDetails)
         failures = @($failures)
         tracked_s114_harness_mutation_state = $trackedMutationState
         tracked_s114_harness_mutated = $trackedMutationValue
@@ -1925,7 +2106,7 @@ try {
 }
 catch {
     Write-TerminalFailureRecord -AttemptRoot $attemptRoot -AttemptName $attempt.name `
-        -Phase $publicationPhase -Message $_.Exception.Message `
+        -Phase $publicationPhase -Message $_.Exception.Message -ErrorRecord $_ `
         -CompactEvidencePublished $compactPublished -CompactEvidencePath $compactPath
     throw ("T-11502 terminal {0} failure; attempt {1} remains retained without rollback: {2}" -f `
         $publicationPhase, $attempt.name, $_.Exception.Message)
