@@ -1266,3 +1266,38 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   manifest `60cac4761f5276d05fe9f1be296925e4d9e0e7e667706564b8478bb792167f40`
   matched all 213 covered files with no residual stage.
 - **Commit:** `ce3d74370fff8f3d1ee1f4b958a2fa6d516f9d31`
+
+## T-11411 (sprint 114)
+- **Description:** Pinned and installed the upstream runtime-neutral Animus
+  Sprint Loops adapter in an isolated Git workspace, then tested Ferric
+  discovery and every capability layer allowed after the observed packaging
+  failure. The installer produced an exact 28-script helper copy, but the
+  adapter contained no Ferric-formatted `SKILL.md`, so Ferric discovered no
+  skill and all model-behavior arms stopped rather than substituting a
+  different adapter.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-28T00:56:18Z
+- **Files modified:** ignored
+  `target/s114-experiment/sprint-loop-source/`, ignored
+  `target/s114-experiment/sprint-loop-workspace/`,
+  `docs/sprints/s114/control-artifacts/sprint-loop-run/`,
+  `docs/sprints/s114/sprint-meta.md`, `docs/work/tasks.md`,
+  `docs/work/completed-tasks.md`
+- **Verification:** source commit
+  `4acc1fd6e0b964ea4bcbedd17c44cb2ca8ca0066` and tree
+  `3420c3d9858b6d3049b81f2334ca21a9d1fdaade` were clean and pinned; the
+  52-file source manifest and full 28-file disposable-workspace manifest were
+  bound to their raw Git trees, and the 28-file install manifest reverified;
+  installed helper bytes matched source and an idempotent reinstall left the
+  disposable Git tree clean. `ferric skills list` returned success and exactly
+  reported no installed skills; the pinned router returned `uninitialized`;
+  the validator
+  reported an uninitialized Book; static source bindings proved `git_write`
+  registered at Ring 2 with `shell_exec` and `manage_task` excluded from the
+  query registry. `verify-probe.ps1` passed 46 assertions with exact
+  coverage of all 38 evidence payloads (excluding the self-manifest); the
+  verifier rejected seven adversarial mutation cases; the Ferric skill parser
+  passed 16/16 unit tests, template hygiene passed 3/3, and the Book v2
+  validator passed with
+  eight intent chapters. No model request or remote mutation ran.
+- **Commit:** PENDING

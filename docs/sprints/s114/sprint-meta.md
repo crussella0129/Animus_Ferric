@@ -75,3 +75,15 @@
   retained [selection](control-artifacts/runtime/epoch-4/final/selection.json),
   [runtime verification](control-artifacts/runtime/epoch-4/final/runtime-verification.json),
   and [recovery analysis](sprint-research/runtime-attestation-recovery.md).
+- **T-11411 — completed with a packaging-layer negative result:** the pinned
+  upstream Open Harnesses adapter at commit
+  `4acc1fd6e0b964ea4bcbedd17c44cb2ca8ca0066` installed 28 helper scripts
+  byte-for-byte, but supplied no Ferric-formatted `SKILL.md`; `ferric skills
+  list` therefore reported no installed skills. Per E11-A, behavioral arms B
+  through E were classified `not-runnable-after-packaging-failure`, not
+  simulated with a different adapter. Static evidence confirms `git_write` is
+  registered at Ring 2 while `shell_exec` and `manage_task` remain human-only;
+  the pinned operator router returned `uninitialized`, the Book validator
+  reported `not initialized`, and no remote mutation occurred. See the
+  [capability report](control-artifacts/sprint-loop-run/capability-report.md)
+  and its exact structured evidence.

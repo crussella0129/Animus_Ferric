@@ -1,0 +1,2 @@
+No skills installed in C:\Users\charl\Animus_Ferric\target\s114-experiment\sprint-loop-workspace\.ferric\skills
+Install one by creating C:\Users\charl\Animus_Ferric\target\s114-experiment\sprint-loop-workspace\.ferric\skills/<name>/SKILL.md with `name` and `description` frontmatter.
