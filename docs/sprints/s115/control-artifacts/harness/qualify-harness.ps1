@@ -358,6 +358,35 @@ function Assert-CapturedCommandParity {
     }
 }
 
+function Get-CheckedPresentOperationByteTotal {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Operations,
+        [Parameter(Mandatory)][string]$Label
+    )
+    [int64]$total = 0
+    foreach ($operation in $Operations) {
+        $properties = @($operation.PSObject.Properties.Name)
+        if ($properties -notcontains 'present') {
+            throw "$Label operation omits required property present"
+        }
+        if (-not [bool]$operation.present) {
+            continue
+        }
+        if ($properties -notcontains 'regular_file_bytes') {
+            throw "$Label present operation omits regular_file_bytes"
+        }
+        $bytes = $operation.regular_file_bytes
+        if ($bytes -isnot [int64] -or [int64]$bytes -lt 0) {
+            throw "$Label present operation regular_file_bytes is not a nonnegative Int64"
+        }
+        if ([int64]$bytes -gt [int64]::MaxValue - $total) {
+            throw "$Label regular-file byte total exceeds Int64"
+        }
+        $total += [int64]$bytes
+    }
+    return $total
+}
+
 function Invoke-CommandRecordSemanticSelfTest {
     $emptySha = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
     $before = [pscustomobject]@{
@@ -406,6 +435,27 @@ function Invoke-CommandRecordSemanticSelfTest {
     if (-not $mismatchRejected) {
         throw 'semantic control did not reject command-record byte mismatch'
     }
+
+    $emptyOperationBytes = Get-CheckedPresentOperationByteTotal -Operations @() `
+        -Label 'semantic empty operations'
+    $nonemptyOperationBytes = Get-CheckedPresentOperationByteTotal -Operations @(
+        [pscustomobject]@{ present = $false },
+        [pscustomobject]@{ present = $true; regular_file_bytes = [int64]7 },
+        [pscustomobject]@{ present = $true; regular_file_bytes = [int64]11 }
+    ) -Label 'semantic nonempty operations'
+    $missingOperationBytesRejected = $false
+    try {
+        Get-CheckedPresentOperationByteTotal -Operations @(
+            [pscustomobject]@{ present = $true }
+        ) -Label 'semantic missing operation bytes' | Out-Null
+    }
+    catch {
+        $missingOperationBytesRejected = $true
+    }
+    if ($emptyOperationBytes -ne 0 -or $nonemptyOperationBytes -ne 18 -or
+        -not $missingOperationBytesRejected) {
+        throw 'semantic checked operation-byte total cases failed'
+    }
     return [pscustomobject]@{
         schema = 's115-command-record-semantic-selftest-v1'
         status = 'pass'
@@ -413,6 +463,9 @@ function Invoke-CommandRecordSemanticSelfTest {
         parity_status = [string]$parity.status
         extra_task_result_rejected = $voidTaskResultRejected
         byte_mismatch_rejected = $mismatchRejected
+        empty_operation_byte_total = [int64]$emptyOperationBytes
+        nonempty_operation_byte_total = [int64]$nonemptyOperationBytes
+        missing_operation_bytes_rejected = $missingOperationBytesRejected
         attempt_created = $false
         preservation_move_run = $false
     }
@@ -1988,6 +2041,10 @@ if ($failures.Count -gt 0) {
         $attempt.name, ($failures -join '; '))
 }
 
+$publicationPhase = 'result-construction'
+$compactPublished = $false
+$compactPath = "target/s115-preserved-preflight/attempt-$($attempt.name)/evidence"
+try {
 $result = [ordered]@{
     schema = 's115-harness-qualification-v1'
     task = 'T-11502'
@@ -2051,14 +2108,10 @@ $result = [ordered]@{
         recursive_delete_used = $false
         all_moves_same_volume = $true
         all_present_move_manifests_byte_identical = $true
-        pre_regular_file_bytes = [int64](
-            @($preOperations | Where-Object { $_.present } |
-                Measure-Object -Property regular_file_bytes -Sum).Sum
-        )
-        post_regular_file_bytes = [int64](
-            @($postOperations | Where-Object { $_.present } |
-                Measure-Object -Property regular_file_bytes -Sum).Sum
-        )
+        pre_regular_file_bytes = Get-CheckedPresentOperationByteTotal `
+            -Operations @($preOperations) -Label 'pre-selftest preservation'
+        post_regular_file_bytes = Get-CheckedPresentOperationByteTotal `
+            -Operations @($postOperations) -Label 'post-selftest preservation'
         retained_frozen_copy_regular_file_bytes = [int64]$copyOperation.regular_file_bytes
         volume_before = $volumeBefore
         volume_after = Get-VolumeObservation
@@ -2072,11 +2125,8 @@ foreach ($entry in $canonicalRoots.GetEnumerator()) {
     $result.handoff.canonical_roots_absent[$entry.Key] = $true
 }
 
-$resultPath = Join-Path $evidenceRoot 'result.json'
 $publicationPhase = 'result-sealing'
-$compactPublished = $false
-$compactPath = Convert-ToRepoRelative $evidenceRoot
-try {
+$resultPath = Join-Path $evidenceRoot 'result.json'
     Write-NewJson $resultPath $result 40
     Write-NewText (Join-Path $evidenceRoot 'result.sha256') `
         ((Get-Sha256 $resultPath) + "  result.json`n")

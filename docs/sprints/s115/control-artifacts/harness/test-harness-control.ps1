@@ -179,6 +179,7 @@ Assert-ContainsAll $verifier.source @(
     'canonical root is not absent at live handoff',
     'Assert-ControlSourceStatic',
     'Invoke-IndependentLiveJournalVerification',
+    'Get-CheckedPresentOperationByteTotal',
     'EvidenceRoot basename/location is not bound to result.attempt',
     'independent journal enumeration differs from retained qualifier audit',
     'control provenance does not name the exact four control files'
@@ -216,6 +217,9 @@ if ($semantic.schema -cne 's115-command-record-semantic-selftest-v1' -or
     $semantic.parity_status -cne 'pass' -or
     -not $semantic.extra_task_result_rejected -or
     -not $semantic.byte_mismatch_rejected -or
+    $semantic.empty_operation_byte_total -ne 0 -or
+    $semantic.nonempty_operation_byte_total -ne 18 -or
+    -not $semantic.missing_operation_bytes_rejected -or
     $semantic.attempt_created -or $semantic.preservation_move_run -or
     (@($mutationBefore.attempts) -join "`n") -cne
         (@($mutationAfter.attempts) -join "`n") -or
@@ -233,4 +237,5 @@ if ($semantic.schema -cne 's115-command-record-semantic-selftest-v1' -or
     destructive_commands_found = 0
     command_record_semantic_regression = 'pass'
     extra_task_result_rejected = $true
+    operation_byte_total_semantic_regression = 'pass'
 } | ConvertTo-Json -Depth 3

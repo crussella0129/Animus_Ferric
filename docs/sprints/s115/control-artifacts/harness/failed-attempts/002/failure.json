@@ -1,0 +1,32 @@
+{
+  "schema": "s115-harness-unsealed-attempt-failure-v1",
+  "attempt": "002",
+  "status": "control_failure_after_harness_pass",
+  "phase": "result-construction",
+  "captured_at_utc": "2026-08-28T06:41:05.5841461Z",
+  "source_commit": "2c67c87978cebdf6e6e5074cfb79345aaec6328f",
+  "exit_code": 1,
+  "error": "qualify-harness.ps1: The property 'Sum' cannot be found on this object. Verify that the property exists.",
+  "cause": "StrictMode rejected .Sum on the empty pre-operation measurement result while result.json was being constructed.",
+  "raw_attempt": "target/s115-preserved-preflight/attempt-002",
+  "raw_attempt_modified_after_failure": false,
+  "qualifier_terminal_failure_record_present": false,
+  "result_present": false,
+  "compact_evidence_published": false,
+  "command_gate_count": 26,
+  "frozen_self_test": {
+    "status": "pass",
+    "exit_code": 0,
+    "duration_ms": 424486,
+    "summary_sha256": "9f139650c843643c819566a24fab1c91d7100957f589f598b0dfe7da2c66d752",
+    "journal_sha256": "cc715671f3414e7afd4cf31f3530d5792aaa28c731f27b89232d449d026be6f0",
+    "static_cases": 13,
+    "dynamic_cases": 5
+  },
+  "post_quarantine_present_root_count": 4,
+  "canonical_roots_absent_after": true,
+  "known_unrelated_edit": "docs/sprints/s114/control-artifacts/model/acquisition-tests.json",
+  "known_unrelated_edit_sha256_after": "8ecf94878e7ad745aea28a9365af58ee111c80b26d21a15a0f434edb2beb75db",
+  "resolution": "Use explicit empty-safe int64 accumulation in qualifier and verifier, cover result construction with terminal-failure handling, and exercise empty/nonempty/error aggregation in control self-test.",
+  "safe_to_retry": true
+}

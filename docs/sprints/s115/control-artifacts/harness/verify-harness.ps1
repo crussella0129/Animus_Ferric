@@ -93,6 +93,35 @@ function Get-Sha256([string]$Path) {
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $full).Hash.ToLowerInvariant()
 }
 
+function Get-CheckedPresentOperationByteTotal {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Operations,
+        [Parameter(Mandatory)][string]$Label
+    )
+    [int64]$total = 0
+    foreach ($operation in $Operations) {
+        $properties = @($operation.PSObject.Properties.Name)
+        if ($properties -notcontains 'present') {
+            throw "$Label operation omits required property present"
+        }
+        if (-not [bool]$operation.present) {
+            continue
+        }
+        if ($properties -notcontains 'regular_file_bytes') {
+            throw "$Label present operation omits regular_file_bytes"
+        }
+        $bytes = $operation.regular_file_bytes
+        if ($bytes -isnot [int64] -or [int64]$bytes -lt 0) {
+            throw "$Label present operation regular_file_bytes is not a nonnegative Int64"
+        }
+        if ([int64]$bytes -gt [int64]::MaxValue - $total) {
+            throw "$Label regular-file byte total exceeds Int64"
+        }
+        $total += [int64]$bytes
+    }
+    return $total
+}
+
 function Resolve-EvidenceRelative([string]$Relative, [string]$Label) {
     if ([string]::IsNullOrWhiteSpace($Relative) -or
         [System.IO.Path]::IsPathRooted($Relative) -or
@@ -1402,12 +1431,12 @@ if ($result.preservation.pre_batch -cne '001-pre-selftest' -or
     -not $result.preservation.all_present_move_manifests_byte_identical) {
     throw 'depth-preserving frozen-copy retention or mutation policy is invalid'
 }
-$computedPreBytes = [int64](@($result.preservation.pre_operations |
-        Where-Object { $_.present } |
-        Measure-Object -Property regular_file_bytes -Sum).Sum)
-$computedPostBytes = [int64](@($result.preservation.post_operations |
-        Where-Object { $_.present } |
-        Measure-Object -Property regular_file_bytes -Sum).Sum)
+$computedPreBytes = Get-CheckedPresentOperationByteTotal `
+    -Operations @($result.preservation.pre_operations) `
+    -Label 'verified pre-selftest preservation'
+$computedPostBytes = Get-CheckedPresentOperationByteTotal `
+    -Operations @($result.preservation.post_operations) `
+    -Label 'verified post-selftest preservation'
 if ([int64]$result.preservation.pre_regular_file_bytes -ne $computedPreBytes -or
     [int64]$result.preservation.post_regular_file_bytes -ne $computedPostBytes -or
     [int64]$result.preservation.retained_frozen_copy_regular_file_bytes -ne
