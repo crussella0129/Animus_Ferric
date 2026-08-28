@@ -237,12 +237,11 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
   delete; implicit `move_path` overwrite; `shell_exec`/`git_*` stay opaque by
   design.
 
-## Book v2 active sprint tasks
+## Book v2 carry-forward from Sprint 114
 
-### Sprint 114 — hardware-calibrated autonomous development
-
-- [ ] T-11410 (sprint 114) [intent: INT-0007]: Run the frozen MH-RS01 app task through Ferric with a forced linked continuation, mutation reconciliation, no Codex repair, and a clearly labeled existing-model simulation only if Qwen3.8 is non-viable. — touches: `target/s114-experiment/app-workspace/`, `docs/sprints/s114/control-artifacts/app-run/`
-- [ ] T-11412 (sprint 114) [intent: INT-0007]: Archive and hash the experiment, verify traces and teardown, and publish the non-inflated capability verdict. — touches: `docs/sprints/s114/`, `docs/work/tasks.md`, `docs/work/completed-tasks.md`, `docs/intents/INT-0007-hardware-calibrated-autonomous-development.md`
+- [ ] T-11414 (backlog) [intent: INT-0008]: Add a query-only `--trace-dir <PATH>` operator surface that preserves the current `<workspace>/.ferric/trace` default, requires an explicit repeat on resume, resolves the workspace and requested trace root through canonical or nearest-existing-ancestor paths before mutation, rejects equality, ancestor/descendant overlap, symlinks, and junctions in both directions, proves fresh and resumed external traces remain verifiable, updates CLI documentation and tests, and requalifies the changed release binary before the frozen MH-RS01 trial. — touches: `crates/ferric-cli/src/query.rs`, `crates/ferric-cli/tests/cli.rs`, `docs/commands.md`, `docs/configuration.md`
+- [ ] T-11410 (backlog) [intent: INT-0007]: After T-11414 and binary requalification, run the frozen MH-RS01 app task through Ferric with a forced linked continuation, mutation reconciliation, no Codex repair, and a clearly labeled existing-model simulation only if Qwen3.8 is non-viable. — touches: `target/s114-experiment/app-workspace/`, `docs/sprints/s114/control-artifacts/app-run/`
+- [ ] T-11412 (backlog) [intent: INT-0007]: After T-11410, archive and hash the experiment, verify traces and teardown, and publish the non-inflated capability verdict. — touches: `docs/sprints/s114/`, `docs/work/tasks.md`, `docs/work/completed-tasks.md`, `docs/intents/INT-0007-hardware-calibrated-autonomous-development.md`
 
 ## Book v2 carry-forward from Sprint 113
 

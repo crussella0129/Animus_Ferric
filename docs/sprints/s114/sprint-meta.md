@@ -87,3 +87,10 @@
   reported `not initialized`, and no remote mutation occurred. See the
   [capability report](control-artifacts/sprint-loop-run/capability-report.md)
   and its exact structured evidence.
+- **T-11410/T-11412 — re-scoped, not fixed:** no application inference or
+  candidate mutation occurred, and the frozen grader was not weakened.
+  T-11414 must first add a safe external trace root and requalify the changed
+  Ferric binary; only then may T-11410 run, followed by T-11412 archival and
+  teardown. Moving these tasks to backlog records the unmet dependency and
+  allows Sprint 114 to enter Test with a truthful failed outcome rather than
+  treating carry-forward as completion.

@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0008
 - **State:** proposed
-- **Work evidence:** none
+- **Work evidence:** [T-11414 external trace-root prerequisite](../work/tasks.md#book-v2-carry-forward-from-sprint-114)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -122,3 +122,6 @@ the same concepts instead of adding another public runbook.
 - 2026-08-27: created as `proposed` from operator feedback that Sprint 114's
   safe local-model test required an unreasonable number of manual PowerShell
   commands.
+- 2026-08-27: linked backlog task T-11414 for the external trace-root boundary
+  and release-binary requalification required before the frozen application
+  trial can resume; the broader unified workflow remains proposed.
