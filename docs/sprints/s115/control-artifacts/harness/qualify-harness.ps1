@@ -134,7 +134,7 @@ function New-SafeDirectory([string]$Path) {
         }
         $cursor = Join-Path $cursor $component
         if (-not (Test-EntryExists $cursor)) {
-            New-Item -ItemType Directory -LiteralPath $cursor -ErrorAction Stop | Out-Null
+            New-Item -ItemType Directory -Path $cursor -ErrorAction Stop | Out-Null
         }
         Assert-RealDirectory $cursor 'created path component' | Out-Null
     }
@@ -544,7 +544,7 @@ function Get-NextAttempt {
             continue
         }
         try {
-            New-Item -ItemType Directory -LiteralPath $targetAttempt -ErrorAction Stop | Out-Null
+            New-Item -ItemType Directory -Path $targetAttempt -ErrorAction Stop | Out-Null
             return [pscustomobject]@{
                 number = $number
                 name = $name

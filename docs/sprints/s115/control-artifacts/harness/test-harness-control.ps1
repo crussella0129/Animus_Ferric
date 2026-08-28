@@ -60,6 +60,15 @@ function Assert-NoDestructiveCommands([object]$Parsed, [string]$Label) {
                 throw "$Label contains a recursive Copy-Item operation"
             }
         }
+        if ($name -eq 'New-Item') {
+            $literalPath = @($command.CommandElements | Where-Object {
+                    $_ -is [System.Management.Automation.Language.CommandParameterAst] -and
+                    $_.ParameterName -eq 'LiteralPath'
+                })
+            if ($literalPath.Count -gt 0) {
+                throw "$Label contains unsupported New-Item -LiteralPath"
+            }
+        }
     }
     $deleteMembers = @($Parsed.ast.FindAll({
                 param($node)

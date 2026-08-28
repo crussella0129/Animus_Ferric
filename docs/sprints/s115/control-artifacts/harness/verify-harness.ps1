@@ -843,6 +843,15 @@ function Assert-ControlSourceStatic([string]$QualifierPath) {
                 throw 'qualifier contains forbidden recursive Copy-Item'
             }
         }
+        if ($name -eq 'New-Item') {
+            $literalPath = @($command.CommandElements | Where-Object {
+                    $_ -is [System.Management.Automation.Language.CommandParameterAst] -and
+                    $_.ParameterName -eq 'LiteralPath'
+                })
+            if ($literalPath.Count -gt 0) {
+                throw 'qualifier contains unsupported New-Item -LiteralPath'
+            }
+        }
         $text = $command.Extent.Text
         if ($name -in @('git', 'git.exe') -and
             $text -match '(?i)(?:\s|["''])((clean)|(reset)|(checkout))(?=\s|["''])') {
