@@ -1,0 +1,15 @@
+{
+  "schema": "animus-ferric-s115-runtime-result-v1",
+  "passed": true,
+  "state": "qualified_running",
+  "attempt": "002",
+  "started_at_utc": "2026-08-28T08:56:11.4854345+00:00",
+  "completed_at_utc": "2026-08-28T09:04:57.4875835+00:00",
+  "wall_seconds": 526.001346,
+  "launch_count": 1,
+  "smoke_invocation_count": 1,
+  "throughput_request_count": 4,
+  "replacement_request_count": 0,
+  "process_pid": 18096,
+  "handoff_sha256": "8fc12473f3aa8802e3de42a92047d9a6f266a86be5b0ddadeb941567e3982519"
+}

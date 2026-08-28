@@ -1,0 +1,81 @@
+{
+  "schema": "animus-ferric-s115-start-process-engine-resolution-v1",
+  "passed": true,
+  "path_injection_strategy": "parent-process-scoped-inheritance-restored-no-Start-Process-Path-override",
+  "effective_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell;C:\\Users\\charl\\.codex\\tmp\\arg0\\codex-arg0xDnaLT;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\libheif\\libheif\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\jxrlib\\jxrlib\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\poppler\\Library\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\bin\\override;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\;C:\\WINDOWS\\System32\\OpenSSH\\;C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\NvDLISR;C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common;C:\\Program Files\\dotnet\\;C:\\Program Files\\Calibre2\\;C:\\Program Files\\nodejs\\;C:\\Program Files\\Git-Xet\\;C:\\Program Files\\Go\\bin;C:\\Program Files (x86)\\ZeroTier\\One\\;C:\\Program Files\\Tailscale\\;C:\\Program Files\\Git\\cmd;C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files\\GitHub CLI\\;C:\\Users\\charl\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin;C:\\Users\\charl\\AppData\\Local\\agy\\bin;C:\\Users\\charl\\.cargo\\bin;C:\\Users\\charl\\.local\\bin;C:\\Users\\charl\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\;C:\\Users\\charl\\AppData\\Local\\Programs\\Python\\Python313\\;C:\\Users\\charl\\AppData\\Local\\Programs\\Python\\Launcher\\;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell;C:\\Users\\charl\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\charl\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\charl\\AppData\\Roaming\\npm;C:\\Users\\charl\\AppData\\Local\\Microsoft\\WinGet\\Links;C:\\Users\\charl\\AppData\\Local\\AnthropicClaude;C:\\Users\\charl\\AppData\\Local\\Programs\\Ollama;C:\\Users\\charl\\.dotnet\\tools;C:\\steamcmd;C:\\Users\\charl\\go\\bin;C:\\Program Files\\JetBrains\\RustRover 2025.3.5\\bin;C:\\Users\\charl\\AppData\\Local\\Programs\\MiKTeX\\miktex\\bin\\x64\\;C:\\Users\\charl\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Google.PlatformTools_Microsoft.Winget.Source_8wekyb3d8bbwe\\platform-tools;C:\\Users\\charl\\AppData\\Local\\Programs\\Antigravity IDE\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\bin\\fallback;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\git\\cmd;C:\\Users\\charl\\AppData\\Local\\OpenAI\\Codex\\bin\\9758fc89b2be71d3;C:\\Users\\charl\\AppData\\Local\\OpenAI\\Codex\\bin\\d664d99528113e03",
+  "proof": {
+    "schema": "animus-ferric-s115-bare-engine-resolution-v1",
+    "passed": true,
+    "executable_name": "llama-server.exe",
+    "pinned_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe",
+    "pinned_sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+    "higher_priority_candidates": [
+      {
+        "directory": "C:\\Users\\charl\\Animus_Ferric\\target\\release",
+        "candidate": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\llama-server.exe",
+        "present": false,
+        "regular_file": false,
+        "is_pinned": false,
+        "sha256": null,
+        "reparse_point": false
+      },
+      {
+        "directory": "C:\\Users\\charl\\Animus_Ferric",
+        "candidate": "C:\\Users\\charl\\Animus_Ferric\\llama-server.exe",
+        "present": false,
+        "regular_file": false,
+        "is_pinned": false,
+        "sha256": null,
+        "reparse_point": false
+      },
+      {
+        "directory": "C:\\WINDOWS\\system32",
+        "candidate": "C:\\WINDOWS\\system32\\llama-server.exe",
+        "present": false,
+        "regular_file": false,
+        "is_pinned": false,
+        "sha256": null,
+        "reparse_point": false
+      },
+      {
+        "directory": "C:\\WINDOWS\\System",
+        "candidate": "C:\\WINDOWS\\System\\llama-server.exe",
+        "present": false,
+        "regular_file": false,
+        "is_pinned": false,
+        "sha256": null,
+        "reparse_point": false
+      },
+      {
+        "directory": "C:\\WINDOWS",
+        "candidate": "C:\\WINDOWS\\llama-server.exe",
+        "present": false,
+        "regular_file": false,
+        "is_pinned": false,
+        "sha256": null,
+        "reparse_point": false
+      }
+    ],
+    "launch_path_matches": [
+      {
+        "path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe",
+        "regular_file": true,
+        "sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+        "reparse_point": false
+      },
+      {
+        "path": "C:\\Users\\charl\\.cargo\\bin\\llama-server.exe",
+        "regular_file": true,
+        "sha256": "05db01f06449ddf2ac178efb761e5229b9e097170fae81ee08ee3a2dbe1fd976",
+        "reparse_point": false
+      }
+    ],
+    "first_path_match": {
+      "path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe",
+      "regular_file": true,
+      "sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+      "reparse_point": false
+    },
+    "errors": []
+  }
+}

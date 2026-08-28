@@ -1,0 +1,208 @@
+{
+  "schema": "animus-ferric-s115-throughput-summary-v1",
+  "passed": true,
+  "request_sha256": "bb495b8de7d59f0d01336712bccdfcaed9d6ba9bc1f46b5cb46d6285cda9f0ba",
+  "template_sha256": "51a9e7ec303f9ff8c0ddee17fdc5abd96c0a08d74b210e683128f9a0ac06aae0",
+  "scheduled_samples": [
+    "warmup",
+    "trial-01",
+    "trial-02",
+    "trial-03"
+  ],
+  "replacement_samples": 0,
+  "observed_samples": 4,
+  "valid_request_count": 4,
+  "valid_trial_count": 3,
+  "median_decoded_tokens_per_second": 3.565083339811294,
+  "minimum_required": 2.0,
+  "samples": [
+    {
+      "schema": "animus-ferric-s115-throughput-sample-v1",
+      "ordinal": 1,
+      "label": "warmup",
+      "scored": false,
+      "request_sha256": "bb495b8de7d59f0d01336712bccdfcaed9d6ba9bc1f46b5cb46d6285cda9f0ba",
+      "exchange": {
+        "method": "POST",
+        "uri": "http://127.0.0.1:8080/v1/chat/completions",
+        "started_at_utc": "2026-08-28T08:58:44.1130470Z",
+        "completed_at_utc": "2026-08-28T08:59:58.6431742Z",
+        "wall_ms": 74529.904,
+        "timeout_seconds": 720,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ],
+          "Content-Length": [
+            "1901"
+          ],
+          "Server": [
+            "llama.cpp"
+          ]
+        },
+        "error": null,
+        "response_file": "throughput-warmup.response.json",
+        "response_bytes": 1901,
+        "response_sha256": "3b2e0454124db265ba3c3e8d44090c0f680063aa500d6be2b2c361bd343c10a2"
+      },
+      "usage_completion_tokens": 256,
+      "timings_predicted_n": 256,
+      "timings_predicted_ms": 71818.77,
+      "timings_reported_per_second": 3.550603832396461,
+      "computed_decoded_tokens_per_second": 3.5645277689940946,
+      "counter_consistent": true,
+      "rate_consistent": true,
+      "failure_cause": null,
+      "valid": true
+    },
+    {
+      "schema": "animus-ferric-s115-throughput-sample-v1",
+      "ordinal": 2,
+      "label": "trial-01",
+      "scored": true,
+      "request_sha256": "bb495b8de7d59f0d01336712bccdfcaed9d6ba9bc1f46b5cb46d6285cda9f0ba",
+      "exchange": {
+        "method": "POST",
+        "uri": "http://127.0.0.1:8080/v1/chat/completions",
+        "started_at_utc": "2026-08-28T08:59:58.6599463Z",
+        "completed_at_utc": "2026-08-28T09:01:10.2588859Z",
+        "wall_ms": 71598.694,
+        "timeout_seconds": 720,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ],
+          "Content-Length": [
+            "1892"
+          ],
+          "Server": [
+            "llama.cpp"
+          ]
+        },
+        "error": null,
+        "response_file": "throughput-trial-01.response.json",
+        "response_bytes": 1892,
+        "response_sha256": "d39032df7818604b80a68e6762a83e01cb51ba1402ead0468772234767d0ec0a"
+      },
+      "usage_completion_tokens": 256,
+      "timings_predicted_n": 256,
+      "timings_predicted_ms": 71060.457,
+      "timings_reported_per_second": 3.5884936681451403,
+      "computed_decoded_tokens_per_second": 3.6025661923339447,
+      "counter_consistent": true,
+      "rate_consistent": true,
+      "failure_cause": null,
+      "valid": true
+    },
+    {
+      "schema": "animus-ferric-s115-throughput-sample-v1",
+      "ordinal": 3,
+      "label": "trial-02",
+      "scored": true,
+      "request_sha256": "bb495b8de7d59f0d01336712bccdfcaed9d6ba9bc1f46b5cb46d6285cda9f0ba",
+      "exchange": {
+        "method": "POST",
+        "uri": "http://127.0.0.1:8080/v1/chat/completions",
+        "started_at_utc": "2026-08-28T09:01:10.2803851Z",
+        "completed_at_utc": "2026-08-28T09:02:22.8204046Z",
+        "wall_ms": 72539.787,
+        "timeout_seconds": 720,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ],
+          "Content-Length": [
+            "1892"
+          ],
+          "Server": [
+            "llama.cpp"
+          ]
+        },
+        "error": null,
+        "response_file": "throughput-trial-02.response.json",
+        "response_bytes": 1892,
+        "response_sha256": "d327ccb2d7b79072f51dd26fa56d69e7661a5a428d8c4cd68e9d292e9c3832ca"
+      },
+      "usage_completion_tokens": 256,
+      "timings_predicted_n": 256,
+      "timings_predicted_ms": 72111.99,
+      "timings_reported_per_second": 3.5361664544273426,
+      "computed_decoded_tokens_per_second": 3.5500337738564696,
+      "counter_consistent": true,
+      "rate_consistent": true,
+      "failure_cause": null,
+      "valid": true
+    },
+    {
+      "schema": "animus-ferric-s115-throughput-sample-v1",
+      "ordinal": 4,
+      "label": "trial-03",
+      "scored": true,
+      "request_sha256": "bb495b8de7d59f0d01336712bccdfcaed9d6ba9bc1f46b5cb46d6285cda9f0ba",
+      "exchange": {
+        "method": "POST",
+        "uri": "http://127.0.0.1:8080/v1/chat/completions",
+        "started_at_utc": "2026-08-28T09:02:22.8283982Z",
+        "completed_at_utc": "2026-08-28T09:03:35.0589414Z",
+        "wall_ms": 72230.306,
+        "timeout_seconds": 720,
+        "status_code": 200,
+        "reason": "OK",
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Keep-Alive": [
+            "timeout=5, max=100"
+          ],
+          "Access-Control-Allow-Origin": [
+            ""
+          ],
+          "Content-Length": [
+            "1894"
+          ],
+          "Server": [
+            "llama.cpp"
+          ]
+        },
+        "error": null,
+        "response_file": "throughput-trial-03.response.json",
+        "response_bytes": 1894,
+        "response_sha256": "e2cf3b0c7a4a2d572cc65362a3eaf5e5c3ddebf5ff8ee98aabb071c46c071890"
+      },
+      "usage_completion_tokens": 256,
+      "timings_predicted_n": 256,
+      "timings_predicted_ms": 71807.578,
+      "timings_reported_per_second": 3.5511572330151564,
+      "computed_decoded_tokens_per_second": 3.565083339811294,
+      "counter_consistent": true,
+      "rate_consistent": true,
+      "failure_cause": null,
+      "valid": true
+    }
+  ]
+}

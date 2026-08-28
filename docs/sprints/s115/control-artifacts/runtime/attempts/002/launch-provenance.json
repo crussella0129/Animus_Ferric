@@ -1,0 +1,23 @@
+{
+  "schema": "animus-ferric-s115-launch-provenance-v1",
+  "passed": true,
+  "wrapper_pid": 22772,
+  "child_pid": 18096,
+  "child_parent_pid": 22772,
+  "creation_binding": {
+    "schema": "animus-ferric-process-creation-window-v1",
+    "passed": true,
+    "tolerance_seconds": 5,
+    "creation_date_utc": "2026-08-28T08:57:26.6784000+00:00",
+    "preflight_captured_utc": "2026-08-28T08:57:26.1101998+00:00",
+    "attestation_captured_utc": "2026-08-28T08:57:43.7447275+00:00",
+    "errors": []
+  },
+  "ready_stdout_prefix": {
+    "bytes": 250,
+    "sha256": "f8a9b4f7c18eecf063fff44c9e3710ead05ba21de2b16b3d88bcad6d0b253702"
+  },
+  "ready_stdout_prefix_file": "launch-ready.stdout.prefix.bin",
+  "ready_line": "server ready: http://127.0.0.1:8080/v1 (pid 18096)",
+  "ready_pid": 18096
+}

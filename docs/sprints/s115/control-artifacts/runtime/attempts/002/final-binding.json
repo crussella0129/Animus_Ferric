@@ -1,0 +1,112 @@
+{
+  "schema": "animus-ferric-s115-live-binding-v1",
+  "passed": true,
+  "captured_at_utc": "2026-08-28T09:04:16.1379202+00:00",
+  "runfiles": {
+    "local": {
+      "path": "C:\\Users\\charl\\Animus_Ferric\\.ferric\\server.json",
+      "present": true,
+      "bytes": 279,
+      "sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f",
+      "content": "{\n  \"engine\": \"llama-server\",\n  \"pid\": 18096,\n  \"port\": 8080,\n  \"base_url\": \"http://127.0.0.1:8080/v1\",\n  \"tailscale\": false,\n  \"model\": \"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\n  \"context_size\": 32768,\n  \"sampling_seed\": 42,\n  \"parallel_slots\": 1\n}",
+      "parse_error": null,
+      "value": {
+        "engine": "llama-server",
+        "pid": 18096,
+        "port": 8080,
+        "base_url": "http://127.0.0.1:8080/v1",
+        "tailscale": false,
+        "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "context_size": 32768,
+        "sampling_seed": 42,
+        "parallel_slots": 1
+      }
+    },
+    "global": {
+      "path": "C:\\Users\\charl\\AppData\\Roaming\\ferric\\server.json",
+      "present": true,
+      "bytes": 279,
+      "sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f",
+      "content": "{\n  \"engine\": \"llama-server\",\n  \"pid\": 18096,\n  \"port\": 8080,\n  \"base_url\": \"http://127.0.0.1:8080/v1\",\n  \"tailscale\": false,\n  \"model\": \"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\n  \"context_size\": 32768,\n  \"sampling_seed\": 42,\n  \"parallel_slots\": 1\n}",
+      "parse_error": null,
+      "value": {
+        "engine": "llama-server",
+        "pid": 18096,
+        "port": 8080,
+        "base_url": "http://127.0.0.1:8080/v1",
+        "tailscale": false,
+        "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "context_size": 32768,
+        "sampling_seed": 42,
+        "parallel_slots": 1
+      }
+    }
+  },
+  "runfile": {
+    "engine": "llama-server",
+    "pid": 18096,
+    "port": 8080,
+    "base_url": "http://127.0.0.1:8080/v1",
+    "tailscale": false,
+    "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "context_size": 32768,
+    "sampling_seed": 42,
+    "parallel_slots": 1
+  },
+  "process": {
+    "pid": 18096,
+    "parent_pid": 22772,
+    "name": "llama-server.exe",
+    "executable_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe",
+    "command_line": "\"llama-server\" -m C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf -c 32768 -t 12 -ngl 24 -b 512 --seed 42 --parallel 1 --host 127.0.0.1 --port 8080",
+    "creation_utc": "2026-08-28T08:57:26.6784000+00:00",
+    "command_binding": {
+      "schema": "animus-ferric-windows-process-command-binding-v1",
+      "passed": true,
+      "executable_path_passed": true,
+      "recorded_executable_sha256_passed": true,
+      "live_executable_sha256_passed": true,
+      "argv0_passed": true,
+      "argv0_mode": "declared_bare_alias",
+      "argument_tail_passed": true,
+      "expected_argc": 19,
+      "observed_argc": 19,
+      "observed_argv": [
+        "llama-server",
+        "-m",
+        "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "-c",
+        "32768",
+        "-t",
+        "12",
+        "-ngl",
+        "24",
+        "-b",
+        "512",
+        "--seed",
+        "42",
+        "--parallel",
+        "1",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8080"
+      ],
+      "errors": []
+    },
+    "creation_binding": {
+      "passed": true,
+      "expected_creation_utc": "2026-08-28T08:57:26.6784000+00:00",
+      "observed_creation_utc": "2026-08-28T08:57:26.6784000+00:00"
+    }
+  },
+  "listeners": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 8080,
+      "State": 2,
+      "OwningProcess": 18096
+    }
+  ],
+  "errors": []
+}

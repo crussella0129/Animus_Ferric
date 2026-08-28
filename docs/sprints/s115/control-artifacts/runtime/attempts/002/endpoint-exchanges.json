@@ -1,0 +1,95 @@
+{
+  "health": {
+    "method": "GET",
+    "uri": "http://127.0.0.1:8080/health",
+    "started_at_utc": "2026-08-28T08:57:45.5457577Z",
+    "completed_at_utc": "2026-08-28T08:57:45.5915912Z",
+    "wall_ms": 42.342,
+    "timeout_seconds": 30,
+    "status_code": 200,
+    "reason": "OK",
+    "headers": {
+      "Content-Type": [
+        "application/json; charset=utf-8"
+      ],
+      "Keep-Alive": [
+        "timeout=5, max=100"
+      ],
+      "Access-Control-Allow-Origin": [
+        ""
+      ],
+      "Content-Length": [
+        "15"
+      ],
+      "Server": [
+        "llama.cpp"
+      ]
+    },
+    "error": null,
+    "response_file": "health.body.json",
+    "response_bytes": 15,
+    "response_sha256": "a29ee2b15c494311c52521766e44af56a3ad2248e7a8ab465e5206463c13d288"
+  },
+  "models": {
+    "method": "GET",
+    "uri": "http://127.0.0.1:8080/v1/models",
+    "started_at_utc": "2026-08-28T08:57:45.5938707Z",
+    "completed_at_utc": "2026-08-28T08:57:45.6006923Z",
+    "wall_ms": 6.689,
+    "timeout_seconds": 30,
+    "status_code": 200,
+    "reason": "OK",
+    "headers": {
+      "Content-Type": [
+        "application/json; charset=utf-8"
+      ],
+      "Keep-Alive": [
+        "timeout=5, max=100"
+      ],
+      "Access-Control-Allow-Origin": [
+        ""
+      ],
+      "Content-Length": [
+        "826"
+      ],
+      "Server": [
+        "llama.cpp"
+      ]
+    },
+    "error": null,
+    "response_file": "models.body.json",
+    "response_bytes": 826,
+    "response_sha256": "4a28e4f2593eac7898cbdf1d51cbeb1794c25115501e965b6829664bf9c0e1e5"
+  },
+  "props": {
+    "method": "GET",
+    "uri": "http://127.0.0.1:8080/props",
+    "started_at_utc": "2026-08-28T08:57:45.6050709Z",
+    "completed_at_utc": "2026-08-28T08:57:45.6101849Z",
+    "wall_ms": 4.986,
+    "timeout_seconds": 30,
+    "status_code": 200,
+    "reason": "OK",
+    "headers": {
+      "Content-Type": [
+        "application/json; charset=utf-8"
+      ],
+      "Keep-Alive": [
+        "timeout=5, max=100"
+      ],
+      "Access-Control-Allow-Origin": [
+        ""
+      ],
+      "Content-Length": [
+        "12178"
+      ],
+      "Server": [
+        "llama.cpp"
+      ]
+    },
+    "error": null,
+    "response_file": "props.body.json",
+    "response_bytes": 12178,
+    "response_sha256": "19a26ec755c164471f1ba6e2dcad7228318887e39d1506c6fdb0a36be269bb62"
+  }
+}

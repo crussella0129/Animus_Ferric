@@ -1,0 +1,82 @@
+{
+  "schema": "animus-ferric-s115-attempt-control-provenance-v1",
+  "source_manifest_sha256": "e3daeedbb31033b1d1cac95ea57f732f93cb8b0f9b1a4f588979b5ae2222085e",
+  "frozen_manifest_sha256": "e3daeedbb31033b1d1cac95ea57f732f93cb8b0f9b1a4f588979b5ae2222085e",
+  "files": [
+    {
+      "name": ".gitattributes",
+      "bytes": 32,
+      "sha256": "2b4a3840c3903389ceb19fedd520c0b4ed8a4012394423f54c79113cd1c1032d"
+    },
+    {
+      "name": "README.md",
+      "bytes": 4008,
+      "sha256": "a1db78ba07a0b1b9efb227b041a1bc26eba444ff89fff33dd3c8e392e0fc1fc8"
+    },
+    {
+      "name": "runtime-plan.json",
+      "bytes": 5783,
+      "sha256": "3036ef11fc98bac62afc8fc6bcdb30b482fe47ff23d45643bf8c37ac1cee3278"
+    },
+    {
+      "name": "runtime-common.ps1",
+      "bytes": 59582,
+      "sha256": "ac61f58ba379bae171ccf8c0e3588a55a57e8172dd9b69c53f13e8f99c8a4a92"
+    },
+    {
+      "name": "qualify-runtime.ps1",
+      "bytes": 56399,
+      "sha256": "90c1e4246195384abeae71886b68cf771751e9f85fd1e84909dfe30be6c723d3"
+    },
+    {
+      "name": "verify-runtime.ps1",
+      "bytes": 60289,
+      "sha256": "767bef285a9b77b84a5d005e06bc22e63e53359ac5b31ab05de31e30429e0e6f"
+    },
+    {
+      "name": "verify-handoff.ps1",
+      "bytes": 7545,
+      "sha256": "3a03ab0eab2e823c33f409fa7bf825c945afe726568b2abcc31cf5ecf8f779a2"
+    },
+    {
+      "name": "test-runtime-control.ps1",
+      "bytes": 13451,
+      "sha256": "80724d7afeed070de76ceab2cd1140fd4f8891ce1ba6c1d51749c4b7fa57919e"
+    },
+    {
+      "name": "nonce.txt",
+      "bytes": 30,
+      "sha256": "0d556cbddf4ba5e5b0643929f1024d11d7e074bd5dd133831508b31cc06d6a70"
+    },
+    {
+      "name": "smoke-prompt.txt",
+      "bytes": 183,
+      "sha256": "45528fbdc5dd072487dfdb58233c8c915fa49cc55e4c08cba1769d1601d785c2"
+    },
+    {
+      "name": "throughput-request.template.json",
+      "bytes": 762,
+      "sha256": "51a9e7ec303f9ff8c0ddee17fdc5abd96c0a08d74b210e683128f9a0ac06aae0"
+    },
+    {
+      "name": "template-probe-defaults.json",
+      "bytes": 300,
+      "sha256": "d05b8eaf3548d1fc726d12eedeac019686af9e78cb091f9cb1bec7940cbc633a"
+    },
+    {
+      "name": "template-probe-alias-false.json",
+      "bytes": 352,
+      "sha256": "d2308d4e8737f5db4157e16460071149dc3421b066712ad03d84aae2b4afc5a7"
+    },
+    {
+      "name": "template-probe-all-false.json",
+      "bytes": 378,
+      "sha256": "2be7bad26e9e51ea88d34b5abb026ca058dd93cb9151f02d917fe8d108fed45c"
+    },
+    {
+      "name": "template-probe-all-true.json",
+      "bytes": 376,
+      "sha256": "09d7811e84084f629120a83c35940241e1275998ba77101f27ebc0e2196d5b0b"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "schema": "animus-ferric-s115-server-log-attestation-v1",
+  "passed": true,
+  "raw_relative_path": "target/s115-runtime-qualification/attempts/002/server-live.log",
+  "prefix": {
+    "bytes": 50812,
+    "sha256": "6fe4990a0a48aad6edbe677c67ec43323a4cd2337ec2b435e574a1f35bab4b39"
+  },
+  "facts": {
+    "schema": "animus-ferric-s115-server-log-facts-v1",
+    "passed": true,
+    "value": {
+      "effective_gpu_layers": 24,
+      "total_layers": 66,
+      "offload_line": "offloaded 24/66 layers",
+      "kv_cache_lines": [
+        "K (q8_0):  544.00 MiB, V (q8_0):"
+      ],
+      "flash_attention_lines": [
+        "flash_attn            = enabled"
+      ],
+      "thinking_lines": [
+        "chat template, thinking = 1"
+      ],
+      "preserve_warning_count": 0
+    },
+    "sha256": "b1dc89c9a106bbfbe05131769bb0a47f7a2af7b5099a4cea5baf938d11cbcbae"
+  },
+  "effective_gpu_layers": 24,
+  "total_layers": 66,
+  "offload_line": "offloaded 24/66 layers",
+  "kv_cache_lines": [
+    "K (q8_0):  544.00 MiB, V (q8_0):"
+  ],
+  "flash_attention_lines": [
+    "flash_attn            = enabled"
+  ],
+  "thinking_lines": [
+    "chat template, thinking = 1"
+  ],
+  "preserve_warning_count": 0
+}

@@ -1,0 +1,4 @@
+Launching llama-server on http://127.0.0.1:8080/v1 ...
+server ready: http://127.0.0.1:8080/v1 (pid 18096)
+registered locally at C:\Users\charl\Animus_Ferric\.ferric\server.json
+registered globally at C:\Users\charl\AppData\Roaming\ferric\server.json

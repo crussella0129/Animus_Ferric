@@ -1,0 +1,118 @@
+{
+  "schema": "animus-ferric-s115-external-trace-smoke-v1",
+  "passed": true,
+  "process": {
+    "file": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+    "arguments": [
+      "query",
+      "--workspace",
+      "C:\\Users\\charl\\Animus_Ferric\\target\\s115-runtime-qualification\\attempts\\002\\smoke-workspace",
+      "--trace-dir",
+      "C:\\Users\\charl\\Animus_Ferric\\target\\s115-runtime-qualification\\attempts\\002\\external-trace",
+      "--model",
+      "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "--api-base",
+      "http://127.0.0.1:8080/v1",
+      "--params-b",
+      "27",
+      "--quant",
+      "Q4_K_M",
+      "--family",
+      "qwen3.8",
+      "--ctx",
+      "32768",
+      "--temperature",
+      "1",
+      "--protocol",
+      "grammar",
+      "--harness-policy",
+      "legacy",
+      "--tier",
+      "ultra",
+      "--max-ring",
+      "0",
+      "--max-turns",
+      "4",
+      "--profile-dir",
+      "C:\\Users\\charl\\Animus_Ferric\\target\\s115-runtime-qualification\\attempts\\002\\empty-profile",
+      "--no-config",
+      "--no-stream",
+      "Read nonce.txt using the read_file tool. Then call task_complete with summary exactly `AF-S115-QWEN38-NONCE-93D7C4B1`. Do not call any mutating tool and do not request clarification."
+    ],
+    "pid": 18256,
+    "started_at_utc": "2026-08-28T08:57:47.2279236Z",
+    "completed_at_utc": "2026-08-28T08:58:43.9369677Z",
+    "duration_ms": 56707.696,
+    "timed_out": false,
+    "execution_timed_out": false,
+    "kill_attempted": false,
+    "kill_succeeded": false,
+    "post_process_alive": false,
+    "output_drain_timed_out": false,
+    "exit_code": 0,
+    "stdout_file": "smoke.stdout.log",
+    "stderr_file": "smoke.stderr.log"
+  },
+  "trace_count": 1,
+  "trace_verify": {
+    "file": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+    "arguments": [
+      "trace",
+      "verify",
+      "C:\\Users\\charl\\Animus_Ferric\\docs\\sprints\\s115\\control-artifacts\\runtime\\attempts\\002\\smoke.trace.jsonl"
+    ],
+    "pid": 5276,
+    "started_at_utc": "2026-08-28T08:58:43.9457663Z",
+    "completed_at_utc": "2026-08-28T08:58:43.9973741Z",
+    "duration_ms": 50.182,
+    "timed_out": false,
+    "execution_timed_out": false,
+    "kill_attempted": false,
+    "kill_succeeded": false,
+    "post_process_alive": false,
+    "output_drain_timed_out": false,
+    "exit_code": 0,
+    "stdout_file": "trace-verify.stdout.log",
+    "stderr_file": "trace-verify.stderr.log"
+  },
+  "trace_facts": {
+    "record_count": 22,
+    "policy_count": 1,
+    "protocol": "constrained_json",
+    "turn_count": 2,
+    "constraint_count": 2,
+    "all_turns_json_schema_constrained": true,
+    "tool_calls": [
+      {
+        "name": "read_file",
+        "args": {
+          "path": "nonce.txt"
+        }
+      },
+      {
+        "name": "task_complete",
+        "args": {
+          "summary": "AF-S115-QWEN38-NONCE-93D7C4B1"
+        }
+      }
+    ],
+    "read_file_before_task_complete": true,
+    "exact_nonce_read_result_count": 1,
+    "exact_nonce_read_file_pairs": [
+      {
+        "call_id": "g-0-0",
+        "path": "nonce.txt",
+        "call_event_index": 9,
+        "result_event_index": 11
+      }
+    ],
+    "exact_task_complete_summary": true,
+    "forbidden_tools_observed": [],
+    "session_end_count": 1,
+    "session_end_reason": "task_complete"
+  },
+  "workspace_unchanged": true,
+  "workspace_ferric_absent": true,
+  "before_manifest_sha256": "312392db392b5cf08556a4b85d418336fbee2cd667c4de5badc3ecb3a4095617",
+  "after_manifest_sha256": "312392db392b5cf08556a4b85d418336fbee2cd667c4de5badc3ecb3a4095617"
+}

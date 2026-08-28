@@ -1,0 +1,126 @@
+{
+  "schema": "animus-ferric-s115-runtime-handoff-v1",
+  "state": "qualified_running",
+  "attempt": "002",
+  "qualified_at_utc": "2026-08-28T09:04:16.1761575+00:00",
+  "endpoint": "http://127.0.0.1:8080/v1",
+  "served_model_id": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+  "served_n_params": 27320697856,
+  "property_digest_sha256": "c5dd44aeab1b08049c73ce420a4d279584d7ab75f84326039051a501f95aced1",
+  "server_log_facts_sha256": "b1dc89c9a106bbfbe05131769bb0a47f7a2af7b5099a4cea5baf938d11cbcbae",
+  "coordinate": {
+    "id": "qwen38-q4-k-m-32768-ngl24",
+    "quant": "Q4_K_M",
+    "context": 32768,
+    "gpu_layers": 24,
+    "port": 8080,
+    "threads": 12,
+    "batch_size": 512,
+    "seed": 42,
+    "parallel_slots": 1
+  },
+  "counts": {
+    "launch": 1,
+    "fallback": 0,
+    "download": 0,
+    "restart": 0,
+    "smoke": 1,
+    "throughput": 4,
+    "throughput_replacement": 0
+  },
+  "process": {
+    "pid": 18096,
+    "creation_utc": "2026-08-28T08:57:26.6784000+00:00",
+    "executable_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe",
+    "executable_sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+    "command_line": "\"llama-server\" -m C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf -c 32768 -t 12 -ngl 24 -b 512 --seed 42 --parallel 1 --host 127.0.0.1 --port 8080",
+    "expected_argv": [
+      "llama-server",
+      "-m",
+      "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "-c",
+      "32768",
+      "-t",
+      "12",
+      "-ngl",
+      "24",
+      "-b",
+      "512",
+      "--seed",
+      "42",
+      "--parallel",
+      "1",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "8080"
+    ]
+  },
+  "listeners": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 8080,
+      "State": 2,
+      "OwningProcess": 18096
+    }
+  ],
+  "runfiles": {
+    "local_path": "C:\\Users\\charl\\Animus_Ferric\\.ferric\\server.json",
+    "local_sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f",
+    "global_path": "C:\\Users\\charl\\AppData\\Roaming\\ferric\\server.json",
+    "global_sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f"
+  },
+  "identities": {
+    "ferric_sha256": "21cd2c358604783274d130049be757658b1589cf506e1e38f37267120399b65d",
+    "model_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "engine_sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+    "cuda_backend_sha256": "fc45d8f6a73f46231e0e04d6aa8260c7e366b974a18cab4bc53ed35248c2ff82",
+    "runtime_tree_manifest_sha256": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d",
+    "release_result_sha256": "3bcb6a647a1c07378d285d0fda404c5704a90daf1b38af4e5b51277465b0f5c9",
+    "release_source_commit": "894fdf40a324cb00988072ae39fe0219dfc39152",
+    "control_manifest_sha256": "e3daeedbb31033b1d1cac95ea57f732f93cb8b0f9b1a4f588979b5ae2222085e",
+    "runtime_plan_sha256": "3036ef11fc98bac62afc8fc6bcdb30b482fe47ff23d45643bf8c37ac1cee3278"
+  },
+  "frozen_launch": {
+    "declaration_sha256": "51982bdc8677b22425d6ceda7d73da12d421e982abbc29f759837ab9b363e5c6",
+    "environment": {
+      "Path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell;C:\\Users\\charl\\.codex\\tmp\\arg0\\codex-arg0xDnaLT;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\libheif\\libheif\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\jxrlib\\jxrlib\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\poppler\\Library\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\bin\\override;C:\\WINDOWS\\system32;C:\\WINDOWS;C:\\WINDOWS\\System32\\Wbem;C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\;C:\\WINDOWS\\System32\\OpenSSH\\;C:\\Program Files\\NVIDIA Corporation\\NVIDIA App\\NvDLISR;C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common;C:\\Program Files\\dotnet\\;C:\\Program Files\\Calibre2\\;C:\\Program Files\\nodejs\\;C:\\Program Files\\Git-Xet\\;C:\\Program Files\\Go\\bin;C:\\Program Files (x86)\\ZeroTier\\One\\;C:\\Program Files\\Tailscale\\;C:\\Program Files\\Git\\cmd;C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files\\GitHub CLI\\;C:\\Users\\charl\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin;C:\\Users\\charl\\AppData\\Local\\agy\\bin;C:\\Users\\charl\\.cargo\\bin;C:\\Users\\charl\\.local\\bin;C:\\Users\\charl\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\;C:\\Users\\charl\\AppData\\Local\\Programs\\Python\\Python313\\;C:\\Users\\charl\\AppData\\Local\\Programs\\Python\\Launcher\\;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell;C:\\Users\\charl\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\charl\\AppData\\Local\\Programs\\Microsoft VS Code\\bin;C:\\Users\\charl\\AppData\\Roaming\\npm;C:\\Users\\charl\\AppData\\Local\\Microsoft\\WinGet\\Links;C:\\Users\\charl\\AppData\\Local\\AnthropicClaude;C:\\Users\\charl\\AppData\\Local\\Programs\\Ollama;C:\\Users\\charl\\.dotnet\\tools;C:\\steamcmd;C:\\Users\\charl\\go\\bin;C:\\Program Files\\JetBrains\\RustRover 2025.3.5\\bin;C:\\Users\\charl\\AppData\\Local\\Programs\\MiKTeX\\miktex\\bin\\x64\\;C:\\Users\\charl\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Google.PlatformTools_Microsoft.Winget.Source_8wekyb3d8bbwe\\platform-tools;C:\\Users\\charl\\AppData\\Local\\Programs\\Antigravity IDE\\bin;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\bin\\fallback;C:\\Users\\charl\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\git\\cmd;C:\\Users\\charl\\AppData\\Local\\OpenAI\\Codex\\bin\\9758fc89b2be71d3;C:\\Users\\charl\\AppData\\Local\\OpenAI\\Codex\\bin\\d664d99528113e03",
+      "LLAMA_ARG_FIT": "on",
+      "LLAMA_ARG_LOG_TIMESTAMPS": "on",
+      "LLAMA_ARG_TIMEOUT": "720",
+      "LLAMA_ARG_CACHE_TYPE_V": "q8_0",
+      "LLAMA_ARG_LOG_FILE": "C:\\Users\\charl\\Animus_Ferric\\target\\s115-runtime-qualification\\attempts\\002\\server-live.log",
+      "LLAMA_ARG_REASONING_PRESERVE": "true",
+      "LLAMA_ARG_REASONING": "on",
+      "LLAMA_ARG_FLASH_ATTN": "on",
+      "LLAMA_ARG_CACHE_TYPE_K": "q8_0",
+      "LLAMA_ARG_CHAT_TEMPLATE_KWARGS": "{\"enable_thinking\":true,\"preserve_thinking\":true}",
+      "LLAMA_ARG_FIT_TARGET": "1024",
+      "LLAMA_ARG_LOG_COLORS": "off",
+      "LLAMA_ARG_THINK_BUDGET": "1024",
+      "LLAMA_ARG_LOG_VERBOSITY": "4"
+    }
+  },
+  "evidence": {
+    "control_provenance_sha256": "27c040b780803b0b475d7c9589dfd69a84f1f74d74dbe14f77a9eadb20ad3cd0",
+    "runtime_identity_sha256": "10b02154f5612a0fa64da57da0b43d72f5cfd676f3df68b6c360a247aa62375c",
+    "server_attestation_sha256": "5a12f9b3b2470224ee108559741c74eb8cdf04720bdc766950cb07b6166194b4",
+    "template_attestation_sha256": "18b88b6c4ab2c709662c623ef5ddbd43be56a021d244d66c9b93f96edb4caa3a",
+    "smoke_sha256": "adbfaaebd32516835d0d47cc0e251edc880068ab69364beeaa9ad7ba62e4d33b",
+    "trace_sha256": "e6d6b4398dab34bc05e4811680bf99f2848b12afbec1e618975c8c48919f588c",
+    "throughput_sha256": "b2de6dc854c59517ebee7f8dd9065bab24511a00b1d1b434dea9213eba405bac",
+    "model_inventory_before_sha256": "2df834b097b7c6c0b990e7f01fafc9aeddebe1b7ce42538c889ad44362f19257",
+    "model_inventory_after_sha256": "2df834b097b7c6c0b990e7f01fafc9aeddebe1b7ce42538c889ad44362f19257",
+    "launch_stream_prefixes_sha256": "3bb7822a8956fa3966f78cf1f8ce038f928106ee7c803543c6ca265503946523",
+    "final_binding_sha256": "283acac6ec588328c9d9f104bc365c3dc6e5a1b2110eb7043fbe18dbdd214fc2",
+    "launch_provenance_sha256": "2012bee1fb14d9fd26ae77e9b7c4cdba643d7a5faab4688bef1febcf11485fac",
+    "launch_ready_stdout_prefix_sha256": "f8a9b4f7c18eecf063fff44c9e3710ead05ba21de2b16b3d88bcad6d0b253702",
+    "engine_resolution_sha256": "918c11590ea8225a5e68b5785057fd30933544b11f2b2ada93d6d8305005b2a5"
+  },
+  "server_log_prefix": {
+    "raw_relative_path": "target/s115-runtime-qualification/attempts/002/server-live.log",
+    "bytes": 50812,
+    "sha256": "6fe4990a0a48aad6edbe677c67ec43323a4cd2337ec2b435e574a1f35bab4b39"
+  },
+  "disposition": "leave_same_bound_process_running"
+}
