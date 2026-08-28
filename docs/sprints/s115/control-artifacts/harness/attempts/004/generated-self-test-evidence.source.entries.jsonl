@@ -1,0 +1,6 @@
+{"relative_path":".","type":"directory","size":0,"sha256":null,"link_target":null}
+{"relative_path":"journal-snapshot-df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae","type":"directory","size":0,"sha256":null,"link_target":null}
+{"relative_path":"journal-snapshot-df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae/command-journal.tsv","type":"regular_file","size":833744,"sha256":"df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae","link_target":null}
+{"relative_path":"journal-snapshot-df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae/command-journal.tsv.sha256","type":"regular_file","size":86,"sha256":"e14bf827580bb54e97dc5527747d25533baded685bfde1d83edc56cdf640cc18","link_target":null}
+{"relative_path":"self-test-summary.json","type":"regular_file","size":1718,"sha256":"68aebdbc017f7301d6da71d627417ddc481438e175e849f6c19f0fe94bdcd263","link_target":null}
+{"relative_path":"self-test-summary.sha256","type":"regular_file","size":65,"sha256":"d0bc2cd50fb662d9b693119212362c96f3a911611c39febbf76fac39f61c7e4e","link_target":null}

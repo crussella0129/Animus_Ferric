@@ -1360,3 +1360,29 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   `3bcb6a647a1c07378d285d0fda404c5704a90daf1b38af4e5b51277465b0f5c9`
   passed both verifier modes. No model server or inference ran.
 - **Commit:** `38acafb4176951a59f113b9cb92d62e99a5354e6`
+
+## T-11502 (sprint 115)
+- **Description:** Losslessly quarantined every stale generated run root and
+  re-proved the frozen Sprint 114 app harness, standalone external Git
+  topology, and Bubblewrap network boundary from a depth-preserving copy. A
+  pre-attempt control failure and attempts 001 through 003 all failed closed
+  and remain append-only evidence; each exposed a distinct PowerShell control
+  defect that was covered before attempt 004 completed successfully.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-28T07:08:11Z
+- **Files modified:** `docs/sprints/s115/control-artifacts/harness/`, ignored
+  `target/s115-preserved-preflight/attempt-001/` through
+  `target/s115-preserved-preflight/attempt-004/`, `docs/work/tasks.md`, and
+  `docs/work/completed-tasks.md`
+- **Verification:** attempt 004 passed the 30-file plus two generated-input
+  frozen contract, all 295 journal rows, 590 referenced outputs, 156 sandbox
+  invocations, both host and WSL depth probes, the standalone external Git
+  probe, and explicit network-unshare canaries. Offline and live verification
+  independently reconciled all 92 compact evidence files; the frozen manifest
+  is `532cd39a9fec557816929bcf12e5ae539c8a30c0f4c4829a9d6f89b0ca9f358b`
+  and the live journal is
+  `df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae`.
+  Before/after manifests were byte-identical for every moved root, all four
+  canonical roots were absent at handoff, the tracked worktree effect and
+  known unrelated Sprint 114 edit were unchanged, and no model inference ran.
+- **Commit:** PENDING

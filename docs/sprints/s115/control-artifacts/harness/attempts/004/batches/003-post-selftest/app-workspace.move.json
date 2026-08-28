@@ -1,0 +1,19 @@
+{
+  "schema": "s115-preserved-root-v1",
+  "batch": "003-post-selftest",
+  "root_key": "app-workspace",
+  "present": true,
+  "source": "target/s114-experiment/app-workspace",
+  "destination": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/app-workspace",
+  "same_volume": true,
+  "before_manifest": "batches/003-post-selftest/app-workspace.before.entries.jsonl",
+  "after_manifest": "batches/003-post-selftest/app-workspace.after.entries.jsonl",
+  "entry_count": 2,
+  "regular_file_count": 1,
+  "regular_file_bytes": 39,
+  "reparse_count": 0,
+  "manifest_bytes": 240,
+  "entries_sha256": "82c6b82a0ca5407c5e84610642c291bf74c382a9550a670e59ac536cb5e27271",
+  "byte_identical_manifests": true,
+  "parity": true
+}

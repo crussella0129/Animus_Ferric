@@ -239,7 +239,6 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Sprint 115 — external traces and frozen app trial
 
-- [ ] T-11502 (sprint 115) [intent: INT-0007]: Losslessly quarantine stale generated state and re-prove the frozen harness and network-disabled sandbox. — touches: `docs/sprints/s115/control-artifacts/harness/`, exact `target/s114-experiment/` run roots, `target/s115-preserved-preflight/`
 - [ ] T-11503 (sprint 115) [intent: INT-0007]: Qualify the exact post-reboot managed Qwen runtime and freeze its handoff. — touches: `docs/sprints/s115/control-artifacts/runtime/`, owned server runfiles
 - [ ] T-11410 (sprint 115) [intent: INT-0007]: Run the frozen MH-RS01 app through the one-turn segment and explicit linked continuation with no Codex repair. — touches: `target/s114-experiment/app-workspace/`, `target/s114-experiment/app-traces/`, `docs/sprints/s115/control-artifacts/app-run/`
 - [ ] T-11412 (sprint 115) [intent: INT-0007, INT-0008]: Archive and hash all trial evidence, verify traces/effects/exact teardown, publish the non-inflated verdict, and queue the full compact workflow. — touches: `docs/sprints/s115/`, Book ledgers/intents, exact disposable experiment roots

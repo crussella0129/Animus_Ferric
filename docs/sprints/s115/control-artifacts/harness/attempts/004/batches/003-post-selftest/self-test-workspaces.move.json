@@ -1,0 +1,19 @@
+{
+  "schema": "s115-preserved-root-v1",
+  "batch": "003-post-selftest",
+  "root_key": "self-test-workspaces",
+  "present": true,
+  "source": "target/s114-experiment/self-test-workspaces",
+  "destination": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/self-test-workspaces",
+  "same_volume": true,
+  "before_manifest": "batches/003-post-selftest/self-test-workspaces.before.entries.jsonl",
+  "after_manifest": "batches/003-post-selftest/self-test-workspaces.after.entries.jsonl",
+  "entry_count": 307,
+  "regular_file_count": 237,
+  "regular_file_bytes": 580353,
+  "reparse_count": 1,
+  "manifest_bytes": 54060,
+  "entries_sha256": "ce60caddf2f196166bd62bac10ce32ac8e58783d96434314ef68be627aa8b23b",
+  "byte_identical_manifests": true,
+  "parity": true
+}

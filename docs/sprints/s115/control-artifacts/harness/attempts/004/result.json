@@ -1,0 +1,286 @@
+{
+  "schema": "s115-harness-qualification-v1",
+  "task": "T-11502",
+  "attempt": "004",
+  "status": "pass",
+  "completed_at_utc": "2026-08-28T07:04:57.1438250+00:00",
+  "frozen_harness": {
+    "source": "docs/sprints/s114/control-artifacts/app-harness",
+    "transient_copy": "target/s115-preserved-preflight/attempt-004/frozen/app-harness",
+    "retained_copy": "target/s115-preserved-preflight/attempt-004/frozen/app-harness",
+    "depth_components_to_repo": 6,
+    "host_depth_probe": "pass",
+    "wsl_depth_probe": "pass",
+    "wsl_repository_root": "/mnt/c/Users/charl/Animus_Ferric",
+    "frozen_manifest_sha256": "532cd39a9fec557816929bcf12e5ae539c8a30c0f4c4829a9d6f89b0ca9f358b",
+    "frozen_file_count": 30,
+    "frozen_seed_file_count": 5,
+    "frozen_seed_hash_parity": true,
+    "copied_inputs_unchanged_after_selftest": true,
+    "copied_final_inputs_entries_sha256": "b5cb055fd3b4c2fb936ca128ebf6c324d0cd5768e0dd82244f694f735b5a7021",
+    "tracked_source_before_entries_sha256": "c1d75d5abee0490cabbe409be5776ae14cb1ac089d5f3c8c5747c52523df05d5",
+    "tracked_source_after_entries_sha256": "c1d75d5abee0490cabbe409be5776ae14cb1ac089d5f3c8c5747c52523df05d5",
+    "tracked_source_byte_identical": true,
+    "tracked_git_status_unchanged": true,
+    "complete_tracked_worktree_git_effect_unchanged": true,
+    "tracked_worktree_status_sha256": "25fca6413e074393a3d78234929c7a1bfad7a943f5c2ea88924b457fdc40f055",
+    "tracked_worktree_diff_sha256": "49c3de283edc572ba02045d38cff31714f84b4ae672730d6f79fce16cd15b497",
+    "tracked_worktree_cached_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "repository_head_unchanged": true,
+    "repository_commit": "3228df97afe8b5d0363a941f8e641c5e923ec72f",
+    "repository_tree": "b06af2dc5a9176e31c09991d80da0f04f19d7ac2",
+    "sprint_114_status_unchanged": true,
+    "known_unrelated_edit": "docs/sprints/s114/control-artifacts/model/acquisition-tests.json",
+    "known_unrelated_edit_sha256_before": "8ecf94878e7ad745aea28a9365af58ee111c80b26d21a15a0f434edb2beb75db",
+    "known_unrelated_edit_sha256_after": "8ecf94878e7ad745aea28a9365af58ee111c80b26d21a15a0f434edb2beb75db"
+  },
+  "control_provenance": {
+    "schema": "s115-harness-control-provenance-v1",
+    "files": [
+      {
+        "name": "qualify-harness.ps1",
+        "source": "docs/sprints/s115/control-artifacts/harness/qualify-harness.ps1",
+        "retained": "control/qualify-harness.ps1",
+        "bytes": 103071,
+        "sha256": "2bf594406f78d9b36f01fd228fd7db6f277e6bc12a9f697fc78d5a358e2addbf"
+      },
+      {
+        "name": "verify-harness.ps1",
+        "source": "docs/sprints/s115/control-artifacts/harness/verify-harness.ps1",
+        "retained": "control/verify-harness.ps1",
+        "bytes": 75461,
+        "sha256": "f6d5d3aec6e080f0be6db0669435766afe40afeb3dbda67dd6129b3badf39ef4"
+      },
+      {
+        "name": "test-harness-control.ps1",
+        "source": "docs/sprints/s115/control-artifacts/harness/test-harness-control.ps1",
+        "retained": "control/test-harness-control.ps1",
+        "bytes": 10018,
+        "sha256": "5ca429438d4a6ea5b4a14696b223d3f7d26c64137ccb74a5df7c57b5c0644906"
+      },
+      {
+        "name": "README.md",
+        "source": "docs/sprints/s115/control-artifacts/harness/README.md",
+        "retained": "control/README.md",
+        "bytes": 7616,
+        "sha256": "5b0a0db6a6f7ea54dcf54f87a74015b9798456e2581f3ac5845901cda1a9a2ae"
+      }
+    ]
+  },
+  "self_test": {
+    "status": "pass",
+    "timeout_seconds": 1800,
+    "timed_out": false,
+    "exit_code": 0,
+    "invocation": [
+      "wsl.exe",
+      "--exec",
+      "bash",
+      "target/s115-preserved-preflight/attempt-004/frozen/app-harness/scripts/self-test.sh"
+    ],
+    "copied_script_sha256": "4d32986043b3c146063167d2f7da691e1a5b1acbbea51e29f8769028dc4b7cbc",
+    "summary_sha256": "68aebdbc017f7301d6da71d627417ddc481438e175e849f6c19f0fe94bdcd263",
+    "journal_sha256": "df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae",
+    "bubblewrap_network_disabled_canaries": "pass",
+    "generated_evidence": "generated-self-test-evidence",
+    "live_journal_cross_link": {
+      "schema": "s115-selftest-live-journal-link-v1",
+      "summary_journal_sha256": "df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae",
+      "copied_snapshot_sha256": "df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae",
+      "live_journal": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/app-harness/command-journal.tsv",
+      "live_journal_sha256": "df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae",
+      "live_journal_companion": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/app-harness/command-journal.tsv.sha256",
+      "live_journal_companion_sha256": "e14bf827580bb54e97dc5527747d25533baded685bfde1d83edc56cdf640cc18",
+      "post_quarantine_manifest": "batches/003-post-selftest/app-harness.after.entries.jsonl",
+      "retained_log_file_count": 847,
+      "journal_row_count": 295,
+      "referenced_output_count": 590,
+      "sandbox_invocation_count": 156,
+      "unshare_net_proven": true,
+      "status": "pass"
+    },
+    "live_journal_audit": "live-harness-journal-audit.json"
+  },
+  "standalone_git": {
+    "schema": "s115-standalone-git-probe-v1",
+    "status": "pass",
+    "candidate": "target/s114-experiment/app-workspace",
+    "metadata": "target/s114-experiment/launcher-attestation-probe",
+    "candidate_dot_git_absent": true,
+    "metadata_is_sibling": true,
+    "separate_git_dir_option_used": false,
+    "initialization_named_both_roots": true,
+    "core_bare_false": true,
+    "explicit_toplevel_matches_candidate": true,
+    "explicit_git_dir_matches_metadata": true,
+    "explicit_status_clean": true,
+    "commit": "11271ff284935e80467d4ea665558307dd81e4df",
+    "tree": "250fb72b5a3218d419a9af4626968557569b3a01",
+    "git_ceiling_directories": "target/s114-experiment",
+    "ambient_parent_discovery_blocked": true
+  },
+  "preservation": {
+    "target_attempt": "target/s115-preserved-preflight/attempt-004",
+    "pre_batch": "001-pre-selftest",
+    "frozen_copy_batch": "002-frozen-copy",
+    "post_batch": "003-post-selftest",
+    "pre_operations": [
+      {
+        "schema": "s115-preserved-root-v1",
+        "batch": "001-pre-selftest",
+        "root_key": "app-harness",
+        "present": false,
+        "source": "target/s114-experiment/app-harness",
+        "destination": "target/s115-preserved-preflight/attempt-004/batches/001-pre-selftest/roots/app-harness",
+        "parity": true
+      },
+      {
+        "schema": "s115-preserved-root-v1",
+        "batch": "001-pre-selftest",
+        "root_key": "self-test-workspaces",
+        "present": false,
+        "source": "target/s114-experiment/self-test-workspaces",
+        "destination": "target/s115-preserved-preflight/attempt-004/batches/001-pre-selftest/roots/self-test-workspaces",
+        "parity": true
+      },
+      {
+        "schema": "s115-preserved-root-v1",
+        "batch": "001-pre-selftest",
+        "root_key": "app-workspace",
+        "present": false,
+        "source": "target/s114-experiment/app-workspace",
+        "destination": "target/s115-preserved-preflight/attempt-004/batches/001-pre-selftest/roots/app-workspace",
+        "parity": true
+      },
+      {
+        "schema": "s115-preserved-root-v1",
+        "batch": "001-pre-selftest",
+        "root_key": "launcher-attestation-probe",
+        "present": false,
+        "source": "target/s114-experiment/launcher-attestation-probe",
+        "destination": "target/s115-preserved-preflight/attempt-004/batches/001-pre-selftest/roots/launcher-attestation-probe",
+        "parity": true
+      }
+    ],
+    "copy_operation": {
+      "schema": "s115-preserved-root-v1",
+      "batch": "002-frozen-copy",
+      "root_key": "depth-preserving-frozen-copy",
+      "present": true,
+      "source": "target/s115-preserved-preflight/attempt-004/frozen/app-harness",
+      "destination": "target/s115-preserved-preflight/attempt-004/frozen/app-harness",
+      "retained_in_place": true,
+      "same_volume": true,
+      "final_manifest": "batches/002-frozen-copy/depth-preserving-frozen-copy.final.entries.jsonl",
+      "entry_count": 52,
+      "entries_sha256": "b5cb055fd3b4c2fb936ca128ebf6c324d0cd5768e0dd82244f694f735b5a7021",
+      "regular_file_count": 36,
+      "regular_file_bytes": 1132903,
+      "reparse_count": 0,
+      "parity": true
+    },
+    "post_operations": [
+      {
+        "schema": "s115-preserved-root-v1",
+        "batch": "003-post-selftest",
+        "root_key": "app-harness",
+        "present": true,
+        "source": "target/s114-experiment/app-harness",
+        "destination": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/app-harness",
+        "same_volume": true,
+        "before_manifest": "batches/003-post-selftest/app-harness.before.entries.jsonl",
+        "after_manifest": "batches/003-post-selftest/app-harness.after.entries.jsonl",
+        "entry_count": 5038,
+        "regular_file_count": 2559,
+        "regular_file_bytes": 895454265,
+        "reparse_count": 0,
+        "manifest_bytes": 882941,
+        "entries_sha256": "157a94f16907f00cb4d348e7bff94a7312320017c55d2e45758e2951f3792b9d",
+        "byte_identical_manifests": true,
+        "parity": true
+      },
+      {
+        "schema": "s115-preserved-root-v1",
+        "batch": "003-post-selftest",
+        "root_key": "self-test-workspaces",
+        "present": true,
+        "source": "target/s114-experiment/self-test-workspaces",
+        "destination": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/self-test-workspaces",
+        "same_volume": true,
+        "before_manifest": "batches/003-post-selftest/self-test-workspaces.before.entries.jsonl",
+        "after_manifest": "batches/003-post-selftest/self-test-workspaces.after.entries.jsonl",
+        "entry_count": 307,
+        "regular_file_count": 237,
+        "regular_file_bytes": 580353,
+        "reparse_count": 1,
+        "manifest_bytes": 54060,
+        "entries_sha256": "ce60caddf2f196166bd62bac10ce32ac8e58783d96434314ef68be627aa8b23b",
+        "byte_identical_manifests": true,
+        "parity": true
+      },
+      {
+        "schema": "s115-preserved-root-v1",
+        "batch": "003-post-selftest",
+        "root_key": "app-workspace",
+        "present": true,
+        "source": "target/s114-experiment/app-workspace",
+        "destination": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/app-workspace",
+        "same_volume": true,
+        "before_manifest": "batches/003-post-selftest/app-workspace.before.entries.jsonl",
+        "after_manifest": "batches/003-post-selftest/app-workspace.after.entries.jsonl",
+        "entry_count": 2,
+        "regular_file_count": 1,
+        "regular_file_bytes": 39,
+        "reparse_count": 0,
+        "manifest_bytes": 240,
+        "entries_sha256": "82c6b82a0ca5407c5e84610642c291bf74c382a9550a670e59ac536cb5e27271",
+        "byte_identical_manifests": true,
+        "parity": true
+      },
+      {
+        "schema": "s115-preserved-root-v1",
+        "batch": "003-post-selftest",
+        "root_key": "launcher-attestation-probe",
+        "present": true,
+        "source": "target/s114-experiment/launcher-attestation-probe",
+        "destination": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/launcher-attestation-probe",
+        "same_volume": true,
+        "before_manifest": "batches/003-post-selftest/launcher-attestation-probe.before.entries.jsonl",
+        "after_manifest": "batches/003-post-selftest/launcher-attestation-probe.after.entries.jsonl",
+        "entry_count": 41,
+        "regular_file_count": 26,
+        "regular_file_bytes": 28141,
+        "reparse_count": 0,
+        "manifest_bytes": 5834,
+        "entries_sha256": "0588e27347e7f278c9552cab912bf26f8789651af726462f693dbaa0ab85b6b4",
+        "byte_identical_manifests": true,
+        "parity": true
+      }
+    ],
+    "recursive_delete_used": false,
+    "all_moves_same_volume": true,
+    "all_present_move_manifests_byte_identical": true,
+    "pre_regular_file_bytes": 0,
+    "post_regular_file_bytes": 896062798,
+    "retained_frozen_copy_regular_file_bytes": 1132903,
+    "volume_before": {
+      "volume_root": "C:\\",
+      "total_bytes": 999199973376,
+      "available_free_bytes": 28692480000
+    },
+    "volume_after": {
+      "volume_root": "C:\\",
+      "total_bytes": 999199973376,
+      "available_free_bytes": 27703656448
+    }
+  },
+  "handoff": {
+    "canonical_roots_absent": {
+      "app-harness": true,
+      "self-test-workspaces": true,
+      "app-workspace": true,
+      "launcher-attestation-probe": true
+    },
+    "ready_for_t11503": true
+  }
+}

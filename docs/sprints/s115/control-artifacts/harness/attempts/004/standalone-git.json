@@ -1,0 +1,18 @@
+{
+  "schema": "s115-standalone-git-probe-v1",
+  "status": "pass",
+  "candidate": "target/s114-experiment/app-workspace",
+  "metadata": "target/s114-experiment/launcher-attestation-probe",
+  "candidate_dot_git_absent": true,
+  "metadata_is_sibling": true,
+  "separate_git_dir_option_used": false,
+  "initialization_named_both_roots": true,
+  "core_bare_false": true,
+  "explicit_toplevel_matches_candidate": true,
+  "explicit_git_dir_matches_metadata": true,
+  "explicit_status_clean": true,
+  "commit": "11271ff284935e80467d4ea665558307dd81e4df",
+  "tree": "250fb72b5a3218d419a9af4626968557569b3a01",
+  "git_ceiling_directories": "target/s114-experiment",
+  "ambient_parent_discovery_blocked": true
+}

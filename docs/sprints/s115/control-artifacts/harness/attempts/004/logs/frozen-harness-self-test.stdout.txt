@@ -1,0 +1,59 @@
+self-test infrastructure mapping: native failure -> 70
+self-test fixed resource profile: inherited override rejected
+self-test journal integrity: broken early chain rejected
+self-test baseline rejection: missing modules
+self-test known-good: all dimensions pass
+self-test deterministic grading: repeated known-good bytes match
+self-test output spoof resistance: candidate bytes are sanitized and prefixed
+self-test static rejection: immutable-edit -> seed_immutability
+self-test static rejection: dependency -> dependency_policy
+self-test static rejection: symlink -> path_policy
+self-test static rejection: hardlink -> path_policy
+self-test static rejection: build-script -> path_policy
+self-test static rejection: cargo-config -> path_policy
+self-test static rejection: missing-plan -> plan
+self-test static rejection: incomplete-plan -> plan
+self-test static rejection: missing-tests -> model_tests
+self-test static rejection: few-tests -> model_tests
+self-test static rejection: source-safety -> source_safety
+self-test static rejection: disabled-model-tests -> model_tests
+self-test static rejection: trivial-test-oracles -> model_tests
+self-test dynamic rejection: model_tests
+self-test dynamic rejection: registered model-test topics
+self-test dynamic rejection: visible_contract
+self-test dynamic rejection: hidden_contract
+self-test dynamic rejection: cli_contract
+{
+  "schema": "s114-harness-self-test-v1",
+  "status": "pass",
+  "tests": {
+    "mh_rs01_seed_baseline_and_immutability": "pass",
+    "bubblewrap_execution_boundary_canaries": "pass",
+    "grader_known_good_and_violation_matrix": "pass"
+  },
+  "baseline": {"exit_code": 101, "e0583_count": 3, "other_rust_error_codes": 0},
+  "known_good_dimensions": {
+    "seed_immutability": "pass",
+    "dependency_policy": "pass",
+    "path_policy": "pass",
+    "plan": "pass",
+    "model_tests": "pass",
+    "visible_contract": "pass",
+    "hidden_contract": "pass",
+    "cli_contract": "pass",
+    "source_safety": "pass"
+  },
+  "deterministic_grade_replay": "pass",
+  "output_spoof_resistance": "pass",
+  "trusted_failure_exit_mapping": "pass",
+  "inherited_resource_override_rejection": "pass",
+  "broken_early_journal_chain_rejection": "pass",
+  "violation_matrix": {"static_cases": 13, "dynamic_cases": 5, "dynamic_dimensions": 4, "model_registration_cases": 2},
+  "journal_snapshot": "journal-snapshot-df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae/command-journal.tsv",
+  "journal_snapshot_companion": "journal-snapshot-df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae/command-journal.tsv.sha256",
+  "journal_sha256": "df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae",
+  "journal_snapshot_companion_sha256": "e14bf827580bb54e97dc5527747d25533baded685bfde1d83edc56cdf640cc18",
+  "grader_binary_sha256": "0317488631e069c152e098d725eaacd6cc9f767b563df7a4b9e62be8afe641e1",
+  "grader_source_tree_sha256": "f2531a8f973e5fc51b45bc92fbfd87b1b7591cbce33ddb84793697000a213fe1",
+  "frozen_input_manifest_sha256": "532cd39a9fec557816929bcf12e5ae539c8a30c0f4c4829a9d6f89b0ca9f358b"
+}

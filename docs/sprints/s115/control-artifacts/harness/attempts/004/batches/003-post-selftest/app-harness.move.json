@@ -1,0 +1,19 @@
+{
+  "schema": "s115-preserved-root-v1",
+  "batch": "003-post-selftest",
+  "root_key": "app-harness",
+  "present": true,
+  "source": "target/s114-experiment/app-harness",
+  "destination": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/app-harness",
+  "same_volume": true,
+  "before_manifest": "batches/003-post-selftest/app-harness.before.entries.jsonl",
+  "after_manifest": "batches/003-post-selftest/app-harness.after.entries.jsonl",
+  "entry_count": 5038,
+  "regular_file_count": 2559,
+  "regular_file_bytes": 895454265,
+  "reparse_count": 0,
+  "manifest_bytes": 882941,
+  "entries_sha256": "157a94f16907f00cb4d348e7bff94a7312320017c55d2e45758e2951f3792b9d",
+  "byte_identical_manifests": true,
+  "parity": true
+}

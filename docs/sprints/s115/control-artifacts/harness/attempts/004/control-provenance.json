@@ -1,0 +1,33 @@
+{
+  "schema": "s115-harness-control-provenance-v1",
+  "files": [
+    {
+      "name": "qualify-harness.ps1",
+      "source": "docs/sprints/s115/control-artifacts/harness/qualify-harness.ps1",
+      "retained": "control/qualify-harness.ps1",
+      "bytes": 103071,
+      "sha256": "2bf594406f78d9b36f01fd228fd7db6f277e6bc12a9f697fc78d5a358e2addbf"
+    },
+    {
+      "name": "verify-harness.ps1",
+      "source": "docs/sprints/s115/control-artifacts/harness/verify-harness.ps1",
+      "retained": "control/verify-harness.ps1",
+      "bytes": 75461,
+      "sha256": "f6d5d3aec6e080f0be6db0669435766afe40afeb3dbda67dd6129b3badf39ef4"
+    },
+    {
+      "name": "test-harness-control.ps1",
+      "source": "docs/sprints/s115/control-artifacts/harness/test-harness-control.ps1",
+      "retained": "control/test-harness-control.ps1",
+      "bytes": 10018,
+      "sha256": "5ca429438d4a6ea5b4a14696b223d3f7d26c64137ccb74a5df7c57b5c0644906"
+    },
+    {
+      "name": "README.md",
+      "source": "docs/sprints/s115/control-artifacts/harness/README.md",
+      "retained": "control/README.md",
+      "bytes": 7616,
+      "sha256": "5b0a0db6a6f7ea54dcf54f87a74015b9798456e2581f3ac5845901cda1a9a2ae"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "schema": "s115-preserved-root-v1",
+  "batch": "001-pre-selftest",
+  "root_key": "launcher-attestation-probe",
+  "present": false,
+  "source": "target/s114-experiment/launcher-attestation-probe",
+  "destination": "target/s115-preserved-preflight/attempt-004/batches/001-pre-selftest/roots/launcher-attestation-probe",
+  "parity": true
+}
