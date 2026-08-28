@@ -100,7 +100,7 @@ function Get-CheckedPresentOperationByteTotal {
     )
     [int64]$total = 0
     foreach ($operation in $Operations) {
-        $properties = @($operation.PSObject.Properties.Name)
+        $properties = @($operation.PSObject.Properties | ForEach-Object { $_.Name })
         if ($properties -notcontains 'present') {
             throw "$Label operation omits required property present"
         }
@@ -232,7 +232,7 @@ function Assert-ManifestBytes([string]$ManifestPath, [string]$ExpectedSha256 = '
 }
 
 function Assert-ExactProperties([object]$Object, [string[]]$Expected, [string]$Label) {
-    $actual = @($Object.PSObject.Properties.Name | Sort-Object)
+    $actual = @($Object.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
     $wanted = @($Expected | Sort-Object)
     if (($actual -join "`n") -cne ($wanted -join "`n")) {
         throw "$Label property set differs"
@@ -348,15 +348,16 @@ function Read-EntriesManifest([string]$ManifestPath, [string]$Label) {
                 throw "$Label has a malformed reparse record: $relative"
             }
         }
-        if (-not $entries.TryAdd($relative, [pscustomobject][ordered]@{
-                    relative_path = $relative
-                    type = $type
-                    size = $sizeValue
-                    sha256 = $entry.sha256
-                    link_target = $entry.link_target
-                })) {
+        if ($entries.ContainsKey($relative)) {
             throw "$Label contains a duplicate path: $relative"
         }
+        $entries.Add($relative, [pscustomobject][ordered]@{
+                relative_path = $relative
+                type = $type
+                size = $sizeValue
+                sha256 = $entry.sha256
+                link_target = $entry.link_target
+            })
         $previousPath = $relative
     }
     return [pscustomobject]@{
@@ -412,16 +413,17 @@ function Get-FrozenCopyContract {
         $sourceItem = Get-Item -LiteralPath (Assert-RegularFile `
                 (Join-Path $pinnedRoot ($relative -replace '/', '\')) `
                 "live pinned frozen input $relative")
-        if ([int64]$pinnedFile.bytes -lt 0 -or
+        if ($files.ContainsKey($relative) -or
+            [int64]$pinnedFile.bytes -lt 0 -or
             [string]$pinnedFile.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
             [int64]$sourceItem.Length -ne [int64]$pinnedFile.bytes -or
-            (Get-Sha256 $sourceItem.FullName) -cne [string]$pinnedFile.sha256 -or
-            -not $files.TryAdd($relative, [pscustomobject]@{
-                    bytes = [int64]$pinnedFile.bytes
-                    sha256 = [string]$pinnedFile.sha256
-                })) {
+            (Get-Sha256 $sourceItem.FullName) -cne [string]$pinnedFile.sha256) {
             throw "pinned frozen file identity is invalid or duplicate: $relative"
         }
+        $files.Add($relative, [pscustomobject]@{
+                bytes = [int64]$pinnedFile.bytes
+                sha256 = [string]$pinnedFile.sha256
+            })
         $slash = $relative.LastIndexOf('/')
         while ($slash -gt 0) {
             $null = $directories.Add($relative.Substring(0, $slash))
@@ -442,12 +444,13 @@ function Get-FrozenCopyContract {
         )) {
         $item = Get-Item -LiteralPath (Assert-RegularFile $control.source `
                 "frozen control $($control.path)")
-        if (-not $files.TryAdd([string]$control.path, [pscustomobject]@{
-                    bytes = [int64]$item.Length
-                    sha256 = [string]$control.sha256
-                })) {
+        if ($files.ContainsKey([string]$control.path)) {
             throw "duplicate frozen control file: $($control.path)"
         }
+        $files.Add([string]$control.path, [pscustomobject]@{
+                bytes = [int64]$item.Length
+                sha256 = [string]$control.sha256
+            })
     }
     return [pscustomobject]@{
         files = $files
@@ -923,9 +926,10 @@ foreach ($line in Get-Content -LiteralPath $filesManifest) {
     }
     $relative = $Matches[2]
     $path = Resolve-EvidenceRelative $relative 'files.sha256 entry'
-    if ($relative -eq 'files.sha256' -or -not $listed.TryAdd($relative, $Matches[1])) {
+    if ($relative -eq 'files.sha256' -or $listed.ContainsKey($relative)) {
         throw "duplicate or self-referential files.sha256 entry: $relative"
     }
+    $listed.Add($relative, $Matches[1])
     if ((Get-Sha256 $path) -ne $Matches[1]) {
         throw "retained evidence hash differs: $relative"
     }
@@ -1225,7 +1229,7 @@ foreach ($gate in $repositoryGitArgv.Keys) {
     $command = $byGate[$gate]
     if ($command.file -cne 'git.exe' -or $command.working_directory -cne '.' -or
         -not $command.inherited_git_environment_cleared -or $command.git_locale -cne 'C' -or
-        @($command.environment.PSObject.Properties.Name).Count -ne 0) {
+        @($command.environment.PSObject.Properties | ForEach-Object { $_.Name }).Count -ne 0) {
         throw "repository Git executable/cwd/environment differs: $gate"
     }
     Assert-ExactArgv $command $repositoryGitArgv[$gate] $gate
@@ -1236,7 +1240,7 @@ $depthScriptsRelative = "target/s115-preserved-preflight/attempt-$($result.attem
 $depthCommand = $byGate['wsl-depth-probe']
 if ($depthCommand.file -cne 'wsl.exe' -or $depthCommand.working_directory -cne '.' -or
     $depthCommand.inherited_git_environment_cleared -or
-    @($depthCommand.environment.PSObject.Properties.Name).Count -ne 0) {
+    @($depthCommand.environment.PSObject.Properties | ForEach-Object { $_.Name }).Count -ne 0) {
     throw 'WSL depth-probe executable/cwd/environment differs'
 }
 Assert-ExactArgv $depthCommand @(
@@ -1274,7 +1278,9 @@ foreach ($gate in $expectedGitArgv.Keys) {
         throw "Git command executable/cwd/environment differs: $gate"
     }
     Assert-ExactArgv $command $expectedGitArgv[$gate] $gate
-    $environmentNames = @($command.environment.PSObject.Properties.Name)
+    $environmentNames = @(
+        $command.environment.PSObject.Properties | ForEach-Object { $_.Name }
+    )
     if ($gate -eq 'git-ambient-discovery-blocked') {
         if ($environmentNames.Count -ne 1 -or
             $environmentNames[0] -cne 'GIT_CEILING_DIRECTORIES' -or

@@ -189,6 +189,13 @@ if ($qualifier.source.Contains('--separate-git-dir') -or
     $qualifier.source -match '(?i)\bgit(?:\.exe)?\b[^\r\n]*(?:\bclean\b|\breset\b|\bcheckout\b)') {
     throw 'qualifier contains a forbidden Git setup or mutation surface'
 }
+if ($verifier.source.Contains('.TryAdd(')) {
+    throw 'verifier uses an unsupported SortedDictionary.TryAdd method'
+}
+if ($qualifier.source.Contains('.PSObject.Properties.Name') -or
+    $verifier.source.Contains('.PSObject.Properties.Name')) {
+    throw 'control uses StrictMode-unsafe direct property-name enumeration'
+}
 if (($qualifier.source | Select-String -Pattern 'Move-Item -LiteralPath' -AllMatches).Matches.Count -ne 2) {
     throw 'qualifier must have exactly the manifested-root move and compact-evidence publication moves'
 }

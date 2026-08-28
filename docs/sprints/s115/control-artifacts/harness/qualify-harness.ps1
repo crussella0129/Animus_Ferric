@@ -316,7 +316,7 @@ function Assert-CapturedCommandRecordCollection {
         throw "$Label emitted $($Records.Count) objects instead of $ExpectedCount; types: $types"
     }
     foreach ($record in $Records) {
-        $properties = @($record.PSObject.Properties.Name)
+        $properties = @($record.PSObject.Properties | ForEach-Object { $_.Name })
         foreach ($required in @(
                 'schema', 'gate', 'timed_out', 'exit_code',
                 'stdout_bytes', 'stderr_bytes', 'stdout_sha256', 'stderr_sha256'
@@ -365,7 +365,7 @@ function Get-CheckedPresentOperationByteTotal {
     )
     [int64]$total = 0
     foreach ($operation in $Operations) {
-        $properties = @($operation.PSObject.Properties.Name)
+        $properties = @($operation.PSObject.Properties | ForEach-Object { $_.Name })
         if ($properties -notcontains 'present') {
             throw "$Label operation omits required property present"
         }
@@ -844,7 +844,7 @@ function Materialize-FrozenHarness {
 }
 
 function Assert-ExactPropertyNames([object]$Value, [string[]]$Expected, [string]$Label) {
-    $actual = @($Value.PSObject.Properties.Name | Sort-Object)
+    $actual = @($Value.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
     $wanted = @($Expected | Sort-Object)
     if (($actual -join "`n") -cne ($wanted -join "`n")) {
         throw "$Label property set differs from the frozen schema"
