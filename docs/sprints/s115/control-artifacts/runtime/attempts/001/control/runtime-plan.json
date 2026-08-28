@@ -1,0 +1,145 @@
+{
+  "schema": "animus-ferric-s115-runtime-plan-v1",
+  "task": "T-11503",
+  "coordinate": {
+    "id": "qwen38-q4-k-m-32768-ngl24",
+    "quant": "Q4_K_M",
+    "context": 32768,
+    "gpu_layers": 24,
+    "port": 8080,
+    "threads": 12,
+    "batch_size": 512,
+    "seed": 42,
+    "parallel_slots": 1
+  },
+  "policy": {
+    "attempt_wall_seconds": 5400,
+    "startup_timeout_seconds": 330,
+    "request_timeout_seconds": 720,
+    "smoke_timeout_seconds": 900,
+    "teardown_timeout_seconds": 120,
+    "minimum_gpu_free_mib": 7000,
+    "creation_time_tolerance_seconds": 5,
+    "attempt_number_width": 3,
+    "no_qualification_attempt_retry": true,
+    "provider_retry_policy": "ferric-built-in-transient-backoff-not-disabled-or-claimed-zero",
+    "no_fallback": true,
+    "no_download": true,
+    "successful_server_disposition": "leave_same_bound_process_running"
+  },
+  "forbidden_inherited_environment": [
+    "LLAMA_ARG_*",
+    "FERRIC_*",
+    "GGML_*",
+    "CUDA_*",
+    "OMP_*",
+    "MKL_*",
+    "OPENAI_API_KEY",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY"
+  ],
+  "qualified_release": {
+    "result_path": "docs/sprints/s115/control-artifacts/release/attempts/002/result.json",
+    "result_sha256": "3bcb6a647a1c07378d285d0fda404c5704a90daf1b38af4e5b51277465b0f5c9",
+    "source_commit": "894fdf40a324cb00988072ae39fe0219dfc39152",
+    "binary_path": "target/release/ferric.exe",
+    "binary_bytes": 21209088,
+    "binary_sha256": "21cd2c358604783274d130049be757658b1589cf506e1e38f37267120399b65d",
+    "version": "ferric 0.1.0",
+    "feature": "backend-openai"
+  },
+  "model": {
+    "path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "file": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "expected_served_ftype": "Q4_K - Medium",
+    "bytes": 16464440224,
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "parameters": 27320697856
+  },
+  "engine": {
+    "runtime_root": "target/s114-experiment/runtime/llama-b10516-cuda12.4/bin",
+    "binary_path": "target/s114-experiment/runtime/llama-b10516-cuda12.4/bin/llama-server.exe",
+    "binary_bytes": 9216,
+    "binary_sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c",
+    "cuda_backend_path": "target/s114-experiment/runtime/llama-b10516-cuda12.4/bin/ggml-cuda.dll",
+    "cuda_backend_bytes": 538308608,
+    "cuda_backend_sha256": "fc45d8f6a73f46231e0e04d6aa8260c7e366b974a18cab4bc53ed35248c2ff82",
+    "release": "b10516",
+    "commit": "b95502ba9",
+    "source_manifest_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/control-inputs.json",
+    "source_manifest_sha256": "9d39c911fee39ffcf271525cf0af30717eaa51dabe7765758568c601a5f0f37d",
+    "source_common_path": "docs/sprints/s114/control-artifacts/runtime/epoch-3/runtime-common.ps1",
+    "source_common_sha256": "c096088f3399000cfa4aec88101b7ea987f559ab086f9cc1c2cd09dda69aada5"
+  },
+  "launch_environment": {
+    "LLAMA_ARG_CACHE_TYPE_K": "q8_0",
+    "LLAMA_ARG_CACHE_TYPE_V": "q8_0",
+    "LLAMA_ARG_FLASH_ATTN": "on",
+    "LLAMA_ARG_FIT": "on",
+    "LLAMA_ARG_FIT_TARGET": "1024",
+    "LLAMA_ARG_REASONING": "on",
+    "LLAMA_ARG_THINK_BUDGET": "1024",
+    "LLAMA_ARG_REASONING_PRESERVE": "true",
+    "LLAMA_ARG_CHAT_TEMPLATE_KWARGS": "{\"enable_thinking\":true,\"preserve_thinking\":true}",
+    "LLAMA_ARG_TIMEOUT": "720",
+    "LLAMA_ARG_LOG_COLORS": "off",
+    "LLAMA_ARG_LOG_TIMESTAMPS": "on",
+    "LLAMA_ARG_LOG_VERBOSITY": "4"
+  },
+  "expected_child_argv": [
+    "llama-server", "-m", "__MODEL__", "-c", "32768", "-t", "12",
+    "-ngl", "24", "-b", "512", "--seed", "42", "--parallel", "1",
+    "--host", "127.0.0.1", "--port", "8080"
+  ],
+  "template_attestation": {
+    "protocol": "apply-template-differential-v1",
+    "endpoint": "/apply-template",
+    "expected_chat_template_sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce",
+    "user_prior_sentinel": "AF-S114-E02-TEMPLATE-USER-PRIOR-7C91",
+    "reasoning_sentinel": "AF-S114-E02-TEMPLATE-REASONING-5B2D",
+    "content_sentinel": "AF-S114-E02-TEMPLATE-CONTENT-4E68",
+    "user_latest_sentinel": "AF-S114-E02-TEMPLATE-USER-LATEST-A3F7",
+    "arms": [
+      {"name":"defaults","request_file":"template-probe-defaults.json","expect_reasoning":true},
+      {"name":"alias-false","request_file":"template-probe-alias-false.json","expect_reasoning":true},
+      {"name":"all-false","request_file":"template-probe-all-false.json","expect_reasoning":false},
+      {"name":"all-true","request_file":"template-probe-all-true.json","expect_reasoning":true}
+    ]
+  },
+  "smoke": {
+    "nonce_file": "nonce.txt",
+    "prompt_file": "smoke-prompt.txt",
+    "expected_summary": "AF-S115-QWEN38-NONCE-93D7C4B1",
+    "temperature": 1.0,
+    "protocol": "grammar",
+    "harness_policy": "legacy",
+    "tier": "ultra",
+    "max_ring": 0,
+    "max_turns": 4,
+    "forbidden_tools": ["copy_file","delete_path","edit_file","git_write","make_dir","move_path","request_user_input","run_check","write_file"]
+  },
+  "throughput": {
+    "request_template": "throughput-request.template.json",
+    "sequence": ["warmup", "trial-01", "trial-02", "trial-03"],
+    "scored_samples": 3,
+    "replacement_samples": 0,
+    "max_tokens": 256,
+    "minimum_decoded_tokens": 128,
+    "minimum_median_decoded_tokens_per_second": 2.0
+  },
+  "wsl": {
+    "distribution": "Ubuntu",
+    "version": 2,
+    "bubblewrap_command": "bwrap",
+    "network_probe": "proc-net-only-loopback-v1"
+  },
+  "evidence": {
+    "tracked_attempt_root": "docs/sprints/s115/control-artifacts/runtime/attempts",
+    "raw_attempt_root": "target/s115-runtime-qualification/attempts",
+    "lock_path": "target/s115-runtime-qualification/runtime.lock",
+    "raw_server_log": "server-live.log",
+    "manifest": "files.sha256"
+  }
+}

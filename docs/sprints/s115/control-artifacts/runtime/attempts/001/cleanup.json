@@ -1,0 +1,5 @@
+{
+  "attempted": false,
+  "stopped": false,
+  "reason": "strong_ownership_was_not_proven"
+}
