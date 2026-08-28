@@ -65,3 +65,12 @@ The live verifier never launches, restarts, stops, or mutates the server. T-1141
 must consume the exact endpoint, model identifier, PID, creation time, hashes,
 and argv in the handoff. Any mismatch is infrastructure failure; it does not
 authorize a second download, coordinate fallback, or unrecorded restart.
+
+## Attempt 001 disposition
+
+Attempt `001` is preserved as a pre-launch control false-negative. Ubuntu WSL2,
+Bubblewrap 0.11.1, and the isolated loopback-only sentinel all succeeded, but
+the original predicate searched for `bwrap ` while the tool correctly emitted
+`bubblewrap 0.11.1`. It is not a model, engine, or host failure. After this
+revised control manifest passes its static checks, one new append-only numeric
+attempt is allowed; attempt `001` must never be reused, rewritten, or removed.

@@ -134,6 +134,9 @@ function Invoke-S115RuntimeVerification {
             'CommandLine', 'CreationDate'
         )
         $listenerFields = @('LocalAddress', 'LocalPort', 'State', 'OwningProcess')
+        $derivedBubblewrapVersion = Get-S115BubblewrapVersionFacts `
+            -Output ([string]$preflight.isolation.result.stdout) `
+            -ExpectedVersion ([string]$context.plan.wsl.bubblewrap_version)
         if ($preflight.schema -cne 'animus-ferric-s115-e17-a-v1' -or
             -not [bool]$preflight.passed -or
             -not [bool]$preflight.enforced_after_complete_capture -or
@@ -188,7 +191,10 @@ function Invoke-S115RuntimeVerification {
             [int]$preflight.isolation.distribution_list.exit_code -ne 0 -or
             $preflight.isolation.result.timed_out -or
             [int]$preflight.isolation.result.exit_code -ne 0 -or
-            -not ([string]$preflight.isolation.result.stdout).Contains('bwrap ') -or
+            -not $derivedBubblewrapVersion.passed -or
+            -not (Test-JsonEquivalent `
+                -Left $preflight.isolation.bubblewrap_version `
+                -Right $derivedBubblewrapVersion) -or
             -not ([string]$preflight.isolation.result.stdout).Contains(
                 'S115_NETWORK_NAMESPACE_ONLY_LOOPBACK=1') -or
             -not (Test-JsonEquivalent -Left $preflight.frozen_targets.model `

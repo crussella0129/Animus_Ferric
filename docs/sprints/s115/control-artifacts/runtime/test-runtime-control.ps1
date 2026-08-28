@@ -73,6 +73,7 @@ Assert-Check -Condition (
     [int]$plan.coordinate.seed -eq 42 -and
     [int]$plan.coordinate.parallel_slots -eq 1 -and
     [int]$plan.coordinate.port -eq 8080 -and
+    [string]$plan.wsl.bubblewrap_version -ceq '0.11.1' -and
     [UInt64]$plan.model.bytes -eq 16464440224 -and
     [string]$plan.model.sha256 -ceq
         '322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482'
@@ -106,6 +107,32 @@ Assert-Check -Condition (
     [int]$syntheticLogFacts.value.preserve_warning_count -eq 0 -and
     [string]$syntheticLogFacts.sha256 -match '^[0-9a-f]{64}$'
 ) -Name 'shared server-log parser derives the frozen effective runtime facts'
+$retainedBubblewrapFixture = @'
+Linux 6.6.114.1-microsoft-standard-WSL2 x86_64 GNU/Linux
+bubblewrap 0.11.1
+S115_NETWORK_NAMESPACE_ONLY_LOOPBACK=1
+'@
+$bubblewrapFacts = Get-S115BubblewrapVersionFacts `
+    -Output $retainedBubblewrapFixture -ExpectedVersion '0.11.1'
+$deceptiveBubblewrapFixtures = @(
+    '',
+    'bwrap 0.11.1',
+    'bubblewrap 0.11',
+    'bubblewrap 0.11.1 extra',
+    "bubblewrap 0.11.1`nbubblewrap 0.11.1",
+    'not-bubblewrap 0.11.1',
+    'bubblewrap 0.11.2'
+)
+$deceptiveAccepted = @($deceptiveBubblewrapFixtures | Where-Object {
+    (Get-S115BubblewrapVersionFacts -Output $_ `
+        -ExpectedVersion '0.11.1').passed
+})
+Assert-Check -Condition (
+    $bubblewrapFacts.passed -and
+    [string]$bubblewrapFacts.observed_version -ceq '0.11.1' -and
+    [string]$bubblewrapFacts.exact_line -ceq 'bubblewrap 0.11.1' -and
+    $deceptiveAccepted.Count -eq 0
+) -Name 'Bubblewrap parser accepts retained exact output and rejects deceptive forms'
 
 $attributes = (Get-Content -Raw -LiteralPath (Join-Path $artifact `.gitattributes)).Replace("`r", '')
 Assert-Check -Condition ($attributes -ceq "* text eol=lf`nattempts/** -text`n") `
@@ -195,6 +222,10 @@ Assert-Check -Condition (
     $commonText.Contains('[System.Diagnostics.Process]::GetProcessById') -and
     $commonText.Contains('$process.Kill()') -and
     $commonText.Contains('function Get-S115ServerLogFacts') -and
+    $commonText.Contains('function Get-S115BubblewrapVersionFacts') -and
+    $commonText.Contains('$bubblewrapVersion.passed') -and
+    -not $commonText.Contains("Contains('bwrap ')") -and
+    -not $runtimeVerifierText.Contains("Contains('bwrap ')") -and
     $commonText.Contains('live server-log prefix effective facts changed') -and
     $commonText.Contains('retained_process_or_listener_exit_unconfirmed') -and
     $commonText.Contains('Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue') -and

@@ -587,6 +587,63 @@ function Get-S115HostSnapshot {
     }
 }
 
+function Get-S115BubblewrapVersionFacts {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Output,
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$ExpectedVersion
+    )
+    $lines = @($Output.Replace("`r", '').Split("`n") | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    })
+    $candidateLines = @($lines | Where-Object {
+        [regex]::IsMatch(
+            [string]$_,
+            '(?i)(?:^|[^A-Za-z0-9])(?:bubblewrap|bwrap)(?:[^A-Za-z0-9]|$)'
+        )
+    })
+    $exactMatches = [System.Collections.Generic.List[object]]::new()
+    foreach ($line in $candidateLines) {
+        $match = [regex]::Match(
+            [string]$line,
+            '^bubblewrap (?<major>0|[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)\z',
+            [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+        )
+        if ($match.Success) { $exactMatches.Add($match) }
+    }
+    $observedVersion = if ($exactMatches.Count -eq 1) {
+        '{0}.{1}.{2}' -f
+            $exactMatches[0].Groups['major'].Value,
+            $exactMatches[0].Groups['minor'].Value,
+            $exactMatches[0].Groups['patch'].Value
+    } else { $null }
+    $errors = [System.Collections.Generic.List[string]]::new()
+    if ($candidateLines.Count -ne 1) {
+        $errors.Add('probe output must contain exactly one Bubblewrap candidate line')
+    }
+    if ($exactMatches.Count -ne 1) {
+        $errors.Add('Bubblewrap version line is missing or malformed')
+    }
+    elseif ($observedVersion -cne $ExpectedVersion) {
+        $errors.Add('Bubblewrap version differs from the frozen version')
+    }
+    [pscustomobject][ordered]@{
+        schema = 'animus-ferric-s115-bubblewrap-version-v1'
+        passed = $errors.Count -eq 0
+        expected_version = $ExpectedVersion
+        observed_version = $observedVersion
+        exact_line = if ($exactMatches.Count -eq 1) {
+            [string]$exactMatches[0].Value
+        } else { $null }
+        candidate_lines = $candidateLines
+        errors = @($errors)
+    }
+}
+
 function Invoke-S115WslIsolationProbe {
     param([Parameter(Mandatory = $true)]$Context)
     $distributionList = Invoke-BoundedProcessResult -FilePath 'wsl.exe' `
@@ -620,11 +677,14 @@ bwrap --unshare-user --uid 0 --gid 0 --unshare-pid --unshare-net \
         '--distribution', [string]$Context.plan.wsl.distribution,
         '--exec', 'bash', '-lc', $script
     ) -TimeoutMilliseconds 60000
+    $bubblewrapVersion = Get-S115BubblewrapVersionFacts `
+        -Output ([string]$result.stdout) `
+        -ExpectedVersion ([string]$Context.plan.wsl.bubblewrap_version)
     $passed = -not $distributionList.timed_out -and
         $distributionList.exit_code -eq 0 -and $distributionMatch.Success -and
         $observedVersion -eq [int]$Context.plan.wsl.version -and
         -not $result.timed_out -and $result.exit_code -eq 0 -and
-        $result.stdout.Contains('bwrap ') -and
+        $bubblewrapVersion.passed -and
         $result.stdout.Contains('S115_NETWORK_NAMESPACE_ONLY_LOOPBACK=1')
     [pscustomobject][ordered]@{
         schema = 'animus-ferric-s115-wsl-isolation-v1'
@@ -634,6 +694,7 @@ bwrap --unshare-user --uid 0 --gid 0 --unshare-pid --unshare-net \
         observed_version = $observedVersion
         observed_state = $observedState
         distribution_list = $distributionList
+        bubblewrap_version = $bubblewrapVersion
         result = $result
     }
 }

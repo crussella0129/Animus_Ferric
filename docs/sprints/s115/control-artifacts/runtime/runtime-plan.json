@@ -133,6 +133,7 @@
     "distribution": "Ubuntu",
     "version": 2,
     "bubblewrap_command": "bwrap",
+    "bubblewrap_version": "0.11.1",
     "network_probe": "proc-net-only-loopback-v1"
   },
   "evidence": {
