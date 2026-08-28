@@ -1,0 +1,62 @@
+{
+  "schema": "animus-ferric-s114-app-preflight-v1",
+  "task": "T-11410",
+  "result": "blocked_pre_inference",
+  "captured_at_utc": "2026-08-28T00:01:30.6886943+00:00",
+  "reason": "query_trace_directory_collides_with_frozen_candidate_path_policy",
+  "repository": {
+    "commit_at_capture": "fec17dd175bb95054516b37897261a0ec6a5a2e1",
+    "calibrated_source_commit": "a1306e5191591600551ef7c2c8676f061e8d554f"
+  },
+  "ferric": {
+    "display_path": "target/release/ferric.exe",
+    "bytes": 21132800,
+    "sha256": "af75612b3498a1721e5b5f1b2f6309bf851d65b9bd13ad45e76cf8e370cf10f2",
+    "matches_t11409_calibrated_binary": true,
+    "query_help_exit_code": 0,
+    "query_help_stdout_sha256": "6965bdbae3d0ea278dd631ac55c7f2ab2af3b5482b93d066c518239a68bd19ad",
+    "query_help_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "external_trace_option_absent": true
+  },
+  "source_findings": {
+    "query_source": "crates/ferric-cli/src/query.rs",
+    "query_source_sha256": "971e5cee430d9c9f58f03e7619b363ba7a488d9ff06184f14895bb51c62943b7",
+    "hardcoded_workspace_trace": true,
+    "hardcoded_workspace_trace_line": 935,
+    "trace_sink_accepts_directory_line": 1128,
+    "run_check_source": "crates/ferric-tools/src/builtin/run_check.rs",
+    "run_check_source_sha256": "289600796fb23c5d9c3e87c9d1880cddd7e970bd5c19419e78093513c0161a1a",
+    "run_check_uses_exact_workspace": true,
+    "run_check_current_directory_line": 239
+  },
+  "frozen_grader": {
+    "source": "docs/sprints/s114/control-artifacts/app-harness/grader/src/lib.rs",
+    "source_sha256": "3dc6be7dcc1900c5606a069863650b0d27574f71474f90f37da3a945eaa4b108",
+    "frozen_inputs_sha256": "532cd39a9fec557816929bcf12e5ae539c8a30c0f4c4829a9d6f89b0ca9f358b",
+    "frozen_inputs_hash_record": "532cd39a9fec557816929bcf12e5ae539c8a30c0f4c4829a9d6f89b0ca9f358b",
+    "allowed_directories_are_only_src_and_tests": true,
+    "other_directories_fail_path_policy": true,
+    "path_policy_lines": "307-321"
+  },
+  "collision": {
+    "query_creates_candidate_dot_ferric_before_inference": true,
+    "model_visible_check_runs_from_candidate": true,
+    "dot_ferric_is_forbidden_by_frozen_grader": true,
+    "accepted_in_session_check_possible": false,
+    "post_run_deletion_repairs_in_session_check": false
+  },
+  "execution_state": {
+    "candidate_display_path": "target/s114-experiment/app-workspace",
+    "candidate_exists": false,
+    "model_inference_started": false,
+    "candidate_mutation_started": false,
+    "managed_server_runfile_absent": true,
+    "listener_8080_count_at_capture": 0
+  },
+  "disposition": {
+    "frozen_harness_edited": false,
+    "calibrated_binary_rebuilt": false,
+    "task_completed": false,
+    "next_requirement": "operator_only_external_trace_root_plus_independent_binary_requalification"
+  }
+}

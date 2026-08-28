@@ -41,6 +41,19 @@
   exact tail-argument comparison, live-shaped positive fixtures, and negative
   path/argument tamper tests. The same recovery analysis records the retained
   evidence and protocol.
+- **T-11410 — recoverable candidate/trace-layout incompatibility:** preflight
+  found that `ferric query` unconditionally creates
+  `<workspace>/.ferric/trace` before inference, while the frozen MH-RS01 static
+  grader permits only the sealed seed and six declared model-authored outputs
+  and rejects `.ferric` through its path-policy dimension. Consequently every
+  model-visible `run_check` would fail before judging the application, and
+  deleting the trace directory after the run would not repair the required
+  fresh in-session check. No T-11410 inference or candidate mutation began.
+  Changing the frozen grader would reopen T-11408; changing Ferric would alter
+  the T-11409-calibrated binary and exceeds T-11410's locked touches. Leave
+  T-11410 queued while T-11411 proceeds, then re-scope an external trace-root
+  capability and binary requalification through follow-on intent work before
+  any MH-RS01 trial.
 
 ## Resolution
 
