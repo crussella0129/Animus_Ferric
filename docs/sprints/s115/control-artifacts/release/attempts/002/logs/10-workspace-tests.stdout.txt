@@ -1,0 +1,1265 @@
+
+running 10 tests
+test tests::validate_project_name_rejects_empty ... ok
+test tests::cargo_package_names_are_deterministic_and_toml_safe ... ok
+test tests::derive_initial_tasks_nonempty ... ok
+test tests::validate_goal_rejects_empty ... ok
+test tests::cargo_package_names_reject_reserved_implicit_binary_targets ... ok
+test tests::validate_project_name_rejects_control_characters_but_accepts_unicode ... ok
+test tests::target_clobber_safety_rules ... ok
+test tests::exclusive_file_creation_refuses_a_racing_destination ... ok
+test tests::inventory_verification_rejects_unexpected_concurrent_content ... ok
+test tests::a_scaffolded_rust_project_declares_its_own_workspace ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.58s
+
+
+running 12 tests
+test scaffold_refuses_dot_target_when_cwd_is_nonempty ... ok
+test hostile_markdown_crlf_and_unicode_remain_inert ... ok
+test scaffold_creates_git_repo_with_main_and_dev ... ok
+test scaffold_preserves_support_for_an_existing_empty_directory ... ok
+test scaffold_refuses_to_clobber_existing_file ... ok
+test scaffold_refuses_to_clobber_hidden_only_dir ... ok
+test scaffold_refuses_to_clobber_nonempty_dir ... ok
+test ambient_global_excludes_cannot_omit_book_files ... ok
+test scaffold_commit_works_without_global_git_identity ... ok
+test rust_profile_derives_a_safe_package_and_passes_cargo ... ok
+test rust_profile_rejects_unsafe_package_names_before_creating_target ... ok
+test reports_and_bytes_are_deterministic_and_complete_for_every_profile ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.70s
+
+
+running 81 tests
+test autonomy_results::tests::infrastructure_rows_are_not_scored_as_model_failures ... ok
+test autonomy_results::tests::paired_freshness_requires_distinct_instances_and_equal_initial_trees ... ok
+test autonomy_results::tests::pass_power_three_requires_three_successes_in_one_task_variant ... ok
+test autonomy_results::tests::single_evidence_rows_use_the_same_strict_persisted_predicate ... ok
+test calibrate::tests::a_clean_ladder_reports_nothing ... ok
+test autonomy_results::tests::paired_provenance_requires_valid_digests_and_canonical_pair_id ... ok
+test calibrate::tests::calibrate_records_both_tiers ... ok
+test calibrate::tests::a_failure_below_the_highest_pass_is_reported ... ok
+test calibrate::tests::calibration_stops_at_the_first_failed_or_missing_level ... ok
+test autonomy_results::tests::strict_validated_timeout_is_a_scoreable_model_failure ... ok
+test calibrate::tests::failed_l0_has_no_measured_level ... ok
+test autonomy_results::tests::strict_rows_fail_closed_on_trace_or_managed_server_tampering ... ok
+test calibrate::tests::failures_above_the_ceiling_are_not_inconsistent ... ok
+test calibrate::tests::highest_completed_is_measured_level ... ok
+test calibrate::tests::nothing_passed_means_nothing_to_report ... ok
+test autonomy_results::tests::summary_filters_run_and_keeps_contract_distinct_from_completion ... ok
+test autonomy_results::tests::infrastructure_rows_do_not_enter_secondary_model_metrics ... ok
+test autonomy_results::tests::unknown_coordinate_cannot_replace_an_expected_row ... ok
+test autonomy_results::tests::duplicate_coordinates_make_a_run_incomplete ... ok
+test autonomy_results::tests::category_drift_cannot_complete_an_expected_coordinate ... ok
+test calibrate::tests::old_json_without_ring_field_defaults_none ... ok
+test autonomy_results::tests::schema_one_rows_default_to_single_legacy_coordinates ... ok
+test autonomy_results::tests::invalid_trace_or_unpaired_rows_are_excluded_not_scored_as_losses ... ok
+test autonomy_results::tests::repository_brief_comparisons_never_cross_policy_coordinates ... ok
+test autonomy_results::tests::paired_summary_is_coordinate_complete_and_uses_only_eligible_pairs ... ok
+test results::tests::legacy_row_without_spec_or_checks_uses_compatible_defaults ... ok
+test runner::tests::autonomy_resume_args_preserve_isolation_and_answer ... ok
+test runner::tests::query_args_mock_arm ... ok
+test runner::tests::query_args_openai_arm_targets_the_valve ... ok
+test runner::tests::read_tail_is_bounded_and_keeps_the_end ... ok
+test runner::tests::segment_request_rejects_mixed_or_missing_sources ... ok
+test autonomy::tests::embedded_v1_has_fixed_checks_and_all_recovery_probe_shapes ... ok
+test autonomy::tests::serde_rejects_unknown_fields ... ok
+test autonomy::tests::embedded_v1_parses_as_a_balanced_internal_baseline ... ok
+test spec::tests::all_seven_specs_parse ... ok
+test spec::tests::l0_forbids_mutations_and_uses_ferric_tool_names ... ok
+test provenance::tests::hashes_known_vector_and_file_equally ... ok
+test spec::tests::unknown_field_rejected ... ok
+test summary::tests::incomplete_or_infrastructure_dirty_run_is_not_calibration_evidence ... ok
+test summary::tests::qualification_uses_ceiling_and_calibration_stops_at_first_gap ... ok
+test summary::tests::required_passes_does_not_promote_decimal_roundoff ... ok
+test summary::tests::rows_from_other_run_ids_do_not_pollute_the_summary ... ok
+test summary::tests::sample_stats_use_sample_sd_and_interpolated_iqr ... ok
+test summary::tests::terminal_and_failure_counts_are_nonexclusive_and_attributable ... ok
+test summary::tests::wilson_interval_matches_nine_of_ten ... ok
+test tests::preserve_order_active ... ok
+test spec::tests::l1_l2_use_ferric_mutation_tools ... ok
+test verify::tests::command_check_noisy_fixture ... ignored, test-only child process fixture
+test autonomy::tests::validation_rejects_duplicate_ids_and_category_drift ... ok
+test verify::tests::command_check_sleep_fixture ... ignored, test-only child process fixture
+test autonomy::tests::validation_rejects_unsafe_paths_and_shell_checks ... ok
+test autonomy_results::tests::malformed_jsonl_reports_its_physical_line ... ok
+test repository_brief::tests::non_directory_root_is_rejected ... ok
+test verify::tests::completed_truth_table ... ok
+test verify::tests::failure_admission_detects_phrases ... ok
+test repository_brief::tests::zero_limits_are_safe_and_report_through_structured_metadata ... ok
+test repository_brief::tests::byte_limit_keeps_utf8_valid_and_reports_it_when_space_allows ... ok
+test verify::tests::tools_verdict_matrix ... ok
+test autonomy::tests::validation_rejects_incoherent_clarification_and_recovery ... ok
+test calibrate::tests::write_calibrated_ring_creates_record_when_absent ... ok
+test calibrate::tests::read_profile_round_trips_and_misses_are_none ... ok
+test runner::tests::trace_discovery_ignores_foreign_files ... ok
+test repository_brief::tests::file_limit_stops_at_a_deterministic_prefix_and_reports_it ... ok
+test calibrate::tests::eligible_repeated_trial_evidence_is_recorded_in_the_profile ... ok
+test results::tests::read_rows_reports_the_first_bad_physical_line ... ok
+test autonomy::tests::validation_mirrors_child_budget_and_run_check_limits ... ok
+test repository_brief::tests::brief_is_stable_relative_and_metadata_only ... ok
+test verify::tests::parse_trace_fails_closed_on_malformed_jsonl ... ok
+test results::tests::append_is_not_truncate ... ok
+test calibrate::tests::write_calibrated_ring_preserves_measured_level ... ok
+test repository_brief::tests::runtime_hidden_and_sensitive_paths_are_not_disclosed ... ok
+test calibrate::tests::write_profile_replaces_same_key_keeps_others ... ok
+Python 3.13.11
+test verify::tests::preflight_rejects_bad_regex_and_missing_python ... ok
+test verify::tests::command_check_output_is_bounded_while_pipes_are_drained ... ok
+test verify::tests::shared_check_deadline_is_an_infrastructure_failure ... ok
+test verify::tests::fixed_argv_check_classifies_pass_model_failure_and_infrastructure ... ok
+test verify::tests::authoritative_check_rejects_semantically_wrong_python ... ok
+test runner::tests::verbose_child_cannot_fill_pipes_and_deadlock ... ok
+test verify::tests::command_check_timeout_is_a_model_failure ... ok
+test verify::tests::authoritative_l3_l6_python_checks_accept_known_good_artifacts ... ok
+test autonomy::tests::every_untouched_repository_fails_its_authoritative_grade ... ok
+
+test result: ok. 79 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 2.99s
+
+
+running 176 tests
+test autonomy_cmd::tests::paired_schedule_is_adjacent_deterministic_and_counterbalanced ... ok
+test autonomy_cmd::tests::tail_helper_is_utf8_safe_and_bounded ... ok
+test autonomy_cmd::tests::recovery_clarification_rejects_an_unrelated_question ... ok
+test autonomy_cmd::tests::sha256_parser_is_exact_and_normalizes_case ... ok
+test autonomy_cmd::tests::terminal_contract_requires_exact_task_complete ... ok
+test autonomy_cmd::tests::model_preflight_reads_openai_and_ollama_shapes ... ok
+test autonomy_cmd::tests::selected_variants_are_deduplicated_and_stable ... ok
+test backend::tests::api_base_precedence ... ok
+test backend::tests::the_backend_feature_diagnostic_names_the_feature_and_the_alternative ... ok
+test chat::tests::evidence_talk_is_allowed_but_do_escalation_fails_explicitly ... ok
+test chat::tests::parse_chat_input_bang_and_run_are_passthrough ... ok
+test autonomy_cmd::tests::typed_controller_mechanism_metrics_preserve_reason_breakdown ... ok
+test chat::tests::parse_chat_input_default_is_talk ... ok
+test chat::tests::parse_chat_input_do_is_escalate ... ok
+test chat::tests::parse_chat_input_empty_is_empty ... ok
+test chat::tests::parse_chat_input_help_exit_quit ... ok
+test chat::tests::talk_request_has_no_action_channel ... ok
+test config::tests::backend_opts_is_not_debug_printable ... ok
+test config::tests::debug_output_distinguishes_absent_from_redacted ... ok
+test config::tests::debug_output_never_contains_the_api_key ... ok
+test config::tests::legacy_backend_key_is_ignored_not_an_error ... ok
+test autonomy_cmd::tests::cli_parser_keeps_paired_binary_coordinates_distinct ... ok
+test autonomy_cmd::tests::paired_model_hash_is_computed_from_the_managed_artifact ... ok
+test autonomy_cmd::tests::paired_server_provenance_requires_known_single_slot_sampling_controls ... ok
+test config::tests::merge_backend_opts_cli_model_wins_over_config_model ... ok
+test autonomy_cmd::tests::single_policy_parser_coordinates_and_strict_gate_are_explicit ... ok
+test config::tests::merge_backend_opts_config_only_remaining_fields_are_applied ... ok
+test config::tests::project_config_path_is_workspace_relative ... ok
+test config::tests::user_config_path_from_appdata_only ... ok
+test config::tests::user_config_path_from_home_fallback_only ... ok
+test config::tests::user_config_path_from_nothing_resolves_to_none ... ok
+test config::tests::user_config_path_from_xdg_only ... ok
+test config::tests::user_config_path_wrapper_uses_real_env ... ok
+test autonomy_cmd::tests::frozen_pair_rejects_nonfiles_and_equal_digests ... ok
+test chat::tests::escalation_seed_carries_history_and_protocol ... ok
+test launch::tests::spec_from_answers_builds_valid_spec ... ok
+test launch::tests::spec_from_answers_rejects_invalid ... ok
+test logging::tests::empty_or_absent_env_falls_back_to_verbosity ... ok
+test logging::tests::env_value_overrides_verbosity ... ok
+test logging::tests::verbosity_maps_to_levels ... ok
+test autonomy_cmd::tests::named_check_toml_preserves_multiline_python_without_shell ... ok
+test config::tests::load_layered_neither_present_is_all_none ... ok
+test config::tests::load_layered_from_project_only ... ok
+test config::tests::hooks_source_names_the_file_that_supplied_them ... ok
+test config::tests::load_layered_from_user_only ... ok
+test mcp::tests::ferric_query_schema_has_no_workspace_backend_or_model_field ... ok
+test mcp::tests::initialize_returns_fixed_version_and_tools_capability ... ok
+test autonomy_cmd::tests::trace_analysis_accepts_empty_pre_response_timeout_prefix_without_counting_it ... ok
+test config::tests::load_layered_malformed_toml_pushes_diagnostic ... ok
+test autonomy_cmd::tests::trace_analysis_preserves_modern_pre_dispatch_retry_prefix ... ok
+test config::tests::hooks_source_follows_the_project_wins_rule ... ok
+test autonomy_cmd::tests::live_server_snapshot_binding_requires_exact_process_argv_and_owner ... ok
+test mcp::tests::malformed_line_yields_parse_error ... ok
+test mcp::tests::no_bare_println_in_source ... ok
+test mcp::tests::parses_notification_without_id ... ok
+test mcp::tests::parses_valid_request_line ... ok
+test config::tests::no_hooks_means_no_source_to_disclose ... ok
+test mcp::tests::render_line_has_no_embedded_newline ... ok
+test config::tests::load_layered_project_wins_on_overlap ... ok
+test autonomy_cmd::tests::freezing_detects_a_source_change_during_copy ... ok
+test mcp::tests::dispatch_unknown_method_is_json_rpc_error ... ok
+test autonomy_cmd::tests::managed_model_matching_requires_the_same_canonical_artifact ... ok
+test autonomy_cmd::tests::trace_analysis_binds_workspace_protocol_and_turn_budget ... ok
+test autonomy_cmd::tests::retained_trace_names_cannot_collide_across_policy_arms ... ok
+test mcp::tests::launch_cli_flag_overrides_config_file ... ok
+test mcp::tests::tools_list_has_exactly_one_tool_named_ferric_query ... ok
+test mcp::tests::launch_defaults_unchanged_after_clap_type_change ... ok
+test autonomy_cmd::tests::retained_trace_digest_and_validation_use_one_immutable_byte_snapshot ... ok
+test mcp::tests::launch_config_file_sets_default_without_flag ... ok
+test autonomy_cmd::tests::initial_tree_digest_is_portable_ordered_and_content_sensitive ... ok
+test mcp::tests::tools_call_unknown_tool_is_json_rpc_error ... ok
+test mcp::tests::unsupported_planner_fails_before_mcp_trace_or_provider ... ok
+test mcp::tests::tools_call_file_outside_selected_workspace_is_rejected ... ok
+test query::tests::checks_file_parses_fixed_argv_and_defaults ... ok
+test autonomy_cmd::tests::frozen_pair_uses_verified_read_only_copies ... ok
+test query::tests::checks_file_is_explicit_and_fail_closed ... ok
+test mcp::tests::tools_call_file_sensitive_and_ignored_paths_are_rejected ... ok
+test mcp::tests::launch_config_only_model_still_resolves_profile ... ok
+test query::tests::default_source_resume_may_select_external_output ... ok
+test query::tests::external_trace_root_postcreate_rejects_ancestor ... ok
+test mcp::tests::tools_call_provider_error_is_is_error_true_not_panic ... ok
+test query::tests::external_trace_root_postcreate_rejects_equal ... ok
+test query::tests::external_trace_root_postcreate_rejects_non_directory ... ok
+test query::tests::external_trace_root_postcreate_rejects_descendant ... ok
+test query::tests::external_trace_resume_requires_and_reuses_explicit_root ... ok
+test query::tests::external_trace_root_precreate_rejects_ancestor ... ok
+test query::tests::external_trace_root_precreate_rejects_descendant ... ok
+test query::tests::fold_animus_md_appends_a_distinct_block ... ok
+test query::tests::fold_animus_md_falls_back_to_default_prompt ... ok
+test query::tests::external_trace_root_precreate_rejects_dotdot_overlap_alias ... ok
+test query::tests::external_trace_root_precreate_rejection_matrix ... ok
+test query::tests::external_trace_root_precreate_rejects_windows_case_alias ... ok
+test query::tests::external_trace_root_precreate_rejects_equal ... ok
+test query::tests::external_trace_root_precreate_rejects_existing_file ... ok
+test query::tests::run_config_matches_inline_computation ... ok
+test query::tests::run_config_reused_across_calls ... ok
+test query::tests::sink_action_accepts_known_spellings_and_rejects_typos ... ok
+test query::tests::sink_action_maps_to_the_named_policy ... ok
+test query::tests::external_trace_root_resolves_nonexistent_tail ... ok
+test query::tests::external_trace_postcreate_hook_is_one_shot_and_cleanup_safe ... ok
+test query::tests::url_host_ignores_userinfo ... ok
+test query::tests::url_host_reads_ordinary_urls ... ok
+test query::tests::url_host_rejects_what_it_cannot_allowlist ... ok
+test server::tests::health_url_per_engine ... ok
+test server::tests::host_is_loopback ... ok
+test query::tests::route_files_enforces_per_file_and_aggregate_byte_limits ... ok
+test icm::tests::unsupported_planner_fails_before_icm_trace_or_stage_run ... ok
+test query::tests::route_files_resolves_inside_workspace_and_routes_text_and_media ... ok
+test query::tests::route_files_enforces_read_guard_and_ferricignore ... ok
+test server::tests::http_probe_requires_engine_path_and_status_200 ... ok
+test query::tests::external_trace_root_postcreate_rejection_matrix ... ok
+test server::tests::launch_preflight_rejects_occupied_target_port ... ok
+test server::tests::llama_server_argv ... ok
+test server::tests::llama_server_edge_tuning_flags ... ok
+test server::tests::llama_server_mmproj ... ok
+test server::tests::launch_preflight_rejects_existing_global_registration ... ok
+test server::tests::llama_launch_rejects_zero_context_or_port ... ok
+test server::tests::old_runfile_sampling_metadata_defaults_to_unknown ... ok
+test server::tests::ollama_argv_and_env ... ok
+test server::tests::ollama_ignores_edge_tuning_flags ... ok
+test server::tests::launch_preflight_rejects_existing_local_registration ... ok
+test server::tests::read_runfile_absent_is_none ... ok
+test server::tests::runfile_serde_roundtrip ... ok
+test server::tests::tailnet_fqdn_is_none_when_unparseable_or_absent ... ok
+test server::tests::ollama_preflight_rejects_claiming_llama_sampling_controls ... ok
+test server::tests::tailnet_fqdn_reads_dnsname_from_self ... ok
+test server::tests::the_root_object_has_no_dnsname ... ok
+test server::tests::the_serve_invocation_matches_the_documented_form ... ok
+test server::tests::windows_command_line_inspection_preserves_quoted_argv ... ok
+test toolbench_cmd::tests::classify_malformed_args ... ok
+test toolbench_cmd::tests::classify_no_action ... ok
+test toolbench_cmd::tests::classify_success_constrained ... ok
+test toolbench_cmd::tests::classify_success_native ... ok
+test toolbench_cmd::tests::classify_wrong_tool ... ok
+test toolbench_cmd::tests::leaderboard_sorts_best_first ... ok
+test toolbench_cmd::tests::outcome_is_success ... ok
+test toolbench_cmd::tests::outcome_labels ... ok
+test toolbench_cmd::tests::recommend_max_ring_longest_solid_prefix ... ok
+test toolbench_cmd::tests::render_report_has_taxonomy_and_verdict ... ok
+test toolbench_cmd::tests::summary_rows_shape ... ok
+test toolbench_cmd::tests::verdict_bands ... ok
+test toolbench_cmd::tests::classify_parse_error ... ok
+test query::tests::trace_allocator_never_appends_same_millisecond_sessions ... ok
+test trace_verify::tests::accepts_a_native_turn_stopped_by_a_pre_dispatch_guard ... ok
+test trace_verify::tests::accepts_a_real_provider_error_trace_without_turn_end ... ok
+test trace_verify::tests::accepts_a_retryable_modern_crash_before_dispatch ... ok
+test trace_verify::tests::accepts_only_an_empty_pre_response_interrupted_prefix_without_counting_it ... ok
+test trace_verify::tests::accepts_an_evidence_intentional_pause_controller_suffix ... ok
+test trace_verify::tests::rejects_a_checkpoint_inside_an_active_turn ... ok
+test trace_verify::tests::rejects_a_completed_native_turn_with_missing_recorded_calls ... ok
+test trace_verify::tests::rejects_a_nonterminal_call_without_a_result ... ok
+test trace_verify::tests::rejects_a_next_turn_after_an_uncommitted_modern_turn ... ok
+test trace_verify::tests::rejects_an_interrupted_prefix_after_dispatch ... ok
+test trace_verify::tests::rejects_dispatch_that_differs_from_the_proposed_batch ... ok
+test trace_verify::tests::validates_a_complete_tool_transcript_without_executing_it ... ok
+test mcp::tests::error_then_success_same_session ... ok
+test query::tests::external_trace_root_postcreate_rejects_windows_reparse ... ok
+test mcp::tests::tools_call_valid_media_is_routed_to_the_provider ... ok
+test query::tests::external_trace_root_precreate_rejects_windows_junction ... ok
+test server::tests::readiness_succeeds_only_while_child_is_alive_and_http_is_200 ... ok
+test mcp::tests::full_handshake_and_call_sequence ... ok
+test mcp::tests::clarification_roundtrips_through_structured_mcp_continuation ... ok
+test mcp::tests::bounded_mcp_request_preserves_explicit_evidence_policy ... ok
+test mcp::tests::tools_call_ferric_query_success ... ok
+test mcp::tests::tools_call_file_media_skipped_with_reason ... ok
+test query::tests::runs_loop_with_prebuilt_provider ... ok
+test mcp::tests::tools_call_file_text_folds_into_prompt ... ok
+test icm::tests::bounded_icm_stage_preserves_explicit_evidence_policy ... ok
+test mcp::tests::launched_mock_server_resets_script_for_each_tools_call ... ok
+test autonomy_cmd::tests::external_child_does_not_inherit_runner_build_metadata ... ok
+test autonomy_cmd::tests::single_evidence_freezes_and_records_the_verified_child_digest ... ok
+test server::tests::llama_launch_requires_regular_model_and_mmproj_files ... ok
+test server::tests::process_alive_follows_a_real_process ... ok
+test query::tests::powershell_quote_round_trips_argv ... ok
+test server::tests::readiness_fails_when_child_exits_before_http_health ... ok
+test server::tests::live_registration_inspection_binds_pid_listener_and_health ... ok
+
+test result: ok. 176 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.48s
+
+
+running 6 tests
+test bench_check_preflight_distinguishes_missing_python_infrastructure ... ok
+test bench_rejects_out_of_range_trial_and_pass_rate_arguments ... ok
+test bench_keep_workspace_preserves_dir ... ok
+test bench_mock_l0_passes_and_writes_results ... ok
+test bench_mock_records_each_requested_level ... ok
+test bench_three_trials_rotate_levels_retain_traces_and_write_statistics ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.32s
+
+
+running 68 tests
+test chat_talk_turn_is_not_dispatched ... ok
+test checks_file_failure_is_fatal_before_a_model_run ... ok
+test chat_bang_runs_a_command_directly ... ok
+test chat_passthrough_still_enforces_the_command_denylist ... ok
+test chat_talk_then_exit ... ok
+test chat_do_escalates_to_agentic_loop ... ok
+test chat_help_lists_commands ... ok
+test animus_md_present_traces_note ... ok
+test config_file_sets_default_without_flag ... ok
+test animus_md_folds_into_prompt ... ok
+test explicit_checks_file_offers_named_tool_and_blocks_unverified_completion ... ok
+test icm_init_refuses_to_clobber ... ok
+test config_only_stream_disables_live_output ... ok
+test cron_add_accepts_a_cron_expression ... ok
+test cron_add_then_list_shows_the_job ... ok
+test config_only_max_ring_caps_the_offered_tools ... ok
+test cli_flag_overrides_config_file ... ok
+test config_only_model_still_resolves_profile ... ok
+test launch_refuses_to_clobber_nonempty ... ok
+test icm_init_scaffolds_and_plan_shows_the_pipeline ... ok
+test icm_plan_wires_prior_stage_output_as_layer4 ... ok
+test max_turns_rejects_zero ... ok
+test evidence_runs_and_planner_fails_before_trace_or_workspace_mutation ... ok
+test mcp_resume_rejects_already_stopped ... ok
+test cron_add_rejects_bad_input ... ok
+test cron_dry_run_reports_without_executing ... ok
+test external_trace_resume_requires_and_reuses_explicit_root ... ok
+test malformed_config_traced_as_note ... ok
+test max_turns_flag_overrides_the_selected_policy_budget ... ok
+test cron_run_executes_a_due_mock_job_and_advances_state ... ok
+test mcp_resume_continues_an_interrupted_session ... ok
+test no_args_fails_with_usage ... ok
+test no_resume_and_no_prompt_is_a_usage_error ... ok
+test icm_run_stops_at_review_gate_on_q ... ok
+test icm_run_honors_a_stage_range ... ok
+test harness_policy_config_obeys_cli_over_project_precedence ... ok
+test mcp_stdio_e2e ... ok
+test mock_query_end_to_end ... ok
+test query_file_outside_selected_workspace_is_rejected ... ok
+test query_file_sensitive_path_is_rejected_by_read_guard ... ok
+test clarification_resume_requires_and_traces_an_explicit_answer ... ok
+test query_help_documents_trace_dir ... ok
+test query_without_backend_errors ... ok
+test no_config_ignores_project_config ... ok
+test resume_already_stopped_is_a_clear_error ... ok
+test resume_harness_policy_mismatch_is_clear_and_allocates_no_new_trace ... ok
+test resume_protocol_mismatch_is_a_clear_error ... ok
+test query_defaults_unchanged_after_clap_type_change ... ok
+test query_external_trace_root_leaves_workspace_clean ... ok
+test query_file_media_skipped_with_reason ... ok
+test icm_run_executes_every_stage_in_order ... ok
+test max_ring_caps_the_offered_tools ... ok
+test trace_cat_renders_history_compacted ... ok
+test trace_cat_renders_unknown ... ok
+test query_file_text_folds_into_prompt ... ok
+test unknown_args_fail_with_usage ... ok
+test version_flag ... ok
+test resume_continues_an_interrupted_session ... ok
+test resume_with_animus_md_prints_ignored_note ... ok
+test stream_flag_mock_no_duplication ... ok
+test external_trace_root_precreate_rejection_matrix ... ok
+test trace_verify_finds_no_drift_in_a_real_trace ... ok
+test persisted_calibrated_ring_caps_the_offered_tools ... ok
+test query_default_trace_root_is_compatible ... ok
+test resume_with_extra_prompt_appends_nudge ... ok
+test launch_interactive_scaffolds_from_stdin ... ok
+test launch_noninteractive_scaffolds ... ok
+test incomplete_mock_resume_hint_round_trips_in_documented_shell ... ok
+
+test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.73s
+
+
+running 3 tests
+test each_rule_rejects_identity_and_accepts_the_documentation_value ... ok
+test canonical_book_layout_replaces_legacy_live_ledgers ... ok
+test tracked_sources_carry_no_machine_identity ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 31 tests
+test media::tests::media_needs_declared_and_supported ... ok
+test media::tests::classify_by_extension ... ok
+test harness::tests::labels_display_parse_and_serde_are_one_stable_vocabulary ... ok
+test scale::tests::action_protocol_serde ... ok
+test media::tests::parse_modalities_tolerant ... ok
+test check_env::tests::optimization_is_removed_and_deterministic_defaults_are_explicit ... ok
+test scale::tests::an_override_beats_both_measurement_and_size ... ok
+test scale::tests::measured_level_overrides_params ... ok
+test harness::tests::default_is_legacy_and_unknown_or_ambiguous_labels_fail_closed ... ok
+test media::tests::text_always_appends ... ok
+test scale::tests::an_earned_large_and_an_asked_for_large_differ_only_in_the_label ... ok
+test message::tests::media_message_roundtrip ... ok
+test scale::tests::max_output_tokens_per_tier ... ok
+test message::tests::toolcall_args_polymorphic ... ok
+test media::tests::unknown_skips ... ok
+test scale::tests::measured_level_upgrade ... ok
+test scale::tests::protocol_keys_match_what_is_already_on_disk ... ok
+test scale::tests::nano_policy_shape ... ok
+test scale::tests::nano_tier_boundaries ... ok
+test scale::tests::policy_for_is_deterministic ... ok
+test scale::tests::policy_for_is_unchanged_without_an_override ... ok
+test scale::tests::ring_ceiling_per_tier ... ok
+test scale::tests::protocol_key_still_agrees_with_the_debug_format_it_replaced ... ok
+test media::tests::base64_rfc4648_vectors ... ok
+test message::tests::message_roundtrip_json ... ok
+test scale::tests::prompt_budget_respects_small_context ... ok
+test scale::tests::tier_source_labels_round_trip ... ok
+test scale::tests::tier_source_records_which_route_was_taken ... ok
+test user_input::tests::serde_requires_every_field_and_rejects_unknown_fields ... ok
+test user_input::tests::valid_request_roundtrips_and_allows_free_form ... ok
+test user_input::tests::validation_rejects_blank_required_text ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test tier_table_snapshot ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 17 tests
+test size_guard::cron_error_stays_small ... ok
+test tests::due_logic ... ok
+test tests::due_jobs_filters_by_state ... ok
+test tests::cron_expression_is_detected_and_described ... ok
+test tests::cron_fields_reject_bad_input ... ok
+test tests::cron_next_due_finds_the_following_fire ... ok
+test tests::cron_step_and_list_fields ... ok
+test tests::cron_daily_at_0200_fires_only_in_that_minute ... ok
+test tests::next_due_is_last_plus_interval ... ok
+test tests::schedule_describe_roundtrips_compactly ... ok
+test tests::schedule_rejects_garbage_and_zero ... ok
+test tests::schedule_units_and_aliases ... ok
+test tests::parse_dream_and_query_jobs ... ok
+test tests::cron_weekday_range_matches_only_mon_to_fri ... ok
+test tests::unknown_command_is_rejected ... ok
+test tests::state_roundtrips_and_generated_toml_parses ... ok
+test tests::query_without_prompt_is_rejected ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 25 tests
+test checker::tests::allows_ordinary_write ... ok
+test checker::tests::allows_plain_read ... ok
+test checker::tests::denies_dangerous_commands ... ok
+test checker::tests::denies_reading_stray_private_key ... ok
+test checker::tests::denies_reading_dotenv ... ok
+test checker::tests::denies_reading_credential_store_segments ... ok
+test sink::tests::a_clean_run_is_never_gated ... ok
+test checker::tests::denylist_is_const ... ok
+test sink::tests::reads_stay_allowed_even_when_contaminated ... ok
+test checker::tests::denies_reading_ferric_trace_dir ... ok
+test ignore::tests::glob_matches_basename ... ok
+test ignore::tests::path_prefix_matches_from_root ... ok
+test ignore::tests::segment_matches_component_anywhere ... ok
+test checker::tests::denies_sensitive_paths ... ok
+test sink::tests::mutations_follow_the_configured_action_once_contaminated ... ok
+test sink::tests::provenance_defaults_to_clean ... ok
+test ignore::tests::empty_list_matches_nothing ... ok
+test sink::tests::the_decision_does_not_depend_on_call_contents ... ok
+test ignore::tests::parse_skips_comments_and_blanks ... ok
+test ignore::tests::returns_the_source_line_as_reason ... ok
+test workspace::tests::rejects_absolute_outside ... ok
+test workspace::tests::rejects_dotdot_escape ... ok
+test workspace::tests::dotdot_within_workspace_is_allowed ... ok
+test workspace::tests::rejects_prefix_collision ... ok
+test workspace::tests::accepts_nested_valid_path ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test tests::is_stage_reference_only_matches_local_references ... ok
+test tests::stage_index_reads_the_numeric_prefix ... ok
+test tests::parses_the_papers_contract_shape ... ok
+test tests::contract_is_tolerant_of_missing_sections_and_case ... ok
+test tests::the_scaffold_contracts_round_trip ... ok
+test tests::fetch_mode_unfolds_stage_references_but_notes_them ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 10 tests
+test discover_rejects_a_non_workspace ... ok
+test scaffold_refuses_to_clobber_a_nonempty_dir ... ok
+test discovery_orders_stages_numerically_not_lexically ... ok
+test scaffold_then_discover_finds_three_ordered_stages ... ok
+test reference_and_working_layers_are_classified ... ok
+test composed_prompt_carries_the_output_directive ... ok
+test missing_input_is_recorded_not_fatal ... ok
+test plan_composes_every_stage_in_order ... ok
+test a_contract_cannot_pull_context_from_outside_the_workspace ... ok
+test compose_scopes_layers_and_wires_prior_output_as_layer4 ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 131 tests
+test controlled_dispatch::tests::navigation_exhaustion_uses_has_more_not_a_filled_cap ... ok
+test controlled_dispatch::tests::verification_rejects_mutation_and_observation_metadata ... ok
+test compact::tests::maybe_compact_below_trigger_is_noop ... ok
+test compact::tests::maybe_compact_not_enough_history_is_noop ... ok
+test compact::tests::render_transcript_names_roles_and_tool_calls ... ok
+test compact::tests::maybe_compact_summarizer_failure_is_nonfatal ... ok
+test controlled_dispatch::tests::controller_block_feedback_is_stable_and_actionable_for_every_reason ... ok
+test compact::tests::maybe_compact_folds_older_turns_keeps_recent_tail ... ok
+test controller::tests::legacy_state_never_accepts_controller_transitions ... ok
+test compact::tests::maybe_compact_repeat_fold_never_accumulates ... ok
+test compact::tests::maybe_compact_trigger_boundary_is_exclusive_below ... ok
+test controlled_dispatch::tests::no_effect_feedback_distinguishes_typed_causes_and_structural_operations ... ok
+test controller::tests::epoch_and_check_attempt_overflow_fail_closed ... ok
+test controller::tests::measured_effect_advances_once_and_records_exact_authored_evidence ... ok
+test controller::tests::directory_preconditions_and_effects_need_no_content_evidence ... ok
+test controller::tests::prior_turn_boundary_and_complete_reread_are_enforced ... ok
+test controller::tests::requested_range_shapes_are_validated_without_guessing_omitted_bounds ... ok
+test controller::tests::failed_check_repair_rebuilds_same_identity_coverage_from_later_pages ... ok
+test controller::tests::checkpoint_cannot_erase_failure_or_pass_execution_state ... ok
+test controller::tests::recovery_packet_json_escapes_every_dynamic_path_and_reason ... ok
+test controller::tests::failed_check_requires_a_later_turn_global_barrier_and_path_specific_read ... ok
+test controller::tests::resume_discards_inherited_coverage_and_rebuilds_it_from_new_pages ... ok
+test controller::tests::same_named_check_at_same_epoch_is_refused_before_a_second_attempt ... ok
+test controller::tests::checkpoint_and_recovery_packet_are_canonical_and_byte_stable ... ok
+test controller::tests::stale_precondition_witness_preserves_cross_shape_races ... ok
+test controller::tests::workspace_effect_rejects_empty_identityless_and_impossible_postimages ... ok
+test failure::tests::a_successful_call_resets_the_streak ... ok
+test failure::tests::a_zero_dispatch_turn_never_trips ... ok
+test failure::tests::blocked_completion_is_removed_from_execution_counts ... ok
+test failure::tests::control_only_turn_breaks_a_consecutive_failure_streak ... ok
+test failure::tests::controller_only_turn_preserves_the_existing_streak ... ok
+test failure::tests::malformed_attribution_fails_closed_without_suppressing_the_streak ... ok
+test failure::tests::mixed_execution_error_and_blocked_completion_keeps_the_real_failure ... ok
+test controlled_dispatch::tests::diagnostic_normalization_is_platform_and_workspace_stable ... ok
+test failure::tests::mixed_turns_keep_only_real_results ... ok
+test failure::tests::multi_call_turns_count_when_all_error ... ok
+test failure::tests::warns_then_stops_on_an_all_failed_streak ... ok
+test grammar::tests::action_schema_branch_count ... ok
+test grammar::tests::action_schema_includes_terminator_when_passed ... ok
+test grammar::tests::action_schema_includes_thought ... ok
+test grammar::tests::parse_json_action_happy ... ok
+test grammar::tests::parse_json_action_rejects_missing_args ... ok
+test grammar::tests::parse_json_action_rejects_missing_tool ... ok
+test grammar::tests::parse_json_action_rejects_non_object ... ok
+test controlled_dispatch::tests::unverifiable_mutation_effects_fail_before_tool_result ... ok
+test grammar::tests::parse_json_action_with_thought ... ok
+test oscillation::tests::a_two_cycle_is_stopped ... ok
+test oscillation::tests::a_three_cycle_is_deliberately_not_caught ... ok
+test oscillation::tests::argument_order_does_not_matter ... ok
+test oscillation::tests::empty_turns_are_ignored ... ok
+test outcome::tests::only_clean_completion_reasons_are_successful ... ok
+test oscillation::tests::one_alternation_is_fine ... ok
+test progress::tests::a_tool_name_change_resets_the_streak ... ok
+test oscillation::tests::genuine_progress_is_never_stopped ... ok
+test progress::tests::name_set_is_order_independent ... ok
+test progress::tests::the_defining_contrast_same_tool_different_args ... ok
+test progress::tests::warns_then_stops_on_a_same_name_streak ... ok
+test protocol::tests::constraint_capable_selects_constrained_json ... ok
+test protocol::tests::native_only_selects_native_tools ... ok
+test protocol::tests::neither_selects_text_xml ... ok
+test protocol::tests::override_always_wins ... ok
+test grammar::tests::parse_action_rejects_garbage ... ok
+test replay::tests::recovery_checkpoint_history_and_guard_coordinates_are_canonical ... ok
+test grammar::tests::parse_action_rejects_partial_xml ... ok
+test grammar::tests::parse_action_rejects_non_action_object ... ok
+test grammar::tests::parse_action_roundtrip ... ok
+test replay::tests::replay_missing_session_prompt_is_an_error ... ok
+test replay::tests::pre_evidence_trace_fixture_replays_as_legacy ... ok
+test replay::tests::replay_discards_a_turn_end_with_no_confirming_next_turn_start ... ok
+test replay::tests::replay_discards_a_dangling_mid_turn ... ok
+test replay::tests::replay_already_stopped_is_an_error ... ok
+test controlled_dispatch::tests::partial_error_effect_advances_epoch_before_tool_result ... ok
+test replay::tests::invalid_checkpoint_boundaries_fail_before_compaction_can_project_them ... ok
+test replay::tests::fully_resulted_eof_tail_projects_controller_block_count ... ok
+test replay::tests::evidence_replay_requires_projected_state_and_derives_safe_crash_reason ... ok
+test terminator::tests::controls_include_clarification_in_every_protocol_and_plan_terminates_with_plan ... ok
+test terminator::tests::request_descriptor_is_strict_and_supports_free_form ... ok
+test terminator::tests::request_name_detection_is_exact ... ok
+test terminator::tests::request_parser_accepts_valid_and_free_form_arguments ... ok
+test replay::tests::evidence_replay_preserves_a_complete_intentional_pause_suffix ... ok
+test terminator::tests::request_parser_rejects_malformed_arguments ... ok
+test replay::tests::replay_preserves_terminator_position_mid_turn ... ok
+test replay::tests::replay_preserves_native_multi_tool_call_order ... ok
+test trace_structure::tests::checkpoint_cannot_erase_an_active_turn ... ok
+test trace_structure::tests::check_outcomes_attempts_and_same_epoch_uniqueness_are_causal ... ok
+test trace_structure::tests::checkpoint_controller_block_counts_match_policy_and_typed_history ... ok
+test trace_structure::tests::evidence_completion_gate_cannot_erase_required_checks ... ok
+test trace_structure::tests::errored_result_may_follow_a_measured_effect_and_exact_legacy_mirror ... ok
+test trace_structure::tests::controller_block_target_and_stale_witness_are_verified ... ok
+test replay::tests::replay_preserves_native_text_alongside_tool_calls ... ok
+test trace_structure::tests::evidence_event_versions_and_order_fail_closed ... ok
+test trace_structure::tests::evidence_planner_fails_closed_until_its_trace_protocol_exists ... ok
+test trace_structure::tests::evidence_completion_gate_is_unique_and_cannot_precede_a_later_effect ... ok
+test replay::tests::replay_applies_one_history_compaction ... ok
+test trace_structure::tests::evidence_policy_accepts_a_causally_matched_observation ... ok
+test trace_structure::tests::evidence_policy_does_not_treat_git_read_as_an_unmeasured_safe_read ... ok
+test trace_structure::tests::legacy_policy_rejects_known_controller_events_instead_of_ignoring_them ... ok
+test trace_structure::tests::global_repair_barrier_block_is_bound_to_the_new_attempted_target ... ok
+test trace_structure::tests::history_compaction_does_not_change_projected_controller_truth ... ok
+test trace_structure::tests::modern_turn_cannot_be_overwritten_without_commit ... ok
+test trace_structure::tests::navigation_payload_must_match_root_literal_and_cap_arguments ... ok
+test trace_structure::tests::observation_payload_must_match_path_and_literal_range_arguments ... ok
+test trace_structure::tests::no_effect_and_syntax_blocks_require_truthful_typed_witnesses ... ok
+test trace_structure::tests::pending_clarification_requires_prompt_and_both_answer_anchors ... ok
+test trace_structure::tests::proposal_and_dispatch_must_match_exactly ... ok
+test trace_structure::tests::resumed_controller_checkpoint_must_match_core_coordinates ... ok
+test trace_structure::tests::structural_mutations_are_effect_recording_tools ... ok
+test trace_structure::tests::same_turn_observation_cannot_authorize_a_later_call_in_the_batch ... ok
+test trace_structure::tests::recovery_packet_order_handles_no_amendment_generic_and_clarification_resumes ... ok
+test replay::tests::evidence_core_and_controller_projection_keep_effect_and_check_parity ... ok
+test trace_structure::tests::unknown_tool_cannot_forge_a_typed_workspace_effect ... ok
+test trace_structure::tests::successful_evidence_completion_requires_a_current_active_turn_gate ... ok
+test trace_structure::tests::unsupported_check_block_must_match_the_active_unconfigured_name ... ok
+test trace_structure::tests::typed_effect_requires_compatibility_mirror_and_call_target ... ok
+test trace_structure::tests::unsupported_mutation_blocks_must_name_exact_static_targets ... ok
+test replay::tests::replay_reconstructs_a_clean_constrained_json_session ... ok
+test replay::tests::replay_reconstructs_no_progress_guard_nudge ... ok
+test replay::tests::replay_applies_two_sequential_history_compactions ... ok
+test replay::tests::replay_drops_only_a_torn_tail_then_preserves_dispatch_ambiguity ... ok
+test replay::tests::replay_reconstructs_xml_parse_error_nudge_falls_back_to_generic ... ok
+test replay::tests::later_pause_and_answer_checkpoints_must_match_projected_history_exactly ... ok
+test replay::tests::replay_reconstructs_truncated_turn_retry ... ok
+test replay::tests::replay_takes_the_truncation_cap_from_the_trace ... ok
+test replay::tests::replay_reconstructs_repetition_guard_nudge ... ok
+test replay::tests::evidence_clarification_resume_anchors_the_answer_without_a_generic_packet ... ok
+test replay::tests::evidence_resume_packet_is_literal_history_after_base_or_generic_anchors ... ok
+test replay::tests::evidence_crash_prefix_retries_predispatch_without_inventing_an_effect ... ok
+test replay::tests::unresolved_terminal_control_with_resulted_sibling_is_ambiguous ... ok
+test replay::tests::evidence_resume_of_resume_uses_the_latest_projected_controller_state ... ok
+test replay::tests::old_checkpoint_omission_recovers_only_typed_controller_block_counts ... ok
+test replay::tests::evidence_replay_accepts_safe_answer_eof_and_rejects_incomplete_anchor_windows ... ok
+
+test result: ok. 131 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 8 tests
+test an_approved_tainted_write_actually_happens ... ok
+test an_untainted_preview_has_no_warning ... ok
+test without_an_approver_require_approval_still_denies ... ok
+test the_preview_carries_the_tool_and_target ... ok
+test approval_lets_the_write_through ... ok
+test the_preview_discloses_taint ... ok
+test rejection_blocks_the_write_and_tells_the_model ... ok
+test one_tool_call_prompts_the_human_once ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+
+running 3 tests
+test non_retryable_aborts_immediately ... ok
+test backoff_exhaustion ... ok
+test backoff_schedule ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 3 tests
+test committed_clarification_recovers_pending_input_before_terminal_checkpoint ... ok
+test mixed_clarification_turn_executes_no_sibling_mutation ... ok
+test clarification_pause_is_durable_and_answer_resumes_the_original_objective ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 5 tests
+test resume_only_folds_new_post_resume_turns ... ok
+test resume_seeds_compactor_numbering_consistently ... ok
+test real_run_compact_kill_replay_resume_shrinks_history ... ok
+test compaction_triggers_and_shrinks_next_prompt_assembled ... ok
+test history_compacted_traced_after_triggering_turn_start ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+
+running 3 tests
+test constrained_json_carries_action_schema ... ok
+test plan_mode_dispatches_read_tools_and_terminates ... ok
+test constrained_json_dispatches_tool ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+
+
+running 15 tests
+test evidence_check_process ... ok
+test planner_rejection_writes_no_trace_or_workspace_effect ... ok
+test sink_denial_happens_before_a_verification_process_starts ... ok
+test multi_path_effect_advances_one_epoch_and_trace_verifies ... ok
+test stale_commit_is_typed_and_an_admitted_call_prompts_once ... ok
+test evidence_guidance_is_added_to_custom_prompts_and_legacy_is_literal ... ok
+test real_errors_still_stop_when_a_turn_also_has_a_block_and_blocked_completion ... ok
+test repeated_passed_check_points_to_completion_instead_of_mutation ... ok
+test blind_and_same_turn_mutations_are_rejected_before_the_callback ... ok
+test repeated_check_is_blocked_before_a_second_process_starts ... ok
+test no_effect_and_syntax_regression_are_typed_before_approval ... ok
+test blocked_task_complete_breaks_execution_failure_streak_before_recovery ... ok
+test content_and_structural_no_effect_feedback_stays_truthful ... ok
+test failed_check_no_effect_and_repair_blocks_allow_the_recovery_sequence ... ok
+test full_evidence_path_reads_edits_repairs_verifies_and_completes ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.06s
+
+
+running 2 tests
+test all_failing_turns_warn_then_stop_with_repeated_failure ... ok
+test a_success_resets_and_avoids_the_stop ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.37s
+
+
+running 5 tests
+test textxml_request_shape ... ok
+test textxml_terminator_intercepted ... ok
+test textxml_malformed_action_rejected ... ok
+test textxml_happy_path ... ok
+test textxml_repetition_guard ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s
+
+
+running 2 tests
+test test_hooks_error ... ok
+test test_hooks_success ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+
+running 6 tests
+test empty_completion_nudges_then_stops ... ok
+test happy_path_golden_trace_order ... ok
+test denied_tool_feeds_back ... ok
+test unknown_tool_feeds_back ... ok
+test max_turns_still_emits_last_text ... ok
+test max_turns_budget ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.41s
+
+
+running 5 tests
+test identical_repeats_still_report_as_repetition ... ok
+test it_stops_well_inside_the_turn_budget ... ok
+test the_model_is_warned_before_being_stopped ... ok
+test the_live_two_cycle_is_stopped_before_max_turns ... ok
+test genuine_progress_is_never_stopped ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.09s
+
+
+running 2 tests
+test flail_warns_then_stops_with_no_progress ... ok
+test a_tool_change_resets_and_avoids_the_stop ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.13s
+
+
+running 5 tests
+test a_contaminated_run_proceeds_once_a_human_approves ... ok
+test a_contaminated_run_denies_when_nobody_can_approve ... ok
+test reads_still_work_on_a_contaminated_run ... ok
+test the_decision_is_independent_of_call_contents ... ok
+test a_clean_run_is_never_gated ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.61s
+
+
+running 7 tests
+test proposal_before_dispatch_is_safely_retried ... ok
+test successful_terminal_commit_is_not_resumable_if_session_end_was_not_written ... ok
+test dispatched_tail_without_result_fails_closed_as_ambiguous ... ok
+test fully_resulted_tail_is_recovered_without_reexecuting_it ... ok
+test checkpoint_cannot_erase_an_active_or_ambiguous_turn ... ok
+test a_later_turn_cannot_overwrite_an_uncommitted_modern_turn ... ok
+test resume_uses_a_fresh_budget_but_keeps_absolute_turn_ids ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 3 tests
+test repetition_warn_then_stop ... ok
+test order_change_is_not_a_repeat ... ok
+test repetition_resets_on_change ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+
+
+running 11 tests
+test resume_target_inherits_omitted_policy_and_rejects_an_explicit_mismatch ... ok
+test evidence_resume_rejects_required_check_drift_before_trace_or_dispatch ... ok
+test unavailable_policies_write_no_event_and_dispatch_no_tool ... ok
+test resume_none_prompt_none_is_an_error_not_a_panic ... ok
+test resume_some_with_extra_prompt_appends_one_user_message ... ok
+test live_evidence_resume_injects_byte_identical_stale_recovery_packet_and_verifies ... ok
+test resume_some_continues_from_replayed_state ... ok
+test real_run_then_replay_then_resume_reaches_task_complete ... ok
+test resume_preserves_failure_streak_across_a_controller_only_turn ... ok
+test resume_rebuilds_failure_streak_with_blocked_completion_as_control ... ok
+test resume_does_not_reset_failure_streak_for_predispatch_task_complete_stop ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+
+running 2 tests
+test streaming_retry_does_not_replay_failed_attempt_deltas ... ok
+test stream_sink_some_drives_dispatch ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 6 tests
+test task_complete_mixed_turn ... ok
+test task_complete_terminates ... ok
+test malformed_summary_still_terminates ... ok
+test task_complete_mid_turn_preserves_emission_order ... ok
+test task_complete_always_offered ... ok
+test terminator_result_not_fed_back ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+
+
+running 6 tests
+test replay_rebuilds_the_same_context_window_the_run_used_at_the_default_cap ... ok
+test replay_rebuilds_the_same_context_window_the_run_used_at_a_non_default_cap ... ok
+test small_tool_output_is_untouched ... ok
+test large_tool_output_reaches_the_model_truncated ... ok
+test the_trace_keeps_the_full_untruncated_output ... ok
+test the_model_is_told_the_output_was_truncated ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+
+
+running 2 tests
+test clean_run_stays_quiet_at_warn ... ok
+test guard_trip_emits_a_warn ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+
+
+running 3 tests
+test truncated_twice_stops ... ok
+test truncation_distinct_from_parse_failure ... ok
+test truncated_once_then_recovers ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+
+
+running 2 tests
+test completion_is_blocked_until_every_required_check_passes ... ok
+test a_later_mutation_makes_prior_check_evidence_stale ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+
+running 4 tests
+test tests::missing_library_is_typed_err ... ok
+test tests::version_mismatch_is_typed_err ... ok
+test tests::protocol_teaching_is_exclusive ... ok
+test tests::compose_all_pairs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 18 tests
+test mock::tests::provider_is_dyn_compatible ... ok
+test stream_scan::tests::ambiguous_trailing_escape_is_held_back ... ok
+test stream_scan::tests::tool_field_always_precedes_args_content ... ok
+test stream_scan::tests::ambiguous_trailing_unicode_escape_is_held_back ... ok
+test mock::tests::mock_replays_script_in_order ... ok
+test stream_scan::tests::closing_quote_stops_emission ... ok
+test stream_scan::tests::malformed_unicode_escape_stops_gracefully ... ok
+test stream_scan::tests::non_task_complete_tool_never_emits_text ... ok
+test stream_scan::tests::tool_named_fires_once ... ok
+test stream_scan::tests::escaped_characters_decode_correctly ... ok
+test traits::tests::default_complete_streaming_never_fires_tool_named ... ok
+test traits::tests::default_complete_streaming_no_delta_for_tool_only ... ok
+test stream_scan::tests::summary_streams_incrementally ... ok
+test types::tests::retryability_per_variant ... ok
+test types::tests::validate_accepts_lawful_combinations ... ok
+test types::tests::validate_rejects_constraint_and_tools ... ok
+test traits::tests::default_complete_streaming_matches_complete_with_text ... ok
+test types::tests::constraint_jsonschema_serde_roundtrip ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test mock_loop_skeleton ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 38 tests
+test airlock::tests::shell_metacharacters_are_rejected ... ok
+test airlock::tests::ordinary_hostnames_are_accepted ... ok
+test airlock::tests::structurally_invalid_names_are_rejected ... ok
+test airlock::tests::a_bad_allowlist_fails_before_touching_docker ... ok
+test retriever::tests::parse_status_devices_reads_online_offline ... ok
+test retriever::tests::tailnet_retriever_plane_label ... ok
+test sandbox::tests::capabilities_are_always_dropped ... ok
+test sandbox::tests::a_writable_mount_omits_ro_and_must_be_asked_for_by_name ... ok
+test retriever::tests::shell_single_quote_neutralizes_injections ... ok
+test sandbox::tests::no_mount_means_no_host_filesystem_reaches_the_sandbox ... ok
+test retriever::tests::ssh_cat_argv_escapes_path ... ok
+test retriever::tests::ssh_search_argv_plain_form ... ok
+test retriever::tests::ssh_search_argv_tailscale_form ... ok
+test sandbox::tests::a_read_only_mount_is_marked_ro_and_sets_the_workdir ... ok
+test sandbox::tests::mounting_does_not_relax_the_network_or_capabilities ... ok
+test sandbox::tests::the_default_requires_gvisor ... ok
+test sandbox::tests::the_airlock_uses_the_isolated_network_not_bridge ... ok
+test sandbox::tests::the_command_follows_the_image ... ok
+test sandbox::tests::the_default_denies_the_network ... ok
+test sandbox::tests::unrestricted_is_available_but_must_be_named ... ok
+test web::tests::retrieve_non_existent_domain_fails ... ignored
+test web::tests::retrieve_valid_url_downloads_content ... ignored
+test tests::parses_and_stamps_provenance ... ok
+test tests::malformed_output_is_error_not_panic ... ok
+test tests::request_is_the_quarantine_shape ... ok
+test tests::injection_is_contained_as_data ... ok
+test retriever::tests::availability_and_plane ... ok
+test retriever::tests::research_all_all_unavailable_is_empty ... ok
+test web::tests::retrieve_invalid_scheme_rejected ... ok
+test retriever::tests::research_on_unavailable_retriever_is_empty ... ok
+test retriever::tests::matches_by_name_and_is_case_insensitive ... ok
+test retriever::tests::research_pipeline_source_to_quarantined_digest ... ok
+test retriever::tests::research_all_skips_unavailable_plane ... ok
+test retriever::tests::research_all_dedups_shared_source_with_one_model_call ... ok
+test retriever::tests::matches_by_content_and_excludes_non_matches ... ok
+test retriever::tests::skips_noise_dirs_and_binary_files ... ok
+test retriever::tests::respects_max_files_cap ... ok
+test retriever::tests::research_all_aggregates_across_planes ... ok
+
+test result: ok. 36 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 4 tests
+test an_injecting_allowlist_creates_nothing ... ok
+test ferric_stands_up_an_enforcing_airlock ... ok
+test dropping_the_airlock_removes_its_resources ... ok
+test the_gateway_image_needs_no_package_fetch ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+
+
+running 6 tests
+test terms_are_conjunctive ... ok
+test a_filename_term_still_matches ... ok
+test a_multi_word_query_matches ... ok
+test a_blank_query_matches_nothing ... ok
+test a_single_word_query_matches ... ok
+test order_and_punctuation_do_not_matter ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 10 tests
+test the_gvisor_default_fails_closed_when_runsc_is_absent ... ok
+test unrestricted_egress_actually_works ... ok
+test a_read_only_mount_refuses_writes ... ok
+test the_host_outside_the_mount_is_unreachable ... ok
+test a_command_runs_inside_the_sandbox ... ok
+test a_denied_network_really_cannot_reach_out ... ok
+test a_writable_mount_persists_to_the_host ... ok
+test the_airlock_enforces_the_allowlist_and_cannot_be_bypassed ... ok
+test a_mounted_workspace_is_readable_inside_the_sandbox ... ok
+test capabilities_are_really_dropped ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+
+
+running 16 tests
+test tests::a_declared_name_must_match_its_directory ... ok
+test tests::names_are_restricted_to_a_safe_charset ... ok
+test tests::parses_the_conventional_format ... ok
+test tests::rejects_malformed_frontmatter ... ok
+test tests::skills_live_under_the_model_immutable_ferric_dir ... ok
+test tests::tolerates_quotes_crlf_and_a_bom ... ok
+test tests::a_missing_skills_directory_is_not_an_error ... ok
+test tests::an_allowlisted_but_uninstalled_skill_is_quietly_skipped ... ok
+test tests::a_path_shaped_skill_name_is_just_unknown ... ok
+test tests::a_requested_skill_that_is_not_installed_is_reported ... ok
+test tests::a_requested_and_allowlisted_skill_is_cleared_once_as_requested ... ok
+test tests::discovery_alone_authorizes_nothing ... ok
+test tests::repeating_a_requested_skill_clears_it_once ... ok
+test tests::discovery_reports_bad_skills_without_hiding_good_ones ... ok
+test tests::both_authorities_clear_a_skill_and_are_distinguishable ... ok
+test tests::compose_renders_instructions_for_authorized_skills_only ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 73 tests
+test builtin::blocking::tests::no_runtime_is_an_error_not_a_panic ... ok
+test builtin::check_syntax::tests::syntax_regression_matrix_blocks_invalid_from_trusted_or_compiler_failure_baselines ... ok
+test builtin::check_syntax::tests::no_extension_returns_none ... ok
+test builtin::check_syntax::tests::controlled_compiler_bounds_source_size_without_starting_a_process ... ok
+test builtin::check_syntax::tests::controlled_compiler_treats_invalid_utf8_as_invalid_source ... ok
+test builtin::check_syntax::tests::unrecognized_extension_returns_none ... ok
+test builtin::blocking::tests::current_thread_runtime_is_an_error_not_a_panic ... ok
+test builtin::edit_file::tests::descriptor_explains_exact_span_and_whole_definition_rewrites ... ok
+test builtin::blocking::tests::multi_thread_runtime_runs_the_future ... ok
+test builtin::check_syntax::tests::broken_python_returns_in_process_warning ... ok
+test builtin::check_syntax::tests::controlled_diagnostic_fingerprint_is_path_independent_and_lowercase ... ok
+test builtin::check_syntax::tests::compiler_failure_baseline_blocks_a_proven_invalid_candidate ... ok
+test builtin::check_syntax::tests::pep_695_alias_without_type_parameters_compiles ... ok
+test builtin::check_syntax::tests::pep_695_type_parameters_are_preflighted_without_invoking_the_compiler ... ok
+test builtin::check_syntax::tests::unimplemented_codegen_is_unchecked_and_nonblocking ... ok
+test builtin::check_syntax::tests::clean_python_returns_none ... ok
+test builtin::check_syntax::tests::contextually_valid_control_flow_compiles ... ok
+test builtin::fetch_reference::tests::spec_declares_the_dark_matter_argument_set ... ok
+test builtin::check_syntax::tests::top_level_control_flow_is_invalid_and_blocks_absent_or_valid_transitions ... ok
+test builtin::fetch_reference::tests::target_path_is_references_dir ... ok
+test builtin::check_syntax::tests::candidate_compiler_creates_no_temp_or_pycache_files ... ok
+test builtin::controlled_file::tests::appearance_between_ancestor_check_and_exclusive_open_is_stale_without_overwrite ... ok
+test builtin::fetch_reference::tests::an_uncapped_result_does_not_claim_truncation ... ok
+test builtin::run_check::tests::duplicate_and_unsafe_names_are_rejected ... ok
+test builtin::fetch_reference::tests::no_references_dir_is_graceful ... ok
+test builtin::fetch_reference::tests::a_call_naming_nothing_is_an_error ... ok
+test builtin::fetch_reference::tests::a_dark_matter_shaped_call_is_accepted ... ok
+test builtin::controlled_file::tests::partial_candidate_write_failure_preserves_target_and_leaves_no_temp_effect ... ok
+test builtin::fetch_reference::tests::k_caps_results ... ok
+test builtin::controlled_read::tests::leaf_link_race_after_boundary_check_is_not_read ... ok
+test builtin::controlled_file::tests::final_boundary_leaf_replacement_is_restored_and_never_reported_as_success ... ok
+test builtin::fetch_reference::tests::a_capped_result_says_it_was_truncated ... ok
+test builtin::fetch_reference::tests::longer_terms_still_match_as_substrings ... ok
+test builtin::find_files::tests::controlled_find_fails_when_an_enumerated_entry_disappears ... ok
+test builtin::fetch_reference::tests::no_match_reports_cleanly ... ok
+test builtin::controlled_read::tests::ancestor_link_race_after_boundary_check_is_not_followed ... ok
+test builtin::task_registry::tests::a_poisoned_status_lock_is_recovered_not_fatal ... ok
+test builtin::search_files::tests::controlled_search_fails_when_an_enumerated_entry_disappears ... ok
+test builtin::task_registry::tests::status_label_renders_every_variant ... ok
+test builtin::run_check::tests::controlled_preparation_is_exact_typed_and_does_not_spawn ... ok
+test control::tests::logical_lines_preserve_empty_crlf_and_trailing_newline_semantics ... ok
+test builtin::fetch_reference::tests::returns_only_matching_chunk ... ok
+test builtin::fetch_reference::tests::section_filter_restricts_to_heading ... ok
+test builtin::controlled_file::tests::hard_link_created_after_final_candidate_check_is_reported_opaque ... ok
+test builtin::search_files::tests::controlled_search_reports_non_utf8_read_failure_instead_of_no_matches ... ok
+test registry::tests::controlled_policy_filters_opaque_before_preserving_order_and_cap ... ok
+test registry::tests::tools_for_policy_max_ring_override_caps ... ok
+test builtin::fetch_reference::tests::short_token_query_matches ... ok
+test registry::tests::tools_for_policy_sorted_and_capped ... ok
+test builtin::controlled_file::tests::hard_link_created_during_candidate_write_is_reported_opaque ... ok
+test registry::tests::tools_for_policy_trims_outer_ring_first ... ok
+test registry::tests::an_untainted_call_never_reaches_the_approver ... ok
+test builtin::fetch_reference::tests::short_token_matches_whole_words_only ... ok
+test registry::tests::check_records_on_deny ... ok
+test registry::tests::check_records_on_allow ... ok
+test builtin::fetch_reference::tests::target_scopes_the_search_to_one_corpus ... ok
+test builtin::fetch_reference::tests::target_matches_a_folder_prefix ... ok
+test registry::tests::controlled_sink_denial_never_commits_a_typed_mutation ... ok
+test registry::tests::require_approval_denies_when_the_human_rejects ... ok
+test registry::tests::require_approval_runs_the_tool_when_the_human_approves ... ok
+test registry::tests::require_approval_without_an_approver_denies ... ok
+test registry::tests::execute_blocks_on_deny ... ok
+test registry::tests::output_truncation_preserves_full ... ok
+test registry::tests::unknown_tool_outcome ... ok
+test registry::tests::ferric_dir_write_denied ... ok
+test builtin::controlled_file::tests::displaced_original_move_before_cleanup_is_opaque_and_not_deleted ... ok
+test builtin::shell_exec::tests::execution_timeout_works ... ok
+test builtin::shell_exec::tests::nonzero_exit_is_reported_as_an_error ... ok
+test builtin::shell_exec::tests::output_cap_truncates ... ok
+test builtin::run_check::tests::nonzero_and_output_cap_are_reported ... ok
+test builtin::run_check::tests::admitted_commit_spawns_once_and_retains_typed_full_diagnostic ... ok
+test builtin::run_check::tests::fixed_check_passes_and_unknown_name_fails ... ok
+test builtin::run_check::tests::timeout_is_a_tool_error ... ok
+
+test result: ok. 73 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s
+
+
+running 6 tests
+test unknown_task_is_an_error_on_every_action ... ok
+test send_input_from_a_current_thread_runtime_errors_instead_of_panicking ... ok
+test send_input_succeeds_on_a_multi_thread_runtime ... ok
+test back_to_back_tasks_get_distinct_ids ... ok
+test test_background_tasks ... ok
+test finished_tasks_can_be_removed ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 45 tests
+test git_read_extracts_paths_from_args ... ok
+test git_write_extracts_paths_from_args ... ok
+test apply_patch_malformed_or_empty_is_error ... ok
+test delete_path_removes_empty_dir ... ok
+test delete_path_missing_is_error ... ok
+test delete_path_into_ferric_denied ... ok
+test copy_file_directory_source_errors ... ok
+test edit_file_empty_old_string_is_error ... ok
+test edit_file_outside_workspace_denied ... ok
+test copy_file_into_ferric_denied ... ok
+test delete_path_removes_file ... ok
+test delete_path_outside_workspace_denied ... ok
+test delete_path_nonempty_dir_needs_recursive ... ok
+test apply_patch_absent_context_is_error_and_no_write ... ok
+test edit_file_absent_old_string_is_error_and_no_write ... ok
+test rings_gate_builtins_by_tier ... ok
+test move_path_into_ferric_denied ... ok
+test ferricignore_policy_file_is_write_protected ... ok
+test make_dir_creates_parents_and_is_idempotent ... ok
+test apply_patch_context_disambiguates_the_second_occurrence ... ok
+test apply_patch_multi_hunk_applies_in_order ... ok
+test read_missing_file_is_error_not_panic ... ok
+test apply_patch_single_hunk_applies ... ok
+test multi_edit_applies_ordered_batch_atomically ... ok
+test multi_edit_missing_old_leaves_file_unchanged ... ok
+test multi_edit_empty_edits_and_empty_old_error ... ok
+test move_path_outside_to_denied ... ok
+test move_path_missing_source_is_error ... ok
+test copy_file_copies_keeps_original_and_creates_parent ... ok
+test ferricignore_blocks_ignored_paths ... ok
+test list_dir_deterministic_order ... ok
+test find_files_matches_names_sorted_scoped_and_skips_noise ... ok
+test search_files_refuses_outside_workspace ... ok
+test move_path_renames_file ... ok
+test tools_refuse_outside_workspace ... ok
+test edit_file_replaces_first_occurrence ... ok
+test read_file_pagination ... ok
+test move_path_renames_dir ... ok
+test search_files_caps_results ... ok
+test search_files_miss_is_empty_not_error ... ok
+test search_files_deterministic ... ok
+test search_files_finds_matches_with_relpath_and_lineno ... ok
+test legacy_python_warning_is_in_process_and_does_not_execute_sitecustomize ... ok
+test write_then_read_roundtrip ... ok
+test search_files_skips_binary_and_noise_dirs ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 15 tests
+test cas_race_from_absent_to_directory_reports_the_non_file_shape ... ok
+test malformed_empty_and_unsupported_shapes_fail_during_preparation ... ok
+test cas_race_from_existing_file_to_directory_is_typed_and_has_zero_effects ... ok
+test commit_io_error_still_reports_measured_effects_separately ... ok
+test cas_race_returns_typed_expected_and_observed_identities_without_effects ... ok
+test symlink_or_reparse_ancestors_are_rejected_without_touching_the_target ... ok
+test compiler_failure_baseline_blocks_invalid_but_not_unchecked_candidates ... ok
+test symlink_or_reparse_targets_are_rejected_during_preparation ... ok
+test identity_missing_match_and_net_zero_candidates_are_typed_no_effects ... ok
+test raced_link_ancestor_fails_closed_without_touching_either_directory ... ok
+test unsupported_syntax_is_explicitly_unchecked_and_legacy_write_still_creates_parents ... ok
+test hardlinked_targets_are_rejected_at_prepare_and_if_linked_after_prepare ... ok
+test create_and_modify_effects_preserve_exact_crlf_bytes_and_line_counts ... ok
+test python_syntax_matrix_blocks_regressions_and_warns_on_invalid_repairs ... ok
+test all_content_tools_prepare_then_commit_exact_candidates_after_a_clean_reset ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 10 tests
+test controlled_navigation_rejects_a_zero_result_cap ... ok
+test truncated_read_is_honest_and_retains_full_trace_output ... ok
+test read_file_line_semantics_cover_empty_and_trailing_newline ... ok
+test navigation_zero_results_are_explicit_and_stably_hashed ... ok
+test controlled_reads_reject_or_skip_links_outside_the_workspace ... ok
+test read_file_past_eof_is_an_explicit_empty_uncovered_range ... ok
+test read_file_preserves_exact_crlf_range_and_hashes_complete_raw_file ... ok
+test truncated_navigation_marks_the_model_view_but_hashes_full_results ... ok
+test search_navigation_normalizes_root_and_hashes_returned_bytes ... ok
+test navigation_reports_cap_and_exhaustion_independently ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 8 tests
+test controlled_execute_fails_closed_without_typed_preparation ... ok
+test controlled_read_fails_closed_before_prepare_without_an_explicit_capability ... ok
+test permission_intent_mismatch_fails_closed_before_run ... ok
+test legacy_execute_remains_available_for_opaque_tools ... ok
+test guard_denial_happens_before_tool_preparation ... ok
+test controlled_write_fails_closed_without_typed_preparation ... ok
+test controlled_failure_keeps_error_and_effect_channels_separate ... ok
+test controlled_enumeration_and_preparation_use_the_exact_explicit_allowlist ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test delete_of_an_absent_path_is_a_no_effect ... ok
+test make_dir_into_a_missing_parent_is_rejected ... ok
+test make_dir_on_an_existing_directory_is_a_no_effect ... ok
+test copy_of_a_directory_source_is_unsupported ... ok
+test delete_removes_an_empty_directory_with_a_directory_effect ... ok
+test make_dir_creates_a_directory_with_a_measured_effect ... ok
+test a_state_change_between_preparation_and_commit_is_a_stale_precondition ... ok
+test delete_of_a_non_empty_directory_is_unsupported ... ok
+test delete_removes_a_file_with_a_deleted_effect ... ok
+test move_onto_an_existing_destination_is_unsupported ... ok
+test move_directory_reports_directory_effects ... ok
+test make_dir_over_an_existing_file_is_unsupported ... ok
+test move_file_renames_and_reports_a_deletion_and_a_creation ... ok
+test copy_file_publishes_source_bytes_at_a_new_destination ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 1 test
+test guarded_traced_execution ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 32 tests
+test tests::controller_block_reason_wire_labels_are_explicit_and_stable ... ok
+test tests::history_compacted_roundtrip ... ok
+test tests::checkpoint_additive_collections_and_pending_input_default_when_omitted ... ok
+test tests::guard_turn_controller_blocks_are_additive_and_zero_omitted ... ok
+test tests::controller_block_witnesses_roundtrip_and_old_optional_fields_remain_readable ... ok
+test tests::requested_range_shapes_and_large_navigation_counts_roundtrip_losslessly ... ok
+test tests::session_start_resumed_from_roundtrip ... ok
+test tests::session_prompt_roundtrip_with_media ... ok
+test tests::the_trace_directory_is_ferric_trace ... ok
+test tests::turn_end_carries_completion ... ok
+test tests::turn_end_truncated_roundtrip ... ok
+test tests::a_written_trace_lands_in_the_trace_directory ... ok
+test reader::tests::replay_recovery_ignores_incomplete_unterminated_utf8_code_point ... ok
+test reader::tests::replay_recovery_rejects_incomplete_newline_terminated_record ... ok
+test reader::tests::malformed_known_recovery_checkpoint_is_not_downgraded_to_unknown ... ok
+test reader::tests::replay_recovery_rejects_complete_invalid_unterminated_record ... ok
+test reader::tests::strict_mode_rejects_incomplete_unterminated_final_record ... ok
+test reader::tests::replay_recovery_rejects_incomplete_newline_terminated_utf8_code_point ... ok
+test reader::tests::replay_recovery_rejects_complete_invalid_unterminated_utf8 ... ok
+test reader::tests::replay_recovery_ignores_incomplete_unterminated_final_record ... ok
+test tests::old_turn_end_line_parses_with_truncated_false ... ok
+test reader::tests::replay_recovery_reads_valid_unterminated_final_record ... ok
+test tests::an_old_policy_line_reads_back_at_the_default_cap_and_legacy_harness ... ok
+test reader::tests::replay_recovery_rejects_invalid_json_before_incomplete_utf8 ... ok
+test tests::create_new_refuses_to_append_a_second_session ... ok
+test tests::old_session_start_line_parses_with_none_resumed_from ... ok
+test tests::reader_tolerates_unknown_event ... ok
+test reader::tests::strict_mode_rejects_incomplete_unterminated_utf8_code_point ... ok
+test tests::s0_trace_still_parses ... ok
+test tests::seq_monotonic_per_session ... ok
+test tests::jsonl_roundtrip_all_event_types ... ok
+test tests::tool_result_full_output ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test refuses_to_operate_on_an_ancestor_repo ... ok
+test snapshot_leaves_no_temp_index_behind ... ok
+test snapshot_still_captures_untracked_files ... ok
+test snapshot_preserves_the_users_staged_index ... ok
+test test_snapshot_and_revert ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.99s
+

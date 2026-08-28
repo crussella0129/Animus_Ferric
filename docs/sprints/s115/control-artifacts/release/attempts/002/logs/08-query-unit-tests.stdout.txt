@@ -1,0 +1,40 @@
+
+running 35 tests
+test query::tests::fold_animus_md_falls_back_to_default_prompt ... ok
+test query::tests::fold_animus_md_appends_a_distinct_block ... ok
+test query::tests::checks_file_parses_fixed_argv_and_defaults ... ok
+test query::tests::run_config_matches_inline_computation ... ok
+test query::tests::external_trace_root_precreate_rejects_ancestor ... ok
+test query::tests::run_config_reused_across_calls ... ok
+test query::tests::external_trace_root_precreate_rejects_windows_case_alias ... ok
+test query::tests::sink_action_maps_to_the_named_policy ... ok
+test query::tests::external_trace_root_precreate_rejects_descendant ... ok
+test query::tests::sink_action_accepts_known_spellings_and_rejects_typos ... ok
+test query::tests::external_trace_root_precreate_rejects_dotdot_overlap_alias ... ok
+test query::tests::url_host_ignores_userinfo ... ok
+test query::tests::url_host_reads_ordinary_urls ... ok
+test query::tests::url_host_rejects_what_it_cannot_allowlist ... ok
+test query::tests::external_trace_root_precreate_rejects_equal ... ok
+test query::tests::route_files_enforces_per_file_and_aggregate_byte_limits ... ok
+test query::tests::route_files_resolves_inside_workspace_and_routes_text_and_media ... ok
+test query::tests::external_trace_root_resolves_nonexistent_tail ... ok
+test query::tests::default_source_resume_may_select_external_output ... ok
+test query::tests::checks_file_is_explicit_and_fail_closed ... ok
+test query::tests::external_trace_root_precreate_rejects_existing_file ... ok
+test query::tests::route_files_enforces_read_guard_and_ferricignore ... ok
+test query::tests::external_trace_root_postcreate_rejects_equal ... ok
+test query::tests::external_trace_root_postcreate_rejects_ancestor ... ok
+test query::tests::external_trace_resume_requires_and_reuses_explicit_root ... ok
+test query::tests::external_trace_root_postcreate_rejects_non_directory ... ok
+test query::tests::external_trace_root_postcreate_rejects_descendant ... ok
+test query::tests::external_trace_root_precreate_rejection_matrix ... ok
+test query::tests::external_trace_postcreate_hook_is_one_shot_and_cleanup_safe ... ok
+test query::tests::external_trace_root_postcreate_rejection_matrix ... ok
+test query::tests::trace_allocator_never_appends_same_millisecond_sessions ... ok
+test query::tests::external_trace_root_precreate_rejects_windows_junction ... ok
+test query::tests::external_trace_root_postcreate_rejects_windows_reparse ... ok
+test query::tests::runs_loop_with_prebuilt_provider ... ok
+test query::tests::powershell_quote_round_trips_argv ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.71s
+

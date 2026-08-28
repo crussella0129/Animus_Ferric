@@ -1330,3 +1330,33 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   review closed clean after explicit MaxTurns shell round-trip, lexical `..`
   overlap, and production-path post-create assurance revisions.
 - **Commit:** `13bf963b33f6e4ec73150ad4c9b78f86f7c0464b`
+
+## T-11501 (sprint 115)
+- **Description:** Qualified the Sprint 115 query source at commit
+  `894fdf40a324cb00988072ae39fe0219dfc39152` and published a freshly built
+  `backend-openai` release binary only after exact source-output byte and
+  SHA-256 parity. The append-only PowerShell control records bounded commands,
+  independent stream hashes, a clean Cargo/crates scope, the known unrelated
+  Sprint 114 edit, and four real default/external fresh/resume mock probes with
+  exact paths, public resume argv, stop reasons, and continuation links. The
+  first attempt truthfully stopped before Rust gates when empty clean-status
+  output exposed a parameter-binding bug; its partial evidence remains
+  untouched, the control gained a regression, and attempt 002 completed.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md),
+  [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-28T05:06:37Z
+- **Files modified:** `docs/sprints/s115/control-artifacts/release/`, ignored
+  `target/release/ferric.exe`, ignored
+  `target/s115-release-qualification/attempts/001/`, ignored
+  `target/s115-release-qualification/attempts/002/`,
+  `docs/work/tasks.md`, and `docs/work/completed-tasks.md`
+- **Verification:** all 20 attempt-002 gates passed, including locked format,
+  default/backend strict Clippy, targeted backend query and CLI tests, the
+  whole workspace, the fresh release build, version/help checks, and four
+  linked probes. Offline and live verification each reconciled 47 retained
+  files, 20 gates, and four traces. The published 21,209,088-byte binary is
+  `21cd2c358604783274d130049be757658b1589cf506e1e38f37267120399b65d`;
+  retained result hash
+  `3bcb6a647a1c07378d285d0fda404c5704a90daf1b38af4e5b51277465b0f5c9`
+  passed both verifier modes. No model server or inference ran.
+- **Commit:** PENDING

@@ -1,0 +1,2 @@
+[max_turns after 1 turn(s); trace: C:\Users\charl\Animus_Ferric\target\s115-release-qualification\attempts\002\probes\default\workspace\.ferric\trace\q-1787893540555-40100-0.jsonl]
+Resume: ferric query --resume '\\?\C:\Users\charl\Animus_Ferric\target\s115-release-qualification\attempts\002\probes\default\workspace\.ferric\trace\q-1787893540555-40100-0.jsonl' --workspace '\\?\C:\Users\charl\Animus_Ferric\target\s115-release-qualification\attempts\002\probes\default\workspace'
