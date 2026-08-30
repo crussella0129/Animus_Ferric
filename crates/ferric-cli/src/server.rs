@@ -26,8 +26,9 @@ use crate::server_process::{
 };
 use crate::server_registration::{
     CapturedRegistration, PublishError, RegistrationCoordinate, RegistrationInventory,
-    RegistrationScope, RegistrationSlot, RemovalOutcome, ReplacementOutcome, inventory_runfiles,
-    publish_mirrored, remove_if_unchanged, replace_if_unchanged, validate_runfile,
+    RegistrationScope, RegistrationSlot, RemovalError, RemovalFailureKind, RemovalOutcome,
+    ReplacementError, ReplacementOutcome, inventory_runfiles, publish_mirrored,
+    remove_if_unchanged, replace_if_unchanged, validate_runfile,
 };
 use crate::server_resolution::{
     Candidate, CandidateState, HealthState, Resolution, ResolutionIssue, ResolutionIssueKind,
@@ -1908,12 +1909,6 @@ fn discover_lifecycle_before_health_in(scope: &ManagedDiscoveryScope) -> Lifecyc
     discover_inventory_before_health_with(inventory, observe_registration)
 }
 
-fn discover_lifecycle_in(scope: &ManagedDiscoveryScope) -> LifecycleDiscovery {
-    let discovery = discover_lifecycle_before_health_in(scope);
-    let mut health = NativeHealthProbe;
-    complete_lifecycle_health_with(discovery, &mut health, revalidate_registration_after_health)
-}
-
 pub(crate) struct PendingManagedDiscovery {
     lifecycle: LifecycleDiscovery,
 }
@@ -2283,9 +2278,41 @@ fn executable_matches_engine(engine: Engine, executable: &Path) -> bool {
     }
 }
 
-fn argv_has_pair(argv: &[String], flag: &str, value: &str) -> bool {
-    argv.windows(2)
-        .any(|pair| pair[0] == flag && pair[1] == value)
+fn require_exact_argv_coordinate(
+    argv: &[String],
+    flags: &[&str],
+    expected: &str,
+    coordinate: &str,
+) -> Result<(), String> {
+    let mut occurrences = Vec::new();
+    for (index, argument) in argv.iter().enumerate() {
+        if flags.iter().any(|flag| argument == flag) {
+            let Some(value) = argv.get(index + 1) else {
+                return Err(format!(
+                    "observed argv ends after `{argument}` for the expected {coordinate}"
+                ));
+            };
+            occurrences.push((argument.as_str(), value.as_str()));
+        }
+        for flag in flags.iter().filter(|flag| flag.starts_with("--")) {
+            let prefix = format!("{flag}=");
+            if let Some(value) = argument.strip_prefix(&prefix) {
+                occurrences.push((*flag, value));
+            }
+        }
+    }
+    if occurrences.is_empty() {
+        return Err(format!(
+            "observed argv does not contain the expected {coordinate} pair `{}` `{expected}`",
+            flags.join("` or `")
+        ));
+    }
+    if let Some((flag, value)) = occurrences.iter().find(|(_, value)| *value != expected) {
+        return Err(format!(
+            "observed argv has conflicting {coordinate} pair `{flag} {value}`; expected `{expected}`"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_legacy_process_coordinates(
@@ -2302,83 +2329,684 @@ fn validate_legacy_process_coordinates(
     }
     match runfile.engine {
         Engine::LlamaServer => {
-            for (flag, value, coordinate) in [
-                ("--host", "127.0.0.1".to_string(), "loopback host"),
-                ("--port", runfile.port.to_string(), "registered port"),
-            ] {
-                if !argv_has_pair(&identity.argv, flag, &value) {
-                    return Err(format!(
-                        "observed argv does not contain the expected {coordinate} pair `{flag} {value}`"
-                    ));
-                }
+            require_exact_argv_coordinate(
+                &identity.argv,
+                &["--host"],
+                "127.0.0.1",
+                "loopback host",
+            )?;
+            require_exact_argv_coordinate(
+                &identity.argv,
+                &["--port"],
+                &runfile.port.to_string(),
+                "registered port",
+            )?;
+            if let Some(model) = &runfile.model {
+                require_exact_argv_coordinate(
+                    &identity.argv,
+                    &["-m", "--model"],
+                    model,
+                    "recorded model",
+                )?;
             }
-            if let Some(model) = &runfile.model
-                && !argv_has_pair(&identity.argv, "-m", model)
-                && !argv_has_pair(&identity.argv, "--model", model)
-            {
-                return Err(format!(
-                    "observed argv does not contain the recorded model `{model}`"
-                ));
+            if let Some(context) = runfile.context_size {
+                require_exact_argv_coordinate(
+                    &identity.argv,
+                    &["-c", "--ctx-size"],
+                    &context.to_string(),
+                    "recorded context size",
+                )?;
             }
-            if let Some(context) = runfile.context_size
-                && !argv_has_pair(&identity.argv, "-c", &context.to_string())
-                && !argv_has_pair(&identity.argv, "--ctx-size", &context.to_string())
-            {
-                return Err(format!(
-                    "observed argv does not contain the recorded context size {context}"
-                ));
+            if let Some(seed) = runfile.sampling_seed {
+                require_exact_argv_coordinate(
+                    &identity.argv,
+                    &["--seed"],
+                    &seed.to_string(),
+                    "recorded sampling seed",
+                )?;
             }
-            if let Some(seed) = runfile.sampling_seed
-                && !argv_has_pair(&identity.argv, "--seed", &seed.to_string())
-            {
-                return Err(format!(
-                    "observed argv does not contain the recorded sampling seed {seed}"
-                ));
-            }
-            if let Some(parallel) = runfile.parallel_slots
-                && !argv_has_pair(&identity.argv, "--parallel", &parallel.to_string())
-            {
-                return Err(format!(
-                    "observed argv does not contain the recorded parallel slot count {parallel}"
-                ));
+            if let Some(parallel) = runfile.parallel_slots {
+                require_exact_argv_coordinate(
+                    &identity.argv,
+                    &["--parallel"],
+                    &parallel.to_string(),
+                    "recorded parallel slot count",
+                )?;
             }
         }
         Engine::Ollama => {
-            if !identity.argv.iter().any(|argument| argument == "serve") {
-                return Err("observed Ollama argv does not contain `serve`".to_string());
+            if identity.argv.len() != 2 || identity.argv.get(1).map(String::as_str) != Some("serve")
+            {
+                return Err(
+                    "observed Ollama argv is not the closed `ollama serve` command shape"
+                        .to_string(),
+                );
             }
         }
     }
     Ok(())
 }
 
-fn rollback_adoption(replacements: &[(CapturedRegistration, CapturedRegistration)]) -> bool {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AdoptionAliasTransition {
+    Held {
+        detail: String,
+    },
+    Adopted,
+    Absent,
+    ReplacementPreserved {
+        path: PathBuf,
+        detail: String,
+    },
+    ReplaceFailed {
+        preserved_at: Option<PathBuf>,
+        detail: String,
+        replacement_committed: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AdoptionRollbackOutcome {
+    LegacyRestored,
+    Absent,
+    ReplacementPreserved {
+        path: PathBuf,
+        detail: String,
+    },
+    Failed {
+        preserved_at: Option<PathBuf>,
+        detail: String,
+        replacement_committed: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AdoptionAliasReport {
+    coordinate: RegistrationCoordinate,
+    transition: AdoptionAliasTransition,
+    rollback: Option<AdoptionRollbackOutcome>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdoptionDisposition {
+    Blocked,
+    Adopted,
+    Failed,
+    RolledBack,
+    RecoveryPartial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AdoptionReport {
+    disposition: AdoptionDisposition,
+    pid: u32,
+    identity_validated: bool,
+    listener_validated: bool,
+    final_generation_revalidated: bool,
+    registrations: Vec<AdoptionAliasReport>,
+    diagnostics: Vec<String>,
+    success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderedAdoptionReport {
+    stdout: Vec<String>,
+    stderr: Vec<String>,
+    success: bool,
+}
+
+trait AdoptionEffects {
+    fn replace(
+        &mut self,
+        captured: &CapturedRegistration,
+        replacement: &[u8],
+    ) -> Result<ReplacementOutcome, ReplacementError>;
+}
+
+struct NativeAdoptionEffects;
+
+impl AdoptionEffects for NativeAdoptionEffects {
+    fn replace(
+        &mut self,
+        captured: &CapturedRegistration,
+        replacement: &[u8],
+    ) -> Result<ReplacementOutcome, ReplacementError> {
+        replace_if_unchanged(captured, replacement)
+    }
+}
+
+fn held_adoption_reports(
+    captures: &[CapturedRegistration],
+    detail: &str,
+) -> Vec<AdoptionAliasReport> {
+    captures
+        .iter()
+        .map(|capture| AdoptionAliasReport {
+            coordinate: RegistrationCoordinate {
+                scope: capture.scope,
+                path: capture.path.clone(),
+            },
+            transition: AdoptionAliasTransition::Held {
+                detail: detail.to_string(),
+            },
+            rollback: None,
+        })
+        .collect()
+}
+
+fn blocked_adoption_report(
+    pid: u32,
+    captures: &[CapturedRegistration],
+    diagnostic: String,
+) -> AdoptionReport {
+    AdoptionReport {
+        disposition: AdoptionDisposition::Blocked,
+        pid,
+        identity_validated: false,
+        listener_validated: false,
+        final_generation_revalidated: false,
+        registrations: held_adoption_reports(captures, &diagnostic),
+        diagnostics: vec![diagnostic],
+        success: false,
+    }
+}
+
+fn validate_legacy_adoption_inputs(
+    captures: &[CapturedRegistration],
+    requested_pid: u32,
+) -> Result<(ServerRunfile, PathBuf), String> {
+    if requested_pid == 0 {
+        return Err("adoption requires a nonzero --pid".to_string());
+    }
+    let Some(reference) = captures.first() else {
+        return Err("no server registration exists".to_string());
+    };
+    let Some(origin) = captures
+        .iter()
+        .find(|capture| capture.scope == RegistrationScope::Local)
+        .map(|capture| capture.path.clone())
+    else {
+        return Err(
+            "the originating local schema-1 registration is not present in this workspace"
+                .to_string(),
+        );
+    };
+    if captures
+        .iter()
+        .any(|capture| capture.runfile.schema_version != 1)
+    {
+        return Err("every selected registration must use legacy schema 1".to_string());
+    }
+    if captures
+        .iter()
+        .any(|capture| capture.runfile != reference.runfile)
+    {
+        return Err("local/global legacy registrations disagree".to_string());
+    }
+    validate_mutation_path_aliases(captures)?;
+    if reference.runfile.pid != requested_pid {
+        return Err(format!(
+            "--pid {requested_pid} does not match registered PID {}",
+            reference.runfile.pid
+        ));
+    }
+    if reference.runfile.tailscale {
+        return Err(
+            "tailscale=true owns external Serve state that Ferric cannot yet compare-and-replace safely"
+                .to_string(),
+        );
+    }
+    let expected_base_url = format!("http://127.0.0.1:{}/v1", reference.runfile.port);
+    if reference.runfile.port == 0 || reference.runfile.base_url != expected_base_url {
+        return Err(format!(
+            "legacy endpoint must be exactly {expected_base_url} with a nonzero port"
+        ));
+    }
+    Ok((reference.runfile.clone(), origin))
+}
+
+fn adoption_mutation_groups(captures: &[CapturedRegistration]) -> Vec<Vec<usize>> {
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (index, capture) in captures.iter().enumerate() {
+        let key = mutation_path_key(&capture.path);
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| mutation_path_key(&captures[group[0]].path) == key)
+        {
+            group.push(index);
+        } else {
+            groups.push(vec![index]);
+        }
+    }
+    groups
+}
+
+struct AppliedAdoption {
+    legacy: CapturedRegistration,
+    adopted: CapturedRegistration,
+    report_indices: Vec<usize>,
+}
+
+fn set_adoption_transition(
+    reports: &mut [AdoptionAliasReport],
+    indices: &[usize],
+    transition: AdoptionAliasTransition,
+) {
+    for index in indices {
+        reports[*index].transition = transition.clone();
+    }
+}
+
+fn rollback_adoption<E: AdoptionEffects>(
+    replacements: &[AppliedAdoption],
+    reports: &mut [AdoptionAliasReport],
+    effects: &mut E,
+) -> (bool, Vec<String>) {
     let mut complete = true;
-    for (legacy, adopted) in replacements.iter().rev() {
-        match replace_if_unchanged(adopted, &legacy.raw) {
-            Ok(ReplacementOutcome::Replaced) => {}
+    let mut diagnostics = Vec::new();
+    for replacement in replacements.iter().rev() {
+        let outcome = match effects.replace(&replacement.adopted, &replacement.legacy.raw) {
+            Ok(ReplacementOutcome::Replaced) => AdoptionRollbackOutcome::LegacyRestored,
             Ok(ReplacementOutcome::Absent) => {
                 complete = false;
-                eprintln!(
-                    "adoption rollback could not restore absent registration {}",
-                    legacy.path.display()
-                );
+                diagnostics.push(format!(
+                    "rollback could not restore absent registration {}",
+                    replacement.legacy.path.display()
+                ));
+                AdoptionRollbackOutcome::Absent
             }
             Ok(ReplacementOutcome::ReplacementPreserved { path, detail }) => {
                 complete = false;
-                eprintln!(
-                    "adoption rollback preserved a concurrent replacement for {} at {}: {detail}",
-                    legacy.path.display(),
+                diagnostics.push(format!(
+                    "rollback preserved a concurrent replacement for {} at {}: {detail}",
+                    replacement.legacy.path.display(),
                     path.display()
-                );
+                ));
+                AdoptionRollbackOutcome::ReplacementPreserved { path, detail }
             }
             Err(error) => {
                 complete = false;
-                eprintln!("adoption rollback incomplete: {error}");
+                diagnostics.push(format!("adoption rollback incomplete: {error}"));
+                AdoptionRollbackOutcome::Failed {
+                    preserved_at: error.preserved_at,
+                    detail: error.detail,
+                    replacement_committed: error.replacement_committed,
+                }
+            }
+        };
+        for index in &replacement.report_indices {
+            reports[*index].rollback = Some(outcome.clone());
+        }
+    }
+    (complete, diagnostics)
+}
+
+fn failed_adoption_after_replacement<E: AdoptionEffects>(
+    pid: u32,
+    mut reports: Vec<AdoptionAliasReport>,
+    replacements: &[AppliedAdoption],
+    effects: &mut E,
+    diagnostic: String,
+    final_generation_revalidated: bool,
+) -> AdoptionReport {
+    let had_replacements = !replacements.is_empty();
+    let (rollback_complete, rollback_diagnostics) =
+        rollback_adoption(replacements, &mut reports, effects);
+    let every_alias_recovered = reports.iter().all(|registration| {
+        matches!(
+            registration.transition,
+            AdoptionAliasTransition::Held { .. }
+        ) || registration.rollback == Some(AdoptionRollbackOutcome::LegacyRestored)
+    });
+    let mut diagnostics = vec![diagnostic];
+    diagnostics.extend(rollback_diagnostics);
+    AdoptionReport {
+        disposition: if !had_replacements {
+            AdoptionDisposition::Failed
+        } else if rollback_complete && every_alias_recovered {
+            AdoptionDisposition::RolledBack
+        } else {
+            AdoptionDisposition::RecoveryPartial
+        },
+        pid,
+        identity_validated: true,
+        listener_validated: true,
+        final_generation_revalidated,
+        registrations: reports,
+        diagnostics,
+        success: false,
+    }
+}
+
+fn execute_legacy_adoption<R, E>(
+    captures: Vec<CapturedRegistration>,
+    requested_pid: u32,
+    runtime: &R,
+    effects: &mut E,
+) -> AdoptionReport
+where
+    R: ProcessRuntime,
+    E: AdoptionEffects,
+{
+    let (reference, origin) = match validate_legacy_adoption_inputs(&captures, requested_pid) {
+        Ok(validated) => validated,
+        Err(error) => return blocked_adoption_report(requested_pid, &captures, error),
+    };
+    let process = match runtime.acquire(requested_pid) {
+        Ok(process) => process,
+        Err(error) => {
+            return blocked_adoption_report(
+                requested_pid,
+                &captures,
+                format!("could not acquire exact process handle: {error}"),
+            );
+        }
+    };
+    if process.pid() != requested_pid {
+        return blocked_adoption_report(
+            requested_pid,
+            &captures,
+            format!(
+                "retained process handle names PID {}, expected {requested_pid}",
+                process.pid()
+            ),
+        );
+    }
+    let facts = match process.inspect(reference.port) {
+        Ok(facts) => facts,
+        Err(error) => {
+            return blocked_adoption_report(
+                requested_pid,
+                &captures,
+                format!("could not inspect exact process/listener facts: {error}"),
+            );
+        }
+    };
+    if let Err(error) = validate_legacy_process_coordinates(&reference, &facts.identity) {
+        return blocked_adoption_report(requested_pid, &captures, error);
+    }
+    if facts.listener != ListenerState::OwnedByTarget {
+        let mut report = blocked_adoption_report(
+            requested_pid,
+            &captures,
+            format!(
+                "registered endpoint is not exclusively owned on IPv4 loopback by PID {requested_pid}: {:?}",
+                facts.listener
+            ),
+        );
+        report.identity_validated = true;
+        return report;
+    }
+    match process.wait(Duration::ZERO) {
+        Ok(false) => {}
+        Ok(true) => {
+            let mut report = blocked_adoption_report(
+                requested_pid,
+                &captures,
+                "registered process exited during validation".to_string(),
+            );
+            report.identity_validated = true;
+            report.listener_validated = true;
+            return report;
+        }
+        Err(error) => {
+            let mut report = blocked_adoption_report(
+                requested_pid,
+                &captures,
+                format!("could not confirm retained process liveness: {error}"),
+            );
+            report.identity_validated = true;
+            report.listener_validated = true;
+            return report;
+        }
+    }
+
+    let mut adopted_runfile = reference.clone();
+    adopted_runfile.schema_version = RUNFILE_SCHEMA_V2;
+    adopted_runfile.process_identity = Some(facts.identity.clone());
+    adopted_runfile.origin_local_runfile = Some(origin);
+    for capture in &captures {
+        if let Err(error) = validate_runfile(capture.scope, &capture.path, &adopted_runfile) {
+            let mut report = blocked_adoption_report(
+                requested_pid,
+                &captures,
+                format!(
+                    "schema-v2 replacement for {} is invalid: {error}",
+                    capture.path.display()
+                ),
+            );
+            report.identity_validated = true;
+            report.listener_validated = true;
+            return report;
+        }
+    }
+    let replacement_raw = match serde_json::to_vec_pretty(&adopted_runfile) {
+        Ok(raw) => raw,
+        Err(error) => {
+            let mut report = blocked_adoption_report(
+                requested_pid,
+                &captures,
+                format!("could not serialize schema-v2 registration: {error}"),
+            );
+            report.identity_validated = true;
+            report.listener_validated = true;
+            return report;
+        }
+    };
+
+    let mut reports = held_adoption_reports(&captures, "adoption not attempted");
+    let mut replacements = Vec::new();
+    for indices in adoption_mutation_groups(&captures) {
+        let legacy = captures[indices[0]].clone();
+        let adopted_capture = CapturedRegistration {
+            scope: legacy.scope,
+            path: legacy.path.clone(),
+            raw: replacement_raw.clone(),
+            runfile: adopted_runfile.clone(),
+        };
+        match effects.replace(&legacy, &replacement_raw) {
+            Ok(ReplacementOutcome::Replaced) => {
+                set_adoption_transition(&mut reports, &indices, AdoptionAliasTransition::Adopted);
+                replacements.push(AppliedAdoption {
+                    legacy,
+                    adopted: adopted_capture,
+                    report_indices: indices,
+                });
+            }
+            Ok(ReplacementOutcome::Absent) => {
+                set_adoption_transition(&mut reports, &indices, AdoptionAliasTransition::Absent);
+                return failed_adoption_after_replacement(
+                    requested_pid,
+                    reports,
+                    &replacements,
+                    effects,
+                    format!(
+                        "adoption stopped because {} disappeared",
+                        legacy.path.display()
+                    ),
+                    false,
+                );
+            }
+            Ok(ReplacementOutcome::ReplacementPreserved { path, detail }) => {
+                set_adoption_transition(
+                    &mut reports,
+                    &indices,
+                    AdoptionAliasTransition::ReplacementPreserved {
+                        path: path.clone(),
+                        detail: detail.clone(),
+                    },
+                );
+                return failed_adoption_after_replacement(
+                    requested_pid,
+                    reports,
+                    &replacements,
+                    effects,
+                    format!(
+                        "adoption stopped because {} changed; replacement preserved at {}: {detail}",
+                        legacy.path.display(),
+                        path.display()
+                    ),
+                    false,
+                );
+            }
+            Err(error) => {
+                set_adoption_transition(
+                    &mut reports,
+                    &indices,
+                    AdoptionAliasTransition::ReplaceFailed {
+                        preserved_at: error.preserved_at.clone(),
+                        detail: error.detail.clone(),
+                        replacement_committed: error.replacement_committed,
+                    },
+                );
+                if error.replacement_committed {
+                    replacements.push(AppliedAdoption {
+                        legacy,
+                        adopted: adopted_capture,
+                        report_indices: indices,
+                    });
+                }
+                return failed_adoption_after_replacement(
+                    requested_pid,
+                    reports,
+                    &replacements,
+                    effects,
+                    format!("adoption replacement failed: {error}"),
+                    false,
+                );
             }
         }
     }
-    complete
+
+    let final_revalidation = process.inspect(reference.port);
+    let still_exact = final_revalidation.as_ref().is_ok_and(|current| {
+        current.identity == facts.identity && current.listener == ListenerState::OwnedByTarget
+    });
+    if !still_exact {
+        let detail = match final_revalidation {
+            Ok(current) => format!(
+                "retained process changed before completion: identity-match={} listener={:?}",
+                current.identity == facts.identity,
+                current.listener
+            ),
+            Err(error) => format!("retained process final inspection failed: {error}"),
+        };
+        return failed_adoption_after_replacement(
+            requested_pid,
+            reports,
+            &replacements,
+            effects,
+            detail,
+            false,
+        );
+    }
+
+    AdoptionReport {
+        disposition: AdoptionDisposition::Adopted,
+        pid: requested_pid,
+        identity_validated: true,
+        listener_validated: true,
+        final_generation_revalidated: true,
+        registrations: reports,
+        diagnostics: Vec::new(),
+        success: true,
+    }
+}
+
+fn render_adoption_report(report: &AdoptionReport) -> RenderedAdoptionReport {
+    let mut stdout = report
+        .registrations
+        .iter()
+        .map(|registration| {
+            let transition = match &registration.transition {
+                AdoptionAliasTransition::Held { detail } => format!("held detail={detail}"),
+                AdoptionAliasTransition::Adopted => "adopted".to_string(),
+                AdoptionAliasTransition::Absent => "absent".to_string(),
+                AdoptionAliasTransition::ReplacementPreserved { path, detail } => format!(
+                    "replacement-preserved holding={} detail={detail}",
+                    path.display()
+                ),
+                AdoptionAliasTransition::ReplaceFailed {
+                    preserved_at,
+                    detail,
+                    replacement_committed,
+                } => format!(
+                    "replace-failed holding={} committed={replacement_committed} detail={detail}",
+                    preserved_at
+                        .as_ref()
+                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+                ),
+            };
+            let rollback = match &registration.rollback {
+                None => "rollback=not-required".to_string(),
+                Some(AdoptionRollbackOutcome::LegacyRestored) => {
+                    "rollback=legacy-restored".to_string()
+                }
+                Some(AdoptionRollbackOutcome::Absent) => "rollback=absent".to_string(),
+                Some(AdoptionRollbackOutcome::ReplacementPreserved { path, detail }) => format!(
+                    "rollback=replacement-preserved holding={} detail={detail}",
+                    path.display()
+                ),
+                Some(AdoptionRollbackOutcome::Failed {
+                    preserved_at,
+                    detail,
+                    replacement_committed,
+                }) => format!(
+                    "rollback=failed holding={} committed={replacement_committed} detail={detail}",
+                    preserved_at
+                        .as_ref()
+                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+                ),
+            };
+            format!(
+                "[{transition}] {} registration {} {rollback}",
+                registration.coordinate.scope,
+                registration.coordinate.path.display()
+            )
+        })
+        .collect::<Vec<_>>();
+    stdout.push(match report.disposition {
+        AdoptionDisposition::Blocked => {
+            "[state] adoption blocked; legacy registrations kept".to_string()
+        }
+        AdoptionDisposition::Adopted => format!(
+            "[state] adopted live schema-1 server PID {} into schema 2 without signalling it",
+            report.pid
+        ),
+        AdoptionDisposition::Failed => {
+            "[state] adoption failed before any committed replacement".to_string()
+        }
+        AdoptionDisposition::RolledBack => {
+            "[state] adoption failed; legacy registrations restored".to_string()
+        }
+        AdoptionDisposition::RecoveryPartial => {
+            "[state] adoption failed; recovery partial".to_string()
+        }
+    });
+    RenderedAdoptionReport {
+        stdout,
+        stderr: report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| format!("[diagnostic] {diagnostic}"))
+            .collect(),
+        success: report.success,
+    }
+}
+
+fn emit_adoption_report(report: &AdoptionReport) -> ExitCode {
+    let rendered = render_adoption_report(report);
+    for line in rendered.stdout {
+        println!("{line}");
+    }
+    for line in rendered.stderr {
+        eprintln!("{line}");
+    }
+    if rendered.success {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn adopt(workspace: &Path, args: &ServerAdoptArgs) -> ExitCode {
@@ -2387,194 +3015,45 @@ fn adopt(workspace: &Path, args: &ServerAdoptArgs) -> ExitCode {
 
 fn adopt_impl(workspace: &Path, global_path: Option<PathBuf>, args: &ServerAdoptArgs) -> ExitCode {
     if args.pid == 0 {
-        eprintln!("adoption requires a nonzero --pid");
-        return ExitCode::FAILURE;
+        return emit_adoption_report(&blocked_adoption_report(
+            args.pid,
+            &[],
+            "adoption requires a nonzero --pid".to_string(),
+        ));
     }
     let inventory = inventory_runfiles(workspace, global_path);
     let (captures, blocked) = expand_registration_captures(inventory);
     if !blocked.is_empty() {
-        eprintln!("refusing adoption: registration inventory is blocked");
+        let mut report = blocked_adoption_report(
+            args.pid,
+            &captures,
+            "registration inventory is blocked".to_string(),
+        );
         for observation in blocked {
             let reason = match observation.candidate.state {
                 CandidateState::Unverifiable { reason, .. }
                 | CandidateState::Stale { reason, .. } => reason,
                 CandidateState::Verified { .. } => "unexpected verified observation".to_string(),
             };
-            eprintln!("  - {}: {reason}", observation.label);
+            report
+                .diagnostics
+                .push(format!("{}: {reason}", observation.label));
+            report.registrations.push(AdoptionAliasReport {
+                coordinate: observation.candidate.coordinate,
+                transition: AdoptionAliasTransition::Held { detail: reason },
+                rollback: None,
+            });
         }
-        return ExitCode::FAILURE;
+        return emit_adoption_report(&report);
     }
-    let Some(reference) = captures.first() else {
-        eprintln!("refusing adoption: no server registration exists");
-        return ExitCode::FAILURE;
-    };
-    let Some(origin) = captures
-        .iter()
-        .find(|capture| capture.scope == RegistrationScope::Local)
-        .map(|capture| capture.path.clone())
-    else {
-        eprintln!(
-            "refusing adoption: the originating local schema-1 registration is not present in this workspace"
-        );
-        return ExitCode::FAILURE;
-    };
-    if captures
-        .iter()
-        .any(|capture| capture.runfile.schema_version != 1)
-    {
-        eprintln!("refusing adoption: every selected registration must use legacy schema 1");
-        return ExitCode::FAILURE;
-    }
-    if captures
-        .iter()
-        .any(|capture| capture.runfile != reference.runfile)
-    {
-        eprintln!("refusing adoption: local/global legacy registrations disagree");
-        return ExitCode::FAILURE;
-    }
-    if reference.runfile.pid != args.pid {
-        eprintln!(
-            "refusing adoption: --pid {} does not match registered PID {}",
-            args.pid, reference.runfile.pid
-        );
-        return ExitCode::FAILURE;
-    }
-    if reference.runfile.tailscale {
-        eprintln!(
-            "refusing adoption: tailscale=true owns external Serve state that Ferric cannot yet compare-and-replace safely"
-        );
-        return ExitCode::FAILURE;
-    }
-    let expected_base_url = format!("http://127.0.0.1:{}/v1", reference.runfile.port);
-    if reference.runfile.port == 0 || reference.runfile.base_url != expected_base_url {
-        eprintln!(
-            "refusing adoption: legacy endpoint must be exactly {expected_base_url} with a nonzero port"
-        );
-        return ExitCode::FAILURE;
-    }
-
-    let process = match LiveProcess::acquire(args.pid) {
-        Ok(process) => process,
-        Err(error) => {
-            eprintln!("refusing adoption: could not acquire exact process handle: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let facts = match process.inspect(reference.runfile.port) {
-        Ok(facts) => facts,
-        Err(error) => {
-            eprintln!("refusing adoption: could not inspect exact process/listener facts: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    if let Err(error) = validate_legacy_process_coordinates(&reference.runfile, &facts.identity) {
-        eprintln!("refusing adoption: {error}");
-        return ExitCode::FAILURE;
-    }
-    if facts.listener != ListenerState::OwnedByTarget {
-        eprintln!(
-            "refusing adoption: registered endpoint is not exclusively owned on IPv4 loopback by PID {}: {:?}",
-            args.pid, facts.listener
-        );
-        return ExitCode::FAILURE;
-    }
-    match process.wait(Duration::ZERO) {
-        Ok(false) => {}
-        Ok(true) => {
-            eprintln!("refusing adoption: registered process exited during validation");
-            return ExitCode::FAILURE;
-        }
-        Err(error) => {
-            eprintln!("refusing adoption: could not confirm retained process liveness: {error}");
-            return ExitCode::FAILURE;
-        }
-    }
-
-    let mut adopted_runfile = reference.runfile.clone();
-    adopted_runfile.schema_version = RUNFILE_SCHEMA_V2;
-    adopted_runfile.process_identity = Some(facts.identity.clone());
-    adopted_runfile.origin_local_runfile = Some(origin);
-    for capture in &captures {
-        if let Err(error) = validate_runfile(capture.scope, &capture.path, &adopted_runfile) {
-            eprintln!(
-                "refusing adoption: schema-v2 replacement for {} is invalid: {error}",
-                capture.path.display()
-            );
-            return ExitCode::FAILURE;
-        }
-    }
-    let replacement_raw = match serde_json::to_vec_pretty(&adopted_runfile) {
-        Ok(raw) => raw,
-        Err(error) => {
-            eprintln!("refusing adoption: could not serialize schema-v2 registration: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let mut replacements = Vec::new();
-    for legacy in &captures {
-        let adopted_capture = CapturedRegistration {
-            scope: legacy.scope,
-            path: legacy.path.clone(),
-            raw: replacement_raw.clone(),
-            runfile: adopted_runfile.clone(),
-        };
-        match replace_if_unchanged(legacy, &replacement_raw) {
-            Ok(ReplacementOutcome::Replaced) => {
-                replacements.push((legacy.clone(), adopted_capture));
-            }
-            Ok(ReplacementOutcome::Absent) => {
-                eprintln!(
-                    "adoption stopped because {} disappeared; rolling back earlier replacements",
-                    legacy.path.display()
-                );
-                let rolled_back = rollback_adoption(&replacements);
-                eprintln!("adoption rollback completed={rolled_back}");
-                return ExitCode::FAILURE;
-            }
-            Ok(ReplacementOutcome::ReplacementPreserved { path, detail }) => {
-                eprintln!(
-                    "adoption stopped because {} changed; replacement preserved at {}: {detail}",
-                    legacy.path.display(),
-                    path.display()
-                );
-                let rolled_back = rollback_adoption(&replacements);
-                eprintln!("adoption rollback completed={rolled_back}");
-                return ExitCode::FAILURE;
-            }
-            Err(error) => {
-                if error.replacement_committed {
-                    replacements.push((legacy.clone(), adopted_capture));
-                }
-                eprintln!("adoption replacement failed: {error}");
-                let rolled_back = rollback_adoption(&replacements);
-                eprintln!("adoption rollback completed={rolled_back}");
-                return ExitCode::FAILURE;
-            }
-        }
-    }
-
-    let still_exact = process
-        .inspect(reference.runfile.port)
-        .map(|current| {
-            current.identity == facts.identity && current.listener == ListenerState::OwnedByTarget
-        })
-        .unwrap_or(false);
-    if !still_exact {
-        eprintln!(
-            "adoption validation changed before completion; restoring legacy records where still unchanged"
-        );
-        let rolled_back = rollback_adoption(&replacements);
-        eprintln!("adoption rollback completed={rolled_back}");
-        return ExitCode::FAILURE;
-    }
-
-    println!(
-        "adopted live schema-1 server PID {} into schema 2 without signalling it (registrations={})",
+    let runtime = NativeProcessRuntime;
+    let mut effects = NativeAdoptionEffects;
+    emit_adoption_report(&execute_legacy_adoption(
+        captures,
         args.pid,
-        replacements.len()
-    );
-    ExitCode::SUCCESS
+        &runtime,
+        &mut effects,
+    ))
 }
 
 fn status(workspace: &Path) -> ExitCode {
@@ -2659,6 +3138,17 @@ fn status_next_action(discovery: &ManagedServerDiscovery) -> StatusNextAction {
                 legacy
                     .iter()
                     .all(|(alias_pid, alias)| alias_pid == pid && alias == runfile)
+                    && discovery.observations.iter().any(|observation| {
+                        observation.coordinate.scope == RegistrationScope::Local
+                            && matches!(
+                                &observation.state,
+                                ManagedRegistrationState::Captured {
+                                    runfile: candidate,
+                                    runtime: RuntimeObservation::LegacyLive { pid: candidate_pid },
+                                    ..
+                                } if candidate_pid == pid && candidate.as_ref() == *runfile
+                            )
+                    })
                     && discovery
                         .observations
                         .iter()
@@ -2972,73 +3462,124 @@ fn clean_captured_registration(captured: &CapturedRegistration) -> bool {
     }
 }
 
-fn clean_registration_indices(
-    observations: &[LifecycleObservation],
-    indices: impl IntoIterator<Item = usize>,
-) -> bool {
-    let mut complete = true;
-    for index in indices {
-        let Some(captured) = observations[index].capture.as_ref() else {
-            complete = false;
-            eprintln!(
-                "could not clean {} because no exact-byte capture exists",
-                observations[index].label
-            );
-            continue;
-        };
-        complete &= clean_captured_registration(captured);
-    }
-    complete
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DownRegistrationOutcome {
+    Removed,
+    AlreadyAbsent,
+    ReplacementPreserved {
+        path: PathBuf,
+        detail: String,
+    },
+    RestoreFailed {
+        preserved_at: Option<PathBuf>,
+        detail: String,
+    },
+    RemovalFailed {
+        preserved_at: Option<PathBuf>,
+        detail: String,
+    },
+    CleanupFailed {
+        preserved_at: Option<PathBuf>,
+        detail: String,
+    },
+    Held {
+        detail: String,
+    },
 }
 
-fn confirm_cleanup_ports_quiescent(
-    observations: &[LifecycleObservation],
-    indices: &[usize],
-) -> bool {
-    let mut quiescent = true;
-    for index in indices {
-        let Some(captured) = observations[*index].capture.as_ref() else {
-            quiescent = false;
-            eprintln!(
-                "could not clean {} because no exact-byte capture exists",
-                observations[*index].label
-            );
-            continue;
-        };
-        match loopback_listener_state(captured.runfile.pid, captured.runfile.port) {
-            ListenerState::Absent => {}
-            ListenerState::OwnedByTarget | ListenerState::OwnedByTargetWildcard => {
-                quiescent = false;
-                eprintln!(
-                    "kept registrations because PID {} still owns registered port {} named by {}",
-                    captured.runfile.pid,
-                    captured.runfile.port,
-                    captured.path.display()
-                );
-            }
-            ListenerState::OwnedByOther(owners) => {
-                quiescent = false;
-                eprintln!(
-                    "kept registrations because port {} named by {} remains owned by PIDs {owners:?}",
-                    captured.runfile.port,
-                    captured.path.display()
-                );
-            }
-            ListenerState::Uninspectable(error) => {
-                quiescent = false;
-                eprintln!(
-                    "kept registrations because port {} ownership named by {} is uninspectable: {error}",
-                    captured.runfile.port,
-                    captured.path.display()
-                );
-            }
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DownRegistrationReport {
+    coordinate: RegistrationCoordinate,
+    outcome: DownRegistrationOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DownDisposition {
+    Empty,
+    Blocked,
+    StaleCleaned,
+    Stopped,
+    AlreadyExited,
+    Failed,
+    CleanupPartial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DownReport {
+    disposition: DownDisposition,
+    pid: Option<u32>,
+    signalled: bool,
+    exit_proven: bool,
+    listener_released: bool,
+    registrations: Vec<DownRegistrationReport>,
+    diagnostics: Vec<String>,
+    guidance: Option<String>,
+    success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderedDownReport {
+    stdout: Vec<String>,
+    stderr: Vec<String>,
+    success: bool,
+}
+
+enum DownPlan<P> {
+    Empty,
+    Blocked {
+        registrations: Vec<DownRegistrationReport>,
+        diagnostics: Vec<String>,
+        guidance: Option<String>,
+    },
+    Stale {
+        captures: Vec<CapturedRegistration>,
+        expected_revisions: Vec<RegistrationRevision>,
+    },
+    Target {
+        process: P,
+        expected: ProcessIdentity,
+        pid: u32,
+        port: u16,
+        captures: Vec<CapturedRegistration>,
+        expected_revisions: Vec<RegistrationRevision>,
+    },
+}
+
+trait DownEffects {
+    fn revalidate_registrations(&mut self, expected: &[RegistrationRevision])
+    -> Result<(), String>;
+    fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState;
+    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError>;
+}
+
+struct NativeDownEffects {
+    scope: ManagedDiscoveryScope,
+}
+
+impl DownEffects for NativeDownEffects {
+    fn revalidate_registrations(
+        &mut self,
+        expected: &[RegistrationRevision],
+    ) -> Result<(), String> {
+        let inventory = inventory_runfiles(&self.scope.workspace, self.scope.global.clone());
+        let current = discovery_revisions(&flatten_inventory(&inventory));
+        if current == expected {
+            Ok(())
+        } else {
+            Err(
+                "registration inventory changed after teardown resolution; no process was signalled"
+                    .to_string(),
+            )
         }
     }
-    quiescent
-}
 
-fn down(workspace: &Path) -> ExitCode {
-    down_impl(workspace, global_runfile_path())
+    fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState {
+        loopback_listener_state(pid, port)
+    }
+
+    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError> {
+        remove_if_unchanged(captured)
+    }
 }
 
 fn down_mutation_blocker(state: &ManagedServerState) -> Option<&[ResolutionIssue]> {
@@ -3056,46 +3597,104 @@ fn down_mutation_blocker(state: &ManagedServerState) -> Option<&[ResolutionIssue
     }
 }
 
-fn down_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
-    let scope = ManagedDiscoveryScope {
-        workspace: workspace.to_path_buf(),
-        global: global_path,
+fn captures_for_indices(
+    observations: &[LifecycleObservation],
+    mut indices: Vec<usize>,
+) -> Result<Vec<CapturedRegistration>, String> {
+    indices.sort_unstable();
+    indices.dedup();
+    indices
+        .into_iter()
+        .map(|index| {
+            observations[index].capture.clone().ok_or_else(|| {
+                format!(
+                    "{} has no exact-byte registration capture",
+                    observations[index].label
+                )
+            })
+        })
+        .collect()
+}
+
+fn retained_target_down_plan<P>(
+    state: &ManagedServerState,
+    process: P,
+    captures: Vec<CapturedRegistration>,
+    expected_revisions: Vec<RegistrationRevision>,
+) -> Result<DownPlan<P>, String> {
+    let server = match state {
+        ManagedServerState::Ready(server) | ManagedServerState::Degraded { server, .. } => server,
+        ManagedServerState::Empty
+        | ManagedServerState::StaleOnly { .. }
+        | ManagedServerState::Conflict { .. }
+        | ManagedServerState::Unverifiable { .. } => {
+            return Err("typed discovery did not retain one teardown target".to_string());
+        }
     };
-    let LifecycleDiscovery {
-        managed,
-        mut observations,
-        resolution,
-    } = discover_lifecycle_in(&scope);
-    if let Some(issues) = down_mutation_blocker(&managed.state) {
-        eprintln!("refusing teardown: server registration state does not authorize mutation");
-        for issue in issues {
-            eprintln!("  - {}", issue.detail);
-        }
-        return ExitCode::FAILURE;
+    if !server.listener.permits_teardown() {
+        return Err(format!(
+            "target listener {:?} does not authorize teardown",
+            server.listener
+        ));
     }
-    match resolution {
-        Resolution::Empty => {
-            println!("no server registered");
-            ExitCode::SUCCESS
-        }
-        Resolution::Conflict { .. } | Resolution::Unverifiable { .. } => {
-            unreachable!("typed down blocker returned before mutation")
-        }
+    let expected = server
+        .runfile
+        .process_identity
+        .clone()
+        .ok_or_else(|| "resolved teardown target has no creation identity".to_string())?;
+    Ok(DownPlan::Target {
+        process,
+        expected,
+        pid: server.runfile.pid,
+        port: server.runfile.port,
+        captures,
+        expected_revisions,
+    })
+}
+
+fn down_plan_from_lifecycle(mut discovery: LifecycleDiscovery) -> DownPlan<LiveProcess> {
+    if let Some(issues) = down_mutation_blocker(&discovery.managed.state) {
+        let guidance = match status_next_action(&discovery.managed) {
+            StatusNextAction::AdoptLegacy { pid } => {
+                Some(format!("ferric server adopt --pid {pid}"))
+            }
+            action => Some(next_action_text(&action)),
+        };
+        return DownPlan::Blocked {
+            registrations: discovery
+                .managed
+                .observations
+                .iter()
+                .filter(|observation| {
+                    !matches!(observation.state, ManagedRegistrationState::Absent)
+                })
+                .map(|observation| DownRegistrationReport {
+                    coordinate: observation.coordinate.clone(),
+                    outcome: DownRegistrationOutcome::Held {
+                        detail: "typed discovery blocked teardown mutation".to_string(),
+                    },
+                })
+                .collect(),
+            diagnostics: issues.iter().map(|issue| issue.detail.clone()).collect(),
+            guidance,
+        };
+    }
+
+    let expected_revisions = discovery_revisions(&discovery.managed.observations);
+    match discovery.resolution {
+        Resolution::Empty => DownPlan::Empty,
         Resolution::StaleOnly { stale } => {
-            if !confirm_cleanup_ports_quiescent(&observations, &stale) {
-                println!("no process was stopped; stale registrations were kept");
-                return ExitCode::FAILURE;
+            match captures_for_indices(&discovery.observations, stale) {
+                Ok(captures) => DownPlan::Stale {
+                    captures,
+                    expected_revisions,
+                },
+                Err(error) => DownPlan::Blocked {
+                    registrations: Vec::new(),
+                    diagnostics: vec![error],
+                    guidance: None,
+                },
             }
-            let cleaned = clean_registration_indices(&observations, stale);
-            println!("no process was stopped; stale registration cleanup completed={cleaned}");
-            if cleaned {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
-            }
-        }
-        Resolution::Degraded { ref listener, .. } if !listener.permits_teardown() => {
-            unreachable!("typed down listener blocker returned before mutation")
         }
         Resolution::Ready {
             target,
@@ -3108,88 +3707,386 @@ fn down_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
             stale,
             ..
         } => {
-            let target_capture = observations[target]
-                .capture
-                .as_ref()
-                .expect("resolved target has a capture")
-                .clone();
-            let expected = target_capture
-                .runfile
-                .process_identity
-                .clone()
-                .expect("resolved v2 target has process identity");
-            let pid = target_capture.runfile.pid;
-            let port = target_capture.runfile.port;
-            let process = observations[target]
+            let process = discovery.observations[target]
                 .process
                 .take()
                 .expect("resolved target retains its exact process handle");
+            let mut cleanup = vec![target];
+            cleanup.extend(aliases);
+            cleanup.extend(stale);
+            match captures_for_indices(&discovery.observations, cleanup) {
+                Ok(captures) => retained_target_down_plan(
+                    &discovery.managed.state,
+                    process,
+                    captures,
+                    expected_revisions,
+                )
+                .unwrap_or_else(|error| DownPlan::Blocked {
+                    registrations: held_registration_reports(
+                        &discovery
+                            .observations
+                            .iter()
+                            .filter_map(|observation| observation.capture.clone())
+                            .collect::<Vec<_>>(),
+                        &error,
+                    ),
+                    diagnostics: vec![error],
+                    guidance: None,
+                }),
+                Err(error) => DownPlan::Blocked {
+                    registrations: Vec::new(),
+                    diagnostics: vec![error],
+                    guidance: None,
+                },
+            }
+        }
+        Resolution::Conflict { .. } | Resolution::Unverifiable { .. } => {
+            unreachable!("typed down blocker returned before plan construction")
+        }
+    }
+}
 
-            let mut already_exited = match process.wait(Duration::ZERO) {
-                Ok(exited) => exited,
-                Err(error) => {
-                    eprintln!(
-                        "refusing teardown: could not query retained process handle: {error}"
-                    );
-                    return ExitCode::FAILURE;
-                }
-            };
-            if !already_exited {
-                match process.inspect(port) {
-                    Ok(facts) => {
-                        if facts.identity != expected {
-                            eprintln!(
-                                "refusing teardown: process creation/executable/argv identity changed after resolution"
-                            );
-                            return ExitCode::FAILURE;
-                        }
-                        if !facts.listener.permits_teardown() {
-                            match facts.listener {
-                                ListenerState::OwnedByTargetWildcard => {
-                                    eprintln!(
-                                        "refusing teardown: registered port {port} is bound through a wildcard/public listener; registration kept for recovery"
-                                    );
-                                }
-                                ListenerState::OwnedByOther(owners) => {
-                                    eprintln!(
-                                        "refusing teardown: loopback port {port} is owned by other PIDs {owners:?}"
-                                    );
-                                }
-                                ListenerState::Uninspectable(error) => {
-                                    eprintln!(
-                                        "refusing teardown: loopback ownership is uninspectable: {error}"
-                                    );
-                                }
-                                ListenerState::OwnedByTarget | ListenerState::Absent => {
-                                    unreachable!(
-                                        "authorizing listener state passed the fail-closed branch"
-                                    )
-                                }
-                            }
-                            return ExitCode::FAILURE;
-                        }
-                    }
-                    Err(ProcessError::NotFound(_)) => match process.wait(Duration::ZERO) {
-                        Ok(true) => already_exited = true,
-                        Ok(false) => {
-                            eprintln!(
-                                "refusing teardown: process identity vanished without an exit proof"
-                            );
-                            return ExitCode::FAILURE;
-                        }
-                        Err(error) => {
-                            eprintln!(
-                                "refusing teardown: process identity vanished and retained-handle exit inspection failed: {error}"
-                            );
-                            return ExitCode::FAILURE;
-                        }
+fn held_registration_reports(
+    captures: &[CapturedRegistration],
+    detail: &str,
+) -> Vec<DownRegistrationReport> {
+    captures
+        .iter()
+        .map(|capture| DownRegistrationReport {
+            coordinate: RegistrationCoordinate {
+                scope: capture.scope,
+                path: capture.path.clone(),
+            },
+            outcome: DownRegistrationOutcome::Held {
+                detail: detail.to_string(),
+            },
+        })
+        .collect()
+}
+
+fn mutation_path_key(path: &Path) -> PathBuf {
+    // Inventory capture already stores an absolute, lexically normalized path.
+    // Mutation grouping deliberately requires that exact lossless spelling;
+    // broader aliases are blockers, never silently collapsed mutation keys.
+    path.to_path_buf()
+}
+
+fn distinct_mutation_paths_may_alias(left: &Path, right: &Path) -> bool {
+    let left_key = mutation_path_key(left);
+    let right_key = mutation_path_key(right);
+    if left_key == right_key {
+        return false;
+    }
+    if matches!(
+        (std::fs::canonicalize(left), std::fs::canonicalize(right)),
+        (Ok(left), Ok(right)) if left == right
+    ) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        // This fallback is only a conservative blocker. It is never used as a
+        // grouping key, so lossy or incomplete Unicode folding can at worst
+        // refuse a mutation; it cannot collapse distinct entries and report a
+        // mutation that did not happen.
+        left_key
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&right_key.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn validate_mutation_path_aliases(captures: &[CapturedRegistration]) -> Result<(), String> {
+    for (index, left) in captures.iter().enumerate() {
+        for right in &captures[index + 1..] {
+            let left_key = mutation_path_key(&left.path);
+            let right_key = mutation_path_key(&right.path);
+            if left_key == right_key && left.raw != right.raw {
+                return Err(format!(
+                    "registration path {} has conflicting exact-byte mutation captures",
+                    right.path.display()
+                ));
+            }
+            if distinct_mutation_paths_may_alias(&left.path, &right.path) {
+                return Err(format!(
+                    "registration entry may be reachable through two distinct paths, {} and {}; repair the aliases before mutation",
+                    left.path.display(),
+                    right.path.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+struct DownCleanupGroup {
+    key: PathBuf,
+    capture: CapturedRegistration,
+    indices: Vec<usize>,
+}
+
+fn down_cleanup_groups(captures: &[CapturedRegistration]) -> Result<Vec<DownCleanupGroup>, String> {
+    validate_mutation_path_aliases(captures)?;
+    let mut groups: Vec<DownCleanupGroup> = Vec::new();
+    for (index, capture) in captures.iter().enumerate() {
+        let key = mutation_path_key(&capture.path);
+        if let Some(existing) = groups.iter_mut().find(|group| group.key == key) {
+            if existing.capture.raw != capture.raw {
+                return Err(format!(
+                    "registration path {} has conflicting exact-byte cleanup captures",
+                    capture.path.display()
+                ));
+            }
+            existing.indices.push(index);
+            continue;
+        }
+        groups.push(DownCleanupGroup {
+            key,
+            capture: capture.clone(),
+            indices: vec![index],
+        });
+    }
+    Ok(groups)
+}
+
+fn cleanup_registrations<E: DownEffects>(
+    captures: &[CapturedRegistration],
+    groups: &[DownCleanupGroup],
+    effects: &mut E,
+) -> (Vec<DownRegistrationReport>, bool) {
+    let mut complete = true;
+    let outcomes = groups
+        .iter()
+        .map(|group| match effects.remove(&group.capture) {
+            Ok(RemovalOutcome::Removed) => DownRegistrationOutcome::Removed,
+            Ok(RemovalOutcome::Absent) => DownRegistrationOutcome::AlreadyAbsent,
+            Ok(RemovalOutcome::ReplacementPreserved { path, detail }) => {
+                complete = false;
+                DownRegistrationOutcome::ReplacementPreserved { path, detail }
+            }
+            Err(error) => {
+                complete = false;
+                match error.kind {
+                    RemovalFailureKind::Restore => DownRegistrationOutcome::RestoreFailed {
+                        preserved_at: error.preserved_at,
+                        detail: error.detail,
                     },
-                    Err(error) => {
-                        eprintln!("refusing teardown: exact process revalidation failed: {error}");
-                        return ExitCode::FAILURE;
-                    }
+                    RemovalFailureKind::Remove => DownRegistrationOutcome::RemovalFailed {
+                        preserved_at: error.preserved_at,
+                        detail: error.detail,
+                    },
+                    RemovalFailureKind::Other => DownRegistrationOutcome::CleanupFailed {
+                        preserved_at: error.preserved_at,
+                        detail: error.detail,
+                    },
                 }
             }
+        })
+        .collect::<Vec<_>>();
+    let reports = captures
+        .iter()
+        .enumerate()
+        .map(|(index, capture)| {
+            let outcome = groups
+                .iter()
+                .enumerate()
+                .find(|(_, group)| group.indices.contains(&index))
+                .expect("every cleanup capture belongs to a planned path group")
+                .0;
+            let outcome = outcomes[outcome].clone();
+            DownRegistrationReport {
+                coordinate: RegistrationCoordinate {
+                    scope: capture.scope,
+                    path: capture.path.clone(),
+                },
+                outcome,
+            }
+        })
+        .collect();
+    (reports, complete)
+}
+
+fn require_absent_cleanup_ports<E: DownEffects>(
+    captures: &[CapturedRegistration],
+    effects: &mut E,
+    checked: &mut Vec<(u32, u16)>,
+) -> Result<(), String> {
+    for capture in captures {
+        let key = (capture.runfile.pid, capture.runfile.port);
+        if checked.contains(&key) {
+            continue;
+        }
+        let listener = effects.listener_state(key.0, key.1);
+        if listener != ListenerState::Absent {
+            return Err(format!(
+                "registered endpoint {}:{} is not quiescent after exit: {listener:?}",
+                key.0, key.1
+            ));
+        }
+        checked.push(key);
+    }
+    Ok(())
+}
+
+fn failed_down_report(
+    pid: Option<u32>,
+    captures: &[CapturedRegistration],
+    diagnostic: String,
+) -> DownReport {
+    DownReport {
+        disposition: DownDisposition::Failed,
+        pid,
+        signalled: false,
+        exit_proven: false,
+        listener_released: false,
+        registrations: held_registration_reports(captures, &diagnostic),
+        diagnostics: vec![diagnostic],
+        guidance: None,
+        success: false,
+    }
+}
+
+fn execute_down_plan<P, E>(plan: DownPlan<P>, effects: &mut E) -> DownReport
+where
+    P: RetainedProcessHandle,
+    E: DownEffects,
+{
+    match plan {
+        DownPlan::Empty => DownReport {
+            disposition: DownDisposition::Empty,
+            pid: None,
+            signalled: false,
+            exit_proven: true,
+            listener_released: true,
+            registrations: Vec::new(),
+            diagnostics: Vec::new(),
+            guidance: None,
+            success: true,
+        },
+        DownPlan::Blocked {
+            registrations,
+            diagnostics,
+            guidance,
+        } => DownReport {
+            disposition: DownDisposition::Blocked,
+            pid: None,
+            signalled: false,
+            exit_proven: false,
+            listener_released: false,
+            registrations,
+            diagnostics,
+            guidance,
+            success: false,
+        },
+        DownPlan::Stale {
+            captures,
+            expected_revisions,
+        } => {
+            let groups = match down_cleanup_groups(&captures) {
+                Ok(groups) => groups,
+                Err(error) => return failed_down_report(None, &captures, error),
+            };
+            if let Err(error) = effects.revalidate_registrations(&expected_revisions) {
+                return failed_down_report(None, &captures, error);
+            }
+            let mut checked = Vec::new();
+            if let Err(error) = require_absent_cleanup_ports(&captures, effects, &mut checked) {
+                return failed_down_report(None, &captures, error);
+            }
+            let (registrations, complete) = cleanup_registrations(&captures, &groups, effects);
+            DownReport {
+                disposition: if complete {
+                    DownDisposition::StaleCleaned
+                } else {
+                    DownDisposition::CleanupPartial
+                },
+                pid: None,
+                signalled: false,
+                exit_proven: true,
+                listener_released: true,
+                registrations,
+                diagnostics: (!complete)
+                    .then(|| "stale registration cleanup was partial".to_string())
+                    .into_iter()
+                    .collect(),
+                guidance: None,
+                success: complete,
+            }
+        }
+        DownPlan::Target {
+            process,
+            expected,
+            pid,
+            port,
+            captures,
+            expected_revisions,
+        } => {
+            let groups = match down_cleanup_groups(&captures) {
+                Ok(groups) => groups,
+                Err(error) => return failed_down_report(Some(pid), &captures, error),
+            };
+            if process.pid() != pid {
+                return failed_down_report(
+                    Some(pid),
+                    &captures,
+                    format!(
+                        "retained process handle names PID {}, expected {pid}",
+                        process.pid()
+                    ),
+                );
+            }
+            if let Err(error) = effects.revalidate_registrations(&expected_revisions) {
+                return failed_down_report(Some(pid), &captures, error);
+            }
+            let already_exited = match process.inspect(port) {
+                Ok(facts) => {
+                    if facts.identity != expected {
+                        return failed_down_report(
+                            Some(pid),
+                            &captures,
+                            "retained process identity changed after resolution".to_string(),
+                        );
+                    }
+                    if !facts.listener.permits_teardown() {
+                        return failed_down_report(
+                            Some(pid),
+                            &captures,
+                            format!(
+                                "retained process listener no longer authorizes teardown: {:?}",
+                                facts.listener
+                            ),
+                        );
+                    }
+                    false
+                }
+                Err(ProcessError::NotFound(_)) => match process.wait(Duration::ZERO) {
+                    Ok(true) => true,
+                    Ok(false) => {
+                        return failed_down_report(
+                            Some(pid),
+                            &captures,
+                            "retained process identity vanished without exit proof".to_string(),
+                        );
+                    }
+                    Err(error) => {
+                        return failed_down_report(
+                            Some(pid),
+                            &captures,
+                            format!("retained process exit inspection failed: {error}"),
+                        );
+                    }
+                },
+                Err(error) => {
+                    return failed_down_report(
+                        Some(pid),
+                        &captures,
+                        format!("retained process revalidation failed: {error}"),
+                    );
+                }
+            };
 
             let signalled = if already_exited {
                 false
@@ -3197,78 +4094,198 @@ fn down_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
                 match process.terminate() {
                     Ok(signalled) => signalled,
                     Err(error) => {
-                        eprintln!(
-                            "could not terminate retained process handle: {error}; registrations kept"
+                        return failed_down_report(
+                            Some(pid),
+                            &captures,
+                            format!("retained process termination failed: {error}"),
                         );
-                        return ExitCode::FAILURE;
                     }
                 }
             };
-            match process.wait(Duration::from_secs(10)) {
-                Ok(true) => {}
-                Ok(false) => {
-                    eprintln!(
-                        "retained process handle did not exit within 10s; registrations kept"
-                    );
-                    return ExitCode::FAILURE;
-                }
-                Err(error) => {
-                    eprintln!(
-                        "could not confirm retained process exit: {error}; registrations kept"
-                    );
-                    return ExitCode::FAILURE;
-                }
-            }
-
-            match loopback_listener_state(pid, port) {
-                ListenerState::Absent => {}
-                ListenerState::OwnedByOther(owners) => {
-                    eprintln!(
-                        "managed process exited, but loopback port {port} remains owned by PIDs {owners:?}; registrations kept"
-                    );
-                    return ExitCode::FAILURE;
-                }
-                ListenerState::OwnedByTarget | ListenerState::OwnedByTargetWildcard => {
-                    eprintln!(
-                        "managed process exited, but numeric PID {pid} still owns loopback port {port}; registrations kept"
-                    );
-                    return ExitCode::FAILURE;
-                }
-                ListenerState::Uninspectable(error) => {
-                    eprintln!(
-                        "could not verify listener release after exit: {error}; registrations kept"
-                    );
-                    return ExitCode::FAILURE;
+            if !already_exited {
+                match process.wait(Duration::from_secs(10)) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        let mut report = failed_down_report(
+                            Some(pid),
+                            &captures,
+                            "retained process did not exit within 10 seconds".to_string(),
+                        );
+                        report.signalled = signalled;
+                        return report;
+                    }
+                    Err(error) => {
+                        let mut report = failed_down_report(
+                            Some(pid),
+                            &captures,
+                            format!("retained process exit confirmation failed: {error}"),
+                        );
+                        report.signalled = signalled;
+                        return report;
+                    }
                 }
             }
 
-            if signalled {
-                println!("stopped managed server pid {pid} through its retained process handle");
-            } else {
-                println!("managed server pid {pid} had already exited; no process was signalled");
+            let mut checked = Vec::new();
+            if let Err(error) = require_absent_cleanup_ports(&captures, effects, &mut checked) {
+                let mut report = failed_down_report(Some(pid), &captures, error);
+                report.signalled = signalled;
+                report.exit_proven = true;
+                return report;
             }
-            let mut cleanup = vec![target];
-            cleanup.extend(aliases);
-            cleanup.extend(stale);
-            cleanup.sort_unstable();
-            cleanup.dedup();
-            if !confirm_cleanup_ports_quiescent(&observations, &cleanup) {
-                eprintln!(
-                    "managed process exit is confirmed, but at least one registered endpoint remains active or uninspectable; registrations kept"
-                );
-                return ExitCode::FAILURE;
-            }
-            let cleaned = clean_registration_indices(&observations, cleanup);
-            if cleaned {
-                ExitCode::SUCCESS
-            } else {
-                eprintln!(
-                    "managed process exit is confirmed, but registration cleanup was partial"
-                );
-                ExitCode::FAILURE
+            let (registrations, complete) = cleanup_registrations(&captures, &groups, effects);
+            DownReport {
+                disposition: if complete {
+                    if signalled {
+                        DownDisposition::Stopped
+                    } else {
+                        DownDisposition::AlreadyExited
+                    }
+                } else {
+                    DownDisposition::CleanupPartial
+                },
+                pid: Some(pid),
+                signalled,
+                exit_proven: true,
+                listener_released: true,
+                registrations,
+                diagnostics: (!complete)
+                    .then(|| {
+                        "managed process exit is confirmed, but registration cleanup was partial"
+                            .to_string()
+                    })
+                    .into_iter()
+                    .collect(),
+                guidance: None,
+                success: complete,
             }
         }
     }
+}
+
+fn render_down_report(report: &DownReport) -> RenderedDownReport {
+    let mut stdout = report
+        .registrations
+        .iter()
+        .map(|registration| {
+            let coordinate = &registration.coordinate;
+            match &registration.outcome {
+                DownRegistrationOutcome::Removed => format!(
+                    "[removed] {} registration {}",
+                    coordinate.scope,
+                    coordinate.path.display()
+                ),
+                DownRegistrationOutcome::AlreadyAbsent => format!(
+                    "[already-absent] {} registration {}",
+                    coordinate.scope,
+                    coordinate.path.display()
+                ),
+                DownRegistrationOutcome::ReplacementPreserved { path, detail } => format!(
+                    "[replacement-preserved] {} registration {} preserved-at={} detail={detail}",
+                    coordinate.scope,
+                    coordinate.path.display(),
+                    path.display()
+                ),
+                DownRegistrationOutcome::RestoreFailed {
+                    preserved_at,
+                    detail,
+                } => format!(
+                    "[restore-failed] {} registration {} holding={} detail={detail}",
+                    coordinate.scope,
+                    coordinate.path.display(),
+                    preserved_at
+                        .as_ref()
+                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+                ),
+                DownRegistrationOutcome::RemovalFailed {
+                    preserved_at,
+                    detail,
+                } => format!(
+                    "[removal-failed] {} registration {} holding={} detail={detail}",
+                    coordinate.scope,
+                    coordinate.path.display(),
+                    preserved_at
+                        .as_ref()
+                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+                ),
+                DownRegistrationOutcome::CleanupFailed {
+                    preserved_at,
+                    detail,
+                } => format!(
+                    "[cleanup-failed] {} registration {} holding={} detail={detail}",
+                    coordinate.scope,
+                    coordinate.path.display(),
+                    preserved_at
+                        .as_ref()
+                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+                ),
+                DownRegistrationOutcome::Held { detail } => format!(
+                    "[held] {} registration {} detail={detail}",
+                    coordinate.scope,
+                    coordinate.path.display()
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
+    stdout.push(match report.disposition {
+        DownDisposition::Empty => "[state] no server registered".to_string(),
+        DownDisposition::Blocked => "[state] teardown blocked; registrations kept".to_string(),
+        DownDisposition::StaleCleaned => "[state] stale-cleaned".to_string(),
+        DownDisposition::Stopped => format!(
+            "[state] stopped managed server pid {} through its retained process handle",
+            report.pid.expect("stopped report has PID")
+        ),
+        DownDisposition::AlreadyExited => format!(
+            "[state] managed server pid {} was already exited; no process was signalled",
+            report.pid.expect("already-exited report has PID")
+        ),
+        DownDisposition::Failed => "[state] teardown failed; registrations kept".to_string(),
+        DownDisposition::CleanupPartial => {
+            "[state] exit/quiescence confirmed where applicable; cleanup partial".to_string()
+        }
+    });
+    if let Some(guidance) = &report.guidance {
+        stdout.push(format!("[next] {guidance}"));
+    }
+    RenderedDownReport {
+        stdout,
+        stderr: report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| format!("[diagnostic] {diagnostic}"))
+            .collect(),
+        success: report.success,
+    }
+}
+
+fn emit_down_report(report: &DownReport) -> ExitCode {
+    let rendered = render_down_report(report);
+    for line in rendered.stdout {
+        println!("{line}");
+    }
+    for line in rendered.stderr {
+        eprintln!("{line}");
+    }
+    if rendered.success {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn down(workspace: &Path) -> ExitCode {
+    down_impl(workspace, global_runfile_path())
+}
+
+fn down_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
+    let scope = ManagedDiscoveryScope {
+        workspace: workspace.to_path_buf(),
+        global: global_path,
+    };
+    let discovery = discover_lifecycle_before_health_in(&scope);
+    let plan = down_plan_from_lifecycle(discovery);
+    let mut effects = NativeDownEffects { scope };
+    emit_down_report(&execute_down_plan(plan, &mut effects))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3460,7 +4477,9 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
 mod tests {
     use super::*;
     use crate::server_process::canonical_test_start_token;
-    use crate::server_registration::PromisedOriginRegistration;
+    use crate::server_registration::{
+        PromisedOriginRegistration, RegistrationBlock, capture_registration_path,
+    };
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::net::TcpListener;
@@ -3530,6 +4549,103 @@ mod tests {
             process_identity: Some(discovery_fixture_identity(u64::from(pid))),
             origin_local_runfile: Some(discovery_fixture_path(name)),
         }
+    }
+
+    fn discovery_fixture_capture(
+        scope: RegistrationScope,
+        pid: u32,
+        name: &str,
+    ) -> CapturedRegistration {
+        let runfile = discovery_fixture_runfile(pid, name);
+        CapturedRegistration {
+            scope,
+            path: discovery_fixture_path(name),
+            raw: serde_json::to_vec_pretty(&runfile).unwrap(),
+            runfile,
+        }
+    }
+
+    fn legacy_adoption_fixture(pid: u32) -> (Vec<CapturedRegistration>, ProcessFacts) {
+        let port = u16::try_from(7600 + pid % 100).unwrap();
+        let runfile = ServerRunfile {
+            schema_version: 1,
+            engine: Engine::LlamaServer,
+            pid,
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            model: Some("model.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: None,
+            origin_local_runfile: None,
+        };
+        let identity = ProcessIdentity {
+            start_token: canonical_test_start_token(u64::from(pid)),
+            executable: discovery_fixture_executable(),
+            argv: vec![
+                "llama-server".to_string(),
+                "-m".to_string(),
+                "model.gguf".to_string(),
+                "-c".to_string(),
+                "8192".to_string(),
+                "--seed".to_string(),
+                "42".to_string(),
+                "--parallel".to_string(),
+                "1".to_string(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                port.to_string(),
+            ],
+        };
+        let raw = serde_json::to_vec_pretty(&runfile).unwrap();
+        let captures = [
+            (RegistrationScope::Local, "legacy-local"),
+            (RegistrationScope::Global, "legacy-global"),
+        ]
+        .into_iter()
+        .map(|(scope, name)| CapturedRegistration {
+            scope,
+            path: discovery_fixture_path(name),
+            raw: raw.clone(),
+            runfile: runfile.clone(),
+        })
+        .collect();
+        (
+            captures,
+            ProcessFacts {
+                identity,
+                listener: ListenerState::OwnedByTarget,
+            },
+        )
+    }
+
+    fn adoption_fixture_replacement_raw(
+        captures: &[CapturedRegistration],
+        facts: &ProcessFacts,
+    ) -> Vec<u8> {
+        let mut runfile = captures[0].runfile.clone();
+        runfile.schema_version = RUNFILE_SCHEMA_V2;
+        runfile.process_identity = Some(facts.identity.clone());
+        runfile.origin_local_runfile = Some(captures[0].path.clone());
+        serde_json::to_vec_pretty(&runfile).unwrap()
+    }
+
+    fn scripted_remove_event(capture: &CapturedRegistration) -> LifecycleEvent {
+        LifecycleEvent::Remove(
+            capture.path.clone(),
+            ferric_bench::sha256_bytes(&capture.raw),
+        )
+    }
+
+    fn scripted_replace_event(path: &Path, captured: &[u8], replacement: &[u8]) -> LifecycleEvent {
+        LifecycleEvent::Replace(
+            path.to_path_buf(),
+            ferric_bench::sha256_bytes(captured),
+            ferric_bench::sha256_bytes(replacement),
+        )
     }
 
     fn discovery_fixture_coordinate(
@@ -4494,6 +5610,10 @@ mod tests {
         ClockNow,
         Sleep,
         Publish,
+        Revalidate,
+        Remove(PathBuf, String),
+        Replace(PathBuf, String, String),
+        Render,
     }
 
     type EventLedger = Rc<RefCell<Vec<LifecycleEvent>>>;
@@ -4675,6 +5795,1756 @@ mod tests {
                 .expect("scripted process acquisition")
                 .map_err(ProcessError::Operation)
         }
+    }
+
+    struct ScriptedDownEffects {
+        revalidations: VecDeque<Result<(), String>>,
+        listeners: VecDeque<ListenerState>,
+        removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
+        ledger: EventLedger,
+    }
+
+    impl ScriptedDownEffects {
+        fn new(
+            listeners: impl IntoIterator<Item = ListenerState>,
+            removals: impl IntoIterator<Item = Result<RemovalOutcome, RemovalError>>,
+            ledger: EventLedger,
+        ) -> Self {
+            Self {
+                revalidations: VecDeque::from([Ok(())]),
+                listeners: listeners.into_iter().collect(),
+                removals: removals.into_iter().collect(),
+                ledger,
+            }
+        }
+    }
+
+    impl DownEffects for ScriptedDownEffects {
+        fn revalidate_registrations(
+            &mut self,
+            _expected: &[RegistrationRevision],
+        ) -> Result<(), String> {
+            self.ledger.borrow_mut().push(LifecycleEvent::Revalidate);
+            self.revalidations
+                .pop_front()
+                .expect("scripted registration revalidation")
+        }
+
+        fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState {
+            self.ledger
+                .borrow_mut()
+                .push(LifecycleEvent::Listener(pid, port));
+            self.listeners
+                .pop_front()
+                .expect("scripted down-listener state")
+        }
+
+        fn remove(
+            &mut self,
+            captured: &CapturedRegistration,
+        ) -> Result<RemovalOutcome, RemovalError> {
+            self.ledger.borrow_mut().push(LifecycleEvent::Remove(
+                captured.path.clone(),
+                ferric_bench::sha256_bytes(&captured.raw),
+            ));
+            self.removals
+                .pop_front()
+                .expect("scripted conditional-removal result")
+        }
+    }
+
+    struct ScriptedAdoptionEffects {
+        replacements: VecDeque<Result<ReplacementOutcome, ReplacementError>>,
+        ledger: EventLedger,
+    }
+
+    impl ScriptedAdoptionEffects {
+        fn new(
+            replacements: impl IntoIterator<Item = Result<ReplacementOutcome, ReplacementError>>,
+            ledger: EventLedger,
+        ) -> Self {
+            Self {
+                replacements: replacements.into_iter().collect(),
+                ledger,
+            }
+        }
+    }
+
+    impl AdoptionEffects for ScriptedAdoptionEffects {
+        fn replace(
+            &mut self,
+            captured: &CapturedRegistration,
+            replacement: &[u8],
+        ) -> Result<ReplacementOutcome, ReplacementError> {
+            self.ledger.borrow_mut().push(LifecycleEvent::Replace(
+                captured.path.clone(),
+                ferric_bench::sha256_bytes(&captured.raw),
+                ferric_bench::sha256_bytes(replacement),
+            ));
+            self.replacements
+                .pop_front()
+                .expect("scripted conditional-replacement result")
+        }
+    }
+
+    fn render_down_with_ledger(report: &DownReport, ledger: &EventLedger) -> RenderedDownReport {
+        let rendered = render_down_report(report);
+        ledger.borrow_mut().push(LifecycleEvent::Render);
+        rendered
+    }
+
+    fn render_adoption_with_ledger(
+        report: &AdoptionReport,
+        ledger: &EventLedger,
+    ) -> RenderedAdoptionReport {
+        let rendered = render_adoption_report(report);
+        ledger.borrow_mut().push(LifecycleEvent::Render);
+        rendered
+    }
+
+    fn assert_down_failure_kept_recovery(report: &DownReport, rendered: &RenderedDownReport) {
+        assert!(!report.success);
+        assert_eq!(report.disposition, DownDisposition::Failed);
+        assert!(report.registrations.iter().all(|registration| matches!(
+            registration.outcome,
+            DownRegistrationOutcome::Held { .. }
+        )));
+        assert!(
+            rendered.stdout.iter().all(|line| !line.contains("stopped")),
+            "failure report must never claim stopped: {:?}",
+            rendered.stdout
+        );
+    }
+
+    #[test]
+    fn down_signals_only_the_retained_handle() {
+        for (case, listener) in [
+            ("owned", ListenerState::OwnedByTarget),
+            ("absent", ListenerState::Absent),
+        ] {
+            for recorded_health in [HealthState::Healthy, HealthState::Unhealthy] {
+                let pid = if recorded_health == HealthState::Healthy {
+                    6101
+                } else {
+                    6102
+                };
+                let capture = discovery_fixture_capture(RegistrationScope::Local, pid, case);
+                let port = capture.runfile.port;
+                let expected = capture.runfile.process_identity.clone().unwrap();
+                let ledger = Rc::new(RefCell::new(Vec::new()));
+                let process = ScriptedProcess::new(pid, "retained-target", Rc::clone(&ledger))
+                    .with_inspection(Ok(ProcessFacts {
+                        identity: expected.clone(),
+                        listener: listener.clone(),
+                    }));
+                let mut effects = ScriptedDownEffects::new(
+                    [ListenerState::Absent],
+                    [Ok(RemovalOutcome::Removed)],
+                    Rc::clone(&ledger),
+                );
+
+                let mut server = match discovery_fixture_ready().state {
+                    ManagedServerState::Ready(server) => server,
+                    _ => unreachable!("ready fixture changed state"),
+                };
+                server.runfile = capture.runfile.clone();
+                server.identity = expected.clone();
+                server.listener = listener.clone();
+                server.health = recorded_health;
+                let recorded_state = if recorded_health == HealthState::Healthy
+                    && listener == ListenerState::OwnedByTarget
+                {
+                    ManagedServerState::Ready(server)
+                } else {
+                    ManagedServerState::Degraded {
+                        server,
+                        issues: Vec::new(),
+                    }
+                };
+
+                let report = execute_down_plan(
+                    retained_target_down_plan(
+                        &recorded_state,
+                        process,
+                        vec![capture.clone()],
+                        Vec::new(),
+                    )
+                    .unwrap(),
+                    &mut effects,
+                );
+                let rendered = render_down_with_ledger(&report, &ledger);
+
+                assert!(report.success, "{case}, health={recorded_health:?}");
+                assert_eq!(report.disposition, DownDisposition::Stopped);
+                assert!(report.signalled);
+                assert!(report.exit_proven);
+                assert!(report.listener_released);
+                assert!(rendered.stdout.iter().any(|line| line.contains("stopped")));
+                assert_eq!(
+                    *ledger.borrow(),
+                    vec![
+                        LifecycleEvent::Revalidate,
+                        LifecycleEvent::Inspect("retained-target", port),
+                        LifecycleEvent::Terminate("retained-target"),
+                        LifecycleEvent::RetainedWait("retained-target"),
+                        LifecycleEvent::Listener(pid, port),
+                        scripted_remove_event(&capture),
+                        LifecycleEvent::Render,
+                    ],
+                    "HTTP health={recorded_health:?} must not affect retained-handle teardown"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn down_exit_and_listener_postconditions_gate_success() {
+        let capture = discovery_fixture_capture(RegistrationScope::Local, 6201, "down-gates");
+        let pid = capture.runfile.pid;
+        let port = capture.runfile.port;
+        let expected = capture.runfile.process_identity.clone().unwrap();
+        let facts = ProcessFacts {
+            identity: expected.clone(),
+            listener: ListenerState::OwnedByTarget,
+        };
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "signal-error", Rc::clone(&ledger))
+            .with_inspection(Ok(facts.clone()))
+            .with_terminate(Err(ProcessError::Operation("access denied".to_string())));
+        let mut effects = ScriptedDownEffects::new(
+            Vec::<ListenerState>::new(),
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let report = execute_down_plan(
+            DownPlan::Target {
+                process,
+                expected: expected.clone(),
+                pid,
+                port,
+                captures: vec![capture.clone()],
+                expected_revisions: Vec::new(),
+            },
+            &mut effects,
+        );
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert_down_failure_kept_recovery(&report, &rendered);
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Revalidate,
+                LifecycleEvent::Inspect("signal-error", port),
+                LifecycleEvent::Terminate("signal-error"),
+                LifecycleEvent::Render,
+            ]
+        );
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "revision-change", Rc::clone(&ledger));
+        let mut effects = ScriptedDownEffects::new(
+            Vec::<ListenerState>::new(),
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&ledger),
+        );
+        effects.revalidations = VecDeque::from([Err(
+            "a conflicting registration appeared before signal".to_string(),
+        )]);
+        let report = execute_down_plan(
+            DownPlan::Target {
+                process,
+                expected: expected.clone(),
+                pid,
+                port,
+                captures: vec![capture.clone()],
+                expected_revisions: Vec::new(),
+            },
+            &mut effects,
+        );
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert_down_failure_kept_recovery(&report, &rendered);
+        assert_eq!(
+            *ledger.borrow(),
+            vec![LifecycleEvent::Revalidate, LifecycleEvent::Render],
+            "a changed inventory must block before retained inspection, signal, wait, listener, or cleanup"
+        );
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "exit-before-signal", Rc::clone(&ledger))
+            .with_inspection(Ok(facts.clone()))
+            .with_terminate(Ok(false))
+            .with_wait(Ok(true));
+        let mut effects = ScriptedDownEffects::new(
+            [ListenerState::Absent],
+            [Ok(RemovalOutcome::Removed)],
+            Rc::clone(&ledger),
+        );
+        let report = execute_down_plan(
+            DownPlan::Target {
+                process,
+                expected: expected.clone(),
+                pid,
+                port,
+                captures: vec![capture.clone()],
+                expected_revisions: Vec::new(),
+            },
+            &mut effects,
+        );
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert!(report.success);
+        assert_eq!(report.disposition, DownDisposition::AlreadyExited);
+        assert!(!report.signalled);
+        assert!(report.exit_proven);
+        assert!(report.listener_released);
+        let expected_state = format!(
+            "[state] managed server pid {pid} was already exited; no process was signalled"
+        );
+        assert_eq!(
+            rendered.stdout.last().map(String::as_str),
+            Some(expected_state.as_str())
+        );
+        assert!(rendered.stdout.iter().all(|line| !line.contains("stopped")));
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Revalidate,
+                LifecycleEvent::Inspect("exit-before-signal", port),
+                LifecycleEvent::Terminate("exit-before-signal"),
+                LifecycleEvent::RetainedWait("exit-before-signal"),
+                LifecycleEvent::Listener(pid, port),
+                scripted_remove_event(&capture),
+                LifecycleEvent::Render,
+            ],
+            "an inspect-to-terminate exit race must still prove exit and listener release before cleanup"
+        );
+
+        for (generation, wait) in [
+            ("wait-timeout", Ok(false)),
+            (
+                "wait-error",
+                Err(ProcessError::Operation("wait unavailable".to_string())),
+            ),
+        ] {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(pid, generation, Rc::clone(&ledger))
+                .with_inspection(Ok(facts.clone()))
+                .with_wait(wait);
+            let mut effects = ScriptedDownEffects::new(
+                Vec::<ListenerState>::new(),
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Rc::clone(&ledger),
+            );
+            let report = execute_down_plan(
+                DownPlan::Target {
+                    process,
+                    expected: expected.clone(),
+                    pid,
+                    port,
+                    captures: vec![capture.clone()],
+                    expected_revisions: Vec::new(),
+                },
+                &mut effects,
+            );
+            let rendered = render_down_with_ledger(&report, &ledger);
+            assert_down_failure_kept_recovery(&report, &rendered);
+            assert!(report.signalled);
+            assert!(!report.exit_proven);
+            assert_eq!(
+                *ledger.borrow(),
+                vec![
+                    LifecycleEvent::Revalidate,
+                    LifecycleEvent::Inspect(generation, port),
+                    LifecycleEvent::Terminate(generation),
+                    LifecycleEvent::RetainedWait(generation),
+                    LifecycleEvent::Render,
+                ]
+            );
+        }
+
+        for (case, residual) in [
+            ("target", ListenerState::OwnedByTarget),
+            ("wildcard", ListenerState::OwnedByTargetWildcard),
+            ("foreign", ListenerState::OwnedByOther(vec![7777])),
+            (
+                "uninspectable",
+                ListenerState::Uninspectable("access denied".to_string()),
+            ),
+        ] {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(pid, "listener-held", Rc::clone(&ledger))
+                .with_inspection(Ok(facts.clone()));
+            let mut effects = ScriptedDownEffects::new(
+                [residual],
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Rc::clone(&ledger),
+            );
+            let report = execute_down_plan(
+                DownPlan::Target {
+                    process,
+                    expected: expected.clone(),
+                    pid,
+                    port,
+                    captures: vec![capture.clone()],
+                    expected_revisions: Vec::new(),
+                },
+                &mut effects,
+            );
+            let rendered = render_down_with_ledger(&report, &ledger);
+            assert_down_failure_kept_recovery(&report, &rendered);
+            assert!(report.signalled, "{case}");
+            assert!(report.exit_proven, "{case}");
+            assert!(!report.listener_released, "{case}");
+            assert_eq!(
+                *ledger.borrow(),
+                vec![
+                    LifecycleEvent::Revalidate,
+                    LifecycleEvent::Inspect("listener-held", port),
+                    LifecycleEvent::Terminate("listener-held"),
+                    LifecycleEvent::RetainedWait("listener-held"),
+                    LifecycleEvent::Listener(pid, port),
+                    LifecycleEvent::Render,
+                ],
+                "{case}"
+            );
+        }
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "released", Rc::clone(&ledger))
+            .with_inspection(Ok(facts.clone()));
+        let mut effects = ScriptedDownEffects::new(
+            [ListenerState::Absent],
+            [Ok(RemovalOutcome::Removed)],
+            Rc::clone(&ledger),
+        );
+        let report = execute_down_plan(
+            DownPlan::Target {
+                process,
+                expected: expected.clone(),
+                pid,
+                port,
+                captures: vec![capture.clone()],
+                expected_revisions: Vec::new(),
+            },
+            &mut effects,
+        );
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, DownDisposition::Stopped);
+        assert!(report.success);
+        assert!(
+            rendered
+                .stdout
+                .iter()
+                .any(|line| line.starts_with("[state] stopped"))
+        );
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Revalidate,
+                LifecycleEvent::Inspect("released", port),
+                LifecycleEvent::Terminate("released"),
+                LifecycleEvent::RetainedWait("released"),
+                LifecycleEvent::Listener(pid, port),
+                scripted_remove_event(&capture),
+                LifecycleEvent::Render,
+            ]
+        );
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "already-exited", Rc::clone(&ledger))
+            .with_inspection(Err(ProcessError::NotFound(pid)));
+        let mut effects = ScriptedDownEffects::new(
+            [ListenerState::Absent],
+            [Ok(RemovalOutcome::Removed)],
+            Rc::clone(&ledger),
+        );
+        let report = execute_down_plan(
+            DownPlan::Target {
+                process,
+                expected,
+                pid,
+                port,
+                captures: vec![capture.clone()],
+                expected_revisions: Vec::new(),
+            },
+            &mut effects,
+        );
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert!(report.success);
+        assert_eq!(report.disposition, DownDisposition::AlreadyExited);
+        assert!(!report.signalled);
+        assert!(report.exit_proven);
+        assert!(
+            rendered
+                .stdout
+                .iter()
+                .all(|line| !line.contains("[state] stopped"))
+        );
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Revalidate,
+                LifecycleEvent::Inspect("already-exited", port),
+                LifecycleEvent::RetainedWait("already-exited"),
+                LifecycleEvent::Listener(pid, port),
+                scripted_remove_event(&capture),
+                LifecycleEvent::Render,
+            ]
+        );
+    }
+
+    #[test]
+    fn down_cleanup_outcome_matrix() {
+        let stopped_capture = discovery_fixture_capture(RegistrationScope::Local, 6299, "stopped");
+        let stopped_expected = stopped_capture.runfile.process_identity.clone().unwrap();
+        let stopped_port = stopped_capture.runfile.port;
+        let stopped_ledger = Rc::new(RefCell::new(Vec::new()));
+        let stopped_process = ScriptedProcess::new(6299, "stopped", Rc::clone(&stopped_ledger))
+            .with_inspection(Ok(ProcessFacts {
+                identity: stopped_expected.clone(),
+                listener: ListenerState::OwnedByTarget,
+            }));
+        let mut stopped_effects = ScriptedDownEffects::new(
+            [ListenerState::Absent],
+            [Ok(RemovalOutcome::Removed)],
+            Rc::clone(&stopped_ledger),
+        );
+        let stopped_report = execute_down_plan(
+            DownPlan::Target {
+                process: stopped_process,
+                expected: stopped_expected,
+                pid: 6299,
+                port: stopped_port,
+                captures: vec![stopped_capture],
+                expected_revisions: Vec::new(),
+            },
+            &mut stopped_effects,
+        );
+        let stopped_rendered = render_down_with_ledger(&stopped_report, &stopped_ledger);
+        assert_eq!(stopped_report.disposition, DownDisposition::Stopped);
+        assert!(stopped_report.success);
+        assert!(
+            stopped_rendered
+                .stdout
+                .last()
+                .is_some_and(|line| line.starts_with("[state] stopped"))
+        );
+
+        let holding = discovery_fixture_path("holding");
+        let cases = vec![
+            ("removed", Ok(RemovalOutcome::Removed), "[removed]", true),
+            (
+                "absent",
+                Ok(RemovalOutcome::Absent),
+                "[already-absent]",
+                true,
+            ),
+            (
+                "replacement",
+                Ok(RemovalOutcome::ReplacementPreserved {
+                    path: holding.clone(),
+                    detail: "concurrent replacement retained".to_string(),
+                }),
+                "[replacement-preserved]",
+                false,
+            ),
+            (
+                "restore",
+                Err(RemovalError {
+                    path: discovery_fixture_path("restore"),
+                    kind: RemovalFailureKind::Restore,
+                    detail: "restore denied".to_string(),
+                    preserved_at: Some(holding.clone()),
+                }),
+                "[restore-failed]",
+                false,
+            ),
+            (
+                "remove",
+                Err(RemovalError {
+                    path: discovery_fixture_path("remove"),
+                    kind: RemovalFailureKind::Remove,
+                    detail: "remove denied".to_string(),
+                    preserved_at: Some(holding.clone()),
+                }),
+                "[removal-failed]",
+                false,
+            ),
+            (
+                "other",
+                Err(RemovalError {
+                    path: discovery_fixture_path("other"),
+                    kind: RemovalFailureKind::Other,
+                    detail: "holding directory cleanup failed".to_string(),
+                    preserved_at: Some(holding.clone()),
+                }),
+                "[cleanup-failed]",
+                false,
+            ),
+        ];
+
+        for (index, (name, outcome, marker, complete)) in cases.into_iter().enumerate() {
+            let pid = 6301 + u32::try_from(index).unwrap();
+            let capture = discovery_fixture_capture(RegistrationScope::Local, pid, name);
+            let port = capture.runfile.port;
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut effects =
+                ScriptedDownEffects::new([ListenerState::Absent], [outcome], Rc::clone(&ledger));
+            let report = execute_down_plan(
+                DownPlan::<ScriptedProcess>::Stale {
+                    captures: vec![capture.clone()],
+                    expected_revisions: Vec::new(),
+                },
+                &mut effects,
+            );
+            let rendered = render_down_with_ledger(&report, &ledger);
+            assert_eq!(report.success, complete, "{name}");
+            assert_eq!(
+                report.disposition,
+                if complete {
+                    DownDisposition::StaleCleaned
+                } else {
+                    DownDisposition::CleanupPartial
+                },
+                "{name}"
+            );
+            let row = rendered
+                .stdout
+                .iter()
+                .find(|line| line.contains(marker))
+                .unwrap_or_else(|| {
+                    panic!("missing {marker} row for {name}: {:?}", rendered.stdout)
+                });
+            if !complete {
+                assert!(
+                    row.contains(&holding.display().to_string()),
+                    "{name}: {row}"
+                );
+            }
+            assert_eq!(
+                rendered.stdout.last().map(String::as_str),
+                Some(if complete {
+                    "[state] stale-cleaned"
+                } else {
+                    "[state] exit/quiescence confirmed where applicable; cleanup partial"
+                }),
+                "{name}"
+            );
+            assert_eq!(
+                *ledger.borrow(),
+                vec![
+                    LifecycleEvent::Revalidate,
+                    LifecycleEvent::Listener(pid, port),
+                    scripted_remove_event(&capture),
+                    LifecycleEvent::Render,
+                ],
+                "{name}"
+            );
+        }
+
+        let local = discovery_fixture_capture(RegistrationScope::Local, 6401, "partial-local");
+        let mut global = local.clone();
+        global.scope = RegistrationScope::Global;
+        global.path = discovery_fixture_path("partial-global");
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut effects = ScriptedDownEffects::new(
+            [ListenerState::Absent, ListenerState::Absent],
+            [
+                Ok(RemovalOutcome::Removed),
+                Err(RemovalError {
+                    path: global.path.clone(),
+                    kind: RemovalFailureKind::Remove,
+                    detail: "second alias retained".to_string(),
+                    preserved_at: Some(holding.clone()),
+                }),
+            ],
+            Rc::clone(&ledger),
+        );
+        let report = execute_down_plan(
+            DownPlan::<ScriptedProcess>::Stale {
+                captures: vec![local.clone(), global.clone()],
+                expected_revisions: Vec::new(),
+            },
+            &mut effects,
+        );
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, DownDisposition::CleanupPartial);
+        assert!(!report.success);
+        assert_eq!(report.registrations[0].coordinate.path, local.path);
+        assert_eq!(report.registrations[1].coordinate.path, global.path);
+        assert!(
+            rendered.stdout[1].contains(&holding.display().to_string()),
+            "every recovery path must survive rendering: {:?}",
+            rendered.stdout
+        );
+        assert_eq!(
+            rendered.stdout.last().map(String::as_str),
+            Some("[state] exit/quiescence confirmed where applicable; cleanup partial")
+        );
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Revalidate,
+                LifecycleEvent::Listener(local.runfile.pid, local.runfile.port),
+                scripted_remove_event(&local),
+                scripted_remove_event(&global),
+                LifecycleEvent::Render,
+            ]
+        );
+
+        let physical =
+            discovery_fixture_capture(RegistrationScope::Local, 6410, "same-physical-path");
+        let mut duplicate_alias = physical.clone();
+        duplicate_alias.scope = RegistrationScope::Global;
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut effects = ScriptedDownEffects::new(
+            [ListenerState::Absent],
+            [Ok(RemovalOutcome::Removed)],
+            Rc::clone(&ledger),
+        );
+        let report = execute_down_plan(
+            DownPlan::<ScriptedProcess>::Stale {
+                captures: vec![physical.clone(), duplicate_alias.clone()],
+                expected_revisions: Vec::new(),
+            },
+            &mut effects,
+        );
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert!(report.success);
+        assert_eq!(report.registrations.len(), 2);
+        assert!(
+            report.registrations.iter().all(|registration| matches!(
+                registration.outcome,
+                DownRegistrationOutcome::Removed
+            ))
+        );
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Revalidate,
+                LifecycleEvent::Listener(physical.runfile.pid, physical.runfile.port),
+                scripted_remove_event(&physical),
+                LifecycleEvent::Render,
+            ],
+            "one physical path must receive one conditional removal while retaining both alias reports"
+        );
+        assert_eq!(
+            rendered.stdout.last().map(String::as_str),
+            Some("[state] stale-cleaned")
+        );
+
+        duplicate_alias.raw.push(b' ');
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut effects = ScriptedDownEffects::new(
+            Vec::<ListenerState>::new(),
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let report = execute_down_plan(
+            DownPlan::<ScriptedProcess>::Stale {
+                captures: vec![physical, duplicate_alias],
+                expected_revisions: Vec::new(),
+            },
+            &mut effects,
+        );
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert_down_failure_kept_recovery(&report, &rendered);
+        assert_eq!(*ledger.borrow(), vec![LifecycleEvent::Render]);
+    }
+
+    #[test]
+    fn ambiguous_or_unverifiable_down_is_non_mutating() {
+        fn write_runfile_slot(
+            scope: RegistrationScope,
+            path: &Path,
+            runfile: &ServerRunfile,
+        ) -> (RegistrationSlot, Vec<u8>) {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let raw = serde_json::to_vec_pretty(runfile).unwrap();
+            std::fs::write(path, &raw).unwrap();
+            (capture_registration_path(scope, path), raw)
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        for blocker in [
+            "two live keys",
+            "malformed peer",
+            "unreadable peer",
+            "live schema-1 registration",
+            "wildcard listener",
+            "shared listener",
+            "foreign listener",
+            "uninspectable listener",
+            "invalid creation token",
+            "durable Tailscale state",
+        ] {
+            let case_dir = root.path().join(blocker.replace(' ', "-"));
+            let local_path = case_dir
+                .join("workspace")
+                .join(".ferric")
+                .join("server.json");
+            let global_path = case_dir.join("global.json");
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+
+            let mut local_runfile = discovery_fixture_runfile(6450, "blocked-local");
+            local_runfile.origin_local_runfile = Some(local_path.clone());
+            let (inventory, originals, expected_acquires) = match blocker {
+                "malformed peer" => {
+                    let (local, local_raw) =
+                        write_runfile_slot(RegistrationScope::Local, &local_path, &local_runfile);
+                    std::fs::create_dir_all(global_path.parent().unwrap()).unwrap();
+                    let malformed = b"{not-valid-json".to_vec();
+                    std::fs::write(&global_path, &malformed).unwrap();
+                    (
+                        RegistrationInventory {
+                            local,
+                            global: Some(capture_registration_path(
+                                RegistrationScope::Global,
+                                &global_path,
+                            )),
+                            promised_origins: Vec::new(),
+                        },
+                        vec![
+                            (local_path.clone(), local_raw),
+                            (global_path.clone(), malformed),
+                        ],
+                        0,
+                    )
+                }
+                "unreadable peer" => {
+                    let (local, local_raw) =
+                        write_runfile_slot(RegistrationScope::Local, &local_path, &local_runfile);
+                    (
+                        RegistrationInventory {
+                            local,
+                            global: Some(RegistrationSlot::Blocked {
+                                scope: RegistrationScope::Global,
+                                path: global_path,
+                                reason: RegistrationBlock::Unreadable(
+                                    "injected permission denial".to_string(),
+                                ),
+                            }),
+                            promised_origins: Vec::new(),
+                        },
+                        vec![(local_path.clone(), local_raw)],
+                        0,
+                    )
+                }
+                "invalid creation token" => {
+                    local_runfile.process_identity.as_mut().unwrap().start_token =
+                        "invalid-token".to_string();
+                    let (local, local_raw) =
+                        write_runfile_slot(RegistrationScope::Local, &local_path, &local_runfile);
+                    (
+                        RegistrationInventory {
+                            local,
+                            global: None,
+                            promised_origins: Vec::new(),
+                        },
+                        vec![(local_path.clone(), local_raw)],
+                        0,
+                    )
+                }
+                "durable Tailscale state" => {
+                    local_runfile.tailscale = true;
+                    let (local, local_raw) =
+                        write_runfile_slot(RegistrationScope::Local, &local_path, &local_runfile);
+                    (
+                        RegistrationInventory {
+                            local,
+                            global: None,
+                            promised_origins: Vec::new(),
+                        },
+                        vec![(local_path.clone(), local_raw)],
+                        0,
+                    )
+                }
+                "live schema-1 registration" => {
+                    local_runfile.schema_version = 1;
+                    local_runfile.process_identity = None;
+                    local_runfile.origin_local_runfile = None;
+                    let (local, local_raw) =
+                        write_runfile_slot(RegistrationScope::Local, &local_path, &local_runfile);
+                    let (global, global_raw) =
+                        write_runfile_slot(RegistrationScope::Global, &global_path, &local_runfile);
+                    (
+                        RegistrationInventory {
+                            local,
+                            global: Some(global),
+                            promised_origins: Vec::new(),
+                        },
+                        vec![
+                            (local_path.clone(), local_raw),
+                            (global_path.clone(), global_raw),
+                        ],
+                        2,
+                    )
+                }
+                "two live keys" => {
+                    let (local, local_raw) =
+                        write_runfile_slot(RegistrationScope::Local, &local_path, &local_runfile);
+                    let mut global_runfile = local_runfile.clone();
+                    global_runfile.pid = 6451;
+                    global_runfile.process_identity = Some(discovery_fixture_identity(6451));
+                    let (global, global_raw) = write_runfile_slot(
+                        RegistrationScope::Global,
+                        &global_path,
+                        &global_runfile,
+                    );
+                    (
+                        RegistrationInventory {
+                            local,
+                            global: Some(global),
+                            promised_origins: Vec::new(),
+                        },
+                        vec![
+                            (local_path.clone(), local_raw),
+                            (global_path.clone(), global_raw),
+                        ],
+                        2,
+                    )
+                }
+                _ => {
+                    let (local, local_raw) =
+                        write_runfile_slot(RegistrationScope::Local, &local_path, &local_runfile);
+                    (
+                        RegistrationInventory {
+                            local,
+                            global: None,
+                            promised_origins: Vec::new(),
+                        },
+                        vec![(local_path.clone(), local_raw)],
+                        1,
+                    )
+                }
+            };
+            let expected_held = flatten_inventory(&inventory)
+                .iter()
+                .filter(|observation| {
+                    !matches!(observation.state, ManagedRegistrationState::Absent)
+                })
+                .count();
+            let observe_ledger = Rc::clone(&ledger);
+            let discovery = discover_inventory_before_health_with(inventory, move |capture| {
+                observe_ledger
+                    .borrow_mut()
+                    .push(LifecycleEvent::Acquire(capture.runfile.pid));
+                let listener = match blocker {
+                    "wildcard listener" => ListenerState::OwnedByTargetWildcard,
+                    "shared listener" => ListenerState::OwnedByOther(vec![6450, 6451]),
+                    "foreign listener" => ListenerState::OwnedByOther(vec![6451]),
+                    "uninspectable listener" => ListenerState::Uninspectable("denied".to_string()),
+                    _ => ListenerState::OwnedByTarget,
+                };
+                let state = if blocker == "live schema-1 registration"
+                    || blocker == "uninspectable listener"
+                {
+                    CandidateState::Unverifiable {
+                        reason: blocker.to_string(),
+                        observed_identity: capture.runfile.process_identity.clone(),
+                        listener: Some(listener),
+                        health: HealthState::NotProbed,
+                    }
+                } else {
+                    CandidateState::Verified {
+                        identity: capture.runfile.process_identity.clone().unwrap(),
+                        listener,
+                        health: HealthState::NotProbed,
+                    }
+                };
+                let label = registration_label(capture.scope, &capture.path);
+                LifecycleObservation {
+                    candidate: Candidate {
+                        coordinate: RegistrationCoordinate {
+                            scope: capture.scope,
+                            path: capture.path.clone(),
+                        },
+                        runfile: Some(capture.runfile.clone()),
+                        state,
+                    },
+                    label,
+                    capture: Some(capture),
+                    process: None,
+                }
+            });
+            assert!(
+                down_mutation_blocker(&discovery.managed.state).is_some(),
+                "{blocker} must become a typed mutation blocker through inventory and resolution"
+            );
+            let plan = down_plan_from_lifecycle(discovery);
+            let mut effects = ScriptedDownEffects::new(
+                Vec::<ListenerState>::new(),
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Rc::clone(&ledger),
+            );
+            let report = execute_down_plan(plan, &mut effects);
+            let rendered = render_down_with_ledger(&report, &ledger);
+            assert_eq!(report.disposition, DownDisposition::Blocked, "{blocker}");
+            assert!(!report.success, "{blocker}");
+            assert!(!report.signalled, "{blocker}");
+            assert_eq!(report.registrations.len(), expected_held, "{blocker}");
+            assert!(report.registrations.iter().all(|registration| matches!(
+                registration.outcome,
+                DownRegistrationOutcome::Held { .. }
+            )));
+            assert!(
+                rendered.stdout.iter().all(|line| !line.contains("stopped")),
+                "{blocker}: {:?}",
+                rendered.stdout
+            );
+            assert_eq!(
+                ledger
+                    .borrow()
+                    .iter()
+                    .filter(|event| matches!(event, LifecycleEvent::Acquire(_)))
+                    .count(),
+                expected_acquires,
+                "{blocker} must stop acquiring as soon as its real trigger becomes authoritative"
+            );
+            assert!(
+                ledger.borrow().iter().all(|event| matches!(
+                    event,
+                    LifecycleEvent::Acquire(_) | LifecycleEvent::Render
+                )),
+                "{blocker} must have empty signal/listener/delete/HTTP ledgers: {:?}",
+                ledger.borrow()
+            );
+            for (path, original) in originals {
+                assert_eq!(std::fs::read(path).unwrap(), original, "{blocker}");
+            }
+        }
+    }
+
+    #[test]
+    fn live_v1_guidance_and_explicit_adoption() {
+        let pid = 6501;
+        let (captures, facts) = legacy_adoption_fixture(pid);
+        let adopted_raw = adoption_fixture_replacement_raw(&captures, &facts);
+        let coordinates = captures
+            .iter()
+            .map(|capture| RegistrationCoordinate {
+                scope: capture.scope,
+                path: capture.path.clone(),
+            })
+            .collect::<Vec<_>>();
+        let issues = vec![ResolutionIssue {
+            coordinates: coordinates.clone(),
+            kind: ResolutionIssueKind::Unverifiable,
+            detail: format!(
+                "live schema-1 PID {pid} has no creation identity and cannot authorize teardown"
+            ),
+        }];
+        let inventory = RegistrationInventory {
+            local: RegistrationSlot::Captured(Box::new(captures[0].clone())),
+            global: Some(RegistrationSlot::Captured(Box::new(captures[1].clone()))),
+            promised_origins: Vec::new(),
+        };
+        let managed_observations = captures
+            .iter()
+            .enumerate()
+            .map(|(index, capture)| ManagedRegistrationObservation {
+                id: ObservationId(index),
+                coordinate: coordinates[index].clone(),
+                promised: None,
+                state: ManagedRegistrationState::Captured {
+                    runfile: Box::new(capture.runfile.clone()),
+                    raw_sha256: format!("legacy-{index}"),
+                    runtime: RuntimeObservation::LegacyLive { pid },
+                },
+            })
+            .collect::<Vec<_>>();
+        let managed = ManagedServerDiscovery {
+            inventory,
+            observations: managed_observations,
+            state: ManagedServerState::Unverifiable {
+                issues: issues.clone(),
+            },
+        };
+        let rendered_status = render_status(&status_report(&managed));
+        let expected_command = format!("ferric server adopt --pid {pid}");
+        assert!(
+            rendered_status
+                .stdout
+                .iter()
+                .any(|line| line.contains(&expected_command))
+        );
+        let mut global_only = managed.clone();
+        global_only.inventory.local = RegistrationSlot::Absent {
+            scope: coordinates[0].scope,
+            path: coordinates[0].path.clone(),
+        };
+        global_only
+            .observations
+            .retain(|observation| observation.coordinate.scope == RegistrationScope::Global);
+        assert!(matches!(
+            status_report(&global_only).next_action,
+            StatusNextAction::RepairUnverifiable { .. }
+        ));
+
+        let plan = down_plan_from_lifecycle(LifecycleDiscovery {
+            managed,
+            observations: Vec::new(),
+            resolution: Resolution::Unverifiable { issues },
+        });
+        let down_ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut down_effects = ScriptedDownEffects::new(
+            Vec::<ListenerState>::new(),
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&down_ledger),
+        );
+        let down_report = execute_down_plan(plan, &mut down_effects);
+        let rendered_down = render_down_with_ledger(&down_report, &down_ledger);
+        assert_eq!(down_report.disposition, DownDisposition::Blocked);
+        assert_eq!(down_report.registrations.len(), 2);
+        assert!(
+            down_report
+                .registrations
+                .iter()
+                .all(|registration| matches!(
+                    registration.outcome,
+                    DownRegistrationOutcome::Held { .. }
+                ))
+        );
+        assert!(
+            rendered_down
+                .stdout
+                .iter()
+                .any(|line| line.contains(&expected_command))
+        );
+        assert_eq!(*down_ledger.borrow(), vec![LifecycleEvent::Render]);
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "legacy-generation", Rc::clone(&ledger))
+            .with_inspection(Ok(facts.clone()))
+            .with_inspection(Ok(facts.clone()))
+            .with_wait(Ok(false));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let mut effects = ScriptedAdoptionEffects::new(
+            [
+                Ok(ReplacementOutcome::Replaced),
+                Ok(ReplacementOutcome::Replaced),
+            ],
+            Rc::clone(&ledger),
+        );
+        let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+        let rendered = render_adoption_with_ledger(&report, &ledger);
+
+        assert!(report.success);
+        assert_eq!(report.disposition, AdoptionDisposition::Adopted);
+        assert!(report.identity_validated);
+        assert!(report.listener_validated);
+        assert!(report.final_generation_revalidated);
+        assert!(report.registrations.iter().all(|registration| {
+            matches!(registration.transition, AdoptionAliasTransition::Adopted)
+                && registration.rollback.is_none()
+        }));
+        assert!(
+            rendered
+                .stdout
+                .iter()
+                .any(|line| line.contains("without signalling"))
+        );
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Acquire(pid),
+                LifecycleEvent::Inspect("legacy-generation", captures[0].runfile.port),
+                LifecycleEvent::RetainedWait("legacy-generation"),
+                scripted_replace_event(&captures[0].path, &captures[0].raw, &adopted_raw),
+                scripted_replace_event(&captures[1].path, &captures[1].raw, &adopted_raw),
+                LifecycleEvent::Inspect("legacy-generation", captures[0].runfile.port),
+                LifecycleEvent::Render,
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_adoption_transition_and_rollback_matrix() {
+        let pid = 6601;
+        let (captures, facts) = legacy_adoption_fixture(pid);
+        let adopted_raw = adoption_fixture_replacement_raw(&captures, &facts);
+        let port = captures[0].runfile.port;
+
+        let blocked_rows = [
+            (
+                "executable",
+                {
+                    let mut changed = facts.clone();
+                    changed.identity.executable = if cfg!(windows) {
+                        PathBuf::from(r"C:\fixture\python.exe")
+                    } else {
+                        PathBuf::from("/fixture/python")
+                    };
+                    changed
+                },
+                "closed",
+            ),
+            (
+                "argv",
+                {
+                    let mut changed = facts.clone();
+                    changed
+                        .identity
+                        .argv
+                        .extend(["--port".to_string(), (port + 1).to_string()]);
+                    changed
+                },
+                "conflicting registered port",
+            ),
+            (
+                "listener",
+                {
+                    let mut changed = facts.clone();
+                    changed.listener = ListenerState::OwnedByTargetWildcard;
+                    changed
+                },
+                "not exclusively owned",
+            ),
+            (
+                "listener-absent",
+                {
+                    let mut changed = facts.clone();
+                    changed.listener = ListenerState::Absent;
+                    changed
+                },
+                "not exclusively owned",
+            ),
+            (
+                "listener-foreign",
+                {
+                    let mut changed = facts.clone();
+                    changed.listener = ListenerState::OwnedByOther(vec![9999]);
+                    changed
+                },
+                "not exclusively owned",
+            ),
+            (
+                "listener-uninspectable",
+                {
+                    let mut changed = facts.clone();
+                    changed.listener =
+                        ListenerState::Uninspectable("listener table denied".to_string());
+                    changed
+                },
+                "not exclusively owned",
+            ),
+        ];
+        for (case, blocked_facts, expected_fragment) in blocked_rows {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(pid, case, Rc::clone(&ledger))
+                .with_inspection(Ok(blocked_facts));
+            let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+            let mut effects = ScriptedAdoptionEffects::new(
+                Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
+                Rc::clone(&ledger),
+            );
+            let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+            let rendered = render_adoption_with_ledger(&report, &ledger);
+            assert_eq!(report.disposition, AdoptionDisposition::Blocked, "{case}");
+            assert!(
+                report
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.contains(expected_fragment)),
+                "{case}: {:?}",
+                report.diagnostics
+            );
+            assert!(
+                rendered
+                    .stdout
+                    .iter()
+                    .all(|line| !line.contains("adopted live"))
+            );
+            assert_eq!(
+                *ledger.borrow(),
+                vec![
+                    LifecycleEvent::Acquire(pid),
+                    LifecycleEvent::Inspect(case, port),
+                    LifecycleEvent::Render,
+                ],
+                "{case} must not wait, replace, rollback, or signal"
+            );
+        }
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let runtime = ScriptedRuntime::new(
+            Err("retained handle unavailable".to_string()),
+            Rc::clone(&ledger),
+        );
+        let mut effects = ScriptedAdoptionEffects::new(
+            Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+        render_adoption_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, AdoptionDisposition::Blocked);
+        assert_eq!(
+            *ledger.borrow(),
+            vec![LifecycleEvent::Acquire(pid), LifecycleEvent::Render]
+        );
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "inspect-error", Rc::clone(&ledger))
+            .with_inspection(Err(ProcessError::Operation(
+                "inspection denied".to_string(),
+            )));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let mut effects = ScriptedAdoptionEffects::new(
+            Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+        render_adoption_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, AdoptionDisposition::Blocked);
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Acquire(pid),
+                LifecycleEvent::Inspect("inspect-error", port),
+                LifecycleEvent::Render,
+            ]
+        );
+
+        for (case, wait) in [
+            ("exited-during-validation", Ok(true)),
+            (
+                "wait-error",
+                Err(ProcessError::Operation("wait denied".to_string())),
+            ),
+        ] {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(pid, case, Rc::clone(&ledger))
+                .with_inspection(Ok(facts.clone()))
+                .with_wait(wait);
+            let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+            let mut effects = ScriptedAdoptionEffects::new(
+                Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
+                Rc::clone(&ledger),
+            );
+            let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+            render_adoption_with_ledger(&report, &ledger);
+            assert_eq!(report.disposition, AdoptionDisposition::Blocked, "{case}");
+            assert_eq!(
+                *ledger.borrow(),
+                vec![
+                    LifecycleEvent::Acquire(pid),
+                    LifecycleEvent::Inspect(case, port),
+                    LifecycleEvent::RetainedWait(case),
+                    LifecycleEvent::Render,
+                ],
+                "{case}"
+            );
+        }
+
+        for failed_index in 0..captures.len() {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(pid, "alias-failure", Rc::clone(&ledger))
+                .with_inspection(Ok(facts.clone()))
+                .with_wait(Ok(false));
+            let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+            let mut outcomes = (0..failed_index)
+                .map(|_| Ok(ReplacementOutcome::Replaced))
+                .collect::<Vec<_>>();
+            outcomes.push(Ok(ReplacementOutcome::Absent));
+            outcomes.extend((0..failed_index).map(|_| Ok(ReplacementOutcome::Replaced)));
+            let mut effects = ScriptedAdoptionEffects::new(outcomes, Rc::clone(&ledger));
+            let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+            let rendered = render_adoption_with_ledger(&report, &ledger);
+            assert!(!report.success);
+            let expected_disposition = if failed_index == 0 {
+                AdoptionDisposition::Failed
+            } else {
+                AdoptionDisposition::RecoveryPartial
+            };
+            assert_eq!(
+                report.disposition, expected_disposition,
+                "alias {failed_index} is not proven restored at its original path"
+            );
+            let expected_state = if failed_index == 0 {
+                "[state] adoption failed before any committed replacement"
+            } else {
+                "[state] adoption failed; recovery partial"
+            };
+            assert_eq!(
+                rendered.stdout.last().map(String::as_str),
+                Some(expected_state),
+                "alias {failed_index}"
+            );
+            assert!(matches!(
+                report.registrations[failed_index].transition,
+                AdoptionAliasTransition::Absent
+            ));
+            for earlier in &report.registrations[..failed_index] {
+                assert_eq!(
+                    earlier.rollback,
+                    Some(AdoptionRollbackOutcome::LegacyRestored)
+                );
+            }
+            assert!(
+                ledger
+                    .borrow()
+                    .iter()
+                    .all(|event| !matches!(event, LifecycleEvent::Terminate(_))),
+                "alias {failed_index}"
+            );
+        }
+
+        let holding = discovery_fixture_path("adoption-holding");
+        for (case, outcome, marker) in [
+            (
+                "forward-replacement",
+                Ok(ReplacementOutcome::ReplacementPreserved {
+                    path: holding.clone(),
+                    detail: "concurrent replacement retained".to_string(),
+                }),
+                "replacement-preserved",
+            ),
+            (
+                "forward-error",
+                Err(ReplacementError {
+                    path: captures[0].path.clone(),
+                    detail: "replacement publish failed".to_string(),
+                    preserved_at: Some(holding.clone()),
+                    replacement_committed: false,
+                }),
+                "replace-failed",
+            ),
+        ] {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(pid, case, Rc::clone(&ledger))
+                .with_inspection(Ok(facts.clone()))
+                .with_wait(Ok(false));
+            let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+            let mut effects = ScriptedAdoptionEffects::new([outcome], Rc::clone(&ledger));
+            let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+            let rendered = render_adoption_with_ledger(&report, &ledger);
+            assert_eq!(report.disposition, AdoptionDisposition::Failed, "{case}");
+            assert_eq!(
+                rendered.stdout.last().map(String::as_str),
+                Some("[state] adoption failed before any committed replacement"),
+                "{case}"
+            );
+            let failed_row = rendered
+                .stdout
+                .iter()
+                .find(|line| line.contains(marker))
+                .unwrap();
+            assert!(failed_row.contains(&holding.display().to_string()));
+            assert_eq!(
+                *ledger.borrow(),
+                vec![
+                    LifecycleEvent::Acquire(pid),
+                    LifecycleEvent::Inspect(case, port),
+                    LifecycleEvent::RetainedWait(case),
+                    scripted_replace_event(&captures[0].path, &captures[0].raw, &adopted_raw),
+                    LifecycleEvent::Render,
+                ],
+                "{case}"
+            );
+        }
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut changed_facts = facts.clone();
+        changed_facts.identity.start_token = canonical_test_start_token(9999);
+        let process = ScriptedProcess::new(pid, "identity-transition", Rc::clone(&ledger))
+            .with_inspection(Ok(facts.clone()))
+            .with_inspection(Ok(changed_facts))
+            .with_wait(Ok(false));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let mut effects = ScriptedAdoptionEffects::new(
+            [
+                Ok(ReplacementOutcome::Replaced),
+                Ok(ReplacementOutcome::Replaced),
+                Ok(ReplacementOutcome::Replaced),
+                Ok(ReplacementOutcome::Replaced),
+            ],
+            Rc::clone(&ledger),
+        );
+        let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+        render_adoption_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, AdoptionDisposition::RolledBack);
+        assert!(report.registrations.iter().all(|registration| {
+            registration.rollback == Some(AdoptionRollbackOutcome::LegacyRestored)
+        }));
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Acquire(pid),
+                LifecycleEvent::Inspect("identity-transition", port),
+                LifecycleEvent::RetainedWait("identity-transition"),
+                scripted_replace_event(&captures[0].path, &captures[0].raw, &adopted_raw),
+                scripted_replace_event(&captures[1].path, &captures[1].raw, &adopted_raw),
+                LifecycleEvent::Inspect("identity-transition", port),
+                scripted_replace_event(&captures[1].path, &adopted_raw, &captures[1].raw),
+                scripted_replace_event(&captures[0].path, &adopted_raw, &captures[0].raw),
+                LifecycleEvent::Render,
+            ],
+            "final generation failure must rollback in reverse order"
+        );
+
+        for (case, final_inspection) in [
+            (
+                "final-inspect-error",
+                Err(ProcessError::Operation(
+                    "final inspection denied".to_string(),
+                )),
+            ),
+            (
+                "final-listener-change",
+                Ok(ProcessFacts {
+                    identity: facts.identity.clone(),
+                    listener: ListenerState::OwnedByOther(vec![9999]),
+                }),
+            ),
+        ] {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(pid, case, Rc::clone(&ledger))
+                .with_inspection(Ok(facts.clone()))
+                .with_inspection(final_inspection)
+                .with_wait(Ok(false));
+            let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+            let mut effects = ScriptedAdoptionEffects::new(
+                [
+                    Ok(ReplacementOutcome::Replaced),
+                    Ok(ReplacementOutcome::Replaced),
+                    Ok(ReplacementOutcome::Replaced),
+                    Ok(ReplacementOutcome::Replaced),
+                ],
+                Rc::clone(&ledger),
+            );
+            let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+            render_adoption_with_ledger(&report, &ledger);
+            assert_eq!(
+                report.disposition,
+                AdoptionDisposition::RolledBack,
+                "{case}"
+            );
+            assert!(report.registrations.iter().all(|registration| {
+                registration.rollback == Some(AdoptionRollbackOutcome::LegacyRestored)
+            }));
+            assert_eq!(
+                ledger
+                    .borrow()
+                    .iter()
+                    .filter(|event| matches!(event, LifecycleEvent::Replace(_, _, _)))
+                    .count(),
+                4,
+                "{case}"
+            );
+            assert!(
+                ledger
+                    .borrow()
+                    .iter()
+                    .all(|event| !matches!(event, LifecycleEvent::Terminate(_))),
+                "{case}"
+            );
+        }
+
+        for (case, rollback, expected_rollback) in [
+            (
+                "concurrent",
+                Ok(ReplacementOutcome::ReplacementPreserved {
+                    path: holding.clone(),
+                    detail: "concurrent winner kept".to_string(),
+                }),
+                "replacement-preserved",
+            ),
+            (
+                "rollback-error",
+                Err(ReplacementError {
+                    path: captures[0].path.clone(),
+                    detail: "rollback durability failed".to_string(),
+                    preserved_at: Some(holding.clone()),
+                    replacement_committed: false,
+                }),
+                "failed",
+            ),
+        ] {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(pid, case, Rc::clone(&ledger))
+                .with_inspection(Ok(facts.clone()))
+                .with_wait(Ok(false));
+            let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+            let mut effects = ScriptedAdoptionEffects::new(
+                [
+                    Ok(ReplacementOutcome::Replaced),
+                    Ok(ReplacementOutcome::Absent),
+                    rollback,
+                ],
+                Rc::clone(&ledger),
+            );
+            let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+            let rendered = render_adoption_with_ledger(&report, &ledger);
+            assert_eq!(
+                report.disposition,
+                AdoptionDisposition::RecoveryPartial,
+                "{case}"
+            );
+            assert_eq!(
+                rendered.stdout.last().map(String::as_str),
+                Some("[state] adoption failed; recovery partial"),
+                "{case}"
+            );
+            let local_row = rendered
+                .stdout
+                .iter()
+                .find(|line| line.contains(&captures[0].path.display().to_string()))
+                .unwrap();
+            assert!(local_row.contains(expected_rollback), "{case}: {local_row}");
+            assert!(
+                local_row.contains(&holding.display().to_string()),
+                "{case}: {local_row}"
+            );
+            assert!(
+                ledger
+                    .borrow()
+                    .iter()
+                    .all(|event| !matches!(event, LifecycleEvent::Terminate(_))),
+                "{case}"
+            );
+        }
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "rollback-absent", Rc::clone(&ledger))
+            .with_inspection(Ok(facts.clone()))
+            .with_wait(Ok(false));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let mut effects = ScriptedAdoptionEffects::new(
+            [
+                Ok(ReplacementOutcome::Replaced),
+                Ok(ReplacementOutcome::Absent),
+                Ok(ReplacementOutcome::Absent),
+            ],
+            Rc::clone(&ledger),
+        );
+        let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+        let rendered = render_adoption_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, AdoptionDisposition::RecoveryPartial);
+        assert_eq!(
+            report.registrations[0].rollback,
+            Some(AdoptionRollbackOutcome::Absent)
+        );
+        let restored_row = rendered
+            .stdout
+            .iter()
+            .find(|line| line.contains(&captures[0].path.display().to_string()))
+            .unwrap();
+        assert!(restored_row.contains("rollback=absent"), "{restored_row}");
+        assert_eq!(
+            rendered.stdout.last().map(String::as_str),
+            Some("[state] adoption failed; recovery partial")
+        );
+        assert!(
+            ledger
+                .borrow()
+                .iter()
+                .all(|event| !matches!(event, LifecycleEvent::Terminate(_)))
+        );
+
+        let mut same_path_alias = captures[0].clone();
+        same_path_alias.scope = RegistrationScope::Global;
+        let same_path_captures = vec![captures[0].clone(), same_path_alias.clone()];
+        assert_eq!(adoption_mutation_groups(&same_path_captures).len(), 1);
+        let alias_root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(alias_root.path().join("nested")).unwrap();
+        let alias_file = alias_root.path().join("registration.json");
+        std::fs::write(&alias_file, &captures[0].raw).unwrap();
+        let mut direct_alias = captures[0].clone();
+        direct_alias.path = alias_file.clone();
+        let mut lexical_alias = same_path_alias.clone();
+        lexical_alias.path = alias_root
+            .path()
+            .join("nested")
+            .join("..")
+            .join(alias_file.file_name().unwrap());
+        assert!(
+            validate_mutation_path_aliases(&[direct_alias, lexical_alias]).is_err(),
+            "distinct path spellings of one entry must block rather than collapse mutation reports"
+        );
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "same-path", Rc::clone(&ledger))
+            .with_inspection(Ok(facts.clone()))
+            .with_inspection(Ok(facts.clone()))
+            .with_wait(Ok(false));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let mut effects =
+            ScriptedAdoptionEffects::new([Ok(ReplacementOutcome::Replaced)], Rc::clone(&ledger));
+        let report =
+            execute_legacy_adoption(same_path_captures.clone(), pid, &runtime, &mut effects);
+        render_adoption_with_ledger(&report, &ledger);
+        assert!(report.success);
+        assert_eq!(report.registrations.len(), 2);
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Acquire(pid),
+                LifecycleEvent::Inspect("same-path", port),
+                LifecycleEvent::RetainedWait("same-path"),
+                scripted_replace_event(
+                    &same_path_captures[0].path,
+                    &same_path_captures[0].raw,
+                    &adopted_raw,
+                ),
+                LifecycleEvent::Inspect("same-path", port),
+                LifecycleEvent::Render,
+            ]
+        );
+
+        same_path_alias.raw.push(b' ');
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "conflicting-path-token", Rc::clone(&ledger));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let mut effects = ScriptedAdoptionEffects::new(
+            Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let report = execute_legacy_adoption(
+            vec![captures[0].clone(), same_path_alias],
+            pid,
+            &runtime,
+            &mut effects,
+        );
+        render_adoption_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, AdoptionDisposition::Blocked);
+        assert_eq!(
+            *ledger.borrow(),
+            vec![LifecycleEvent::Render],
+            "conflicting tokens for one physical path must block before acquisition"
+        );
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "committed-error", Rc::clone(&ledger))
+            .with_inspection(Ok(facts))
+            .with_wait(Ok(false));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let mut effects = ScriptedAdoptionEffects::new(
+            [
+                Ok(ReplacementOutcome::Replaced),
+                Err(ReplacementError {
+                    path: captures[1].path.clone(),
+                    detail: "directory sync failed after commit".to_string(),
+                    preserved_at: Some(holding),
+                    replacement_committed: true,
+                }),
+                Ok(ReplacementOutcome::Replaced),
+                Ok(ReplacementOutcome::Replaced),
+            ],
+            Rc::clone(&ledger),
+        );
+        let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
+        render_adoption_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, AdoptionDisposition::RolledBack);
+        assert!(matches!(
+            report.registrations[1].transition,
+            AdoptionAliasTransition::ReplaceFailed {
+                replacement_committed: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            report.registrations[1].rollback,
+            Some(AdoptionRollbackOutcome::LegacyRestored)
+        );
     }
 
     #[test]
@@ -5628,6 +8498,63 @@ mod tests {
         )
     ))]
     #[test]
+    fn malformed_v2_token_blocks_down_without_signal_or_delete() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(&mut helper, port);
+
+        let mut identity = LiveProcess::acquire_child(&helper)
+            .unwrap()
+            .inspect(port)
+            .unwrap()
+            .identity;
+        identity.start_token = "opaque".to_string();
+        let record = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: helper.id(),
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(identity),
+            origin_local_runfile: Some(local.clone()),
+        };
+        write_test_runfile(&local, &record);
+        let original_registration = std::fs::read(&local).unwrap();
+
+        let result = down_impl(&workspace, None);
+        let registration_after_down = std::fs::read(&local).unwrap();
+        let helper_remained_live = helper.try_wait().unwrap().is_none();
+        let _ = helper.kill();
+        let _ = helper.wait();
+
+        assert_eq!(result, ExitCode::FAILURE);
+        assert_eq!(registration_after_down, original_registration);
+        assert!(
+            helper_remained_live,
+            "a malformed creation token must block before process acquisition or signalling"
+        );
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
     fn same_creation_with_different_process_metadata_blocks_cleanup_and_signal() {
         let _lifecycle_serial = lifecycle_parent_test_guard();
         let root = tempfile::tempdir().unwrap();
@@ -5719,10 +8646,75 @@ mod tests {
         };
         validate_legacy_process_coordinates(&runfile, &identity).unwrap();
 
+        for (flag, coordinate) in [
+            ("-m", "recorded model"),
+            ("-c", "recorded context size"),
+            ("--seed", "recorded sampling seed"),
+            ("--parallel", "recorded parallel slot count"),
+            ("--host", "loopback host"),
+            ("--port", "registered port"),
+        ] {
+            let mut missing = identity.clone();
+            let index = missing
+                .argv
+                .iter()
+                .position(|argument| argument == flag)
+                .unwrap();
+            missing.argv.drain(index..=index + 1);
+            let error = validate_legacy_process_coordinates(&runfile, &missing).unwrap_err();
+            assert!(error.contains(coordinate), "{flag}: {error}");
+
+            let mut conflicting = identity.clone();
+            conflicting
+                .argv
+                .extend([flag.to_string(), "conflicting-value".to_string()]);
+            let error = validate_legacy_process_coordinates(&runfile, &conflicting).unwrap_err();
+            assert!(
+                error.contains(&format!("conflicting {coordinate}")),
+                "{flag}: {error}"
+            );
+        }
+
+        let mut inline = identity.clone();
+        for (flag, replacement) in [
+            ("-m", "--model=model.gguf"),
+            ("-c", "--ctx-size=8192"),
+            ("--host", "--host=127.0.0.1"),
+            ("--port", "--port=8080"),
+            ("--seed", "--seed=42"),
+            ("--parallel", "--parallel=1"),
+        ] {
+            let index = inline
+                .argv
+                .iter()
+                .position(|argument| argument == flag)
+                .unwrap();
+            inline
+                .argv
+                .splice(index..=index + 1, [replacement.to_string()]);
+        }
+        validate_legacy_process_coordinates(&runfile, &inline).unwrap();
+        let mut conflicting_inline = identity.clone();
+        conflicting_inline
+            .argv
+            .push("--model=other.gguf".to_string());
+        let error = validate_legacy_process_coordinates(&runfile, &conflicting_inline).unwrap_err();
+        assert!(error.contains("conflicting recorded model"));
+
         let mut missing_port = identity.clone();
         missing_port.argv.truncate(missing_port.argv.len() - 2);
         let error = validate_legacy_process_coordinates(&runfile, &missing_port).unwrap_err();
         assert!(error.contains("registered port"));
+
+        let mut conflicting_port = identity.clone();
+        conflicting_port.argv.extend([
+            "--port".to_string(),
+            "8081".to_string(),
+            "--model".to_string(),
+            "other.gguf".to_string(),
+        ]);
+        let error = validate_legacy_process_coordinates(&runfile, &conflicting_port).unwrap_err();
+        assert!(error.contains("conflicting registered port"));
 
         let mut wrong_engine = identity;
         wrong_engine.executable = if cfg!(windows) {
@@ -5732,6 +8724,32 @@ mod tests {
         };
         let error = validate_legacy_process_coordinates(&runfile, &wrong_engine).unwrap_err();
         assert!(error.contains("closed"));
+
+        let ollama = ServerRunfile {
+            engine: Engine::Ollama,
+            model: None,
+            context_size: None,
+            sampling_seed: None,
+            parallel_slots: None,
+            ..runfile
+        };
+        let mut ollama_identity = ProcessIdentity {
+            start_token: canonical_test_start_token(2),
+            executable: if cfg!(windows) {
+                PathBuf::from(r"C:\tools\ollama.exe")
+            } else {
+                PathBuf::from("/tools/ollama")
+            },
+            argv: vec!["ollama".to_string(), "serve".to_string()],
+        };
+        validate_legacy_process_coordinates(&ollama, &ollama_identity).unwrap();
+        ollama_identity.argv = vec![
+            "ollama".to_string(),
+            "status".to_string(),
+            "serve".to_string(),
+        ];
+        let error = validate_legacy_process_coordinates(&ollama, &ollama_identity).unwrap_err();
+        assert!(error.contains("closed `ollama serve`"));
     }
 
     #[test]

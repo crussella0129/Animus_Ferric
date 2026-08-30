@@ -14,7 +14,7 @@ The default engine is llama.cpp's `llama-server`; Ollama is pluggable via
 ```sh
 ferric server up      # launch + publish local/global registrations
 ferric server status  # resolve identity/listener ownership + report HTTP health
-ferric server adopt --pid <PID> # verify and upgrade a live schema-v1 record
+ferric server adopt --pid 6501  # example: run the exact command status/down prints
 ferric server doctor  # check engine-binary + model presence (and reachability)
 ferric server down    # stop only a verified instance, then clean registrations
 ```
@@ -129,33 +129,59 @@ command reports partial cleanup.
 
 - No registration: it is an idempotent success.
 - Stale records only: when every registered endpoint is absent, it conditionally
-  removes unchanged records and explicitly reports that no process was stopped;
-  a live, foreign, shared, or uninspectable listener keeps the recovery record.
+  removes unchanged records and reports `stale-cleaned` without signalling a
+  process; a live, foreign, shared, wildcard, or uninspectable listener keeps
+  every recovery record.
 - One verified schema-v2 instance: it terminates only through the retained exact
-  process handle, proves exit, and then conditionally cleans all matching aliases
-  and stale records.
+  process handle. It reports `stopped` only after proving that handle exited and
+  all registered listeners were released; only then does it conditionally clean
+  the target, matching aliases, and reconciled stale records. A target already
+  proven exited is reported separately and is never described as signalled.
+
+Every cleanup candidate gets a per-path result: `removed`, `already-absent`,
+`replacement-preserved`, `restore-failed`, `removal-failed`, or another explicit
+cleanup failure; a precondition failure reports the candidate as `held`.
+Replacement and failure rows identify every preserved location, including any
+same-parent holding path. If one alias fails while another succeeds, the
+terminal result is `cleanup partial`, not `stopped` or `stale-cleaned`, and the
+command fails even though exit and listener release may already be proven. A
+signal failure, wait timeout/error, or remaining
+target/wildcard/foreign/uninspectable listener is a teardown failure: no
+registration is removed and `stopped` is never printed.
 
 Multiple live identities, disagreement between process and listener ownership,
-uninspectable state, or any blocked registration refuses teardown. Fix the
-reported state; do not work around it with a broad process-name kill.
+uninspectable state, malformed or unreadable peer state, a live unadopted
+schema-v1 record, or any other blocked registration refuses teardown. All
+aliases are retained, no process is signalled, and no potentially owning
+registration is deleted. Fix the reported state; do not work around it with a
+broad process-name kill.
 
 ### Recovering a live schema-v1 registration
 
 Historical schema-v1 runfiles remain readable, but a numeric PID alone cannot
-authorize teardown. If that PID is live, both `status` and `down` retain the
-record and print a copy/paste recovery command. From the workspace containing
-the local record, run:
+authorize teardown. If that PID is live, both `status` and `down` retain every
+alias and print a copy/paste-complete recovery command with that numeric PID
+only when the originating local record is present. A global-only legacy record
+is reported for repair because Ferric cannot safely invent its local origin.
+The adoption command has the form `ferric server adopt --pid <pid>`. For
+example, if status/down reports PID 6501, run:
 
 ```sh
-ferric server adopt --pid <PID>
+ferric server adopt --pid 6501
 ```
 
 Adoption is non-destructive. It acquires an exact retained process handle,
 checks the closed engine executable and every available recorded argv
 coordinate, requires exclusive IPv4-loopback listener ownership, and
 conditionally replaces only unchanged local/global aliases with schema v2.
-Any disagreement leaves the live process unsignalled and preserves recovery
-bytes. A later `server down` re-acquires and revalidates the adopted generation.
+It never signals the process. After replacement, Ferric rechecks that same
+retained generation. If the generation changed, an alias was concurrently
+replaced, or the transition otherwise fails, Ferric rolls back only the v2 bytes
+it wrote that are still unchanged. External replacements remain untouched, and
+any failed rollback reports the exact alias and preserved location so no
+recovery state is hidden. Any pre-replacement disagreement leaves all original
+bytes intact. A later `server down` re-acquires and revalidates the successfully
+adopted generation.
 
 If the legacy PID is already absent, run:
 

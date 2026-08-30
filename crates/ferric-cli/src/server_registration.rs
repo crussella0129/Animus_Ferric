@@ -1016,9 +1016,17 @@ where
 
 /// Conditional-removal failure. `preserved_at`, when present, is an isolated
 /// same-parent location retaining the entry which was moved for inspection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemovalFailureKind {
+    Restore,
+    Remove,
+    Other,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RemovalError {
     pub(crate) path: PathBuf,
+    pub(crate) kind: RemovalFailureKind,
     pub(crate) detail: String,
     pub(crate) preserved_at: Option<PathBuf>,
 }
@@ -1081,6 +1089,7 @@ where
         Err(error) => {
             return Err(RemovalError {
                 path: original.clone(),
+                kind: RemovalFailureKind::Other,
                 detail: format!("inspect current entry: {error}"),
                 preserved_at: None,
             });
@@ -1089,6 +1098,7 @@ where
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(RemovalError {
             path: original.clone(),
+            kind: RemovalFailureKind::Other,
             detail: "current entry is not a regular non-symlink file".to_string(),
             preserved_at: None,
         });
@@ -1096,6 +1106,7 @@ where
 
     let parent = original.parent().ok_or_else(|| RemovalError {
         path: original.clone(),
+        kind: RemovalFailureKind::Other,
         detail: "registration path has no parent".to_string(),
         preserved_at: None,
     })?;
@@ -1104,6 +1115,7 @@ where
         .tempdir_in(parent)
         .map_err(|error| RemovalError {
             path: original.clone(),
+            kind: RemovalFailureKind::Other,
             detail: format!("create same-parent holding directory: {error}"),
             preserved_at: None,
         })?;
@@ -1116,6 +1128,7 @@ where
         Err(error) => {
             return Err(RemovalError {
                 path: original.clone(),
+                kind: RemovalFailureKind::Other,
                 detail: format!("atomically move into holding directory: {error}"),
                 preserved_at: None,
             });
@@ -1130,6 +1143,7 @@ where
             let preserved = keep_holding_dir(holding_dir, "registration");
             return Err(RemovalError {
                 path: original.clone(),
+                kind: RemovalFailureKind::Other,
                 detail: format!("inspect atomically moved entry: {error}"),
                 preserved_at: Some(preserved),
             });
@@ -1148,6 +1162,7 @@ where
             let preserved = keep_holding_dir(holding_dir, "registration");
             return Err(RemovalError {
                 path: original.clone(),
+                kind: RemovalFailureKind::Other,
                 detail: format!("read atomically moved entry: {error}"),
                 preserved_at: Some(preserved),
             });
@@ -1159,12 +1174,14 @@ where
             let preserved = keep_holding_dir(holding_dir, "registration");
             return Err(RemovalError {
                 path: original.clone(),
+                kind: RemovalFailureKind::Remove,
                 detail: format!("remove unchanged moved entry: {error}"),
                 preserved_at: Some(preserved),
             });
         }
         holding_dir.close().map_err(|error| RemovalError {
             path: original.clone(),
+            kind: RemovalFailureKind::Other,
             detail: format!("remove empty holding directory: {error}"),
             preserved_at: None,
         })?;
@@ -1178,6 +1195,7 @@ where
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(RemovalOutcome::Removed),
             Err(error) => Err(RemovalError {
                 path: original.clone(),
+                kind: RemovalFailureKind::Other,
                 detail: format!("inspect original name after removing captured entry: {error}"),
                 preserved_at: None,
             }),
@@ -1210,6 +1228,7 @@ where
             } else {
                 Err(RemovalError {
                     path: original.clone(),
+                    kind: RemovalFailureKind::Restore,
                     detail: format!("could not restore changed entry: {error}"),
                     preserved_at: Some(preserved),
                 })

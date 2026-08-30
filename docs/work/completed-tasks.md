@@ -1549,3 +1549,34 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   114 artifact retained SHA-256
   `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
 - **Commit:** `066b4920620fe5e12e4932baf09e419a553c678a`
+
+## T-11704 (sprint 117)
+
+- **Description:** Routed teardown through one retained process authority and
+  a pre-signal registration-revision check, then required exact exit and
+  listener-release proof before conditional cleanup. Down now returns typed,
+  ordered per-registration outcomes, groups exact duplicate paths once, and
+  blocks distinct aliases or conflicting raw tokens without mutation. Explicit
+  legacy adoption validates the closed engine executable, every recorded argv
+  coordinate, exact listener ownership, and the retained generation before and
+  after exact-byte replacement. Its reverse rollback preserves concurrent
+  state and distinguishes failed-before-commit, fully restored rollback, and
+  partial aggregate recovery truthfully.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T18:05:15-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_registration.rs`, `docs/commands.md`,
+  `docs/server-configuration.md`, and the Book work ledgers.
+- **Verification:** all five frozen E04 acceptance tests and the malformed-token
+  and adoption rollback supplements passed, including separate malformed and
+  unreadable peers, the inspect-to-terminate exit race, exact CAS byte ledgers,
+  rollback-absent rendering, and fail-closed physical-alias handling. The
+  complete serial Ferric CLI all-feature gate passed 241 unit tests, 6
+  benchmark integrations, 69 CLI integrations, 3 model-free lifecycle
+  fixtures, and 3 template-hygiene tests; the previously stalled parallel
+  resume test also passed alone. All-target/all-feature Clippy passed with
+  warnings denied; formatting and diff checks passed. Three independent
+  adversarial audits returned clean. The protected Sprint 114 artifact retained
+  SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** PENDING
