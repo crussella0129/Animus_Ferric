@@ -70,7 +70,7 @@ cargo install --path crates/ferric-cli --features backend-openai --force
 
 | Command | What it does |
 |---|---|
-| `ferric server up\|status\|doctor\|down` | Launch & manage the local OpenAI-compatible inference server (the HTTP valve), bound to `127.0.0.1` only. Registration happens only after the spawned process returns HTTP 200. |
+| `ferric server up\|status\|adopt\|doctor\|down` | Launch and identity-safely manage the local OpenAI-compatible inference server, bound to `127.0.0.1` only. |
 | `ferric query "<prompt>"` | Run one workspace-scoped agent turn against a local model. |
 | `ferric mcp` | Run an MCP-stdio server exposing one tool, `ferric_query`, to MCP clients (Claude Code, Cursor, an IDE). Workspace/backend/model are launch-time-fixed flags; each call runs the full constrained agent loop. *ADR-046.* |
 | `ferric bench ltd` | Measure & diagnose tool-calling fire rate for a model (or a fleet — see below). |
@@ -88,15 +88,22 @@ ferric server down
 ```
 
 > [!NOTE]
-> If you run `ferric server up --tailscale` on a machine for the first time, you must authorize Tailscale Serve on your Tailnet. The command will output an authorization link that you must click to unblock the proxy and register the server globally.
+> `ferric server up --tailscale` is temporarily refused before side effects.
+> Ferric will restore it only after it can compare-and-remove exactly the
+> durable Tailscale Serve state it owns.
 
 `query` and `bench` **auto-discover** the running server from `.ferric/server.json` (or your global `APPDATA` directory) — no `--api-base` needed. To target a server you didn't launch (e.g. an already-running Ollama), pass `--api-base http://localhost:11434/v1`. By default `query` runs the **constrained** path, which is the reliable one for small models.
 
 `server up` fails closed when a local/global registration already exists, the
 target port is occupied, or a llama.cpp model/projector is not a regular file.
-It keeps ownership of the child until the engine-specific health endpoint
-returns HTTP 200; `status` also requires both a live registered PID and HTTP
-health.
+It retains the exact spawned process object until the engine-specific health
+endpoint returns HTTP 200, then publishes identity-bearing local/global
+registrations without overwriting existing state. `status`, read-only backend
+discovery, and `down` resolve those records against process-creation identity,
+executable, argv, and exclusive loopback listener ownership; HTTP health alone
+never authorizes teardown. A live historical schema-v1 record can be upgraded
+without stopping it using the exact `ferric server adopt --pid <PID>` command
+printed by `status`.
 
 `ferric query` also takes workspace-local, guard-permitted files as input with `--file` (repeatable): text/code files fold into the prompt (works on any model), while image/audio/video attach as content parts when you declare `--modality` and the model can read them (Gemma 3n on the OpenAI valve). Attachments are bounded and pass through the same sensitive-path and `.ferricignore` checks as tool reads. See [docs/multimodal.md](docs/multimodal.md).
 

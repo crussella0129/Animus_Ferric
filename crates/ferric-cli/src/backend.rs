@@ -37,14 +37,17 @@ fn resolve_base(explicit: Option<&str>, runfile: Option<&str>) -> String {
 /// Resolve the endpoint exactly once for commands that launch multiple query
 /// processes. Freezing the discovered runfile URL prevents a long benchmark
 /// from silently switching servers mid-run.
-pub(crate) fn resolved_base_url(explicit: Option<&str>) -> String {
+pub(crate) fn resolved_base_url(explicit: Option<&str>) -> Result<String, String> {
+    if let Some(explicit) = explicit {
+        return Ok(resolve_base(Some(explicit), None));
+    }
     let runfile = std::env::current_dir()
-        .ok()
-        .and_then(|directory| crate::server::read_runfile(&directory));
-    resolve_base(
-        explicit,
+        .map_err(|error| format!("resolve current directory for server discovery: {error}"))
+        .and_then(|directory| crate::server::read_runfile_result(&directory))?;
+    Ok(resolve_base(
+        None,
         runfile.as_ref().map(|record| record.base_url.as_str()),
-    )
+    ))
 }
 
 #[cfg(feature = "backend-openai")]
@@ -57,7 +60,7 @@ pub async fn create_provider(
         .api_key
         .clone()
         .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-    let base_url = resolved_base_url(opts.api_base.as_deref());
+    let base_url = resolved_base_url(opts.api_base.as_deref())?;
     let config = OpenAiConfig {
         base_url,
         api_key: api_key.unwrap_or_else(|| "ollama".to_string()),

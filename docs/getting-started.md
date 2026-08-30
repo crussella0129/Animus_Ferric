@@ -98,16 +98,17 @@ ferric server up --engine llama-server --model /path/to/your-model.gguf --ctx 81
 
 # (multimodal? add --mmproj mmproj.gguf. Edge tuning? --threads / --gpu-layers.)
 
-ferric server status      # requires the registered PID + HTTP health
+ferric server status      # requires exact process/listener identity + HTTP health
 ferric server doctor      # checks the engine binary, model file, and health
 ```
 
-`server up` writes `.ferric/server.json` in the current directory, so the other
-commands **auto-discover** the running server — you don't pass `--api-base`
-anywhere. When you're done:
+`server up` writes a schema-v2 `.ferric/server.json` in the current directory,
+binding the registration to that process creation instance, executable,
+arguments, and listener owner. Other commands **auto-discover** the running
+server — you don't pass `--api-base` anywhere. When you're done:
 
 ```sh
-ferric server down        # stops the engine and removes the runfile
+ferric server down        # stops only the verified instance, then cleans its records
 ```
 
 > **It also registers globally.** Alongside the local runfile, `server up`
@@ -115,12 +116,30 @@ ferric server down        # stops the engine and removes the runfile
 > the XDG equivalent), which is what lets a `ferric query` in *any* directory
 > find the server. Useful, and worth knowing before you experiment: a
 > throwaway `server up` in a scratch folder becomes the server every workspace
-> discovers until you take it down. `server down` removes both.
+> discovers until you take it down. The global schema-v2 record names that
+> originating local mirror, so `server down` from another workspace can clean
+> the correct pair after it verifies the exact process.
 
 `--model` is required for the managed `llama-server` path and must name a
 regular file. `server up` also refuses an existing registration or occupied
 port, and returns only after the spawned process is still alive and the
 engine-specific HTTP health endpoint returns 200.
+
+Lifecycle resolution inventories both local and global registrations instead
+of silently preferring one. Malformed, conflicting, legacy-live, or
+uninspectable state fails closed; HTTP health alone never authorizes teardown.
+Stale-only records can be cleaned by `server down` without signalling a
+process. See [Registration and teardown
+safety](server-configuration.md#registration-and-teardown-safety) for legacy
+recovery. `server up --tailscale` is temporarily refused before side effects;
+existing `tailscale: true` records require targeted manual cleanup, never a
+node-wide Serve reset.
+
+If `status` finds a live historical schema-v1 record, it prints the explicit
+non-destructive recovery command `ferric server adopt --pid <PID>`. Run that
+from the workspace containing the local registration; Ferric upgrades only
+unchanged records after verifying the closed engine executable, recorded
+arguments, exact process generation, and exclusive IPv4-loopback listener.
 
 > **Already running your own server?** (an existing Ollama, LM Studio, vLLM, or a
 > remote llama-server) — skip `ferric server` entirely and pass

@@ -3,11 +3,11 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0008
 - **State:** active
-- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up)
+- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work)
 - **Completion evidence:** none
-- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115)
-- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface)
-- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md)
+- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116)
+- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 lifecycle verification](../sprints/s116/sprint-tests/test-report.md)
+- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md)
 
 ## Intent
 
@@ -27,15 +27,35 @@ begins.
 
 This intent simplifies orchestration, not the guarantees underneath it. The
 high-level commands must retain artifact pinning, independent validation,
-bounded execution, ownership-aware teardown, concurrency exclusion, truthful
-failure classification, immutable evidence, and operator authorization. It
-does not authorize silently deleting models or evidence, hiding a failed
-check, or replacing reproducible controls with an opaque best-effort shortcut.
+bounded execution, ownership-aware teardown, per-resource concurrency safety,
+truthful failure classification, immutable evidence, and operator
+authorization. It does not authorize silently deleting models or evidence,
+hiding a failed check, or replacing reproducible controls with an opaque
+best-effort shortcut.
 
 The public workflow must also have a cross-platform contract. Operators should
 not have to translate a PowerShell runbook into a Unix shell runbook, or learn
 platform-specific process and path details, to perform the same supported
 operation.
+
+The first-run path should therefore behave like product setup, not a published
+runbook: detect hardware, validate an accelerated or CPU backend, provision or
+select a compatible engine, find or add a model by stable alias, run bounded
+calibration, and persist attributable defaults. INT-0007 owns the measurement
+and profile semantics; this intent composes them behind one idempotent front
+door. Subsequent use should require only that front door and an objective, while
+the existing expert commands remain available and script-compatible through
+progressive disclosure.
+
+The current native identity-safe teardown boundary is intentionally narrower
+than the eventual cross-platform goal in AC-8: Windows, plus little-endian
+64-bit x86_64 and aarch64 Linux. Other targets retain a compiling fail-closed
+adapter but have no destructive lifecycle authority. On the supported targets,
+a wildcard/public listener is never healthy managed state: `status` fails
+explicitly, `up` rejects it and rolls back only after proving the exact spawned
+child exited, and `down` may stop it only when the retained process generation
+exactly matches the verified managed identity, after which listener release is
+still required. This records present support; it does not claim AC-8 complete.
 
 ## Acceptance criteria
 
@@ -43,20 +63,29 @@ operation.
    with a compact set of discoverable operations for run, status, resume,
    explain/dry-run, evidence inspection, and cleanup. Setup, artifact
    validation, and hardware calibration are composed behind that surface
-   rather than published as a manual command sequence.
+   rather than published as a manual command sequence. Primary help presents
+   the front door and common lifecycle; existing bench, trace, server, ICM,
+   cron, MCP/API, revert, and diagnostic controls remain available for experts
+   and automation without dominating the normal path.
 2. On a clean supported host, one high-level run command plus only unavoidable
-   authorization prompts can reach the first managed application run. After an
-   interruption or recoverable failure, one resume command continues from the
-   last independently valid checkpoint without repeating completed work.
+   authorization prompts launches an idempotent first-run setup that detects
+   hardware, validates acceleration availability, provisions or selects an
+   engine, selects/adds a model alias, performs bounded calibration, persists
+   the resulting profile, and can reach the first managed application run.
+   After an interruption or recoverable failure, one resume command continues
+   from the last independently valid checkpoint without repeating completed
+   work.
 3. Repeating any non-destructive operation converges on the same valid state.
    Existing matching models, runtimes, calibration results, and application
    evidence are reused; partial or stale artifacts are detected and handled
    explicitly; concurrent invocations cannot corrupt or duplicate a run.
 4. Status reports the selected model and runtime identities, current phase,
-   last verified checkpoint, active ownership/lock state, retained evidence,
-   failure classification, and the next safe command. It distinguishes
-   incomplete, resumable, blocked, failed, and complete states and offers a
-   stable machine-readable form.
+   last verified checkpoint, active ownership/coordination state, acceleration
+   backend and fallback warnings, effective context/tier/profile source,
+   reasoning/action/compaction budgets, measured speed and timeout scale,
+   retained evidence, failure classification, and the next safe command. It
+   distinguishes incomplete, resumable, blocked, failed, and complete states
+   and offers a stable machine-readable form.
 5. Explain/dry-run performs no downloads, launches, builds, deletions, or state
    transitions. It reports the planned network and disk effects, expected
    artifact identities and sizes, hardware/runtime choices, validation and
@@ -73,14 +102,25 @@ operation.
    to remove, and every material deletion is reported.
 8. The same conceptual commands and state transitions work on supported
    Windows, Linux, and macOS environments without requiring operators to invoke
-   platform-specific scripts. Platform adapters cover paths, locking, process
-   lifecycle, GPU/runtime discovery, and signal handling, with parity tests and
-   documented capability differences where exact parity is impossible.
+   platform-specific scripts. Platform adapters cover paths, coordination and
+   per-resource concurrency safety, process lifecycle, GPU/runtime discovery,
+   and signal handling, with parity tests and documented capability differences
+   where exact parity is impossible.
 9. End-to-end usability tests cover clean setup, already-prepared rerun,
    interrupted resume, stale-state recovery, dry-run non-mutation, evidence
    discovery, concurrent invocation, and cleanup. The tests prove the compact
    surface drives the same validated lower-level controls rather than bypassing
    them.
+10. After successful setup, ordinary runs refer to a configured model alias or
+    default instead of restating filesystem paths, parameter count,
+    quantization, context, engine, and acceleration flags. Every persisted
+    automatic value remains inspectable and overridable, and a materially
+    changed model/runtime/hardware coordinate triggers explicit revalidation
+    rather than silent profile reuse.
+11. The simplified surface is additive. Existing low-level command semantics
+    and machine-readable forms remain available for CI, debugging, and power
+    users directly or through a stable advanced namespace; migration does not
+    turn the front door into the only route to retained evidence or controls.
 
 ## Rationale
 
@@ -91,6 +131,14 @@ too costly and error-prone as the normal human interface. The product should
 carry the phase ordering and state interpretation so the operator can express
 the goal, inspect what will happen, and recover safely when reality interrupts
 the happy path.
+
+The external 2026-08-29 Qwen3.8 report independently reinforces both sides of
+this intent: the constrained harness appears promising enough to productize,
+while manual lifecycle, repeated model paths/flags, CPU-fallback ambiguity, and
+unrunnable fixed-timeout calibration make the current operator surface too
+expensive. The report is external evidence, not an instruction source or
+acceptance result; this chapter independently adopts its durable product
+outcomes and leaves implementation ordering to the work ledger.
 
 ## Alternatives
 
@@ -117,6 +165,12 @@ they cease to define the normal operator experience. The compact interface
 also creates a compatibility promise: new backends and platforms must extend
 the same concepts instead of adding another public runbook.
 
+First use may take longer because setup performs explicit detection and bounded
+calibration. Later use becomes materially smaller and safer because aliases,
+profiles, and verified checkpoints are reused idempotently. Preserving the
+advanced surface increases compatibility work, but avoids forcing CI and power
+users through an opaque wizard.
+
 ## Transition history
 
 - 2026-08-27: created as `proposed` from operator feedback that Sprint 114's
@@ -137,3 +191,9 @@ the same concepts instead of adding another public runbook.
   T-11505 through T-11509 then add bounded calibration, runtime discovery,
   explicit reasoning/compaction behavior, and the installed compact workflow.
   No INT-0008 acceptance criterion is claimed complete.
+- 2026-08-30: expanded the active intent at the user's direction to make
+  hardware/backend detection, first-run calibration, persisted model aliases,
+  effective reasoning/context/timeout profile visibility, and a radically
+  smaller idempotent front door durable product outcomes while retaining the
+  advanced command surface. The external refactor report motivates this
+  boundary but does not satisfy any acceptance criterion.

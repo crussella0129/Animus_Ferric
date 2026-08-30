@@ -5,9 +5,9 @@
 //! launcher never binds a public interface and never execs an arbitrary binary
 //! (the engine is a closed enum).
 //!
-//! Lifecycle (`up`/`status`/`down`) uses an engine-specific HTTP health probe
-//! and a platform kill, so the whole command is std-only and lives in the
-//! default build. The deeper *constrained* capability check is `ferric toolbench
+//! Lifecycle (`up`/`status`/`down`) uses an engine-specific HTTP health probe,
+//! retained Windows process HANDLEs or Linux pidfds, and exact listener-owner
+//! inspection. The deeper *constrained* capability check is `ferric toolbench
 //! --protocol grammar` against the launched server.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -18,6 +18,22 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
+
+use crate::server_process::{
+    ListenerState, LiveProcess, ProcessError, ProcessIdentity, loopback_listener_state,
+};
+use crate::server_registration::{
+    CapturedRegistration, PublishError, RegistrationInventory, RegistrationScope, RegistrationSlot,
+    RemovalOutcome, ReplacementOutcome, capture_registration_path, inventory_runfiles,
+    publish_mirrored, remove_if_unchanged, replace_if_unchanged, validate_runfile,
+};
+use crate::server_resolution::{Candidate, CandidateState, Resolution, resolve};
+
+const RUNFILE_SCHEMA_V2: u8 = 2;
+
+const fn legacy_runfile_schema() -> u8 {
+    1
+}
 
 /// The inference engine the launcher manages. A closed set — the launcher never
 /// execs an arbitrary binary (ADR-005).
@@ -46,10 +62,19 @@ pub enum ServerCommand {
     Up(Box<ServerUpArgs>),
     /// Health-check the registered server and print its base URL.
     Status,
+    /// Non-destructively bind one live legacy registration to its exact process identity.
+    Adopt(ServerAdoptArgs),
     /// Stop the registered server and remove the runfile.
     Down,
     /// Check engine-binary + model presence (and reachability if up).
     Doctor(Box<ServerUpArgs>),
+}
+
+#[derive(Args, Clone)]
+pub struct ServerAdoptArgs {
+    /// PID named by the live schema-v1 registration being adopted.
+    #[arg(long)]
+    pub pid: u32,
 }
 
 #[derive(Args, Clone)]
@@ -87,7 +112,7 @@ pub struct ServerUpArgs {
     /// comparison uses one slot to avoid cross-request scheduling effects.
     #[arg(long)]
     pub parallel: Option<u32>,
-    /// Securely expose the engine port over Tailscale (requires `tailscale` CLI).
+    /// Reserved; currently refused until exact Tailscale Serve rollback exists.
     #[arg(long)]
     pub tailscale: bool,
 }
@@ -121,23 +146,6 @@ pub struct LaunchCommand {
     pub program: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
-}
-
-/// The node's Tailnet FQDN, read from `tailscale status --json`.
-///
-/// The FQDN lives at **`Self.DNSName`**, not at the top level (ADR-076). Reading
-/// `DNSName` from the root always yielded `None` against the real CLI, so
-/// `--tailscale` printed "Tailscale proxy active." and then recorded the
-/// **loopback** URL in the runfile — silently defeating the flag's entire
-/// purpose, since anything reading that runfile got `127.0.0.1`.
-///
-/// The trailing dot on the FQDN is stripped: tailscale reports an absolute DNS
-/// name (`host.tailnet.ts.net.`) and that dot is not wanted in a URL.
-fn tailnet_fqdn(status_json: &[u8]) -> Option<String> {
-    let json: serde_json::Value = serde_json::from_slice(status_json).ok()?;
-    let dns = json.get("Self")?.get("DNSName")?.as_str()?;
-    let clean = dns.trim_end_matches('.').trim();
-    (!clean.is_empty()).then(|| clean.to_string())
 }
 
 /// Build the engine launch command. Pure (no spawn). Host is whatever
@@ -213,8 +221,14 @@ fn health_path(engine: Engine) -> &'static str {
 
 /// The registered-server record. Lets `query`/`toolbench` auto-discover the
 /// base URL (T-805) and `down` find the PID.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerRunfile {
+    /// Schema 1 is the historical PID-only record. Schema 2 binds the record
+    /// to a process creation instance, executable, argv, and its originating
+    /// local alias. Missing schema metadata therefore remains readable without
+    /// being mistaken for teardown authority.
+    #[serde(default = "legacy_runfile_schema")]
+    pub schema_version: u8,
     pub engine: Engine,
     pub pid: u32,
     pub port: u16,
@@ -231,6 +245,10 @@ pub struct ServerRunfile {
     pub sampling_seed: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parallel_slots: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_identity: Option<ProcessIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_local_runfile: Option<PathBuf>,
 }
 
 /// Runfile location: `<workspace>/.ferric/server.json` (the `.ferric/` dir is
@@ -243,25 +261,74 @@ pub fn global_runfile_path() -> Option<PathBuf> {
     crate::config::user_config_path().map(|p| p.with_file_name("server.json"))
 }
 
-/// Read the registered server, if any (local first, global fallback).
-pub fn read_runfile(workspace: &Path) -> Option<ServerRunfile> {
-    read_runfile_impl(workspace, global_runfile_path())
+/// Resolve one healthy managed server for read-only consumers.
+///
+/// This uses the same lossless inventory, process identity, listener ownership,
+/// and stale-alias reconciliation as status/down. Static file precedence never
+/// selects an endpoint, and degraded or unverifiable registrations never fall
+/// through to an unrelated default backend.
+pub(crate) fn read_runfile_result(workspace: &Path) -> Result<Option<ServerRunfile>, String> {
+    read_runfile_result_impl(workspace, global_runfile_path())
 }
 
-fn read_runfile_impl(workspace: &Path, global: Option<PathBuf>) -> Option<ServerRunfile> {
-    let local = runfile_path(workspace);
-    if let Ok(text) = std::fs::read_to_string(&local)
-        && let Ok(rf) = serde_json::from_str(&text)
-    {
-        return Some(rf);
+fn read_runfile_result_impl(
+    workspace: &Path,
+    global: Option<PathBuf>,
+) -> Result<Option<ServerRunfile>, String> {
+    let observations = observe_lifecycle(workspace, global);
+    match lifecycle_resolution(&observations) {
+        Resolution::Empty => Ok(None),
+        Resolution::StaleOnly { stale } => {
+            let details = stale
+                .iter()
+                .map(|index| match &observations[*index].candidate.state {
+                    CandidateState::Stale { reason } => {
+                        format!("{}: {reason}", observations[*index].candidate.label)
+                    }
+                    _ => observations[*index].candidate.label.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            Err(format!(
+                "only stale server registrations remain ({details}); run `ferric server down` to clean them after reviewing the reported listener state"
+            ))
+        }
+        Resolution::Blocked { reasons } => Err(format!(
+            "server registration resolution is blocked: {}",
+            reasons.join("; ")
+        )),
+        Resolution::One {
+            target,
+            http_healthy,
+            listener_present,
+            listener_loopback_only,
+            ..
+        } => {
+            let capture = observations[target]
+                .capture
+                .as_ref()
+                .expect("resolved target has a captured registration");
+            if !listener_present {
+                return Err(format!(
+                    "managed server PID {} has no listener on its registered port {}",
+                    capture.runfile.pid, capture.runfile.port
+                ));
+            }
+            if !listener_loopback_only {
+                return Err(format!(
+                    "managed server PID {} exposes registered port {} through a wildcard/public listener",
+                    capture.runfile.pid, capture.runfile.port
+                ));
+            }
+            if !http_healthy {
+                return Err(format!(
+                    "managed server PID {} owns the registered loopback listener, but its engine health endpoint is not healthy",
+                    capture.runfile.pid
+                ));
+            }
+            Ok(Some(capture.runfile.clone()))
+        }
     }
-    if let Some(global) = global
-        && let Ok(text) = std::fs::read_to_string(&global)
-        && let Ok(rf) = serde_json::from_str(&text)
-    {
-        return Some(rf);
-    }
-    None
 }
 
 fn is_listening(host: &str, port: u16) -> bool {
@@ -315,11 +382,6 @@ fn http_status_ok(host: &str, port: u16, path: &str) -> bool {
     matches!(fields.next(), Some("HTTP/1.0") | Some("HTTP/1.1")) && fields.next() == Some("200")
 }
 
-fn registered_server_healthy(runfile: &ServerRunfile) -> bool {
-    process_alive(runfile.pid)
-        && http_status_ok("127.0.0.1", runfile.port, health_path(runfile.engine))
-}
-
 /// Live process/listener facts used by strict autonomy evidence.  The runfile
 /// is only a registration hint; callers must bind it back to the process and
 /// socket which exist now before treating it as provenance.
@@ -340,11 +402,40 @@ pub(crate) struct RegisteredServerSnapshot {
 pub(crate) fn inspect_registered_server(
     runfile: &ServerRunfile,
 ) -> Result<RegisteredServerSnapshot, String> {
-    if !process_alive(runfile.pid) {
+    let process = LiveProcess::acquire(runfile.pid)
+        .map_err(|error| format!("acquire registered process: {error}"))?;
+    let facts = process
+        .inspect(runfile.port)
+        .map_err(|error| format!("inspect registered process: {error}"))?;
+    if let Some(expected) = &runfile.process_identity
+        && expected != &facts.identity
+    {
         return Err(format!(
-            "registered server PID {} is not alive",
+            "registered server PID {} no longer matches its creation/executable/argv identity",
             runfile.pid
         ));
+    }
+    match facts.listener {
+        ListenerState::OwnedByTarget => {}
+        ListenerState::OwnedByTargetWildcard => {
+            return Err(format!(
+                "registered server PID {} owns a wildcard/public listener on port {}; only an exclusive loopback listener is healthy managed state",
+                runfile.pid, runfile.port
+            ));
+        }
+        ListenerState::Absent => {
+            return Err(format!(
+                "registered server PID {} owns no loopback listener on port {}",
+                runfile.pid, runfile.port
+            ));
+        }
+        ListenerState::OwnedByOther(owners) => {
+            return Err(format!(
+                "loopback port {} is owned by other PIDs {owners:?}, not registered PID {}",
+                runfile.port, runfile.pid
+            ));
+        }
+        ListenerState::Uninspectable(error) => return Err(error),
     }
     if !http_status_ok("127.0.0.1", runfile.port, health_path(runfile.engine)) {
         return Err(format!(
@@ -352,208 +443,12 @@ pub(crate) fn inspect_registered_server(
             runfile.pid, runfile.port
         ));
     }
-
-    let snapshot = inspect_process_and_listener(runfile.pid, runfile.port)?;
-    if snapshot.listener_owner_pid != runfile.pid {
-        return Err(format!(
-            "loopback listener on port {} belongs to PID {}, not registered PID {}",
-            runfile.port, snapshot.listener_owner_pid, runfile.pid
-        ));
-    }
-    if snapshot.argv.is_empty() {
-        return Err(format!(
-            "registered server PID {} has no inspectable argv",
-            runfile.pid
-        ));
-    }
-    Ok(snapshot)
-}
-
-#[cfg(windows)]
-fn inspect_process_and_listener(pid: u32, port: u16) -> Result<RegisteredServerSnapshot, String> {
-    #[derive(Deserialize)]
-    struct PowerShellSnapshot {
-        executable_path: String,
-        command_line: String,
-        listener_owner_pids: String,
-    }
-
-    // Only numeric values are interpolated.  Any unavailable CIM/network
-    // inspection command terminates the script and therefore fails closed.
-    let script = format!(
-        "$ErrorActionPreference='Stop'; \
-         $p=Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\"; \
-         if ($null -eq $p) {{ throw 'registered process absent' }}; \
-         $owners=@(Get-NetTCPConnection -State Listen -LocalPort {port} \
-             -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique); \
-         [pscustomobject]@{{ \
-             executable_path=[string]$p.ExecutablePath; \
-             command_line=[string]$p.CommandLine; \
-             listener_owner_pids=($owners -join ',') \
-         }} | ConvertTo-Json -Compress"
-    );
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .map_err(|error| format!("launch Windows managed-server inspection: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Windows managed-server inspection failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let facts: PowerShellSnapshot = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("decode Windows managed-server inspection: {error}"))?;
-    if facts.executable_path.trim().is_empty() || facts.command_line.trim().is_empty() {
-        return Err("Windows process inspection omitted executable or command line".to_string());
-    }
-    let owners = facts
-        .listener_owner_pids
-        .split(',')
-        .filter(|owner| !owner.trim().is_empty())
-        .map(|owner| {
-            owner
-                .trim()
-                .parse::<u32>()
-                .map_err(|error| format!("invalid Windows listener owner PID {owner:?}: {error}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if owners != [pid] {
-        return Err(format!(
-            "loopback port {port} listener owners are {owners:?}; expected only PID {pid}"
-        ));
-    }
     Ok(RegisteredServerSnapshot {
-        pid,
-        executable: PathBuf::from(facts.executable_path),
-        argv: split_windows_command_line(&facts.command_line),
-        listener_owner_pid: pid,
+        pid: runfile.pid,
+        executable: facts.identity.executable,
+        argv: facts.identity.argv,
+        listener_owner_pid: runfile.pid,
     })
-}
-
-#[cfg(windows)]
-fn split_windows_command_line(command_line: &str) -> Vec<String> {
-    let chars = command_line.chars().collect::<Vec<_>>();
-    let mut argv = Vec::new();
-    let mut index = 0;
-    while index < chars.len() {
-        while index < chars.len() && chars[index].is_whitespace() {
-            index += 1;
-        }
-        if index == chars.len() {
-            break;
-        }
-        let mut argument = String::new();
-        let mut quoted = false;
-        while index < chars.len() {
-            if !quoted && chars[index].is_whitespace() {
-                break;
-            }
-            let mut backslashes = 0;
-            while index < chars.len() && chars[index] == '\\' {
-                backslashes += 1;
-                index += 1;
-            }
-            if index < chars.len() && chars[index] == '"' {
-                argument.extend(std::iter::repeat_n('\\', backslashes / 2));
-                if backslashes % 2 == 0 {
-                    quoted = !quoted;
-                } else {
-                    argument.push('"');
-                }
-                index += 1;
-            } else {
-                argument.extend(std::iter::repeat_n('\\', backslashes));
-                if index < chars.len() {
-                    argument.push(chars[index]);
-                    index += 1;
-                }
-            }
-        }
-        argv.push(argument);
-    }
-    argv
-}
-
-#[cfg(target_os = "linux")]
-fn inspect_process_and_listener(pid: u32, port: u16) -> Result<RegisteredServerSnapshot, String> {
-    use std::os::unix::ffi::OsStringExt;
-
-    let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
-        .map_err(|error| format!("inspect /proc/{pid}/exe: {error}"))?;
-    let command_line = std::fs::read(format!("/proc/{pid}/cmdline"))
-        .map_err(|error| format!("inspect /proc/{pid}/cmdline: {error}"))?;
-    let argv = command_line
-        .split(|byte| *byte == 0)
-        .filter(|argument| !argument.is_empty())
-        .map(|argument| {
-            std::ffi::OsString::from_vec(argument.to_vec())
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect::<Vec<_>>();
-    if argv.is_empty() {
-        return Err(format!("/proc/{pid}/cmdline contains no argv"));
-    }
-
-    let mut process_socket_inodes = Vec::new();
-    let fd_dir = std::fs::read_dir(format!("/proc/{pid}/fd"))
-        .map_err(|error| format!("inspect /proc/{pid}/fd: {error}"))?;
-    for entry in fd_dir {
-        let entry = entry.map_err(|error| format!("inspect /proc/{pid}/fd entry: {error}"))?;
-        let Ok(target) = std::fs::read_link(entry.path()) else {
-            continue;
-        };
-        let target = target.to_string_lossy();
-        if let Some(inode) = target
-            .strip_prefix("socket:[")
-            .and_then(|value| value.strip_suffix(']'))
-        {
-            process_socket_inodes.push(inode.to_string());
-        }
-    }
-    let listener_inodes = ["/proc/net/tcp", "/proc/net/tcp6"]
-        .into_iter()
-        .filter_map(|path| std::fs::read_to_string(path).ok())
-        .flat_map(|table| listening_socket_inodes(&table, port))
-        .collect::<Vec<_>>();
-    if !listener_inodes
-        .iter()
-        .any(|inode| process_socket_inodes.contains(inode))
-    {
-        return Err(format!(
-            "registered PID {pid} does not own a TCP listener on loopback port {port}"
-        ));
-    }
-    Ok(RegisteredServerSnapshot {
-        pid,
-        executable,
-        argv,
-        listener_owner_pid: pid,
-    })
-}
-
-#[cfg(target_os = "linux")]
-fn listening_socket_inodes(table: &str, port: u16) -> Vec<String> {
-    let expected_port = format!("{port:04X}");
-    table
-        .lines()
-        .skip(1)
-        .filter_map(|line| {
-            let fields = line.split_whitespace().collect::<Vec<_>>();
-            let local_port = fields.get(1)?.rsplit_once(':')?.1;
-            (local_port.eq_ignore_ascii_case(&expected_port) && fields.get(3) == Some(&"0A"))
-                .then(|| fields.get(9).map(|inode| (*inode).to_string()))
-                .flatten()
-        })
-        .collect()
-}
-
-#[cfg(not(any(windows, target_os = "linux")))]
-fn inspect_process_and_listener(pid: u32, _port: u16) -> Result<RegisteredServerSnapshot, String> {
-    Err(format!(
-        "live process/listener inspection is unsupported on this platform for PID {pid}"
-    ))
 }
 
 /// Retain the spawned child while polling HTTP readiness. This ties a healthy
@@ -598,85 +493,441 @@ fn wait_healthy(
     }
 }
 
-fn stop_child(child: &mut Child) {
-    let already_exited = matches!(child.try_wait(), Ok(Some(_)));
-    if !already_exited {
-        let _ = child.kill();
+fn stop_child(child: &mut Child) -> Result<(), String> {
+    match child.try_wait() {
+        Ok(Some(_)) => return Ok(()),
+        Ok(None) => {}
+        Err(error) => {
+            return Err(format!(
+                "could not prove spawned child PID {} is still the unreaped child before fallback shutdown: {error}",
+                child.id()
+            ));
+        }
     }
-    // Reap an exited or killed child while this command still owns the handle.
-    let _ = child.wait();
+
+    if let Err(kill_error) = child.kill() {
+        return match child.try_wait() {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => Err(format!(
+                "could not terminate owned child PID {}: {kill_error}",
+                child.id()
+            )),
+            Err(recheck_error) => Err(format!(
+                "could not terminate owned child PID {} ({kill_error}) or recheck it ({recheck_error})",
+                child.id()
+            )),
+        };
+    }
+    child.wait().map(|_| ()).map_err(|error| {
+        format!(
+            "could not reap terminated child PID {}: {error}",
+            child.id()
+        )
+    })
 }
 
-/// Kill a process by PID, portably (TerminateProcess on Windows, SIGKILL on
-/// Unix), since `up` does not retain the `Child` handle across invocations.
-///
-/// The Unix path goes through `sh -c` **on purpose**. It used to exec `kill`
-/// directly, which assumes a `kill(1)` binary on PATH — `procps` is not
-/// installed in `debian-bookworm-slim`, so inside our own `ferric-core` image
-/// the spawn failed with "not found", `status` came back `Err`, and the server
-/// was reported unkillable while it carried on serving (sprint 96, found live).
-/// `kill` is a POSIX **shell builtin**, so routing through `sh` needs nothing
-/// installed and keeps this std-only.
-fn kill_pid(pid: u32) -> bool {
-    #[cfg(windows)]
-    let status = Command::new("taskkill")
-        .args(["/F", "/PID", &pid.to_string()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    #[cfg(not(windows))]
-    let status = Command::new("sh")
-        .args(["-c", &format!("kill -9 {pid}")])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    matches!(status, Ok(s) if s.success())
+fn require_listener_released(pid: u32, port: u16) -> Result<(), String> {
+    match loopback_listener_state(pid, port) {
+        ListenerState::Absent => Ok(()),
+        ListenerState::OwnedByTarget | ListenerState::OwnedByTargetWildcard => Err(format!(
+            "numeric PID {pid} still owns registered port {port} after retained-process exit"
+        )),
+        ListenerState::OwnedByOther(owners) => Err(format!(
+            "registered port {port} remains owned by PIDs {owners:?} after retained-process exit"
+        )),
+        ListenerState::Uninspectable(error) => Err(format!(
+            "registered port {port} ownership is uninspectable after retained-process exit: {error}"
+        )),
+    }
 }
 
-/// Is `pid` still running? Used to tell "the kill worked" apart from "the kill
-/// silently did nothing", which `kill_pid`'s return value alone cannot express.
-///
-/// Unix uses `kill -0` (the null signal: permission and existence check, no
-/// delivery) via the shell builtin, for the same reason as above.
-fn process_alive(pid: u32) -> bool {
-    #[cfg(windows)]
-    {
-        let out = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output();
-        // tasklist prints "INFO: No tasks are running..." (exit 0) when absent,
-        // so the exit status says nothing — the PID must appear in the output.
-        matches!(out, Ok(o) if String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+/// Stop the exact process object retained before readiness and publication.
+/// Registration rollback is authorized only after this returns `Ok(())`.
+fn stop_managed_child(child: &mut Child, process: &LiveProcess, port: u16) -> Result<(), String> {
+    process
+        .terminate()
+        .map_err(|error| format!("terminate retained process object: {error}"))?;
+    match process.wait(Duration::from_secs(10)) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err("retained process object did not exit within 10s".to_string());
+        }
+        Err(error) => return Err(format!("wait for retained process object: {error}")),
     }
-    #[cfg(not(windows))]
-    {
-        // A **zombie** answers `kill -0` successfully: the process is dead, but
-        // its table entry survives until the parent reaps it. If nothing reaps
-        // — a container whose PID 1 is not an init, which is exactly what
-        // `docker/docker-compose.yml` used to produce — that entry is permanent,
-        // and treating it as alive would make `down` refuse to clean up a
-        // process that has already exited, forever.
-        //
-        // On Linux `/proc` settles it. Elsewhere, fall through to `kill -0`.
-        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-            // Field 3 is the state, but field 2 (`comm`) is parenthesised and
-            // may itself contain spaces or ')', so scan from the LAST ')'.
-            if let Some(close) = stat.rfind(')') {
-                return !matches!(
-                    stat[close + 1..].split_whitespace().next(),
-                    Some("Z") | None
-                );
+    require_listener_released(process.pid(), port)?;
+    child
+        .wait()
+        .map(|_| ())
+        .map_err(|error| format!("reap exited child PID {}: {error}", child.id()))
+}
+
+struct LifecycleObservation {
+    candidate: Candidate,
+    capture: Option<CapturedRegistration>,
+    process: Option<LiveProcess>,
+    /// Listener owners observed while this registration's process identity was
+    /// stale. Cleanup is safe only when every such owner is independently
+    /// accounted for by a verified registration in the same inventory.
+    stale_listener_owners: Vec<u32>,
+}
+
+fn registration_label(scope: RegistrationScope, path: &Path) -> String {
+    format!("{scope} registration {}", path.display())
+}
+
+fn push_inventory_slot(
+    slot: RegistrationSlot,
+    captures: &mut Vec<CapturedRegistration>,
+    observations: &mut Vec<LifecycleObservation>,
+) {
+    match slot {
+        RegistrationSlot::Absent { .. } => {}
+        RegistrationSlot::Captured(captured) => captures.push(*captured),
+        RegistrationSlot::Blocked {
+            scope,
+            path,
+            reason,
+        } => observations.push(LifecycleObservation {
+            candidate: Candidate {
+                label: registration_label(scope, &path),
+                state: CandidateState::Blocked {
+                    reason: reason.to_string(),
+                },
+            },
+            capture: None,
+            process: None,
+            stale_listener_owners: Vec::new(),
+        }),
+    }
+}
+
+fn expand_registration_captures(
+    inventory: RegistrationInventory,
+) -> (Vec<CapturedRegistration>, Vec<LifecycleObservation>) {
+    let mut captures = Vec::new();
+    let mut observations = Vec::new();
+    push_inventory_slot(inventory.local, &mut captures, &mut observations);
+    if let Some(global) = inventory.global {
+        push_inventory_slot(global, &mut captures, &mut observations);
+    }
+
+    // A v2 global record promises the path of its originating local mirror.
+    // Capture that alias before any destructive decision so `down` from a
+    // different workspace can clean the actual mirror rather than recomputing
+    // a path from the current directory.
+    for source in captures.clone() {
+        if source.runfile.schema_version != RUNFILE_SCHEMA_V2 {
+            continue;
+        }
+        let Some(origin) = source.runfile.origin_local_runfile.as_deref() else {
+            continue;
+        };
+        if let Some(existing) = captures.iter().find(|capture| capture.path == origin) {
+            if existing.runfile != source.runfile {
+                observations.push(LifecycleObservation {
+                    candidate: Candidate {
+                        label: registration_label(RegistrationScope::Origin, origin),
+                        state: CandidateState::Blocked {
+                            reason: format!(
+                                "promised origin differs from the {} record at {}",
+                                source.scope,
+                                source.path.display()
+                            ),
+                        },
+                    },
+                    capture: None,
+                    process: None,
+                    stale_listener_owners: Vec::new(),
+                });
+            }
+            continue;
+        }
+        match capture_registration_path(RegistrationScope::Origin, origin) {
+            RegistrationSlot::Absent { .. } => {}
+            RegistrationSlot::Captured(origin_capture) => {
+                if origin_capture.runfile == source.runfile {
+                    captures.push(*origin_capture);
+                } else {
+                    observations.push(LifecycleObservation {
+                        candidate: Candidate {
+                            label: registration_label(RegistrationScope::Origin, origin),
+                            state: CandidateState::Blocked {
+                                reason: format!(
+                                    "origin contents differ from the {} record at {}",
+                                    source.scope,
+                                    source.path.display()
+                                ),
+                            },
+                        },
+                        capture: None,
+                        process: None,
+                        stale_listener_owners: Vec::new(),
+                    });
+                }
+            }
+            RegistrationSlot::Blocked {
+                scope,
+                path,
+                reason,
+            } => observations.push(LifecycleObservation {
+                candidate: Candidate {
+                    label: registration_label(scope, &path),
+                    state: CandidateState::Blocked {
+                        reason: reason.to_string(),
+                    },
+                },
+                capture: None,
+                process: None,
+                stale_listener_owners: Vec::new(),
+            }),
+        }
+    }
+    (captures, observations)
+}
+
+fn stale_observation(
+    capture: CapturedRegistration,
+    reason: String,
+    stale_listener_owners: Vec<u32>,
+) -> LifecycleObservation {
+    let label = registration_label(capture.scope, &capture.path);
+    LifecycleObservation {
+        candidate: Candidate {
+            label,
+            state: CandidateState::Stale { reason },
+        },
+        capture: Some(capture),
+        process: None,
+        stale_listener_owners,
+    }
+}
+
+fn stale_observation_from_listener(
+    capture: CapturedRegistration,
+    reason: String,
+    listener: ListenerState,
+) -> LifecycleObservation {
+    let pid = capture.runfile.pid;
+    let port = capture.runfile.port;
+    match listener {
+        ListenerState::Absent => stale_observation(capture, reason, Vec::new()),
+        ListenerState::OwnedByTarget | ListenerState::OwnedByTargetWildcard => {
+            stale_observation(capture, reason, vec![pid])
+        }
+        ListenerState::OwnedByOther(owners) => stale_observation(capture, reason, owners),
+        ListenerState::Uninspectable(error) => blocked_observation(
+            capture,
+            format!(
+                "{reason}; listener ownership on registered loopback port {port} is uninspectable: {error}"
+            ),
+        ),
+    }
+}
+
+fn blocked_observation(capture: CapturedRegistration, reason: String) -> LifecycleObservation {
+    let label = registration_label(capture.scope, &capture.path);
+    LifecycleObservation {
+        candidate: Candidate {
+            label,
+            state: CandidateState::Blocked { reason },
+        },
+        capture: Some(capture),
+        process: None,
+        stale_listener_owners: Vec::new(),
+    }
+}
+
+fn observe_registration(capture: CapturedRegistration) -> LifecycleObservation {
+    let pid = capture.runfile.pid;
+    let port = capture.runfile.port;
+    if capture.runfile.tailscale {
+        return blocked_observation(
+            capture,
+            "this registration owns durable Tailscale Serve state that this build cannot yet compare-and-remove safely; stop the engine and remove that exact Serve endpoint with Tailscale tooling before removing the registration"
+                .to_string(),
+        );
+    }
+    let process = match LiveProcess::acquire(pid) {
+        Ok(process) => process,
+        Err(ProcessError::NotFound(_)) => {
+            let listener = loopback_listener_state(pid, port);
+            return stale_observation_from_listener(
+                capture,
+                format!("PID {pid} is absent"),
+                listener,
+            );
+        }
+        Err(error) => {
+            return blocked_observation(
+                capture,
+                format!("could not acquire an exact process handle for PID {pid}: {error}"),
+            );
+        }
+    };
+
+    if capture.runfile.schema_version == 1 {
+        return match process.wait(Duration::ZERO) {
+            Ok(true) | Err(ProcessError::NotFound(_)) => stale_observation_from_listener(
+                capture,
+                format!("legacy PID {pid} is absent"),
+                loopback_listener_state(pid, port),
+            ),
+            Ok(false) => blocked_observation(
+                capture,
+                format!(
+                    "live schema-1 PID {pid} has no creation identity and cannot authorize teardown; from the workspace containing its local registration run `ferric server adopt --pid {pid}` to verify and record the current process generation without signalling it"
+                ),
+            ),
+            Err(error) => blocked_observation(
+                capture,
+                format!("could not inspect legacy PID {pid}: {error}"),
+            ),
+        };
+    }
+
+    let expected = capture
+        .runfile
+        .process_identity
+        .as_ref()
+        .expect("schema-v2 inventory validation requires process identity");
+    let facts = match process.inspect(capture.runfile.port) {
+        Ok(facts) => facts,
+        Err(ProcessError::NotFound(_)) => {
+            return stale_observation_from_listener(
+                capture,
+                format!("PID {pid} exited during inspection"),
+                loopback_listener_state(pid, port),
+            );
+        }
+        Err(error) => {
+            return blocked_observation(
+                capture,
+                format!("could not bind PID {pid} to its process/listener facts: {error}"),
+            );
+        }
+    };
+    if facts.identity.start_token != expected.start_token {
+        return stale_observation_from_listener(
+            capture,
+            format!("PID {pid} belongs to a different process creation instance"),
+            facts.listener,
+        );
+    }
+    if facts.identity.executable != expected.executable || facts.identity.argv != expected.argv {
+        return blocked_observation(
+            capture,
+            format!(
+                "live process creation instance {pid} has executable/argv facts that differ from its registration"
+            ),
+        );
+    }
+
+    let (listener_present, listener_loopback_only) = match facts.listener {
+        ListenerState::OwnedByTarget => (true, true),
+        ListenerState::OwnedByTargetWildcard => (true, false),
+        ListenerState::Absent => (false, true),
+        ListenerState::OwnedByOther(owners) => {
+            return blocked_observation(
+                capture,
+                format!("loopback port {} is owned by other PIDs {owners:?}", port),
+            );
+        }
+        ListenerState::Uninspectable(error) => {
+            return blocked_observation(
+                capture,
+                format!("loopback port {} ownership is uninspectable: {error}", port),
+            );
+        }
+    };
+    let http_healthy =
+        listener_present && http_status_ok("127.0.0.1", port, health_path(capture.runfile.engine));
+    let registration_key = serde_json::to_vec(&capture.runfile)
+        .expect("a deserialized server runfile must serialize again");
+    let label = registration_label(capture.scope, &capture.path);
+    LifecycleObservation {
+        candidate: Candidate {
+            label,
+            state: CandidateState::Verified {
+                identity: facts.identity,
+                registration_key,
+                http_healthy,
+                listener_present,
+                listener_loopback_only,
+            },
+        },
+        capture: Some(capture),
+        process: Some(process),
+        stale_listener_owners: Vec::new(),
+    }
+}
+
+fn observe_lifecycle(workspace: &Path, global_path: Option<PathBuf>) -> Vec<LifecycleObservation> {
+    let inventory = inventory_runfiles(workspace, global_path);
+    let (captures, mut observations) = expand_registration_captures(inventory);
+    observations.extend(captures.into_iter().map(observe_registration));
+    observations
+}
+
+fn lifecycle_resolution(observations: &[LifecycleObservation]) -> Resolution {
+    let candidates = observations
+        .iter()
+        .map(|observation| observation.candidate.clone())
+        .collect::<Vec<_>>();
+    let resolution = resolve(&candidates);
+    let mut listener_blockers = Vec::new();
+    match &resolution {
+        Resolution::StaleOnly { stale } => {
+            for index in stale {
+                let observation = &observations[*index];
+                if !observation.stale_listener_owners.is_empty() {
+                    listener_blockers.push(format!(
+                        "{} is stale but registered port ownership remains with PIDs {:?}",
+                        observation.candidate.label, observation.stale_listener_owners
+                    ));
+                }
             }
         }
-
-        matches!(
-            Command::new("sh")
-                .args(["-c", &format!("kill -0 {pid}")])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status(),
-            Ok(s) if s.success()
-        )
+        Resolution::One {
+            target,
+            stale,
+            listener_present,
+            ..
+        } => {
+            let target_capture = observations[*target]
+                .capture
+                .as_ref()
+                .expect("verified lifecycle target has a capture");
+            for index in stale {
+                let observation = &observations[*index];
+                if observation.stale_listener_owners.is_empty() {
+                    continue;
+                }
+                let stale_capture = observation
+                    .capture
+                    .as_ref()
+                    .expect("stale lifecycle observation has a capture");
+                let accounted_by_target = *listener_present
+                    && stale_capture.runfile.port == target_capture.runfile.port
+                    && observation
+                        .stale_listener_owners
+                        .iter()
+                        .all(|owner| *owner == target_capture.runfile.pid);
+                if !accounted_by_target {
+                    listener_blockers.push(format!(
+                        "{} is stale but registered port ownership by PIDs {:?} is not accounted for by the selected managed server",
+                        observation.candidate.label, observation.stale_listener_owners
+                    ));
+                }
+            }
+        }
+        Resolution::Empty | Resolution::Blocked { .. } => {}
+    }
+    if listener_blockers.is_empty() {
+        resolution
+    } else {
+        Resolution::Blocked {
+            reasons: listener_blockers,
+        }
     }
 }
 
@@ -696,6 +947,7 @@ pub fn run_server(workspace: &Path, cmd: ServerCommand) -> ExitCode {
     match cmd {
         ServerCommand::Up(args) => up(workspace, &args),
         ServerCommand::Status => status(workspace),
+        ServerCommand::Adopt(args) => adopt(workspace, &args),
         ServerCommand::Down => down(workspace),
         ServerCommand::Doctor(args) => doctor(workspace, &args),
     }
@@ -739,6 +991,12 @@ fn validate_launch_preconditions(
 ) -> Result<(), String> {
     if args.port == 0 {
         return Err("--port must be greater than zero".to_string());
+    }
+    if args.tailscale {
+        return Err(
+            "--tailscale is temporarily fail-closed: Ferric cannot yet prove ownership of durable Tailscale Serve state during rollback and teardown"
+                .to_string(),
+        );
     }
 
     if args.engine == Engine::LlamaServer {
@@ -813,6 +1071,36 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
     };
     let pid = child.id();
 
+    // Retain the exact OS process object before any readiness polling or
+    // publication. Every later failure path can then terminate this creation
+    // instance without converting the numeric PID back into authority.
+    let managed_process = match LiveProcess::acquire_child(&child) {
+        Ok(process) => process,
+        Err(error) => {
+            eprintln!("could not acquire exact lifecycle control for spawned PID {pid}: {error}");
+            if let Err(stop_error) = stop_child(&mut child) {
+                eprintln!("could not confirm fallback child shutdown: {stop_error}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    debug_assert_eq!(managed_process.pid(), pid);
+    match child.try_wait() {
+        Ok(None) => {}
+        Ok(Some(status)) => {
+            eprintln!(
+                "spawned engine PID {pid} exited before retained-process binding could be confirmed ({status}); no replacement process was signalled"
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(error) => {
+            eprintln!(
+                "could not confirm spawned engine PID {pid} after acquiring its process object ({error}); refusing to signal an unproven binding"
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+
     if let Err(error) = wait_healthy(
         &mut child,
         cfg.engine,
@@ -824,50 +1112,47 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
             "server did not become HTTP-healthy at {}: {error}",
             cfg.base_url()
         );
-        stop_child(&mut child);
+        if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
+            eprintln!("could not confirm exact child shutdown: {stop_error}");
+        }
         return ExitCode::FAILURE;
     }
 
-    let mut base_url = cfg.base_url();
-    if cfg.tailscale {
-        println!(
-            "Exposing {} to Tailnet (tailscale serve {})...",
-            base_url, cfg.port
-        );
-        match Command::new("tailscale")
-            .args(["serve", "--bg", &cfg.port.to_string()])
-            .status()
-        {
-            Ok(status) if status.success() => {
-                println!("Tailscale proxy active.");
-                match Command::new("tailscale")
-                    .args(["status", "--json"])
-                    .output()
-                {
-                    Ok(status_out) => match tailnet_fqdn(&status_out.stdout) {
-                        Some(fqdn) => {
-                            base_url = format!("https://{fqdn}/v1");
-                            println!("Tailscale FQDN discovered: {fqdn}");
-                        }
-                        None => eprintln!(
-                            "Warning: `tailscale serve` succeeded but the Tailnet FQDN could \
-                             not be read from `tailscale status --json`; \
-                             recording the local URL {base_url} instead."
-                        ),
-                    },
-                    Err(e) => eprintln!("Warning: could not run `tailscale status --json`: {e}"),
-                }
+    let base_url = cfg.base_url();
+    let process_facts = match managed_process.inspect(cfg.port) {
+        Ok(facts) => facts,
+        Err(error) => {
+            eprintln!(
+                "server became healthy but its process/listener identity could not be bound: {error}"
+            );
+            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
+                eprintln!("could not confirm exact child shutdown: {stop_error}");
             }
-            Ok(status) => {
-                eprintln!("Warning: `tailscale serve` failed with status: {}", status);
-            }
-            Err(e) => {
-                eprintln!("Warning: could not execute `tailscale serve`: {e}");
-            }
+            return ExitCode::FAILURE;
         }
+    };
+    if process_facts.listener != ListenerState::OwnedByTarget {
+        eprintln!(
+            "server child PID {pid} does not exclusively own the expected loopback listener: {:?}",
+            process_facts.listener
+        );
+        if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
+            eprintln!("could not confirm exact child shutdown: {stop_error}");
+        }
+        return ExitCode::FAILURE;
     }
-
+    let local_path = match std::path::absolute(runfile_path(workspace)) {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("could not resolve the local registration path: {error}");
+            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
+                eprintln!("could not confirm exact child shutdown: {stop_error}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
     let runfile = ServerRunfile {
+        schema_version: RUNFILE_SCHEMA_V2,
         engine: cfg.engine,
         pid,
         port: cfg.port,
@@ -877,121 +1162,814 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         context_size: (cfg.engine == Engine::LlamaServer).then_some(cfg.ctx),
         sampling_seed: cfg.seed,
         parallel_slots: cfg.parallel,
+        process_identity: Some(process_facts.identity),
+        origin_local_runfile: Some(local_path),
+    };
+    let published = match publish_mirrored(workspace, global_path.as_deref(), &runfile) {
+        Ok(published) => published,
+        Err(PublishError::Durability {
+            path,
+            detail,
+            published,
+        }) => {
+            eprintln!(
+                "registration committed at {} but its directory durability check failed: {detail}; stopping the owned child before exact-byte rollback",
+                path.display()
+            );
+            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
+                eprintln!(
+                    "could not prove exact child exit ({stop_error}); published registrations are kept for recovery"
+                );
+                return ExitCode::FAILURE;
+            }
+            clean_captured_registration(&published.local);
+            if let Some(global) = &published.global {
+                clean_captured_registration(global);
+            }
+            return ExitCode::FAILURE;
+        }
+        Err(PublishError::Mirror {
+            path,
+            detail,
+            local,
+        }) => {
+            eprintln!(
+                "global registration publication failed at {}: {detail}; stopping the owned child before local rollback",
+                path.display()
+            );
+            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
+                eprintln!(
+                    "could not prove exact child exit ({stop_error}); local registration at {} is kept for recovery",
+                    local.path.display()
+                );
+                return ExitCode::FAILURE;
+            }
+            if !clean_captured_registration(&local) {
+                eprintln!(
+                    "the child is stopped, but local publication rollback was partial at {}",
+                    local.path.display()
+                );
+            }
+            return ExitCode::FAILURE;
+        }
+        Err(error) => {
+            eprintln!("server registration publication failed: {error}");
+            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
+                eprintln!("could not confirm exact child shutdown: {stop_error}");
+            }
+            return ExitCode::FAILURE;
+        }
     };
 
-    let path = runfile_path(workspace);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    match child.try_wait() {
+        Ok(None) => {}
+        Ok(Some(status)) => {
+            eprintln!(
+                "engine process exited during registration publication ({status}); rolling back unchanged registrations"
+            );
+            if let Err(error) = require_listener_released(pid, cfg.port) {
+                eprintln!(
+                    "published registrations are kept because endpoint release is not proven: {error}"
+                );
+                return ExitCode::FAILURE;
+            }
+            clean_captured_registration(&published.local);
+            if let Some(global) = &published.global {
+                clean_captured_registration(global);
+            }
+            return ExitCode::FAILURE;
+        }
+        Err(error) => {
+            eprintln!("could not confirm the engine child after publication: {error}");
+            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
+                eprintln!(
+                    "could not prove exact child exit ({stop_error}); published registrations are kept for recovery"
+                );
+                return ExitCode::FAILURE;
+            }
+            clean_captured_registration(&published.local);
+            if let Some(global) = &published.global {
+                clean_captured_registration(global);
+            }
+            return ExitCode::FAILURE;
+        }
     }
-    let local_res = serde_json::to_string_pretty(&runfile)
-        .map_err(|_| ())
-        .and_then(|s| std::fs::write(&path, &s).map_err(|_| ()));
 
-    let global_res = if let Some(global) = global_path {
-        if let Some(parent) = global.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        serde_json::to_string_pretty(&runfile)
-            .map_err(|_| ())
-            .and_then(|s| std::fs::write(&global, &s).map_err(|_| ()))
-            .map(|_| global)
-    } else {
-        Err(())
+    println!("server ready: {} (pid {pid})", base_url);
+    println!("registered locally at {}", published.local.path.display());
+    if let Some(global) = published.global {
+        println!("registered globally at {}", global.path.display());
+    }
+    ExitCode::SUCCESS
+}
+
+fn executable_matches_engine(engine: Engine, executable: &Path) -> bool {
+    let Some(file_name) = executable.file_name().and_then(|value| value.to_str()) else {
+        return false;
     };
-
-    if local_res.is_ok() || global_res.is_ok() {
-        println!("server ready: {} (pid {pid})", base_url);
-        if local_res.is_ok() {
-            println!("registered locally at {}", path.display());
-        }
-        if let Ok(global) = global_res {
-            println!("registered globally at {}", global.display());
-        }
-        ExitCode::SUCCESS
-    } else {
-        eprintln!("server is up (pid {pid}) but the runfile could not be written");
-        stop_child(&mut child);
-        ExitCode::FAILURE
+    let expected = engine.program();
+    #[cfg(windows)]
+    {
+        file_name.eq_ignore_ascii_case(expected)
+            || file_name.eq_ignore_ascii_case(&format!("{expected}.exe"))
+    }
+    #[cfg(not(windows))]
+    {
+        file_name == expected
     }
 }
 
-fn status(workspace: &Path) -> ExitCode {
-    match read_runfile(workspace) {
-        Some(rf) => {
-            let healthy = registered_server_healthy(&rf);
-            println!(
-                "engine={:?} pid={} base_url={} ({})",
-                rf.engine,
-                rf.pid,
-                rf.base_url,
-                if healthy {
-                    "process alive, HTTP healthy"
-                } else {
-                    "process absent or HTTP NOT healthy"
+fn argv_has_pair(argv: &[String], flag: &str, value: &str) -> bool {
+    argv.windows(2)
+        .any(|pair| pair[0] == flag && pair[1] == value)
+}
+
+fn validate_legacy_process_coordinates(
+    runfile: &ServerRunfile,
+    identity: &ProcessIdentity,
+) -> Result<(), String> {
+    if !executable_matches_engine(runfile.engine, &identity.executable) {
+        return Err(format!(
+            "observed executable {} is not the closed {:?} engine `{}`",
+            identity.executable.display(),
+            runfile.engine,
+            runfile.engine.program()
+        ));
+    }
+    match runfile.engine {
+        Engine::LlamaServer => {
+            for (flag, value, coordinate) in [
+                ("--host", "127.0.0.1".to_string(), "loopback host"),
+                ("--port", runfile.port.to_string(), "registered port"),
+            ] {
+                if !argv_has_pair(&identity.argv, flag, &value) {
+                    return Err(format!(
+                        "observed argv does not contain the expected {coordinate} pair `{flag} {value}`"
+                    ));
                 }
-            );
-            if rf.sampling_seed.is_some() || rf.parallel_slots.is_some() {
-                println!(
-                    "sampling_seed={} parallel_slots={}",
-                    rf.sampling_seed
-                        .map_or_else(|| "unspecified".to_string(), |seed| seed.to_string()),
-                    rf.parallel_slots
-                        .map_or_else(|| "unspecified".to_string(), |slots| slots.to_string())
+            }
+            if let Some(model) = &runfile.model
+                && !argv_has_pair(&identity.argv, "-m", model)
+                && !argv_has_pair(&identity.argv, "--model", model)
+            {
+                return Err(format!(
+                    "observed argv does not contain the recorded model `{model}`"
+                ));
+            }
+            if let Some(context) = runfile.context_size
+                && !argv_has_pair(&identity.argv, "-c", &context.to_string())
+                && !argv_has_pair(&identity.argv, "--ctx-size", &context.to_string())
+            {
+                return Err(format!(
+                    "observed argv does not contain the recorded context size {context}"
+                ));
+            }
+            if let Some(seed) = runfile.sampling_seed
+                && !argv_has_pair(&identity.argv, "--seed", &seed.to_string())
+            {
+                return Err(format!(
+                    "observed argv does not contain the recorded sampling seed {seed}"
+                ));
+            }
+            if let Some(parallel) = runfile.parallel_slots
+                && !argv_has_pair(&identity.argv, "--parallel", &parallel.to_string())
+            {
+                return Err(format!(
+                    "observed argv does not contain the recorded parallel slot count {parallel}"
+                ));
+            }
+        }
+        Engine::Ollama => {
+            if !identity.argv.iter().any(|argument| argument == "serve") {
+                return Err("observed Ollama argv does not contain `serve`".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rollback_adoption(replacements: &[(CapturedRegistration, CapturedRegistration)]) -> bool {
+    let mut complete = true;
+    for (legacy, adopted) in replacements.iter().rev() {
+        match replace_if_unchanged(adopted, &legacy.raw) {
+            Ok(ReplacementOutcome::Replaced) => {}
+            Ok(ReplacementOutcome::Absent) => {
+                complete = false;
+                eprintln!(
+                    "adoption rollback could not restore absent registration {}",
+                    legacy.path.display()
                 );
             }
-            if healthy {
+            Ok(ReplacementOutcome::ReplacementPreserved { path, detail }) => {
+                complete = false;
+                eprintln!(
+                    "adoption rollback preserved a concurrent replacement for {} at {}: {detail}",
+                    legacy.path.display(),
+                    path.display()
+                );
+            }
+            Err(error) => {
+                complete = false;
+                eprintln!("adoption rollback incomplete: {error}");
+            }
+        }
+    }
+    complete
+}
+
+fn adopt(workspace: &Path, args: &ServerAdoptArgs) -> ExitCode {
+    adopt_impl(workspace, global_runfile_path(), args)
+}
+
+fn adopt_impl(workspace: &Path, global_path: Option<PathBuf>, args: &ServerAdoptArgs) -> ExitCode {
+    if args.pid == 0 {
+        eprintln!("adoption requires a nonzero --pid");
+        return ExitCode::FAILURE;
+    }
+    let inventory = inventory_runfiles(workspace, global_path);
+    let (captures, blocked) = expand_registration_captures(inventory);
+    if !blocked.is_empty() {
+        eprintln!("refusing adoption: registration inventory is blocked");
+        for observation in blocked {
+            let reason = match observation.candidate.state {
+                CandidateState::Blocked { reason } | CandidateState::Stale { reason } => reason,
+                CandidateState::Verified { .. } => "unexpected verified observation".to_string(),
+            };
+            eprintln!("  - {}: {reason}", observation.candidate.label);
+        }
+        return ExitCode::FAILURE;
+    }
+    let Some(reference) = captures.first() else {
+        eprintln!("refusing adoption: no server registration exists");
+        return ExitCode::FAILURE;
+    };
+    let Some(origin) = captures
+        .iter()
+        .find(|capture| capture.scope == RegistrationScope::Local)
+        .map(|capture| capture.path.clone())
+    else {
+        eprintln!(
+            "refusing adoption: the originating local schema-1 registration is not present in this workspace"
+        );
+        return ExitCode::FAILURE;
+    };
+    if captures
+        .iter()
+        .any(|capture| capture.runfile.schema_version != 1)
+    {
+        eprintln!("refusing adoption: every selected registration must use legacy schema 1");
+        return ExitCode::FAILURE;
+    }
+    if captures
+        .iter()
+        .any(|capture| capture.runfile != reference.runfile)
+    {
+        eprintln!("refusing adoption: local/global legacy registrations disagree");
+        return ExitCode::FAILURE;
+    }
+    if reference.runfile.pid != args.pid {
+        eprintln!(
+            "refusing adoption: --pid {} does not match registered PID {}",
+            args.pid, reference.runfile.pid
+        );
+        return ExitCode::FAILURE;
+    }
+    if reference.runfile.tailscale {
+        eprintln!(
+            "refusing adoption: tailscale=true owns external Serve state that Ferric cannot yet compare-and-replace safely"
+        );
+        return ExitCode::FAILURE;
+    }
+    let expected_base_url = format!("http://127.0.0.1:{}/v1", reference.runfile.port);
+    if reference.runfile.port == 0 || reference.runfile.base_url != expected_base_url {
+        eprintln!(
+            "refusing adoption: legacy endpoint must be exactly {expected_base_url} with a nonzero port"
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let process = match LiveProcess::acquire(args.pid) {
+        Ok(process) => process,
+        Err(error) => {
+            eprintln!("refusing adoption: could not acquire exact process handle: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let facts = match process.inspect(reference.runfile.port) {
+        Ok(facts) => facts,
+        Err(error) => {
+            eprintln!("refusing adoption: could not inspect exact process/listener facts: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(error) = validate_legacy_process_coordinates(&reference.runfile, &facts.identity) {
+        eprintln!("refusing adoption: {error}");
+        return ExitCode::FAILURE;
+    }
+    if facts.listener != ListenerState::OwnedByTarget {
+        eprintln!(
+            "refusing adoption: registered endpoint is not exclusively owned on IPv4 loopback by PID {}: {:?}",
+            args.pid, facts.listener
+        );
+        return ExitCode::FAILURE;
+    }
+    match process.wait(Duration::ZERO) {
+        Ok(false) => {}
+        Ok(true) => {
+            eprintln!("refusing adoption: registered process exited during validation");
+            return ExitCode::FAILURE;
+        }
+        Err(error) => {
+            eprintln!("refusing adoption: could not confirm retained process liveness: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let mut adopted_runfile = reference.runfile.clone();
+    adopted_runfile.schema_version = RUNFILE_SCHEMA_V2;
+    adopted_runfile.process_identity = Some(facts.identity.clone());
+    adopted_runfile.origin_local_runfile = Some(origin);
+    for capture in &captures {
+        if let Err(error) = validate_runfile(capture.scope, &capture.path, &adopted_runfile) {
+            eprintln!(
+                "refusing adoption: schema-v2 replacement for {} is invalid: {error}",
+                capture.path.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+    let replacement_raw = match serde_json::to_vec_pretty(&adopted_runfile) {
+        Ok(raw) => raw,
+        Err(error) => {
+            eprintln!("refusing adoption: could not serialize schema-v2 registration: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut replacements = Vec::new();
+    for legacy in &captures {
+        let adopted_capture = CapturedRegistration {
+            scope: legacy.scope,
+            path: legacy.path.clone(),
+            raw: replacement_raw.clone(),
+            runfile: adopted_runfile.clone(),
+        };
+        match replace_if_unchanged(legacy, &replacement_raw) {
+            Ok(ReplacementOutcome::Replaced) => {
+                replacements.push((legacy.clone(), adopted_capture));
+            }
+            Ok(ReplacementOutcome::Absent) => {
+                eprintln!(
+                    "adoption stopped because {} disappeared; rolling back earlier replacements",
+                    legacy.path.display()
+                );
+                let rolled_back = rollback_adoption(&replacements);
+                eprintln!("adoption rollback completed={rolled_back}");
+                return ExitCode::FAILURE;
+            }
+            Ok(ReplacementOutcome::ReplacementPreserved { path, detail }) => {
+                eprintln!(
+                    "adoption stopped because {} changed; replacement preserved at {}: {detail}",
+                    legacy.path.display(),
+                    path.display()
+                );
+                let rolled_back = rollback_adoption(&replacements);
+                eprintln!("adoption rollback completed={rolled_back}");
+                return ExitCode::FAILURE;
+            }
+            Err(error) => {
+                if error.replacement_committed {
+                    replacements.push((legacy.clone(), adopted_capture));
+                }
+                eprintln!("adoption replacement failed: {error}");
+                let rolled_back = rollback_adoption(&replacements);
+                eprintln!("adoption rollback completed={rolled_back}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let still_exact = process
+        .inspect(reference.runfile.port)
+        .map(|current| {
+            current.identity == facts.identity && current.listener == ListenerState::OwnedByTarget
+        })
+        .unwrap_or(false);
+    if !still_exact {
+        eprintln!(
+            "adoption validation changed before completion; restoring legacy records where still unchanged"
+        );
+        let rolled_back = rollback_adoption(&replacements);
+        eprintln!("adoption rollback completed={rolled_back}");
+        return ExitCode::FAILURE;
+    }
+
+    println!(
+        "adopted live schema-1 server PID {} into schema 2 without signalling it (registrations={})",
+        args.pid,
+        replacements.len()
+    );
+    ExitCode::SUCCESS
+}
+
+fn status(workspace: &Path) -> ExitCode {
+    status_impl(workspace, global_runfile_path())
+}
+
+fn status_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
+    let observations = observe_lifecycle(workspace, global_path);
+    for observation in &observations {
+        match &observation.candidate.state {
+            CandidateState::Verified {
+                http_healthy,
+                listener_present,
+                listener_loopback_only,
+                ..
+            } => {
+                let runfile = &observation
+                    .capture
+                    .as_ref()
+                    .expect("verified observations have captures")
+                    .runfile;
+                println!(
+                    "[verified] {}: engine={:?} pid={} base_url={} listener={} http={}",
+                    observation.candidate.label,
+                    runfile.engine,
+                    runfile.pid,
+                    runfile.base_url,
+                    if !*listener_present {
+                        "absent"
+                    } else if *listener_loopback_only {
+                        "owned-loopback"
+                    } else {
+                        "wildcard-public"
+                    },
+                    if *http_healthy {
+                        "healthy"
+                    } else {
+                        "not-healthy"
+                    }
+                );
+            }
+            CandidateState::Stale { reason } => {
+                println!("[stale] {}: {reason}", observation.candidate.label);
+            }
+            CandidateState::Blocked { reason } => {
+                eprintln!("[blocked] {}: {reason}", observation.candidate.label);
+            }
+        }
+    }
+
+    match lifecycle_resolution(&observations) {
+        Resolution::Empty => {
+            println!("no server registered in local or global scope");
+            ExitCode::FAILURE
+        }
+        Resolution::StaleOnly { .. } => {
+            println!(
+                "no live managed server; stale registrations can be removed with `ferric server down`"
+            );
+            ExitCode::FAILURE
+        }
+        Resolution::Blocked { reasons } => {
+            eprintln!(
+                "server registration state is ambiguous or unverifiable; no process action is authorized"
+            );
+            for reason in reasons {
+                eprintln!("  - {reason}");
+            }
+            ExitCode::FAILURE
+        }
+        Resolution::One {
+            target,
+            aliases,
+            stale,
+            http_healthy,
+            listener_present,
+            listener_loopback_only,
+        } => {
+            let runfile = &observations[target]
+                .capture
+                .as_ref()
+                .expect("resolved target has a capture")
+                .runfile;
+            println!(
+                "resolved one managed server: pid={} base_url={} aliases={} stale={}",
+                runfile.pid,
+                runfile.base_url,
+                aliases.len() + 1,
+                stale.len()
+            );
+            if listener_present && listener_loopback_only && http_healthy {
+                ExitCode::SUCCESS
+            } else {
+                eprintln!(
+                    "managed process identity is exact, but {}{}",
+                    if listener_present && !listener_loopback_only {
+                        "its registered port is bound through a wildcard/public listener"
+                    } else if listener_present {
+                        "its HTTP endpoint is not healthy"
+                    } else {
+                        "its expected loopback listener is absent"
+                    },
+                    if listener_present && listener_loopback_only && !http_healthy {
+                        ""
+                    } else {
+                        "; teardown remains identity-authorized"
+                    }
+                );
+                ExitCode::FAILURE
+            }
+        }
+    }
+}
+
+fn clean_captured_registration(captured: &CapturedRegistration) -> bool {
+    match remove_if_unchanged(captured) {
+        Ok(RemovalOutcome::Removed) => {
+            println!(
+                "removed unchanged {} registration at {}",
+                captured.scope,
+                captured.path.display()
+            );
+            true
+        }
+        Ok(RemovalOutcome::Absent) => {
+            println!(
+                "{} registration already absent at {}",
+                captured.scope,
+                captured.path.display()
+            );
+            true
+        }
+        Ok(RemovalOutcome::ReplacementPreserved { path, detail }) => {
+            eprintln!(
+                "kept replacement for {} registration at {}: {detail}",
+                captured.scope,
+                path.display()
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("registration cleanup incomplete: {error}");
+            false
+        }
+    }
+}
+
+fn clean_registration_indices(
+    observations: &[LifecycleObservation],
+    indices: impl IntoIterator<Item = usize>,
+) -> bool {
+    let mut complete = true;
+    for index in indices {
+        let Some(captured) = observations[index].capture.as_ref() else {
+            complete = false;
+            eprintln!(
+                "could not clean {} because no exact-byte capture exists",
+                observations[index].candidate.label
+            );
+            continue;
+        };
+        complete &= clean_captured_registration(captured);
+    }
+    complete
+}
+
+fn confirm_cleanup_ports_quiescent(
+    observations: &[LifecycleObservation],
+    indices: &[usize],
+) -> bool {
+    let mut quiescent = true;
+    for index in indices {
+        let Some(captured) = observations[*index].capture.as_ref() else {
+            quiescent = false;
+            eprintln!(
+                "could not clean {} because no exact-byte capture exists",
+                observations[*index].candidate.label
+            );
+            continue;
+        };
+        match loopback_listener_state(captured.runfile.pid, captured.runfile.port) {
+            ListenerState::Absent => {}
+            ListenerState::OwnedByTarget | ListenerState::OwnedByTargetWildcard => {
+                quiescent = false;
+                eprintln!(
+                    "kept registrations because PID {} still owns registered port {} named by {}",
+                    captured.runfile.pid,
+                    captured.runfile.port,
+                    captured.path.display()
+                );
+            }
+            ListenerState::OwnedByOther(owners) => {
+                quiescent = false;
+                eprintln!(
+                    "kept registrations because port {} named by {} remains owned by PIDs {owners:?}",
+                    captured.runfile.port,
+                    captured.path.display()
+                );
+            }
+            ListenerState::Uninspectable(error) => {
+                quiescent = false;
+                eprintln!(
+                    "kept registrations because port {} ownership named by {} is uninspectable: {error}",
+                    captured.runfile.port,
+                    captured.path.display()
+                );
+            }
+        }
+    }
+    quiescent
+}
+
+fn down(workspace: &Path) -> ExitCode {
+    down_impl(workspace, global_runfile_path())
+}
+
+fn down_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
+    let mut observations = observe_lifecycle(workspace, global_path);
+    match lifecycle_resolution(&observations) {
+        Resolution::Empty => {
+            println!("no server registered");
+            ExitCode::SUCCESS
+        }
+        Resolution::Blocked { reasons } => {
+            eprintln!("refusing teardown: server registration state is ambiguous or unverifiable");
+            for reason in reasons {
+                eprintln!("  - {reason}");
+            }
+            ExitCode::FAILURE
+        }
+        Resolution::StaleOnly { stale } => {
+            if !confirm_cleanup_ports_quiescent(&observations, &stale) {
+                println!("no process was stopped; stale registrations were kept");
+                return ExitCode::FAILURE;
+            }
+            let cleaned = clean_registration_indices(&observations, stale);
+            println!("no process was stopped; stale registration cleanup completed={cleaned}");
+            if cleaned {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
             }
         }
-        None => {
-            println!("no server registered (no .ferric/server.json)");
-            ExitCode::FAILURE
-        }
-    }
-}
+        Resolution::One {
+            target,
+            aliases,
+            stale,
+            ..
+        } => {
+            let target_capture = observations[target]
+                .capture
+                .as_ref()
+                .expect("resolved target has a capture")
+                .clone();
+            let expected = target_capture
+                .runfile
+                .process_identity
+                .clone()
+                .expect("resolved v2 target has process identity");
+            let pid = target_capture.runfile.pid;
+            let port = target_capture.runfile.port;
+            let process = observations[target]
+                .process
+                .take()
+                .expect("resolved target retains its exact process handle");
 
-fn down(workspace: &Path) -> ExitCode {
-    match read_runfile(workspace) {
-        Some(rf) => {
-            kill_pid(rf.pid);
-
-            // Ask the OS whether it actually died, rather than trusting the
-            // kill's exit status. SIGKILL is delivered asynchronously, so give
-            // it a moment before concluding anything.
-            let mut alive = process_alive(rf.pid);
-            for _ in 0..20 {
-                if !alive {
-                    break;
+            let mut already_exited = match process.wait(Duration::ZERO) {
+                Ok(exited) => exited,
+                Err(error) => {
+                    eprintln!(
+                        "refusing teardown: could not query retained process handle: {error}"
+                    );
+                    return ExitCode::FAILURE;
                 }
-                std::thread::sleep(Duration::from_millis(100));
-                alive = process_alive(rf.pid);
+            };
+            if !already_exited {
+                match process.inspect(port) {
+                    Ok(facts) => {
+                        if facts.identity != expected {
+                            eprintln!(
+                                "refusing teardown: process creation/executable/argv identity changed after resolution"
+                            );
+                            return ExitCode::FAILURE;
+                        }
+                        match facts.listener {
+                            ListenerState::OwnedByTarget
+                            | ListenerState::OwnedByTargetWildcard
+                            | ListenerState::Absent => {}
+                            ListenerState::OwnedByOther(owners) => {
+                                eprintln!(
+                                    "refusing teardown: loopback port {port} is owned by other PIDs {owners:?}"
+                                );
+                                return ExitCode::FAILURE;
+                            }
+                            ListenerState::Uninspectable(error) => {
+                                eprintln!(
+                                    "refusing teardown: loopback ownership is uninspectable: {error}"
+                                );
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                    }
+                    Err(ProcessError::NotFound(_)) => match process.wait(Duration::ZERO) {
+                        Ok(true) => already_exited = true,
+                        Ok(false) => {
+                            eprintln!(
+                                "refusing teardown: process identity vanished without an exit proof"
+                            );
+                            return ExitCode::FAILURE;
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "refusing teardown: process identity vanished and retained-handle exit inspection failed: {error}"
+                            );
+                            return ExitCode::FAILURE;
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!("refusing teardown: exact process revalidation failed: {error}");
+                        return ExitCode::FAILURE;
+                    }
+                }
             }
 
-            if alive {
-                // Deliberately KEEP the runfile. It used to be deleted here
-                // regardless, which orphaned a still-serving process and threw
-                // away the only record of its PID — `down` reported failure
-                // while guaranteeing nobody could ever retry. Whatever is
-                // wrong, the record is what makes it recoverable.
+            let signalled = if already_exited {
+                false
+            } else {
+                match process.terminate() {
+                    Ok(signalled) => signalled,
+                    Err(error) => {
+                        eprintln!(
+                            "could not terminate retained process handle: {error}; registrations kept"
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
+            };
+            match process.wait(Duration::from_secs(10)) {
+                Ok(true) => {}
+                Ok(false) => {
+                    eprintln!(
+                        "retained process handle did not exit within 10s; registrations kept"
+                    );
+                    return ExitCode::FAILURE;
+                }
+                Err(error) => {
+                    eprintln!(
+                        "could not confirm retained process exit: {error}; registrations kept"
+                    );
+                    return ExitCode::FAILURE;
+                }
+            }
+
+            match loopback_listener_state(pid, port) {
+                ListenerState::Absent => {}
+                ListenerState::OwnedByOther(owners) => {
+                    eprintln!(
+                        "managed process exited, but loopback port {port} remains owned by PIDs {owners:?}; registrations kept"
+                    );
+                    return ExitCode::FAILURE;
+                }
+                ListenerState::OwnedByTarget | ListenerState::OwnedByTargetWildcard => {
+                    eprintln!(
+                        "managed process exited, but numeric PID {pid} still owns loopback port {port}; registrations kept"
+                    );
+                    return ExitCode::FAILURE;
+                }
+                ListenerState::Uninspectable(error) => {
+                    eprintln!(
+                        "could not verify listener release after exit: {error}; registrations kept"
+                    );
+                    return ExitCode::FAILURE;
+                }
+            }
+
+            if signalled {
+                println!("stopped managed server pid {pid} through its retained process handle");
+            } else {
+                println!("managed server pid {pid} had already exited; no process was signalled");
+            }
+            let mut cleanup = vec![target];
+            cleanup.extend(aliases);
+            cleanup.extend(stale);
+            cleanup.sort_unstable();
+            cleanup.dedup();
+            if !confirm_cleanup_ports_quiescent(&observations, &cleanup) {
                 eprintln!(
-                    "could not stop pid {} — it is STILL RUNNING; runfile kept so `ferric server down` can be retried",
-                    rf.pid
+                    "managed process exit is confirmed, but at least one registered endpoint remains active or uninspectable; registrations kept"
                 );
                 return ExitCode::FAILURE;
             }
-
-            let _ = std::fs::remove_file(runfile_path(workspace));
-            if let Some(global) = global_runfile_path() {
-                let _ = std::fs::remove_file(global);
+            let cleaned = clean_registration_indices(&observations, cleanup);
+            if cleaned {
+                ExitCode::SUCCESS
+            } else {
+                eprintln!(
+                    "managed process exit is confirmed, but registration cleanup was partial"
+                );
+                ExitCode::FAILURE
             }
-            println!("stopped server pid {}", rf.pid);
-            ExitCode::SUCCESS
-        }
-        None => {
-            println!("no server registered");
-            ExitCode::SUCCESS
         }
     }
 }
@@ -1048,26 +2026,27 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         println!("[INVALID] --seed and --parallel are supported only by llama-server");
         ok = false;
     }
+    if args.tailscale {
+        println!(
+            "[BLOCKED] --tailscale is temporarily fail-closed until Ferric can compare-and-remove only the Serve endpoint it owns"
+        );
+        ok = false;
+    }
 
-    match read_runfile(workspace) {
-        Some(rf) => {
-            let healthy = registered_server_healthy(&rf);
-            if healthy {
-                println!(
-                    "[ok] registered process alive and HTTP healthy at {}",
-                    rf.base_url
-                );
-                println!("     health: {}", health_url(rf.engine, &rf.base_url));
-                println!("     verify the constrained path: `ferric bench ltd --protocol grammar`");
-            } else {
-                println!(
-                    "[FAILED] registered server {} has no live PID and healthy HTTP endpoint",
-                    rf.base_url
-                );
-            }
-            ok &= healthy;
+    match read_runfile_result(workspace) {
+        Ok(Some(rf)) => {
+            println!(
+                "[ok] exact managed process/listener identity and HTTP health at {}",
+                rf.base_url
+            );
+            println!("     health: {}", health_url(rf.engine, &rf.base_url));
+            println!("     verify the constrained path: `ferric bench ltd --protocol grammar`");
         }
-        None => println!("[info] no server running — `ferric server up` to start one"),
+        Ok(None) => println!("[info] no server running — `ferric server up` to start one"),
+        Err(error) => {
+            println!("[BLOCKED] server registration inventory: {error}");
+            ok = false;
+        }
     }
 
     if ok {
@@ -1100,41 +2079,596 @@ mod tests {
         }
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn windows_command_line_inspection_preserves_quoted_argv() {
-        assert_eq!(
-            split_windows_command_line(
-                r#""C:\Program Files\llama-server.exe" -m "models\example model.gguf" -c 8192 --seed 42"#,
-            ),
-            [
-                r#"C:\Program Files\llama-server.exe"#,
-                "-m",
-                r#"models\example model.gguf"#,
-                "-c",
-                "8192",
-                "--seed",
-                "42",
-            ]
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn proc_tcp_parser_requires_listen_state_and_exact_port() {
-        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
-          0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 12345 1 0000000000000000\n\
-          1: 0100007F:1F91 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 99999 1 0000000000000000\n\
-          2: 0100007F:1F90 00000000:0000 01 00000000:00000000 00:00000000 00000000 1000 0 77777 1 0000000000000000\n";
-        assert_eq!(listening_socket_inodes(table, 8080), ["12345"]);
-    }
-
     fn unused_port() -> u16 {
         TcpListener::bind(("127.0.0.1", 0))
             .unwrap()
             .local_addr()
             .unwrap()
             .port()
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    const LIFECYCLE_HELPER_ENV: &str = "FERRIC_TEST_LIFECYCLE_HELPER";
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    const LIFECYCLE_HELPER_WILDCARD_ENV: &str = "FERRIC_TEST_LIFECYCLE_WILDCARD";
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    static LIFECYCLE_PARENT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    const LIFECYCLE_HELPER_READY_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Child-scoped test process used by the cross-workspace lifecycle
+    /// regression below. A normal test-harness invocation returns immediately;
+    /// only the explicitly spawned child enters the serving loop.
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
+    fn lifecycle_helper_process() {
+        if std::env::var(LIFECYCLE_HELPER_ENV).ok().as_deref() != Some("1") {
+            return;
+        }
+        let port = std::env::var("FERRIC_TEST_LIFECYCLE_PORT")
+            .expect("helper port")
+            .parse::<u16>()
+            .expect("numeric helper port");
+        let bind_host = if std::env::var(LIFECYCLE_HELPER_WILDCARD_ENV).ok().as_deref() == Some("1")
+        {
+            "0.0.0.0"
+        } else {
+            "127.0.0.1"
+        };
+        let listener = TcpListener::bind((bind_host, port)).expect("bind helper listener");
+        loop {
+            let (mut stream, _) = listener.accept().expect("accept helper request");
+            let mut request = [0_u8; 512];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .expect("write helper response");
+        }
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    fn spawn_lifecycle_helper(port: u16) -> Child {
+        spawn_lifecycle_helper_with_binding(port, false)
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    fn spawn_lifecycle_helper_with_binding(port: u16, wildcard: bool) -> Child {
+        Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--exact",
+                "server::tests::lifecycle_helper_process",
+                "--nocapture",
+            ])
+            .env(LIFECYCLE_HELPER_ENV, "1")
+            .env(
+                LIFECYCLE_HELPER_WILDCARD_ENV,
+                if wildcard { "1" } else { "0" },
+            )
+            .env("FERRIC_TEST_LIFECYCLE_PORT", port.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn lifecycle helper")
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    fn lifecycle_parent_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        LIFECYCLE_PARENT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    fn wait_for_lifecycle_helper(child: &mut Child, port: u16) {
+        if let Err(error) = wait_healthy(
+            child,
+            Engine::LlamaServer,
+            "127.0.0.1",
+            port,
+            LIFECYCLE_HELPER_READY_TIMEOUT,
+        ) {
+            let cleanup = stop_child(child);
+            panic!(
+                "lifecycle helper did not become HTTP-ready: {error}; cleanup result: {cleanup:?}"
+            );
+        }
+    }
+
+    fn write_test_runfile(path: &Path, runfile: &ServerRunfile) {
+        std::fs::create_dir_all(path.parent().expect("runfile parent")).unwrap();
+        std::fs::write(path, serde_json::to_vec_pretty(runfile).unwrap()).unwrap();
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
+    fn cross_workspace_stale_local_selects_and_stops_only_verified_global() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace_a = root.path().join("workspace-a");
+        let workspace_b = root.path().join("workspace-b");
+        std::fs::create_dir_all(&workspace_a).unwrap();
+        std::fs::create_dir_all(&workspace_b).unwrap();
+        let local_a = std::path::absolute(runfile_path(&workspace_a)).unwrap();
+        let local_b = std::path::absolute(runfile_path(&workspace_b)).unwrap();
+        let global = root.path().join("config").join("server.json");
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(&mut helper, port);
+
+        let helper_pid = helper.id();
+        let helper_facts = LiveProcess::acquire_child(&helper)
+            .unwrap()
+            .inspect(port)
+            .unwrap();
+        assert_eq!(helper_facts.listener, ListenerState::OwnedByTarget);
+        let live = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: helper_pid,
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(helper_facts.identity),
+            origin_local_runfile: Some(local_b.clone()),
+        };
+        write_test_runfile(&local_b, &live);
+        write_test_runfile(&global, &live);
+
+        // The stale local record names the test runner itself with a deliberately
+        // wrong creation token. Old local-first/PID-only teardown would signal
+        // this PID. Identity resolution must classify it stale and target only
+        // the exact helper retained by the global/origin mirrors.
+        let mut stale_identity = LiveProcess::acquire(std::process::id())
+            .unwrap()
+            .inspect(port)
+            .unwrap()
+            .identity;
+        stale_identity.start_token.push_str("-stale");
+        let mut stale = live.clone();
+        stale.pid = std::process::id();
+        stale.process_identity = Some(stale_identity);
+        stale.origin_local_runfile = Some(local_a.clone());
+        write_test_runfile(&local_a, &stale);
+
+        let discovered = read_runfile_result_impl(&workspace_a, Some(global.clone()))
+            .unwrap()
+            .expect("read-only consumers resolve the verified global server");
+        assert_eq!(discovered.pid, helper_pid);
+        assert_eq!(
+            status_impl(&workspace_a, Some(global.clone())),
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            down_impl(&workspace_a, Some(global.clone())),
+            ExitCode::SUCCESS
+        );
+        let _ = helper.wait().expect("reap terminated helper");
+        assert!(!local_a.exists(), "stale current-workspace alias cleaned");
+        assert!(!local_b.exists(), "selected global origin alias cleaned");
+        assert!(!global.exists(), "selected global alias cleaned");
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
+    fn wildcard_listener_fails_status_but_exact_identity_can_be_stopped() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper_with_binding(port, true);
+        wait_for_lifecycle_helper(&mut helper, port);
+
+        let helper_pid = helper.id();
+        let helper_facts = LiveProcess::acquire_child(&helper)
+            .unwrap()
+            .inspect(port)
+            .unwrap();
+        assert_eq!(helper_facts.listener, ListenerState::OwnedByTargetWildcard);
+        let record = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: helper_pid,
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(helper_facts.identity),
+            origin_local_runfile: Some(local.clone()),
+        };
+        write_test_runfile(&local, &record);
+
+        assert_eq!(status_impl(&workspace, None), ExitCode::FAILURE);
+        assert_eq!(down_impl(&workspace, None), ExitCode::SUCCESS);
+        let _ = helper.wait().expect("reap terminated wildcard helper");
+        assert!(!local.exists(), "exact wildcard registration cleaned");
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
+    fn stale_registration_keeps_live_foreign_listener_and_recovery_record() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(&mut helper, port);
+
+        let helper_facts = LiveProcess::acquire_child(&helper)
+            .unwrap()
+            .inspect(port)
+            .unwrap();
+        assert_eq!(helper_facts.listener, ListenerState::OwnedByTarget);
+        let stale = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: u32::MAX,
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(helper_facts.identity),
+            origin_local_runfile: Some(local.clone()),
+        };
+        write_test_runfile(&local, &stale);
+
+        let result = down_impl(&workspace, None);
+        let registration_remained = local.exists();
+        let helper_remained_live = helper.try_wait().unwrap().is_none();
+        let _ = helper.kill();
+        let _ = helper.wait();
+
+        assert_eq!(result, ExitCode::FAILURE);
+        assert!(
+            registration_remained,
+            "an active endpoint must keep its recovery registration"
+        );
+        assert!(
+            helper_remained_live,
+            "a listener owned by a foreign PID must never be signalled"
+        );
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
+    fn live_legacy_registration_cannot_authorize_teardown() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(&mut helper, port);
+
+        let legacy = ServerRunfile {
+            schema_version: 1,
+            engine: Engine::LlamaServer,
+            pid: helper.id(),
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: None,
+            origin_local_runfile: None,
+        };
+        write_test_runfile(&local, &legacy);
+
+        let result = down_impl(&workspace, None);
+        let registration_remained = local.exists();
+        let helper_remained_live = helper.try_wait().unwrap().is_none();
+        let _ = helper.kill();
+        let _ = helper.wait();
+
+        assert_eq!(result, ExitCode::FAILURE);
+        assert!(
+            registration_remained,
+            "blocked legacy record must be retained"
+        );
+        assert!(
+            helper_remained_live,
+            "a live schema-1 PID must never be signalled without creation identity"
+        );
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
+    fn same_creation_with_different_process_metadata_blocks_cleanup_and_signal() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(&mut helper, port);
+
+        let mut identity = LiveProcess::acquire_child(&helper)
+            .unwrap()
+            .inspect(port)
+            .unwrap()
+            .identity;
+        identity.argv.push("--not-the-observed-command".to_string());
+        let record = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: helper.id(),
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(identity),
+            origin_local_runfile: Some(local.clone()),
+        };
+        write_test_runfile(&local, &record);
+
+        let result = down_impl(&workspace, None);
+        let registration_remained = local.exists();
+        let helper_remained_live = helper.try_wait().unwrap().is_none();
+        let _ = helper.kill();
+        let _ = helper.wait();
+
+        assert_eq!(result, ExitCode::FAILURE);
+        assert!(
+            registration_remained,
+            "a live same-creation metadata mismatch must retain its recovery coordinate"
+        );
+        assert!(
+            helper_remained_live,
+            "a live same-creation metadata mismatch must never be signalled"
+        );
+    }
+
+    #[test]
+    fn legacy_adoption_coordinates_require_closed_engine_and_every_recorded_value() {
+        let executable = if cfg!(windows) {
+            PathBuf::from(r"C:\tools\llama-server.exe")
+        } else {
+            PathBuf::from("/tools/llama-server")
+        };
+        let runfile = ServerRunfile {
+            schema_version: 1,
+            engine: Engine::LlamaServer,
+            pid: 42,
+            port: 8080,
+            base_url: "http://127.0.0.1:8080/v1".to_string(),
+            tailscale: false,
+            model: Some("model.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: None,
+            origin_local_runfile: None,
+        };
+        let identity = ProcessIdentity {
+            start_token: "opaque".to_string(),
+            executable,
+            argv: vec![
+                "llama-server".to_string(),
+                "-m".to_string(),
+                "model.gguf".to_string(),
+                "-c".to_string(),
+                "8192".to_string(),
+                "--seed".to_string(),
+                "42".to_string(),
+                "--parallel".to_string(),
+                "1".to_string(),
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                "8080".to_string(),
+            ],
+        };
+        validate_legacy_process_coordinates(&runfile, &identity).unwrap();
+
+        let mut missing_port = identity.clone();
+        missing_port.argv.truncate(missing_port.argv.len() - 2);
+        let error = validate_legacy_process_coordinates(&runfile, &missing_port).unwrap_err();
+        assert!(error.contains("registered port"));
+
+        let mut wrong_engine = identity;
+        wrong_engine.executable = if cfg!(windows) {
+            PathBuf::from(r"C:\tools\python.exe")
+        } else {
+            PathBuf::from("/tools/python")
+        };
+        let error = validate_legacy_process_coordinates(&runfile, &wrong_engine).unwrap_err();
+        assert!(error.contains("closed"));
+    }
+
+    #[test]
+    fn blocked_local_inventory_prevents_global_autodiscovery() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let local = runfile_path(&workspace);
+        let global = root.path().join("config").join("server.json");
+        std::fs::create_dir_all(local.parent().unwrap()).unwrap();
+        std::fs::write(&local, b"{not-json").unwrap();
+        write_test_runfile(
+            &global,
+            &ServerRunfile {
+                schema_version: 1,
+                engine: Engine::LlamaServer,
+                pid: 1,
+                port: 8080,
+                base_url: "http://127.0.0.1:8080/v1".to_string(),
+                tailscale: false,
+                model: None,
+                context_size: None,
+                sampling_seed: None,
+                parallel_slots: None,
+                process_identity: None,
+                origin_local_runfile: None,
+            },
+        );
+
+        let error = read_runfile_result_impl(&workspace, Some(global)).unwrap_err();
+        assert!(error.contains("blocked"), "unexpected error: {error}");
+        assert!(error.contains(&local.display().to_string()));
+    }
+
+    #[test]
+    fn durable_tailscale_registration_is_retained_as_a_blocker() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let local = runfile_path(&workspace);
+        write_test_runfile(
+            &local,
+            &ServerRunfile {
+                schema_version: 1,
+                engine: Engine::LlamaServer,
+                pid: u32::MAX,
+                port: 8080,
+                base_url: "https://example-host.tailnet-example.ts.net/v1".to_string(),
+                tailscale: true,
+                model: None,
+                context_size: None,
+                sampling_seed: None,
+                parallel_slots: None,
+                process_identity: None,
+                origin_local_runfile: None,
+            },
+        );
+
+        assert_eq!(down_impl(&workspace, None), ExitCode::FAILURE);
+        assert!(
+            local.exists(),
+            "the registration must retain the clue to durable proxy state"
+        );
     }
 
     fn llama_args(model: &Path) -> ServerUpArgs {
@@ -1178,7 +2712,15 @@ mod tests {
         (port, handle)
     }
 
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
     #[test]
     fn live_registration_inspection_binds_pid_listener_and_health() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -1195,6 +2737,7 @@ mod tests {
             released.recv_timeout(Duration::from_secs(15)).unwrap();
         });
         let runfile = ServerRunfile {
+            schema_version: 1,
             engine: Engine::LlamaServer,
             pid: std::process::id(),
             port,
@@ -1204,6 +2747,8 @@ mod tests {
             context_size: Some(8192),
             sampling_seed: Some(42),
             parallel_slots: Some(1),
+            process_identity: None,
+            origin_local_runfile: None,
         };
         let inspected = inspect_registered_server(&runfile);
         release.send(()).unwrap();
@@ -1372,6 +2917,20 @@ mod tests {
     }
 
     #[test]
+    fn launch_preflight_blocks_unowned_durable_tailscale_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let model = dir.path().join("model.gguf");
+        std::fs::write(&model, b"model").unwrap();
+        let mut args = llama_args(&model);
+        args.tailscale = true;
+
+        let error = validate_launch_preconditions(dir.path(), &args, None)
+            .expect_err("Tailscale Serve mutation must remain fail-closed");
+        assert!(error.contains("temporarily fail-closed"), "{error}");
+        assert!(error.contains("ownership"), "{error}");
+    }
+
+    #[test]
     fn llama_launch_requires_regular_model_and_mmproj_files() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("missing.gguf");
@@ -1479,7 +3038,7 @@ mod tests {
         )
         .expect_err("an exited child cannot become ready");
         assert!(error.contains("exited before readiness"));
-        stop_child(&mut child);
+        stop_child(&mut child).unwrap();
     }
 
     #[test]
@@ -1514,13 +3073,14 @@ mod tests {
         )
         .expect("a live child plus HTTP 200 is ready");
         assert!(matches!(child.try_wait(), Ok(None)));
-        stop_child(&mut child);
+        stop_child(&mut child).unwrap();
         server.join().unwrap();
     }
 
     #[test]
     fn runfile_serde_roundtrip() {
         let rf = ServerRunfile {
+            schema_version: 1,
             engine: Engine::LlamaServer,
             pid: 4321,
             port: 8080,
@@ -1530,6 +3090,8 @@ mod tests {
             context_size: Some(4096),
             sampling_seed: Some(42),
             parallel_slots: Some(1),
+            process_identity: None,
+            origin_local_runfile: None,
         };
         let s = serde_json::to_string(&rf).unwrap();
         let back: ServerRunfile = serde_json::from_str(&s).unwrap();
@@ -1555,119 +3117,10 @@ mod tests {
     #[test]
     fn read_runfile_absent_is_none() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(read_runfile_impl(dir.path(), None).is_none());
-    }
-
-    // --- ADR-076: Tailnet FQDN discovery ---
-
-    /// Shaped exactly like real `tailscale status --json` output on a connected
-    /// node, with synthetic identity (sprint 105): the addresses stay in
-    /// Tailscale's real `100.64.0.0/10` CGNAT range so the fixture is still
-    /// representative, but the tailnet, host and node id are examples.
-    ///
-    /// The shape is the point: `DNSName` sits under `Self`, and the root has no
-    /// `DNSName` key at all — reading it from the root is the bug this pins.
-    const REAL_STATUS_JSON: &str = r#"{
-      "Version": "1.98.2-taaf7caef1-gc4a37aed9",
-      "BackendState": "Running",
-      "MagicDNSSuffix": "tailnet-example.ts.net",
-      "TailscaleIPs": ["100.64.0.1"],
-      "Self": {
-        "ID": "nEXAMPLENODEIDCNTRL",
-        "HostName": "EXAMPLE-HOST",
-        "DNSName": "example-host.tailnet-example.ts.net.",
-        "OS": "windows"
-      },
-      "Peer": {}
-    }"#;
-
-    #[test]
-    fn tailnet_fqdn_reads_dnsname_from_self() {
-        assert_eq!(
-            tailnet_fqdn(REAL_STATUS_JSON.as_bytes()).as_deref(),
-            Some("example-host.tailnet-example.ts.net")
-        );
-    }
-
-    /// The regression: `DNSName` was read from the ROOT, where it does not
-    /// exist, so discovery silently returned nothing and the runfile kept the
-    /// loopback URL.
-    #[test]
-    fn the_root_object_has_no_dnsname() {
-        let json: serde_json::Value = serde_json::from_str(REAL_STATUS_JSON).unwrap();
         assert!(
-            json.get("DNSName").is_none(),
-            "real tailscale output has no top-level DNSName — reading it there              is what made --tailscale silently record 127.0.0.1"
+            read_runfile_result_impl(dir.path(), None)
+                .unwrap()
+                .is_none()
         );
-    }
-
-    #[test]
-    fn tailnet_fqdn_is_none_when_unparseable_or_absent() {
-        assert_eq!(tailnet_fqdn(b"not json"), None);
-        assert_eq!(tailnet_fqdn(br#"{"Self":{}}"#), None);
-        assert_eq!(tailnet_fqdn(br#"{}"#), None);
-        // A blank name must not produce "https:///v1".
-        assert_eq!(tailnet_fqdn(br#"{"Self":{"DNSName":"."}}"#), None);
-    }
-
-    /// `tailscale serve --bg <port>` is the documented background form
-    /// (verified against `tailscale serve --help` on 1.98.2).
-    #[test]
-    fn the_serve_invocation_matches_the_documented_form() {
-        let port: u16 = 8080;
-        let args = ["serve", "--bg", &port.to_string()].join(" ");
-        assert_eq!(args, "serve --bg 8080");
-    }
-
-    /// `process_alive` must track a real process across its death. Spawned and
-    /// killed here rather than probing an arbitrary PID, because PID reuse
-    /// makes "this number is unused" a flaky assertion.
-    #[test]
-    fn process_alive_follows_a_real_process() {
-        assert!(
-            process_alive(std::process::id()),
-            "the test process itself must read as alive"
-        );
-
-        #[cfg(windows)]
-        let mut child = Command::new("cmd")
-            .args(["/C", "ping -n 30 127.0.0.1 > NUL"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn a child to observe");
-        #[cfg(not(windows))]
-        let mut child = Command::new("sh")
-            .args(["-c", "sleep 30"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn a child to observe");
-
-        let pid = child.id();
-        assert!(
-            process_alive(pid),
-            "a just-spawned child must read as alive"
-        );
-
-        // Through kill_pid, so this also covers the container defect: on Unix
-        // it used to exec `kill(1)`, absent from slim images, and silently do
-        // nothing while reporting failure.
-        assert!(
-            kill_pid(pid),
-            "kill_pid must report success on a live child"
-        );
-
-        let mut alive = true;
-        for _ in 0..30 {
-            if !process_alive(pid) {
-                alive = false;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        assert!(!alive, "the child must read as dead after kill_pid");
-
-        let _ = child.wait();
     }
 }

@@ -1416,3 +1416,35 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   process signal, and confirmed no listener or global registration.
 - **Commits:** evidence `70aecb84d762bf97972b65c15f37b8c48de7f833`;
   verifier overlay `31290fd5270b351a09506e63467ab1f23b8fdc76`
+
+## T-11504 (sprint 116)
+
+- **Description:** Replaced local-first server-runfile precedence and numeric-PID
+  teardown with a lossless local/global inventory, additive schema-v2 process
+  identity, exact loopback-listener ownership, retained-handle termination,
+  per-path no-clobber publication, exact-byte conditional cleanup, and explicit
+  non-destructive schema-v1 adoption. Managed discovery consumers now share the
+  same conservative resolver. `server up --tailscale` and historical
+  Tailscale-bearing registrations fail closed until Ferric can own and
+  conditionally restore external Serve state. The external refactor report's
+  wider calibration and compact-command outcomes were added to INT-0007 and
+  INT-0008 as active requirements, not credited as completed work.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T05:10:57Z
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_process.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/src/server_resolution.rs`, lifecycle consumers and the
+  feature-gated model-free fixture under `crates/ferric-cli/`; current server
+  and operator documentation; INT-0007 and INT-0008; and `docs/sprints/s116/`
+- **Verification:** the reduced-feature CLI suite passed 214/214; the
+  all-feature CLI suite passed 220/220 on three consecutive post-fix runs; the
+  full workspace all-feature gate passed, including CLI integration 69/69,
+  lifecycle fixture 3/3, benchmark mock 6/6, and template hygiene 3/3. The
+  three-test lifecycle fixture passed on Windows and native WSL Linux; its
+  x86_64/AArch64 feature build passed. Strict workspace Clippy with warnings
+  denied, formatting, Book v2 validation, mdBook rendering, and diff checks
+  passed. An optional broad AArch64 cross-build stopped only because the host
+  lacks `aarch64-linux-gnu-gcc` for `ring`; no AArch64 runtime result is
+  claimed.
+- **Commit:** `fb05f6b17427b1e4843e703280e2f543ac5c2611`

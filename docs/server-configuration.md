@@ -12,19 +12,22 @@ The default engine is llama.cpp's `llama-server`; Ollama is pluggable via
 ## Lifecycle
 
 ```sh
-ferric server up      # launch + register (writes .ferric/server.json)
-ferric server status  # health-check the registered server, print its base URL
+ferric server up      # launch + publish local/global registrations
+ferric server status  # resolve identity/listener ownership + report HTTP health
+ferric server adopt --pid <PID> # verify and upgrade a live schema-v1 record
 ferric server doctor  # check engine-binary + model presence (and reachability)
-ferric server down    # stop it and remove the runfile
+ferric server down    # stop only a verified instance, then clean registrations
 ```
 
 `up` refuses to launch when a local/global registration already exists or the
 target port is occupied. For llama.cpp it also requires a regular model file,
 a regular projector when supplied, and nonzero context/port values. Ferric
 retains the spawned child until its engine-specific HTTP endpoint returns 200;
-only then does it write a **runfile** at `.ferric/server.json` recording the
-engine, PID, port, and base URL. This is what lets `ferric query` and `ferric
-bench` **auto-discover** the server—no `--api-base` needed.
+it then binds the child to its process creation identity and verifies that child
+owns the expected listener. Only after those checks does it publish the same
+**runfile** bytes locally at `.ferric/server.json` and in the user config
+directory. This is what lets `ferric query` and `ferric bench`
+**auto-discover** the server—no `--api-base` needed.
 
 `doctor` is the pre-flight check; it validates presence *without* launching:
 
@@ -39,15 +42,94 @@ $ ferric server doctor --engine llama-server --model ./model.gguf
 
 ```console
 $ ferric server status
-engine=LlamaServer pid=36792 base_url=http://127.0.0.1:8080/v1 (process alive, HTTP healthy)
+[verified] local registration ...: engine=LlamaServer pid=36792 base_url=http://127.0.0.1:8080/v1 listener=owned-loopback http=healthy
+resolved one managed server: pid=36792 base_url=http://127.0.0.1:8080/v1 aliases=2 stale=0
 ```
 
-`status` requires both the registered PID to be alive and the engine-specific
-local HTTP endpoint to return 200; a bare TCP listener is not accepted as
-health. `server down` is intended for a runfile created by `server up`. If a
-runfile was copied, hand-edited, or left across PID reuse, verify its process
-identity before using `down`; executable/start-time binding remains future
-lifecycle hardening.
+`status` succeeds only when schema-v2 process identity and listener ownership
+are exact and the engine-specific local HTTP endpoint returns 200. A bare TCP
+listener is not healthy, and a healthy HTTP response is never teardown
+authority. `down` independently revalidates the retained process handle and
+listener facts, waits for that exact process instance to exit, and only then
+cleans its unchanged registrations.
+
+A wildcard/public bind is reported explicitly and makes `status` fail. Because
+the process generation is still exact, `down` may stop that same retained
+process and verify listener release; it never treats public exposure as healthy
+managed state. Native destructive lifecycle control is supported on Windows
+and on little-endian 64-bit x86_64/AArch64 Linux. Other platforms fail closed
+until they have an equivalent retained-process adapter.
+
+## Registration and teardown safety
+
+Schema v2 adds teardown identity without breaking deserialization of historical
+runfiles. In addition to the engine, PID, port, and base URL, a new registration
+records:
+
+- a process-creation token that distinguishes PID reuse;
+- the resolved executable and complete argument vector;
+- the absolute path of the originating local `.ferric/server.json` mirror; and
+- the existing launch provenance, including model and context when known.
+
+Ferric inventories the current workspace's local registration and the user-level
+global registration independently. A global schema-v2 record also identifies
+its real originating local mirror, so running `status` or `down` from another
+workspace does not silently replace that origin with the current directory.
+Equivalent records are aliases of one managed instance; stale records are kept
+separate. A malformed, unreadable, symlinked, conflicting, or otherwise
+unverifiable entry makes resolution fail closed—no process is signalled.
+
+Registration publication is no-clobber and atomic per path, not one
+cross-filesystem transaction. If the second mirror cannot be published, Ferric
+stops the child it still owns before conditionally rolling back the first.
+Cleanup likewise removes only the exact bytes captured during resolution. If a
+file changes or is replaced concurrently, the replacement is preserved and the
+command reports partial cleanup.
+
+`server down` has three practical outcomes:
+
+- No registration: it is an idempotent success.
+- Stale records only: when every registered endpoint is absent, it conditionally
+  removes unchanged records and explicitly reports that no process was stopped;
+  a live, foreign, shared, or uninspectable listener keeps the recovery record.
+- One verified schema-v2 instance: it terminates only through the retained exact
+  process handle, proves exit, and then conditionally cleans all matching aliases
+  and stale records.
+
+Multiple live identities, disagreement between process and listener ownership,
+uninspectable state, or any blocked registration refuses teardown. Fix the
+reported state; do not work around it with a broad process-name kill.
+
+### Recovering a live schema-v1 registration
+
+Historical schema-v1 runfiles remain readable, but a numeric PID alone cannot
+authorize teardown. If that PID is live, both `status` and `down` retain the
+record and print a copy/paste recovery command. From the workspace containing
+the local record, run:
+
+```sh
+ferric server adopt --pid <PID>
+```
+
+Adoption is non-destructive. It acquires an exact retained process handle,
+checks the closed engine executable and every available recorded argv
+coordinate, requires exclusive IPv4-loopback listener ownership, and
+conditionally replaces only unchanged local/global aliases with schema v2.
+Any disagreement leaves the live process unsignalled and preserves recovery
+bytes. A later `server down` re-acquires and revalidates the adopted generation.
+
+If the legacy PID is already absent, run:
+
+```sh
+ferric server down
+ferric server up --engine llama-server --model /path/to/model.gguf
+```
+
+The first command treats the unchanged legacy record as stale and removes it
+without signalling a process; the second publishes schema v2. If the PID was
+reused or the record is malformed, Ferric continues to refuse automatic
+cleanup. In that case, compare the local and global files with the record you
+inspected and remove only those exact unchanged files manually.
 
 ## Launch flags
 
@@ -63,7 +145,7 @@ lifecycle hardening.
 | `--threads <N>` | engine default | CPU threads (llama-server only) |
 | `--gpu-layers <N>` | engine default | layers to offload to GPU (llama-server only) |
 | `--batch-size <N>` | engine default | batch size (llama-server only) |
-| `--tailscale` | off | expose the port over Tailscale Serve |
+| `--tailscale` | off | reserved; currently refused before any process or registration side effect |
 
 ### How the flags map to `llama-server`
 
@@ -93,10 +175,19 @@ the machine. This is also why, in the containerized topology, `ferric` and
 `llama-server` are co-located in one container rather than split across a network
 boundary (see [Container Topology & Roadmap](swarming-k8s.md)).
 
-If you genuinely need remote access, `--tailscale` exposes the port over your
-tailnet via Tailscale Serve (requires the `tailscale` CLI, and the first run on a
-machine prints an authorization link you must click). This is an explicit,
-authenticated opt-in — not a public bind.
+`server up --tailscale` is temporarily fail-closed. Ferric refuses it during
+preflight, before spawning an engine or writing a registration, because it
+cannot yet compare-and-remove only the durable Tailscale Serve state it created.
+
+An existing registration with `tailscale: true` is also blocked from automatic
+teardown, even when it appears stale. Inspect the exact Serve configuration with
+`tailscale serve status` and independently verify the registered process
+creation instance, executable, arguments, and listener owner. Stop that exact
+process, then use the targeted removal syntax shown by `tailscale serve --help`
+to remove only the endpoint for the recorded port. Never use a node-wide Serve
+reset as lifecycle cleanup. Finally compare and remove only its unchanged
+local/global registration files. A future release can restore `--tailscale`
+after it can capture, own, and conditionally restore that external state.
 
 ## Edge tuning
 

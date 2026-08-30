@@ -40,11 +40,16 @@ $Model = 'C:\Models\qwen2.5-coder-7b-instruct-q4_k_m.gguf'
 & $FerricExe server up --engine llama-server --model $Model --ctx 8192 --gpu-layers 99
 ```
 
-`server up` now fails before spawning if either runfile already exists, port
+`server up` fails before spawning if either registration already exists, port
 8080 is occupied, or the model is not a regular file. It returns success only
-after the spawned PID remains alive and `/health` returns HTTP 200. If preflight
-reports an existing registration, inspect it and use `server status`; do not
-overwrite the record.
+after the spawned process remains alive, owns the expected listener, and
+`/health` returns HTTP 200. If preflight reports an existing registration,
+inspect it with `server status`; do not overwrite the record. Conflicting,
+legacy-live, or unverifiable state fails closed.
+
+For a live legacy record, follow the printed
+`ferric server adopt --pid <PID>` command from its originating workspace.
+Adoption records exact process identity without stopping the server.
 
 Leave that terminal open for engine logs. In a second terminal, verify the
 registered server, independently check its HTTP surface, and run the asserted
@@ -434,17 +439,20 @@ cat .ferric/MEMORY.md
 
 ---
 
-## 20. Server lifecycle + edge/Tailscale 🔵
+## 20. Server lifecycle + edge tuning 🔵
 
 ```sh
 ferric server up --engine llama-server --model model.gguf --ctx 8192
 ferric server status
 ferric server doctor            # engine binary + model + reachability
-ferric server up --tailscale    # also expose the port over Tailscale (needs the tailscale CLI)
 ferric server down
 ```
 
 Edge tuning knobs for Jetson/RPi: `--threads`, `--gpu-layers`, `--batch-size`.
+`server up --tailscale` is currently refused before side effects; do not use a
+node-wide Tailscale Serve reset to clean an older `tailscale: true`
+registration. See [Registration and teardown
+safety](server-configuration.md#registration-and-teardown-safety).
 
 ---
 
