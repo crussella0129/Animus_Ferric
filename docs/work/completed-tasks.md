@@ -1615,3 +1615,37 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   Sprint 114 artifact retained SHA-256
   `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
 - **Commit:** `7b8ad48ade13265a5ed582adae0193d8c29bb26d`
+
+## T-11706 (sprint 117)
+
+- **Description:** Added real multi-process registration races and production-
+  path lifecycle composition proofs for launch, discovery, retained-handle
+  teardown, legacy adoption, and publication compensation. Hardened the
+  model-free CLI fixture with process-wide serialization, pre-call lifetime
+  guards, bounded child and CLI watchdogs, diagnosed-only bind retries,
+  independent HTTP connection handling, and exact cleanup assertions. Added
+  native Windows retained-HANDLE and Linux pidfd/listener smokes plus a bounded
+  Ubuntu/Windows CI fixture matrix, `dev` immutable-head runs, and AArch64
+  feature-surface compile coverage.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T19:28:44-04:00
+- **Files modified:** `.github/workflows/ci.yml`,
+  `crates/ferric-cli/src/bin/ferric_lifecycle_fixture.rs`,
+  `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_process.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, and the Book work
+  ledgers.
+- **Verification:** the six exact supplemental composition tests, all three
+  serialized model-free lifecycle fixtures, and the native Windows and WSL
+  Linux process-handle smokes passed. The complete Ferric CLI all-feature gate
+  passed 255 unit tests, 6 benchmark integrations, 69 CLI integrations, 3
+  lifecycle fixtures, and 3 template-hygiene tests; the full workspace
+  all-feature suite also passed. Package and workspace all-target Clippy passed
+  with warnings denied, formatting and diff checks passed, and the AArch64
+  lifecycle feature surface compile-checked. Independent adversarial reviews
+  returned clean. Immutable-head, two-OS CI, nineteen-row command evidence,
+  and Test critique remain the locked Test-phase acceptance boundary. The
+  protected Sprint 114 artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** PENDING

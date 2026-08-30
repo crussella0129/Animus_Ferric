@@ -14,6 +14,10 @@ use std::time::Duration;
 
 const INVOCATION_MARKER_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER";
 const LIFETIME_TOKEN_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN";
+const BIND_DIAGNOSTIC_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_BIND_DIAGNOSTIC";
+const READY_MARKER_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_READY_MARKER";
+const ADDRESS_IN_USE_DIAGNOSTIC: &[u8] = b"ferric-lifecycle-fixture:address-in-use:v1\n";
+const READY_MARKER: &[u8] = b"ferric-lifecycle-fixture:ready:v1\n";
 
 fn record_invocation() -> std::io::Result<()> {
     let Some(marker) = std::env::var_os(INVOCATION_MARKER_ENV) else {
@@ -41,6 +45,13 @@ fn argument_value(arguments: &[String], name: &str) -> Option<String> {
         .windows(2)
         .find(|pair| pair[0] == name)
         .map(|pair| pair[1].clone())
+}
+
+fn write_optional_marker(environment: &str, bytes: &[u8]) -> std::io::Result<()> {
+    let Some(path) = std::env::var_os(environment) else {
+        return Ok(());
+    };
+    std::fs::write(path, bytes)
 }
 
 fn respond(mut stream: TcpStream) -> std::io::Result<()> {
@@ -91,32 +102,71 @@ fn main() -> ExitCode {
         eprintln!("fixture requires a nonzero numeric --port");
         return ExitCode::FAILURE;
     };
+    let Some(model) = argument_value(&arguments, "-m").map(PathBuf::from) else {
+        eprintln!("fixture requires the ordinary -m MODEL argument");
+        return ExitCode::FAILURE;
+    };
+    if !model.is_file() {
+        eprintln!("fixture model must be a regular file: {}", model.display());
+        return ExitCode::FAILURE;
+    }
+    let Some(_context_size) = argument_value(&arguments, "-c")
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value != 0)
+    else {
+        eprintln!("fixture requires a nonzero numeric -c context size");
+        return ExitCode::FAILURE;
+    };
+    let Some(lifetime_token) = std::env::var_os(LIFETIME_TOKEN_ENV).map(PathBuf::from) else {
+        eprintln!("fixture requires a guarded lifetime token");
+        return ExitCode::FAILURE;
+    };
+    if !lifetime_token.is_file() {
+        eprintln!(
+            "fixture lifetime token is absent or nonregular: {}",
+            lifetime_token.display()
+        );
+        return ExitCode::FAILURE;
+    }
 
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(listener) => listener,
         Err(error) => {
+            if error.kind() == std::io::ErrorKind::AddrInUse
+                && let Err(marker_error) =
+                    write_optional_marker(BIND_DIAGNOSTIC_ENV, ADDRESS_IN_USE_DIAGNOSTIC)
+            {
+                eprintln!("fixture could not record address-in-use diagnosis: {marker_error}");
+            }
             eprintln!("fixture could not bind 127.0.0.1:{port}: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let lifetime_token = std::env::var_os(LIFETIME_TOKEN_ENV).map(PathBuf::from);
-    if lifetime_token.is_some()
-        && let Err(error) = listener.set_nonblocking(true)
-    {
+    if let Err(error) = listener.set_nonblocking(true) {
         eprintln!("fixture could not enable controlled cleanup: {error}");
         return ExitCode::FAILURE;
     }
+    if let Err(error) = write_optional_marker(READY_MARKER_ENV, READY_MARKER) {
+        eprintln!("fixture could not record readiness: {error}");
+        return ExitCode::FAILURE;
+    }
     loop {
-        if lifetime_token.as_ref().is_some_and(|path| !path.is_file()) {
+        if !lifetime_token.is_file() {
             return ExitCode::SUCCESS;
         }
         match listener.accept() {
             Ok((stream, _)) => {
-                let _ = respond(stream);
+                if let Err(error) = thread::Builder::new()
+                    .name("ferric-fixture-http".into())
+                    .spawn(move || {
+                        let _ = respond(stream);
+                    })
+                {
+                    eprintln!("fixture could not dispatch an HTTP connection: {error}");
+                    return ExitCode::FAILURE;
+                }
             }
-            Err(error)
-                if lifetime_token.is_some() && error.kind() == std::io::ErrorKind::WouldBlock =>
-            {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(25));
             }
             Err(error) => {

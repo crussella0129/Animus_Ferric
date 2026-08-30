@@ -17,15 +17,36 @@
     )
 ))]
 
-use std::fs;
+use std::collections::BTreeMap;
+use std::fmt;
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::{
+    Mutex, MutexGuard, OnceLock,
+    mpsc::{self, Sender},
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const SENTINEL_NAME: &str = "unrelated-sentinel.txt";
+const BIND_DIAGNOSTIC_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_BIND_DIAGNOSTIC";
+const READY_MARKER_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_READY_MARKER";
+const ADDRESS_IN_USE_DIAGNOSTIC: &[u8] = b"ferric-lifecycle-fixture:address-in-use:v1\n";
+const READY_MARKER: &[u8] = b"ferric-lifecycle-fixture:ready:v1\n";
+const CLI_TIMEOUT: Duration = Duration::from_secs(30);
+const CHILD_EXIT_GRACE: Duration = Duration::from_secs(5);
+const FIXTURE_LIFETIME_LIMIT: Duration = Duration::from_secs(90);
+const PORT_ATTEMPTS: usize = 3;
+
+fn lifecycle_test_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 fn canonical_test_start_token(coordinate: u64) -> String {
     assert!(
@@ -105,6 +126,81 @@ fn isolated_ferric(workspace: &Path, appdata: &Path, bin_dir: &Path) -> Command 
         // Ferric can resolve only the copied closed-engine fixture.
         .env("PATH", bin_dir);
     command
+}
+
+fn wait_for_child_exit(
+    child: &mut Child,
+    timeout: Duration,
+) -> std::io::Result<Option<ExitStatus>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn run_cli_status_bounded(label: &str, command: &mut Command) -> ExitStatus {
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap_or_else(|error| panic!("could not spawn {label}: {error}"));
+    match wait_for_child_exit(&mut child, CLI_TIMEOUT)
+        .unwrap_or_else(|error| panic!("could not observe {label}: {error}"))
+    {
+        Some(status) => status,
+        None => {
+            let kill = child.kill();
+            let reaped = wait_for_child_exit(&mut child, CHILD_EXIT_GRACE)
+                .unwrap_or_else(|error| panic!("could not reap timed-out {label}: {error}"));
+            panic!(
+                "{label} exceeded the {CLI_TIMEOUT:?} CLI watchdog; kill={kill:?} reaped={reaped:?}"
+            );
+        }
+    }
+}
+
+fn run_cli_output_bounded(label: &str, command: &mut Command) -> Output {
+    // Files, rather than pipes, prevent an incorrectly spawned daemon from
+    // keeping `wait_with_output` blocked by inherited writer handles.
+    let capture = tempfile::tempdir().expect("create bounded CLI capture directory");
+    let stdout_path = capture.path().join("stdout");
+    let stderr_path = capture.path().join("stderr");
+    let stdout = File::create(&stdout_path).expect("create CLI stdout capture");
+    let stderr = File::create(&stderr_path).expect("create CLI stderr capture");
+    let mut child = command
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .unwrap_or_else(|error| panic!("could not spawn {label}: {error}"));
+
+    let status = match wait_for_child_exit(&mut child, CLI_TIMEOUT)
+        .unwrap_or_else(|error| panic!("could not observe {label}: {error}"))
+    {
+        Some(status) => status,
+        None => {
+            let kill = child.kill();
+            let reaped = wait_for_child_exit(&mut child, CHILD_EXIT_GRACE)
+                .unwrap_or_else(|error| panic!("could not reap timed-out {label}: {error}"));
+            let stdout = fs::read(&stdout_path).unwrap_or_default();
+            let stderr = fs::read(&stderr_path).unwrap_or_default();
+            panic!(
+                "{label} exceeded the {CLI_TIMEOUT:?} CLI watchdog; kill={kill:?} reaped={reaped:?}\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
+            );
+        }
+    };
+    Output {
+        status,
+        stdout: fs::read(stdout_path).expect("read bounded CLI stdout"),
+        stderr: fs::read(stderr_path).expect("read bounded CLI stderr"),
+    }
 }
 
 fn assert_success(label: &str, output: Output) {
@@ -187,6 +283,94 @@ fn wait_until(mut predicate: impl FnMut() -> bool) -> bool {
         thread::sleep(Duration::from_millis(50));
     }
     predicate()
+}
+
+fn marker_matches(path: &Path, expected: &[u8]) -> bool {
+    fs::read(path).is_ok_and(|bytes| bytes == expected)
+}
+
+fn remove_marker(path: &Path) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!(
+            "could not remove fixture marker {}: {error}",
+            path.display()
+        ),
+    }
+}
+
+#[derive(PartialEq, Eq)]
+enum TreeEntry {
+    Directory,
+    File(Box<[u8]>),
+    Symlink(PathBuf),
+}
+
+fn byte_fingerprint(bytes: &[u8]) -> u64 {
+    let mut fingerprint = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        fingerprint ^= u64::from(*byte);
+        fingerprint = fingerprint.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    fingerprint
+}
+
+impl fmt::Debug for TreeEntry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Directory => formatter.write_str("Directory"),
+            Self::File(bytes) => formatter
+                .debug_struct("File")
+                .field("bytes", &bytes.len())
+                .field(
+                    "fingerprint",
+                    &format_args!("{:#018x}", byte_fingerprint(bytes)),
+                )
+                .finish(),
+            Self::Symlink(target) => formatter.debug_tuple("Symlink").field(target).finish(),
+        }
+    }
+}
+
+fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, TreeEntry> {
+    fn visit(root: &Path, directory: &Path, snapshot: &mut BTreeMap<PathBuf, TreeEntry>) {
+        let mut entries = fs::read_dir(directory)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "could not enumerate snapshot directory {}: {error}",
+                    directory.display()
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let relative = path.strip_prefix(root).unwrap().to_path_buf();
+            let metadata = fs::symlink_metadata(&path).unwrap();
+            if metadata.file_type().is_symlink() {
+                snapshot.insert(relative, TreeEntry::Symlink(fs::read_link(&path).unwrap()));
+            } else if metadata.is_dir() {
+                snapshot.insert(relative, TreeEntry::Directory);
+                visit(root, &path, snapshot);
+            } else if metadata.is_file() {
+                let bytes = fs::read(&path).unwrap_or_else(|error| {
+                    panic!("could not read snapshot file {}: {error}", path.display())
+                });
+                snapshot.insert(relative, TreeEntry::File(bytes.into_boxed_slice()));
+            } else {
+                panic!(
+                    "unexpected filesystem object in fixture tree: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    let mut snapshot = BTreeMap::new();
+    visit(root, root, &mut snapshot);
+    snapshot
 }
 
 fn write_sentinel(directory: &Path, label: &str) {
@@ -567,21 +751,42 @@ impl Drop for ExternalProcessGuard {
 struct FixtureLifetimeGuard {
     token: PathBuf,
     port: u16,
+    watchdog_cancel: Option<Sender<()>>,
+    watchdog: Option<thread::JoinHandle<()>>,
     armed: bool,
 }
 
 impl FixtureLifetimeGuard {
     fn create(token: PathBuf, port: u16) -> Self {
         fs::write(&token, b"fixture may run only while this token exists").unwrap();
+        let watched_token = token.clone();
+        let (watchdog_cancel, cancel) = mpsc::channel();
+        let watchdog = thread::spawn(move || {
+            if cancel.recv_timeout(FIXTURE_LIFETIME_LIMIT).is_err() {
+                let _ = fs::remove_file(watched_token);
+            }
+        });
         Self {
             token,
             port,
+            watchdog_cancel: Some(watchdog_cancel),
+            watchdog: Some(watchdog),
             armed: true,
         }
     }
 
-    fn cleanup(&self) {
+    fn token(&self) -> &Path {
+        &self.token
+    }
+
+    fn cleanup(&mut self) {
         let _ = fs::remove_file(&self.token);
+        if let Some(cancel) = self.watchdog_cancel.take() {
+            let _ = cancel.send(());
+        }
+        if let Some(watchdog) = self.watchdog.take() {
+            let _ = watchdog.join();
+        }
         let _ = wait_until(|| !endpoint_is_healthy(self.port));
     }
 
@@ -619,13 +824,153 @@ impl Drop for ChildGuard {
     fn drop(&mut self) {
         if let Some(child) = &mut self.0 {
             let _ = child.kill();
-            let _ = child.wait();
+            let _ = wait_for_child_exit(child, CHILD_EXIT_GRACE);
         }
     }
 }
 
+struct RunningFixture {
+    port: u16,
+    lifetime: FixtureLifetimeGuard,
+    child: ChildGuard,
+}
+
+fn launch_managed_fixture_with_retry(
+    root: &Path,
+    workspace: &Path,
+    appdata: &Path,
+    bin_dir: &Path,
+    model: &Path,
+) -> (u16, FixtureLifetimeGuard) {
+    for attempt in 1..=PORT_ATTEMPTS {
+        let port = unused_port();
+        let token = root.join(format!("managed-fixture-{attempt}.lifetime"));
+        let bind_diagnostic = root.join(format!("managed-fixture-{attempt}.bind"));
+        let mut lifetime = FixtureLifetimeGuard::create(token, port);
+        let mut command = isolated_ferric(workspace, appdata, bin_dir);
+        command
+            .env("FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN", lifetime.token())
+            .env(BIND_DIAGNOSTIC_ENV, &bind_diagnostic)
+            .args([
+                "server",
+                "up",
+                "--model",
+                model.to_str().unwrap(),
+                "--ctx",
+                "4096",
+                "--port",
+                &port.to_string(),
+            ]);
+        let status = run_cli_status_bounded("real `ferric server up`", &mut command);
+        let address_in_use = marker_matches(&bind_diagnostic, ADDRESS_IN_USE_DIAGNOSTIC);
+        if status.success() {
+            assert!(
+                !bind_diagnostic.exists(),
+                "managed fixture reported a bind failure despite successful launch"
+            );
+            return (port, lifetime);
+        }
+
+        lifetime.finish();
+        remove_marker(&bind_diagnostic);
+        if address_in_use && attempt < PORT_ATTEMPTS {
+            continue;
+        }
+        if address_in_use {
+            panic!(
+                "real `ferric server up` exhausted {PORT_ATTEMPTS} diagnosed address-in-use attempts"
+            );
+        }
+        panic!(
+            "real `ferric server up` failed without the fixture's exact address-in-use diagnostic: {status}"
+        );
+    }
+    unreachable!("the diagnosed bind retry loop always returns or panics")
+}
+
+fn launch_direct_fixture_with_retry(
+    root: &Path,
+    workspace: &Path,
+    engine: &Path,
+    model: &Path,
+    label: &str,
+) -> RunningFixture {
+    for attempt in 1..=PORT_ATTEMPTS {
+        let port = unused_port();
+        let token = root.join(format!("{label}-{attempt}.lifetime"));
+        let bind_diagnostic = root.join(format!("{label}-{attempt}.bind"));
+        let ready_marker = root.join(format!("{label}-{attempt}.ready"));
+        let mut lifetime = FixtureLifetimeGuard::create(token, port);
+        let child = Command::new(engine)
+            .args([
+                "-m",
+                model.to_str().unwrap(),
+                "-c",
+                "4096",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &port.to_string(),
+            ])
+            .env("FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN", lifetime.token())
+            .env(BIND_DIAGNOSTIC_ENV, &bind_diagnostic)
+            .env(READY_MARKER_ENV, &ready_marker)
+            .current_dir(workspace)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap_or_else(|error| panic!("could not spawn {label}: {error}"));
+        let mut child = ChildGuard::new(child);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let exit = child
+                .child_mut()
+                .try_wait()
+                .unwrap_or_else(|error| panic!("could not observe {label}: {error}"));
+            if let Some(status) = exit {
+                let address_in_use = marker_matches(&bind_diagnostic, ADDRESS_IN_USE_DIAGNOSTIC);
+                lifetime.finish();
+                remove_marker(&bind_diagnostic);
+                remove_marker(&ready_marker);
+                if address_in_use && attempt < PORT_ATTEMPTS {
+                    break;
+                }
+                if address_in_use {
+                    panic!("{label} exhausted {PORT_ATTEMPTS} diagnosed address-in-use attempts");
+                }
+                panic!("{label} exited before readiness without a diagnosed bind race: {status}");
+            }
+
+            if marker_matches(&ready_marker, READY_MARKER) {
+                assert!(
+                    !bind_diagnostic.exists(),
+                    "{label} reported both bind failure and readiness"
+                );
+                if endpoint_is_healthy(port) {
+                    remove_marker(&ready_marker);
+                    return RunningFixture {
+                        port,
+                        lifetime,
+                        child,
+                    };
+                }
+            }
+
+            if Instant::now() >= deadline {
+                lifetime.finish();
+                remove_marker(&bind_diagnostic);
+                remove_marker(&ready_marker);
+                panic!("{label} exceeded the bounded readiness watchdog");
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+    unreachable!("the diagnosed bind retry loop always returns or panics")
+}
+
 #[test]
 fn model_free_server_lifecycle_fixture_e2e() {
+    let _lifecycle_lock = lifecycle_test_lock();
     let root = tempfile::tempdir().unwrap();
     let workspace_a = root.path().join("workspace-a");
     let workspace_b = root.path().join("workspace-b");
@@ -641,26 +986,14 @@ fn model_free_server_lifecycle_fixture_e2e() {
     let (bin_dir, _engine) = install_fixture(root.path());
     let model = root.path().join("dummy-model.gguf");
     fs::write(&model, b"model-free fixture").unwrap();
-    let port = unused_port();
+    let baseline = snapshot_tree(root.path());
 
-    // Null output is load-bearing: the engine inherits Ferric's stdio, so an
-    // output pipe owned by `ferric server up` would stay open in the daemon.
-    let up = isolated_ferric(&workspace_b, &appdata, &bin_dir)
-        .args([
-            "server",
-            "up",
-            "--model",
-            model.to_str().unwrap(),
-            "--ctx",
-            "4096",
-            "--port",
-            &port.to_string(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .unwrap();
-    assert!(up.success(), "real `ferric server up` failed: {up}");
+    // The token and its independent watchdog exist before the blocking CLI
+    // launch. A bind retry is allowed only when the fixture writes its exact,
+    // private address-in-use diagnostic.
+    let (port, mut process_lifetime) =
+        launch_managed_fixture_with_retry(root.path(), &workspace_b, &appdata, &bin_dir, &model);
+    let lifetime_token = process_lifetime.token().to_path_buf();
 
     let local_a = local_a_dir.join("server.json");
     let local_b = local_b_dir.join("server.json");
@@ -680,12 +1013,25 @@ fn model_free_server_lifecycle_fixture_e2e() {
         .expect("retain exact up-launched fixture process object");
     assert!(endpoint_is_healthy(port));
 
+    // One incomplete client must not serialize the listener. The fixture's
+    // per-connection worker leaves the accept loop free for a second health
+    // request while this socket deliberately sends no HTTP bytes.
+    let address = format!("127.0.0.1:{port}").parse().unwrap();
+    let slow_connection = TcpStream::connect_timeout(&address, Duration::from_millis(250))
+        .expect("open deliberately incomplete fixture connection");
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        endpoint_is_healthy(port),
+        "an incomplete HTTP client blocked independent fixture health handling"
+    );
+    drop(slow_connection);
+
     assert_success(
         "status from originating workspace B",
-        isolated_ferric(&workspace_b, &appdata, &bin_dir)
-            .args(["server", "status"])
-            .output()
-            .unwrap(),
+        run_cli_output_bounded(
+            "status from originating workspace B",
+            isolated_ferric(&workspace_b, &appdata, &bin_dir).args(["server", "status"]),
+        ),
     );
 
     // A stale current-workspace record names this test runner with a creation
@@ -709,17 +1055,17 @@ fn model_free_server_lifecycle_fixture_e2e() {
 
     assert_success(
         "status from stale workspace A",
-        isolated_ferric(&workspace_a, &appdata, &bin_dir)
-            .args(["server", "status"])
-            .output()
-            .unwrap(),
+        run_cli_output_bounded(
+            "status from stale workspace A",
+            isolated_ferric(&workspace_a, &appdata, &bin_dir).args(["server", "status"]),
+        ),
     );
     assert_success(
         "down from stale workspace A",
-        isolated_ferric(&workspace_a, &appdata, &bin_dir)
-            .args(["server", "down"])
-            .output()
-            .unwrap(),
+        run_cli_output_bounded(
+            "down from stale workspace A",
+            isolated_ferric(&workspace_a, &appdata, &bin_dir).args(["server", "down"]),
+        ),
     );
 
     assert!(
@@ -731,6 +1077,15 @@ fn model_free_server_lifecycle_fixture_e2e() {
         "fixture listener 127.0.0.1:{port} remained healthy after down"
     );
     fixture_guard.disarm();
+    process_lifetime.finish();
+    assert!(
+        wait_until(|| endpoint_is_closed(port)),
+        "fixture listener 127.0.0.1:{port} remained open after exact process exit"
+    );
+    assert!(
+        !lifetime_token.exists(),
+        "fixture lifetime coordination token remained after teardown"
+    );
     assert_only_sentinel(&local_a_dir, "workspace-a");
     assert_only_sentinel(&local_b_dir, "workspace-b");
     assert_only_sentinel(&global_dir, "global");
@@ -738,10 +1093,16 @@ fn model_free_server_lifecycle_fixture_e2e() {
         fs::read_to_string(root.path().join(SENTINEL_NAME)).unwrap(),
         "root"
     );
+    assert_eq!(
+        snapshot_tree(root.path()),
+        baseline,
+        "the complete fixture tree changed: an owned registration, stage, coordination artifact, or unrelated mutation remained"
+    );
 }
 
 #[test]
 fn tailscale_mode_refuses_before_side_effects() {
+    let _lifecycle_lock = lifecycle_test_lock();
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
     let appdata = root.path().join("isolated-config");
@@ -757,35 +1118,37 @@ fn tailscale_mode_refuses_before_side_effects() {
     assert!(tailscale.is_file(), "fake tailscale executable must exist");
     let model = root.path().join("dummy-model.gguf");
     fs::write(&model, b"model-free fixture").unwrap();
-    let port = unused_port();
-    assert!(endpoint_is_closed(port));
+    let refused_port = unused_port();
+    assert!(endpoint_is_closed(refused_port));
 
     let invocation_marker = root.path().join("unexpected-invocation.json");
     let refused_lifetime_token = root.path().join("refused-fixture-must-not-live.token");
+    let mut refused_lifetime =
+        FixtureLifetimeGuard::create(refused_lifetime_token.clone(), refused_port);
 
-    // The deliberately absent lifetime token makes a hypothetical bad spawn
-    // exit immediately after leaving its invocation marker, so output capture
-    // stays bounded even when this safety property regresses.
-    let up = isolated_ferric(&workspace, &appdata, &bin_dir)
-        .env(
-            "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
-            &invocation_marker,
-        )
-        .env(
-            "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
-            &refused_lifetime_token,
-        )
-        .args([
-            "server",
-            "up",
-            "--tailscale",
-            "--model",
-            model.to_str().unwrap(),
-            "--port",
-            &port.to_string(),
-        ])
-        .output()
-        .unwrap();
+    // Even a regression that spawns before refusing is bounded: the live
+    // token guard and its watchdog precede the blocking CLI call.
+    let up = run_cli_output_bounded(
+        "server up --tailscale",
+        isolated_ferric(&workspace, &appdata, &bin_dir)
+            .env(
+                "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
+                &invocation_marker,
+            )
+            .env(
+                "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+                refused_lifetime.token(),
+            )
+            .args([
+                "server",
+                "up",
+                "--tailscale",
+                "--model",
+                model.to_str().unwrap(),
+                "--port",
+                &refused_port.to_string(),
+            ]),
+    );
     assert_failed_output(
         "server up --tailscale",
         &up,
@@ -798,8 +1161,8 @@ fn tailscale_mode_refuses_before_side_effects() {
         invocation_marker.display()
     );
     assert!(
-        endpoint_is_closed(port),
-        "refused tailscale launch created a listener on 127.0.0.1:{port}"
+        endpoint_is_closed(refused_port),
+        "refused tailscale launch created a listener on 127.0.0.1:{refused_port}"
     );
     assert_only_sentinel(&local_dir, "workspace");
     assert_only_sentinel(&global_dir, "global");
@@ -808,22 +1171,27 @@ fn tailscale_mode_refuses_before_side_effects() {
         "root"
     );
 
-    let doctor = isolated_ferric(&workspace, &appdata, &bin_dir)
-        .env(
-            "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
-            &invocation_marker,
-        )
-        .args([
-            "server",
-            "doctor",
-            "--tailscale",
-            "--model",
-            model.to_str().unwrap(),
-            "--port",
-            &port.to_string(),
-        ])
-        .output()
-        .unwrap();
+    let doctor = run_cli_output_bounded(
+        "server doctor --tailscale",
+        isolated_ferric(&workspace, &appdata, &bin_dir)
+            .env(
+                "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
+                &invocation_marker,
+            )
+            .env(
+                "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+                refused_lifetime.token(),
+            )
+            .args([
+                "server",
+                "doctor",
+                "--tailscale",
+                "--model",
+                model.to_str().unwrap(),
+                "--port",
+                &refused_port.to_string(),
+            ]),
+    );
     assert_failed_output(
         "server doctor --tailscale",
         &doctor,
@@ -837,38 +1205,25 @@ fn tailscale_mode_refuses_before_side_effects() {
         !invocation_marker.exists(),
         "doctor invoked the fake engine or Tailscale executable before reporting BLOCKED"
     );
-    assert!(endpoint_is_closed(port));
+    assert!(endpoint_is_closed(refused_port));
     assert_only_sentinel(&local_dir, "workspace");
     assert_only_sentinel(&global_dir, "global");
+    refused_lifetime.finish();
+    assert!(!refused_lifetime_token.exists());
 
-    let process_lifetime_token = root.path().join("live-fixture.token");
-    let mut process_lifetime = FixtureLifetimeGuard::create(process_lifetime_token.clone(), port);
-    let child = Command::new(&engine)
-        .args([
-            "-m",
-            model.to_str().unwrap(),
-            "-c",
-            "4096",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-        ])
-        .env(
-            "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
-            &process_lifetime_token,
-        )
-        .current_dir(&workspace)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let pid = child.id();
-    let mut fixture = ChildGuard::new(child);
-    assert!(
-        wait_until(|| endpoint_is_healthy(port)),
-        "direct lifecycle fixture did not become healthy"
+    let RunningFixture {
+        port,
+        lifetime: mut process_lifetime,
+        child: mut fixture,
+    } = launch_direct_fixture_with_retry(
+        root.path(),
+        &workspace,
+        &engine,
+        &model,
+        "tailscale-live-fixture",
     );
+    let process_lifetime_token = process_lifetime.token().to_path_buf();
+    let pid = fixture.child_mut().id();
 
     let local = local_dir.join("server.json");
     let global = global_dir.join("server.json");
@@ -924,14 +1279,19 @@ fn tailscale_mode_refuses_before_side_effects() {
     ];
 
     for phase in ["live", "absent"] {
-        let status = isolated_ferric(&workspace, &appdata, &bin_dir)
-            .env(
-                "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
-                &invocation_marker,
-            )
-            .args(["server", "status"])
-            .output()
-            .unwrap();
+        let status = run_cli_output_bounded(
+            &format!("server status with {phase} Tailscale PID"),
+            isolated_ferric(&workspace, &appdata, &bin_dir)
+                .env(
+                    "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
+                    &invocation_marker,
+                )
+                .env(
+                    "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+                    &process_lifetime_token,
+                )
+                .args(["server", "status"]),
+        );
         assert_failed_output(
             &format!("server status with {phase} Tailscale PID"),
             &status,
@@ -945,14 +1305,19 @@ fn tailscale_mode_refuses_before_side_effects() {
         assert_registration_and_sentinel(&local_dir, "workspace", &local_raw);
         assert_registration_and_sentinel(&global_dir, "global", &global_raw);
 
-        let down = isolated_ferric(&workspace, &appdata, &bin_dir)
-            .env(
-                "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
-                &invocation_marker,
-            )
-            .args(["server", "down"])
-            .output()
-            .unwrap();
+        let down = run_cli_output_bounded(
+            &format!("server down with {phase} Tailscale PID"),
+            isolated_ferric(&workspace, &appdata, &bin_dir)
+                .env(
+                    "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
+                    &invocation_marker,
+                )
+                .env(
+                    "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+                    &process_lifetime_token,
+                )
+                .args(["server", "down"]),
+        );
         assert_failed_output(
             &format!("server down with {phase} Tailscale PID"),
             &down,
@@ -1003,6 +1368,7 @@ fn tailscale_mode_refuses_before_side_effects() {
 
 #[test]
 fn legacy_adoption_then_down_cli_e2e() {
+    let _lifecycle_lock = lifecycle_test_lock();
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
     let appdata = root.path().join("isolated-config");
@@ -1013,30 +1379,19 @@ fn legacy_adoption_then_down_cli_e2e() {
     let (bin_dir, engine) = install_fixture(root.path());
     let model = root.path().join("dummy-model.gguf");
     fs::write(&model, b"model-free fixture").unwrap();
-    let port = unused_port();
-
-    let child = Command::new(&engine)
-        .args([
-            "-m",
-            model.to_str().unwrap(),
-            "-c",
-            "4096",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-        ])
-        .current_dir(&workspace)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let pid = child.id();
-    let mut fixture = ChildGuard::new(child);
-    assert!(
-        wait_until(|| endpoint_is_healthy(port)),
-        "direct lifecycle fixture did not become healthy"
+    let RunningFixture {
+        port,
+        lifetime: mut process_lifetime,
+        child: mut fixture,
+    } = launch_direct_fixture_with_retry(
+        root.path(),
+        &workspace,
+        &engine,
+        &model,
+        "legacy-adoption-fixture",
     );
+    let process_lifetime_token = process_lifetime.token().to_path_buf();
+    let pid = fixture.child_mut().id();
 
     let local = local_dir.join("server.json");
     let global = global_dir.join("server.json");
@@ -1056,10 +1411,15 @@ fn legacy_adoption_then_down_cli_e2e() {
 
     assert_success(
         "legacy adoption",
-        isolated_ferric(&workspace, &appdata, &bin_dir)
-            .args(["server", "adopt", "--pid", &pid.to_string()])
-            .output()
-            .unwrap(),
+        run_cli_output_bounded(
+            "legacy adoption",
+            isolated_ferric(&workspace, &appdata, &bin_dir)
+                .env(
+                    "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+                    &process_lifetime_token,
+                )
+                .args(["server", "adopt", "--pid", &pid.to_string()]),
+        ),
     );
     assert!(
         fixture.child_mut().try_wait().unwrap().is_none(),
@@ -1083,17 +1443,27 @@ fn legacy_adoption_then_down_cli_e2e() {
     );
     assert_success(
         "status after adoption",
-        isolated_ferric(&workspace, &appdata, &bin_dir)
-            .args(["server", "status"])
-            .output()
-            .unwrap(),
+        run_cli_output_bounded(
+            "status after adoption",
+            isolated_ferric(&workspace, &appdata, &bin_dir)
+                .env(
+                    "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+                    &process_lifetime_token,
+                )
+                .args(["server", "status"]),
+        ),
     );
     assert_success(
         "down after adoption",
-        isolated_ferric(&workspace, &appdata, &bin_dir)
-            .args(["server", "down"])
-            .output()
-            .unwrap(),
+        run_cli_output_bounded(
+            "down after adoption",
+            isolated_ferric(&workspace, &appdata, &bin_dir)
+                .env(
+                    "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+                    &process_lifetime_token,
+                )
+                .args(["server", "down"]),
+        ),
     );
 
     let fixture_exited = wait_until(|| fixture.child_mut().try_wait().unwrap().is_some());
@@ -1102,9 +1472,11 @@ fn legacy_adoption_then_down_cli_e2e() {
     // later assertion can panic and make Drop call Child::kill on a reused PID.
     fixture.disarm();
     assert!(
-        wait_until(|| !endpoint_is_healthy(port)),
-        "adopted fixture listener remained healthy after down"
+        wait_until(|| endpoint_is_closed(port)),
+        "adopted fixture listener remained open after down"
     );
+    process_lifetime.finish();
+    assert!(!process_lifetime_token.exists());
     assert_only_sentinel(&local_dir, "workspace");
     assert_only_sentinel(&global_dir, "global");
 }

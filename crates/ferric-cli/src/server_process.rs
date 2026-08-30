@@ -399,6 +399,8 @@ mod platform {
             options: u32,
         ) -> i32;
         fn CloseHandle(object: Handle) -> i32;
+        #[cfg(test)]
+        fn GetHandleInformation(object: Handle, flags: *mut u32) -> i32;
         fn GetProcessTimes(
             process: Handle,
             creation_time: *mut FileTime,
@@ -1070,9 +1072,209 @@ mod platform {
 
     #[cfg(test)]
     mod tests {
-        use std::net::{Ipv4Addr, TcpListener};
+        use std::fs;
+        use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
+        use std::path::{Path, PathBuf};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::thread;
+        use std::time::Instant;
 
         use super::*;
+
+        const NATIVE_SMOKE_HELPER_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_HELPER";
+        const NATIVE_SMOKE_MODE_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_MODE";
+        const NATIVE_SMOKE_READY_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_READY";
+        const ERROR_INVALID_HANDLE: i32 = 6;
+        const NATIVE_SMOKE_TIMEOUT: Duration = Duration::from_secs(15);
+        static NEXT_READY_MARKER: AtomicU64 = AtomicU64::new(0);
+
+        struct ReadyMarker(PathBuf);
+
+        impl ReadyMarker {
+            fn new(mode: &str) -> Self {
+                let sequence = NEXT_READY_MARKER.fetch_add(1, Ordering::Relaxed);
+                Self(std::env::temp_dir().join(format!(
+                    "ferric-process-smoke-{}-{sequence}-{mode}.ready",
+                    std::process::id()
+                )))
+            }
+        }
+
+        impl Drop for ReadyMarker {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+
+        struct ChildGuard(Option<Child>);
+
+        impl ChildGuard {
+            fn child_mut(&mut self) -> &mut Child {
+                self.0.as_mut().expect("smoke child remains retained")
+            }
+
+            fn take(&mut self) -> Child {
+                self.0.take().expect("smoke child remains retained")
+            }
+        }
+
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                if let Some(mut child) = self.0.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+
+        struct RetainedSmokeGuard {
+            process: Option<LiveProcess>,
+            _ready: ReadyMarker,
+        }
+
+        impl RetainedSmokeGuard {
+            fn process(&self) -> &LiveProcess {
+                self.process
+                    .as_ref()
+                    .expect("smoke process remains retained")
+            }
+        }
+
+        impl Drop for RetainedSmokeGuard {
+            fn drop(&mut self) {
+                if let Some(process) = self.process.take() {
+                    let _ = process.terminate();
+                    let _ = process.wait(Duration::from_secs(5));
+                }
+            }
+        }
+
+        fn wait_for_ready(child: &mut Child, path: &Path) -> u16 {
+            let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
+            loop {
+                if let Ok(value) = fs::read_to_string(path)
+                    && let Ok(port) = value.trim().parse::<u16>()
+                    && port != 0
+                {
+                    return port;
+                }
+                if let Some(status) = child.try_wait().expect("inspect smoke helper status") {
+                    panic!("native smoke helper exited before readiness: {status}");
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "native smoke helper did not publish readiness within {NATIVE_SMOKE_TIMEOUT:?}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn spawn_retained_smoke_child(mode: &str) -> (RetainedSmokeGuard, u16) {
+            let ready = ReadyMarker::new(mode);
+            let child = Command::new(std::env::current_exe().expect("current test executable"))
+                .args([
+                    "--exact",
+                    "server_process::platform::tests::native_process_smoke_helper",
+                    "--nocapture",
+                ])
+                .env(NATIVE_SMOKE_HELPER_ENV, "1")
+                .env(NATIVE_SMOKE_MODE_ENV, mode)
+                .env(NATIVE_SMOKE_READY_ENV, &ready.0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn native process smoke helper");
+            let mut child = ChildGuard(Some(child));
+            let port = wait_for_ready(child.child_mut(), &ready.0);
+            let source_handle = child.child_mut().as_raw_handle() as Handle;
+            let process = LiveProcess::acquire_child(child.child_mut())
+                .expect("duplicate the spawned child's exact process HANDLE");
+            assert_ne!(
+                process.handle, source_handle,
+                "acquire_child must retain a distinct duplicated HANDLE"
+            );
+
+            // Close the `Child` source HANDLE. Every later inspection, signal,
+            // and wait in this smoke now has only the retained duplicate.
+            drop(child.take());
+            (
+                RetainedSmokeGuard {
+                    process: Some(process),
+                    _ready: ready,
+                },
+                port,
+            )
+        }
+
+        fn wait_for_listener_state(
+            process: &LiveProcess,
+            port: u16,
+            expected: &ListenerState,
+        ) -> ListenerState {
+            let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
+            loop {
+                let state = loopback_listener_state(process.pid(), port);
+                if &state == expected {
+                    return state;
+                }
+                assert!(
+                    !process.wait(Duration::ZERO).expect("poll retained HANDLE"),
+                    "smoke helper exited while waiting for listener state {expected:?}; last state: {state:?}"
+                );
+                assert!(
+                    Instant::now() < deadline,
+                    "listener state did not become {expected:?}; last state: {state:?}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn filetime_for_handle(handle: Handle) -> u64 {
+            let mut creation = MaybeUninit::<FileTime>::uninit();
+            let mut exit = MaybeUninit::<FileTime>::uninit();
+            let mut kernel = MaybeUninit::<FileTime>::uninit();
+            let mut user = MaybeUninit::<FileTime>::uninit();
+            assert_ne!(
+                unsafe {
+                    GetProcessTimes(
+                        handle,
+                        creation.as_mut_ptr(),
+                        exit.as_mut_ptr(),
+                        kernel.as_mut_ptr(),
+                        user.as_mut_ptr(),
+                    )
+                },
+                0,
+                "read FILETIME from duplicated process HANDLE"
+            );
+            let creation = unsafe { creation.assume_init() };
+            (u64::from(creation.high_date_time) << 32) | u64::from(creation.low_date_time)
+        }
+
+        /// A normal harness invocation returns immediately. The parent smoke
+        /// explicitly re-runs only this test with one harmless socket mode.
+        #[test]
+        fn native_process_smoke_helper() {
+            if std::env::var(NATIVE_SMOKE_HELPER_ENV).ok().as_deref() != Some("1") {
+                return;
+            }
+            let mode = std::env::var(NATIVE_SMOKE_MODE_ENV).expect("native smoke mode");
+            let ready = PathBuf::from(
+                std::env::var_os(NATIVE_SMOKE_READY_ENV).expect("native smoke ready path"),
+            );
+            let listener = match mode.as_str() {
+                "ipv4-loopback" => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)),
+                "ipv4-wildcard" => TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)),
+                "ipv6-loopback" => TcpListener::bind((Ipv6Addr::LOCALHOST, 0)),
+                other => panic!("unknown native smoke mode {other:?}"),
+            }
+            .expect("bind native smoke listener");
+            fs::write(&ready, listener.local_addr().unwrap().port().to_string())
+                .expect("publish native smoke readiness");
+            thread::sleep(Duration::from_secs(60));
+        }
 
         fn process_command_line_buffer(command_line: &str) -> (Vec<usize>, usize) {
             let wide = command_line.encode_utf16().collect::<Vec<_>>();
@@ -1352,6 +1554,92 @@ mod platform {
             assert_eq!(
                 loopback_listener_state(std::process::id(), wildcard_port),
                 ListenerState::OwnedByTargetWildcard
+            );
+        }
+
+        #[test]
+        fn windows_retained_process_handle_smoke() {
+            let (mut loopback, loopback_port) = spawn_retained_smoke_child("ipv4-loopback");
+            let process = loopback.process();
+            assert_eq!(
+                wait_for_listener_state(process, loopback_port, &ListenerState::OwnedByTarget),
+                ListenerState::OwnedByTarget
+            );
+            let filetime = filetime_for_handle(process.handle);
+            assert!(filetime > 0, "process creation FILETIME must be positive");
+            let facts = process
+                .inspect(loopback_port)
+                .expect("inspect exact retained process HANDLE");
+            assert_eq!(
+                facts.identity.start_token,
+                format_windows_start_token(filetime)
+            );
+            validate_start_token(&facts.identity.start_token)
+                .expect("native FILETIME token must be canonical");
+            assert!(!facts.identity.executable.as_os_str().is_empty());
+            assert!(!facts.identity.argv.is_empty());
+            assert_eq!(facts.listener, ListenerState::OwnedByTarget);
+
+            // Take the retained duplicate out of its cleanup guard. The
+            // original `Child` HANDLE was already closed by the spawn helper,
+            // so termination and waiting below can target only this HANDLE.
+            let retained = loopback
+                .process
+                .take()
+                .expect("retained loopback process HANDLE");
+            assert!(
+                retained
+                    .terminate()
+                    .expect("terminate through retained HANDLE")
+            );
+            assert!(
+                retained
+                    .wait(Duration::from_secs(5))
+                    .expect("wait through retained HANDLE")
+            );
+            let duplicated_handle = retained.handle;
+            let mut handle_flags = 0_u32;
+            assert_ne!(
+                unsafe { GetHandleInformation(duplicated_handle, &mut handle_flags) },
+                0,
+                "duplicated process HANDLE must remain valid while retained"
+            );
+            drop(retained);
+            assert_eq!(
+                unsafe { GetHandleInformation(duplicated_handle, &mut handle_flags) },
+                0,
+                "dropping LiveProcess must release its duplicated HANDLE"
+            );
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(ERROR_INVALID_HANDLE),
+                "released HANDLE must be rejected as invalid"
+            );
+
+            let (wildcard, wildcard_port) = spawn_retained_smoke_child("ipv4-wildcard");
+            let wildcard_state = wait_for_listener_state(
+                wildcard.process(),
+                wildcard_port,
+                &ListenerState::OwnedByTargetWildcard,
+            );
+            assert_eq!(wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!wildcard_state.permits_teardown());
+            drop(wildcard);
+
+            let (ipv6_loopback, ipv6_loopback_port) = spawn_retained_smoke_child("ipv6-loopback");
+            let expected_ipv6 = ListenerState::Uninspectable(format!(
+                "exact IPv6 loopback (::1) listener ownership is unsupported for the IPv4-only managed endpoint; observed owner PIDs [{}]",
+                ipv6_loopback.process().pid()
+            ));
+            let ipv6_state = wait_for_listener_state(
+                ipv6_loopback.process(),
+                ipv6_loopback_port,
+                &expected_ipv6,
+            );
+            assert_eq!(ipv6_state, expected_ipv6);
+            assert!(
+                !ipv6_state.permits_teardown(),
+                "an exact ::1 observation must never authorize the IPv4-only endpoint"
             );
         }
 
@@ -1952,7 +2240,285 @@ mod platform {
 
     #[cfg(test)]
     mod tests {
+        use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
+        use std::os::unix::process::CommandExt;
+        use std::path::{Path, PathBuf};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::thread;
+
         use super::*;
+
+        const NATIVE_SMOKE_HELPER_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_HELPER";
+        const NATIVE_SMOKE_MODE_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_MODE";
+        const NATIVE_SMOKE_READY_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_READY";
+        const NATIVE_SMOKE_INHERITED_FD_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_INHERITED_FD";
+        const NATIVE_SMOKE_INHERITED_PORT_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_INHERITED_PORT";
+        const NATIVE_SMOKE_TIMEOUT: Duration = Duration::from_secs(15);
+        const F_GETFD: c_int = 1;
+        const F_SETFD: c_int = 2;
+        const FD_CLOEXEC: c_int = 1;
+        const EBADF: i32 = 9;
+        static NEXT_READY_MARKER: AtomicU64 = AtomicU64::new(0);
+
+        unsafe extern "C" {
+            fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
+        }
+
+        struct ReadyMarker(PathBuf);
+
+        impl ReadyMarker {
+            fn new(mode: &str) -> Self {
+                let sequence = NEXT_READY_MARKER.fetch_add(1, Ordering::Relaxed);
+                Self(std::env::temp_dir().join(format!(
+                    "ferric-process-smoke-{}-{sequence}-{mode}.ready",
+                    std::process::id()
+                )))
+            }
+        }
+
+        impl Drop for ReadyMarker {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+
+        struct ChildGuard(Option<Child>);
+
+        impl ChildGuard {
+            fn child_mut(&mut self) -> &mut Child {
+                self.0.as_mut().expect("smoke child remains retained")
+            }
+
+            fn take(&mut self) -> Child {
+                self.0.take().expect("smoke child remains retained")
+            }
+        }
+
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                if let Some(mut child) = self.0.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+
+        struct RetainedSmokeGuard {
+            process: Option<LiveProcess>,
+            child: Option<Child>,
+            _ready: ReadyMarker,
+        }
+
+        impl RetainedSmokeGuard {
+            fn process(&self) -> &LiveProcess {
+                self.process
+                    .as_ref()
+                    .expect("smoke process remains retained")
+            }
+
+            fn child_pid(&self) -> u32 {
+                self.child
+                    .as_ref()
+                    .expect("smoke child remains retained")
+                    .id()
+            }
+        }
+
+        impl Drop for RetainedSmokeGuard {
+            fn drop(&mut self) {
+                if let Some(process) = self.process.take() {
+                    let _ = process.terminate();
+                    let _ = process.wait(Duration::from_secs(5));
+                }
+                if let Some(mut child) = self.child.take() {
+                    match child.try_wait() {
+                        Ok(Some(_)) => {}
+                        Ok(None) | Err(_) => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
+                    }
+                }
+            }
+        }
+
+        fn wait_for_ready(child: &mut Child, path: &Path) -> u16 {
+            let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
+            loop {
+                if let Ok(value) = fs::read_to_string(path)
+                    && let Ok(port) = value.trim().parse::<u16>()
+                    && port != 0
+                {
+                    return port;
+                }
+                if let Some(status) = child.try_wait().expect("inspect smoke helper status") {
+                    panic!("native smoke helper exited before readiness: {status}");
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "native smoke helper did not publish readiness within {NATIVE_SMOKE_TIMEOUT:?}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn spawn_retained_smoke_child(
+            mode: &str,
+            inherited_listener: Option<(&TcpListener, u16)>,
+        ) -> (RetainedSmokeGuard, u16) {
+            let ready = ReadyMarker::new(mode);
+            let mut command =
+                Command::new(std::env::current_exe().expect("current test executable"));
+            command
+                .args([
+                    "--exact",
+                    "server_process::platform::tests::native_process_smoke_helper",
+                    "--nocapture",
+                ])
+                .env(NATIVE_SMOKE_HELPER_ENV, "1")
+                .env(NATIVE_SMOKE_MODE_ENV, mode)
+                .env(NATIVE_SMOKE_READY_ENV, &ready.0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+
+            if let Some((listener, port)) = inherited_listener {
+                let inherited_fd = listener.as_raw_fd();
+                let flags = unsafe { fcntl(inherited_fd, F_GETFD) };
+                assert!(flags >= 0, "inspect inherited listener descriptor flags");
+                command
+                    .env(NATIVE_SMOKE_INHERITED_FD_ENV, inherited_fd.to_string())
+                    .env(NATIVE_SMOKE_INHERITED_PORT_ENV, port.to_string());
+                // Only the post-fork child clears CLOEXEC. This avoids a
+                // process-wide inheritance race in the multithreaded harness.
+                unsafe {
+                    command.pre_exec(move || {
+                        if fcntl(inherited_fd, F_SETFD, flags & !FD_CLOEXEC) < 0 {
+                            Err(std::io::Error::last_os_error())
+                        } else {
+                            Ok(())
+                        }
+                    });
+                }
+            }
+
+            let child = command.spawn().expect("spawn native process smoke helper");
+            let mut child = ChildGuard(Some(child));
+            let port = wait_for_ready(child.child_mut(), &ready.0);
+            let process = LiveProcess::acquire_child(child.child_mut())
+                .expect("retain the spawned child's exact pidfd");
+            assert_eq!(process.pid(), child.child_mut().id());
+            (
+                RetainedSmokeGuard {
+                    process: Some(process),
+                    child: Some(child.take()),
+                    _ready: ready,
+                },
+                port,
+            )
+        }
+
+        fn fixture_listener_state(pid: u32, port: u16, known_peer_pids: &[u32]) -> ListenerState {
+            let mut relevant = RelevantListenerInodes::default();
+            relevant.extend(
+                listening_loopback_relevant_inodes(
+                    &fs::read_to_string("/proc/net/tcp").expect("read native IPv4 table"),
+                    port,
+                    AddressFamily::V4,
+                )
+                .expect("parse native IPv4 table"),
+            );
+            if let Ok(table) = fs::read_to_string("/proc/net/tcp6") {
+                relevant.extend(
+                    listening_loopback_relevant_inodes(&table, port, AddressFamily::V6)
+                        .expect("parse native IPv6 table"),
+                );
+            }
+            listener_state_from_socket_inventories(
+                pid,
+                port,
+                &relevant,
+                socket_inodes_for_process(pid),
+                known_peer_pids
+                    .iter()
+                    .copied()
+                    .map(|peer_pid| (peer_pid, socket_inodes_for_process(peer_pid)))
+                    .collect(),
+            )
+            .unwrap_or_else(ListenerState::Uninspectable)
+        }
+
+        fn wait_for_fixture_listener_state(
+            process: &LiveProcess,
+            port: u16,
+            known_peer_pids: &[u32],
+            expected: &ListenerState,
+        ) -> ListenerState {
+            let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
+            loop {
+                // These native sockets are created inside this test. Feeding
+                // the production classifier the actual target inventory plus
+                // the only fixture peers avoids making the smoke depend on
+                // permission to enumerate unrelated root-owned `/proc/*/fd`
+                // directories. An unaccounted socket inode still fails closed.
+                let state = fixture_listener_state(process.pid(), port, known_peer_pids);
+                if &state == expected {
+                    return state;
+                }
+                assert!(
+                    !process.wait(Duration::ZERO).expect("poll retained pidfd"),
+                    "smoke helper exited while waiting for listener state {expected:?}; last state: {state:?}"
+                );
+                assert!(
+                    Instant::now() < deadline,
+                    "listener state did not become {expected:?}; last state: {state:?}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        /// A normal harness invocation returns immediately. The parent smoke
+        /// explicitly re-runs only this test with one harmless socket mode.
+        #[test]
+        fn native_process_smoke_helper() {
+            if std::env::var(NATIVE_SMOKE_HELPER_ENV).ok().as_deref() != Some("1") {
+                return;
+            }
+            let mode = std::env::var(NATIVE_SMOKE_MODE_ENV).expect("native smoke mode");
+            let ready = PathBuf::from(
+                std::env::var_os(NATIVE_SMOKE_READY_ENV).expect("native smoke ready path"),
+            );
+            let port = if mode == "inherited" {
+                let inherited_fd = std::env::var(NATIVE_SMOKE_INHERITED_FD_ENV)
+                    .expect("inherited listener fd")
+                    .parse::<c_int>()
+                    .expect("numeric inherited listener fd");
+                assert!(
+                    unsafe { fcntl(inherited_fd, F_GETFD) } >= 0,
+                    "listener descriptor must survive exec"
+                );
+                std::env::var(NATIVE_SMOKE_INHERITED_PORT_ENV)
+                    .expect("inherited listener port")
+                    .parse::<u16>()
+                    .expect("numeric inherited listener port")
+            } else {
+                let listener = match mode.as_str() {
+                    "ipv4-loopback" => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)),
+                    "ipv4-wildcard" => TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)),
+                    "ipv6-loopback" => TcpListener::bind((Ipv6Addr::LOCALHOST, 0)),
+                    "ipv6-wildcard" => TcpListener::bind((Ipv6Addr::UNSPECIFIED, 0)),
+                    other => panic!("unknown native smoke mode {other:?}"),
+                }
+                .expect("bind native smoke listener");
+                let port = listener.local_addr().unwrap().port();
+                fs::write(&ready, port.to_string()).expect("publish native smoke readiness");
+                thread::sleep(Duration::from_secs(60));
+                return;
+            };
+            fs::write(&ready, port.to_string()).expect("publish native smoke readiness");
+            thread::sleep(Duration::from_secs(60));
+        }
 
         fn complete_socket_inventory(inodes: &[&str]) -> ProcessSocketInventory {
             ProcessSocketInventory::Complete(
@@ -2170,6 +2736,171 @@ mod platform {
                 }
                 other => panic!("unexpected native wildcard state: {other:?}"),
             }
+        }
+
+        #[test]
+        fn linux_pidfd_process_handle_smoke() {
+            let (mut loopback, loopback_port) = spawn_retained_smoke_child("ipv4-loopback", None);
+            let process = loopback.process();
+            assert_eq!(
+                wait_for_fixture_listener_state(
+                    process,
+                    loopback_port,
+                    &[],
+                    &ListenerState::OwnedByTarget,
+                ),
+                ListenerState::OwnedByTarget
+            );
+            let facts = process
+                .inspect(loopback_port)
+                .expect("inspect exact retained pidfd process");
+            let pid = process.pid();
+            let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id")
+                .expect("read native Linux boot ID")
+                .trim()
+                .to_string();
+            let stat =
+                fs::read_to_string(format!("/proc/{pid}/stat")).expect("read child process stat");
+            let start_ticks =
+                parse_proc_start_ticks(&stat).expect("parse child process start ticks");
+            assert!(start_ticks > 0);
+            assert_eq!(
+                facts.identity.start_token,
+                format_linux_start_token(&boot_id, start_ticks)
+            );
+            validate_start_token(&facts.identity.start_token)
+                .expect("native boot-ID/start-ticks token must be canonical");
+            assert_eq!(
+                facts.identity.executable,
+                fs::read_link(format!("/proc/{pid}/exe")).expect("read child executable identity")
+            );
+            let command_line =
+                fs::read(format!("/proc/{pid}/cmdline")).expect("read child argv identity");
+            assert_eq!(
+                facts.identity.argv,
+                parse_linux_argv(pid, &command_line).expect("parse child argv identity")
+            );
+            match facts.listener {
+                ListenerState::OwnedByTarget => {}
+                ListenerState::Uninspectable(ref detail) => {
+                    assert!(detail.contains("listener owner enumeration is incomplete"));
+                    assert!(!facts.listener.permits_teardown());
+                }
+                ref other => panic!("unexpected full-/proc listener state: {other:?}"),
+            }
+            assert!(
+                !process
+                    .wait(Duration::ZERO)
+                    .expect("live pidfd must not poll as exited")
+            );
+
+            // Signal and poll only through the pidfd. Child::wait below is
+            // used solely after pidfd-observed exit to reap our child zombie.
+            let retained = loopback.process.take().expect("retained loopback pidfd");
+            let pidfd = retained.pidfd.as_raw_fd();
+            assert!(
+                unsafe { fcntl(pidfd, F_GETFD) } >= 0,
+                "retained pidfd must be open before teardown"
+            );
+            assert!(
+                retained
+                    .terminate()
+                    .expect("signal only through retained pidfd")
+            );
+            assert!(
+                retained
+                    .wait(Duration::from_secs(5))
+                    .expect("poll only through retained pidfd")
+            );
+            let mut child = loopback.child.take().expect("reap smoke helper child");
+            let status = child.wait().expect("reap pidfd-terminated child");
+            assert!(
+                !status.success(),
+                "SIGKILLed helper must not report success"
+            );
+            drop(child);
+            drop(retained);
+            assert_eq!(
+                unsafe { fcntl(pidfd, F_GETFD) },
+                -1,
+                "dropping LiveProcess must close its pidfd"
+            );
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(EBADF),
+                "released pidfd must be rejected as bad"
+            );
+
+            let (wildcard, wildcard_port) = spawn_retained_smoke_child("ipv4-wildcard", None);
+            let wildcard_state = wait_for_fixture_listener_state(
+                wildcard.process(),
+                wildcard_port,
+                &[],
+                &ListenerState::OwnedByTargetWildcard,
+            );
+            assert_eq!(wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!wildcard_state.permits_teardown());
+            drop(wildcard);
+
+            let (ipv6_wildcard, ipv6_wildcard_port) =
+                spawn_retained_smoke_child("ipv6-wildcard", None);
+            let ipv6_wildcard_state = wait_for_fixture_listener_state(
+                ipv6_wildcard.process(),
+                ipv6_wildcard_port,
+                &[],
+                &ListenerState::OwnedByTargetWildcard,
+            );
+            assert_eq!(ipv6_wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!ipv6_wildcard_state.permits_teardown());
+            drop(ipv6_wildcard);
+
+            let (ipv6_loopback, ipv6_loopback_port) =
+                spawn_retained_smoke_child("ipv6-loopback", None);
+            let ipv6_loopback_state = wait_for_fixture_listener_state(
+                ipv6_loopback.process(),
+                ipv6_loopback_port,
+                &[],
+                &ListenerState::Absent,
+            );
+            assert_eq!(
+                ipv6_loopback_state,
+                ListenerState::Absent,
+                "exact ::1 cannot accept the managed IPv4 loopback endpoint"
+            );
+            drop(ipv6_loopback);
+
+            // Clear CLOEXEC only in the forked child so one real loopback
+            // socket inode is visibly owned by both this parent and the child.
+            let inherited_listener =
+                TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind inherited listener");
+            let inherited_port = inherited_listener.local_addr().unwrap().port();
+            let inherited_fd = inherited_listener.as_raw_fd();
+            let (shared, ready_port) = spawn_retained_smoke_child(
+                "inherited",
+                Some((&inherited_listener, inherited_port)),
+            );
+            assert_eq!(ready_port, inherited_port);
+            let parent_link = fs::read_link(format!("/proc/self/fd/{inherited_fd}"))
+                .expect("read parent inherited socket link");
+            let child_link =
+                fs::read_link(format!("/proc/{}/fd/{inherited_fd}", shared.child_pid()))
+                    .expect("read child inherited socket link");
+            assert_eq!(child_link, parent_link);
+            assert!(
+                parent_link.to_string_lossy().starts_with("socket:["),
+                "shared descriptor must visibly reference a socket inode"
+            );
+            let mut expected_owners = vec![std::process::id(), shared.child_pid()];
+            expected_owners.sort_unstable();
+            let expected_shared = ListenerState::OwnedByOther(expected_owners);
+            let shared_state = wait_for_fixture_listener_state(
+                shared.process(),
+                inherited_port,
+                &[std::process::id()],
+                &expected_shared,
+            );
+            assert_eq!(shared_state, expected_shared);
+            assert!(!shared_state.permits_teardown());
         }
 
         #[test]

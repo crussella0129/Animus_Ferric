@@ -260,7 +260,3 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 ## Sprint 116 failed-close remediation
 
 - [ ] T-11606 (backlog, before T-11510 and T-11505) [intent: INT-0008]: Rebuild Sprint 116 acceptance at the clause level: enforce tagged OS process-start tokens; add executable finalized-name matrices for E01 inventory/schema/conditional removal and E03 resolver/consumer behavior, including lossless scope/origin diagnostics; add injected store/process/listener fault seams for the E02/E04/E05-A/E05-B matrices; race real concurrent clients over shared registration paths; assert status, legacy-adoption, and complete Tailscale-blocked output contracts; harden and serialize the lifecycle fixture with Windows/Linux CI coverage; and bind every finalized EARS clause to exact executed commands, immutable heads, CI runs, and an accepted critic verdict. — touches: `crates/ferric-cli/src/server*.rs`, lifecycle consumers and fixtures, CI workflows, server/operator docs, Sprint Test evidence
-
-## Sprint 117 — T-11606 acceptance recovery
-
-- [ ] T-11706 (sprint 117) [intent: INT-0008]: Prove all finalized clauses with real client races, hardened model-free fixtures, native smokes, serialized Windows/Linux CI, AArch64 compile coverage, and immutable Sprint evidence. — touches: `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, `crates/ferric-cli/src/bin/ferric_lifecycle_fixture.rs`, `crates/ferric-cli/src/server*.rs`, `crates/ferric-cli/Cargo.toml`, `.github/workflows/ci.yml`, operator docs, `docs/sprints/s117/sprint-tests/`

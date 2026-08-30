@@ -2,8 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `dev` runs establish immutable pre-PR Sprint evidence; `main` retains
+    # the post-merge regression gate.
+    branches: [main, dev]
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -38,6 +41,25 @@ jobs:
       - name: clippy with backend-openai
         run: cargo clippy -p ferric-cli --features backend-openai --all-targets -- -D warnings
 
+  # Runs the model-free lifecycle fixture natively on both supported CI hosts.
+  # Tests are serialized because they exercise process, listener, and runfile
+  # ownership boundaries.
+  lifecycle-fixture:
+    name: lifecycle fixture (${{ matrix.os }})
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy lifecycle fixture
+        run: cargo clippy -p ferric-cli --features lifecycle-fixture --all-targets --locked -- -D warnings
+      - name: test lifecycle fixture serially
+        run: cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1
+
   # Portability gate: Ferric must keep type-checking for Raspberry Pi /
   # Orange Pi / Jetson class aarch64 Linux targets (ADR-004).
   aarch64-check:
@@ -49,4 +71,6 @@ jobs:
       - name: add target
         run: rustup target add aarch64-unknown-linux-gnu
       - name: check
-        run: cargo check --workspace --target aarch64-unknown-linux-gnu
+        run: cargo check --workspace --target aarch64-unknown-linux-gnu --locked
+      - name: check lifecycle fixture (compile only)
+        run: cargo check -p ferric-cli --features lifecycle-fixture --all-targets --target aarch64-unknown-linux-gnu --locked

@@ -2112,6 +2112,215 @@ mod tests {
         }
     }
 
+    const PROCESS_CLIENT_MODE: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_MODE";
+    const PROCESS_CLIENT_ROOT: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_ROOT";
+    const PROCESS_CLIENT_ID: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_ID";
+    const PROCESS_CLIENT_PATH: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_PATH";
+    const PROCESS_CLIENT_WORKSPACE: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_WORKSPACE";
+    const PROCESS_CLIENT_GLOBAL: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_GLOBAL";
+    const PROCESS_CLIENT_DISCRIMINATOR: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_DISCRIMINATOR";
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize)]
+    struct ProcessClientOutcome {
+        kind: String,
+        preserved_at: Option<PathBuf>,
+    }
+
+    fn process_client_coordinate(root: &Path, phase: &str, id: &str, state: &str) -> PathBuf {
+        root.join(format!("{phase}-{id}.{state}"))
+    }
+
+    fn wait_for_process_coordinate(path: &Path, timeout: std::time::Duration) -> io::Result<()> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match fs::symlink_metadata(path) {
+                Ok(_) => return Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "timed out waiting for process coordinate {}",
+                        path.display()
+                    ),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn process_client_barrier(root: &Path, phase: &str, id: &str) -> io::Result<()> {
+        fs::create_dir_all(root)?;
+        let ready = process_client_coordinate(root, phase, id, "ready");
+        let release = process_client_coordinate(root, phase, id, "release");
+        fs::write(&ready, format!("pid={}\n", std::process::id()))?;
+        wait_for_process_coordinate(&release, std::time::Duration::from_secs(15))
+    }
+
+    struct ProcessBarrierPersistenceEffects {
+        global: PathBuf,
+        root: PathBuf,
+        id: String,
+        paused: bool,
+    }
+
+    impl PersistenceEffects for ProcessBarrierPersistenceEffects {
+        fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>> {
+            NativePersistenceEffects.serialize(runfile)
+        }
+
+        fn create_stage(&mut self, final_path: &Path, parent: &Path) -> io::Result<NamedTempFile> {
+            if !self.paused && paths_match(final_path, &self.global) {
+                self.paused = true;
+                process_client_barrier(&self.root, "publish-global", &self.id)?;
+            }
+            NativePersistenceEffects.create_stage(final_path, parent)
+        }
+
+        fn write_all(
+            &mut self,
+            final_path: &Path,
+            stage: &mut NamedTempFile,
+            raw: &[u8],
+        ) -> io::Result<()> {
+            NativePersistenceEffects.write_all(final_path, stage, raw)
+        }
+
+        fn flush(&mut self, final_path: &Path, stage: &mut NamedTempFile) -> io::Result<()> {
+            NativePersistenceEffects.flush(final_path, stage)
+        }
+
+        fn sync_file(&mut self, final_path: &Path, stage: &NamedTempFile) -> io::Result<()> {
+            NativePersistenceEffects.sync_file(final_path, stage)
+        }
+
+        fn persist_noclobber(
+            &mut self,
+            final_path: &Path,
+            stage: NamedTempFile,
+        ) -> Result<(), StagePersistError> {
+            NativePersistenceEffects.persist_noclobber(final_path, stage)
+        }
+
+        fn sync_parent(&mut self, final_path: &Path, parent: &Path) -> io::Result<()> {
+            NativePersistenceEffects.sync_parent(final_path, parent)
+        }
+    }
+
+    struct ProcessClientGuard {
+        label: String,
+        child: Option<std::process::Child>,
+    }
+
+    impl ProcessClientGuard {
+        fn spawn(
+            label: impl Into<String>,
+            mode: &str,
+            root: &Path,
+            id: &str,
+            environment: &[(&str, String)],
+        ) -> Self {
+            let label = label.into();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "server_registration::tests::lifecycle_interleaving_process_client",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(PROCESS_CLIENT_MODE, mode)
+                .env(PROCESS_CLIENT_ROOT, root)
+                .env(PROCESS_CLIENT_ID, id)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            for (name, value) in environment {
+                command.env(name, value);
+            }
+            let child = command
+                .spawn()
+                .unwrap_or_else(|error| panic!("spawn {label}: {error}"));
+            Self {
+                label,
+                child: Some(child),
+            }
+        }
+
+        fn finish(mut self) {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                let status = self
+                    .child
+                    .as_mut()
+                    .unwrap()
+                    .try_wait()
+                    .unwrap_or_else(|error| panic!("poll {} process client: {error}", self.label));
+                if status.is_some() {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    let child = self.child.as_mut().unwrap();
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!(
+                        "{} process client exceeded its 20 second watchdog",
+                        self.label
+                    );
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let output = self.child.take().unwrap().wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "{} process client failed ({}):\nstdout:\n{}\nstderr:\n{}",
+                self.label,
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    impl Drop for ProcessClientGuard {
+        fn drop(&mut self) {
+            if let Some(child) = &mut self.child {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    fn process_client_outcome_path(root: &Path, id: &str) -> PathBuf {
+        root.join(format!("outcome-{id}.json"))
+    }
+
+    fn write_process_client_outcome(root: &Path, id: &str, outcome: ProcessClientOutcome) {
+        let raw = serde_json::to_vec_pretty(&outcome).unwrap();
+        fs::write(process_client_outcome_path(root, id), raw).unwrap();
+    }
+
+    fn read_process_client_outcome(root: &Path, id: &str) -> ProcessClientOutcome {
+        serde_json::from_slice(&fs::read(process_client_outcome_path(root, id)).unwrap()).unwrap()
+    }
+
+    fn release_process_client(root: &Path, phase: &str, id: &str) {
+        fs::write(
+            process_client_coordinate(root, phase, id, "release"),
+            b"released\n",
+        )
+        .unwrap();
+    }
+
+    fn await_process_client(root: &Path, phase: &str, id: &str) {
+        wait_for_process_coordinate(
+            &process_client_coordinate(root, phase, id, "ready"),
+            std::time::Duration::from_secs(15),
+        )
+        .unwrap();
+    }
+
     fn persistence_phases(
         effects: &ScriptedPersistenceEffects,
         final_path: &Path,
@@ -2179,6 +2388,392 @@ mod tests {
             | PublishError::Durability { attempt, .. } => attempt,
             other => panic!("expected persistence attempt, got {other:?}"),
         }
+    }
+
+    fn process_client_path(name: &str) -> PathBuf {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| panic!("process client is missing {name}"))
+    }
+
+    fn process_client_discriminator() -> u64 {
+        std::env::var(PROCESS_CLIENT_DISCRIMINATOR)
+            .unwrap_or_else(|_| panic!("process client is missing {PROCESS_CLIENT_DISCRIMINATOR}"))
+            .parse()
+            .expect("process client discriminator is a u64")
+    }
+
+    fn captured_path(path: &Path) -> CapturedRegistration {
+        let slot = capture_registration_path(RegistrationScope::Local, path);
+        captured(&slot).clone()
+    }
+
+    #[test]
+    fn lifecycle_interleaving_process_client() {
+        let Ok(mode) = std::env::var(PROCESS_CLIENT_MODE) else {
+            return;
+        };
+        let root = process_client_path(PROCESS_CLIENT_ROOT);
+        let id = std::env::var(PROCESS_CLIENT_ID)
+            .unwrap_or_else(|_| panic!("process client is missing {PROCESS_CLIENT_ID}"));
+
+        match mode.as_str() {
+            "publish" => {
+                let workspace = process_client_path(PROCESS_CLIENT_WORKSPACE);
+                let global = process_client_path(PROCESS_CLIENT_GLOBAL);
+                let local = absolute_path(&runfile_path(&workspace)).unwrap();
+                let runfile = v2_runfile(&local, process_client_discriminator());
+                let mut effects = ProcessBarrierPersistenceEffects {
+                    global: global.clone(),
+                    root: root.clone(),
+                    id: id.clone(),
+                    paused: false,
+                };
+                let kind = match publish_mirrored_with(
+                    &workspace,
+                    Some(&global),
+                    &runfile,
+                    &mut effects,
+                ) {
+                    Ok(published) => {
+                        assert_eq!(published.local.raw, published.global.unwrap().raw);
+                        "published"
+                    }
+                    Err(error) => {
+                        let attempt = publication_attempt(&error);
+                        for final_registration in &attempt.finals {
+                            assert!(matches!(
+                                remove_if_unchanged(final_registration).unwrap(),
+                                RemovalOutcome::Removed | RemovalOutcome::Absent
+                            ));
+                        }
+                        for stage in &attempt.stages {
+                            assert!(matches!(
+                                remove_publication_stage_if_unchanged(stage).unwrap(),
+                                RemovalOutcome::Removed | RemovalOutcome::Absent
+                            ));
+                        }
+                        "compensated"
+                    }
+                };
+                write_process_client_outcome(
+                    &root,
+                    &id,
+                    ProcessClientOutcome {
+                        kind: kind.to_string(),
+                        preserved_at: None,
+                    },
+                );
+            }
+            "publish-replacement" => {
+                let path = process_client_path(PROCESS_CLIENT_PATH);
+                let raw =
+                    serde_json::to_vec_pretty(&v2_runfile(&path, process_client_discriminator()))
+                        .unwrap();
+                persist_bytes_noclobber(&path, &raw).unwrap();
+                write_process_client_outcome(
+                    &root,
+                    &id,
+                    ProcessClientOutcome {
+                        kind: "published-replacement".to_string(),
+                        preserved_at: None,
+                    },
+                );
+            }
+            "remove" => {
+                let path = process_client_path(PROCESS_CLIENT_PATH);
+                let capture = captured_path(&path);
+                process_client_barrier(&root, "remove-start", &id).unwrap();
+                let outcome = remove_if_unchanged(&capture).unwrap();
+                let (kind, preserved_at) = match outcome {
+                    RemovalOutcome::Removed => ("removed", None),
+                    RemovalOutcome::Absent => ("absent", None),
+                    RemovalOutcome::ReplacementPreserved { path, .. } => {
+                        ("replacement-preserved", Some(path))
+                    }
+                };
+                write_process_client_outcome(
+                    &root,
+                    &id,
+                    ProcessClientOutcome {
+                        kind: kind.to_string(),
+                        preserved_at,
+                    },
+                );
+            }
+            "remove-after-isolation" => {
+                let path = process_client_path(PROCESS_CLIENT_PATH);
+                let capture = captured_path(&path);
+                let outcome = remove_if_unchanged_impl(
+                    &capture,
+                    |_| process_client_barrier(&root, "remove-isolated", &id).unwrap(),
+                    |path| fs::read(path),
+                    |path| fs::remove_file(path),
+                    persist_bytes_noclobber,
+                )
+                .unwrap();
+                let (kind, preserved_at) = match outcome {
+                    RemovalOutcome::Removed => ("removed", None),
+                    RemovalOutcome::Absent => ("absent", None),
+                    RemovalOutcome::ReplacementPreserved { path, .. } => {
+                        ("replacement-preserved", Some(path))
+                    }
+                };
+                write_process_client_outcome(
+                    &root,
+                    &id,
+                    ProcessClientOutcome {
+                        kind: kind.to_string(),
+                        preserved_at,
+                    },
+                );
+            }
+            "replace" => {
+                let path = process_client_path(PROCESS_CLIENT_PATH);
+                let capture = captured_path(&path);
+                let replacement =
+                    serde_json::to_vec_pretty(&v2_runfile(&path, process_client_discriminator()))
+                        .unwrap();
+                process_client_barrier(&root, "replace-start", &id).unwrap();
+                let outcome = replace_if_unchanged(&capture, &replacement).unwrap();
+                let (kind, preserved_at) = match outcome {
+                    ReplacementOutcome::Replaced => ("replaced", None),
+                    ReplacementOutcome::Absent => ("absent", None),
+                    ReplacementOutcome::ReplacementPreserved { path, .. } => {
+                        ("replacement-preserved", Some(path))
+                    }
+                };
+                write_process_client_outcome(
+                    &root,
+                    &id,
+                    ProcessClientOutcome {
+                        kind: kind.to_string(),
+                        preserved_at,
+                    },
+                );
+            }
+            other => panic!("unknown registration process-client mode {other}"),
+        }
+    }
+
+    #[test]
+    fn two_process_lifecycle_interleaving_is_per_path_safe() {
+        let root = tempfile::tempdir().unwrap();
+        let coordinates = root.path().join("coordinates");
+        fs::create_dir_all(&coordinates).unwrap();
+        let workspace_a = root.path().join("workspace-a");
+        let workspace_b = root.path().join("workspace-b");
+        let global = absolute_path(&root.path().join("config").join("server.json")).unwrap();
+        let local_a = absolute_path(&runfile_path(&workspace_a)).unwrap();
+        let local_b = absolute_path(&runfile_path(&workspace_b)).unwrap();
+
+        let publisher_a = ProcessClientGuard::spawn(
+            "publisher A",
+            "publish",
+            &coordinates,
+            "publisher-a",
+            &[
+                (
+                    PROCESS_CLIENT_WORKSPACE,
+                    workspace_a.to_string_lossy().into_owned(),
+                ),
+                (PROCESS_CLIENT_GLOBAL, global.to_string_lossy().into_owned()),
+                (PROCESS_CLIENT_DISCRIMINATOR, "101".to_string()),
+            ],
+        );
+        let publisher_b = ProcessClientGuard::spawn(
+            "publisher B",
+            "publish",
+            &coordinates,
+            "publisher-b",
+            &[
+                (
+                    PROCESS_CLIENT_WORKSPACE,
+                    workspace_b.to_string_lossy().into_owned(),
+                ),
+                (PROCESS_CLIENT_GLOBAL, global.to_string_lossy().into_owned()),
+                (PROCESS_CLIENT_DISCRIMINATOR, "102".to_string()),
+            ],
+        );
+        await_process_client(&coordinates, "publish-global", "publisher-a");
+        await_process_client(&coordinates, "publish-global", "publisher-b");
+
+        for workspace in [&workspace_a, &workspace_b] {
+            let split = inventory_runfiles(workspace, Some(global.clone()));
+            assert!(matches!(split.local, RegistrationSlot::Captured(_)));
+            assert!(matches!(
+                split.global,
+                Some(RegistrationSlot::Absent { .. })
+            ));
+        }
+
+        release_process_client(&coordinates, "publish-global", "publisher-a");
+        release_process_client(&coordinates, "publish-global", "publisher-b");
+        publisher_a.finish();
+        publisher_b.finish();
+        let publisher_a = read_process_client_outcome(&coordinates, "publisher-a");
+        let publisher_b = read_process_client_outcome(&coordinates, "publisher-b");
+        let mut publisher_kinds = [publisher_a.kind.as_str(), publisher_b.kind.as_str()];
+        publisher_kinds.sort_unstable();
+        assert_eq!(publisher_kinds, ["compensated", "published"]);
+
+        let (winner_local, loser_local) = if publisher_a.kind == "published" {
+            (&local_a, &local_b)
+        } else {
+            (&local_b, &local_a)
+        };
+        assert_eq!(fs::read(winner_local).unwrap(), fs::read(&global).unwrap());
+        assert!(!loser_local.exists());
+        assert!(publication_stage_paths(root.path()).is_empty());
+
+        let winner_capture = captured_path(winner_local);
+        let global_slot = capture_registration_path(RegistrationScope::Global, &global);
+        let global_capture = captured(&global_slot).clone();
+        assert_eq!(
+            remove_if_unchanged(&winner_capture).unwrap(),
+            RemovalOutcome::Removed
+        );
+        assert_eq!(
+            remove_if_unchanged(&global_capture).unwrap(),
+            RemovalOutcome::Removed
+        );
+
+        // A remover atomically isolates its capture while a different process
+        // publishes a replacement at the original name. The remover may clean
+        // only its moved capture and must preserve the publisher's bytes.
+        let operation_workspace = root.path().join("operation-workspace");
+        let operation_path = absolute_path(&runfile_path(&operation_workspace)).unwrap();
+        write_runfile(&operation_path, &v2_runfile(&operation_path, 301));
+        let remover = ProcessClientGuard::spawn(
+            "isolating remover",
+            "remove-after-isolation",
+            &coordinates,
+            "isolating-remover",
+            &[(
+                PROCESS_CLIENT_PATH,
+                operation_path.to_string_lossy().into_owned(),
+            )],
+        );
+        await_process_client(&coordinates, "remove-isolated", "isolating-remover");
+        assert!(!operation_path.exists());
+        let replacement_publisher = ProcessClientGuard::spawn(
+            "replacement publisher",
+            "publish-replacement",
+            &coordinates,
+            "replacement-publisher",
+            &[
+                (
+                    PROCESS_CLIENT_PATH,
+                    operation_path.to_string_lossy().into_owned(),
+                ),
+                (PROCESS_CLIENT_DISCRIMINATOR, "302".to_string()),
+            ],
+        );
+        replacement_publisher.finish();
+        release_process_client(&coordinates, "remove-isolated", "isolating-remover");
+        remover.finish();
+        assert_eq!(
+            read_process_client_outcome(&coordinates, "isolating-remover").kind,
+            "replacement-preserved"
+        );
+        assert_eq!(
+            captured_path(&operation_path).runfile,
+            v2_runfile(&operation_path, 302)
+        );
+
+        // Two explicit adoption clients capture one live v1 record before
+        // either replaces it. The first wins; the second preserves the winner
+        // because its captured bytes are stale. This registration-only path
+        // has no process signal operation at all.
+        write_runfile(&operation_path, &legacy_runfile(1234));
+        let adopter_a = ProcessClientGuard::spawn(
+            "adopter A",
+            "replace",
+            &coordinates,
+            "adopter-a",
+            &[
+                (
+                    PROCESS_CLIENT_PATH,
+                    operation_path.to_string_lossy().into_owned(),
+                ),
+                (PROCESS_CLIENT_DISCRIMINATOR, "401".to_string()),
+            ],
+        );
+        let adopter_b = ProcessClientGuard::spawn(
+            "adopter B",
+            "replace",
+            &coordinates,
+            "adopter-b",
+            &[
+                (
+                    PROCESS_CLIENT_PATH,
+                    operation_path.to_string_lossy().into_owned(),
+                ),
+                (PROCESS_CLIENT_DISCRIMINATOR, "402".to_string()),
+            ],
+        );
+        await_process_client(&coordinates, "replace-start", "adopter-a");
+        await_process_client(&coordinates, "replace-start", "adopter-b");
+        release_process_client(&coordinates, "replace-start", "adopter-a");
+        adopter_a.finish();
+        release_process_client(&coordinates, "replace-start", "adopter-b");
+        adopter_b.finish();
+        let adopter_a = read_process_client_outcome(&coordinates, "adopter-a");
+        let adopter_b = read_process_client_outcome(&coordinates, "adopter-b");
+        assert_eq!(adopter_a.kind, "replaced");
+        assert_eq!(adopter_b.kind, "replacement-preserved");
+        assert_eq!(
+            captured_path(&operation_path).runfile,
+            v2_runfile(&operation_path, 401)
+        );
+        let held_winner = adopter_b
+            .preserved_at
+            .expect("losing adopter retains the concurrently published winner");
+        assert_eq!(
+            fs::read(&held_winner).unwrap(),
+            fs::read(&operation_path).unwrap()
+        );
+        fs::remove_file(&held_winner).unwrap();
+        fs::remove_dir(held_winner.parent().unwrap()).unwrap();
+
+        // Both remover processes capture the same final before either runs.
+        // One exact-byte removal succeeds and the other observes absence.
+        let remover_a = ProcessClientGuard::spawn(
+            "remover A",
+            "remove",
+            &coordinates,
+            "remover-a",
+            &[(
+                PROCESS_CLIENT_PATH,
+                operation_path.to_string_lossy().into_owned(),
+            )],
+        );
+        let remover_b = ProcessClientGuard::spawn(
+            "remover B",
+            "remove",
+            &coordinates,
+            "remover-b",
+            &[(
+                PROCESS_CLIENT_PATH,
+                operation_path.to_string_lossy().into_owned(),
+            )],
+        );
+        await_process_client(&coordinates, "remove-start", "remover-a");
+        await_process_client(&coordinates, "remove-start", "remover-b");
+        release_process_client(&coordinates, "remove-start", "remover-a");
+        remover_a.finish();
+        release_process_client(&coordinates, "remove-start", "remover-b");
+        remover_b.finish();
+        assert_eq!(
+            read_process_client_outcome(&coordinates, "remover-a").kind,
+            "removed"
+        );
+        assert_eq!(
+            read_process_client_outcome(&coordinates, "remover-b").kind,
+            "absent"
+        );
+        assert!(!operation_path.exists());
+        assert!(publication_stage_paths(root.path()).is_empty());
     }
 
     fn clean_attempt_stages(attempt: &PublicationAttempt) {

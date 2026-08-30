@@ -630,6 +630,7 @@ fn wait_healthy_with<C: SpawnedChild, H: HealthProbe, K: LifecycleClock>(
     }
 }
 
+#[cfg(test)]
 fn wait_healthy(
     child: &mut Child,
     engine: Engine,
@@ -846,10 +847,6 @@ where
     L: ListenerInspector,
 {
     stop_managed_child_report_with(child, process, port, listener).into_result()
-}
-
-fn stop_managed_child(child: &mut Child, process: &LiveProcess, port: u16) -> Result<(), String> {
-    stop_managed_child_with(child, process, port, &NativeListenerInspector)
 }
 
 /// Bind the spawned child to its durable OS process object before any
@@ -2589,89 +2586,95 @@ fn emit_publication_report(report: PublicationCompletionReport) -> Option<Publis
     report.published
 }
 
-fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
-    let global_path = global_runfile_path();
-    if let Err(error) = validate_launch_preconditions(workspace, args, global_path.as_deref()) {
-        eprintln!("server launch preflight failed: {error}");
-        return ExitCode::FAILURE;
-    }
+#[derive(Debug)]
+enum LaunchOrchestrationError {
+    Spawn(String),
+    Bind {
+        pid: u32,
+        detail: String,
+    },
+    Readiness {
+        base_url: String,
+        detail: String,
+        shutdown: Option<String>,
+    },
+    Inspect(String),
+    LocalPath {
+        detail: String,
+        shutdown: Option<String>,
+    },
+    Publication(Box<PublicationCompletionReport>),
+}
 
-    let cfg = config_from(args);
-    let launch = command(&cfg);
+#[derive(Debug)]
+struct LaunchOrchestrationSuccess {
+    pid: u32,
+    base_url: String,
+    published: PublishedRegistrations,
+}
 
-    let mut proc = Command::new(&launch.program);
-    proc.args(&launch.args);
-    for (k, v) in &launch.env {
-        proc.env(k, v);
-    }
-    println!("Launching {} on {} ...", launch.program, cfg.base_url());
-    let mut child = match proc.spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            eprintln!(
-                "could not start `{}`: {e}\n(is it installed and on PATH?)",
-                launch.program
-            );
-            return ExitCode::FAILURE;
-        }
-    };
-    let pid = child.id();
+/// One authority-preserving launch sequence shared by production `up` and
+/// deterministic composition tests. The spawned child is bound to its exact
+/// retained process object before any readiness probe, and publication is
+/// reachable only after readiness plus final process/listener inspection.
+#[allow(clippy::too_many_arguments)]
+fn orchestrate_launch_with<C, R, L, H, K, E, S, F>(
+    workspace: &Path,
+    global_path: Option<&Path>,
+    cfg: &ServerConfig,
+    spawn: S,
+    runtime: &R,
+    listener: &L,
+    health: &mut H,
+    clock: &mut K,
+    publish: F,
+    compensation: &mut E,
+) -> Result<LaunchOrchestrationSuccess, LaunchOrchestrationError>
+where
+    C: SpawnedChild,
+    R: SpawnedProcessRuntime<C>,
+    L: ListenerInspector,
+    H: HealthProbe,
+    K: LifecycleClock,
+    E: PublicationCompensationEffects,
+    S: FnOnce() -> Result<C, String>,
+    F: FnOnce(&Path, Option<&Path>, &ServerRunfile) -> Result<PublishedRegistrations, PublishError>,
+{
+    let mut child = spawn().map_err(LaunchOrchestrationError::Spawn)?;
+    let pid = child.pid();
+    let process = bind_spawned_child(&mut child, runtime, cfg.port, listener)
+        .map_err(|detail| LaunchOrchestrationError::Bind { pid, detail })?;
+    debug_assert_eq!(process.pid(), pid);
 
-    // Retain the exact OS process object before any readiness polling or
-    // publication. Every later failure path can then terminate this creation
-    // instance without converting the numeric PID back into authority.
-    let managed_process = match bind_spawned_child(
-        &mut child,
-        &NativeSpawnedProcessRuntime,
-        cfg.port,
-        &NativeListenerInspector,
-    ) {
-        Ok(process) => process,
-        Err(error) => {
-            eprintln!("could not establish exact lifecycle control for spawned PID {pid}: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    debug_assert_eq!(managed_process.pid(), pid);
-
-    if let Err(error) = wait_healthy(
+    let base_url = cfg.base_url();
+    if let Err(detail) = wait_healthy_with(
         &mut child,
         cfg.engine,
         &cfg.host,
         cfg.port,
         Duration::from_secs(300),
+        health,
+        clock,
     ) {
-        eprintln!(
-            "server did not become HTTP-healthy at {}: {error}",
-            cfg.base_url()
-        );
-        if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
-            eprintln!("could not confirm exact child shutdown: {stop_error}");
-        }
-        return ExitCode::FAILURE;
+        let shutdown = stop_managed_child_with(&mut child, &process, cfg.port, listener).err();
+        return Err(LaunchOrchestrationError::Readiness {
+            base_url,
+            detail,
+            shutdown,
+        });
     }
 
-    let base_url = cfg.base_url();
-    let process_facts = match inspect_bound_child_for_publication(
-        &mut child,
-        &managed_process,
-        cfg.port,
-        &NativeListenerInspector,
-    ) {
-        Ok(facts) => facts,
-        Err(error) => {
-            eprintln!("server launch was rejected before publication: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let process_facts =
+        inspect_bound_child_for_publication(&mut child, &process, cfg.port, listener)
+            .map_err(LaunchOrchestrationError::Inspect)?;
     let local_path = match std::path::absolute(runfile_path(workspace)) {
         Ok(path) => path,
         Err(error) => {
-            eprintln!("could not resolve the local registration path: {error}");
-            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
-                eprintln!("could not confirm exact child shutdown: {stop_error}");
-            }
-            return ExitCode::FAILURE;
+            let shutdown = stop_managed_child_with(&mut child, &process, cfg.port, listener).err();
+            return Err(LaunchOrchestrationError::LocalPath {
+                detail: error.to_string(),
+                shutdown,
+            });
         }
     };
     let runfile = ServerRunfile {
@@ -2688,23 +2691,109 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         process_identity: Some(process_facts.identity),
         origin_local_runfile: Some(local_path),
     };
-    let publication = publish_mirrored(workspace, global_path.as_deref(), &runfile);
-    let mut compensation = NativePublicationCompensationEffects;
+    let publication = publish(workspace, global_path, &runfile);
     let completion = complete_publication_with(
         &mut child,
-        &managed_process,
+        &process,
         cfg.port,
         publication,
+        listener,
+        compensation,
+    );
+    if completion.success {
+        Ok(LaunchOrchestrationSuccess {
+            pid,
+            base_url,
+            published: completion
+                .published
+                .expect("successful publication completion retains published registrations"),
+        })
+    } else {
+        Err(LaunchOrchestrationError::Publication(Box::new(completion)))
+    }
+}
+
+fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
+    let global_path = global_runfile_path();
+    if let Err(error) = validate_launch_preconditions(workspace, args, global_path.as_deref()) {
+        eprintln!("server launch preflight failed: {error}");
+        return ExitCode::FAILURE;
+    }
+
+    let cfg = config_from(args);
+    let launch = command(&cfg);
+
+    let mut proc = Command::new(&launch.program);
+    proc.args(&launch.args);
+    for (k, v) in &launch.env {
+        proc.env(k, v);
+    }
+    println!("Launching {} on {} ...", launch.program, cfg.base_url());
+    let mut health = NativeHealthProbe;
+    let mut clock = SystemLifecycleClock;
+    let mut compensation = NativePublicationCompensationEffects;
+    let launched = orchestrate_launch_with(
+        workspace,
+        global_path.as_deref(),
+        &cfg,
+        || proc.spawn().map_err(|error| error.to_string()),
+        &NativeSpawnedProcessRuntime,
         &NativeListenerInspector,
+        &mut health,
+        &mut clock,
+        publish_mirrored,
         &mut compensation,
     );
-    let Some(published) = emit_publication_report(completion) else {
-        return ExitCode::FAILURE;
+    let launched = match launched {
+        Ok(launched) => launched,
+        Err(LaunchOrchestrationError::Spawn(error)) => {
+            eprintln!(
+                "could not start `{}`: {error}\n(is it installed and on PATH?)",
+                launch.program
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(LaunchOrchestrationError::Bind { pid, detail }) => {
+            eprintln!(
+                "could not establish exact lifecycle control for spawned PID {pid}: {detail}"
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(LaunchOrchestrationError::Readiness {
+            base_url,
+            detail,
+            shutdown,
+        }) => {
+            eprintln!("server did not become HTTP-healthy at {base_url}: {detail}");
+            if let Some(stop_error) = shutdown {
+                eprintln!("could not confirm exact child shutdown: {stop_error}");
+            }
+            return ExitCode::FAILURE;
+        }
+        Err(LaunchOrchestrationError::Inspect(detail)) => {
+            eprintln!("server launch was rejected before publication: {detail}");
+            return ExitCode::FAILURE;
+        }
+        Err(LaunchOrchestrationError::LocalPath { detail, shutdown }) => {
+            eprintln!("could not resolve the local registration path: {detail}");
+            if let Some(stop_error) = shutdown {
+                eprintln!("could not confirm exact child shutdown: {stop_error}");
+            }
+            return ExitCode::FAILURE;
+        }
+        Err(LaunchOrchestrationError::Publication(report)) => {
+            let published = emit_publication_report(*report);
+            debug_assert!(published.is_none());
+            return ExitCode::FAILURE;
+        }
     };
 
-    println!("server ready: {} (pid {pid})", base_url);
-    println!("registered locally at {}", published.local.path.display());
-    if let Some(global) = published.global {
+    println!("server ready: {} (pid {})", launched.base_url, launched.pid);
+    println!(
+        "registered locally at {}",
+        launched.published.local.path.display()
+    );
+    if let Some(global) = launched.published.global {
         println!("registered globally at {}", global.path.display());
     }
     ExitCode::SUCCESS
@@ -4905,13 +4994,17 @@ mod tests {
     use super::*;
     use crate::server_process::canonical_test_start_token;
     use crate::server_registration::{
-        PersistencePhase, PromisedOriginRegistration, RegistrationBlock, capture_registration_path,
+        PersistenceEffects, PersistencePhase, PromisedOriginRegistration, RegistrationBlock,
+        StagePersistError, capture_registration_path, publish_mirrored_with,
     };
     use std::cell::RefCell;
-    use std::collections::VecDeque;
+    use std::collections::{HashMap, VecDeque};
+    use std::fs;
+    use std::io;
     use std::net::TcpListener;
     use std::rc::Rc;
     use std::thread;
+    use tempfile::NamedTempFile;
 
     fn cfg(engine: Engine) -> ServerConfig {
         ServerConfig {
@@ -6089,7 +6182,9 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum LifecycleEvent {
+        Spawn(u32),
         Acquire(u32),
+        PidMapReplace(u32, &'static str),
         ChildTryWait(u32),
         ChildKill(u32),
         ChildWait(u32),
@@ -6106,6 +6201,7 @@ mod tests {
         Remove(PathBuf, String),
         RemoveStage(PathBuf, Option<String>),
         Replace(PathBuf, String, String),
+        Persistence(PersistencePhase, PathBuf),
         Render,
     }
 
@@ -6290,6 +6386,40 @@ mod tests {
         }
     }
 
+    struct ScriptedPidMapRuntime {
+        processes: RefCell<HashMap<u32, ScriptedProcess>>,
+        ledger: EventLedger,
+    }
+
+    impl ScriptedPidMapRuntime {
+        fn new(process: ScriptedProcess, ledger: EventLedger) -> Self {
+            Self {
+                processes: RefCell::new(HashMap::from([(process.pid(), process)])),
+                ledger,
+            }
+        }
+
+        fn replace(&self, pid: u32, generation: &'static str, process: ScriptedProcess) {
+            self.ledger
+                .borrow_mut()
+                .push(LifecycleEvent::PidMapReplace(pid, generation));
+            self.processes.borrow_mut().insert(pid, process);
+        }
+    }
+
+    impl ProcessRuntime for ScriptedPidMapRuntime {
+        type Process = ScriptedProcess;
+
+        fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
+            self.ledger.borrow_mut().push(LifecycleEvent::Acquire(pid));
+            self.processes
+                .borrow()
+                .get(&pid)
+                .cloned()
+                .ok_or(ProcessError::NotFound(pid))
+        }
+    }
+
     struct ScriptedDownEffects {
         revalidations: VecDeque<Result<(), String>>,
         listeners: VecDeque<ListenerState>,
@@ -6346,6 +6476,91 @@ mod tests {
         }
     }
 
+    struct FilesystemDownEffects {
+        scope: ManagedDiscoveryScope,
+        listeners: VecDeque<ListenerState>,
+        ledger: EventLedger,
+    }
+
+    impl DownEffects for FilesystemDownEffects {
+        fn revalidate_registrations(
+            &mut self,
+            expected: &[RegistrationRevision],
+        ) -> Result<(), String> {
+            self.ledger.borrow_mut().push(LifecycleEvent::Revalidate);
+            let inventory = inventory_runfiles(&self.scope.workspace, self.scope.global.clone());
+            let current = discovery_revisions(&flatten_inventory(&inventory));
+            if current == expected {
+                Ok(())
+            } else {
+                Err("composition inventory changed before teardown".to_string())
+            }
+        }
+
+        fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState {
+            self.ledger
+                .borrow_mut()
+                .push(LifecycleEvent::Listener(pid, port));
+            self.listeners
+                .pop_front()
+                .expect("scripted composition listener state")
+        }
+
+        fn remove(
+            &mut self,
+            captured: &CapturedRegistration,
+        ) -> Result<RemovalOutcome, RemovalError> {
+            self.ledger
+                .borrow_mut()
+                .push(scripted_remove_event(captured));
+            remove_if_unchanged(captured)
+        }
+    }
+
+    struct RevisionCheckingDownEffects {
+        scope: ManagedDiscoveryScope,
+        listeners: VecDeque<ListenerState>,
+        removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
+        ledger: EventLedger,
+    }
+
+    impl DownEffects for RevisionCheckingDownEffects {
+        fn revalidate_registrations(
+            &mut self,
+            expected: &[RegistrationRevision],
+        ) -> Result<(), String> {
+            self.ledger.borrow_mut().push(LifecycleEvent::Revalidate);
+            let inventory = inventory_runfiles(&self.scope.workspace, self.scope.global.clone());
+            let current = discovery_revisions(&flatten_inventory(&inventory));
+            if current == expected {
+                Ok(())
+            } else {
+                Err("composition inventory changed before teardown".to_string())
+            }
+        }
+
+        fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState {
+            self.ledger
+                .borrow_mut()
+                .push(LifecycleEvent::Listener(pid, port));
+            self.listeners
+                .pop_front()
+                .expect("scripted transition listener state")
+        }
+
+        fn remove(
+            &mut self,
+            captured: &CapturedRegistration,
+        ) -> Result<RemovalOutcome, RemovalError> {
+            self.ledger
+                .borrow_mut()
+                .push(scripted_remove_event(captured));
+            self.removals
+                .pop_front()
+                .expect("scripted transition removal")
+        }
+    }
+
     struct ScriptedPublicationEffects {
         final_removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
         stage_removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
@@ -6394,6 +6609,172 @@ mod tests {
         }
     }
 
+    struct CompositionPersistenceEffects {
+        failure: Option<(PathBuf, PersistencePhase)>,
+        retain_stage_after_persist: Option<PathBuf>,
+        serializations: usize,
+        ledger: EventLedger,
+    }
+
+    impl CompositionPersistenceEffects {
+        fn default_with(ledger: EventLedger) -> Self {
+            Self {
+                failure: None,
+                retain_stage_after_persist: None,
+                serializations: 0,
+                ledger,
+            }
+        }
+
+        fn failing(final_path: &Path, phase: PersistencePhase, ledger: EventLedger) -> Self {
+            Self {
+                failure: Some((final_path.to_path_buf(), phase)),
+                ..Self::default_with(ledger)
+            }
+        }
+
+        fn retaining_committed_stage(final_path: &Path, ledger: EventLedger) -> Self {
+            Self {
+                retain_stage_after_persist: Some(final_path.to_path_buf()),
+                ..Self::default_with(ledger)
+            }
+        }
+
+        fn fails(&self, final_path: &Path, phase: PersistencePhase) -> bool {
+            self.failure
+                .as_ref()
+                .is_some_and(|(path, target)| path == final_path && *target == phase)
+        }
+
+        fn record(&self, phase: PersistencePhase, final_path: &Path) {
+            self.ledger
+                .borrow_mut()
+                .push(LifecycleEvent::Persistence(phase, final_path.to_path_buf()));
+        }
+
+        fn injected(phase: PersistencePhase) -> io::Error {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("injected {phase:?} composition failure"),
+            )
+        }
+    }
+
+    impl PersistenceEffects for CompositionPersistenceEffects {
+        fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>> {
+            self.serializations += 1;
+            serde_json::to_vec_pretty(runfile)
+        }
+
+        fn create_stage(&mut self, final_path: &Path, parent: &Path) -> io::Result<NamedTempFile> {
+            self.record(PersistencePhase::CreateStage, final_path);
+            if self.fails(final_path, PersistencePhase::CreateStage) {
+                return Err(Self::injected(PersistencePhase::CreateStage));
+            }
+            tempfile::Builder::new()
+                .prefix(".server-registration-composition-")
+                .tempfile_in(parent)
+        }
+
+        fn write_all(
+            &mut self,
+            final_path: &Path,
+            stage: &mut NamedTempFile,
+            raw: &[u8],
+        ) -> io::Result<()> {
+            self.record(PersistencePhase::WriteAll, final_path);
+            if self.fails(final_path, PersistencePhase::WriteAll) {
+                stage.write_all(&raw[..raw.len().min(7)])?;
+                return Err(Self::injected(PersistencePhase::WriteAll));
+            }
+            stage.write_all(raw)
+        }
+
+        fn flush(&mut self, final_path: &Path, stage: &mut NamedTempFile) -> io::Result<()> {
+            self.record(PersistencePhase::Flush, final_path);
+            if self.fails(final_path, PersistencePhase::Flush) {
+                return Err(Self::injected(PersistencePhase::Flush));
+            }
+            stage.as_file_mut().flush()
+        }
+
+        fn sync_file(&mut self, final_path: &Path, stage: &NamedTempFile) -> io::Result<()> {
+            self.record(PersistencePhase::FileSync, final_path);
+            if self.fails(final_path, PersistencePhase::FileSync) {
+                return Err(Self::injected(PersistencePhase::FileSync));
+            }
+            stage.as_file().sync_all()
+        }
+
+        fn persist_noclobber(
+            &mut self,
+            final_path: &Path,
+            mut stage: NamedTempFile,
+        ) -> Result<(), StagePersistError> {
+            self.record(PersistencePhase::PersistNoClobber, final_path);
+            if self.fails(final_path, PersistencePhase::PersistNoClobber) {
+                return Err(StagePersistError {
+                    error: Self::injected(PersistencePhase::PersistNoClobber),
+                    stage,
+                });
+            }
+            if self
+                .retain_stage_after_persist
+                .as_ref()
+                .is_some_and(|target| target == final_path)
+            {
+                if let Err(error) = fs::hard_link(stage.path(), final_path) {
+                    return Err(StagePersistError { error, stage });
+                }
+                stage.disable_cleanup(true);
+                drop(stage);
+                return Ok(());
+            }
+            stage
+                .persist_noclobber(final_path)
+                .map(drop)
+                .map_err(|error| StagePersistError {
+                    error: error.error,
+                    stage: error.file,
+                })
+        }
+
+        fn sync_parent(&mut self, final_path: &Path, _parent: &Path) -> io::Result<()> {
+            self.record(PersistencePhase::ParentSync, final_path);
+            if self.fails(final_path, PersistencePhase::ParentSync) {
+                return Err(Self::injected(PersistencePhase::ParentSync));
+            }
+            Ok(())
+        }
+    }
+
+    struct FilesystemPublicationEffects {
+        ledger: EventLedger,
+    }
+
+    impl PublicationCompensationEffects for FilesystemPublicationEffects {
+        fn remove_final(
+            &mut self,
+            captured: &CapturedRegistration,
+        ) -> Result<RemovalOutcome, RemovalError> {
+            self.ledger
+                .borrow_mut()
+                .push(scripted_remove_event(captured));
+            remove_if_unchanged(captured)
+        }
+
+        fn remove_stage(
+            &mut self,
+            stage: &PublicationStage,
+        ) -> Result<RemovalOutcome, RemovalError> {
+            self.ledger.borrow_mut().push(LifecycleEvent::RemoveStage(
+                stage.path.clone(),
+                stage.raw.as_deref().map(ferric_bench::sha256_bytes),
+            ));
+            remove_publication_stage_if_unchanged(stage)
+        }
+    }
+
     struct ScriptedAdoptionEffects {
         replacements: VecDeque<Result<ReplacementOutcome, ReplacementError>>,
         ledger: EventLedger,
@@ -6425,6 +6806,25 @@ mod tests {
             self.replacements
                 .pop_front()
                 .expect("scripted conditional-replacement result")
+        }
+    }
+
+    struct FilesystemAdoptionEffects {
+        ledger: EventLedger,
+    }
+
+    impl AdoptionEffects for FilesystemAdoptionEffects {
+        fn replace(
+            &mut self,
+            captured: &CapturedRegistration,
+            replacement: &[u8],
+        ) -> Result<ReplacementOutcome, ReplacementError> {
+            self.ledger.borrow_mut().push(scripted_replace_event(
+                &captured.path,
+                &captured.raw,
+                replacement,
+            ));
+            replace_if_unchanged(captured, replacement)
         }
     }
 
@@ -8284,6 +8684,12 @@ mod tests {
         }
     }
 
+    fn composition_runfile(pid: u32, local_path: &Path) -> ServerRunfile {
+        let mut runfile = discovery_fixture_runfile(pid, "composition");
+        runfile.origin_local_runfile = Some(local_path.to_path_buf());
+        runfile
+    }
+
     #[test]
     fn bound_child_try_wait_error_uses_retained_cleanup_or_preserves_recovery() {
         let pid = 4101;
@@ -8999,6 +9405,1321 @@ mod tests {
             event,
             LifecycleEvent::Terminate(_) | LifecycleEvent::ChildKill(_)
         )));
+    }
+
+    #[test]
+    fn status_and_discovery_two_scope_matrix() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let local_path = runfile_path(&workspace);
+        let global_path = root.path().join("global/server.json");
+        let pid = 4511;
+        let runfile = composition_runfile(pid, &local_path);
+        let published = publish_mirrored(&workspace, Some(&global_path), &runfile).unwrap();
+        let expected_raw = published.local.raw.clone();
+        assert_eq!(published.global.as_ref().unwrap().raw, expected_raw);
+
+        let inventory = inventory_runfiles(&workspace, Some(global_path.clone()));
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut health = ScriptedHealth {
+            results: VecDeque::from([true]),
+            ledger: Rc::clone(&ledger),
+        };
+        let lifecycle = discover_inventory_with(
+            inventory,
+            |capture| {
+                let identity = capture.runfile.process_identity.clone().unwrap();
+                LifecycleObservation {
+                    candidate: Candidate {
+                        coordinate: RegistrationCoordinate {
+                            scope: capture.scope,
+                            path: capture.path.clone(),
+                        },
+                        runfile: Some(capture.runfile.clone()),
+                        state: CandidateState::Verified {
+                            identity,
+                            listener: ListenerState::OwnedByTarget,
+                            health: HealthState::NotProbed,
+                        },
+                    },
+                    label: registration_label(capture.scope, &capture.path),
+                    capture: Some(capture),
+                    process: None,
+                }
+            },
+            &mut health,
+            |_observation| Ok(()),
+        );
+        let managed = lifecycle.managed.clone();
+        let server = match &managed.state {
+            ManagedServerState::Ready(server) => server.clone(),
+            state => panic!("two exact mirrors must resolve ready, got {state:?}"),
+        };
+        assert_eq!(
+            server.aliases.len(),
+            2,
+            "the global mirror retains its promised local-origin observation"
+        );
+        assert_eq!(*ledger.borrow(), vec![LifecycleEvent::Health(runfile.port)]);
+
+        let rendered = render_status(&status_report(&managed));
+        assert!(rendered.success);
+        assert!(
+            rendered
+                .stdout
+                .iter()
+                .any(|line| line.contains("aliases=2"))
+        );
+        assert_eq!(
+            rendered
+                .stdout
+                .iter()
+                .filter(|line| line.starts_with("[captured]"))
+                .count(),
+            3
+        );
+
+        let scope = ManagedDiscoveryScope {
+            workspace: workspace.clone(),
+            global: Some(global_path.clone()),
+        };
+        assert!(matches!(
+            crate::backend::automatic_endpoint_from_discovery(scope.clone(), managed.clone()),
+            Ok(crate::backend::EndpointSelection::Managed { .. })
+        ));
+        assert!(
+            crate::backend::require_managed_endpoint(scope.clone(), managed.clone(), None).is_ok()
+        );
+        assert_eq!(
+            crate::autonomy_cmd::require_matching_pre_health_discovery(
+                &managed,
+                &server.fingerprint,
+            )
+            .unwrap()
+            .fingerprint,
+            server.fingerprint,
+            "strict autonomy must consume the same typed two-scope discovery"
+        );
+        let mut doctor_effects = RecordingDoctorEffects::default();
+        let doctor =
+            doctor_report_after_discovery(&doctor_fixture_args(), &managed, &mut doctor_effects);
+        assert!(doctor.success);
+        assert_eq!(
+            doctor_effects.events,
+            vec![DoctorEvent::Binary, DoctorEvent::File]
+        );
+
+        let facts = ProcessFacts {
+            identity: server.identity.clone(),
+            listener: ListenerState::OwnedByTarget,
+        };
+        let process = ScriptedProcess::new(pid, "two-scope-generation", Rc::clone(&ledger))
+            .with_inspection(Ok(facts));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let retained = runtime.acquire(pid).unwrap();
+        let captures = vec![published.local, published.global.unwrap()];
+        let plan = retained_target_down_plan(
+            &managed.state,
+            retained,
+            captures.clone(),
+            discovery_revisions(&managed.observations),
+        )
+        .unwrap();
+        let mut down_effects = FilesystemDownEffects {
+            scope,
+            listeners: VecDeque::from([ListenerState::Absent]),
+            ledger: Rc::clone(&ledger),
+        };
+        let report = execute_down_plan(plan, &mut down_effects);
+        let down = render_down_with_ledger(&report, &ledger);
+        assert!(down.success);
+        assert_eq!(report.disposition, DownDisposition::Stopped);
+        assert!(
+            report
+                .registrations
+                .iter()
+                .all(|registration| { registration.outcome == DownRegistrationOutcome::Removed })
+        );
+        assert!(!local_path.exists());
+        assert!(!global_path.exists());
+        assert_eq!(
+            ledger.borrow().as_slice(),
+            &[
+                LifecycleEvent::Health(runfile.port),
+                LifecycleEvent::Acquire(pid),
+                LifecycleEvent::Revalidate,
+                LifecycleEvent::Inspect("two-scope-generation", runfile.port),
+                LifecycleEvent::Terminate("two-scope-generation"),
+                LifecycleEvent::RetainedWait("two-scope-generation"),
+                LifecycleEvent::Listener(pid, runfile.port),
+                scripted_remove_event(&captures[0]),
+                scripted_remove_event(&captures[1]),
+                LifecycleEvent::Render,
+            ]
+        );
+    }
+
+    #[test]
+    fn down_retained_handle_transition_matrix() {
+        let pid = 4521;
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("transition-workspace");
+        let local_path = runfile_path(&workspace);
+        let global_path = root.path().join("transition-global/server.json");
+        let runfile = composition_runfile(pid, &local_path);
+        let port = runfile.port;
+        let identity = runfile.process_identity.clone().unwrap();
+        let published = publish_mirrored(&workspace, Some(&global_path), &runfile).unwrap();
+        let local = published.local;
+        let global = published.global.unwrap();
+        let captures = vec![local.clone(), global.clone()];
+        let scope = ManagedDiscoveryScope {
+            workspace: workspace.clone(),
+            global: Some(global_path),
+        };
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut health = ScriptedHealth {
+            results: VecDeque::from([true]),
+            ledger: Rc::clone(&ledger),
+        };
+        let lifecycle = discover_inventory_with(
+            inventory_runfiles(&workspace, scope.global.clone()),
+            |capture| {
+                let observed_identity = capture.runfile.process_identity.clone().unwrap();
+                LifecycleObservation {
+                    candidate: Candidate {
+                        coordinate: RegistrationCoordinate {
+                            scope: capture.scope,
+                            path: capture.path.clone(),
+                        },
+                        runfile: Some(capture.runfile.clone()),
+                        state: CandidateState::Verified {
+                            identity: observed_identity,
+                            listener: ListenerState::OwnedByTarget,
+                            health: HealthState::NotProbed,
+                        },
+                    },
+                    label: registration_label(capture.scope, &capture.path),
+                    capture: Some(capture),
+                    process: None,
+                }
+            },
+            &mut health,
+            |_observation| Ok(()),
+        );
+        let managed = lifecycle.managed;
+        assert!(matches!(&managed.state, ManagedServerState::Ready(_)));
+        let revisions = discovery_revisions(&managed.observations);
+
+        // Resolve the real inventory first, acquire its exact retained
+        // generation once, then remap the same numeric PID in the fake process
+        // table. Planning and execution must keep using the already-retained
+        // object while real inventory revisions gate pre-signal mutation.
+        let process = ScriptedProcess::new(pid, "retained-before-remap", Rc::clone(&ledger))
+            .with_inspection(Ok(ProcessFacts {
+                identity: identity.clone(),
+                listener: ListenerState::OwnedByTarget,
+            }));
+        let runtime = ScriptedPidMapRuntime::new(process, Rc::clone(&ledger));
+        let retained = runtime.acquire(pid).unwrap();
+        runtime.replace(
+            pid,
+            "replacement-generation",
+            ScriptedProcess::new(pid, "replacement-generation", Rc::clone(&ledger))
+                .with_inspection(Ok(ProcessFacts {
+                    identity: discovery_fixture_identity(u64::from(pid) + 1),
+                    listener: ListenerState::OwnedByTarget,
+                })),
+        );
+        let replacement = discovery_fixture_path("transition-replacement");
+        let mut effects = RevisionCheckingDownEffects {
+            scope: scope.clone(),
+            listeners: VecDeque::from([ListenerState::Absent]),
+            removals: VecDeque::from([
+                Ok(RemovalOutcome::Removed),
+                Ok(RemovalOutcome::ReplacementPreserved {
+                    path: replacement.clone(),
+                    detail: "concurrent alias replacement".to_string(),
+                }),
+            ]),
+            ledger: Rc::clone(&ledger),
+        };
+        let plan = retained_target_down_plan(
+            &managed.state,
+            retained,
+            captures.clone(),
+            revisions.clone(),
+        )
+        .unwrap();
+        let report = execute_down_plan(plan, &mut effects);
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, DownDisposition::CleanupPartial);
+        assert!(report.exit_proven && report.listener_released);
+        assert!(rendered.stdout.iter().any(|line| {
+            line.contains("replacement-preserved")
+                && line.contains(&replacement.display().to_string())
+        }));
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Health(port),
+                LifecycleEvent::Acquire(pid),
+                LifecycleEvent::PidMapReplace(pid, "replacement-generation"),
+                LifecycleEvent::Revalidate,
+                LifecycleEvent::Inspect("retained-before-remap", port),
+                LifecycleEvent::Terminate("retained-before-remap"),
+                LifecycleEvent::RetainedWait("retained-before-remap"),
+                LifecycleEvent::Listener(pid, port),
+                scripted_remove_event(&local),
+                scripted_remove_event(&global),
+                LifecycleEvent::Render,
+            ],
+            "observe/acquire, pre-signal revalidation, post-exit listener proof, and per-alias cleanup must remain ordered"
+        );
+        assert_eq!(
+            ledger
+                .borrow()
+                .iter()
+                .filter(|event| matches!(event, LifecycleEvent::Acquire(_)))
+                .count(),
+            1,
+            "PID remap must not trigger a numeric-PID reacquisition"
+        );
+        assert!(ledger.borrow().iter().all(|event| !matches!(
+            event,
+            LifecycleEvent::Inspect("replacement-generation", _)
+                | LifecycleEvent::Terminate("replacement-generation")
+                | LifecycleEvent::RetainedWait("replacement-generation")
+        )));
+
+        for case in [
+            "pre-signal-revision-change",
+            "pre-signal-listener-transfer",
+            "terminate-failure",
+            "wait-failure",
+            "post-exit-listener-transfer",
+        ] {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let inspected_listener = if case == "pre-signal-listener-transfer" {
+                ListenerState::OwnedByOther(vec![9901])
+            } else {
+                ListenerState::OwnedByTarget
+            };
+            let mut process = ScriptedProcess::new(pid, case, Rc::clone(&ledger)).with_inspection(
+                Ok(ProcessFacts {
+                    identity: identity.clone(),
+                    listener: inspected_listener,
+                }),
+            );
+            if case == "terminate-failure" {
+                process = process.with_terminate(Err(ProcessError::Operation(
+                    "retained terminate failed".to_string(),
+                )));
+            }
+            if case == "wait-failure" {
+                process = process.with_wait(Err(ProcessError::Operation(
+                    "retained wait failed".to_string(),
+                )));
+            }
+            let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+            let retained = runtime.acquire(pid).unwrap();
+            let mut effects = ScriptedDownEffects::new(
+                [if case == "post-exit-listener-transfer" {
+                    ListenerState::OwnedByOther(vec![9902])
+                } else {
+                    ListenerState::Absent
+                }],
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Rc::clone(&ledger),
+            );
+            if case == "pre-signal-revision-change" {
+                effects.revalidations =
+                    VecDeque::from([Err("registration changed before signal".to_string())]);
+            }
+            let plan = retained_target_down_plan(
+                &managed.state,
+                retained,
+                captures.clone(),
+                revisions.clone(),
+            )
+            .unwrap();
+            let report = execute_down_plan(plan, &mut effects);
+            let rendered = render_down_with_ledger(&report, &ledger);
+            assert_eq!(report.disposition, DownDisposition::Failed, "{case}");
+            assert!(!rendered.success, "{case}");
+            assert!(
+                ledger
+                    .borrow()
+                    .iter()
+                    .all(|event| !matches!(event, LifecycleEvent::Remove(_, _))),
+                "{case} must preserve every alias"
+            );
+            assert_eq!(ledger.borrow().first(), Some(&LifecycleEvent::Acquire(pid)));
+            assert_eq!(ledger.borrow().last(), Some(&LifecycleEvent::Render));
+            let events = ledger.borrow();
+            let inspect = events
+                .iter()
+                .position(|event| matches!(event, LifecycleEvent::Inspect(_, _)));
+            let terminate = events
+                .iter()
+                .position(|event| matches!(event, LifecycleEvent::Terminate(_)));
+            if case == "pre-signal-revision-change" {
+                assert!(inspect.is_none() && terminate.is_none());
+            } else if case == "pre-signal-listener-transfer" {
+                assert!(inspect.is_some() && terminate.is_none());
+            } else {
+                assert!(inspect < terminate);
+            }
+        }
+    }
+
+    #[test]
+    fn up_spawned_child_binding_precedes_readiness() {
+        let pid = 4531;
+        let port = 9531;
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("orchestrated-up");
+        let mut launch_cfg = cfg(Engine::LlamaServer);
+        launch_cfg.port = port;
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "up-bound-generation", Rc::clone(&ledger))
+            .with_inspection(Ok(ProcessFacts {
+                identity: discovery_fixture_identity(u64::from(pid)),
+                listener: ListenerState::OwnedByTarget,
+            }));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+        let mut health = ScriptedHealth {
+            results: VecDeque::from([true]),
+            ledger: Rc::clone(&ledger),
+        };
+        let mut clock = ScriptedClock {
+            now: Instant::now(),
+            ledger: Rc::clone(&ledger),
+        };
+        let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+        let mut compensation = ScriptedPublicationEffects::new(
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let spawn_ledger = Rc::clone(&ledger);
+        let launched = orchestrate_launch_with(
+            &workspace,
+            None,
+            &launch_cfg,
+            move || {
+                spawn_ledger.borrow_mut().push(LifecycleEvent::Spawn(pid));
+                Ok(ScriptedChild::new(
+                    pid,
+                    [Ok(None), Ok(None), Ok(None), Ok(None)],
+                    Rc::clone(&spawn_ledger),
+                ))
+            },
+            &runtime,
+            &listener,
+            &mut health,
+            &mut clock,
+            |workspace, global, runfile| {
+                publish_mirrored_with(workspace, global, runfile, &mut persistence)
+            },
+            &mut compensation,
+        )
+        .unwrap();
+        assert_eq!(launched.pid, pid);
+        assert_eq!(persistence.serializations, 1);
+        assert!(launched.published.local.path.exists());
+        let events = ledger.borrow();
+        assert_eq!(events.first(), Some(&LifecycleEvent::Spawn(pid)));
+        let bind = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::Acquire(pid))
+            .unwrap();
+        let readiness = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::Health(port))
+            .unwrap();
+        let publication = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    LifecycleEvent::Persistence(PersistencePhase::CreateStage, _)
+                )
+            })
+            .unwrap();
+        let final_inspection = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::Inspect("up-bound-generation", port))
+            .unwrap();
+        assert!(bind < readiness && readiness < final_inspection && final_inspection < publication);
+        drop(events);
+
+        let blocked_ledger = Rc::new(RefCell::new(Vec::new()));
+        let runtime = ScriptedRuntime::new(
+            Err("retained handle unavailable".to_string()),
+            Rc::clone(&blocked_ledger),
+        );
+        let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&blocked_ledger));
+        let mut health = ScriptedHealth {
+            results: VecDeque::new(),
+            ledger: Rc::clone(&blocked_ledger),
+        };
+        let mut clock = ScriptedClock {
+            now: Instant::now(),
+            ledger: Rc::clone(&blocked_ledger),
+        };
+        let mut persistence =
+            CompositionPersistenceEffects::default_with(Rc::clone(&blocked_ledger));
+        let mut compensation = ScriptedPublicationEffects::new(
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&blocked_ledger),
+        );
+        let spawn_ledger = Rc::clone(&blocked_ledger);
+        let blocked = orchestrate_launch_with(
+            &root.path().join("blocked-up"),
+            None,
+            &launch_cfg,
+            move || {
+                spawn_ledger.borrow_mut().push(LifecycleEvent::Spawn(pid));
+                Ok(ScriptedChild::new(
+                    pid,
+                    [Ok(None)],
+                    Rc::clone(&spawn_ledger),
+                ))
+            },
+            &runtime,
+            &listener,
+            &mut health,
+            &mut clock,
+            |workspace, global, runfile| {
+                publish_mirrored_with(workspace, global, runfile, &mut persistence)
+            },
+            &mut compensation,
+        );
+        assert!(matches!(
+            blocked,
+            Err(LaunchOrchestrationError::Bind { .. })
+        ));
+        assert_eq!(persistence.serializations, 0);
+        assert!(blocked_ledger.borrow().iter().all(|event| !matches!(
+            event,
+            LifecycleEvent::Health(_) | LifecycleEvent::Persistence(_, _)
+        )));
+    }
+
+    #[test]
+    fn legacy_adoption_then_down() {
+        let pid = 4541;
+        let (fixture, facts) = legacy_adoption_fixture(pid);
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("legacy-workspace");
+        let local_path = runfile_path(&workspace);
+        let global_path = root.path().join("legacy-global/server.json");
+        fs::create_dir_all(local_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(global_path.parent().unwrap()).unwrap();
+        fs::write(&local_path, &fixture[0].raw).unwrap();
+        fs::write(&global_path, &fixture[0].raw).unwrap();
+        let scope = ManagedDiscoveryScope {
+            workspace: workspace.clone(),
+            global: Some(global_path.clone()),
+        };
+        let inventory = inventory_runfiles(&workspace, Some(global_path.clone()));
+        let (legacy, blocked) = expand_registration_captures(inventory);
+        assert!(blocked.is_empty());
+        assert_eq!(legacy.len(), 2);
+        assert_eq!(legacy[0].path, local_path);
+        assert_eq!(legacy[1].path, global_path);
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "adopted-generation", Rc::clone(&ledger))
+            .with_inspection(Ok(facts.clone()))
+            .with_inspection(Ok(facts.clone()))
+            .with_wait(Ok(false));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let mut adoption_effects = FilesystemAdoptionEffects {
+            ledger: Rc::clone(&ledger),
+        };
+        let adoption = execute_legacy_adoption(legacy, pid, &runtime, &mut adoption_effects);
+        let adoption_rendered = render_adoption_with_ledger(&adoption, &ledger);
+        assert!(adoption_rendered.success);
+        assert_eq!(adoption.disposition, AdoptionDisposition::Adopted);
+        assert!(ledger.borrow().iter().all(|event| !matches!(
+            event,
+            LifecycleEvent::Terminate(_) | LifecycleEvent::ChildKill(_)
+        )));
+
+        let adopted_raw = fs::read(&local_path).unwrap();
+        assert_eq!(fs::read(&global_path).unwrap(), adopted_raw);
+        let adopted_runfile: ServerRunfile = serde_json::from_slice(&adopted_raw).unwrap();
+        assert_eq!(adopted_runfile.schema_version, RUNFILE_SCHEMA_V2);
+        let parsed_identity = adopted_runfile.process_identity.clone().unwrap();
+        assert_eq!(parsed_identity, facts.identity);
+        assert_eq!(
+            adopted_runfile.origin_local_runfile.as_deref(),
+            Some(local_path.as_path())
+        );
+
+        // Re-read and parse the bytes written by the real conditional
+        // replacement adapter, then resolve that inventory before deriving
+        // teardown authority from its persisted identity.
+        let adopted_inventory = inventory_runfiles(&workspace, Some(global_path.clone()));
+        let (adopted_captures, blocked) = expand_registration_captures(adopted_inventory.clone());
+        assert!(blocked.is_empty());
+        assert_eq!(adopted_captures.len(), 3);
+        let mut health = ScriptedHealth {
+            results: VecDeque::from([true]),
+            ledger: Rc::clone(&ledger),
+        };
+        let lifecycle = discover_inventory_with(
+            adopted_inventory,
+            |capture| {
+                let identity = capture.runfile.process_identity.clone().unwrap();
+                LifecycleObservation {
+                    candidate: Candidate {
+                        coordinate: RegistrationCoordinate {
+                            scope: capture.scope,
+                            path: capture.path.clone(),
+                        },
+                        runfile: Some(capture.runfile.clone()),
+                        state: CandidateState::Verified {
+                            identity,
+                            listener: ListenerState::OwnedByTarget,
+                            health: HealthState::NotProbed,
+                        },
+                    },
+                    label: registration_label(capture.scope, &capture.path),
+                    capture: Some(capture),
+                    process: None,
+                }
+            },
+            &mut health,
+            |_observation| Ok(()),
+        );
+        let managed = lifecycle.managed;
+        assert!(matches!(&managed.state, ManagedServerState::Ready(_)));
+
+        let process = ScriptedProcess::new(pid, "adopted-generation", Rc::clone(&ledger))
+            .with_inspection(Ok(ProcessFacts {
+                identity: parsed_identity.clone(),
+                listener: ListenerState::OwnedByTarget,
+            }));
+        let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
+        let retained = runtime.acquire(pid).unwrap();
+        let plan = retained_target_down_plan(
+            &managed.state,
+            retained,
+            adopted_captures,
+            discovery_revisions(&managed.observations),
+        )
+        .unwrap();
+        let mut down_effects = FilesystemDownEffects {
+            scope,
+            listeners: VecDeque::from([ListenerState::Absent]),
+            ledger: Rc::clone(&ledger),
+        };
+        let down = execute_down_plan(plan, &mut down_effects);
+        let down_rendered = render_down_with_ledger(&down, &ledger);
+        assert!(down_rendered.success);
+        assert_eq!(down.disposition, DownDisposition::Stopped);
+        assert!(
+            down.registrations
+                .iter()
+                .all(|registration| { registration.outcome == DownRegistrationOutcome::Removed })
+        );
+        assert!(!local_path.exists());
+        assert!(!global_path.exists());
+
+        let events = ledger.borrow();
+        let adoption_finish = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::Render)
+            .unwrap();
+        let down_acquire = events
+            .iter()
+            .enumerate()
+            .find(|(index, event)| {
+                *index > adoption_finish && **event == LifecycleEvent::Acquire(pid)
+            })
+            .map(|(index, _)| index)
+            .unwrap();
+        assert!(events[..adoption_finish].iter().all(|event| !matches!(
+            event,
+            LifecycleEvent::Terminate(_) | LifecycleEvent::ChildKill(_)
+        )));
+        assert_eq!(
+            events[down_acquire..]
+                .iter()
+                .filter(|event| matches!(event, LifecycleEvent::Inspect("adopted-generation", _)))
+                .count(),
+            1
+        );
+        assert!(events[down_acquire..].contains(&LifecycleEvent::Terminate("adopted-generation")));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, LifecycleEvent::Remove(_, _)))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn registration_publication_failure_matrix() {
+        fn attempt(error: &PublishError) -> &PublicationAttempt {
+            match error {
+                PublishError::Write { attempt, .. }
+                | PublishError::Mirror { attempt, .. }
+                | PublishError::Durability { attempt, .. } => attempt,
+                PublishError::Invalid { .. } | PublishError::Serialize(_) => {
+                    panic!("publication fault did not retain an attempt: {error}")
+                }
+            }
+        }
+
+        // First prove both successful shapes cross the real publication
+        // algorithm and reach the coordinator only after all persistence
+        // phases. The coordinator performs no shutdown or cleanup while the
+        // retained child is still live.
+        for mirrored in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("success-workspace");
+            let local = runfile_path(&workspace);
+            let global = root.path().join("success-global/server.json");
+            let pid = 4550 + u32::from(mirrored);
+            let runfile = composition_runfile(pid, &local);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+            let publication = publish_mirrored_with(
+                &workspace,
+                mirrored.then_some(global.as_path()),
+                &runfile,
+                &mut persistence,
+            );
+            assert_eq!(persistence.serializations, 1);
+            let process = ScriptedProcess::new(pid, "publication-success", Rc::clone(&ledger));
+            let mut child = ScriptedChild::new(pid, [Ok(None)], Rc::clone(&ledger));
+            let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+            let mut cleanup = ScriptedPublicationEffects::new(
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Rc::clone(&ledger),
+            );
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                runfile.port,
+                publication,
+                &listener,
+                &mut cleanup,
+            );
+            assert_eq!(report.disposition, PublicationDisposition::Ready);
+            assert!(report.success);
+            assert_eq!(
+                fs::read(&local).unwrap(),
+                serde_json::to_vec_pretty(&runfile).unwrap()
+            );
+            if mirrored {
+                assert!(global.exists());
+            } else {
+                assert!(!global.exists());
+            }
+            assert_eq!(
+                ledger.borrow().last(),
+                Some(&LifecycleEvent::ChildTryWait(pid))
+            );
+            assert!(ledger.borrow().iter().all(|event| !matches!(
+                event,
+                LifecycleEvent::Terminate(_)
+                    | LifecycleEvent::Remove(_, _)
+                    | LifecycleEvent::RemoveStage(_, _)
+            )));
+        }
+
+        // Every local and global persistence boundary feeds the exact
+        // PublicationAttempt produced by publish_mirrored_with into the
+        // shutdown/compensation coordinator. Cleanup is real and conditional.
+        for fail_global in [false, true] {
+            for phase in [
+                PersistencePhase::CreateStage,
+                PersistencePhase::WriteAll,
+                PersistencePhase::Flush,
+                PersistencePhase::FileSync,
+                PersistencePhase::PersistNoClobber,
+                PersistencePhase::StageCleanup,
+                PersistencePhase::ParentSync,
+            ] {
+                let root = tempfile::tempdir().unwrap();
+                let workspace = root.path().join(format!(
+                    "{}-{phase:?}",
+                    if fail_global { "global" } else { "local" }
+                ));
+                let local = runfile_path(&workspace);
+                let global = root.path().join("global/server.json");
+                let pid = 4560 + u32::from(fail_global);
+                let runfile = composition_runfile(pid, &local);
+                let target = if fail_global { &global } else { &local };
+                let ledger = Rc::new(RefCell::new(Vec::new()));
+                let mut persistence = if phase == PersistencePhase::StageCleanup {
+                    CompositionPersistenceEffects::retaining_committed_stage(
+                        target,
+                        Rc::clone(&ledger),
+                    )
+                } else {
+                    CompositionPersistenceEffects::failing(target, phase, Rc::clone(&ledger))
+                };
+                let publication = publish_mirrored_with(
+                    &workspace,
+                    fail_global.then_some(global.as_path()),
+                    &runfile,
+                    &mut persistence,
+                );
+                assert_eq!(persistence.serializations, 1, "{fail_global} {phase:?}");
+                let error = publication.as_ref().unwrap_err();
+                let retained = attempt(error).clone();
+                assert_eq!(retained.terminal_phase, phase);
+                assert_eq!(
+                    retained.final_committed,
+                    matches!(
+                        phase,
+                        PersistencePhase::StageCleanup | PersistencePhase::ParentSync
+                    )
+                );
+                assert_eq!(
+                    retained.finals.len(),
+                    usize::from(fail_global)
+                        + usize::from(matches!(
+                            phase,
+                            PersistencePhase::StageCleanup | PersistencePhase::ParentSync
+                        )),
+                    "{fail_global} {phase:?} must expose every committed final"
+                );
+                assert_eq!(
+                    retained.stages.len(),
+                    usize::from(!matches!(
+                        phase,
+                        PersistencePhase::CreateStage | PersistencePhase::ParentSync
+                    )),
+                    "{fail_global} {phase:?} must explain every retained stage"
+                );
+
+                let process = ScriptedProcess::new(pid, "publication-boundary", Rc::clone(&ledger));
+                let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+                let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+                let mut cleanup = FilesystemPublicationEffects {
+                    ledger: Rc::clone(&ledger),
+                };
+                let report = complete_publication_with(
+                    &mut child,
+                    &process,
+                    runfile.port,
+                    publication,
+                    &listener,
+                    &mut cleanup,
+                );
+                assert_eq!(
+                    report.disposition,
+                    PublicationDisposition::RolledBack,
+                    "{fail_global} {phase:?}: {report:?}"
+                );
+                assert!(!local.exists(), "{fail_global} {phase:?}");
+                assert!(!global.exists(), "{fail_global} {phase:?}");
+                for stage in &retained.stages {
+                    assert!(!stage.path.exists(), "{fail_global} {phase:?}");
+                }
+                let events = ledger.borrow();
+                let last_persistence = events
+                    .iter()
+                    .rposition(|event| matches!(event, LifecycleEvent::Persistence(_, _)))
+                    .unwrap();
+                let terminate = events
+                    .iter()
+                    .position(|event| *event == LifecycleEvent::Terminate("publication-boundary"))
+                    .unwrap();
+                let first_cleanup = events.iter().position(|event| {
+                    matches!(
+                        event,
+                        LifecycleEvent::Remove(_, _) | LifecycleEvent::RemoveStage(_, _)
+                    )
+                });
+                assert!(last_persistence < terminate);
+                if let Some(first_cleanup) = first_cleanup {
+                    let released = events
+                        .iter()
+                        .position(|event| *event == LifecycleEvent::Listener(pid, runfile.port))
+                        .unwrap();
+                    assert!(released < first_cleanup);
+                }
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| matches!(event, LifecycleEvent::Remove(_, _)))
+                        .count(),
+                    retained.finals.len()
+                );
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| matches!(event, LifecycleEvent::RemoveStage(_, _)))
+                        .count(),
+                    retained.stages.len()
+                );
+            }
+        }
+
+        // Real no-clobber conflicts preserve the winner while the
+        // coordinator removes only attempt-owned finals and stages.
+        for existing_global in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("occupied-workspace");
+            let local = runfile_path(&workspace);
+            let global = root.path().join("occupied-global/server.json");
+            let occupied = if existing_global { &global } else { &local };
+            fs::create_dir_all(occupied.parent().unwrap()).unwrap();
+            fs::write(occupied, b"external-publication-winner").unwrap();
+            let pid = 4570 + u32::from(existing_global);
+            let runfile = composition_runfile(pid, &local);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+            let publication = publish_mirrored_with(
+                &workspace,
+                existing_global.then_some(global.as_path()),
+                &runfile,
+                &mut persistence,
+            );
+            assert_eq!(
+                attempt(publication.as_ref().unwrap_err()).terminal_phase,
+                PersistencePhase::PersistNoClobber
+            );
+            let process = ScriptedProcess::new(pid, "publication-no-clobber", Rc::clone(&ledger));
+            let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+            let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+            let mut cleanup = FilesystemPublicationEffects {
+                ledger: Rc::clone(&ledger),
+            };
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                runfile.port,
+                publication,
+                &listener,
+                &mut cleanup,
+            );
+            assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+            assert_eq!(fs::read(occupied).unwrap(), b"external-publication-winner");
+            if existing_global {
+                assert!(!local.exists());
+            }
+        }
+
+        // Lexical alias rejection occurs before serialization/staging, but
+        // still enters the same child-owned failure coordinator.
+        {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("alias-workspace");
+            let local = runfile_path(&workspace);
+            let alias = local.parent().unwrap().join(".").join("server.json");
+            let pid = 4581;
+            let runfile = composition_runfile(pid, &local);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+            let publication =
+                publish_mirrored_with(&workspace, Some(&alias), &runfile, &mut persistence);
+            assert!(matches!(publication, Err(PublishError::Invalid { .. })));
+            assert_eq!(persistence.serializations, 0);
+            assert!(ledger.borrow().is_empty());
+            let process = ScriptedProcess::new(pid, "publication-alias", Rc::clone(&ledger));
+            let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+            let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+            let mut cleanup = FilesystemPublicationEffects {
+                ledger: Rc::clone(&ledger),
+            };
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                runfile.port,
+                publication,
+                &listener,
+                &mut cleanup,
+            );
+            assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+            assert!(report.finals.is_empty() && report.stages.is_empty());
+            assert!(!local.exists());
+        }
+
+        // A child exit after a successful mirrored publication is another
+        // coordinator boundary: both real finals are rolled back only after
+        // retained exit, reap, and listener-release proof.
+        {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("post-publish-exit");
+            let local = runfile_path(&workspace);
+            let global = root.path().join("post-publish-global/server.json");
+            let pid = 4591;
+            let runfile = composition_runfile(pid, &local);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+            let publication =
+                publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
+            let process = ScriptedProcess::new(pid, "publication-child-exit", Rc::clone(&ledger))
+                .with_terminate(Ok(false));
+            let mut child = ScriptedChild::new(
+                pid,
+                [Ok(Some(ScriptedExit("exited after publication")))],
+                Rc::clone(&ledger),
+            );
+            let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+            let mut cleanup = FilesystemPublicationEffects {
+                ledger: Rc::clone(&ledger),
+            };
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                runfile.port,
+                publication,
+                &listener,
+                &mut cleanup,
+            );
+            assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+            assert!(!local.exists() && !global.exists());
+            let events = ledger.borrow();
+            let child_exit = events
+                .iter()
+                .position(|event| *event == LifecycleEvent::ChildTryWait(pid))
+                .unwrap();
+            let first_remove = events
+                .iter()
+                .position(|event| matches!(event, LifecycleEvent::Remove(_, _)))
+                .unwrap();
+            assert!(child_exit < first_remove);
+        }
+
+        // Successful real publication followed by an inconclusive Child
+        // status check must enter the same retained-object shutdown path. A
+        // later retained wait can independently prove exit and authorize
+        // rollback; without that proof both finals remain held.
+        for retained_exit_proven in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join(if retained_exit_proven {
+                "try-wait-error-exited"
+            } else {
+                "try-wait-error-unproved"
+            });
+            let local = runfile_path(&workspace);
+            let global = root.path().join("try-wait-error-global/server.json");
+            let pid = 4595 + u32::from(retained_exit_proven);
+            let runfile = composition_runfile(pid, &local);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+            let publication =
+                publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
+            assert!(publication.is_ok());
+            let process = ScriptedProcess::new(
+                pid,
+                if retained_exit_proven {
+                    "try-wait-error-exited"
+                } else {
+                    "try-wait-error-unproved"
+                },
+                Rc::clone(&ledger),
+            )
+            .with_wait(Ok(retained_exit_proven));
+            let mut child = ScriptedChild::new(
+                pid,
+                [Err("post-publication child status unavailable".to_string())],
+                Rc::clone(&ledger),
+            );
+            let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+            let mut cleanup = FilesystemPublicationEffects {
+                ledger: Rc::clone(&ledger),
+            };
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                runfile.port,
+                publication,
+                &listener,
+                &mut cleanup,
+            );
+            assert!(
+                report.diagnostics[0]
+                    .contains("could not confirm the engine child after publication")
+            );
+            if retained_exit_proven {
+                assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+                assert!(!local.exists() && !global.exists());
+                assert_eq!(
+                    ledger
+                        .borrow()
+                        .iter()
+                        .filter(|event| matches!(event, LifecycleEvent::Remove(_, _)))
+                        .count(),
+                    2
+                );
+            } else {
+                assert_eq!(report.disposition, PublicationDisposition::RecoveryHeld);
+                assert!(local.exists() && global.exists());
+                assert_eq!(report.finals.len(), 2);
+                assert!(
+                    report
+                        .finals
+                        .iter()
+                        .all(|entry| matches!(entry.outcome, DownRegistrationOutcome::Held { .. }))
+                );
+                assert!(ledger.borrow().iter().all(|event| !matches!(
+                    event,
+                    LifecycleEvent::Remove(_, _) | LifecycleEvent::RemoveStage(_, _)
+                )));
+            }
+            let events = ledger.borrow();
+            let child_status = events
+                .iter()
+                .position(|event| *event == LifecycleEvent::ChildTryWait(pid))
+                .unwrap();
+            let retained_wait = events
+                .iter()
+                .position(|event| matches!(event, LifecycleEvent::RetainedWait(_)))
+                .unwrap();
+            assert!(child_status < retained_wait);
+        }
+
+        // Runtime proof failures all begin with a real global FileSync fault.
+        // No unproved-exit row reaches either conditional store adapter.
+        for case in [
+            "terminate-timeout",
+            "wait-timeout",
+            "wait-error",
+            "reap-error",
+            "listener-survival",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join(format!("runtime-{case}"));
+            let local = runfile_path(&workspace);
+            let global = root.path().join("runtime-global/server.json");
+            let pid = 4601;
+            let runfile = composition_runfile(pid, &local);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut persistence = CompositionPersistenceEffects::failing(
+                &global,
+                PersistencePhase::FileSync,
+                Rc::clone(&ledger),
+            );
+            let publication =
+                publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
+            let mut process = ScriptedProcess::new(pid, case, Rc::clone(&ledger));
+            if case == "terminate-timeout" {
+                process = process
+                    .with_terminate(Err(ProcessError::Operation("signal denied".to_string())))
+                    .with_wait(Ok(false));
+            } else if case == "wait-timeout" {
+                process = process.with_wait(Ok(false));
+            } else if case == "wait-error" {
+                process = process.with_wait(Err(ProcessError::Operation(
+                    "retained wait unavailable".to_string(),
+                )));
+            }
+            let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+            if case == "reap-error" {
+                child.wait = VecDeque::from([Err("reap failed".to_string())]);
+            }
+            let listener = ScriptedListener::new(
+                if case == "listener-survival" {
+                    ListenerState::OwnedByTarget
+                } else {
+                    ListenerState::Absent
+                },
+                Rc::clone(&ledger),
+            );
+            let mut cleanup = ScriptedPublicationEffects::new(
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Rc::clone(&ledger),
+            );
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                runfile.port,
+                publication,
+                &listener,
+                &mut cleanup,
+            );
+            assert_eq!(
+                report.disposition,
+                PublicationDisposition::RecoveryHeld,
+                "{case}"
+            );
+            assert!(
+                report
+                    .finals
+                    .iter()
+                    .all(|entry| matches!(entry.outcome, DownRegistrationOutcome::Held { .. }))
+            );
+            assert!(
+                report
+                    .stages
+                    .iter()
+                    .all(|entry| matches!(entry.outcome, DownRegistrationOutcome::Held { .. }))
+            );
+            assert!(ledger.borrow().iter().all(|event| !matches!(
+                event,
+                LifecycleEvent::Remove(_, _) | LifecycleEvent::RemoveStage(_, _)
+            )));
+        }
+
+        // A terminate error does not itself prove exit, but a later successful
+        // wait on that same retained object, reap, and listener release do.
+        {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("terminate-error-exited");
+            let local = runfile_path(&workspace);
+            let global = root.path().join("terminate-error-global/server.json");
+            let pid = 4611;
+            let runfile = composition_runfile(pid, &local);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut persistence = CompositionPersistenceEffects::failing(
+                &global,
+                PersistencePhase::FileSync,
+                Rc::clone(&ledger),
+            );
+            let publication =
+                publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
+            let process = ScriptedProcess::new(pid, "terminate-error-exited", Rc::clone(&ledger))
+                .with_terminate(Err(ProcessError::Operation("signal denied".to_string())))
+                .with_wait(Ok(true));
+            let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+            let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+            let mut cleanup = FilesystemPublicationEffects {
+                ledger: Rc::clone(&ledger),
+            };
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                runfile.port,
+                publication,
+                &listener,
+                &mut cleanup,
+            );
+            assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+            assert!(!local.exists() && !global.exists());
+        }
+
+        // A concurrent final replacement is preserved while the unchanged
+        // stage is still removed, producing an explicit partial recovery.
+        {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("replacement-race");
+            let local = runfile_path(&workspace);
+            let global = root.path().join("replacement-global/server.json");
+            let pid = 4621;
+            let runfile = composition_runfile(pid, &local);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut persistence = CompositionPersistenceEffects::failing(
+                &global,
+                PersistencePhase::FileSync,
+                Rc::clone(&ledger),
+            );
+            let publication =
+                publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
+            fs::write(&local, b"concurrent final replacement").unwrap();
+            let process = ScriptedProcess::new(pid, "publication-replacement", Rc::clone(&ledger));
+            let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+            let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+            let mut cleanup = FilesystemPublicationEffects {
+                ledger: Rc::clone(&ledger),
+            };
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                runfile.port,
+                publication,
+                &listener,
+                &mut cleanup,
+            );
+            assert_eq!(report.disposition, PublicationDisposition::RecoveryPartial);
+            assert!(matches!(
+                report.finals[0].outcome,
+                DownRegistrationOutcome::ReplacementPreserved { .. }
+            ));
+            assert!(matches!(
+                report.stages[0].outcome,
+                DownRegistrationOutcome::Removed
+            ));
+            assert_eq!(fs::read(&local).unwrap(), b"concurrent final replacement");
+        }
+
+        // Store-adapter failures after proven exit attempt every final before
+        // every stage and retain each explicit recovery location.
+        {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("cleanup-failures");
+            let local = runfile_path(&workspace);
+            let global = root.path().join("cleanup-global/server.json");
+            let final_holding = root.path().join("final-holding");
+            let stage_holding = root.path().join("stage-holding");
+            let pid = 4631;
+            let runfile = composition_runfile(pid, &local);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut persistence = CompositionPersistenceEffects::failing(
+                &global,
+                PersistencePhase::FileSync,
+                Rc::clone(&ledger),
+            );
+            let publication =
+                publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
+            let process =
+                ScriptedProcess::new(pid, "publication-cleanup-failure", Rc::clone(&ledger));
+            let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+            let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+            let mut cleanup = ScriptedPublicationEffects::new(
+                [Err(RemovalError {
+                    path: local.clone(),
+                    kind: RemovalFailureKind::Remove,
+                    detail: "conditional final cleanup failed".to_string(),
+                    preserved_at: Some(final_holding.clone()),
+                })],
+                [Err(RemovalError {
+                    path: global.clone(),
+                    kind: RemovalFailureKind::Remove,
+                    detail: "conditional stage cleanup failed".to_string(),
+                    preserved_at: Some(stage_holding.clone()),
+                })],
+                Rc::clone(&ledger),
+            );
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                runfile.port,
+                publication,
+                &listener,
+                &mut cleanup,
+            );
+            let rendered = render_publication_with_ledger(&report, &ledger);
+            assert_eq!(report.disposition, PublicationDisposition::RecoveryPartial);
+            assert!(
+                rendered
+                    .stdout
+                    .iter()
+                    .any(|line| { line.contains(&final_holding.display().to_string()) })
+            );
+            assert!(
+                rendered
+                    .stdout
+                    .iter()
+                    .any(|line| { line.contains(&stage_holding.display().to_string()) })
+            );
+            let events = ledger.borrow();
+            let final_cleanup = events
+                .iter()
+                .position(|event| matches!(event, LifecycleEvent::Remove(_, _)))
+                .unwrap();
+            let stage_cleanup = events
+                .iter()
+                .position(|event| matches!(event, LifecycleEvent::RemoveStage(_, _)))
+                .unwrap();
+            assert!(final_cleanup < stage_cleanup);
+            assert_eq!(events.last(), Some(&LifecycleEvent::Render));
+        }
     }
 
     fn unused_port() -> u16 {
