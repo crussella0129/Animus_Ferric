@@ -1386,3 +1386,33 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   canonical roots were absent at handoff, the tracked worktree effect and
   known unrelated Sprint 114 edit were unchanged, and no model inference ran.
 - **Commit:** `5e1ad3852c0e1f8d5dce984eb196cf7dd9fbfdcc`
+
+## T-11503 (sprint 115 — closed partial)
+- **Disposition:** Closed on Sprint 115's abort, not completed. E17-A/B and
+  handoff publication passed; E17-C's dependent-use half did not occur and is
+  represented by T-11506 before T-11410.
+- **Description:** Qualified the exact post-reboot Qwen3.8-27B UD-Q4_K_M
+  runtime through the managed CUDA b10516 server at context 32,768 and 24 GPU
+  layers. Attempt 001 retained a pre-launch Bubblewrap-name false-negative;
+  attempt 002 passed host/resource attestation, ownership/argv/listener/runfile
+  binding, health and effective-property checks, constrained smoke, and bounded
+  throughput, then published the same process as an immutable
+  `qualified_running` handoff. A verifier-only compatibility overlay preserves
+  retained ISO timestamps, compares canonical UTC instants, and accepts only
+  attempt 002's exact predecessor manifest without rewriting either attempt.
+  The live handoff later ended externally before T-11410 consumed it; this task
+  therefore claims runtime qualification, not application execution.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Closed:** 2026-08-29T23:00:29-04:00
+- **Files modified:** `docs/sprints/s115/control-artifacts/runtime/`,
+  `docs/sprints/s115/sprint-tests/`, `docs/work/tasks.md`, and
+  `docs/work/completed-tasks.md`
+- **Verification:** attempt 002 retained 64 manifest-bound files; one warmup
+  plus three 256-token samples produced a 3.565083339811294 tokens/s median;
+  static control passed 31 checks; offline runtime and handoff verifiers passed
+  with canonical UTC and the exact predecessor binding; attempt snapshots were
+  byte-unchanged. After external server termination, exact cold cleanup removed
+  only the stale local registration matching the retained handoff hash, sent no
+  process signal, and confirmed no listener or global registration.
+- **Commits:** evidence `70aecb84d762bf97972b65c15f37b8c48de7f833`;
+  verifier overlay `31290fd5270b351a09506e63467ab1f23b8fdc76`

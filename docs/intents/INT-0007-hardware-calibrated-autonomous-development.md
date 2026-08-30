@@ -3,11 +3,11 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0007
 - **State:** active
-- **Work evidence:** [Sprint 114 T-11407 through T-11413](../sprints/s114/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 continuation plan](../sprints/s115/sprint-plans/build-plan.md#execution-sequence)
+- **Work evidence:** [Sprint 114 T-11407 through T-11413](../sprints/s114/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 continuation plan](../sprints/s115/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 partial closeout](../sprints/s115/sprint-tests/test-report.md)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
-- **Documentation evidence:** [Sprint 114 research](../sprints/s114/sprint-research/research-report.md)
+- **Test evidence:** [Sprint 115 release, harness, and managed-runtime evidence](../sprints/s115/sprint-tests/test-report.md)
+- **Documentation evidence:** [Sprint 114 research](../sprints/s114/sprint-research/research-report.md); [external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md)
 
 ## Intent
 
@@ -107,3 +107,9 @@ changes discovered by the trial belong to follow-on intents.
   cleanup, and truthful closeout.
 - 2026-08-26: moved from `planned` to `active` when Sprint 114 Build began with
   the frozen Qwen3.8-27B quant acquisition task T-11407.
+- 2026-08-29: Sprint 115 ended aborted with partial results. The exact CUDA runtime qualified at
+  context 32,768 with 24 GPU layers and a 3.5651 decoded-token/s median, but
+  its immutable live handoff ended externally before MH-RS01 began. The later
+  exploratory counter application is encouraging but does not meet AC-3/4;
+  T-11506, T-11410, and T-11412 remain ordered work and the intent stays
+  active.

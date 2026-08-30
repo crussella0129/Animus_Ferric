@@ -197,7 +197,7 @@ local product semantics and fresh host behavior, not model availability.
 - [Blocked preflight result](../../s114/control-artifacts/app-run/preflight/result.json)
 - [Prior runtime selection](../../s114/control-artifacts/runtime/epoch-4/final/selection.json)
 - [Prior runtime verification](../../s114/control-artifacts/runtime/epoch-4/final/runtime-verification.json)
-- [T-11414, T-11410, and T-11412 backlog](../../../work/tasks.md#book-v2-carry-forward-from-sprint-114)
+- [Ordered post-Sprint 115 local-model work](../../../work/tasks.md#post-sprint-115--ordered-local-model-work)
 
 The research audit inspected 20 unique project files across the current Book,
 query/replay/workspace implementation and tests, frozen app harness, and prior

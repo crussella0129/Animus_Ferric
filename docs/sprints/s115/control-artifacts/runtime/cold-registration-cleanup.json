@@ -1,0 +1,44 @@
+{
+  "schema": "animus-ferric-s115-cold-registration-cleanup-v1",
+  "observed_utc": "2026-08-30T02:44:30.2524106+00:00",
+  "target": "<repo>/.ferric/server.json",
+  "retained_handoff": "docs/sprints/s115/control-artifacts/runtime/attempts/002/handoff.json",
+  "retained_handoff_sha256": "8fc12473f3aa8802e3de42a92047d9a6f266a86be5b0ddadeb941567e3982519",
+  "retained_handoff_length": 8444,
+  "removed_sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f",
+  "expected_sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f",
+  "pid": 18096,
+  "retained_process_live": false,
+  "same_numeric_pid_observation": null,
+  "listener_port": 8080,
+  "listeners_before": 0,
+  "listeners_after": 0,
+  "global_runfile_before": false,
+  "global_runfile_after": false,
+  "global_path_derivation": "Environment.GetFolderPath(ApplicationData)/ferric/server.json",
+  "global_path_redacted": "<application-data>/ferric/server.json",
+  "signal_sent": false,
+  "removal": "exact_stale_local_registration_only",
+  "local_runfile_after": false,
+  "pre_removal_checks": {
+    "target_was_ordinary_file": true,
+    "target_was_reparse_point": false,
+    "parent_was_reparse_point": false,
+    "resolved_target_within_repository": true,
+    "registration_coordinate_matched_handoff": true
+  },
+  "cold_state_verified_utc": "2026-08-30T02:58:55.2283203+00:00",
+  "five_disposable_roots": {
+    "app_harness_present": false,
+    "self_test_workspaces_present": false,
+    "app_workspace_present": false,
+    "app_traces_present": false,
+    "launcher_attestation_probe_present": false
+  },
+  "preserved": {
+    "models_directory_present": true,
+    "committed_sprint_evidence_present": true,
+    "retained_quarantine_present": true
+  },
+  "llama_server_processes_after": 0
+}
