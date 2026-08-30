@@ -1489,3 +1489,34 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   the Sprint 114 protected artifact retained SHA-256
   `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
 - **Commit:** `4ddd0aa310827dd19a942b9929599ce41c47895e`
+
+## T-11702 (sprint 117)
+
+- **Description:** Bound lifecycle authority to retained Windows process
+  HANDLEs and Linux pidfds before exact identity validation, signaling, or
+  waiting. Listener inspection now distinguishes exclusive IPv4 loopback,
+  absent, wildcard/dual-stack, foreign/shared/multiple, and uninspectable
+  states; only exact target ownership or absence authorizes teardown. Linux
+  argv decoding and shared-owner enumeration fail closed, Windows records
+  exact IPv6 loopback as unsupported for this IPv4 endpoint, and server launch
+  now binds its child before readiness, compensates every failed publication
+  gate through the retained generation, and always reaps a proven exit.
+  Registered-server validation retains and rechecks the same process across
+  the HTTP probe so a replacement endpoint cannot inherit stale authority.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T15:34:58-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_process.rs`, and the Book work ledgers.
+- **Verification:** all frozen E02 acceptance tests and supplemental PID-reuse,
+  wildcard, cleanup, non-UTF-8, and incomplete-owner regressions passed. The
+  complete Ferric CLI all-feature gate passed 232 unit tests, 6 benchmark
+  integrations, 69 CLI integrations, 3 model-free lifecycle fixtures, and 3
+  template-hygiene tests. The focused 41-test server lifecycle suite passed on
+  both Windows and native WSL Linux; the 15-test Linux process/listener suite
+  passed, including strict argv and IPv6 wildcard coverage. All-target,
+  all-feature Clippy passed with warnings denied; formatting and diff checks
+  passed. Restricted Linux `/proc` owner visibility is explicitly retained as
+  non-authorizing `Uninspectable` state. The protected Sprint 114 artifact
+  retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** PENDING

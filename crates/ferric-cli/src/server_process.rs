@@ -170,15 +170,23 @@ fn is_canonical_lowercase_uuid(value: &str) -> bool {
 pub enum ListenerState {
     /// The target owns only loopback-bound listeners on the registered port.
     OwnedByTarget,
-    /// The target owns a wildcard listener on the registered port. Teardown
-    /// may still stop the exact retained process, but launch/status must not
-    /// mistake this public exposure for the required loopback-only binding.
+    /// The target owns a wildcard or potentially dual-stack listener on the
+    /// registered port. This is non-exclusive, non-authorizing state even
+    /// when the exact retained process owns the socket.
     OwnedByTargetWildcard,
     Absent,
     /// The relevant owner set is not exclusively the target. The vector is
     /// complete and includes the target PID too when ownership is shared.
     OwnedByOther(Vec<u32>),
     Uninspectable(String),
+}
+
+impl ListenerState {
+    /// Only an exclusive IPv4-loopback owner or a proven-absent listener can
+    /// authorize destructive lifecycle work.
+    pub fn permits_teardown(&self) -> bool {
+        matches!(self, Self::OwnedByTarget | Self::Absent)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +219,58 @@ impl fmt::Display for ProcessError {
 }
 
 impl std::error::Error for ProcessError {}
+
+/// Operations available only after an exact OS process object has been
+/// retained. Implementations must never reopen the numeric PID for signal or
+/// wait authority.
+pub trait RetainedProcess {
+    fn pid(&self) -> u32;
+    fn inspect(&self, port: u16) -> Result<ProcessFacts, ProcessError>;
+    fn terminate(&self) -> Result<bool, ProcessError>;
+    fn wait(&self, timeout: Duration) -> Result<bool, ProcessError>;
+}
+
+/// Acquisition boundary used by lifecycle orchestration and deterministic
+/// generation-reuse tests.
+pub trait ProcessRuntime {
+    type Process: RetainedProcess;
+
+    fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError>;
+}
+
+/// Facts inspected from the same retained process object that later receives
+/// any signal/wait operation.
+pub struct RetainedProcessInspection<P> {
+    pub process: P,
+    pub facts: ProcessFacts,
+}
+
+/// Acquire first, then validate all persisted v2 identity coordinates against
+/// that retained object. A mismatch returns without signaling it.
+pub fn acquire_matching_process<R: ProcessRuntime>(
+    runtime: &R,
+    pid: u32,
+    port: u16,
+    expected: &ProcessIdentity,
+) -> Result<RetainedProcessInspection<R::Process>, ProcessError> {
+    let process = runtime.acquire(pid)?;
+    let facts = process.inspect(port)?;
+    let mismatch = if facts.identity.start_token != expected.start_token {
+        Some("start token")
+    } else if facts.identity.executable != expected.executable {
+        Some("executable")
+    } else if facts.identity.argv != expected.argv {
+        Some("argv")
+    } else {
+        None
+    };
+    if let Some(coordinate) = mismatch {
+        return Err(ProcessError::Operation(format!(
+            "retained process {pid} {coordinate} does not match the registered identity"
+        )));
+    }
+    Ok(RetainedProcessInspection { process, facts })
+}
 
 /// Inspect loopback-relevant listener ownership independently of process
 /// liveness.
@@ -295,14 +355,25 @@ mod platform {
     struct RelevantListenerOwners {
         loopback: Vec<u32>,
         wildcard: Vec<u32>,
+        unsupported_ipv6_loopback: Vec<u32>,
     }
 
     impl RelevantListenerOwners {
+        fn extend(&mut self, other: Self) {
+            self.loopback.extend(other.loopback);
+            self.wildcard.extend(other.wildcard);
+            self.unsupported_ipv6_loopback
+                .extend(other.unsupported_ipv6_loopback);
+            self.normalize();
+        }
+
         fn normalize(&mut self) {
             self.loopback.sort_unstable();
             self.loopback.dedup();
             self.wildcard.sort_unstable();
             self.wildcard.dedup();
+            self.unsupported_ipv6_loopback.sort_unstable();
+            self.unsupported_ipv6_loopback.dedup();
         }
 
         fn all(&self) -> Vec<u32> {
@@ -712,14 +783,32 @@ mod platform {
     }
 
     pub(super) fn loopback_listener_state(pid: u32, port: u16) -> ListenerState {
-        // The managed endpoint is exactly IPv4 127.0.0.1. A foreign IPv6
-        // wildcard can coexist on the same numeric port without owning that
-        // endpoint, so it must not strand teardown of the exact IPv4 target.
-        // The closed launcher itself always requests IPv4 loopback.
-        let owners = query_listener_owners(AF_INET, port);
-        match owners {
-            Ok(owners) => listener_state_from_owners(pid, owners),
-            Err(error) => ListenerState::Uninspectable(error),
+        // The managed endpoint is exactly IPv4 127.0.0.1. Exact IPv6 ::1 is
+        // deliberately not claimed as ownership coverage for that endpoint,
+        // but an IPv6 wildcard may accept IPv4-mapped traffic when dual-stack
+        // and therefore remains non-exclusive, non-authorizing state.
+        listener_state_from_owner_queries(
+            pid,
+            query_listener_owners(AF_INET, port),
+            query_listener_owners(AF_INET6, port),
+        )
+    }
+
+    fn listener_state_from_owner_queries(
+        pid: u32,
+        ipv4: Result<RelevantListenerOwners, String>,
+        ipv6: Result<RelevantListenerOwners, String>,
+    ) -> ListenerState {
+        match (ipv4, ipv6) {
+            (Ok(mut ipv4), Ok(ipv6)) => {
+                ipv4.extend(ipv6);
+                listener_state_from_owners(pid, ipv4)
+            }
+            (Err(ipv4), Ok(_)) => ListenerState::Uninspectable(ipv4),
+            (Ok(_), Err(ipv6)) => ListenerState::Uninspectable(ipv6),
+            (Err(ipv4), Err(ipv6)) => ListenerState::Uninspectable(format!(
+                "IPv4 listener inspection failed: {ipv4}; IPv6 listener inspection failed: {ipv6}"
+            )),
         }
     }
 
@@ -873,6 +962,8 @@ mod platform {
         }
 
         let wildcard = [0_u8; 16];
+        let mut loopback = [0_u8; 16];
+        loopback[15] = 1;
         let mut owners = RelevantListenerOwners::default();
         for index in 0..count {
             let offset = size_of::<u32>() + index * size_of::<MibTcp6RowOwnerPid>();
@@ -888,6 +979,8 @@ mod platform {
             // socket's v6-only setting and must therefore remain relevant.
             if row.local_address == wildcard {
                 owners.wildcard.push(row.owning_pid);
+            } else if row.local_address == loopback {
+                owners.unsupported_ipv6_loopback.push(row.owning_pid);
             }
         }
         owners.normalize();
@@ -895,6 +988,12 @@ mod platform {
     }
 
     fn listener_state_from_owners(pid: u32, owners: RelevantListenerOwners) -> ListenerState {
+        if !owners.unsupported_ipv6_loopback.is_empty() {
+            return ListenerState::Uninspectable(format!(
+                "exact IPv6 loopback (::1) listener ownership is unsupported for the IPv4-only managed endpoint; observed owner PIDs {:?}",
+                owners.unsupported_ipv6_loopback
+            ));
+        }
         let owners_all = owners.all();
         if owners_all.is_empty() {
             return ListenerState::Absent;
@@ -1090,13 +1189,14 @@ mod platform {
                 RelevantListenerOwners {
                     loopback: vec![10, 20],
                     wildcard: vec![30],
+                    unsupported_ipv6_loopback: vec![],
                 }
             );
             assert!(parse_ipv4_relevant_listener_owners(&table[..8], 8080).is_err());
         }
 
         #[test]
-        fn ipv6_tcp_owner_parser_ignores_loopback_but_keeps_wildcard() {
+        fn ipv6_tcp_owner_parser_records_unsupported_loopback_and_wildcard() {
             let mut loopback = [0_u8; 16];
             loopback[15] = 1;
             let wildcard = [0_u8; 16];
@@ -1124,47 +1224,112 @@ mod platform {
                 RelevantListenerOwners {
                     loopback: vec![],
                     wildcard: vec![20],
+                    unsupported_ipv6_loopback: vec![10],
                 }
             );
             assert!(parse_ipv6_relevant_listener_owners(&table[..8], 8080).is_err());
         }
 
         #[test]
-        fn listener_owner_classification_is_fail_closed_for_shared_ports() {
-            assert_eq!(
-                listener_state_from_owners(
-                    10,
-                    RelevantListenerOwners {
+        fn loopback_listener_ownership_matrix() {
+            let rows = [
+                (
+                    "exclusive IPv4 loopback",
+                    Ok(RelevantListenerOwners {
                         loopback: vec![10],
                         wildcard: vec![],
-                    },
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByTarget,
+                    true,
                 ),
-                ListenerState::OwnedByTarget
-            );
-            assert_eq!(
-                listener_state_from_owners(10, RelevantListenerOwners::default()),
-                ListenerState::Absent
-            );
-            assert_eq!(
-                listener_state_from_owners(
-                    10,
-                    RelevantListenerOwners {
+                (
+                    "absent",
+                    Ok(RelevantListenerOwners::default()),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::Absent,
+                    true,
+                ),
+                (
+                    "foreign IPv4 loopback",
+                    Ok(RelevantListenerOwners {
+                        loopback: vec![20],
+                        wildcard: vec![],
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByOther(vec![20]),
+                    false,
+                ),
+                (
+                    "shared or multiple IPv4 loopback",
+                    Ok(RelevantListenerOwners {
                         loopback: vec![20, 10, 20],
                         wildcard: vec![],
-                    },
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByOther(vec![10, 20]),
+                    false,
                 ),
-                ListenerState::OwnedByOther(vec![10, 20])
-            );
-            assert_eq!(
-                listener_state_from_owners(
-                    10,
-                    RelevantListenerOwners {
+                (
+                    "IPv4 wildcard",
+                    Ok(RelevantListenerOwners {
                         loopback: vec![],
                         wildcard: vec![10],
-                    },
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByTargetWildcard,
+                    false,
                 ),
-                ListenerState::OwnedByTargetWildcard
-            );
+                (
+                    "IPv6 wildcard or dual-stack",
+                    Ok(RelevantListenerOwners::default()),
+                    Ok(RelevantListenerOwners {
+                        loopback: vec![],
+                        wildcard: vec![10],
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    ListenerState::OwnedByTargetWildcard,
+                    false,
+                ),
+                (
+                    "exact IPv6 loopback is explicitly unsupported",
+                    Ok(RelevantListenerOwners::default()),
+                    Ok(RelevantListenerOwners {
+                        loopback: vec![],
+                        wildcard: vec![],
+                        unsupported_ipv6_loopback: vec![10],
+                    }),
+                    ListenerState::Uninspectable(
+                        "exact IPv6 loopback (::1) listener ownership is unsupported for the IPv4-only managed endpoint; observed owner PIDs [10]"
+                            .to_string(),
+                    ),
+                    false,
+                ),
+                (
+                    "uninspectable IPv4 table",
+                    Err("IPv4 owner query denied".to_string()),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::Uninspectable("IPv4 owner query denied".to_string()),
+                    false,
+                ),
+                (
+                    "uninspectable IPv6 table",
+                    Ok(RelevantListenerOwners::default()),
+                    Err("IPv6 owner query denied".to_string()),
+                    ListenerState::Uninspectable("IPv6 owner query denied".to_string()),
+                    false,
+                ),
+            ];
+
+            for (name, ipv4, ipv6, expected, authorizing) in rows {
+                let state = listener_state_from_owner_queries(10, ipv4, ipv6);
+                assert_eq!(state, expected, "row {name}");
+                assert_eq!(state.permits_teardown(), authorizing, "row {name}");
+            }
         }
 
         #[test]
@@ -1210,10 +1375,9 @@ mod platform {
 ))]
 mod platform {
     use std::collections::{BTreeSet, HashSet};
-    use std::ffi::{OsString, c_int, c_long, c_void};
+    use std::ffi::{c_int, c_long, c_void};
     use std::fs;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    use std::os::unix::ffi::OsStringExt;
     use std::path::Path;
     use std::time::Instant;
 
@@ -1311,21 +1475,7 @@ mod platform {
                         &error,
                     )
                 })?;
-            let argv = command_line
-                .split(|byte| *byte == 0)
-                .filter(|argument| !argument.is_empty())
-                .map(|argument| {
-                    OsString::from_vec(argument.to_vec())
-                        .to_string_lossy()
-                        .into_owned()
-                })
-                .collect::<Vec<_>>();
-            if argv.is_empty() {
-                return Err(ProcessError::Operation(format!(
-                    "/proc/{}/cmdline contains no argv",
-                    self.pid
-                )));
-            }
+            let argv = parse_linux_argv(self.pid, &command_line)?;
             let listener = loopback_listener_state(self.pid, port);
 
             // All /proc and socket tables above are PID-indexed.  The pidfd
@@ -1428,6 +1578,34 @@ mod platform {
         }
     }
 
+    fn parse_linux_argv(pid: u32, command_line: &[u8]) -> Result<Vec<String>, ProcessError> {
+        let command_line = command_line.strip_suffix(&[0]).unwrap_or(command_line);
+        if command_line.is_empty() {
+            return Err(ProcessError::Operation(format!(
+                "/proc/{pid}/cmdline contains no argv"
+            )));
+        }
+
+        command_line
+            .split(|byte| *byte == 0)
+            .enumerate()
+            .map(|(index, argument)| {
+                if argument.is_empty() {
+                    return Err(ProcessError::Operation(format!(
+                        "/proc/{pid}/cmdline argv element {index} is empty"
+                    )));
+                }
+                std::str::from_utf8(argument)
+                    .map(str::to_owned)
+                    .map_err(|error| {
+                        ProcessError::Operation(format!(
+                            "/proc/{pid}/cmdline argv element {index} is not UTF-8: {error}"
+                        ))
+                    })
+            })
+            .collect()
+    }
+
     pub(super) fn loopback_listener_state(pid: u32, port: u16) -> ListenerState {
         match inspect_loopback_listener_state(pid, port) {
             Ok(state) => state,
@@ -1463,21 +1641,13 @@ mod platform {
             return Ok(ListenerState::Absent);
         }
 
-        let target_inodes = match socket_inodes_for_process(pid) {
-            Ok(inodes) => inodes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => HashSet::new(),
-            Err(error) => return Err(format!("inspect /proc/{pid}/fd: {error}")),
-        };
-        let target_owned_inodes = target_inodes
-            .intersection(&listening_inodes)
-            .cloned()
-            .collect::<HashSet<_>>();
-        let target_owns = !target_owned_inodes.is_empty();
-        let mut accounted_inodes = target_owned_inodes.clone();
-
-        let mut other_owners = BTreeSet::new();
+        let target_inventory = socket_inodes_for_process(pid);
+        let mut peer_inventories = Vec::new();
         let proc_entries = fs::read_dir("/proc").map_err(|error| format!("read /proc: {error}"))?;
-        for entry in proc_entries.flatten() {
+        for entry in proc_entries {
+            let entry = entry.map_err(|error| {
+                format!("enumerate /proc while inspecting listener owners: {error}")
+            })?;
             let Some(owner_pid) = entry
                 .file_name()
                 .to_str()
@@ -1488,8 +1658,105 @@ mod platform {
             if owner_pid == pid {
                 continue;
             }
-            let Ok(inodes) = socket_inodes_for_process(owner_pid) else {
-                continue;
+            peer_inventories.push((owner_pid, socket_inodes_for_process(owner_pid)));
+        }
+
+        listener_state_from_socket_inventories(
+            pid,
+            port,
+            &relevant_inodes,
+            target_inventory,
+            peer_inventories,
+        )
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum ProcessSocketInventory {
+        Complete(HashSet<String>),
+        Vanished,
+        Uninspectable(String),
+    }
+
+    fn socket_inodes_for_process(pid: u32) -> ProcessSocketInventory {
+        let entries = match fs::read_dir(format!("/proc/{pid}/fd")) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return ProcessSocketInventory::Vanished;
+            }
+            Err(error) => {
+                return ProcessSocketInventory::Uninspectable(format!(
+                    "read /proc/{pid}/fd: {error}"
+                ));
+            }
+        };
+        let mut inodes = HashSet::new();
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return ProcessSocketInventory::Uninspectable(format!(
+                        "enumerate /proc/{pid}/fd: {error}"
+                    ));
+                }
+            };
+            let target = match fs::read_link(entry.path()) {
+                Ok(target) => target,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return ProcessSocketInventory::Uninspectable(format!(
+                        "read link {}: {error}",
+                        entry.path().display()
+                    ));
+                }
+            };
+            if let Some(inode) = socket_inode(&target) {
+                inodes.insert(inode.to_string());
+            }
+        }
+        ProcessSocketInventory::Complete(inodes)
+    }
+
+    fn listener_state_from_socket_inventories(
+        pid: u32,
+        port: u16,
+        relevant_inodes: &RelevantListenerInodes,
+        target_inventory: ProcessSocketInventory,
+        peer_inventories: Vec<(u32, ProcessSocketInventory)>,
+    ) -> Result<ListenerState, String> {
+        let listening_inodes = relevant_inodes.all();
+        if listening_inodes.is_empty() {
+            return Ok(ListenerState::Absent);
+        }
+        let target_inodes = match target_inventory {
+            ProcessSocketInventory::Complete(inodes) => inodes,
+            ProcessSocketInventory::Vanished => HashSet::new(),
+            ProcessSocketInventory::Uninspectable(error) => return Err(error),
+        };
+        let target_loopback = target_inodes
+            .intersection(&relevant_inodes.loopback)
+            .cloned()
+            .collect::<HashSet<_>>();
+        let target_wildcard = target_inodes
+            .intersection(&relevant_inodes.wildcard)
+            .cloned()
+            .collect::<HashSet<_>>();
+        let target_owns = !target_loopback.is_empty() || !target_wildcard.is_empty();
+        let mut accounted_inodes = target_loopback
+            .union(&target_wildcard)
+            .cloned()
+            .collect::<HashSet<_>>();
+        let mut other_owners = BTreeSet::new();
+
+        for (owner_pid, inventory) in peer_inventories {
+            let inodes = match inventory {
+                ProcessSocketInventory::Complete(inodes) => inodes,
+                ProcessSocketInventory::Vanished => continue,
+                ProcessSocketInventory::Uninspectable(error) => {
+                    return Err(format!(
+                        "listener owner enumeration is incomplete because PID {owner_pid} is uninspectable: {error}"
+                    ));
+                }
             };
             let owned_listeners = inodes
                 .intersection(&listening_inodes)
@@ -1514,33 +1781,15 @@ mod platform {
                 other_owners.into_iter().collect(),
             ));
         }
-        if target_owns {
-            if !target_owned_inodes.is_disjoint(&relevant_inodes.wildcard) {
-                Ok(ListenerState::OwnedByTargetWildcard)
-            } else {
-                Ok(ListenerState::OwnedByTarget)
-            }
+        if !target_wildcard.is_empty() {
+            Ok(ListenerState::OwnedByTargetWildcard)
+        } else if !target_loopback.is_empty() {
+            Ok(ListenerState::OwnedByTarget)
         } else {
             Err(format!(
                 "loopback port {port} has listening socket inodes but their owning process is not inspectable"
             ))
         }
-    }
-
-    fn socket_inodes_for_process(pid: u32) -> std::io::Result<HashSet<String>> {
-        let mut inodes = HashSet::new();
-        for entry in fs::read_dir(format!("/proc/{pid}/fd"))? {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            let Ok(target) = fs::read_link(entry.path()) else {
-                continue;
-            };
-            if let Some(inode) = socket_inode(&target) {
-                inodes.insert(inode.to_string());
-            }
-        }
-        Ok(inodes)
     }
 
     fn socket_inode(target: &Path) -> Option<&str> {
@@ -1705,6 +1954,23 @@ mod platform {
     mod tests {
         use super::*;
 
+        fn complete_socket_inventory(inodes: &[&str]) -> ProcessSocketInventory {
+            ProcessSocketInventory::Complete(
+                inodes.iter().map(|inode| (*inode).to_string()).collect(),
+            )
+        }
+
+        fn classified_listener_state(
+            pid: u32,
+            port: u16,
+            relevant: &RelevantListenerInodes,
+            target: ProcessSocketInventory,
+            peers: Vec<(u32, ProcessSocketInventory)>,
+        ) -> ListenerState {
+            listener_state_from_socket_inventories(pid, port, relevant, target, peers)
+                .unwrap_or_else(ListenerState::Uninspectable)
+        }
+
         #[test]
         fn proc_stat_parser_handles_spaces_and_closing_parentheses_in_comm() {
             let stat =
@@ -1718,6 +1984,121 @@ mod platform {
                 format_linux_start_token("00000000-1111-2222-3333-444444444444", 987_654),
                 "linux-boot-id:00000000-1111-2222-3333-444444444444;start-ticks:987654"
             );
+        }
+
+        #[test]
+        fn linux_non_utf8_argv_is_uninspectable_not_lossy() {
+            let error = parse_linux_argv(42, b"llama-server\0--model\0\xff\0").unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("argv element 2 is not UTF-8"));
+            assert!(!message.contains('\u{fffd}'));
+
+            let empty = parse_linux_argv(42, b"llama-server\0\0--port\08080\0").unwrap_err();
+            assert!(empty.to_string().contains("argv element 1 is empty"));
+        }
+
+        #[test]
+        fn loopback_listener_ownership_matrix() {
+            let empty = RelevantListenerInodes::default();
+            let state =
+                classified_listener_state(10, 8080, &empty, complete_socket_inventory(&[]), vec![]);
+            assert_eq!(state, ListenerState::Absent);
+            assert!(state.permits_teardown());
+
+            let loopback = RelevantListenerInodes {
+                loopback: HashSet::from(["loopback".to_string()]),
+                wildcard: HashSet::new(),
+            };
+            let state = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                complete_socket_inventory(&["loopback"]),
+                vec![],
+            );
+            assert_eq!(state, ListenerState::OwnedByTarget);
+            assert!(state.permits_teardown());
+
+            let foreign = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                complete_socket_inventory(&[]),
+                vec![(20, complete_socket_inventory(&["loopback"]))],
+            );
+            assert_eq!(foreign, ListenerState::OwnedByOther(vec![20]));
+            assert!(!foreign.permits_teardown());
+
+            let shared = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                complete_socket_inventory(&["loopback"]),
+                vec![(20, complete_socket_inventory(&["loopback"]))],
+            );
+            assert_eq!(shared, ListenerState::OwnedByOther(vec![10, 20]));
+            assert!(!shared.permits_teardown());
+
+            let wildcard = RelevantListenerInodes {
+                loopback: HashSet::new(),
+                wildcard: HashSet::from(["wildcard".to_string()]),
+            };
+            let wildcard_state = classified_listener_state(
+                10,
+                8080,
+                &wildcard,
+                complete_socket_inventory(&["wildcard"]),
+                vec![],
+            );
+            assert_eq!(wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!wildcard_state.permits_teardown());
+
+            // The same wildcard set models both IPv4 wildcard and Linux IPv6
+            // wildcard/dual-stack observations; neither can authorize an
+            // IPv4-loopback teardown.
+            let dual_stack = classified_listener_state(
+                10,
+                8080,
+                &wildcard,
+                complete_socket_inventory(&["wildcard"]),
+                vec![(20, complete_socket_inventory(&["wildcard"]))],
+            );
+            assert_eq!(dual_stack, ListenerState::OwnedByOther(vec![10, 20]));
+            assert!(!dual_stack.permits_teardown());
+
+            let uninspectable = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                ProcessSocketInventory::Uninspectable("permission denied".to_string()),
+                vec![],
+            );
+            assert!(matches!(uninspectable, ListenerState::Uninspectable(_)));
+            assert!(!uninspectable.permits_teardown());
+        }
+
+        #[test]
+        fn linux_uninspectable_shared_listener_owner_is_not_exclusive() {
+            let relevant = RelevantListenerInodes {
+                loopback: HashSet::from(["shared".to_string()]),
+                wildcard: HashSet::new(),
+            };
+            let state = classified_listener_state(
+                10,
+                8080,
+                &relevant,
+                complete_socket_inventory(&["shared"]),
+                vec![(
+                    20,
+                    ProcessSocketInventory::Uninspectable(
+                        "permission denied while reading inherited socket descriptors".to_string(),
+                    ),
+                )],
+            );
+            let ListenerState::Uninspectable(detail) = state else {
+                panic!("uninspectable shared owner was misclassified as exclusive")
+            };
+            assert!(detail.contains("PID 20 is uninspectable"));
         }
 
         #[test]
@@ -1765,18 +2146,30 @@ mod platform {
         fn native_listener_inventory_distinguishes_loopback_from_wildcard() {
             let loopback = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
             let loopback_port = loopback.local_addr().unwrap().port();
-            assert_eq!(
-                loopback_listener_state(std::process::id(), loopback_port),
-                ListenerState::OwnedByTarget
-            );
+            let loopback_state = loopback_listener_state(std::process::id(), loopback_port);
+            match &loopback_state {
+                ListenerState::OwnedByTarget => assert!(loopback_state.permits_teardown()),
+                ListenerState::Uninspectable(detail) => {
+                    assert!(detail.contains("listener owner enumeration is incomplete"));
+                    assert!(!loopback_state.permits_teardown());
+                }
+                other => panic!("unexpected native loopback state: {other:?}"),
+            }
 
             let wildcard =
                 std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 0)).unwrap();
             let wildcard_port = wildcard.local_addr().unwrap().port();
-            assert_eq!(
-                loopback_listener_state(std::process::id(), wildcard_port),
-                ListenerState::OwnedByTargetWildcard
-            );
+            let wildcard_state = loopback_listener_state(std::process::id(), wildcard_port);
+            match &wildcard_state {
+                ListenerState::OwnedByTargetWildcard => {
+                    assert!(!wildcard_state.permits_teardown())
+                }
+                ListenerState::Uninspectable(detail) => {
+                    assert!(detail.contains("listener owner enumeration is incomplete"));
+                    assert!(!wildcard_state.permits_teardown());
+                }
+                other => panic!("unexpected native wildcard state: {other:?}"),
+            }
         }
 
         #[test]
@@ -1840,6 +2233,290 @@ mod platform {
 }
 
 pub use platform::LiveProcess;
+
+impl RetainedProcess for LiveProcess {
+    fn pid(&self) -> u32 {
+        LiveProcess::pid(self)
+    }
+
+    fn inspect(&self, port: u16) -> Result<ProcessFacts, ProcessError> {
+        LiveProcess::inspect(self, port)
+    }
+
+    fn terminate(&self) -> Result<bool, ProcessError> {
+        LiveProcess::terminate(self)
+    }
+
+    fn wait(&self, timeout: Duration) -> Result<bool, ProcessError> {
+        LiveProcess::wait(self, timeout)
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NativeProcessRuntime;
+
+impl ProcessRuntime for NativeProcessRuntime {
+    type Process = LiveProcess;
+
+    fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
+        LiveProcess::acquire(pid)
+    }
+}
+
+#[cfg(all(
+    test,
+    any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )
+))]
+mod retained_process_contract_tests {
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    use super::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Event {
+        Acquire(u64),
+        Inspect(u64),
+        Terminate(u64),
+        Wait(u64),
+    }
+
+    struct FakeRuntime {
+        pid: u32,
+        current_generation: Rc<Cell<u64>>,
+        remap_on_inspect: Rc<Cell<Option<u64>>>,
+        generations: Rc<HashMap<u64, ProcessFacts>>,
+        events: Rc<RefCell<Vec<Event>>>,
+    }
+
+    struct FakeRetainedProcess {
+        pid: u32,
+        generation: u64,
+        current_generation: Rc<Cell<u64>>,
+        remap_on_inspect: Rc<Cell<Option<u64>>>,
+        generations: Rc<HashMap<u64, ProcessFacts>>,
+        events: Rc<RefCell<Vec<Event>>>,
+    }
+
+    impl ProcessRuntime for FakeRuntime {
+        type Process = FakeRetainedProcess;
+
+        fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
+            if pid != self.pid {
+                return Err(ProcessError::NotFound(pid));
+            }
+            let generation = self.current_generation.get();
+            self.events.borrow_mut().push(Event::Acquire(generation));
+            Ok(FakeRetainedProcess {
+                pid,
+                generation,
+                current_generation: Rc::clone(&self.current_generation),
+                remap_on_inspect: Rc::clone(&self.remap_on_inspect),
+                generations: Rc::clone(&self.generations),
+                events: Rc::clone(&self.events),
+            })
+        }
+    }
+
+    impl RetainedProcess for FakeRetainedProcess {
+        fn pid(&self) -> u32 {
+            self.pid
+        }
+
+        fn inspect(&self, _port: u16) -> Result<ProcessFacts, ProcessError> {
+            self.events
+                .borrow_mut()
+                .push(Event::Inspect(self.generation));
+            if let Some(replacement) = self.remap_on_inspect.take() {
+                self.current_generation.set(replacement);
+            }
+            self.generations
+                .get(&self.generation)
+                .cloned()
+                .ok_or(ProcessError::NotFound(self.pid))
+        }
+
+        fn terminate(&self) -> Result<bool, ProcessError> {
+            self.events
+                .borrow_mut()
+                .push(Event::Terminate(self.generation));
+            Ok(true)
+        }
+
+        fn wait(&self, _timeout: Duration) -> Result<bool, ProcessError> {
+            self.events.borrow_mut().push(Event::Wait(self.generation));
+            Ok(true)
+        }
+    }
+
+    fn facts(coordinate: u64) -> ProcessFacts {
+        ProcessFacts {
+            identity: ProcessIdentity {
+                start_token: canonical_test_start_token(coordinate),
+                executable: PathBuf::from(format!("/fixture/engine-{coordinate}")),
+                argv: vec![
+                    format!("engine-{coordinate}"),
+                    "--port".to_string(),
+                    "8080".to_string(),
+                ],
+            },
+            listener: ListenerState::OwnedByTarget,
+        }
+    }
+
+    #[test]
+    fn retained_process_handle_identity_matrix() {
+        let generation_one = facts(1);
+        let generation_two = facts(2);
+        let current_generation = Rc::new(Cell::new(1));
+        let remap_on_inspect = Rc::new(Cell::new(Some(2)));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let runtime = FakeRuntime {
+            pid: 77,
+            current_generation: Rc::clone(&current_generation),
+            remap_on_inspect: Rc::clone(&remap_on_inspect),
+            generations: Rc::new(HashMap::from([
+                (1, generation_one.clone()),
+                (2, generation_two.clone()),
+            ])),
+            events: Rc::clone(&events),
+        };
+
+        // The numeric PID is remapped during inspection, after acquisition.
+        // All later authority remains bound to generation one.
+        let retained =
+            acquire_matching_process(&runtime, 77, 8080, &generation_one.identity).unwrap();
+        assert_eq!(current_generation.get(), 2);
+        assert_eq!(retained.facts, generation_one);
+        assert_eq!(retained.process.pid(), 77);
+        retained.process.terminate().unwrap();
+        retained.process.wait(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            events.borrow().as_slice(),
+            [
+                Event::Acquire(1),
+                Event::Inspect(1),
+                Event::Terminate(1),
+                Event::Wait(1),
+            ]
+        );
+
+        // PID reuse before acquisition observes the replacement generation
+        // and fails without signaling or waiting on either generation.
+        events.borrow_mut().clear();
+        remap_on_inspect.set(None);
+        let error = acquire_matching_process(&runtime, 77, 8080, &generation_one.identity)
+            .err()
+            .expect("replacement generation must not match");
+        assert!(error.to_string().contains("start token"));
+        assert_eq!(
+            events.borrow().as_slice(),
+            [Event::Acquire(2), Event::Inspect(2)]
+        );
+
+        // Each persisted identity coordinate independently fails closed.
+        current_generation.set(1);
+        for (coordinate, expected) in [
+            ("start token", generation_two.identity.clone()),
+            (
+                "executable",
+                ProcessIdentity {
+                    start_token: generation_one.identity.start_token.clone(),
+                    executable: PathBuf::from("/fixture/different-engine"),
+                    argv: generation_one.identity.argv.clone(),
+                },
+            ),
+            (
+                "argv",
+                ProcessIdentity {
+                    start_token: generation_one.identity.start_token.clone(),
+                    executable: generation_one.identity.executable.clone(),
+                    argv: vec!["different-argv".to_string()],
+                },
+            ),
+        ] {
+            events.borrow_mut().clear();
+            let error = acquire_matching_process(&runtime, 77, 8080, &expected)
+                .err()
+                .expect("identity mismatch must fail closed");
+            assert!(error.to_string().contains(coordinate));
+            assert_eq!(
+                events.borrow().as_slice(),
+                [Event::Acquire(1), Event::Inspect(1)]
+            );
+        }
+    }
+
+    #[test]
+    fn pid_reuse_before_handle_acquisition_signals_nothing() {
+        let generation_one = facts(1);
+        let generation_two = facts(2);
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let runtime = FakeRuntime {
+            pid: 77,
+            current_generation: Rc::new(Cell::new(2)),
+            remap_on_inspect: Rc::new(Cell::new(None)),
+            generations: Rc::new(HashMap::from([
+                (1, generation_one.clone()),
+                (2, generation_two),
+            ])),
+            events: Rc::clone(&events),
+        };
+
+        let error = acquire_matching_process(&runtime, 77, 8080, &generation_one.identity)
+            .err()
+            .expect("replacement generation must not match");
+
+        assert!(error.to_string().contains("start token"));
+        assert_eq!(
+            events.borrow().as_slice(),
+            [Event::Acquire(2), Event::Inspect(2)]
+        );
+    }
+
+    #[test]
+    fn pid_reuse_after_handle_acquisition_targets_original_handle() {
+        let generation_one = facts(1);
+        let generation_two = facts(2);
+        let current_generation = Rc::new(Cell::new(1));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let runtime = FakeRuntime {
+            pid: 77,
+            current_generation: Rc::clone(&current_generation),
+            remap_on_inspect: Rc::new(Cell::new(Some(2))),
+            generations: Rc::new(HashMap::from([
+                (1, generation_one.clone()),
+                (2, generation_two),
+            ])),
+            events: Rc::clone(&events),
+        };
+
+        let retained =
+            acquire_matching_process(&runtime, 77, 8080, &generation_one.identity).unwrap();
+        assert_eq!(current_generation.get(), 2);
+        retained.process.terminate().unwrap();
+        retained.process.wait(Duration::from_secs(1)).unwrap();
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            [
+                Event::Acquire(1),
+                Event::Inspect(1),
+                Event::Terminate(1),
+                Event::Wait(1),
+            ]
+        );
+    }
+}
 
 #[cfg(test)]
 mod start_token_validation_tests {
