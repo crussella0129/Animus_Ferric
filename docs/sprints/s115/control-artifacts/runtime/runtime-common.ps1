@@ -5,10 +5,159 @@ $script:S115Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $script:S115ArtifactDirectory = $PSScriptRoot
 $script:S115FrozenCommonSha256 =
     'c096088f3399000cfa4aec88101b7ea987f559ab086f9cc1c2cd09dda69aada5'
+$script:S115VerifierPredecessorControlManifestSha256 =
+    'e3daeedbb31033b1d1cac95ea57f732f93cb8b0f9b1a4f588979b5ae2222085e'
+$script:S115HeldHandleCreationToleranceTicks = [Int64]10
 
 function Get-S115RawSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
     (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+}
+
+function ConvertFrom-S115EvidenceJson {
+    param([Parameter(Mandatory = $true, ValueFromPipeline = $true)][string]$Json)
+    process {
+        $Json | ConvertFrom-Json -DateKind String
+    }
+}
+
+function Read-S115EvidenceJson {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "retained JSON file is absent: $Path"
+    }
+    Get-Content -Raw -LiteralPath $Path | ConvertFrom-S115EvidenceJson
+}
+
+function ConvertTo-S115CanonicalUtcInstant {
+    param([Parameter(Mandatory = $true)][AllowNull()][object]$Value)
+    if ($null -eq $Value) { throw 'UTC instant is null' }
+    $instant = if ($Value -is [DateTimeOffset]) {
+        [DateTimeOffset]$Value
+    }
+    elseif ($Value -is [DateTime]) {
+        $dateTime = [DateTime]$Value
+        if ($dateTime.Kind -eq [DateTimeKind]::Unspecified) {
+            throw 'UTC instant DateTime has ambiguous Unspecified kind'
+        }
+        [DateTimeOffset]$dateTime
+    }
+    elseif ($Value -is [string]) {
+        $text = [string]$Value
+        $parsed = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParseExact(
+            $text,
+            'o',
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind,
+            [ref]$parsed
+        )) {
+            throw "UTC instant is not exact round-trip ISO-8601: $text"
+        }
+        $parsed
+    }
+    else {
+        throw "unsupported UTC instant type: $($Value.GetType().FullName)"
+    }
+    $instant.ToUniversalTime().ToString(
+        'o',
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+}
+
+function Test-S115UtcInstantEquivalent {
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Left,
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Right
+    )
+    try {
+        $leftCanonical = ConvertTo-S115CanonicalUtcInstant -Value $Left
+        $rightCanonical = ConvertTo-S115CanonicalUtcInstant -Value $Right
+        [pscustomobject][ordered]@{
+            passed = $leftCanonical -ceq $rightCanonical
+            left_utc = $leftCanonical
+            right_utc = $rightCanonical
+            error = $null
+        }
+    }
+    catch {
+        [pscustomobject][ordered]@{
+            passed = $false
+            left_utc = $null
+            right_utc = $null
+            error = $_.Exception.Message
+        }
+    }
+}
+
+function Test-S115HeldHandleCreationInstant {
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Observed,
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Expected
+    )
+    try {
+        $observedCanonical = ConvertTo-S115CanonicalUtcInstant -Value $Observed
+        $expectedCanonical = ConvertTo-S115CanonicalUtcInstant -Value $Expected
+        $observedInstant = [DateTimeOffset]::ParseExact(
+            $observedCanonical,
+            'o',
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $expectedInstant = [DateTimeOffset]::ParseExact(
+            $expectedCanonical,
+            'o',
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind
+        )
+        $deltaTicks = [Math]::Abs(
+            $observedInstant.UtcDateTime.Ticks - $expectedInstant.UtcDateTime.Ticks
+        )
+        [pscustomobject][ordered]@{
+            passed = $deltaTicks -le $script:S115HeldHandleCreationToleranceTicks
+            observed_utc = $observedCanonical
+            expected_utc = $expectedCanonical
+            delta_ticks = [Int64]$deltaTicks
+            maximum_delta_ticks = $script:S115HeldHandleCreationToleranceTicks
+            error = $null
+        }
+    }
+    catch {
+        [pscustomobject][ordered]@{
+            passed = $false
+            observed_utc = $null
+            expected_utc = $null
+            delta_ticks = $null
+            maximum_delta_ticks = $script:S115HeldHandleCreationToleranceTicks
+            error = $_.Exception.Message
+        }
+    }
+}
+
+function Test-S115VerifierControlManifestCompatibility {
+    param(
+        [Parameter(Mandatory = $true)][string]$AttemptId,
+        [Parameter(Mandatory = $true)][string]$AttemptSourceManifestSha256,
+        [Parameter(Mandatory = $true)][string]$CurrentManifestSha256
+    )
+    $wellFormed = $AttemptSourceManifestSha256 -cmatch '^[0-9a-f]{64}$' -and
+        $CurrentManifestSha256 -cmatch '^[0-9a-f]{64}$'
+    $isCurrent = $wellFormed -and
+        $AttemptSourceManifestSha256 -ceq $CurrentManifestSha256
+    $isExactPredecessor = $wellFormed -and $AttemptId -ceq '002' -and
+        $AttemptSourceManifestSha256 -ceq
+            $script:S115VerifierPredecessorControlManifestSha256
+    [pscustomobject][ordered]@{
+        passed = $isCurrent -or $isExactPredecessor
+        mode = if ($isCurrent) { 'current' }
+            elseif ($isExactPredecessor) { 'exact_predecessor' }
+            else { 'rejected' }
+        attempt_source_manifest_sha256 = $AttemptSourceManifestSha256
+        attempt = $AttemptId
+        current_manifest_sha256 = $CurrentManifestSha256
+        allowed_predecessor_manifest_sha256 =
+            $script:S115VerifierPredecessorControlManifestSha256
+    }
 }
 
 function Find-S115RepositoryRoot {
@@ -703,9 +852,16 @@ function Get-S115LiveBinding {
     param(
         [Parameter(Mandatory = $true)]$Context,
         [AllowNull()][string]$PreflightCapturedUtc,
-        [AllowNull()][string]$ExpectedCreationUtc
+        [AllowNull()][object]$ExpectedCreationUtc
     )
     $errors = [System.Collections.Generic.List[string]]::new()
+    $hasExpectedCreation = $null -ne $ExpectedCreationUtc -and
+        -not ($ExpectedCreationUtc -is [string] -and
+            [string]::IsNullOrWhiteSpace($ExpectedCreationUtc))
+    $expectedCreationCanonical = if ($hasExpectedCreation) {
+        ConvertTo-S115CanonicalUtcInstant -Value $ExpectedCreationUtc
+    }
+    else { $null }
     $paths = Get-S115RunfilePaths -Context $Context
     $local = Get-S115RunfileObservation -Path $paths.local
     $global = Get-S115RunfileObservation -Path $paths.global
@@ -755,14 +911,16 @@ function Get-S115LiveBinding {
             if (-not $commandBinding.passed) {
                 $errors.Add('live process executable/argv binding failed')
             }
-            $creationUtc = ConvertTo-UtcIso8601 -Value $process.CreationDate
-            if (-not [string]::IsNullOrWhiteSpace($ExpectedCreationUtc)) {
-                if ($creationUtc -cne $ExpectedCreationUtc) {
+            $creationUtc = ConvertTo-S115CanonicalUtcInstant -Value (
+                ConvertTo-UtcIso8601 -Value $process.CreationDate
+            )
+            if ($hasExpectedCreation) {
+                if ($creationUtc -cne $expectedCreationCanonical) {
                     $errors.Add('live process creation time differs from frozen handoff')
                 }
                 $creationBinding = [ordered]@{
-                    passed = $creationUtc -ceq $ExpectedCreationUtc
-                    expected_creation_utc = $ExpectedCreationUtc
+                    passed = $creationUtc -ceq $expectedCreationCanonical
+                    expected_creation_utc = $expectedCreationCanonical
                     observed_creation_utc = $creationUtc
                 }
             }
@@ -1101,7 +1259,7 @@ function Test-S115LiveHandoff {
     )
     $errors = [System.Collections.Generic.List[string]]::new()
     $binding = Get-S115LiveBinding -Context $Context `
-        -ExpectedCreationUtc ([string]$Handoff.process.creation_utc)
+        -ExpectedCreationUtc $Handoff.process.creation_utc
     if (-not $binding.passed) { $errors.AddRange([string[]]$binding.errors) }
     if ($null -eq $binding.process -or
         [UInt32]$binding.process.pid -ne [UInt32]$Handoff.process.pid) {
@@ -1212,7 +1370,7 @@ function Test-S115LiveHandoff {
     }
     try {
         $finalBinding = Get-S115LiveBinding -Context $Context `
-            -ExpectedCreationUtc ([string]$Handoff.process.creation_utc)
+            -ExpectedCreationUtc $Handoff.process.creation_utc
         if (-not $finalBinding.passed -or $null -eq $finalBinding.process -or
             [UInt32]$finalBinding.process.pid -ne [UInt32]$Handoff.process.pid -or
             [string]$finalBinding.runfiles.local.sha256 -cne
@@ -1243,7 +1401,7 @@ function Test-S115LiveHandoff {
 function Stop-S115StronglyBoundRuntime {
     param(
         [Parameter(Mandatory = $true)]$Context,
-        [Parameter(Mandatory = $true)][string]$ExpectedCreationUtc
+        [Parameter(Mandatory = $true)][object]$ExpectedCreationUtc
     )
     $before = Get-S115LiveBinding -Context $Context `
         -ExpectedCreationUtc $ExpectedCreationUtc
@@ -1258,6 +1416,7 @@ function Stop-S115StronglyBoundRuntime {
     $process = $null
     $observedStartUtc = $null
     $observedPath = $null
+    $heldCreationBinding = $null
     $killed = $false
     $waitExited = $false
     $hasExited = $false
@@ -1268,14 +1427,11 @@ function Stop-S115StronglyBoundRuntime {
         # Force a durable OS process handle before any final identity check.
         $null = $process.Handle
         $observedStart = $process.StartTime.ToUniversalTime()
-        $expectedStart = [DateTimeOffset]::Parse(
-            $ExpectedCreationUtc,
-            [System.Globalization.CultureInfo]::InvariantCulture,
-            [System.Globalization.DateTimeStyles]::RoundtripKind
-        ).UtcDateTime
-        $observedStartUtc = $observedStart.ToString('o')
+        $observedStartUtc = ConvertTo-S115CanonicalUtcInstant -Value $observedStart
+        $heldCreationBinding = Test-S115HeldHandleCreationInstant `
+            -Observed $observedStart -Expected $ExpectedCreationUtc
         $observedPath = [string]$process.MainModule.FileName
-        if ($observedStart.Ticks -ne $expectedStart.Ticks -or
+        if (-not $heldCreationBinding.passed -or
             -not [System.IO.Path]::GetFullPath($observedPath).Equals(
                 [System.IO.Path]::GetFullPath($Context.engine_path),
                 [System.StringComparison]::OrdinalIgnoreCase
@@ -1288,6 +1444,7 @@ function Stop-S115StronglyBoundRuntime {
                 reason = 'held_process_handle_identity_mismatch'
                 binding = $before
                 observed_start_utc = $observedStartUtc
+                creation_binding = $heldCreationBinding
                 observed_executable_path = $observedPath
             }
         }
@@ -1360,6 +1517,7 @@ function Stop-S115StronglyBoundRuntime {
         held_process = [ordered]@{
             pid = [UInt32]$before.process.pid
             observed_start_utc = $observedStartUtc
+            creation_binding = $heldCreationBinding
             observed_executable_path = $observedPath
             executable_sha256 = [string]$Context.plan.engine.binary_sha256
             kill_called = $killed

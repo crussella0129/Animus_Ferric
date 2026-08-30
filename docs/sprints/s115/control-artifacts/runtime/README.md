@@ -47,6 +47,10 @@ listener, then acquires a durable process handle and rechecks its start time,
 path, and hash before calling `Kill()` on that process only. Exact-hash runfiles
 are removed only after process exit and listener absence are confirmed; a
 process whose ownership cannot be proven is not killed speculatively.
+The held-handle start-time recheck permits only a fixed ten-tick (one
+microsecond) delta between the CIM and `System.Diagnostics.Process` Windows
+timestamp surfaces; PID, handle, path, executable hash, argv, runfiles, and
+listener ownership remain exact.
 
 Verify retained bytes without contacting the server:
 
@@ -74,3 +78,15 @@ the original predicate searched for `bwrap ` while the tool correctly emitted
 `bubblewrap 0.11.1`. It is not a model, engine, or host failure. After this
 revised control manifest passes its static checks, one new append-only numeric
 attempt is allowed; attempt `001` must never be reused, rewritten, or removed.
+
+## Attempt 002 disposition
+
+Attempt `002` qualified successfully and retained a `qualified_running`
+handoff. Its later root live-verifier invocation false-negatived because plain
+PowerShell JSON deserialization converted the exact UTC creation string into a
+local `DateTime`, and a culture-sensitive string cast then discarded its offset
+and fractional seconds. The revised verifier preserves retained ISO strings,
+canonicalizes UTC instants invariantly, and accepts only attempt `002`'s exact
+predecessor control-manifest hash in addition to the current manifest. Attempt
+`002` remains byte-for-byte immutable; this verifier-only correction does not
+authorize a launch, restart, replacement, inference call, or evidence rewrite.

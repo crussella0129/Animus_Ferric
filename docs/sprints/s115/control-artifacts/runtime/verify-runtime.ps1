@@ -24,7 +24,7 @@ function Invoke-S115RuntimeVerification {
             Add-Error "missing retained file: $Name"
             return $null
         }
-        try { Get-Content -Raw -LiteralPath $path | ConvertFrom-Json }
+        try { Read-S115EvidenceJson -Path $path }
         catch { Add-Error "malformed retained JSON: $Name"; $null }
     }
     function Assert-Hash {
@@ -56,29 +56,44 @@ function Invoke-S115RuntimeVerification {
         }
     }
 
+    $attemptSourceManifestSha256 = $null
+    $attemptRuntimePlanSha256 = $null
+    $attemptControlCompatibility = $null
     $provenance = Read-Json -Name 'control-provenance.json'
     if ($null -ne $provenance -and $null -ne $control) {
+        $attemptSourceManifestSha256 =
+            [string]$provenance.source_manifest_sha256
+        $attemptControlCompatibility =
+            Test-S115VerifierControlManifestCompatibility `
+                -AttemptId $resolved.id `
+                -AttemptSourceManifestSha256 $attemptSourceManifestSha256 `
+                -CurrentManifestSha256 ([string]$control.manifest_sha256)
         if ($provenance.schema -cne
                 'animus-ferric-s115-attempt-control-provenance-v1' -or
-            [string]$provenance.source_manifest_sha256 -cne
-                [string]$control.manifest_sha256) {
-            Add-Error 'attempt control provenance differs from current frozen control'
+            -not $attemptControlCompatibility.passed) {
+            Add-Error 'attempt source control manifest is neither current nor the exact allowed predecessor'
+        }
+        if ([string]$provenance.frozen_manifest_sha256 -cne
+            $attemptSourceManifestSha256) {
+            Add-Error 'attempt source and frozen control manifest identities differ'
         }
         $frozenManifest = Join-Path $resolved.path 'control/control-inputs.sha256'
         if (-not (Test-Path -LiteralPath $frozenManifest -PathType Leaf) -or
             (Get-Sha256Lower -Path $frozenManifest) -cne
-                [string]$control.manifest_sha256) {
-            Add-Error 'attempt did not freeze the exact control manifest'
+                $attemptSourceManifestSha256) {
+            Add-Error 'attempt did not freeze its own exact source control manifest'
         }
         $frozenEntries = @{}
-        foreach ($line in Get-Content -LiteralPath $frozenManifest) {
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            if ($line -notmatch '^([0-9a-f]{64})  ([^/\\]+)$' -or
-                $frozenEntries.ContainsKey($Matches[2])) {
-                Add-Error 'frozen control manifest is malformed or duplicated'
-                continue
+        if (Test-Path -LiteralPath $frozenManifest -PathType Leaf) {
+            foreach ($line in Get-Content -LiteralPath $frozenManifest) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                if ($line -notmatch '^([0-9a-f]{64})  ([^/\\]+)$' -or
+                    $frozenEntries.ContainsKey($Matches[2])) {
+                    Add-Error 'frozen control manifest is malformed or duplicated'
+                    continue
+                }
+                $frozenEntries[$Matches[2]] = $Matches[1]
             }
-            $frozenEntries[$Matches[2]] = $Matches[1]
         }
         $recordNames = [System.Collections.Generic.HashSet[string]]::new(
             [System.StringComparer]::OrdinalIgnoreCase
@@ -104,15 +119,41 @@ function Invoke-S115RuntimeVerification {
             }).Count -ne 0) {
             Add-Error 'frozen control provenance is not the exact fifteen-name set'
         }
+        $frozenPlanPath = Join-Path $resolved.path 'control/runtime-plan.json'
+        if (-not (Test-Path -LiteralPath $frozenPlanPath -PathType Leaf)) {
+            Add-Error 'attempt frozen runtime plan is absent'
+        }
+        else {
+            $attemptRuntimePlanSha256 = Get-Sha256Lower -Path $frozenPlanPath
+            if (-not $frozenEntries.ContainsKey('runtime-plan.json') -or
+                [string]$frozenEntries['runtime-plan.json'] -cne
+                    $attemptRuntimePlanSha256) {
+                Add-Error 'attempt runtime plan is not bound by its source manifest'
+            }
+            try {
+                $frozenPlan = Read-S115EvidenceJson -Path $frozenPlanPath
+                if ($frozenPlan.schema -cne 'animus-ferric-s115-runtime-plan-v1' -or
+                    $frozenPlan.task -cne 'T-11503' -or
+                    -not (Test-JsonEquivalent -Left $frozenPlan `
+                        -Right $context.plan)) {
+                    Add-Error 'attempt predecessor plan differs from the current compatible plan'
+                }
+            }
+            catch { Add-Error 'attempt frozen runtime plan is malformed' }
+        }
     }
 
     $start = Read-Json -Name 'attempt-start.json'
     $preflight = Read-Json -Name 'preflight.json'
     if ($null -ne $start) {
         if ($null -eq $control -or
+            $null -eq $attemptSourceManifestSha256 -or
+            $null -eq $attemptRuntimePlanSha256 -or
             [string]$start.attempt -cne $resolved.id -or
             [string]$start.control_manifest_sha256 -cne
-                [string]$control.manifest_sha256 -or
+                $attemptSourceManifestSha256 -or
+            [string]$start.runtime_plan_sha256 -cne
+                $attemptRuntimePlanSha256 -or
             [int]$start.policy.attempt_wall_seconds -ne 5400 -or
             -not [bool]$start.policy.no_qualification_attempt_retry -or
             [string]$start.policy.provider_retry_policy -cne
@@ -791,6 +832,14 @@ function Invoke-S115RuntimeVerification {
     $handoff = Read-Json -Name 'handoff.json'
     $finalBinding = Read-Json -Name 'final-binding.json'
     if ($null -ne $handoff) {
+        $handoffBindingCreationEquivalent =
+            Test-S115UtcInstantEquivalent -Left $handoff.process.creation_utc `
+                -Right $binding.process.creation_utc
+        $handoffFinalCreationEquivalent = if ($null -ne $finalBinding) {
+            Test-S115UtcInstantEquivalent -Left $handoff.process.creation_utc `
+                -Right $finalBinding.process.creation_utc
+        }
+        else { [pscustomobject]@{ passed = $false } }
         $coordinateEquivalent = Test-JsonEquivalent -Left $handoff.coordinate `
             -Right $context.plan.coordinate
         $listenersEquivalent = if ($null -ne $finalBinding) {
@@ -820,8 +869,7 @@ function Invoke-S115RuntimeVerification {
             $handoff.disposition -cne 'leave_same_bound_process_running' -or
             -not $handoffEnvironmentEquivalent -or
             [UInt32]$handoff.process.pid -ne [UInt32]$binding.process.pid -or
-            [string]$handoff.process.creation_utc -cne
-                [string]$binding.process.creation_utc -or
+            -not $handoffBindingCreationEquivalent.passed -or
             [string]$handoff.property_digest_sha256 -cne
                 [string]$propertyDigest.sha256 -or
             [string]$handoff.server_log_facts_sha256 -cne
@@ -846,17 +894,16 @@ function Invoke-S115RuntimeVerification {
                 [string]$context.plan.qualified_release.source_commit -or
             $null -eq $control -or
             [string]$handoff.identities.control_manifest_sha256 -cne
-                [string]$control.manifest_sha256 -or
+                $attemptSourceManifestSha256 -or
             [string]$handoff.identities.runtime_plan_sha256 -cne
-                (Get-Sha256Lower -Path $context.plan_path)) {
+                $attemptRuntimePlanSha256) {
             Add-Error 'handoff does not bind the exact qualified running process'
         }
         if ($null -ne $finalBinding -and
             (-not [bool]$finalBinding.passed -or
             [UInt32]$handoff.process.pid -ne
                 [UInt32]$finalBinding.process.pid -or
-            [string]$handoff.process.creation_utc -cne
-                [string]$finalBinding.process.creation_utc -or
+            -not $handoffFinalCreationEquivalent.passed -or
             [string]$handoff.process.executable_path -cne
                 [string]$finalBinding.process.executable_path -or
             [string]$handoff.process.command_line -cne
@@ -907,7 +954,7 @@ function Invoke-S115RuntimeVerification {
         try {
             $journal = @(Get-Content -LiteralPath $journalPath |
                 Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                ForEach-Object { $_ | ConvertFrom-Json })
+                ForEach-Object { $_ | ConvertFrom-S115EvidenceJson })
             $expectedThroughputNames = @($context.plan.throughput.sequence |
                 ForEach-Object { "throughput:$_" })
             $expectedJournalSequence = [System.Collections.Generic.List[string]]::new()
@@ -960,8 +1007,9 @@ function Invoke-S115RuntimeVerification {
             }
             $terminalJournal = $journal[$journal.Count - 1]
             if ([UInt32]$terminalJournal.details.pid -ne [UInt32]$handoff.process.pid -or
-                [string]$terminalJournal.details.creation_utc -cne
-                    [string]$handoff.process.creation_utc) {
+                -not (Test-S115UtcInstantEquivalent `
+                    -Left $terminalJournal.details.creation_utc `
+                    -Right $handoff.process.creation_utc).passed) {
                 $journalPayloadPassed = $false
             }
             if (($actualJournalSequence -join "`n") -cne
@@ -986,6 +1034,12 @@ function Invoke-S115RuntimeVerification {
         $finalGateListenersEquivalent = Test-JsonEquivalent `
             -Left @($retainedLiveGate.final_binding.listeners) `
             -Right @($finalBinding.listeners)
+        $firstGateCreationEquivalent = Test-S115UtcInstantEquivalent `
+            -Left $retainedLiveGate.binding.process.creation_utc `
+            -Right $handoff.process.creation_utc
+        $finalGateCreationEquivalent = Test-S115UtcInstantEquivalent `
+            -Left $retainedLiveGate.final_binding.process.creation_utc `
+            -Right $handoff.process.creation_utc
         if ($retainedLiveGate.schema -cne
                 'animus-ferric-s115-live-handoff-verification-v1' -or
             -not [bool]$retainedLiveGate.passed -or
@@ -996,10 +1050,8 @@ function Invoke-S115RuntimeVerification {
                 [UInt32]$handoff.process.pid -or
             [UInt32]$retainedLiveGate.final_binding.process.pid -ne
                 [UInt32]$handoff.process.pid -or
-            [string]$retainedLiveGate.binding.process.creation_utc -cne
-                [string]$handoff.process.creation_utc -or
-            [string]$retainedLiveGate.final_binding.process.creation_utc -cne
-                [string]$handoff.process.creation_utc -or
+            -not $firstGateCreationEquivalent.passed -or
+            -not $finalGateCreationEquivalent.passed -or
             [string]$retainedLiveGate.binding.runfiles.local.sha256 -cne
                 [string]$handoff.runfiles.local_sha256 -or
             [string]$retainedLiveGate.binding.runfiles.global.sha256 -cne
@@ -1059,6 +1111,11 @@ function Invoke-S115RuntimeVerification {
         attempt = $resolved.id
         mode = if ($Live) { 'offline-plus-live' } else { 'offline' }
         manifest = $manifest
+        control_binding = [ordered]@{
+            attempt_source_manifest_sha256 = $attemptSourceManifestSha256
+            attempt_runtime_plan_sha256 = $attemptRuntimePlanSha256
+            compatibility = $attemptControlCompatibility
+        }
         live = $liveResult
         errors = @($errors)
     }

@@ -134,6 +134,90 @@ Assert-Check -Condition (
     $deceptiveAccepted.Count -eq 0
 ) -Name 'Bubblewrap parser accepts retained exact output and rejects deceptive forms'
 
+$attempt002Timestamp = '2026-08-28T08:57:26.6784000+00:00'
+$attempt002HandoffPath = Join-Path $context.tracked_attempt_root `
+    '002/handoff.json'
+$attempt002Handoff = Read-S115EvidenceJson -Path $attempt002HandoffPath
+Assert-Check -Condition (
+    $attempt002Handoff.process.creation_utc -is [string] -and
+    $attempt002Handoff.process.creation_utc -ceq $attempt002Timestamp -and
+    (ConvertTo-S115CanonicalUtcInstant `
+        -Value $attempt002Handoff.process.creation_utc) -ceq $attempt002Timestamp
+) -Name 'attempt 002 ISO creation instant survives retained JSON round trip'
+
+$originalCulture = [System.Threading.Thread]::CurrentThread.CurrentCulture
+$originalUiCulture = [System.Threading.Thread]::CurrentThread.CurrentUICulture
+try {
+    $nonDefaultCulture = [System.Globalization.CultureInfo]::GetCultureInfo(
+        'fr-FR'
+    )
+    [System.Threading.Thread]::CurrentThread.CurrentCulture = $nonDefaultCulture
+    [System.Threading.Thread]::CurrentThread.CurrentUICulture = $nonDefaultCulture
+    $legacyDate = ('{"creation_utc":"' + $attempt002Timestamp + '"}' |
+        ConvertFrom-Json).creation_utc
+    $legacyCanonical = ConvertTo-S115CanonicalUtcInstant -Value $legacyDate
+}
+finally {
+    [System.Threading.Thread]::CurrentThread.CurrentCulture = $originalCulture
+    [System.Threading.Thread]::CurrentThread.CurrentUICulture = $originalUiCulture
+}
+$differentInstant = Test-S115UtcInstantEquivalent `
+    -Left $attempt002Timestamp `
+    -Right '2026-08-28T08:57:26.6784001+00:00'
+Assert-Check -Condition (
+    $legacyDate -is [DateTime] -and
+    $legacyCanonical -ceq $attempt002Timestamp -and
+    -not $differentInstant.passed
+) -Name 'legacy DateTime canonicalization is culture invariant and rejects a different instant'
+
+$currentManifestSha256 = [string]$control.manifest_sha256
+$currentCompatibility = Test-S115VerifierControlManifestCompatibility `
+    -AttemptId '999' `
+    -AttemptSourceManifestSha256 $currentManifestSha256 `
+    -CurrentManifestSha256 $currentManifestSha256
+$predecessorCompatibility = Test-S115VerifierControlManifestCompatibility `
+    -AttemptId '002' `
+    -AttemptSourceManifestSha256 `
+        $script:S115VerifierPredecessorControlManifestSha256 `
+    -CurrentManifestSha256 $currentManifestSha256
+$arbitraryCompatibility = Test-S115VerifierControlManifestCompatibility `
+    -AttemptId '002' `
+    -AttemptSourceManifestSha256 ('a' * 64) `
+    -CurrentManifestSha256 $currentManifestSha256
+$uppercaseCompatibility = Test-S115VerifierControlManifestCompatibility `
+    -AttemptId '002' `
+    -AttemptSourceManifestSha256 `
+        $script:S115VerifierPredecessorControlManifestSha256.ToUpperInvariant() `
+    -CurrentManifestSha256 $currentManifestSha256
+$wrongAttemptCompatibility = Test-S115VerifierControlManifestCompatibility `
+    -AttemptId '003' `
+    -AttemptSourceManifestSha256 `
+        $script:S115VerifierPredecessorControlManifestSha256 `
+    -CurrentManifestSha256 $currentManifestSha256
+Assert-Check -Condition (
+    $currentCompatibility.passed -and
+    $predecessorCompatibility.passed -and
+    -not $arbitraryCompatibility.passed -and
+    -not $uppercaseCompatibility.passed -and
+    -not $wrongAttemptCompatibility.passed
+) -Name 'verifier admits the exact predecessor only for attempt 002'
+
+$heldThreeTicks = Test-S115HeldHandleCreationInstant `
+    -Observed '2026-08-28T08:57:26.6784003+00:00' `
+    -Expected $attempt002Timestamp
+$heldTenTicks = Test-S115HeldHandleCreationInstant `
+    -Observed '2026-08-28T08:57:26.6784010+00:00' `
+    -Expected $attempt002Timestamp
+$heldElevenTicks = Test-S115HeldHandleCreationInstant `
+    -Observed '2026-08-28T08:57:26.6784011+00:00' `
+    -Expected $attempt002Timestamp
+Assert-Check -Condition (
+    $heldThreeTicks.passed -and [Int64]$heldThreeTicks.delta_ticks -eq 3 -and
+    $heldTenTicks.passed -and [Int64]$heldTenTicks.delta_ticks -eq 10 -and
+    -not $heldElevenTicks.passed -and
+    [Int64]$heldElevenTicks.delta_ticks -eq 11
+) -Name 'held-handle cleanup accepts at most the fixed ten-tick cross-API delta'
+
 $attributes = (Get-Content -Raw -LiteralPath (Join-Path $artifact `.gitattributes)).Replace("`r", '')
 Assert-Check -Condition ($attributes -ceq "* text eol=lf`nattempts/** -text`n") `
     -Name 'control LF and evidence raw-byte checkout rules are frozen'
@@ -223,6 +307,10 @@ Assert-Check -Condition (
     $commonText.Contains('$process.Kill()') -and
     $commonText.Contains('function Get-S115ServerLogFacts') -and
     $commonText.Contains('function Get-S115BubblewrapVersionFacts') -and
+    $commonText.Contains('function Read-S115EvidenceJson') -and
+    $commonText.Contains('ConvertFrom-Json -DateKind String') -and
+    $commonText.Contains('function ConvertTo-S115CanonicalUtcInstant') -and
+    $commonText.Contains('function Test-S115HeldHandleCreationInstant') -and
     $commonText.Contains('$bubblewrapVersion.passed') -and
     -not $commonText.Contains("Contains('bwrap ')") -and
     -not $runtimeVerifierText.Contains("Contains('bwrap ')") -and

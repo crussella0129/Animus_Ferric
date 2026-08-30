@@ -31,16 +31,28 @@ function Invoke-S115HandoffVerification {
     if (-not (Test-Path -LiteralPath $handoffPath -PathType Leaf)) {
         throw 'handoff.json is absent'
     }
-    $handoff = Get-Content -Raw -LiteralPath $handoffPath | ConvertFrom-Json
-    $result = Get-Content -Raw -LiteralPath (Join-Path `
-        $resolved.path 'result.json') | ConvertFrom-Json
-    $launch = Get-Content -Raw -LiteralPath (Join-Path `
-        $resolved.path 'launch-command.json') | ConvertFrom-Json
-    $log = Get-Content -Raw -LiteralPath (Join-Path `
-        $resolved.path 'server-log-attestation.json') | ConvertFrom-Json
-    $binding = Get-Content -Raw -LiteralPath (Join-Path `
-        $resolved.path 'final-binding.json') | ConvertFrom-Json
+    $handoff = Read-S115EvidenceJson -Path $handoffPath
+    $result = Read-S115EvidenceJson -Path (Join-Path `
+        $resolved.path 'result.json')
+    $launch = Read-S115EvidenceJson -Path (Join-Path `
+        $resolved.path 'launch-command.json')
+    $log = Read-S115EvidenceJson -Path (Join-Path `
+        $resolved.path 'server-log-attestation.json')
+    $binding = Read-S115EvidenceJson -Path (Join-Path `
+        $resolved.path 'final-binding.json')
     $control = Assert-S115ControlInputs -Context $context
+    $attemptSourceManifestSha256 =
+        [string]$offline.control_binding.attempt_source_manifest_sha256
+    $attemptRuntimePlanSha256 =
+        [string]$offline.control_binding.attempt_runtime_plan_sha256
+    $controlCompatibility = Test-S115VerifierControlManifestCompatibility `
+        -AttemptId $resolved.id `
+        -AttemptSourceManifestSha256 $attemptSourceManifestSha256 `
+        -CurrentManifestSha256 ([string]$control.manifest_sha256)
+    $creationEquivalent = Test-S115UtcInstantEquivalent `
+        -Left $handoff.process.creation_utc -Right $binding.process.creation_utc
+    $canonicalCreationUtc = ConvertTo-S115CanonicalUtcInstant `
+        -Value $handoff.process.creation_utc
     $coordinateEquivalent = Test-JsonEquivalent -Left $handoff.coordinate `
         -Right $context.plan.coordinate
     $handoffEnvironmentEquivalent = Test-JsonEquivalent `
@@ -57,8 +69,7 @@ function Invoke-S115HandoffVerification {
         [string]$handoff.process.executable_sha256 -cne
             [string]$context.plan.engine.binary_sha256 -or
         [UInt32]$handoff.process.pid -ne [UInt32]$binding.process.pid -or
-        [string]$handoff.process.creation_utc -cne
-            [string]$binding.process.creation_utc -or
+        -not $creationEquivalent.passed -or
         [string]$handoff.process.executable_path -cne
             [string]$binding.process.executable_path -or
         [string]$handoff.process.command_line -cne
@@ -105,10 +116,11 @@ function Invoke-S115HandoffVerification {
             [string]$context.plan.qualified_release.result_sha256 -or
         [string]$handoff.identities.release_source_commit -cne
             [string]$context.plan.qualified_release.source_commit -or
+        -not $controlCompatibility.passed -or
         [string]$handoff.identities.control_manifest_sha256 -cne
-            [string]$control.manifest_sha256 -or
+            $attemptSourceManifestSha256 -or
         [string]$handoff.identities.runtime_plan_sha256 -cne
-            (Get-Sha256Lower -Path $context.plan_path) -or
+            $attemptRuntimePlanSha256 -or
         [string]$handoff.evidence.engine_resolution_sha256 -cne
             (Get-Sha256Lower -Path (Join-Path $resolved.path `
                 'engine-resolution.json')) -or
@@ -134,7 +146,7 @@ function Invoke-S115HandoffVerification {
         attempt = $resolved.id
         mode = if ($Live) { 'offline-plus-live' } else { 'offline' }
         pid = [UInt32]$handoff.process.pid
-        creation_utc = [string]$handoff.process.creation_utc
+        creation_utc = $canonicalCreationUtc
         endpoint = [string]$handoff.endpoint
         offline_runtime = $offline
         live = $liveResult
