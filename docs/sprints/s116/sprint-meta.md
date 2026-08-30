@@ -3,10 +3,21 @@
 - **Sprint number:** 116
 - **Book schema version:** 2
 - **Start timestamp:** 2026-08-30T03:18:00Z
-- **End timestamp:** 2026-08-30T05:10:57Z
+- **End timestamp:** (filled at Loop Phase)
 - **Model:** Codex host model not exposed
-- **Exit status:** completed
+- **Exit status:** in-progress
 - **Token count:** not observable
-- **Summary:** Replaced lossy server-runfile precedence and PID-only teardown with lossless two-scope inventory, retained-handle process identity, complete no-clobber per-file publication, safe legacy adoption, atomic per-path conditional cleanup, and fail-closed Tailscale state. Promoted the external refactor report's durable calibration and compact-workflow outcomes into active intents without treating that report as completion evidence.
+- **Summary:** Landed a substantial identity-safe lifecycle refactor and promoted the external report's durable product outcomes, but the mandatory adversarial Test critique found missing finalized EARS matrices, so the sprint proceeds to a failed close with bounded remediation.
 - **Intents:** [INT-0008 — Unified local-model workflow](../../intents/INT-0008-unified-local-model-workflow.md); [INT-0007 — Hardware-calibrated autonomous development](../../intents/INT-0007-hardware-calibrated-autonomous-development.md)
-- **Completion evidence:** [T-11504 completion record](../../work/completed-tasks.md#t-11504-sprint-116); [Sprint 116 test report](sprint-tests/test-report.md)
+- **Completion evidence:** (filled at Loop Phase)
+
+## Blockages
+
+- T-11504 / INT-0008: aggregate green suites did not prove the finalized
+  concurrency, fault-injection, output-contract, Tailscale, CI, and provenance
+  matrices. See the [failure report](failure-report.md) and
+  [blocking critique](sprint-tests/critique.md); T-11606 carries remediation.
+- Remote checkpoint: PR #102 merged before the required Test critique and
+  legal Loop close. Project policy forbids assuming a second Sprint 116 PR, so
+  the failure report requires an explicit owner-selected correction boundary
+  before Sprint 117 begins.

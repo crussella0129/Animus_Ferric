@@ -1448,3 +1448,13 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   lacks `aarch64-linux-gnu-gcc` for `ring`; no AArch64 runtime result is
   claimed.
 - **Commit:** `fb05f6b17427b1e4843e703280e2f543ac5c2611`
+- **Loop correction:** The preceding Build-phase `Completed` timestamp records
+  implementation landing, not Test acceptance. The mandatory adversarial Test
+  critique later blocked the finalized EARS claim; Sprint 116 therefore took
+  the failed close route and this task's durable disposition is **closed
+  partial**. The green suites remain regression evidence, while AC-3, AC-4,
+  AC-6, and AC-7 do not advance from this task.
+- **Remediation:** [T-11606 in the failed-close backlog](tasks.md#sprint-116-failed-close-remediation)
+  must close the missing fault, concurrency, output-contract, CI, and
+  provenance matrices before report-driven calibration or compact-command work
+  resumes.
