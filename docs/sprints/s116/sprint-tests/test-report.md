@@ -1,45 +1,39 @@
-# Sprint 116 Test Report
+# Sprint 116 Test Report — Invalidated
 
 ## Verdict
 
-**Passed for the Sprint 116 identity-safe server-lifecycle scope.** The final
-tree passed reduced- and all-feature CLI suites, the full workspace all-feature
-gate, strict static checks, the required x86_64/AArch64 feature-fixture compile
-checks, and the three-test model-free lifecycle fixture on both Windows and
-native WSL Linux.
+**No pass verdict.** This report was originally written before the required
+adversarial Test Phase critique. That critique found material locked-EARS and
+evidence gaps, so the prior pass is withdrawn and Sprint 116 takes the
+re-architecture failure route.
 
-This verdict advances INT-0008's lifecycle criteria; it does not claim the
-intent's complete compact human workflow, model calibration, or three-platform
-product acceptance.
+See the [failure report](../failure-report.md) and
+[blocking critique](critique.md). The observed green gates below are retained
+as regression evidence only; they do not advance INT-0008 AC-3, AC-4, AC-6,
+or AC-7 by themselves.
 
-| Gate | Final result |
+| Gate | Observed result and boundary |
 | --- | --- |
-| CLI without default features | 214/214 passed |
-| CLI with all features | 220/220 passed on each of three consecutive post-fix runs |
-| Full workspace with all features | passed; observed CLI integration 69/69, lifecycle fixture 3/3, benchmark mock 6/6, and template hygiene 3/3 |
-| Windows model-free lifecycle fixture | 3/3 passed |
-| Native WSL Linux lifecycle fixture | 3/3 passed |
-| Strict Clippy, formatting, and diff checks | passed |
-| x86_64 and AArch64 lifecycle feature-fixture compilation | passed |
-| Optional AArch64 all-features/all-targets build | environmentally blocked; missing `aarch64-linux-gnu-gcc` while compiling `ring`; not an acceptance failure |
+| CLI without default features | 214/214 passed locally before merge; no clause-level mapping retained |
+| CLI with all features | 220/220 passed on three consecutive pre-merge runs and once within the post-merge full-workspace all-feature run |
+| Full workspace with all features | passed once post-merge with Rust sources matching `e6439b1`; local observation rather than an immutable CI artifact; a restricted attempt first hit an expected nested-Python sandbox denial |
+| Feature-gated lifecycle fixture | 3/3 passed locally on Windows and native WSL Linux; absent from ordinary CI |
+| GitHub CI | PR run `33294229347` and post-merge run `33320491690` passed, but default-feature tests exclude the lifecycle fixture |
+| Static/compile gates | strict Clippy, formatting, diff checks, Book checks, and the scoped AArch64 feature build passed |
 
 ## Reliability history
 
-The first all-feature verification sequence was not clean: a helper-owning
-lifecycle test timed out waiting for readiness under parallel test execution.
-The final tree serializes those helper-owning parent tests with a test-only
-guard. Production lifecycle behavior was not changed by that reliability fix.
-Afterward, all 220 all-feature CLI tests passed three consecutive times, and
-the full workspace gate passed.
+The first pre-merge all-feature sequence exposed a helper readiness timeout. A
+test-only mutex stabilized the parent unit tests, but the feature-gated E2E
+retains a separate release-then-bind port and fixed-deadline risk. That
+remaining risk is part of the remediation, not a closed concern.
 
 ## Evidence boundary
 
-- The lifecycle E2E is deliberately model-free and does not qualify inference
-  quality, throughput, context, reasoning budgets, or a GGUF/backend pairing.
-- Runtime evidence covers Windows and native WSL Linux x86_64. AArch64 has the
-  required feature-fixture compilation evidence but no runtime execution.
-- The optional broad AArch64 cross-build block is recorded rather than treated
-  as a product failure because its missing external cross-compiler is not a
-  Sprint 116 acceptance prerequisite.
-- The tests use temporary workspaces, registration roots, ports, fixtures, and
-  sentinels; no operator server state or retained model evidence is mutated.
+- The model-free E2E proves useful happy-path and stale-local/live-global
+  behavior without qualifying inference or a GGUF/backend coordinate.
+- Runtime evidence covers Windows and native WSL Linux x86_64; no AArch64
+  runtime result exists.
+- Temporary workspaces prevented operator-state mutation.
+- Aggregate green suites cannot fill the missing concurrency, fault-injection,
+  output-contract, and provenance links named by the finalized plan.

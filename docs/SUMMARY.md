@@ -165,3 +165,5 @@
   - [Integration test results](sprints/s116/sprint-tests/integration-tests.md)
   - [End-to-end test results](sprints/s116/sprint-tests/e2e-tests.md)
   - [Test report](sprints/s116/sprint-tests/test-report.md)
+  - [Blocking test critique](sprints/s116/sprint-tests/critique.md)
+  - [Failure report](sprints/s116/failure-report.md)

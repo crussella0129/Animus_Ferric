@@ -3,10 +3,10 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0008
 - **State:** active
-- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work)
+- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [T-11606 failed-close acceptance remediation](../work/tasks.md#sprint-116-failed-close-remediation)
 - **Completion evidence:** none
-- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116)
-- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 lifecycle verification](../sprints/s116/sprint-tests/test-report.md)
+- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116)
+- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md)
 - **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md)
 
 ## Intent
@@ -197,3 +197,11 @@ users through an opaque wizard.
   smaller idempotent front door durable product outcomes while retaining the
   advanced command surface. The external refactor report motivates this
   boundary but does not satisfy any acceptance criterion.
+- 2026-08-30: Sprint 116 took the failed Test route after the
+  mandatory adversarial critique found that aggregate green suites did not
+  prove the finalized EARS matrices. The landed lifecycle refactor remains
+  partial code and regression evidence, but AC-3, AC-4, AC-6, and AC-7 do not
+  advance. T-11606 now gates the wider local-model backlog on tagged process
+  identity, deterministic lifecycle fault seams, real concurrency, asserted
+  operator output, hardened cross-platform fixtures, and clause-level
+  provenance.
