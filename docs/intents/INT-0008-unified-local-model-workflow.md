@@ -2,12 +2,12 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0008
-- **State:** proposed
-- **Work evidence:** [T-11414 external trace-root prerequisite](../work/tasks.md#book-v2-carry-forward-from-sprint-114)
+- **State:** active
+- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up)
 - **Completion evidence:** none
-- **Code evidence:** none
-- **Test evidence:** none
-- **Documentation evidence:** none
+- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115)
+- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface)
+- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md)
 
 ## Intent
 
@@ -125,3 +125,15 @@ the same concepts instead of adding another public runbook.
 - 2026-08-27: linked backlog task T-11414 for the external trace-root boundary
   and release-binary requalification required before the frozen application
   trial can resume; the broader unified workflow remains proposed.
+- 2026-08-28: moved from `proposed` to `planned` when Sprint 115 selected the
+  safe external trace-root and copy/paste-correct resume command as the first
+  bounded operator-surface increment. The full cross-platform workflow remains
+  later work and is not replaced by a platform-specific wrapper.
+- 2026-08-28: moved from `planned` to `active` when Sprint 115 Build began
+  T-11414 under its finalized external-trace and exact-resume plan.
+- 2026-08-29: Sprint 115 field evidence confirmed that the compact human
+  surface must follow, not precede, ownership-safe server lifecycle semantics.
+  T-11504 now fixes ambiguous local/global registrations and PID-only teardown;
+  T-11505 through T-11509 then add bounded calibration, runtime discovery,
+  explicit reasoning/compaction behavior, and the installed compact workflow.
+  No INT-0008 acceptance criterion is claimed complete.

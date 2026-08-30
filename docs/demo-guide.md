@@ -262,16 +262,23 @@ a git repo; the mock loop also snapshots per turn.)
 
 ## 10. Session resume — continue an interrupted task 🟢
 
-If a run is killed mid-task, replay its trace and continue the **same** task with
-more turns (not a chat continuation):
+If a run stops incomplete, replay its trace and continue the **same** task with
+more turns (not a chat continuation). Every supported resumable `query` stop
+prints a `Resume:` command with the exact trace, workspace, and external-root
+arguments. Repeat any invocation-only backend or model overrides that are not
+stored in configuration:
 
 ```sh
 # Resume an incomplete trace:
 ferric query --resume .ferric/trace/<incomplete>.jsonl
 ```
 
-A trace that already reached a stop reason is rejected. `ferric mcp --resume` does
-the same over MCP.
+A successful terminal trace is rejected. An incomplete trace remains resumable
+even when its final `session_end` records the incomplete stop, such as a turn
+budget being exhausted. A clarification stop alone adds `--answer '<answer>'`
+to the printed command. `ferric mcp --resume` provides continuation over MCP;
+the query-only external trace-root command surface is documented in
+[Your First Query](basics-query.md#keeping-a-query-trace-outside-the-workspace).
 
 ---
 

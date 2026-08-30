@@ -1,0 +1,12 @@
+[
+  {
+    "path": "models/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+    "bytes": 4683073536,
+    "last_write_utc": "2026-06-29T18:52:36.6132061Z"
+  },
+  {
+    "path": "models/Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "bytes": 16464440224,
+    "last_write_utc": "2026-08-27T03:56:45.4564073Z"
+  }
+]

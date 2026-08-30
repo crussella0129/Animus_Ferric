@@ -1,0 +1,801 @@
+{
+  "schema": "animus-ferric-s115-release-qualification-v1",
+  "task": "T-11501",
+  "attempt": 2,
+  "passed": true,
+  "captured_at_utc": "2026-08-28T05:05:41.0419607+00:00",
+  "failure": "",
+  "repository": {
+    "branch": "dev",
+    "commit": "894fdf40a324cb00988072ae39fe0219dfc39152",
+    "qualified_source_scope": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates"
+    ],
+    "qualified_source_clean": true,
+    "known_unrelated_edit": {
+      "path": "docs/sprints/s114/control-artifacts/model/acquisition-tests.json",
+      "tolerated_status": " M",
+      "present": true
+    }
+  },
+  "host": {
+    "powershell": "7.6.4",
+    "platform": "windows",
+    "execution_requirement": "normal host access; full workspace tests may inspect processes"
+  },
+  "source_files": [
+    {
+      "path": "crates/ferric-cli/src/query.rs",
+      "bytes": 119185,
+      "sha256": "d213f9eab02127f710dfa486591d573e35251880063928f4d37071030708265b"
+    },
+    {
+      "path": "crates/ferric-cli/tests/cli.rs",
+      "bytes": 103861,
+      "sha256": "a61505d2395e3131acb6fd5d6b24ecbfb5e0317189d4348cc31091589b85dcfc"
+    },
+    {
+      "path": "docs/basics-query.md",
+      "bytes": 5637,
+      "sha256": "08164366e37e10e2b6ffa8ca3eca8a7e5050803bf6848b654514a531c3f6113d"
+    },
+    {
+      "path": "docs/commands.md",
+      "bytes": 10974,
+      "sha256": "bde3721c42d7879a0b165525fc3683568356907446b400d6dd18eee322386565"
+    },
+    {
+      "path": "docs/configuration.md",
+      "bytes": 6165,
+      "sha256": "e627c51ea6cb6b86c51a0da2dca44013c1a8eee71cfcca34a1bc3356f68cd6df"
+    },
+    {
+      "path": "docs/demo-guide.md",
+      "bytes": 16615,
+      "sha256": "717e20fe891f612a575a039998c25205e21d1bdd8168adb04a64dca1c49dfa1c"
+    }
+  ],
+  "gates": [
+    {
+      "ordinal": 1,
+      "name": "source-status",
+      "executable": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "argv": [
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--",
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "process_id": 8300,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:16.0045163+00:00",
+      "ended_at_utc": "2026-08-28T05:02:16.0660460+00:00",
+      "duration_ms": 59.347,
+      "stdout": "logs/01-source-status.stdout.txt",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr": "logs/01-source-status.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 2,
+      "name": "known-unrelated-status",
+      "executable": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "argv": [
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--",
+        "docs/sprints/s114/control-artifacts/model/acquisition-tests.json"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "process_id": 28444,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:16.1032387+00:00",
+      "ended_at_utc": "2026-08-28T05:02:16.1506005+00:00",
+      "duration_ms": 46.153,
+      "stdout": "logs/02-known-unrelated-status.stdout.txt",
+      "stdout_sha256": "25fca6413e074393a3d78234929c7a1bfad7a943f5c2ea88924b457fdc40f055",
+      "stderr": "logs/02-known-unrelated-status.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 3,
+      "name": "source-head",
+      "executable": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "argv": [
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric",
+        "rev-parse",
+        "HEAD"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "process_id": 30192,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:16.1579892+00:00",
+      "ended_at_utc": "2026-08-28T05:02:16.2002783+00:00",
+      "duration_ms": 41.19,
+      "stdout": "logs/03-source-head.stdout.txt",
+      "stdout_sha256": "d14331e59982066231d5f795a8a932391aff5e8ea3d48063e4801bbe9153c3bb",
+      "stderr": "logs/03-source-head.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 4,
+      "name": "source-branch",
+      "executable": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "argv": [
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric",
+        "branch",
+        "--show-current"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "process_id": 40140,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:16.2025619+00:00",
+      "ended_at_utc": "2026-08-28T05:02:16.2432834+00:00",
+      "duration_ms": 39.627,
+      "stdout": "logs/04-source-branch.stdout.txt",
+      "stdout_sha256": "9c5955fc99a60b8f6dee6cf582c4420d91e1b3e2a201f532c91e2cbdfce7fa51",
+      "stderr": "logs/04-source-branch.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 5,
+      "name": "fmt",
+      "executable": "C:\\Users\\charl\\.cargo\\bin\\cargo.exe",
+      "argv": [
+        "--locked",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 600,
+      "timed_out": false,
+      "process_id": 11936,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:16.2453103+00:00",
+      "ended_at_utc": "2026-08-28T05:02:17.1743469+00:00",
+      "duration_ms": 927.825,
+      "stdout": "logs/05-fmt.stdout.txt",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr": "logs/05-fmt.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 6,
+      "name": "clippy-default",
+      "executable": "C:\\Users\\charl\\.cargo\\bin\\cargo.exe",
+      "argv": [
+        "--locked",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 3600,
+      "timed_out": false,
+      "process_id": 39260,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:17.1762229+00:00",
+      "ended_at_utc": "2026-08-28T05:02:24.1555502+00:00",
+      "duration_ms": 6977.801,
+      "stdout": "logs/06-clippy-default.stdout.txt",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr": "logs/06-clippy-default.stderr.txt",
+      "stderr_sha256": "bc107c11c8a1856bd6c9a7a575f87fb39c10a7661c1d483a718b65e22bb341e7"
+    },
+    {
+      "ordinal": 7,
+      "name": "clippy-backend",
+      "executable": "C:\\Users\\charl\\.cargo\\bin\\cargo.exe",
+      "argv": [
+        "--locked",
+        "clippy",
+        "-p",
+        "ferric-cli",
+        "--all-targets",
+        "--features",
+        "backend-openai",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 3600,
+      "timed_out": false,
+      "process_id": 31212,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:24.1625869+00:00",
+      "ended_at_utc": "2026-08-28T05:02:24.8105101+00:00",
+      "duration_ms": 646.611,
+      "stdout": "logs/07-clippy-backend.stdout.txt",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr": "logs/07-clippy-backend.stderr.txt",
+      "stderr_sha256": "ec3275bd7cdb61fe7edc4fadcb9a7a8d1c03aef38d75c8a6d05652c57a1d448e"
+    },
+    {
+      "ordinal": 8,
+      "name": "query-unit-tests",
+      "executable": "C:\\Users\\charl\\.cargo\\bin\\cargo.exe",
+      "argv": [
+        "--locked",
+        "test",
+        "-p",
+        "ferric-cli",
+        "--features",
+        "backend-openai",
+        "--bin",
+        "ferric",
+        "query::tests"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 3600,
+      "timed_out": false,
+      "process_id": 38528,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:24.8161458+00:00",
+      "ended_at_utc": "2026-08-28T05:02:34.8750705+00:00",
+      "duration_ms": 10057.15,
+      "stdout": "logs/08-query-unit-tests.stdout.txt",
+      "stdout_sha256": "a7bae9cc1d6821e038fe94ab72065b5bc5f8b127ca3ed66204eda4b5ffadd9f3",
+      "stderr": "logs/08-query-unit-tests.stderr.txt",
+      "stderr_sha256": "566757c8cbc8efc3b37b48706bfa50560e42a3f37ff0148a45b9333f25e593f8"
+    },
+    {
+      "ordinal": 9,
+      "name": "cli-integration-tests",
+      "executable": "C:\\Users\\charl\\.cargo\\bin\\cargo.exe",
+      "argv": [
+        "--locked",
+        "test",
+        "-p",
+        "ferric-cli",
+        "--features",
+        "backend-openai",
+        "--test",
+        "cli"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 3600,
+      "timed_out": false,
+      "process_id": 36820,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:34.8813184+00:00",
+      "ended_at_utc": "2026-08-28T05:02:37.4728657+00:00",
+      "duration_ms": 2590.227,
+      "stdout": "logs/09-cli-integration-tests.stdout.txt",
+      "stdout_sha256": "f3844ab6d2f943aa2afd13a24bc341c5bee7a281b8b36482077b661dbe26c36f",
+      "stderr": "logs/09-cli-integration-tests.stderr.txt",
+      "stderr_sha256": "086daa635d98d54c3079a73e6931e89de2ff87b0a251b02b674c410fcd5a86ba"
+    },
+    {
+      "ordinal": 10,
+      "name": "workspace-tests",
+      "executable": "C:\\Users\\charl\\.cargo\\bin\\cargo.exe",
+      "argv": [
+        "--locked",
+        "test",
+        "--workspace",
+        "--all-targets"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 7200,
+      "timed_out": false,
+      "process_id": 21048,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:02:37.4789863+00:00",
+      "ended_at_utc": "2026-08-28T05:04:20.6420131+00:00",
+      "duration_ms": 103160.52,
+      "stdout": "logs/10-workspace-tests.stdout.txt",
+      "stdout_sha256": "5e6f574b5970c844189b3cb3a411cb78f89feaf28c5cd31a91ef3426087fe811",
+      "stderr": "logs/10-workspace-tests.stderr.txt",
+      "stderr_sha256": "2038c53772b90694e4c663d056b41940b050f99eb4b82e083b9f3ccc65552143"
+    },
+    {
+      "ordinal": 11,
+      "name": "release-build",
+      "executable": "C:\\Users\\charl\\.cargo\\bin\\cargo.exe",
+      "argv": [
+        "--locked",
+        "build",
+        "--release",
+        "-p",
+        "ferric-cli",
+        "--features",
+        "backend-openai",
+        "--target-dir",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\cargo-target"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 3600,
+      "timed_out": false,
+      "process_id": 35424,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:04:20.6497307+00:00",
+      "ended_at_utc": "2026-08-28T05:05:39.3767352+00:00",
+      "duration_ms": 78725.62,
+      "stdout": "logs/11-release-build.stdout.txt",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr": "logs/11-release-build.stderr.txt",
+      "stderr_sha256": "f725253f4d929e12015aaa492e2efc9000a34f8fda8d8013f54367bd33d08ff3"
+    },
+    {
+      "ordinal": 12,
+      "name": "post-source-status",
+      "executable": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "argv": [
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--",
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "process_id": 41040,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:05:39.8881732+00:00",
+      "ended_at_utc": "2026-08-28T05:05:39.9340871+00:00",
+      "duration_ms": 44.961,
+      "stdout": "logs/12-post-source-status.stdout.txt",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr": "logs/12-post-source-status.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 13,
+      "name": "post-known-unrelated-status",
+      "executable": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "argv": [
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--",
+        "docs/sprints/s114/control-artifacts/model/acquisition-tests.json"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "process_id": 41428,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:05:39.9356897+00:00",
+      "ended_at_utc": "2026-08-28T05:05:39.9795921+00:00",
+      "duration_ms": 43.068,
+      "stdout": "logs/13-post-known-unrelated-status.stdout.txt",
+      "stdout_sha256": "25fca6413e074393a3d78234929c7a1bfad7a943f5c2ea88924b457fdc40f055",
+      "stderr": "logs/13-post-known-unrelated-status.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 14,
+      "name": "post-source-head",
+      "executable": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "argv": [
+        "-C",
+        "C:\\Users\\charl\\Animus_Ferric",
+        "rev-parse",
+        "HEAD"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "process_id": 16404,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:05:39.9848505+00:00",
+      "ended_at_utc": "2026-08-28T05:05:40.0227305+00:00",
+      "duration_ms": 37.015,
+      "stdout": "logs/14-post-source-head.stdout.txt",
+      "stdout_sha256": "d14331e59982066231d5f795a8a932391aff5e8ea3d48063e4801bbe9153c3bb",
+      "stderr": "logs/14-post-source-head.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 15,
+      "name": "binary-version",
+      "executable": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "argv": [
+        "--version"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "process_id": 22448,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:05:40.0284381+00:00",
+      "ended_at_utc": "2026-08-28T05:05:40.4914164+00:00",
+      "duration_ms": 461.882,
+      "stdout": "logs/15-binary-version.stdout.txt",
+      "stdout_sha256": "7c600ce0c82093d7d1e0082da1a226f39096ecbe981825cbe9c30d9e1c66b68a",
+      "stderr": "logs/15-binary-version.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 16,
+      "name": "query-help",
+      "executable": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "argv": [
+        "query",
+        "--help"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 120,
+      "timed_out": false,
+      "process_id": 13516,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:05:40.4967735+00:00",
+      "ended_at_utc": "2026-08-28T05:05:40.5160201+00:00",
+      "duration_ms": 17.909,
+      "stdout": "logs/16-query-help.stdout.txt",
+      "stdout_sha256": "0c1b44602d7d7b8bad0048e8cb37f157280bd11d7c4e74dd4de9d3b6b5df9bca",
+      "stderr": "logs/16-query-help.stderr.txt",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "ordinal": 17,
+      "name": "probe-default-fresh",
+      "executable": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "argv": [
+        "query",
+        "--mock",
+        "--no-config",
+        "--max-turns",
+        "1",
+        "--workspace",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\default\\workspace",
+        "do a release qualification mock task"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "process_id": 40100,
+      "expected_exit_codes": [
+        1
+      ],
+      "exit_code": 1,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:05:40.5377008+00:00",
+      "ended_at_utc": "2026-08-28T05:05:40.5986793+00:00",
+      "duration_ms": 59.977,
+      "stdout": "logs/17-probe-default-fresh.stdout.txt",
+      "stdout_sha256": "293d2441f2e469ad238c3be4efb17a05e20811e5a5981034beed24ea361466c2",
+      "stderr": "logs/17-probe-default-fresh.stderr.txt",
+      "stderr_sha256": "cc33a88b407af679723b8ac81863551cebe013b5b6f7146c2b67f3e223769aa8"
+    },
+    {
+      "ordinal": 18,
+      "name": "probe-default-resume",
+      "executable": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "argv": [
+        "query",
+        "--mock",
+        "--no-config",
+        "--resume",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\default\\workspace\\.ferric\\trace\\q-1787893540555-40100-0.jsonl",
+        "--workspace",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\default\\workspace",
+        "--max-turns",
+        "3"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "process_id": 40048,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:05:40.6879660+00:00",
+      "ended_at_utc": "2026-08-28T05:05:40.7848644+00:00",
+      "duration_ms": 95.476,
+      "stdout": "logs/18-probe-default-resume.stdout.txt",
+      "stdout_sha256": "30d07a382334c4bb72ef258fcdb3c1f7eded3f66483f2decc840efa061aa8160",
+      "stderr": "logs/18-probe-default-resume.stderr.txt",
+      "stderr_sha256": "7a7bd7943a5f3ba1f24855ceab87cc080473e532117eef52a0318606f474387d"
+    },
+    {
+      "ordinal": 19,
+      "name": "probe-external-fresh",
+      "executable": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "argv": [
+        "query",
+        "--mock",
+        "--no-config",
+        "--max-turns",
+        "1",
+        "--workspace",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\workspace",
+        "--trace-dir",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\traces",
+        "do a release qualification mock task"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "process_id": 40444,
+      "expected_exit_codes": [
+        1
+      ],
+      "exit_code": 1,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:05:40.8317971+00:00",
+      "ended_at_utc": "2026-08-28T05:05:40.8934145+00:00",
+      "duration_ms": 60.553,
+      "stdout": "logs/19-probe-external-fresh.stdout.txt",
+      "stdout_sha256": "293d2441f2e469ad238c3be4efb17a05e20811e5a5981034beed24ea361466c2",
+      "stderr": "logs/19-probe-external-fresh.stderr.txt",
+      "stderr_sha256": "d685ebd2e9f4aba573c5447f10635c05c144d68fcac044586338b942e66ae924"
+    },
+    {
+      "ordinal": 20,
+      "name": "probe-external-resume",
+      "executable": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "argv": [
+        "query",
+        "--mock",
+        "--no-config",
+        "--resume",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\traces\\q-1787893540849-40444-0.jsonl",
+        "--workspace",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\workspace",
+        "--max-turns",
+        "3",
+        "--trace-dir",
+        "C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\traces"
+      ],
+      "working_directory": "C:\\Users\\charl\\Animus_Ferric",
+      "timeout_seconds": 300,
+      "timed_out": false,
+      "process_id": 39048,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "started_at_utc": "2026-08-28T05:05:40.9073800+00:00",
+      "ended_at_utc": "2026-08-28T05:05:41.0069405+00:00",
+      "duration_ms": 98.258,
+      "stdout": "logs/20-probe-external-resume.stdout.txt",
+      "stdout_sha256": "30d07a382334c4bb72ef258fcdb3c1f7eded3f66483f2decc840efa061aa8160",
+      "stderr": "logs/20-probe-external-resume.stderr.txt",
+      "stderr_sha256": "4c49e042f02f1004c0a6cd0832d1e4c342b4216a62422fa6c03754f5b1b87192"
+    }
+  ],
+  "binary": {
+    "display_path": "target/release/ferric.exe",
+    "bytes": 21209088,
+    "sha256": "21cd2c358604783274d130049be757658b1589cf506e1e38f37267120399b65d",
+    "version": "ferric 0.1.0",
+    "source_commit": "894fdf40a324cb00988072ae39fe0219dfc39152",
+    "backend_openai": true,
+    "build_output": {
+      "display_path": "target/s115-release-qualification/attempts/002/cargo-target/release/ferric.exe",
+      "bytes": 21209088,
+      "sha256": "21cd2c358604783274d130049be757658b1589cf506e1e38f37267120399b65d"
+    },
+    "published_from_exact_build_output": true
+  },
+  "query_help": {
+    "gate": "query-help",
+    "stdout": "logs/16-query-help.stdout.txt",
+    "stdout_sha256": "0c1b44602d7d7b8bad0048e8cb37f157280bd11d7c4e74dd4de9d3b6b5df9bca",
+    "stderr": "logs/16-query-help.stderr.txt",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "checks": {
+      "trace_dir": true,
+      "default_root": true,
+      "disjoint": true,
+      "reparse": true,
+      "explicit_resume": true,
+      "powershell": true
+    }
+  },
+  "probes": [
+    {
+      "name": "default_fresh",
+      "gate": "probe-default-fresh",
+      "passed": true,
+      "external": false,
+      "workspace": "target/s115-release-qualification/attempts/002/probes/default/workspace",
+      "observed_trace_workspace": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\default\\workspace",
+      "trace_workspace_exact": true,
+      "trace_root": "target/s115-release-qualification/attempts/002/probes/default/workspace/.ferric/trace",
+      "trace_location_exact": true,
+      "workspace_dot_ferric_absent": false,
+      "session": "q-1787893540555-40100-0",
+      "stop_reason": "max_turns",
+      "resume_argv": [
+        "ferric",
+        "query",
+        "--resume",
+        "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\default\\workspace\\.ferric\\trace\\q-1787893540555-40100-0.jsonl",
+        "--workspace",
+        "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\default\\workspace"
+      ],
+      "resume_argv_exact": true,
+      "answer_absent": true,
+      "trace": {
+        "retained_path": "probes/default-fresh.jsonl",
+        "sha256": "7ed58fb76a3f4842072f2203a15e3bb3e3d4909888f7c8afdff1886872c26c63",
+        "bytes": 8378
+      }
+    },
+    {
+      "name": "default_resume",
+      "gate": "probe-default-resume",
+      "passed": true,
+      "external": false,
+      "workspace": "target/s115-release-qualification/attempts/002/probes/default/workspace",
+      "observed_trace_workspace": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\default\\workspace",
+      "trace_workspace_exact": true,
+      "trace_root": "target/s115-release-qualification/attempts/002/probes/default/workspace/.ferric/trace",
+      "trace_location_exact": true,
+      "workspace_dot_ferric_absent": false,
+      "session": "q-1787893540705-40048-0",
+      "resumed_from": "q-1787893540555-40100-0",
+      "expected_resumed_from": "q-1787893540555-40100-0",
+      "resumed_from_matches": true,
+      "stop_reason": "task_complete",
+      "terminal_resume_hint_absent": true,
+      "trace": {
+        "retained_path": "probes/default-resume.jsonl",
+        "sha256": "95b9ca9541bf87d7bcdb5fc28e928c49d8ae55360a5d2b885e55e0f253bd762c",
+        "bytes": 7572
+      }
+    },
+    {
+      "name": "external_fresh",
+      "gate": "probe-external-fresh",
+      "passed": true,
+      "external": true,
+      "workspace": "target/s115-release-qualification/attempts/002/probes/external/workspace",
+      "observed_trace_workspace": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\workspace",
+      "trace_workspace_exact": true,
+      "trace_root": "target/s115-release-qualification/attempts/002/probes/external/traces",
+      "trace_location_exact": true,
+      "workspace_dot_ferric_absent": true,
+      "session": "q-1787893540849-40444-0",
+      "stop_reason": "max_turns",
+      "resume_argv": [
+        "ferric",
+        "query",
+        "--resume",
+        "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\traces\\q-1787893540849-40444-0.jsonl",
+        "--workspace",
+        "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\workspace",
+        "--trace-dir",
+        "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\traces"
+      ],
+      "resume_argv_exact": true,
+      "answer_absent": true,
+      "trace": {
+        "retained_path": "probes/external-fresh.jsonl",
+        "sha256": "46f2326b2a33600e89114b077d5ca9c62e22ef54b379ac9199a5c2efe2307746",
+        "bytes": 8381
+      }
+    },
+    {
+      "name": "external_resume",
+      "gate": "probe-external-resume",
+      "passed": true,
+      "external": true,
+      "workspace": "target/s115-release-qualification/attempts/002/probes/external/workspace",
+      "observed_trace_workspace": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\target\\s115-release-qualification\\attempts\\002\\probes\\external\\workspace",
+      "trace_workspace_exact": true,
+      "trace_root": "target/s115-release-qualification/attempts/002/probes/external/traces",
+      "trace_location_exact": true,
+      "workspace_dot_ferric_absent": true,
+      "session": "q-1787893540926-39048-0",
+      "resumed_from": "q-1787893540849-40444-0",
+      "expected_resumed_from": "q-1787893540849-40444-0",
+      "resumed_from_matches": true,
+      "stop_reason": "task_complete",
+      "terminal_resume_hint_absent": true,
+      "trace": {
+        "retained_path": "probes/external-resume.jsonl",
+        "sha256": "78ed6abe3ba1cb4eec02f55c244b3c933e8972ad29e699f58a1b5ab1bf6ca14e",
+        "bytes": 7576
+      }
+    }
+  ],
+  "publication": {
+    "transient_root": "target/s115-release-qualification/attempts/002",
+    "retained_root": "docs/sprints/s115/control-artifacts/release/attempts/002",
+    "staged_then_verified": true
+  }
+}

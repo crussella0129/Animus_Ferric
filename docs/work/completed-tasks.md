@@ -1301,3 +1301,118 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   validator passed with
   eight intent chapters. No model request or remote mutation ran.
 - **Commit:** `86b10b82a00f555364c0e837374b39cadb61aeae`
+
+## T-11414 (sprint 115)
+- **Description:** Added the query-only `--trace-dir` boundary while preserving
+  the workspace-local default. External roots are normalized from the
+  invocation directory, resolved through the deepest existing canonical
+  ancestor, rejected for workspace overlap, non-directory components,
+  symlinks, Windows reparse points, and case aliases, and revalidated after
+  creation before trace allocation. External continuations must repeat the
+  same canonical root, and every resumable incomplete query stop now prints a
+  PowerShell- or POSIX-sh-safe command with the exact trace/workspace/root
+  arguments; clarification alone adds `--answer`. Public docs distinguish
+  resumable incomplete traces from successful terminal traces.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-28T00:15:38-04:00
+- **Files modified:** `crates/ferric-cli/src/query.rs`,
+  `crates/ferric-cli/tests/cli.rs`, `docs/basics-query.md`,
+  `docs/commands.md`, `docs/configuration.md`, `docs/demo-guide.md`,
+  `docs/SUMMARY.md`, `docs/intents/INT-0007-hardware-calibrated-autonomous-development.md`,
+  `docs/intents/INT-0008-unified-local-model-workflow.md`,
+  `docs/sprints/s115/`, `docs/work/tasks.md`, and
+  `docs/work/completed-tasks.md`
+- **Verification:** query unit tests passed 35/35; default and
+  `backend-openai` CLI suites passed 68/68 and 69/69; the full Ferric binary
+  suite passed 176/176 outside the restricted Windows process-inspection
+  sandbox; backend-enabled all-target Clippy passed with warnings denied;
+  workspace formatting and `git diff --check` passed. Independent adversarial
+  review closed clean after explicit MaxTurns shell round-trip, lexical `..`
+  overlap, and production-path post-create assurance revisions.
+- **Commit:** `13bf963b33f6e4ec73150ad4c9b78f86f7c0464b`
+
+## T-11501 (sprint 115)
+- **Description:** Qualified the Sprint 115 query source at commit
+  `894fdf40a324cb00988072ae39fe0219dfc39152` and published a freshly built
+  `backend-openai` release binary only after exact source-output byte and
+  SHA-256 parity. The append-only PowerShell control records bounded commands,
+  independent stream hashes, a clean Cargo/crates scope, the known unrelated
+  Sprint 114 edit, and four real default/external fresh/resume mock probes with
+  exact paths, public resume argv, stop reasons, and continuation links. The
+  first attempt truthfully stopped before Rust gates when empty clean-status
+  output exposed a parameter-binding bug; its partial evidence remains
+  untouched, the control gained a regression, and attempt 002 completed.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md),
+  [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-28T05:06:37Z
+- **Files modified:** `docs/sprints/s115/control-artifacts/release/`, ignored
+  `target/release/ferric.exe`, ignored
+  `target/s115-release-qualification/attempts/001/`, ignored
+  `target/s115-release-qualification/attempts/002/`,
+  `docs/work/tasks.md`, and `docs/work/completed-tasks.md`
+- **Verification:** all 20 attempt-002 gates passed, including locked format,
+  default/backend strict Clippy, targeted backend query and CLI tests, the
+  whole workspace, the fresh release build, version/help checks, and four
+  linked probes. Offline and live verification each reconciled 47 retained
+  files, 20 gates, and four traces. The published 21,209,088-byte binary is
+  `21cd2c358604783274d130049be757658b1589cf506e1e38f37267120399b65d`;
+  retained result hash
+  `3bcb6a647a1c07378d285d0fda404c5704a90daf1b38af4e5b51277465b0f5c9`
+  passed both verifier modes. No model server or inference ran.
+- **Commit:** `38acafb4176951a59f113b9cb92d62e99a5354e6`
+
+## T-11502 (sprint 115)
+- **Description:** Losslessly quarantined every stale generated run root and
+  re-proved the frozen Sprint 114 app harness, standalone external Git
+  topology, and Bubblewrap network boundary from a depth-preserving copy. A
+  pre-attempt control failure and attempts 001 through 003 all failed closed
+  and remain append-only evidence; each exposed a distinct PowerShell control
+  defect that was covered before attempt 004 completed successfully.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Completed:** 2026-08-28T07:08:11Z
+- **Files modified:** `docs/sprints/s115/control-artifacts/harness/`, ignored
+  `target/s115-preserved-preflight/attempt-001/` through
+  `target/s115-preserved-preflight/attempt-004/`, `docs/work/tasks.md`, and
+  `docs/work/completed-tasks.md`
+- **Verification:** attempt 004 passed the 30-file plus two generated-input
+  frozen contract, all 295 journal rows, 590 referenced outputs, 156 sandbox
+  invocations, both host and WSL depth probes, the standalone external Git
+  probe, and explicit network-unshare canaries. Offline and live verification
+  independently reconciled all 92 compact evidence files; the frozen manifest
+  is `532cd39a9fec557816929bcf12e5ae539c8a30c0f4c4829a9d6f89b0ca9f358b`
+  and the live journal is
+  `df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae`.
+  Before/after manifests were byte-identical for every moved root, all four
+  canonical roots were absent at handoff, the tracked worktree effect and
+  known unrelated Sprint 114 edit were unchanged, and no model inference ran.
+- **Commit:** `5e1ad3852c0e1f8d5dce984eb196cf7dd9fbfdcc`
+
+## T-11503 (sprint 115 — closed partial)
+- **Disposition:** Closed on Sprint 115's abort, not completed. E17-A/B and
+  handoff publication passed; E17-C's dependent-use half did not occur and is
+  represented by T-11506 before T-11410.
+- **Description:** Qualified the exact post-reboot Qwen3.8-27B UD-Q4_K_M
+  runtime through the managed CUDA b10516 server at context 32,768 and 24 GPU
+  layers. Attempt 001 retained a pre-launch Bubblewrap-name false-negative;
+  attempt 002 passed host/resource attestation, ownership/argv/listener/runfile
+  binding, health and effective-property checks, constrained smoke, and bounded
+  throughput, then published the same process as an immutable
+  `qualified_running` handoff. A verifier-only compatibility overlay preserves
+  retained ISO timestamps, compares canonical UTC instants, and accepts only
+  attempt 002's exact predecessor manifest without rewriting either attempt.
+  The live handoff later ended externally before T-11410 consumed it; this task
+  therefore claims runtime qualification, not application execution.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md)
+- **Closed:** 2026-08-29T23:00:29-04:00
+- **Files modified:** `docs/sprints/s115/control-artifacts/runtime/`,
+  `docs/sprints/s115/sprint-tests/`, `docs/work/tasks.md`, and
+  `docs/work/completed-tasks.md`
+- **Verification:** attempt 002 retained 64 manifest-bound files; one warmup
+  plus three 256-token samples produced a 3.565083339811294 tokens/s median;
+  static control passed 31 checks; offline runtime and handoff verifiers passed
+  with canonical UTC and the exact predecessor binding; attempt snapshots were
+  byte-unchanged. After external server termination, exact cold cleanup removed
+  only the stale local registration matching the retained handoff hash, sent no
+  process signal, and confirmed no listener or global registration.
+- **Commits:** evidence `70aecb84d762bf97972b65c15f37b8c48de7f833`;
+  verifier overlay `31290fd5270b351a09506e63467ab1f23b8fdc76`

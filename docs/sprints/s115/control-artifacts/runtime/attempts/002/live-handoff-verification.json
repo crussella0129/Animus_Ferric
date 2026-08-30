@@ -1,0 +1,726 @@
+{
+  "schema": "animus-ferric-s115-live-handoff-verification-v1",
+  "passed": true,
+  "checked_at_utc": "2026-08-28T09:04:57.4846076+00:00",
+  "binding": {
+    "schema": "animus-ferric-s115-live-binding-v1",
+    "passed": true,
+    "captured_at_utc": "2026-08-28T09:04:16.4481836+00:00",
+    "runfiles": {
+      "local": {
+        "path": "C:\\Users\\charl\\Animus_Ferric\\.ferric\\server.json",
+        "present": true,
+        "bytes": 279,
+        "sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f",
+        "content": "{\n  \"engine\": \"llama-server\",\n  \"pid\": 18096,\n  \"port\": 8080,\n  \"base_url\": \"http://127.0.0.1:8080/v1\",\n  \"tailscale\": false,\n  \"model\": \"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\n  \"context_size\": 32768,\n  \"sampling_seed\": 42,\n  \"parallel_slots\": 1\n}",
+        "parse_error": null,
+        "value": {
+          "engine": "llama-server",
+          "pid": 18096,
+          "port": 8080,
+          "base_url": "http://127.0.0.1:8080/v1",
+          "tailscale": false,
+          "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "context_size": 32768,
+          "sampling_seed": 42,
+          "parallel_slots": 1
+        }
+      },
+      "global": {
+        "path": "C:\\Users\\charl\\AppData\\Roaming\\ferric\\server.json",
+        "present": true,
+        "bytes": 279,
+        "sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f",
+        "content": "{\n  \"engine\": \"llama-server\",\n  \"pid\": 18096,\n  \"port\": 8080,\n  \"base_url\": \"http://127.0.0.1:8080/v1\",\n  \"tailscale\": false,\n  \"model\": \"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\n  \"context_size\": 32768,\n  \"sampling_seed\": 42,\n  \"parallel_slots\": 1\n}",
+        "parse_error": null,
+        "value": {
+          "engine": "llama-server",
+          "pid": 18096,
+          "port": 8080,
+          "base_url": "http://127.0.0.1:8080/v1",
+          "tailscale": false,
+          "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "context_size": 32768,
+          "sampling_seed": 42,
+          "parallel_slots": 1
+        }
+      }
+    },
+    "runfile": {
+      "engine": "llama-server",
+      "pid": 18096,
+      "port": 8080,
+      "base_url": "http://127.0.0.1:8080/v1",
+      "tailscale": false,
+      "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "context_size": 32768,
+      "sampling_seed": 42,
+      "parallel_slots": 1
+    },
+    "process": {
+      "pid": 18096,
+      "parent_pid": 22772,
+      "name": "llama-server.exe",
+      "executable_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe",
+      "command_line": "\"llama-server\" -m C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf -c 32768 -t 12 -ngl 24 -b 512 --seed 42 --parallel 1 --host 127.0.0.1 --port 8080",
+      "creation_utc": "2026-08-28T08:57:26.6784000+00:00",
+      "command_binding": {
+        "schema": "animus-ferric-windows-process-command-binding-v1",
+        "passed": true,
+        "executable_path_passed": true,
+        "recorded_executable_sha256_passed": true,
+        "live_executable_sha256_passed": true,
+        "argv0_passed": true,
+        "argv0_mode": "declared_bare_alias",
+        "argument_tail_passed": true,
+        "expected_argc": 19,
+        "observed_argc": 19,
+        "observed_argv": [
+          "llama-server",
+          "-m",
+          "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "-c",
+          "32768",
+          "-t",
+          "12",
+          "-ngl",
+          "24",
+          "-b",
+          "512",
+          "--seed",
+          "42",
+          "--parallel",
+          "1",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "8080"
+        ],
+        "errors": []
+      },
+      "creation_binding": {
+        "passed": true,
+        "expected_creation_utc": "2026-08-28T08:57:26.6784000+00:00",
+        "observed_creation_utc": "2026-08-28T08:57:26.6784000+00:00"
+      }
+    },
+    "listeners": [
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 8080,
+        "State": 2,
+        "OwningProcess": 18096
+      }
+    ],
+    "errors": []
+  },
+  "runtime_identity": {
+    "release_result_sha256": "3bcb6a647a1c07378d285d0fda404c5704a90daf1b38af4e5b51277465b0f5c9",
+    "ferric": {
+      "path": "C:\\Users\\charl\\Animus_Ferric\\target\\release\\ferric.exe",
+      "bytes": 21209088,
+      "sha256": "21cd2c358604783274d130049be757658b1589cf506e1e38f37267120399b65d"
+    },
+    "model": {
+      "path": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "bytes": 16464440224,
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482"
+    },
+    "engine": {
+      "path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe",
+      "bytes": 9216,
+      "sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c"
+    },
+    "cuda_backend": {
+      "path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\ggml-cuda.dll",
+      "bytes": 538308608,
+      "sha256": "fc45d8f6a73f46231e0e04d6aa8260c7e366b974a18cab4bc53ed35248c2ff82"
+    },
+    "runtime_tree": {
+      "passed": true,
+      "expected_file_count": 55,
+      "actual_file_count": 55,
+      "errors": [],
+      "actual": [
+        {
+          "path": "cublas64_12.dll",
+          "bytes": 100033536,
+          "sha256": "e40202fe4223c1cd2d2dce7beec59e1ed61c7801bd827309183be9b50e358f4c"
+        },
+        {
+          "path": "cublasLt64_12.dll",
+          "bytes": 473551360,
+          "sha256": "2a896460bef60ed57ef32b0875812f355a6984e671d638bb632f5e8c1d7a831f"
+        },
+        {
+          "path": "cudart64_12.dll",
+          "bytes": 553984,
+          "sha256": "d28e42265da7462162a54da6b7a99ea4fa2caf8139d862bb500db875d0b32dfc"
+        },
+        {
+          "path": "ggml-base.dll",
+          "bytes": 773632,
+          "sha256": "8f5626f4f2a736caab94c5120bb6ace15592b47ac3cab9b023e1247b5e877bf7"
+        },
+        {
+          "path": "ggml-cpu-alderlake.dll",
+          "bytes": 1182208,
+          "sha256": "97a6792627470fdf5fd99dd2775b32eed3e30b87dfa79a5d2add9d92853eea8e"
+        },
+        {
+          "path": "ggml-cpu-cannonlake.dll",
+          "bytes": 1397248,
+          "sha256": "12999cc7f6b0ac0ba38a3b2407b4ec16f7d1397cdebaaec59ae0b9a22e7503ba"
+        },
+        {
+          "path": "ggml-cpu-cascadelake.dll",
+          "bytes": 1383936,
+          "sha256": "a04d9637bccbb4911a6b3868a2019696a5aadfeac714e769a1741fb234c3f013"
+        },
+        {
+          "path": "ggml-cpu-cooperlake.dll",
+          "bytes": 1384960,
+          "sha256": "f706fcedce98737fd404fc275ae2fe31e3c49890df7ebc3e0beb8efb8e618031"
+        },
+        {
+          "path": "ggml-cpu-haswell.dll",
+          "bytes": 1186304,
+          "sha256": "fce3cfad5c965a7dbc87ee78ce9dcaa727c3f267339541bfae6721b60207642d"
+        },
+        {
+          "path": "ggml-cpu-icelake.dll",
+          "bytes": 1390592,
+          "sha256": "3c0178ac4d7db0f1340125c8e8b83f5944491550a3b4ef6df19133bd813d622e"
+        },
+        {
+          "path": "ggml-cpu-ivybridge.dll",
+          "bytes": 1075712,
+          "sha256": "8156b645b6ecb08c3e33ad7b15e601d1b6965e3dfbfbadf37941fe82015acb8e"
+        },
+        {
+          "path": "ggml-cpu-piledriver.dll",
+          "bytes": 1079808,
+          "sha256": "895c1f15d42f8765fafd358e725512b7b9025b162b22f49a84880bf421f615aa"
+        },
+        {
+          "path": "ggml-cpu-sandybridge.dll",
+          "bytes": 1055744,
+          "sha256": "567f6f16a90fbb60a08916ce0f18b22603f12ed682f7388ae8858ba649a63a61"
+        },
+        {
+          "path": "ggml-cpu-sapphirerapids.dll",
+          "bytes": 1661440,
+          "sha256": "4648680f5473a9573c0ff2b476b688a0fb9738f98462b48dad2bda52e275581e"
+        },
+        {
+          "path": "ggml-cpu-skylakex.dll",
+          "bytes": 1391104,
+          "sha256": "8520bb806f38cfadab30d7946424eee1191e59732cc0843b137cfb4315227a4f"
+        },
+        {
+          "path": "ggml-cpu-sse42.dll",
+          "bytes": 878592,
+          "sha256": "f85253f981c2372fdd4add30260232fa0e6c9922d1796c47bbc03e84b9010d62"
+        },
+        {
+          "path": "ggml-cpu-x64.dll",
+          "bytes": 871424,
+          "sha256": "9dd11256f6a7a57c6fd6b6a99ba3bd50abfa6ba9accdc24f4906fb96441e1c28"
+        },
+        {
+          "path": "ggml-cpu-zen4.dll",
+          "bytes": 1391616,
+          "sha256": "87b24bdbbdcdd76eed9064e2c21e3e147ee08f0e1708016e3089a517df1ad7ee"
+        },
+        {
+          "path": "ggml-cuda.dll",
+          "bytes": 538308608,
+          "sha256": "fc45d8f6a73f46231e0e04d6aa8260c7e366b974a18cab4bc53ed35248c2ff82"
+        },
+        {
+          "path": "ggml-rpc-server.exe",
+          "bytes": 101376,
+          "sha256": "c85ade0212bbeb4d37b98c66300f44d63e1b87ee2ab099e0b44c364a3572530c"
+        },
+        {
+          "path": "ggml-rpc.dll",
+          "bytes": 138752,
+          "sha256": "fc7f723d04a5e0971489850556740014afa5fedb90ffb8b4c668c8f95d1d7006"
+        },
+        {
+          "path": "ggml.dll",
+          "bytes": 86016,
+          "sha256": "a6149283ebbb41190a5172395a367086dd88ff6dee3350ee964e5a63bccd4b6f"
+        },
+        {
+          "path": "libomp140.x86_64.dll",
+          "bytes": 661856,
+          "sha256": "4a20c1e5c115c29771a12324513eb109badac72180f79481527ad79d996ffb33"
+        },
+        {
+          "path": "llama-batched-bench-impl.dll",
+          "bytes": 61440,
+          "sha256": "b205b4edf4eaded5a3d81c4a8b624a32ee2916296ad491d11b9c5f0072446894"
+        },
+        {
+          "path": "llama-batched-bench.exe",
+          "bytes": 9216,
+          "sha256": "e2d8ab4fa81395b5f3928175c196966b2563f9bf9417923b2c409578ae936194"
+        },
+        {
+          "path": "llama-bench-impl.dll",
+          "bytes": 395264,
+          "sha256": "48818a75742e056c57fa685dc5bf23d7fe05736689832a0ecb3d7f5b9b122c2b"
+        },
+        {
+          "path": "llama-bench.exe",
+          "bytes": 9216,
+          "sha256": "75e025a9b0a616c3d99c1cfdb7dc1d74fff96cf109612f68dd5c92e44ca19eb9"
+        },
+        {
+          "path": "llama-cli-impl.dll",
+          "bytes": 3496960,
+          "sha256": "f76a25a54a35941a2017b944fcc5db1ebf0a6f8b718f97acc32a0fab975eadc5"
+        },
+        {
+          "path": "llama-cli.exe",
+          "bytes": 9216,
+          "sha256": "d5d41ed1dc845b728b54f9b78c458d3a6baa0824e45c25b8100c096f81035884"
+        },
+        {
+          "path": "llama-common.dll",
+          "bytes": 8079872,
+          "sha256": "32575744205de1b6a69d46e9097a3b17f2ea996c0feddd3086ed378f459114dd"
+        },
+        {
+          "path": "llama-completion-impl.dll",
+          "bytes": 133120,
+          "sha256": "818a22d381611e47e6206e095a79b4b5c37ecfe1c0ce8d63cfa0f02d8fc9113b"
+        },
+        {
+          "path": "llama-completion.exe",
+          "bytes": 9216,
+          "sha256": "4b87621b0090e91babd75f06df36df6400b746451e6089539fd2d9aeb23ac123"
+        },
+        {
+          "path": "llama-fit-params-impl.dll",
+          "bytes": 40960,
+          "sha256": "3775970ef0575d2ae13e49bcd1e7de3d22029deaa13a2d24a429bc6db48a49b9"
+        },
+        {
+          "path": "llama-fit-params.exe",
+          "bytes": 9216,
+          "sha256": "91bcf323f3ffeaedc8e3513947ba0f71d26881e5163f0aaaa83e26c966cc1bca"
+        },
+        {
+          "path": "llama-gemma3-cli.exe",
+          "bytes": 27136,
+          "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+        },
+        {
+          "path": "llama-gguf-split.exe",
+          "bytes": 60416,
+          "sha256": "d6a8e4015ffa52824a1bcb7e422fd3498fc2b4f27cd7b4ad0c6d1506026fd939"
+        },
+        {
+          "path": "llama-imatrix.exe",
+          "bytes": 253952,
+          "sha256": "00156faadfd757c7baec2e357d43444f82af1aef95cf3e5461ede64069d4ecca"
+        },
+        {
+          "path": "llama-llava-cli.exe",
+          "bytes": 27136,
+          "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+        },
+        {
+          "path": "llama-minicpmv-cli.exe",
+          "bytes": 27136,
+          "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+        },
+        {
+          "path": "llama-mtmd-cli.exe",
+          "bytes": 84480,
+          "sha256": "4a15f13665cdc7085008698b6fdfbffb5f842ccc26a0f8c368424a6dd2785200"
+        },
+        {
+          "path": "llama-mtmd-debug.exe",
+          "bytes": 55296,
+          "sha256": "2e5964bb2087ab5a610d6b701b5565c5d397ca840acf27a757aaf27ba87feeed"
+        },
+        {
+          "path": "llama-perplexity-impl.dll",
+          "bytes": 194048,
+          "sha256": "cf41fa78ee7ceda727d8e577ad4b4e062261f62c7ba4d7fa88e93d91e6b3e872"
+        },
+        {
+          "path": "llama-perplexity.exe",
+          "bytes": 9216,
+          "sha256": "ad519d81fe372951a1d84c032e90da192876b93532bae0c5b71b3e37591d2e4e"
+        },
+        {
+          "path": "llama-quantize-impl.dll",
+          "bytes": 137216,
+          "sha256": "cb26315d9601c9cca27e8f5c7c49e20ebf656a8400cd4a2c3800954c0476f8be"
+        },
+        {
+          "path": "llama-quantize.exe",
+          "bytes": 9216,
+          "sha256": "b90413d2f8749c0cb044bfb81c12b72b757e6f221b96463963475b47bccb6ba4"
+        },
+        {
+          "path": "llama-qwen2vl-cli.exe",
+          "bytes": 27136,
+          "sha256": "ec0736b993168d15b873f897adb9fd2afe418b2d7ba17e31464ed3f3970c653d"
+        },
+        {
+          "path": "llama-results.exe",
+          "bytes": 45568,
+          "sha256": "d228c1540bf480df3b06f8271dd37dc452891e7769c52a2f663801f3ea2081fd"
+        },
+        {
+          "path": "llama-server-impl.dll",
+          "bytes": 9982976,
+          "sha256": "b4590de3b49eb7c2bb4d1e4774760f202828d5749c37eec34347398c45779550"
+        },
+        {
+          "path": "llama-server.exe",
+          "bytes": 9216,
+          "sha256": "5a3cbd5613c45ef2d53d3afc6734fd9e67229c0066c2415626ddc7c18901d36c"
+        },
+        {
+          "path": "llama-template-analysis.exe",
+          "bytes": 270848,
+          "sha256": "b8c914da60edca0aa9c40e2610186a63e56f913a171fefce7cf69938ec7e0bc7"
+        },
+        {
+          "path": "llama-tokenize.exe",
+          "bytes": 57344,
+          "sha256": "3221b8210022462438d7e587bb17b1a4ad260fea645537aa2d2a2fea285b6429"
+        },
+        {
+          "path": "llama-tts.exe",
+          "bytes": 41472,
+          "sha256": "861726a31a9ac43d18381f6dcf80905be14f02a087e1854d518e73cbd17588cf"
+        },
+        {
+          "path": "llama.dll",
+          "bytes": 2958848,
+          "sha256": "fdabe60bdb0673411688572f752939de80d50d998331e4efe94fe28f24fc504d"
+        },
+        {
+          "path": "llama.exe",
+          "bytes": 83968,
+          "sha256": "89a47a0fe9d26898da099749c52382adcc30a3dd4a2dc55bd7fda927c20cd7ad"
+        },
+        {
+          "path": "mtmd.dll",
+          "bytes": 1716736,
+          "sha256": "dcda852c814ab85a4d5cd78d7c3daaab4a512d163d2d10858769065347a1364b"
+        }
+      ]
+    }
+  },
+  "endpoints": {
+    "health": {
+      "status_code": 200,
+      "text": "{\"status\":\"ok\"}",
+      "json": {
+        "status": "ok"
+      }
+    },
+    "models": {
+      "status_code": 200,
+      "text": "{\"models\":[{\"name\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"model\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"modified_at\":\"\",\"size\":\"\",\"digest\":\"\",\"type\":\"model\",\"description\":\"\",\"tags\":[\"\"],\"capabilities\":[\"completion\"],\"parameters\":\"\",\"details\":{\"parent_model\":\"\",\"format\":\"gguf\",\"family\":\"\",\"families\":[\"\"],\"parameter_size\":\"\",\"quantization_level\":\"\"}}],\"object\":\"list\",\"data\":[{\"id\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"aliases\":[\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\"],\"tags\":[],\"object\":\"model\",\"created\":1787907897,\"owned_by\":\"llamacpp\",\"meta\":{\"vocab_type\":2,\"n_vocab\":248320,\"n_ctx\":32768,\"n_ctx_train\":262144,\"n_embd\":5120,\"n_params\":27320697856,\"size\":16453443584,\"ftype\":\"Q4_K - Medium\"}}]}",
+      "json": {
+        "models": [
+          {
+            "name": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+            "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+            "modified_at": "",
+            "size": "",
+            "digest": "",
+            "type": "model",
+            "description": "",
+            "tags": [
+              ""
+            ],
+            "capabilities": [
+              "completion"
+            ],
+            "parameters": "",
+            "details": {
+              "parent_model": "",
+              "format": "gguf",
+              "family": "",
+              "families": [
+                ""
+              ],
+              "parameter_size": "",
+              "quantization_level": ""
+            }
+          }
+        ],
+        "object": "list",
+        "data": [
+          {
+            "id": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+            "aliases": [
+              "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf"
+            ],
+            "tags": [],
+            "object": "model",
+            "created": 1787907897,
+            "owned_by": "llamacpp",
+            "meta": {
+              "vocab_type": 2,
+              "n_vocab": 248320,
+              "n_ctx": 32768,
+              "n_ctx_train": 262144,
+              "n_embd": 5120,
+              "n_params": 27320697856,
+              "size": 16453443584,
+              "ftype": "Q4_K - Medium"
+            }
+          }
+        ]
+      }
+    },
+    "props": {
+      "status_code": 200,
+      "text": "{\"default_generation_settings\":{\"params\":{\"seed\":42,\"temperature\":1.0,\"dynatemp_range\":0.0,\"dynatemp_exponent\":1.0,\"top_k\":20,\"top_p\":0.949999988079071,\"min_p\":0.05000000074505806,\"top_n_sigma\":-1.0,\"xtc_probability\":0.0,\"xtc_threshold\":0.10000000149011612,\"typical_p\":1.0,\"repeat_last_n\":64,\"repeat_penalty\":1.0,\"presence_penalty\":0.0,\"frequency_penalty\":0.0,\"dry_multiplier\":0.0,\"dry_base\":1.75,\"dry_allowed_length\":2,\"dry_penalty_last_n\":64,\"mirostat\":0,\"mirostat_tau\":5.0,\"mirostat_eta\":0.10000000149011612,\"adaptive_target\":-1.0,\"adaptive_decay\":0.8999999761581421,\"max_tokens\":-1,\"n_predict\":-1,\"n_keep\":0,\"n_discard\":0,\"ignore_eos\":false,\"stream\":false,\"n_probs\":0,\"min_keep\":0,\"chat_format\":\"Content-only\",\"reasoning_format\":\"none\",\"reasoning_in_content\":false,\"generation_prompt\":\"\",\"samplers\":[\"penalties\",\"dry\",\"top_n_sigma\",\"top_k\",\"typ_p\",\"top_p\",\"min_p\",\"xtc\",\"temperature\"],\"speculative.types\":\"none\",\"timings_per_token\":false,\"post_sampling_probs\":false,\"backend_sampling\":false,\"lora\":[]},\"n_ctx\":32768},\"total_slots\":1,\"model_alias\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"model_ftype\":\"Q4_K - Medium\",\"model_path\":\"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\"modalities\":{\"vision\":false,\"video\":false,\"audio\":false},\"media_marker\":\"<__media_IUCv61HSknKdsDjHgqbnm79ujPeWXl67__>\",\"endpoint_slots\":true,\"endpoint_props\":false,\"endpoint_metrics\":false,\"ui\":true,\"ui_settings\":{},\"chat_template\":\"{%- set image_count = namespace(value=0) %}\\n{%- set video_count = namespace(value=0) %}\\n{%- macro render_content(content, do_vision_count, is_system_content=false) %}\\n    {%- if content is string %}\\n        {{- content }}\\n    {%- elif content is iterable and content is not mapping %}\\n        {%- for item in content %}\\n            {%- if 'image' in item or 'image_url' in item or item.type == 'image' %}\\n                {%- if is_system_content %}\\n                    {{- raise_exception('System message cannot contain images.') }}\\n                {%- endif %}\\n                {%- if do_vision_count %}\\n                    {%- set image_count.value = image_count.value + 1 %}\\n                {%- endif %}\\n                {%- if add_vision_id %}\\n                    {{- 'Picture ' ~ image_count.value ~ ': ' }}\\n                {%- endif %}\\n                {{- '<|vision_start|><|image_pad|><|vision_end|>' }}\\n            {%- elif 'video' in item or item.type == 'video' %}\\n                {%- if is_system_content %}\\n                    {{- raise_exception('System message cannot contain videos.') }}\\n                {%- endif %}\\n                {%- if do_vision_count %}\\n                    {%- set video_count.value = video_count.value + 1 %}\\n                {%- endif %}\\n                {%- if add_vision_id %}\\n                    {{- 'Video ' ~ video_count.value ~ ': ' }}\\n                {%- endif %}\\n                {{- '<|vision_start|><|video_pad|><|vision_end|>' }}\\n            {%- elif 'text' in item %}\\n                {{- item.text }}\\n            {%- else %}\\n                {{- raise_exception('Unexpected item type in content.') }}\\n            {%- endif %}\\n        {%- endfor %}\\n    {%- elif content is none or content is undefined %}\\n        {{- '' }}\\n    {%- else %}\\n        {{- raise_exception('Unexpected content type.') }}\\n    {%- endif %}\\n{%- endmacro %}\\n{%- if not messages %}\\n    {{- raise_exception('No messages provided.') }}\\n{%- endif %}\\n{%- set sysns = namespace(count=0, text='') %}\\n{%- for message in messages %}\\n    {%- if sysns.count == loop.index0 and (message.role == 'system' or message.role == 'developer') %}\\n        {%- set sys_content = render_content(message.content, false, true)|trim %}\\n        {%- if sys_content %}\\n            {%- set sysns.text = sysns.text + ('\\\\n' if sysns.text else '') + sys_content %}\\n        {%- endif %}\\n        {%- set sysns.count = sysns.count + 1 %}\\n    {%- endif %}\\n{%- endfor %}\\n{%- set num_sys = sysns.count %}\\n{%- set merged_system = sysns.text %}\\n{%- set reasoning_instructions = '' %}\\n{%- if enable_thinking is undefined or enable_thinking is true %}\\n    {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}\\n    {%- if resolved_reasoning_effort == 'high' %}\\n        {%- set resolved_reasoning_effort = 'xhigh' %}\\n    {%- endif %}\\n    {%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}\\n        {{- raise_exception('Unexpected reasoning effort ' ~ reasoning_effort ~ '. Supported types are xhigh (default), medium, and low.') }}\\n    {%- endif %}\\n    {%- if resolved_reasoning_effort == 'xhigh' %}\\n        {%- set reasoning_instructions = 'Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.' %}\\n    {%- elif resolved_reasoning_effort == 'low' %}\\n        {%- set reasoning_instructions = 'Reasoning effort is set to low. Keep your thinking brief and focused, moving directly to the conclusion without unnecessary elaboration.' %}\\n    {%- endif %}\\n{%- endif %}\\n{%- if tools and tools is iterable and tools is not mapping %}\\n    {{- '<|im_start|>system\\\\n' }}\\n    {%- if reasoning_instructions %}\\n        {{- reasoning_instructions + '\\\\n\\\\n' }}\\n    {%- endif %}\\n    {{- \\\"# Tools\\\\n\\\\nYou have access to the following functions:\\\\n\\\\n<tools>\\\" }}\\n    {%- for tool in tools %}\\n        {{- \\\"\\\\n\\\" }}\\n        {{- tool | tojson }}\\n    {%- endfor %}\\n    {{- \\\"\\\\n</tools>\\\" }}\\n    {{- '\\\\n\\\\nIf you choose to call a function ONLY reply in the following format with NO suffix:\\\\n\\\\n<tool_call>\\\\n<function=example_function_name>\\\\n<parameter=example_parameter_1>\\\\nvalue_1\\\\n</parameter>\\\\n<parameter=example_parameter_2>\\\\nThis is the value for the second parameter\\\\nthat can span\\\\nmultiple lines\\\\n</parameter>\\\\n</function>\\\\n</tool_call>\\\\n\\\\n<IMPORTANT>\\\\nReminder:\\\\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\\\\n- Required parameters MUST be specified\\\\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\\\\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\\\\n</IMPORTANT>' }}\\n    {%- if merged_system %}\\n        {{- '\\\\n\\\\n' + merged_system }}\\n    {%- endif %}\\n    {{- '<|im_end|>\\\\n' }}\\n{%- else %}\\n    {%- if merged_system %}\\n        {{- '<|im_start|>system\\\\n' + (reasoning_instructions + '\\\\n\\\\n' if reasoning_instructions else '')  + merged_system + '<|im_end|>\\\\n' }}\\n    {%- elif reasoning_instructions %}\\n        {{- '<|im_start|>system\\\\n' + reasoning_instructions + '<|im_end|>\\\\n' }}\\n    {%- endif %}\\n{%- endif %}\\n{%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) %}\\n{%- for message in messages[::-1] %}\\n    {%- set index = (messages|length - 1) - loop.index0 %}\\n    {%- if ns.multi_step_tool and message.role == \\\"user\\\" %}\\n        {%- set content = render_content(message.content, false)|trim %}\\n        {%- if not(content.startswith('<tool_response>') and content.endswith('</tool_response>')) %}\\n            {%- set ns.multi_step_tool = false %}\\n            {%- set ns.last_query_index = index %}\\n        {%- endif %}\\n    {%- endif %}\\n{%- endfor %}\\n{%- for message in messages %}\\n    {%- if loop.index0 >= num_sys %}\\n    {%- set content = render_content(message.content, true)|trim %}\\n    {%- if message.role == \\\"system\\\" or message.role == \\\"developer\\\" %}\\n        {{- raise_exception('System message must be at the beginning.') }}\\n    {%- elif message.role == \\\"user\\\" %}\\n        {{- '<|im_start|>' + message.role + '\\\\n' + content + '<|im_end|>' + '\\\\n' }}\\n    {%- elif message.role == \\\"assistant\\\" %}\\n        {%- set reasoning_content = '' %}\\n        {%- if message.reasoning_content is string %}\\n            {%- set reasoning_content = message.reasoning_content %}\\n        {%- endif %}\\n        {%- set reasoning_content = reasoning_content|trim %}\\n        {%- if preserve_thinking is undefined or preserve_thinking is true or loop.index0 > ns.last_query_index %}\\n            {{- '<|im_start|>' + message.role + '\\\\n<think>\\\\n' + reasoning_content + '\\\\n</think>\\\\n\\\\n' + content }}\\n        {%- else %}\\n            {{- '<|im_start|>' + message.role + '\\\\n' + content }}\\n        {%- endif %}\\n        {%- if message.tool_calls and message.tool_calls is iterable and message.tool_calls is not mapping %}\\n            {%- for tool_call in message.tool_calls %}\\n                {%- if tool_call.function is defined %}\\n                    {%- set tool_call = tool_call.function %}\\n                {%- endif %}\\n                {%- if tool_call.name is not defined or tool_call.name is none %}\\n                    {{- raise_exception('Tool call is missing a function name.') }}\\n                {%- endif %}\\n                {%- if loop.first %}\\n                    {%- if content|trim %}\\n                        {{- '\\\\n\\\\n<tool_call>\\\\n<function=' + tool_call.name + '>\\\\n' }}\\n                    {%- else %}\\n                        {{- '<tool_call>\\\\n<function=' + tool_call.name + '>\\\\n' }}\\n                    {%- endif %}\\n                {%- else %}\\n                    {{- '\\\\n<tool_call>\\\\n<function=' + tool_call.name + '>\\\\n' }}\\n                {%- endif %}\\n                {%- if tool_call.arguments is mapping %}\\n                    {%- for args_name, args_value in tool_call.arguments|items %}\\n                        {{- '<parameter=' + args_name + '>\\\\n' }}\\n                        {%- set args_value = args_value | string if args_value is string else args_value | tojson | safe %}\\n                        {{- args_value }}\\n                        {{- '\\\\n</parameter>\\\\n' }}\\n                    {%- endfor %}\\n                {%- elif tool_call.arguments is string %}\\n                    {%- if tool_call.arguments|trim %}\\n                        {{- raise_exception('Tool call arguments for function \\\"' + (tool_call.name | string) + '\\\" were passed as a JSON string. Parse them into an object before calling apply_chat_template.') }}\\n                    {%- endif %}\\n                {%- elif tool_call.arguments is defined and tool_call.arguments is not none %}\\n                    {{- raise_exception('Tool call arguments for function \\\"' + (tool_call.name | string) + '\\\" must be an object/mapping or a JSON string.') }}\\n                {%- endif %}\\n                {{- '</function>\\\\n</tool_call>' }}\\n            {%- endfor %}\\n        {%- endif %}\\n        {{- '<|im_end|>\\\\n' }}\\n    {%- elif message.role == \\\"tool\\\" %}\\n        {%- if loop.previtem and loop.previtem.role != \\\"tool\\\" %}\\n            {{- '<|im_start|>user' }}\\n        {%- endif %}\\n        {{- '\\\\n<tool_response>\\\\n' }}\\n        {{- content }}\\n        {{- '\\\\n</tool_response>' }}\\n        {%- if not loop.last and loop.nextitem.role != \\\"tool\\\" %}\\n            {{- '<|im_end|>\\\\n' }}\\n        {%- elif loop.last %}\\n            {{- '<|im_end|>\\\\n' }}\\n        {%- endif %}\\n    {%- else %}\\n        {{- raise_exception('Unexpected message role.') }}\\n    {%- endif %}\\n    {%- endif %}\\n{%- endfor %}\\n{%- if add_generation_prompt %}\\n    {{- '<|im_start|>assistant\\\\n' }}\\n    {%- if enable_thinking is defined and enable_thinking is false %}\\n        {{- '<think>\\\\n\\\\n</think>\\\\n\\\\n' }}\\n    {%- else %}\\n        {{- '<think>\\\\n' }}\\n    {%- endif %}\\n{%- endif %}\\n{#- Unsloth fixes - developer role, merged system messages, tool calling #}\",\"chat_template_caps\":{\"supports_object_arguments\":true,\"supports_parallel_tool_calls\":true,\"supports_preserve_reasoning\":true,\"supports_reasoning_effort\":true,\"supports_string_content\":true,\"supports_system_role\":true,\"supports_tool_calls\":true,\"supports_tools\":true,\"supports_typed_content\":false},\"bos_token\":\"<|endoftext|>\",\"eos_token\":\"<|im_end|>\",\"build_info\":\"b10516-b95502ba9\",\"is_sleeping\":false,\"cors_proxy_enabled\":false}",
+      "json": {
+        "default_generation_settings": {
+          "params": {
+            "seed": 42,
+            "temperature": 1.0,
+            "dynatemp_range": 0.0,
+            "dynatemp_exponent": 1.0,
+            "top_k": 20,
+            "top_p": 0.949999988079071,
+            "min_p": 0.05000000074505806,
+            "top_n_sigma": -1.0,
+            "xtc_probability": 0.0,
+            "xtc_threshold": 0.10000000149011612,
+            "typical_p": 1.0,
+            "repeat_last_n": 64,
+            "repeat_penalty": 1.0,
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0,
+            "dry_multiplier": 0.0,
+            "dry_base": 1.75,
+            "dry_allowed_length": 2,
+            "dry_penalty_last_n": 64,
+            "mirostat": 0,
+            "mirostat_tau": 5.0,
+            "mirostat_eta": 0.10000000149011612,
+            "adaptive_target": -1.0,
+            "adaptive_decay": 0.8999999761581421,
+            "max_tokens": -1,
+            "n_predict": -1,
+            "n_keep": 0,
+            "n_discard": 0,
+            "ignore_eos": false,
+            "stream": false,
+            "n_probs": 0,
+            "min_keep": 0,
+            "chat_format": "Content-only",
+            "reasoning_format": "none",
+            "reasoning_in_content": false,
+            "generation_prompt": "",
+            "samplers": [
+              "penalties",
+              "dry",
+              "top_n_sigma",
+              "top_k",
+              "typ_p",
+              "top_p",
+              "min_p",
+              "xtc",
+              "temperature"
+            ],
+            "speculative.types": "none",
+            "timings_per_token": false,
+            "post_sampling_probs": false,
+            "backend_sampling": false,
+            "lora": []
+          },
+          "n_ctx": 32768
+        },
+        "total_slots": 1,
+        "model_alias": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "model_ftype": "Q4_K - Medium",
+        "model_path": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+        "modalities": {
+          "vision": false,
+          "video": false,
+          "audio": false
+        },
+        "media_marker": "<__media_IUCv61HSknKdsDjHgqbnm79ujPeWXl67__>",
+        "endpoint_slots": true,
+        "endpoint_props": false,
+        "endpoint_metrics": false,
+        "ui": true,
+        "ui_settings": {},
+        "chat_template": "{%- set image_count = namespace(value=0) %}\n{%- set video_count = namespace(value=0) %}\n{%- macro render_content(content, do_vision_count, is_system_content=false) %}\n    {%- if content is string %}\n        {{- content }}\n    {%- elif content is iterable and content is not mapping %}\n        {%- for item in content %}\n            {%- if 'image' in item or 'image_url' in item or item.type == 'image' %}\n                {%- if is_system_content %}\n                    {{- raise_exception('System message cannot contain images.') }}\n                {%- endif %}\n                {%- if do_vision_count %}\n                    {%- set image_count.value = image_count.value + 1 %}\n                {%- endif %}\n                {%- if add_vision_id %}\n                    {{- 'Picture ' ~ image_count.value ~ ': ' }}\n                {%- endif %}\n                {{- '<|vision_start|><|image_pad|><|vision_end|>' }}\n            {%- elif 'video' in item or item.type == 'video' %}\n                {%- if is_system_content %}\n                    {{- raise_exception('System message cannot contain videos.') }}\n                {%- endif %}\n                {%- if do_vision_count %}\n                    {%- set video_count.value = video_count.value + 1 %}\n                {%- endif %}\n                {%- if add_vision_id %}\n                    {{- 'Video ' ~ video_count.value ~ ': ' }}\n                {%- endif %}\n                {{- '<|vision_start|><|video_pad|><|vision_end|>' }}\n            {%- elif 'text' in item %}\n                {{- item.text }}\n            {%- else %}\n                {{- raise_exception('Unexpected item type in content.') }}\n            {%- endif %}\n        {%- endfor %}\n    {%- elif content is none or content is undefined %}\n        {{- '' }}\n    {%- else %}\n        {{- raise_exception('Unexpected content type.') }}\n    {%- endif %}\n{%- endmacro %}\n{%- if not messages %}\n    {{- raise_exception('No messages provided.') }}\n{%- endif %}\n{%- set sysns = namespace(count=0, text='') %}\n{%- for message in messages %}\n    {%- if sysns.count == loop.index0 and (message.role == 'system' or message.role == 'developer') %}\n        {%- set sys_content = render_content(message.content, false, true)|trim %}\n        {%- if sys_content %}\n            {%- set sysns.text = sysns.text + ('\\n' if sysns.text else '') + sys_content %}\n        {%- endif %}\n        {%- set sysns.count = sysns.count + 1 %}\n    {%- endif %}\n{%- endfor %}\n{%- set num_sys = sysns.count %}\n{%- set merged_system = sysns.text %}\n{%- set reasoning_instructions = '' %}\n{%- if enable_thinking is undefined or enable_thinking is true %}\n    {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}\n    {%- if resolved_reasoning_effort == 'high' %}\n        {%- set resolved_reasoning_effort = 'xhigh' %}\n    {%- endif %}\n    {%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}\n        {{- raise_exception('Unexpected reasoning effort ' ~ reasoning_effort ~ '. Supported types are xhigh (default), medium, and low.') }}\n    {%- endif %}\n    {%- if resolved_reasoning_effort == 'xhigh' %}\n        {%- set reasoning_instructions = 'Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.' %}\n    {%- elif resolved_reasoning_effort == 'low' %}\n        {%- set reasoning_instructions = 'Reasoning effort is set to low. Keep your thinking brief and focused, moving directly to the conclusion without unnecessary elaboration.' %}\n    {%- endif %}\n{%- endif %}\n{%- if tools and tools is iterable and tools is not mapping %}\n    {{- '<|im_start|>system\\n' }}\n    {%- if reasoning_instructions %}\n        {{- reasoning_instructions + '\\n\\n' }}\n    {%- endif %}\n    {{- \"# Tools\\n\\nYou have access to the following functions:\\n\\n<tools>\" }}\n    {%- for tool in tools %}\n        {{- \"\\n\" }}\n        {{- tool | tojson }}\n    {%- endfor %}\n    {{- \"\\n</tools>\" }}\n    {{- '\\n\\nIf you choose to call a function ONLY reply in the following format with NO suffix:\\n\\n<tool_call>\\n<function=example_function_name>\\n<parameter=example_parameter_1>\\nvalue_1\\n</parameter>\\n<parameter=example_parameter_2>\\nThis is the value for the second parameter\\nthat can span\\nmultiple lines\\n</parameter>\\n</function>\\n</tool_call>\\n\\n<IMPORTANT>\\nReminder:\\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\\n- Required parameters MUST be specified\\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\\n</IMPORTANT>' }}\n    {%- if merged_system %}\n        {{- '\\n\\n' + merged_system }}\n    {%- endif %}\n    {{- '<|im_end|>\\n' }}\n{%- else %}\n    {%- if merged_system %}\n        {{- '<|im_start|>system\\n' + (reasoning_instructions + '\\n\\n' if reasoning_instructions else '')  + merged_system + '<|im_end|>\\n' }}\n    {%- elif reasoning_instructions %}\n        {{- '<|im_start|>system\\n' + reasoning_instructions + '<|im_end|>\\n' }}\n    {%- endif %}\n{%- endif %}\n{%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) %}\n{%- for message in messages[::-1] %}\n    {%- set index = (messages|length - 1) - loop.index0 %}\n    {%- if ns.multi_step_tool and message.role == \"user\" %}\n        {%- set content = render_content(message.content, false)|trim %}\n        {%- if not(content.startswith('<tool_response>') and content.endswith('</tool_response>')) %}\n            {%- set ns.multi_step_tool = false %}\n            {%- set ns.last_query_index = index %}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- for message in messages %}\n    {%- if loop.index0 >= num_sys %}\n    {%- set content = render_content(message.content, true)|trim %}\n    {%- if message.role == \"system\" or message.role == \"developer\" %}\n        {{- raise_exception('System message must be at the beginning.') }}\n    {%- elif message.role == \"user\" %}\n        {{- '<|im_start|>' + message.role + '\\n' + content + '<|im_end|>' + '\\n' }}\n    {%- elif message.role == \"assistant\" %}\n        {%- set reasoning_content = '' %}\n        {%- if message.reasoning_content is string %}\n            {%- set reasoning_content = message.reasoning_content %}\n        {%- endif %}\n        {%- set reasoning_content = reasoning_content|trim %}\n        {%- if preserve_thinking is undefined or preserve_thinking is true or loop.index0 > ns.last_query_index %}\n            {{- '<|im_start|>' + message.role + '\\n<think>\\n' + reasoning_content + '\\n</think>\\n\\n' + content }}\n        {%- else %}\n            {{- '<|im_start|>' + message.role + '\\n' + content }}\n        {%- endif %}\n        {%- if message.tool_calls and message.tool_calls is iterable and message.tool_calls is not mapping %}\n            {%- for tool_call in message.tool_calls %}\n                {%- if tool_call.function is defined %}\n                    {%- set tool_call = tool_call.function %}\n                {%- endif %}\n                {%- if tool_call.name is not defined or tool_call.name is none %}\n                    {{- raise_exception('Tool call is missing a function name.') }}\n                {%- endif %}\n                {%- if loop.first %}\n                    {%- if content|trim %}\n                        {{- '\\n\\n<tool_call>\\n<function=' + tool_call.name + '>\\n' }}\n                    {%- else %}\n                        {{- '<tool_call>\\n<function=' + tool_call.name + '>\\n' }}\n                    {%- endif %}\n                {%- else %}\n                    {{- '\\n<tool_call>\\n<function=' + tool_call.name + '>\\n' }}\n                {%- endif %}\n                {%- if tool_call.arguments is mapping %}\n                    {%- for args_name, args_value in tool_call.arguments|items %}\n                        {{- '<parameter=' + args_name + '>\\n' }}\n                        {%- set args_value = args_value | string if args_value is string else args_value | tojson | safe %}\n                        {{- args_value }}\n                        {{- '\\n</parameter>\\n' }}\n                    {%- endfor %}\n                {%- elif tool_call.arguments is string %}\n                    {%- if tool_call.arguments|trim %}\n                        {{- raise_exception('Tool call arguments for function \"' + (tool_call.name | string) + '\" were passed as a JSON string. Parse them into an object before calling apply_chat_template.') }}\n                    {%- endif %}\n                {%- elif tool_call.arguments is defined and tool_call.arguments is not none %}\n                    {{- raise_exception('Tool call arguments for function \"' + (tool_call.name | string) + '\" must be an object/mapping or a JSON string.') }}\n                {%- endif %}\n                {{- '</function>\\n</tool_call>' }}\n            {%- endfor %}\n        {%- endif %}\n        {{- '<|im_end|>\\n' }}\n    {%- elif message.role == \"tool\" %}\n        {%- if loop.previtem and loop.previtem.role != \"tool\" %}\n            {{- '<|im_start|>user' }}\n        {%- endif %}\n        {{- '\\n<tool_response>\\n' }}\n        {{- content }}\n        {{- '\\n</tool_response>' }}\n        {%- if not loop.last and loop.nextitem.role != \"tool\" %}\n            {{- '<|im_end|>\\n' }}\n        {%- elif loop.last %}\n            {{- '<|im_end|>\\n' }}\n        {%- endif %}\n    {%- else %}\n        {{- raise_exception('Unexpected message role.') }}\n    {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- '<|im_start|>assistant\\n' }}\n    {%- if enable_thinking is defined and enable_thinking is false %}\n        {{- '<think>\\n\\n</think>\\n\\n' }}\n    {%- else %}\n        {{- '<think>\\n' }}\n    {%- endif %}\n{%- endif %}\n{#- Unsloth fixes - developer role, merged system messages, tool calling #}",
+        "chat_template_caps": {
+          "supports_object_arguments": true,
+          "supports_parallel_tool_calls": true,
+          "supports_preserve_reasoning": true,
+          "supports_reasoning_effort": true,
+          "supports_string_content": true,
+          "supports_system_role": true,
+          "supports_tool_calls": true,
+          "supports_tools": true,
+          "supports_typed_content": false
+        },
+        "bos_token": "<|endoftext|>",
+        "eos_token": "<|im_end|>",
+        "build_info": "b10516-b95502ba9",
+        "is_sleeping": false,
+        "cors_proxy_enabled": false
+      }
+    }
+  },
+  "server_log_prefix": {
+    "passed": true,
+    "path": "C:\\Users\\charl\\Animus_Ferric\\target\\s115-runtime-qualification\\attempts\\002\\server-live.log",
+    "expected_bytes": 50812,
+    "observed_file_bytes": 50812,
+    "expected_sha256": "6fe4990a0a48aad6edbe677c67ec43323a4cd2337ec2b435e574a1f35bab4b39",
+    "observed_sha256": "6fe4990a0a48aad6edbe677c67ec43323a4cd2337ec2b435e574a1f35bab4b39",
+    "errors": []
+  },
+  "server_log_facts": {
+    "schema": "animus-ferric-s115-server-log-facts-v1",
+    "passed": true,
+    "value": {
+      "effective_gpu_layers": 24,
+      "total_layers": 66,
+      "offload_line": "offloaded 24/66 layers",
+      "kv_cache_lines": [
+        "K (q8_0):  544.00 MiB, V (q8_0):"
+      ],
+      "flash_attention_lines": [
+        "flash_attn            = enabled"
+      ],
+      "thinking_lines": [
+        "chat template, thinking = 1"
+      ],
+      "preserve_warning_count": 0
+    },
+    "sha256": "b1dc89c9a106bbfbe05131769bb0a47f7a2af7b5099a4cea5baf938d11cbcbae"
+  },
+  "final_binding": {
+    "schema": "animus-ferric-s115-live-binding-v1",
+    "passed": true,
+    "captured_at_utc": "2026-08-28T09:04:57.4844936+00:00",
+    "runfiles": {
+      "local": {
+        "path": "C:\\Users\\charl\\Animus_Ferric\\.ferric\\server.json",
+        "present": true,
+        "bytes": 279,
+        "sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f",
+        "content": "{\n  \"engine\": \"llama-server\",\n  \"pid\": 18096,\n  \"port\": 8080,\n  \"base_url\": \"http://127.0.0.1:8080/v1\",\n  \"tailscale\": false,\n  \"model\": \"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\n  \"context_size\": 32768,\n  \"sampling_seed\": 42,\n  \"parallel_slots\": 1\n}",
+        "parse_error": null,
+        "value": {
+          "engine": "llama-server",
+          "pid": 18096,
+          "port": 8080,
+          "base_url": "http://127.0.0.1:8080/v1",
+          "tailscale": false,
+          "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "context_size": 32768,
+          "sampling_seed": 42,
+          "parallel_slots": 1
+        }
+      },
+      "global": {
+        "path": "C:\\Users\\charl\\AppData\\Roaming\\ferric\\server.json",
+        "present": true,
+        "bytes": 279,
+        "sha256": "af3c8d4c664ff606a60e2ab9b666d09f1624facade8ffb895122e1bac939d18f",
+        "content": "{\n  \"engine\": \"llama-server\",\n  \"pid\": 18096,\n  \"port\": 8080,\n  \"base_url\": \"http://127.0.0.1:8080/v1\",\n  \"tailscale\": false,\n  \"model\": \"C:\\\\Users\\\\charl\\\\Animus_Ferric\\\\models\\\\Qwen3.8-27B-UD-Q4_K_M.gguf\",\n  \"context_size\": 32768,\n  \"sampling_seed\": 42,\n  \"parallel_slots\": 1\n}",
+        "parse_error": null,
+        "value": {
+          "engine": "llama-server",
+          "pid": 18096,
+          "port": 8080,
+          "base_url": "http://127.0.0.1:8080/v1",
+          "tailscale": false,
+          "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "context_size": 32768,
+          "sampling_seed": 42,
+          "parallel_slots": 1
+        }
+      }
+    },
+    "runfile": {
+      "engine": "llama-server",
+      "pid": 18096,
+      "port": 8080,
+      "base_url": "http://127.0.0.1:8080/v1",
+      "tailscale": false,
+      "model": "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "context_size": 32768,
+      "sampling_seed": 42,
+      "parallel_slots": 1
+    },
+    "process": {
+      "pid": 18096,
+      "parent_pid": 22772,
+      "name": "llama-server.exe",
+      "executable_path": "C:\\Users\\charl\\Animus_Ferric\\target\\s114-experiment\\runtime\\llama-b10516-cuda12.4\\bin\\llama-server.exe",
+      "command_line": "\"llama-server\" -m C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf -c 32768 -t 12 -ngl 24 -b 512 --seed 42 --parallel 1 --host 127.0.0.1 --port 8080",
+      "creation_utc": "2026-08-28T08:57:26.6784000+00:00",
+      "command_binding": {
+        "schema": "animus-ferric-windows-process-command-binding-v1",
+        "passed": true,
+        "executable_path_passed": true,
+        "recorded_executable_sha256_passed": true,
+        "live_executable_sha256_passed": true,
+        "argv0_passed": true,
+        "argv0_mode": "declared_bare_alias",
+        "argument_tail_passed": true,
+        "expected_argc": 19,
+        "observed_argc": 19,
+        "observed_argv": [
+          "llama-server",
+          "-m",
+          "C:\\Users\\charl\\Animus_Ferric\\models\\Qwen3.8-27B-UD-Q4_K_M.gguf",
+          "-c",
+          "32768",
+          "-t",
+          "12",
+          "-ngl",
+          "24",
+          "-b",
+          "512",
+          "--seed",
+          "42",
+          "--parallel",
+          "1",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "8080"
+        ],
+        "errors": []
+      },
+      "creation_binding": {
+        "passed": true,
+        "expected_creation_utc": "2026-08-28T08:57:26.6784000+00:00",
+        "observed_creation_utc": "2026-08-28T08:57:26.6784000+00:00"
+      }
+    },
+    "listeners": [
+      {
+        "LocalAddress": "127.0.0.1",
+        "LocalPort": 8080,
+        "State": 2,
+        "OwningProcess": 18096
+      }
+    ],
+    "errors": []
+  },
+  "errors": []
+}

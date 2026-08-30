@@ -1,0 +1,22 @@
+{
+  "schema": "animus-ferric-s115-live-launch-stream-prefixes-v1",
+  "stdout": {
+    "raw_relative_path": "target/s115-runtime-qualification/attempts/002/launch-live.stdout.log",
+    "bytes": 250,
+    "sha256": "f8a9b4f7c18eecf063fff44c9e3710ead05ba21de2b16b3d88bcad6d0b253702"
+  },
+  "stderr": {
+    "raw_relative_path": "target/s115-runtime-qualification/attempts/002/launch-live.stderr.log",
+    "bytes": 50942,
+    "sha256": "40e07eb300d4140f6231b8499acfa3823ddac51106ec13874dc971740ef1e0fe"
+  },
+  "ready_stdout_prefix": {
+    "passed": true,
+    "path": "C:\\Users\\charl\\Animus_Ferric\\target\\s115-runtime-qualification\\attempts\\002\\launch-live.stdout.log",
+    "expected_bytes": 250,
+    "observed_file_bytes": 250,
+    "expected_sha256": "f8a9b4f7c18eecf063fff44c9e3710ead05ba21de2b16b3d88bcad6d0b253702",
+    "observed_sha256": "f8a9b4f7c18eecf063fff44c9e3710ead05ba21de2b16b3d88bcad6d0b253702",
+    "errors": []
+  }
+}

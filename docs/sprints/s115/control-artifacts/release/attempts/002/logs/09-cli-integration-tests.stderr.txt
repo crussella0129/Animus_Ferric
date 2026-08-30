@@ -1,0 +1,2 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.44s
+     Running tests\cli.rs (target\debug\deps\cli-673bf811952936d9.exe)

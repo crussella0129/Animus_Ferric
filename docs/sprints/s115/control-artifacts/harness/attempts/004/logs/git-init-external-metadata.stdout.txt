@@ -1,0 +1,1 @@
+Initialized empty Git repository in C:/Users/charl/Animus_Ferric/target/s114-experiment/launcher-attestation-probe/

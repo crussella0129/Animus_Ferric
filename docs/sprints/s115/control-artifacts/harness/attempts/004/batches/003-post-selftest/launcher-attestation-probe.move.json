@@ -1,0 +1,19 @@
+{
+  "schema": "s115-preserved-root-v1",
+  "batch": "003-post-selftest",
+  "root_key": "launcher-attestation-probe",
+  "present": true,
+  "source": "target/s114-experiment/launcher-attestation-probe",
+  "destination": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/launcher-attestation-probe",
+  "same_volume": true,
+  "before_manifest": "batches/003-post-selftest/launcher-attestation-probe.before.entries.jsonl",
+  "after_manifest": "batches/003-post-selftest/launcher-attestation-probe.after.entries.jsonl",
+  "entry_count": 41,
+  "regular_file_count": 26,
+  "regular_file_bytes": 28141,
+  "reparse_count": 0,
+  "manifest_bytes": 5834,
+  "entries_sha256": "0588e27347e7f278c9552cab912bf26f8789651af726462f693dbaa0ab85b6b4",
+  "byte_identical_manifests": true,
+  "parity": true
+}

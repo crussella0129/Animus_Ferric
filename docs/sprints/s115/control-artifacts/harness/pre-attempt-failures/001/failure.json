@@ -1,0 +1,33 @@
+{
+  "schema": "s115-harness-pre-attempt-failure-v1",
+  "ordinal": "001",
+  "status": "control_failure",
+  "phase": "preservation-root-initialization",
+  "captured_at_utc": "2026-08-28T06:19:46.2341118Z",
+  "source_commit": "f25d5e6caee1058f06fefe195b3736579572f11f",
+  "command": [
+    "pwsh",
+    "-NoLogo",
+    "-NoProfile",
+    "-File",
+    ".\\docs\\sprints\\s115\\control-artifacts\\harness\\qualify-harness.ps1"
+  ],
+  "exit_code": 1,
+  "error": "qualify-harness.ps1: A parameter cannot be found that matches parameter name 'LiteralPath'.",
+  "cause": "New-Item was invoked with its unsupported -LiteralPath parameter before preservation-root creation.",
+  "attempt_allocated": false,
+  "preservation_root_created": false,
+  "wsl_started": false,
+  "canonical_root_move_attempted": false,
+  "canonical_roots_after": {
+    "app-harness": "present",
+    "self-test-workspaces": "present",
+    "app-workspace": "absent",
+    "launcher-attestation-probe": "absent"
+  },
+  "known_unrelated_edit": "docs/sprints/s114/control-artifacts/model/acquisition-tests.json",
+  "known_unrelated_edit_sha256_after": "8ecf94878e7ad745aea28a9365af58ee111c80b26d21a15a0f434edb2beb75db",
+  "raw_attempt_path": null,
+  "resolution": "Replace the two invalid New-Item -LiteralPath bindings with -Path and add an AST regression that rejects the unsupported form.",
+  "safe_to_retry": true
+}

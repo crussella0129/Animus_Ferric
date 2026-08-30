@@ -1,0 +1,1 @@
+{"messages":[{"role":"user","content":"AF-S114-E02-TEMPLATE-USER-PRIOR-7C91"},{"role":"assistant","reasoning_content":"AF-S114-E02-TEMPLATE-REASONING-5B2D","content":"AF-S114-E02-TEMPLATE-CONTENT-4E68"},{"role":"user","content":"AF-S114-E02-TEMPLATE-USER-LATEST-A3F7"}],"add_generation_prompt":true,"chat_template_kwargs":{"preserve_reasoning":true,"preserve_thinking":true}}

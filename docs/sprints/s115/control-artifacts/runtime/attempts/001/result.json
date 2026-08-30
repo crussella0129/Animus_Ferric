@@ -1,0 +1,17 @@
+{
+  "schema": "animus-ferric-s115-runtime-result-v1",
+  "passed": false,
+  "state": "failed",
+  "attempt": "001",
+  "phase": "preflight",
+  "failure_classification": "hardware_or_isolation_preflight_failure",
+  "error": "System.Management.Automation.RuntimeException: preflight rejected the attempt: Ubuntu WSL2 Bubblewrap network isolation probe failed",
+  "started_at_utc": "2026-08-28T08:45:25.7245448+00:00",
+  "completed_at_utc": "2026-08-28T08:45:39.2281456+00:00",
+  "wall_seconds": 13.502471,
+  "cleanup": {
+    "attempted": false,
+    "stopped": false,
+    "reason": "strong_ownership_was_not_proven"
+  }
+}

@@ -1,0 +1,128 @@
+diff --git a/docs/sprints/s114/control-artifacts/model/acquisition-tests.json b/docs/sprints/s114/control-artifacts/model/acquisition-tests.json
+index 4201906..c5ce1b1 100644
+--- a/docs/sprints/s114/control-artifacts/model/acquisition-tests.json
++++ b/docs/sprints/s114/control-artifacts/model/acquisition-tests.json
+@@ -1,6 +1,6 @@
+ {
+   "schema": "animus-ferric-model-acquisition-tests-v1",
+-  "completed_at_utc": "2026-08-27T09:46:08.4118630Z",
++  "completed_at_utc": "2026-08-27T16:25:15.3780191Z",
+   "passed": true,
+   "tests": [
+     {
+@@ -38,12 +38,13 @@
+           "passed": true,
+           "record": {
+             "schema": "animus-ferric-model-acquisition-v1",
+-            "started_at_utc": "2026-08-27T09:46:05.9076088Z",
+-            "completed_at_utc": "2026-08-27T09:46:06.4531464Z",
++            "started_at_utc": "2026-08-27T16:25:12.9456315Z",
++            "completed_at_utc": "2026-08-27T16:25:13.5257252Z",
+             "quant": "Q4_K_M",
+             "verified": false,
+             "published": false,
+             "failure": "partial_file_failed_verification",
++            "path": "models/tiny.gguf.part",
+             "verification": {
+               "schema": "animus-ferric-model-verification-v1",
+               "path": "models/tiny.gguf.part",
+@@ -53,8 +54,7 @@
+               "actual_sha256": "55e5509f8052998294266ee5b50cb592938191fb5d67f73cac2e60b0276b1bdd",
+               "verified": false,
+               "failure": "sha256_mismatch"
+-            },
+-            "path": "models/tiny.gguf.part"
++            }
+           },
+           "final_exists": false,
+           "partial_exists": true
+@@ -63,19 +63,19 @@
+           "passed": true,
+           "record": {
+             "schema": "animus-ferric-model-acquisition-v1",
+-            "started_at_utc": "2026-08-27T09:46:06.6036676Z",
+-            "completed_at_utc": "2026-08-27T09:46:07.5105821Z",
++            "started_at_utc": "2026-08-27T16:25:13.702704Z",
++            "completed_at_utc": "2026-08-27T16:25:14.579408Z",
+             "quant": "Q4_K_M",
+             "verified": false,
+             "published": false,
+             "failure": "post_publish_verification_failed",
+-            "quarantine": "models/tiny.gguf.rejected-20260827T0946075049460Z-55384",
+-            "path": "models/tiny.gguf",
+-            "verification": null
++            "quarantine": "models/tiny.gguf.rejected-20260827T1625145761271Z-46868",
++            "verification": null,
++            "path": "models/tiny.gguf"
+           },
+           "final_exists": false,
+           "quarantine": [
+-            "tiny.gguf.rejected-20260827T0946075049460Z-55384"
++            "tiny.gguf.rejected-20260827T1625145761271Z-46868"
+           ]
+         }
+       }
+@@ -84,29 +84,10 @@
+       "name": "model_is_ignored_evidence_is_tracked",
+       "passed": true,
+       "evidence": {
+-        "ignore_rule": "warning: unable to access 'C:\\Users\\charl/.config/git/ignore': Permission denied\r\n.gitignore:33:models/\tmodels/Qwen3.8-27B-UD-Q4_K_M.gguf",
++        "ignore_rule": ".gitignore:33:models/\tmodels/Qwen3.8-27B-UD-Q4_K_M.gguf",
+         "git_tracked": false,
+         "model_blob_in_status": false,
+-        "status": [
+-          " M docs/sprints/s114/control-artifacts/model/acquire-model.ps1",
+-          " M docs/sprints/s114/control-artifacts/model/acquisition-tests.json",
+-          " M docs/sprints/s114/control-artifacts/model/test-acquisition.ps1",
+-          "?? docs/sprints/s114/control-artifacts/runtime/.gitattributes",
+-          "?? docs/sprints/s114/control-artifacts/runtime/README.md",
+-          "?? docs/sprints/s114/control-artifacts/runtime/finalize-selection.ps1",
+-          "?? docs/sprints/s114/control-artifacts/runtime/freeze-runtime.ps1",
+-          "?? docs/sprints/s114/control-artifacts/runtime/nonce.txt",
+-          "?? docs/sprints/s114/control-artifacts/runtime/record-q4-verdict.ps1",
+-          "?? docs/sprints/s114/control-artifacts/runtime/run-coordinate.ps1",
+-          "?? docs/sprints/s114/control-artifacts/runtime/runtime-common.ps1",
+-          "?? docs/sprints/s114/control-artifacts/runtime/runtime-plan.json",
+-          "?? docs/sprints/s114/control-artifacts/runtime/smoke-prompt.txt",
+-          "?? docs/sprints/s114/control-artifacts/runtime/test-runtime.ps1",
+-          "?? docs/sprints/s114/control-artifacts/runtime/throughput-request.template.json",
+-          "?? docs/sprints/s114/control-artifacts/runtime/trace-selftest-fixture.jsonl",
+-          "?? docs/sprints/s114/control-artifacts/runtime/verify-q4-gate.ps1",
+-          "?? docs/sprints/s114/control-artifacts/runtime/verify-runtime.ps1"
+-        ]
++        "status": []
+       }
+     },
+     {
+@@ -148,12 +129,13 @@
+         "acquisition_exit_code": 3,
+         "acquisition_record": {
+           "schema": "animus-ferric-model-acquisition-v1",
+-          "started_at_utc": "2026-08-27T09:46:07.862024Z",
+-          "completed_at_utc": "2026-08-27T09:46:08.3939569Z",
++          "started_at_utc": "2026-08-27T16:25:14.9238718Z",
++          "completed_at_utc": "2026-08-27T16:25:15.3486942Z",
+           "quant": "Q3_K_XL",
+           "verified": false,
+           "published": false,
+           "failure": "q3_fallback_not_authorized",
++          "authorization_record": "invalid",
+           "gate_verification": {
+             "schema": "animus-ferric-q4-gate-verification-v1",
+             "mode": "verify_gate",
+@@ -170,14 +152,13 @@
+               "attempt_manifest_sha256": null,
+               "attempt_verification": null,
+               "runtime_plan_sha256": "4db43a2b704a9b1190a407ebdc417c846063b4ad54eef8225e516608aa4ff015",
+-              "validator_sha256": "7e4c249c9d06c6873f395b3c4972d9604659a765149ac91067efd934c9690d63"
++              "validator_sha256": "ffa8cdfc0580f7f558b6a9433c291f2963324b269bc88b0bb5b2fb07b2623048"
+             },
+             "errors": [
+               "Q4 attempt evidence is absent: 01-q4-32768",
+               "Q4 gate fields do not equal fresh attempt-chain derivation"
+             ]
+           },
+-          "authorization_record": "invalid",
+           "gate": "T-11409/E09-D"
+         },
+         "q3_final_exists": false,

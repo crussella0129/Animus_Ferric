@@ -1,0 +1,16 @@
+{
+  "schema": "s115-selftest-live-journal-link-v1",
+  "summary_journal_sha256": "df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae",
+  "copied_snapshot_sha256": "df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae",
+  "live_journal": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/app-harness/command-journal.tsv",
+  "live_journal_sha256": "df9cc31e61b15e97d2cfbae8de3b5646f2e600d8ad45db1bad98d5d36d77feae",
+  "live_journal_companion": "target/s115-preserved-preflight/attempt-004/batches/003-post-selftest/roots/app-harness/command-journal.tsv.sha256",
+  "live_journal_companion_sha256": "e14bf827580bb54e97dc5527747d25533baded685bfde1d83edc56cdf640cc18",
+  "post_quarantine_manifest": "batches/003-post-selftest/app-harness.after.entries.jsonl",
+  "retained_log_file_count": 847,
+  "journal_row_count": 295,
+  "referenced_output_count": 590,
+  "sandbox_invocation_count": 156,
+  "unshare_net_proven": true,
+  "status": "pass"
+}

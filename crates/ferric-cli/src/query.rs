@@ -130,12 +130,12 @@ pub struct QueryArgs {
     #[arg(required_unless_present = "resume")]
     pub prompt: Option<String>,
 
-    /// Resume an interrupted, still-incomplete session by replaying its
-    /// trace (sprint 39, ADR-049) and continuing the SAME task with more
-    /// turns. Not a chat-continuation mechanism: a trace that already
-    /// reached any stop reason (clean or not) is rejected. `--prompts-dir`/
-    /// `Animus.md` are inert for a resumed run's system message (frozen
-    /// from the replayed trace).
+    /// Resume a supported incomplete session by replaying its trace (sprint
+    /// 39, ADR-049) and continuing the SAME task with more turns. Successful
+    /// terminal traces are rejected; supported incomplete stops and
+    /// structurally recoverable interrupted traces are resumable. This is not
+    /// a chat-continuation mechanism. `--prompts-dir`/`Animus.md` are inert for
+    /// a resumed run's system message (frozen from the replayed trace).
     #[arg(long)]
     pub resume: Option<PathBuf>,
 
@@ -147,6 +147,17 @@ pub struct QueryArgs {
     /// Workspace root (containment boundary). Default: current directory.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
+
+    /// Store this query's trace outside the workspace. The directory must be
+    /// disjoint from the canonical workspace in both directions and must not
+    /// contain a symbolic link or Windows reparse-point component. Default:
+    /// `<workspace>/.ferric/trace`.
+    ///
+    /// Resuming a trace written outside the default root requires explicitly
+    /// repeating the same `--trace-dir`. Printed resume commands use
+    /// PowerShell quoting on Windows and POSIX-sh quoting on Unix.
+    #[arg(long)]
+    pub trace_dir: Option<PathBuf>,
 
     #[command(flatten)]
     pub backend_opts: BackendOpts,
@@ -756,6 +767,525 @@ fn read_attachment(
     Ok(bytes)
 }
 
+/// Stable failure classes for the query-only external trace-root boundary.
+/// Keeping the class separate from the human detail lets tests pin which
+/// predicate refused a path without depending on platform-specific I/O text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternalTraceErrorClass {
+    InvalidPath,
+    Io,
+    NotDirectory,
+    LinkOrReparse,
+    EqualWorkspace,
+    AncestorOfWorkspace,
+    DescendantOfWorkspace,
+    ExplicitRootRequired,
+    ResumeRootMismatch,
+}
+
+impl ExternalTraceErrorClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidPath => "trace_dir_invalid_path",
+            Self::Io => "trace_dir_io",
+            Self::NotDirectory => "trace_dir_not_directory",
+            Self::LinkOrReparse => "trace_dir_link_or_reparse",
+            Self::EqualWorkspace => "trace_dir_equal_workspace",
+            Self::AncestorOfWorkspace => "trace_dir_ancestor_of_workspace",
+            Self::DescendantOfWorkspace => "trace_dir_descendant_of_workspace",
+            Self::ExplicitRootRequired => "trace_dir_required_for_external_resume",
+            Self::ResumeRootMismatch => "trace_dir_mismatch_for_external_resume",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ExternalTraceError {
+    class: ExternalTraceErrorClass,
+    detail: String,
+}
+
+impl ExternalTraceError {
+    fn new(class: ExternalTraceErrorClass, detail: impl Into<String>) -> Self {
+        Self {
+            class,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for ExternalTraceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "trace directory [{}]: {}",
+            self.class.as_str(),
+            self.detail
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PreparedExternalTraceRoot {
+    /// Canonical deepest-existing ancestor plus the untouched absent tail.
+    /// Once materialized and revalidated this becomes fully canonical.
+    root: PathBuf,
+}
+
+/// Lexically collapse `.` and `..` without touching the filesystem. Refuse a
+/// parent traversal above the prefix/root rather than manufacturing a path.
+fn lexical_normalize_trace_path(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match components.last() {
+                Some(Component::Normal(_)) => {
+                    components.pop();
+                }
+                _ => return None,
+            },
+            other => components.push(other),
+        }
+    }
+    Some(components.iter().collect())
+}
+
+fn absolutize_trace_path(path: &Path) -> Result<PathBuf, ExternalTraceError> {
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        let current = std::env::current_dir().map_err(|error| {
+            ExternalTraceError::new(
+                ExternalTraceErrorClass::Io,
+                format!("cannot determine the current directory: {error}"),
+            )
+        })?;
+        current.join(path)
+    };
+    let normalized = lexical_normalize_trace_path(&joined).ok_or_else(|| {
+        ExternalTraceError::new(
+            ExternalTraceErrorClass::InvalidPath,
+            format!("{} traverses above its filesystem root", path.display()),
+        )
+    })?;
+    if !normalized.is_absolute() {
+        return Err(ExternalTraceError::new(
+            ExternalTraceErrorClass::InvalidPath,
+            format!("{} does not resolve to an absolute path", path.display()),
+        ));
+    }
+    Ok(normalized)
+}
+
+#[cfg(windows)]
+fn metadata_is_reparse(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    // FILE_ATTRIBUTE_REPARSE_POINT. Rust exposes the raw attribute word but
+    // intentionally does not duplicate the Win32 constant in `std`.
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn metadata_is_reparse(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// Inspect every existing component without following its final component.
+/// This deliberately rejects links/reparse points even when they would resolve
+/// to a directory that is otherwise disjoint from the workspace.
+fn validate_existing_trace_components(path: &Path) -> Result<(), ExternalTraceError> {
+    let mut ancestors: Vec<&Path> = path.ancestors().collect();
+    ancestors.reverse();
+    for component_path in ancestors {
+        if component_path.as_os_str().is_empty() {
+            continue;
+        }
+        match std::fs::symlink_metadata(component_path) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
+                    return Err(ExternalTraceError::new(
+                        ExternalTraceErrorClass::LinkOrReparse,
+                        format!(
+                            "{} is a symbolic link or reparse point",
+                            component_path.display()
+                        ),
+                    ));
+                }
+                if !metadata.is_dir() {
+                    return Err(ExternalTraceError::new(
+                        ExternalTraceErrorClass::NotDirectory,
+                        format!("{} is not a directory", component_path.display()),
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(ExternalTraceError::new(
+                    ExternalTraceErrorClass::Io,
+                    format!("cannot inspect {}: {error}", component_path.display()),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Canonicalize the deepest existing directory, then reconstruct the absent
+/// tail. Component inspection must run first so canonicalization is not used
+/// to silently accept a symlink/reparse traversal.
+fn canonicalize_existing_trace_prefix(path: &Path) -> Result<PathBuf, ExternalTraceError> {
+    let mut existing = path.to_path_buf();
+    let mut tail = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(&existing) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(name) = existing.file_name().map(ToOwned::to_owned) else {
+                    return Err(ExternalTraceError::new(
+                        ExternalTraceErrorClass::Io,
+                        format!("no existing ancestor could be found for {}", path.display()),
+                    ));
+                };
+                let Some(parent) = existing.parent() else {
+                    return Err(ExternalTraceError::new(
+                        ExternalTraceErrorClass::Io,
+                        format!("no existing ancestor could be found for {}", path.display()),
+                    ));
+                };
+                tail.push(name);
+                existing = parent.to_path_buf();
+            }
+            Err(error) => {
+                return Err(ExternalTraceError::new(
+                    ExternalTraceErrorClass::Io,
+                    format!("cannot inspect {}: {error}", existing.display()),
+                ));
+            }
+        }
+    }
+
+    let mut resolved = std::fs::canonicalize(&existing).map_err(|error| {
+        ExternalTraceError::new(
+            ExternalTraceErrorClass::Io,
+            format!("cannot canonicalize {}: {error}", existing.display()),
+        )
+    })?;
+    for component in tail.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
+#[cfg(windows)]
+fn trace_component_eq(left: std::path::Component<'_>, right: std::path::Component<'_>) -> bool {
+    left.as_os_str()
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&right.as_os_str().to_string_lossy())
+}
+
+#[cfg(not(windows))]
+fn trace_component_eq(left: std::path::Component<'_>, right: std::path::Component<'_>) -> bool {
+    left == right
+}
+
+/// Component-wise prefix comparison. On Windows this also closes the lexical
+/// case-alias gap left by `Path::starts_with` on a case-insensitive filesystem.
+fn trace_path_has_prefix(path: &Path, prefix: &Path) -> bool {
+    let mut path_components = path.components();
+    for expected in prefix.components() {
+        let Some(actual) = path_components.next() else {
+            return false;
+        };
+        if !trace_component_eq(actual, expected) {
+            return false;
+        }
+    }
+    true
+}
+
+fn trace_paths_equal(left: &Path, right: &Path) -> bool {
+    trace_path_has_prefix(left, right) && trace_path_has_prefix(right, left)
+}
+
+fn validate_trace_workspace_disjointness(
+    trace_root: &Path,
+    workspace_root: &Path,
+) -> Result<(), ExternalTraceError> {
+    if trace_paths_equal(trace_root, workspace_root) {
+        return Err(ExternalTraceError::new(
+            ExternalTraceErrorClass::EqualWorkspace,
+            format!("{} resolves to the workspace root", trace_root.display()),
+        ));
+    }
+    if trace_path_has_prefix(workspace_root, trace_root) {
+        return Err(ExternalTraceError::new(
+            ExternalTraceErrorClass::AncestorOfWorkspace,
+            format!(
+                "{} is an ancestor of workspace {}",
+                trace_root.display(),
+                workspace_root.display()
+            ),
+        ));
+    }
+    if trace_path_has_prefix(trace_root, workspace_root) {
+        return Err(ExternalTraceError::new(
+            ExternalTraceErrorClass::DescendantOfWorkspace,
+            format!(
+                "{} is inside workspace {}",
+                trace_root.display(),
+                workspace_root.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Resolve and validate an operator-supplied external trace root without
+/// mutating the filesystem.
+fn prepare_external_trace_root(
+    requested: &Path,
+    workspace_root: &Path,
+) -> Result<PreparedExternalTraceRoot, ExternalTraceError> {
+    let absolute = absolutize_trace_path(requested)?;
+    validate_existing_trace_components(&absolute)?;
+    let root = canonicalize_existing_trace_prefix(&absolute)?;
+    validate_trace_workspace_disjointness(&root, workspace_root)?;
+    Ok(PreparedExternalTraceRoot { root })
+}
+
+fn validate_materialized_external_trace_root(
+    root: &Path,
+    workspace_root: &Path,
+) -> Result<PathBuf, ExternalTraceError> {
+    validate_existing_trace_components(root)?;
+    let metadata = std::fs::symlink_metadata(root).map_err(|error| {
+        ExternalTraceError::new(
+            ExternalTraceErrorClass::Io,
+            format!(
+                "cannot inspect created directory {}: {error}",
+                root.display()
+            ),
+        )
+    })?;
+    if metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
+        return Err(ExternalTraceError::new(
+            ExternalTraceErrorClass::LinkOrReparse,
+            format!("{} became a symbolic link or reparse point", root.display()),
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(ExternalTraceError::new(
+            ExternalTraceErrorClass::NotDirectory,
+            format!("{} is not a directory", root.display()),
+        ));
+    }
+    let canonical = std::fs::canonicalize(root).map_err(|error| {
+        ExternalTraceError::new(
+            ExternalTraceErrorClass::Io,
+            format!(
+                "cannot canonicalize created directory {}: {error}",
+                root.display()
+            ),
+        )
+    })?;
+    validate_trace_workspace_disjointness(&canonical, workspace_root)?;
+    Ok(canonical)
+}
+
+fn materialize_external_trace_root(
+    prepared: &PreparedExternalTraceRoot,
+    workspace_root: &Path,
+) -> Result<PathBuf, ExternalTraceError> {
+    std::fs::create_dir_all(&prepared.root).map_err(|error| {
+        ExternalTraceError::new(
+            ExternalTraceErrorClass::Io,
+            format!("cannot create {}: {error}", prepared.root.display()),
+        )
+    })?;
+
+    // The test build can atomically substitute one post-create filesystem
+    // state on this test thread. The call, hook machinery, and branch are all
+    // compiled out of release builds; production proceeds directly from
+    // `create_dir_all` to validation below.
+    #[cfg(test)]
+    {
+        let validation_root = run_external_trace_post_create_hook(&prepared.root);
+        validate_materialized_external_trace_root(&validation_root, workspace_root)
+    }
+
+    #[cfg(not(test))]
+    {
+        validate_materialized_external_trace_root(&prepared.root, workspace_root)
+    }
+}
+
+#[cfg(test)]
+type ExternalTracePostCreateHook = Box<dyn FnOnce(&Path) -> PathBuf>;
+
+#[cfg(test)]
+struct ExternalTracePostCreateHookState {
+    next_id: u64,
+    installed: Option<(u64, ExternalTracePostCreateHook)>,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// Thread-local makes parallel unit tests independent; the id lets an old
+    /// guard drop without clearing a newer hook installed after its one-shot
+    /// callback was consumed.
+    static EXTERNAL_TRACE_POST_CREATE_HOOK: std::cell::RefCell<ExternalTracePostCreateHookState> =
+        const { std::cell::RefCell::new(ExternalTracePostCreateHookState {
+            next_id: 0,
+            installed: None,
+        }) };
+}
+
+#[cfg(test)]
+struct ExternalTracePostCreateHookGuard {
+    id: u64,
+}
+
+#[cfg(test)]
+impl Drop for ExternalTracePostCreateHookGuard {
+    fn drop(&mut self) {
+        EXTERNAL_TRACE_POST_CREATE_HOOK.with(|state| {
+            let mut state = state.borrow_mut();
+            if state
+                .installed
+                .as_ref()
+                .is_some_and(|(installed_id, _)| *installed_id == self.id)
+            {
+                state.installed = None;
+            }
+        });
+    }
+}
+
+/// Install one callback for the next materialization on this test thread.
+/// The returned guard clears an unconsumed callback during panic/early return.
+#[cfg(test)]
+fn install_external_trace_post_create_hook<F>(hook: F) -> ExternalTracePostCreateHookGuard
+where
+    F: FnOnce(&Path) -> PathBuf + 'static,
+{
+    EXTERNAL_TRACE_POST_CREATE_HOOK.with(|state| {
+        let mut state = state.borrow_mut();
+        assert!(
+            state.installed.is_none(),
+            "an external trace post-create hook is already installed on this test thread"
+        );
+        let id = state.next_id;
+        state.next_id = state.next_id.wrapping_add(1);
+        state.installed = Some((id, Box::new(hook)));
+        ExternalTracePostCreateHookGuard { id }
+    })
+}
+
+#[cfg(test)]
+fn run_external_trace_post_create_hook(root: &Path) -> PathBuf {
+    let hook = EXTERNAL_TRACE_POST_CREATE_HOOK
+        .with(|state| state.borrow_mut().installed.take().map(|(_, hook)| hook));
+    hook.map_or_else(|| root.to_path_buf(), |hook| hook(root))
+}
+
+fn canonical_resume_trace_parent(path: &Path) -> Result<PathBuf, ExternalTraceError> {
+    let canonical = std::fs::canonicalize(path).map_err(|error| {
+        ExternalTraceError::new(
+            ExternalTraceErrorClass::Io,
+            format!(
+                "cannot canonicalize resume trace {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    canonical.parent().map(Path::to_path_buf).ok_or_else(|| {
+        ExternalTraceError::new(
+            ExternalTraceErrorClass::InvalidPath,
+            format!("resume trace {} has no parent directory", path.display()),
+        )
+    })
+}
+
+/// External-source continuations must repeat the same canonical output root.
+/// Default-source continuations may explicitly opt into a valid external root.
+fn validate_resume_trace_root(
+    resume_path: Option<&Path>,
+    workspace_root: &Path,
+    selected_external: Option<&PreparedExternalTraceRoot>,
+) -> Result<(), ExternalTraceError> {
+    let Some(resume_path) = resume_path else {
+        return Ok(());
+    };
+    let source_root = canonical_resume_trace_parent(resume_path)?;
+    let default_root =
+        canonicalize_existing_trace_prefix(&workspace_root.join(".ferric").join("trace"))?;
+    if trace_paths_equal(&source_root, &default_root) {
+        return Ok(());
+    }
+
+    let Some(selected) = selected_external else {
+        return Err(ExternalTraceError::new(
+            ExternalTraceErrorClass::ExplicitRootRequired,
+            format!(
+                "resume trace {} is outside the default workspace trace root; repeat its parent with --trace-dir",
+                resume_path.display()
+            ),
+        ));
+    };
+    if !trace_paths_equal(&source_root, &selected.root) {
+        return Err(ExternalTraceError::new(
+            ExternalTraceErrorClass::ResumeRootMismatch,
+            format!(
+                "--trace-dir {} does not match resume trace parent {}",
+                selected.root.display(),
+                source_root.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn documented_shell_quote(value: &str) -> String {
+    // PowerShell single-quoted strings are literal; a single quote is escaped
+    // by doubling it. `$`, backticks, separators, and double quotes stay inert.
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(not(windows))]
+fn documented_shell_quote(value: &str) -> String {
+    // POSIX sh single-quoted strings are literal. Close the string, emit one
+    // quoted single quote, then reopen it.
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn format_resume_command(
+    trace_path: &Path,
+    workspace_root: &Path,
+    external_trace_root: Option<&Path>,
+    needs_answer: bool,
+) -> String {
+    let mut command = format!(
+        "ferric query --resume {} --workspace {}",
+        documented_shell_quote(&trace_path.to_string_lossy()),
+        documented_shell_quote(&workspace_root.to_string_lossy())
+    );
+    if let Some(trace_root) = external_trace_root {
+        command.push_str(" --trace-dir ");
+        command.push_str(&documented_shell_quote(&trace_root.to_string_lossy()));
+    }
+    if needs_answer {
+        command.push_str(" --answer ");
+        command.push_str(&documented_shell_quote("<answer>"));
+    }
+    command
+}
+
 pub fn run_query(mut args: QueryArgs) -> ExitCode {
     let workspace_root = match &args.workspace {
         Some(path) => path.clone(),
@@ -773,6 +1303,20 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             eprintln!("workspace: {e}");
             return ExitCode::FAILURE;
         }
+    };
+    // Query-only external trace policy. Resolve and reject unsafe paths before
+    // configuration, resume, trace, or provider code can create anything.
+    // Actual directory creation remains delayed until every other read-only
+    // query precondition has passed.
+    let prepared_external_trace_root = match args.trace_dir.as_deref() {
+        Some(requested) => match prepare_external_trace_root(requested, workspace.root()) {
+            Ok(prepared) => Some(prepared),
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
     };
 
     // T-3803: layered config (CLI flag > project `.ferric/config.toml` > user
@@ -888,6 +1432,14 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         },
         None => None,
     };
+    if let Err(error) = validate_resume_trace_root(
+        args.resume.as_deref(),
+        workspace.root(),
+        prepared_external_trace_root.as_ref(),
+    ) {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
     if let Err(error) = ensure_supported_harness_policy(config.harness_policy) {
         eprintln!("{error}");
         return ExitCode::FAILURE;
@@ -932,11 +1484,23 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         }
     };
 
-    let trace_dir = workspace_root.join(".ferric").join("trace");
-    if let Err(e) = std::fs::create_dir_all(&trace_dir) {
-        eprintln!("cannot create trace dir {}: {e}", trace_dir.display());
-        return ExitCode::FAILURE;
-    }
+    let (trace_dir, external_trace_root) = match prepared_external_trace_root.as_ref() {
+        Some(prepared) => match materialize_external_trace_root(prepared, workspace.root()) {
+            Ok(canonical) => (canonical.clone(), Some(canonical)),
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => {
+            let trace_dir = workspace_root.join(".ferric").join("trace");
+            if let Err(e) = std::fs::create_dir_all(&trace_dir) {
+                eprintln!("cannot create trace dir {}: {e}", trace_dir.display());
+                return ExitCode::FAILURE;
+            }
+            (trace_dir, None)
+        }
+    };
     let (_session, trace_path, mut sink) = match create_trace_sink(&trace_dir, "q") {
         Ok(trace) => trace,
         Err(e) => {
@@ -1101,9 +1665,18 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
                 eprintln!("  {}. {}", index + 1, option);
             }
         }
+    }
+    if !outcome.stop.is_success() {
+        let canonical_trace_path =
+            std::fs::canonicalize(&trace_path).unwrap_or_else(|_| trace_path.clone());
         eprintln!(
-            "Resume: ferric query --resume \"{}\" --answer \"<answer>\"",
-            trace_path.display()
+            "Resume: {}",
+            format_resume_command(
+                &canonical_trace_path,
+                workspace.root(),
+                external_trace_root.as_deref(),
+                outcome.needs_input.is_some(),
+            )
         );
     }
     if outcome.stop.is_success() {
@@ -1532,6 +2105,551 @@ fn drive_real(
 mod tests {
     use super::*;
     use ferric_core::policy_for;
+
+    fn trace_test_workspace(directory: &tempfile::TempDir) -> (PathBuf, Workspace) {
+        let root = directory.path().join("workspace");
+        std::fs::create_dir(&root).unwrap();
+        let workspace = Workspace::new(&root).unwrap();
+        (root, workspace)
+    }
+
+    fn assert_external_trace_error(
+        result: Result<PreparedExternalTraceRoot, ExternalTraceError>,
+        expected: ExternalTraceErrorClass,
+    ) {
+        let error = result.unwrap_err();
+        assert_eq!(error.class, expected, "{error}");
+    }
+
+    #[test]
+    fn external_trace_root_resolves_nonexistent_tail() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let external = directory.path().join("evidence");
+        std::fs::create_dir(&external).unwrap();
+        let requested = external.join("nested").join("trace");
+
+        let prepared = prepare_external_trace_root(&requested, workspace.root()).unwrap();
+
+        assert_eq!(
+            prepared.root,
+            std::fs::canonicalize(&external)
+                .unwrap()
+                .join("nested")
+                .join("trace")
+        );
+        assert!(
+            !requested.exists(),
+            "prevalidation must not create the tail"
+        );
+        assert!(!workspace.root().join(".ferric").exists());
+    }
+
+    #[test]
+    fn external_trace_root_precreate_rejects_equal() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        assert_external_trace_error(
+            prepare_external_trace_root(workspace.root(), workspace.root()),
+            ExternalTraceErrorClass::EqualWorkspace,
+        );
+        assert!(!workspace.root().join(".ferric").exists());
+    }
+
+    #[test]
+    fn external_trace_root_precreate_rejects_descendant() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let requested = workspace.root().join("sealed").join("traces");
+        assert_external_trace_error(
+            prepare_external_trace_root(&requested, workspace.root()),
+            ExternalTraceErrorClass::DescendantOfWorkspace,
+        );
+        assert!(!requested.exists());
+        assert!(!workspace.root().join(".ferric").exists());
+        assert!(!workspace.root().join("ferric-mock.txt").exists());
+    }
+
+    #[test]
+    fn external_trace_root_precreate_rejects_dotdot_overlap_alias() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let unused = directory.path().join("unused-component");
+        let aliased_target = workspace.root().join("aliased-traces");
+        let requested = unused.join("..").join("workspace").join("aliased-traces");
+
+        assert_external_trace_error(
+            prepare_external_trace_root(&requested, workspace.root()),
+            ExternalTraceErrorClass::DescendantOfWorkspace,
+        );
+        assert!(
+            !unused.exists(),
+            "lexical resolution must not create its alias prefix"
+        );
+        assert!(
+            !aliased_target.exists(),
+            "overlap rejection must precede directory creation"
+        );
+        assert!(!workspace.root().join(".ferric").exists());
+        assert!(!workspace.root().join("ferric-mock.txt").exists());
+    }
+
+    #[test]
+    fn external_trace_root_precreate_rejects_ancestor() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        assert_external_trace_error(
+            prepare_external_trace_root(directory.path(), workspace.root()),
+            ExternalTraceErrorClass::AncestorOfWorkspace,
+        );
+        assert!(!workspace.root().join(".ferric").exists());
+    }
+
+    #[test]
+    fn external_trace_root_precreate_rejects_existing_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let requested = directory.path().join("trace-file");
+        std::fs::write(&requested, "not a directory").unwrap();
+        assert_external_trace_error(
+            prepare_external_trace_root(&requested, workspace.root()),
+            ExternalTraceErrorClass::NotDirectory,
+        );
+        assert_eq!(
+            std::fs::read_to_string(&requested).unwrap(),
+            "not a directory"
+        );
+        assert!(!workspace.root().join(".ferric").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_trace_root_precreate_rejects_symlink_component() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let target = directory.path().join("actual-evidence");
+        let link = directory.path().join("linked-evidence");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_external_trace_error(
+            prepare_external_trace_root(&link.join("trace"), workspace.root()),
+            ExternalTraceErrorClass::LinkOrReparse,
+        );
+        assert!(!target.join("trace").exists());
+        assert!(!workspace.root().join(".ferric").exists());
+    }
+
+    #[cfg(windows)]
+    fn create_test_junction(link: &Path, target: &Path) {
+        let output = std::process::Command::new("cmd.exe")
+            .arg("/D")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "junction creation failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn external_trace_root_precreate_rejects_windows_junction() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let target = directory.path().join("actual-evidence");
+        let junction = directory.path().join("junction-evidence");
+        std::fs::create_dir(&target).unwrap();
+        create_test_junction(&junction, &target);
+        assert_external_trace_error(
+            prepare_external_trace_root(&junction.join("trace"), workspace.root()),
+            ExternalTraceErrorClass::LinkOrReparse,
+        );
+        assert!(!target.join("trace").exists());
+        assert!(!workspace.root().join(".ferric").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn external_trace_root_precreate_rejects_windows_case_alias() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let alias = workspace.root().with_file_name("WoRkSpAcE");
+        assert_external_trace_error(
+            prepare_external_trace_root(&alias, workspace.root()),
+            ExternalTraceErrorClass::EqualWorkspace,
+        );
+        assert!(!workspace.root().join(".ferric").exists());
+    }
+
+    #[test]
+    fn external_trace_root_precreate_rejection_matrix() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let descendant = workspace.root().join("new-traces");
+        let file = directory.path().join("not-a-directory");
+        std::fs::write(&file, "sentinel").unwrap();
+
+        for (requested, expected) in [
+            (
+                workspace.root().to_path_buf(),
+                ExternalTraceErrorClass::EqualWorkspace,
+            ),
+            (
+                descendant.clone(),
+                ExternalTraceErrorClass::DescendantOfWorkspace,
+            ),
+            (
+                directory.path().to_path_buf(),
+                ExternalTraceErrorClass::AncestorOfWorkspace,
+            ),
+            (file.clone(), ExternalTraceErrorClass::NotDirectory),
+        ] {
+            assert_external_trace_error(
+                prepare_external_trace_root(&requested, workspace.root()),
+                expected,
+            );
+        }
+        assert!(!descendant.exists());
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "sentinel");
+        assert!(!workspace.root().join(".ferric").exists());
+        assert!(!workspace.root().join("ferric-mock.txt").exists());
+    }
+
+    fn prepared_postcreate_root(
+        directory: &tempfile::TempDir,
+        workspace: &Workspace,
+        name: &str,
+    ) -> PreparedExternalTraceRoot {
+        prepare_external_trace_root(&directory.path().join(name), workspace.root()).unwrap()
+    }
+
+    #[test]
+    fn external_trace_root_postcreate_rejects_non_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let prepared = prepared_postcreate_root(&directory, &workspace, "post-file");
+        let _hook = install_external_trace_post_create_hook(|created| {
+            std::fs::remove_dir(created).unwrap();
+            std::fs::write(created, "replacement").unwrap();
+            created.to_path_buf()
+        });
+        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
+        assert_eq!(
+            error.class,
+            ExternalTraceErrorClass::NotDirectory,
+            "{error}"
+        );
+        assert!(!prepared.root.join("q-test.jsonl").exists());
+    }
+
+    #[test]
+    fn external_trace_root_postcreate_rejects_equal() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let prepared = prepared_postcreate_root(&directory, &workspace, "post-equal");
+        let workspace_substitute = workspace.root().to_path_buf();
+        let _hook = install_external_trace_post_create_hook(move |_| workspace_substitute);
+        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
+        assert_eq!(
+            error.class,
+            ExternalTraceErrorClass::EqualWorkspace,
+            "{error}"
+        );
+        assert!(std::fs::read_dir(&prepared.root).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn external_trace_root_postcreate_rejects_descendant() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let prepared = prepared_postcreate_root(&directory, &workspace, "post-descendant");
+        let inside = workspace.root().join("substituted-traces");
+        let _hook = install_external_trace_post_create_hook(move |_| {
+            std::fs::create_dir(&inside).unwrap();
+            inside
+        });
+        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
+        assert_eq!(
+            error.class,
+            ExternalTraceErrorClass::DescendantOfWorkspace,
+            "{error}"
+        );
+        assert!(std::fs::read_dir(&prepared.root).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn external_trace_root_postcreate_rejects_ancestor() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let prepared = prepared_postcreate_root(&directory, &workspace, "post-ancestor");
+        let ancestor = directory.path().to_path_buf();
+        let _hook = install_external_trace_post_create_hook(move |_| ancestor);
+        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
+        assert_eq!(
+            error.class,
+            ExternalTraceErrorClass::AncestorOfWorkspace,
+            "{error}"
+        );
+        assert!(std::fs::read_dir(&prepared.root).unwrap().next().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_trace_root_postcreate_rejects_symlink() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let target = directory.path().join("post-symlink-target");
+        std::fs::create_dir(&target).unwrap();
+        let prepared = prepared_postcreate_root(&directory, &workspace, "post-symlink");
+        let hook_target = target.clone();
+        let _hook = install_external_trace_post_create_hook(move |created| {
+            std::fs::remove_dir(created).unwrap();
+            std::os::unix::fs::symlink(&hook_target, created).unwrap();
+            created.to_path_buf()
+        });
+        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
+        assert_eq!(
+            error.class,
+            ExternalTraceErrorClass::LinkOrReparse,
+            "{error}"
+        );
+        assert!(!target.join("q-test.jsonl").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn external_trace_root_postcreate_rejects_windows_reparse() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let target = directory.path().join("post-junction-target");
+        std::fs::create_dir(&target).unwrap();
+        let prepared = prepared_postcreate_root(&directory, &workspace, "post-junction");
+        let hook_target = target.clone();
+        let _hook = install_external_trace_post_create_hook(move |created| {
+            std::fs::remove_dir(created).unwrap();
+            create_test_junction(created, &hook_target);
+            created.to_path_buf()
+        });
+        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
+        assert_eq!(
+            error.class,
+            ExternalTraceErrorClass::LinkOrReparse,
+            "{error}"
+        );
+        assert!(!target.join("q-test.jsonl").exists());
+    }
+
+    #[test]
+    fn external_trace_root_postcreate_rejection_matrix() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+
+        let file = prepared_postcreate_root(&directory, &workspace, "matrix-file");
+        let _hook = install_external_trace_post_create_hook(|created| {
+            std::fs::remove_dir(created).unwrap();
+            std::fs::write(created, "replacement").unwrap();
+            created.to_path_buf()
+        });
+        let error = materialize_external_trace_root(&file, workspace.root()).unwrap_err();
+        assert_eq!(error.class, ExternalTraceErrorClass::NotDirectory);
+
+        for (name, substituted, expected) in [
+            (
+                "matrix-equal",
+                workspace.root().to_path_buf(),
+                ExternalTraceErrorClass::EqualWorkspace,
+            ),
+            (
+                "matrix-ancestor",
+                directory.path().to_path_buf(),
+                ExternalTraceErrorClass::AncestorOfWorkspace,
+            ),
+        ] {
+            let prepared = prepared_postcreate_root(&directory, &workspace, name);
+            let _hook = install_external_trace_post_create_hook(move |_| substituted);
+            let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
+            assert_eq!(error.class, expected);
+            assert!(std::fs::read_dir(prepared.root).unwrap().next().is_none());
+        }
+
+        let descendant = workspace.root().join("matrix-inside");
+        std::fs::create_dir(&descendant).unwrap();
+        let prepared = prepared_postcreate_root(&directory, &workspace, "matrix-descendant");
+        let _hook = install_external_trace_post_create_hook(move |_| descendant);
+        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
+        assert_eq!(error.class, ExternalTraceErrorClass::DescendantOfWorkspace);
+        assert!(std::fs::read_dir(prepared.root).unwrap().next().is_none());
+        assert!(!workspace.root().join(".ferric").exists());
+    }
+
+    #[test]
+    fn external_trace_postcreate_hook_is_one_shot_and_cleanup_safe() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+
+        let first = prepared_postcreate_root(&directory, &workspace, "hook-first");
+        let workspace_substitute = workspace.root().to_path_buf();
+        let _consumed_guard =
+            install_external_trace_post_create_hook(move |_| workspace_substitute);
+        let first_error = materialize_external_trace_root(&first, workspace.root()).unwrap_err();
+        assert_eq!(first_error.class, ExternalTraceErrorClass::EqualWorkspace);
+
+        // The callback was consumed, even though its guard remains live. A
+        // second call on the same test thread must take the production path.
+        let second = prepared_postcreate_root(&directory, &workspace, "hook-second");
+        let second_root = materialize_external_trace_root(&second, workspace.root()).unwrap();
+        assert_eq!(second_root, std::fs::canonicalize(&second.root).unwrap());
+
+        // Dropping an unconsumed guard clears its callback, so an early return
+        // or panic in a test cannot contaminate a later materialization.
+        {
+            let _unconsumed_guard =
+                install_external_trace_post_create_hook(|_| panic!("stale hook executed"));
+        }
+        let third = prepared_postcreate_root(&directory, &workspace, "hook-third");
+        let third_root = materialize_external_trace_root(&third, workspace.root()).unwrap();
+        assert_eq!(third_root, std::fs::canonicalize(&third.root).unwrap());
+    }
+
+    #[test]
+    fn external_trace_resume_requires_and_reuses_explicit_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let source_root = directory.path().join("external-source");
+        std::fs::create_dir(&source_root).unwrap();
+        let source_trace = source_root.join("q-source.jsonl");
+        std::fs::write(&source_trace, "source").unwrap();
+
+        let omitted =
+            validate_resume_trace_root(Some(&source_trace), workspace.root(), None).unwrap_err();
+        assert_eq!(
+            omitted.class,
+            ExternalTraceErrorClass::ExplicitRootRequired,
+            "{omitted}"
+        );
+
+        let same = prepare_external_trace_root(&source_root, workspace.root()).unwrap();
+        validate_resume_trace_root(Some(&source_trace), workspace.root(), Some(&same)).unwrap();
+
+        let different =
+            prepare_external_trace_root(&directory.path().join("different"), workspace.root())
+                .unwrap();
+        let mismatch =
+            validate_resume_trace_root(Some(&source_trace), workspace.root(), Some(&different))
+                .unwrap_err();
+        assert_eq!(
+            mismatch.class,
+            ExternalTraceErrorClass::ResumeRootMismatch,
+            "{mismatch}"
+        );
+        assert!(
+            !different.root.exists(),
+            "mismatch must fail before creation"
+        );
+        assert!(!workspace.root().join(".ferric").exists());
+    }
+
+    #[test]
+    fn default_source_resume_may_select_external_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, workspace) = trace_test_workspace(&directory);
+        let default = workspace.root().join(".ferric").join("trace");
+        std::fs::create_dir_all(&default).unwrap();
+        let source_trace = default.join("q-source.jsonl");
+        std::fs::write(&source_trace, "source").unwrap();
+        let external =
+            prepare_external_trace_root(&directory.path().join("external"), workspace.root())
+                .unwrap();
+
+        validate_resume_trace_root(Some(&source_trace), workspace.root(), Some(&external)).unwrap();
+        assert!(!external.root.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_quote_round_trips_argv() {
+        let trace = PathBuf::from("C:\\trace dir\\quo'te\"$`;&.jsonl");
+        let workspace = PathBuf::from("C:\\work dir\\quo'te\"$`;&");
+        let root = PathBuf::from("C:\\evidence dir\\quo'te\"$`;&");
+        let command = format_resume_command(&trace, &workspace, Some(&root), true);
+        let script = format!(
+            "function ferric {{ foreach ($value in $args) {{ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value)) }} }}; {command}"
+        );
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command"])
+            .arg(script)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "PowerShell failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let observed: Vec<&str> = stdout.lines().collect();
+        let expected = [
+            "query",
+            "--resume",
+            trace.to_str().unwrap(),
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--trace-dir",
+            root.to_str().unwrap(),
+            "--answer",
+            "<answer>",
+        ];
+        let expected: Vec<String> = expected
+            .iter()
+            .map(|value| ferric_core::base64_encode(value.as_bytes()))
+            .collect();
+        assert_eq!(observed, expected);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_sh_quote_round_trips_argv() {
+        let trace = PathBuf::from("/tmp/trace dir/quo'te\"$`;&.jsonl");
+        let workspace = PathBuf::from("/tmp/work dir/quo'te\"$`;&");
+        let root = PathBuf::from("/tmp/evidence dir/quo'te\"$`;&");
+        let command = format_resume_command(&trace, &workspace, Some(&root), true);
+        let script =
+            format!("ferric() {{ for value do printf '%s\\0' \"$value\"; done; }}; {command}");
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "sh failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let observed: Vec<&[u8]> = output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|argument| !argument.is_empty())
+            .collect();
+        let expected = [
+            "query",
+            "--resume",
+            trace.to_str().unwrap(),
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--trace-dir",
+            root.to_str().unwrap(),
+            "--answer",
+            "<answer>",
+        ];
+        let expected: Vec<&[u8]> = expected.iter().map(|value| value.as_bytes()).collect();
+        assert_eq!(observed, expected);
+    }
 
     #[test]
     fn trace_allocator_never_appends_same_millisecond_sessions() {

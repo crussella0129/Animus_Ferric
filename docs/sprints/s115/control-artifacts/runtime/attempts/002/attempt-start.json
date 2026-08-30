@@ -1,0 +1,14 @@
+{
+  "schema": "animus-ferric-s115-runtime-attempt-start-v1",
+  "attempt": "002",
+  "started_at_utc": "2026-08-28T08:56:11.4854345+00:00",
+  "control_manifest_sha256": "e3daeedbb31033b1d1cac95ea57f732f93cb8b0f9b1a4f588979b5ae2222085e",
+  "runtime_plan_sha256": "3036ef11fc98bac62afc8fc6bcdb30b482fe47ff23d45643bf8c37ac1cee3278",
+  "policy": {
+    "attempt_wall_seconds": 5400,
+    "no_qualification_attempt_retry": true,
+    "provider_retry_policy": "ferric-built-in-transient-backoff-not-disabled-or-claimed-zero",
+    "no_fallback": true,
+    "no_download": true
+  }
+}

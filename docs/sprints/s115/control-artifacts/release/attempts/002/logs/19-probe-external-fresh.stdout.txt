@@ -1,0 +1,1 @@
+✓ write_file: wrote 8 bytes to ferric-mock.txt

@@ -13,7 +13,8 @@ ferric query "<prompt>" [OPTIONS]
 A query runs the model in a **constrained agentic loop**: the model proposes a
 tool call, the harness validates and executes it inside the workspace, feeds the
 result back, and repeats until the model calls `task_complete` or a budget/guard
-stops it. Every step is written to a JSONL trace under `.ferric/trace/`.
+stops it. By default, every step is written to a JSONL trace under the
+workspace's `.ferric/trace/` directory.
 
 ## No model needed: `--mock`
 
@@ -56,12 +57,58 @@ tools (`read_file`, `write_file`, `edit_file`, …) are checked against it throu
 model cannot read or write outside the workspace, and cannot read sensitive files
 (`.env`, SSH keys, cloud credentials) even inside it.
 
+## Keeping a query trace outside the workspace
+
+`ferric query` alone accepts `--trace-dir <DIR>`. It is useful when the
+workspace must remain free of Ferric trace state:
+
+```sh
+ferric query "do a mock task" --mock --workspace ./candidate --trace-dir ./evidence/traces
+```
+
+Omitting the flag keeps the compatible default,
+`<workspace>/.ferric/trace`. A relative `--trace-dir` is resolved from the
+directory where you invoked Ferric, not from `--workspace`.
+
+An external trace directory must be fully disjoint from the canonical
+workspace: it cannot equal, contain, or sit inside the workspace. Existing
+path components must be ordinary directories, not symbolic links or Windows
+reparse points. Ferric checks this before creating the directory and again
+before allocating the trace. This query-level path check does not claim a
+general high-level run/evidence workflow.
+
+If the source trace is external, a continuation must repeat both its workspace
+and the same external trace directory explicitly. Omitting `--trace-dir` is an
+error; Ferric does not silently put the continuation under the workspace:
+
+```powershell
+# Windows PowerShell
+ferric query --resume 'C:\evidence\traces\q-123.jsonl' --workspace 'C:\work\candidate' --trace-dir 'C:\evidence\traces'
+```
+
+```sh
+# POSIX sh on Unix
+ferric query --resume '/evidence/traces/q-123.jsonl' --workspace '/work/candidate' --trace-dir '/evidence/traces'
+```
+
+Whenever `query` reaches a supported incomplete, resumable stop, Ferric prints
+a `Resume:` command with the exact workspace and external trace root needed to
+continue. A clarification stop alone adds an `--answer '<answer>'` placeholder.
+The printed syntax targets PowerShell on Windows and POSIX `sh` on Unix;
+`cmd.exe` syntax is not promised.
+
+A successful terminal trace is complete and is rejected by `--resume`. An
+incomplete trace remains resumable even when its final `session_end` records
+the incomplete stop (for example, exhaustion of the current turn budget); use
+the printed command rather than guessing which paths to repeat.
+
 ## A few flags you will reach for early
 
 | Flag | What it does |
 |---|---|
 | `--mock` | run the scripted mock; no model needed |
 | `--workspace <DIR>` | set the containment boundary (default: current dir) |
+| `--trace-dir <DIR>` | for `query` only, store traces in a safe external directory; relative to the invocation directory and repeated explicitly on external resume |
 | `--file <PATH>` | attach a file (repeatable); text folds into the prompt, media attaches when `--modality` allows |
 | `--stream` is on by default | text and tool activity print live; `--no-stream` to suppress |
 | `--model <NAME>` | the model id your server expects |

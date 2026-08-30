@@ -1,0 +1,17 @@
+{
+  "schema": "s115-preserved-root-v1",
+  "batch": "002-frozen-copy",
+  "root_key": "depth-preserving-frozen-copy",
+  "present": true,
+  "source": "target/s115-preserved-preflight/attempt-004/frozen/app-harness",
+  "destination": "target/s115-preserved-preflight/attempt-004/frozen/app-harness",
+  "retained_in_place": true,
+  "same_volume": true,
+  "final_manifest": "batches/002-frozen-copy/depth-preserving-frozen-copy.final.entries.jsonl",
+  "entry_count": 52,
+  "entries_sha256": "b5cb055fd3b4c2fb936ca128ebf6c324d0cd5768e0dd82244f694f735b5a7021",
+  "regular_file_count": 36,
+  "regular_file_bytes": 1132903,
+  "reparse_count": 0,
+  "parity": true
+}

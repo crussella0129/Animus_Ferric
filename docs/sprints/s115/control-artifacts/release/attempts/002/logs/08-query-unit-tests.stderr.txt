@@ -1,0 +1,3 @@
+   Compiling ferric-cli v0.1.0 (C:\Users\charl\Animus_Ferric\crates\ferric-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.80s
+     Running unittests src\main.rs (target\debug\deps\ferric-ff567cb7485ee716.exe)

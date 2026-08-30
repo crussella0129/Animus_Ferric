@@ -1,0 +1,136 @@
+Run a one-shot, workspace-scoped query against a local model
+
+Usage: ferric.exe query [OPTIONS] [PROMPT]
+
+Arguments:
+  [PROMPT]
+          The task prompt. Required unless `--resume` is given (a pure continuation needs no new instruction); if BOTH are given, this is appended as one extra user message after the replayed history
+
+Options:
+      --resume <RESUME>
+          Resume a supported incomplete session by replaying its trace (sprint 39, ADR-049) and continuing the SAME task with more turns. Successful terminal traces are rejected; supported incomplete stops and structurally recoverable interrupted traces are resumable. This is not a chat-continuation mechanism. `--prompts-dir`/`Animus.md` are inert for a resumed run's system message (frozen from the replayed trace)
+
+  -v, --verbose...
+          Increase harness-internal log verbosity (`-v` info, `-vv` debug, `-vvv` trace). Diagnostics go to stderr — stdout stays a clean machine channel. `FERRIC_LOG`/`RUST_LOG` override this entirely (ADR-063)
+
+      --answer <ANSWER>
+          Answer a pending `request_user_input` clarification. Requires `--resume` and cannot be combined with a new positional prompt
+
+      --workspace <WORKSPACE>
+          Workspace root (containment boundary). Default: current directory
+
+      --trace-dir <TRACE_DIR>
+          Store this query's trace outside the workspace. The directory must be disjoint from the canonical workspace in both directions and must not contain a symbolic link or Windows reparse-point component. Default: `<workspace>/.ferric/trace`.
+          
+          Resuming a trace written outside the default root requires explicitly repeating the same `--trace-dir`. Printed resume commands use PowerShell quoting on Windows and POSIX-sh quoting on Unix.
+
+      --model <MODEL>
+          The model string identifier (required for openai backend)
+
+      --api-base <API_BASE>
+          OpenAI-compatible API base URL. Defaults to the running `ferric server` (`.ferric/server.json` in the cwd), else `http://localhost:1234/v1`
+
+      --api-key <API_KEY>
+          The API key for the OpenAI-compatible API (for openai backend)
+
+      --params-b <PARAMS_B>
+          Parameter count in billions. Default 1.2 when neither this flag nor a config file's `params_b` is set (T-3803).
+          
+          This is a **fact about the model**, not a way to pick a tier — use `--tier` for that (ADR-098). Misstating it to reach a tier also corrupts the profile store and the trace, and leaves no way to tell an earned tier from a claimed one.
+
+      --tier <TIER>
+          Run at this tier regardless of size or measured level (ADR-098).
+          
+          Overrides both the `measured_level` read-back and the parameter-count prior, in **either** direction — you can hold a capable model down as well as lift a small one up. The run says so on stderr and the trace records `tier_source: "override"`, so an asked-for tier is never mistaken later for one the model earned on the ladder.
+          
+          Raising the tier widens turn/tool budgets and the tool-ring ceiling; a model that cannot use them just fails more expensively (the loop guards bound the waste, ADR-037/038/077). `ferric bench` is how a tier gets *earned*.
+          
+          [possible values: nano, small, medium, large, xl, ultra]
+
+      --quant <QUANT>
+          Quantization label. Default "Q4_K_M" when neither this flag nor a config file's `quant` is set (T-3803)
+
+      --family <FAMILY>
+          Model family label. Default "unknown" when neither this flag nor a config file's `family` is set (T-3803)
+
+      --ctx <CTX>
+          Context window in tokens (ModelProfile is config-supplied, ADR-006). Default 4096 when neither this flag nor a config file's `ctx` is set (T-3803)
+
+      --temperature <TEMPERATURE>
+          Sampling temperature (0.0 selects the deterministic sampler). Default 0.0 when neither this flag nor a config file's `temperature` is set (T-3803)
+
+      --protocol <PROTOCOL>
+          Action protocol override (default: chosen from policy + backend caps)
+          
+          [possible values: native, grammar, xml]
+
+      --harness-policy <HARNESS_POLICY>
+          Autonomous harness policy. Omitted fresh runs use `legacy`; omitted resumes inherit the policy recorded in their source trace
+          
+          [possible values: legacy, evidence, evidence-planner]
+
+      --prompts-dir <PROMPTS_DIR>
+          Directory of prompt elements to compose the system prompt from. Falls back to the built-in default prompt when absent or unloadable. Also read from FERRIC_PROMPTS_DIR
+
+      --mock
+          Run against a built-in scripted mock instead of a real model
+
+      --file <FILES>
+          Attach a file to the prompt (repeatable). Text/code files fold into the prompt as text (works on any model); media files (image/audio/video) attach as content parts when `--modality` declares them and the backend carries media (the OpenAI valve)
+
+      --modality <MODALITY>
+          Declare the model's accepted non-text modalities (comma list: `image,audio,video`). Explicit config (ADR-006) — media files attach only for declared modalities; others are skipped with a reason
+
+      --max-ring <MAX_RING>
+          Cap the active tool ring (ADR-028). `0` pins the model to the Ring-0 navigate/mutate core — the smallest, surest grammar — regardless of its size. Restrict-only: it cannot raise the ceiling above what the model's tier/`measured_level` allows
+
+      --max-turns <MAX_TURNS>
+          Override the selected policy's turn budget for this invocation. Ordinary queries use the tier-derived budget when this is absent
+
+      --profile-dir <PROFILE_DIR>
+          Directory holding `model_profiles.json` (written by `ferric bench` and `toolbench --calibrate-rings`). When a record exists for this model, its `measured_level` sets the tier and its `calibrated_ring` defaults `--max-ring` — the durable promotion (ADR-029). A missing file is a no-op. Default "benchmarks" when neither this flag nor a config file's `profile_dir` is set (T-3803)
+
+      --checks-file <CHECKS_FILE>
+          Explicit operator authorization for model-visible verification checks. The TOML file contains fixed program/argv definitions; the model can choose only a check name. Checks are never loaded implicitly from a repository or the ordinary layered config
+
+      --no-config
+          Ignore project and user config files for this invocation. CLI flags and built-in defaults still apply. Intended for isolated benchmark runs
+
+      --no-stream
+          Suppress live streaming of text and tool activity (default: streaming is ON)
+
+      --research <RESEARCH>
+          Search the workspace and fold quarantined digests into the prompt. Keywords, not a URL — this drives the Local-FS plane
+
+      --research-url <RESEARCH_URLS>
+          Fetch this URL through the egress airlock and quarantine it (repeatable).
+          
+          Separate from `--research` because the two planes want different things: Local-FS takes keywords, the Web plane takes an exact URL. The allowlist is derived from the URLs given here and nothing else, so the sandbox may reach precisely the hosts you named (ADR-085).
+
+      --skill <SKILLS>
+          Run with this installed skill's instructions in scope (repeatable).
+          
+          Naming a skill here IS the authorization — it is you asking, on this invocation. Skills you want available without naming them go in `allowed_skills` in `.ferric/config.toml`. Nothing else authorizes one: a skill sitting in `.ferric/skills/` is visible to `ferric skills list` but contributes nothing to a prompt until you say so (ADR-091).
+
+      --allow-standard-runtime
+          Run the web fetch on the standard container runtime instead of gVisor.
+          
+          The default requires gVisor and fails closed without it (ADR-074). Network isolation does NOT depend on this — that is enforced by the airlock's `--internal` network either way; gVisor is defence in depth against container escape.
+
+      --sink-action <SINK_ACTION>
+          What to do with a MUTATION once this run has ingested untrusted content (ADR-080): `requireapproval` (default) | `deny` | `warn`.
+          
+          This only ever applies to a contaminated run — an ordinary run is never gated. `requireapproval` asks a human once per mutation (via `--accept-edits`); with no approver available there is nobody to ask, so it denies.
+
+          Possible values:
+          - requireapproval: Ask a human once per mutation (via `--accept-edits`); with no approver available, deny. The default
+          - deny:            Block the mutation outright
+          - warn:            Allow the mutation but warn on stderr
+          
+          [default: requireapproval]
+
+      --accept-edits
+          Accept-edits mode (ADR-070): pause before each mutating tool call (write/edit/delete/exec), show a preview, and require `y` to apply it. A rejected edit is reported to the model, which can adapt. Requires an interactive stdin; do not enable it for unattended batch runs
+
+  -h, --help
+          Print help (see a summary with '-h')
