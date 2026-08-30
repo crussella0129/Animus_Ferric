@@ -5,8 +5,8 @@
 - **State:** active
 - **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work)
 - **Completion evidence:** none
-- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115)
-- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface)
+- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116)
+- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 lifecycle verification](../sprints/s116/sprint-tests/test-report.md)
 - **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md)
 
 ## Intent
