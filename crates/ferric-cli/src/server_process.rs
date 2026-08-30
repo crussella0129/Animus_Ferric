@@ -26,6 +26,141 @@ pub struct ProcessIdentity {
     pub argv: Vec<String>,
 }
 
+/// Validate the canonical process-start token for the current supported OS.
+///
+/// The persisted representation remains an opaque string, but schema-v2
+/// authority is accepted only when the string has the exact form emitted by
+/// this target's native process adapter. Unsupported targets cannot authorize
+/// a schema-v2 process identity.
+pub(crate) fn validate_start_token(start_token: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let value = start_token
+            .strip_prefix("windows-filetime:")
+            .ok_or_else(|| {
+                "expected canonical Windows start token `windows-filetime:<positive-u64>`"
+                    .to_string()
+            })?;
+        parse_canonical_positive_u64(value).ok_or_else(|| {
+            "Windows FILETIME must be a canonical positive decimal u64".to_string()
+        })?;
+        Ok(())
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        let value = start_token.strip_prefix("linux-boot-id:").ok_or_else(|| {
+            "expected canonical Linux start token `linux-boot-id:<uuid>;start-ticks:<positive-u64>`"
+                .to_string()
+        })?;
+        let (boot_id, start_ticks) = value.split_once(";start-ticks:").ok_or_else(|| {
+            "Linux start token must contain one `;start-ticks:` field".to_string()
+        })?;
+        if !is_canonical_lowercase_uuid(boot_id) {
+            return Err("Linux boot ID must be a canonical lowercase UUID".to_string());
+        }
+        parse_canonical_positive_u64(start_ticks).ok_or_else(|| {
+            "Linux process start ticks must be a canonical positive decimal u64".to_string()
+        })?;
+        Ok(())
+    }
+
+    #[cfg(not(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    {
+        let _ = start_token;
+        Err(format!(
+            "schema-v2 process start-token authority is unsupported on {}",
+            std::env::consts::OS
+        ))
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn canonical_test_start_token(coordinate: u64) -> String {
+    assert!(
+        coordinate > 0,
+        "test start-token coordinate must be positive"
+    );
+
+    #[cfg(windows)]
+    {
+        format!("windows-filetime:{coordinate}")
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        format!("linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:{coordinate}")
+    }
+
+    #[cfg(not(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    {
+        panic!("no canonical schema-v2 test start token exists on an unsupported target")
+    }
+}
+
+#[cfg(any(
+    windows,
+    all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )
+))]
+fn parse_canonical_positive_u64(value: &str) -> Option<u64> {
+    if value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return None;
+    }
+    value.parse::<u64>().ok().filter(|parsed| *parsed > 0)
+}
+
+#[cfg(all(
+    target_os = "linux",
+    target_endian = "little",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn is_canonical_lowercase_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)
+            }
+        })
+}
+
 /// Ownership of sockets able to accept the expected loopback endpoint.
 ///
 /// Platform adapters conservatively include wildcard binds on the registered
@@ -1705,3 +1840,131 @@ mod platform {
 }
 
 pub use platform::LiveProcess;
+
+#[cfg(test)]
+mod start_token_validation_tests {
+    use super::*;
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
+    fn canonical_positive_u64_parser_rejects_noncanonical_values() {
+        validate_start_token(&canonical_test_start_token(42)).unwrap();
+        assert_eq!(parse_canonical_positive_u64("1"), Some(1));
+        assert_eq!(
+            parse_canonical_positive_u64("18446744073709551615"),
+            Some(u64::MAX)
+        );
+        for invalid in [
+            "",
+            "0",
+            "00",
+            "01",
+            "+1",
+            "-1",
+            " 1",
+            "1 ",
+            "1x",
+            "18446744073709551616",
+        ] {
+            assert_eq!(
+                parse_canonical_positive_u64(invalid),
+                None,
+                "accepted noncanonical integer {invalid:?}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_start_token_validation_is_exact() {
+        validate_start_token("windows-filetime:1").unwrap();
+        validate_start_token("windows-filetime:18446744073709551615").unwrap();
+
+        for invalid in [
+            "",
+            "token",
+            " windows-filetime:1",
+            "windows-filetime:",
+            "windows-filetime:0",
+            "windows-filetime:01",
+            "windows-filetime:+1",
+            "windows-filetime:1 ",
+            "windows-filetime:1;trailing",
+            "windows-filetime:18446744073709551616",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
+        ] {
+            assert!(
+                validate_start_token(invalid).is_err(),
+                "accepted invalid Windows start token {invalid:?}"
+            );
+        }
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn linux_start_token_validation_is_exact() {
+        const BOOT_ID: &str = "00000000-1111-4222-8333-444444444444";
+        validate_start_token(&format!("linux-boot-id:{BOOT_ID};start-ticks:1")).unwrap();
+        validate_start_token(&format!(
+            "linux-boot-id:{BOOT_ID};start-ticks:18446744073709551615"
+        ))
+        .unwrap();
+
+        for invalid in [
+            "",
+            "token",
+            " linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
+            "windows-filetime:1",
+            "linux-boot-id:00000000111142228333444444444444;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-44444444444;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-44444444444g;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-44444444444A;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:0",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:01",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:+1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1 ",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1;trailing",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:18446744073709551616",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;other:1;start-ticks:1",
+        ] {
+            assert!(
+                validate_start_token(invalid).is_err(),
+                "accepted invalid Linux start token {invalid:?}"
+            );
+        }
+    }
+
+    #[cfg(not(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    #[test]
+    fn unsupported_target_rejects_v2_start_token_authority() {
+        assert!(validate_start_token("windows-filetime:1").is_err());
+        assert!(
+            validate_start_token(
+                "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1"
+            )
+            .is_err()
+        );
+    }
+}

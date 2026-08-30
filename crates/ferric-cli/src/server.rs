@@ -24,8 +24,8 @@ use crate::server_process::{
 };
 use crate::server_registration::{
     CapturedRegistration, PublishError, RegistrationInventory, RegistrationScope, RegistrationSlot,
-    RemovalOutcome, ReplacementOutcome, capture_registration_path, inventory_runfiles,
-    publish_mirrored, remove_if_unchanged, replace_if_unchanged, validate_runfile,
+    RemovalOutcome, ReplacementOutcome, inventory_runfiles, publish_mirrored, remove_if_unchanged,
+    replace_if_unchanged, validate_runfile,
 };
 use crate::server_resolution::{Candidate, CandidateState, Resolution, resolve};
 
@@ -611,60 +611,16 @@ fn expand_registration_captures(
         push_inventory_slot(global, &mut captures, &mut observations);
     }
 
-    // A v2 global record promises the path of its originating local mirror.
-    // Capture that alias before any destructive decision so `down` from a
-    // different workspace can clean the actual mirror rather than recomputing
-    // a path from the current directory.
-    for source in captures.clone() {
-        if source.runfile.schema_version != RUNFILE_SCHEMA_V2 {
-            continue;
-        }
-        let Some(origin) = source.runfile.origin_local_runfile.as_deref() else {
-            continue;
-        };
-        if let Some(existing) = captures.iter().find(|capture| capture.path == origin) {
-            if existing.runfile != source.runfile {
-                observations.push(LifecycleObservation {
-                    candidate: Candidate {
-                        label: registration_label(RegistrationScope::Origin, origin),
-                        state: CandidateState::Blocked {
-                            reason: format!(
-                                "promised origin differs from the {} record at {}",
-                                source.scope,
-                                source.path.display()
-                            ),
-                        },
-                    },
-                    capture: None,
-                    process: None,
-                    stale_listener_owners: Vec::new(),
-                });
-            }
-            continue;
-        }
-        match capture_registration_path(RegistrationScope::Origin, origin) {
+    // The store captured each global-v2 promised origin independently. Consume
+    // those exact observations rather than re-reading or collapsing a
+    // same-path local/origin pair. A changed but valid origin remains a
+    // candidate with its own raw-byte cleanup token; lifecycle resolution, not
+    // the inventory adapter, decides whether it is stale, an alias, or a live
+    // conflict.
+    for promised in inventory.promised_origins {
+        match promised.slot {
             RegistrationSlot::Absent { .. } => {}
-            RegistrationSlot::Captured(origin_capture) => {
-                if origin_capture.runfile == source.runfile {
-                    captures.push(*origin_capture);
-                } else {
-                    observations.push(LifecycleObservation {
-                        candidate: Candidate {
-                            label: registration_label(RegistrationScope::Origin, origin),
-                            state: CandidateState::Blocked {
-                                reason: format!(
-                                    "origin contents differ from the {} record at {}",
-                                    source.scope,
-                                    source.path.display()
-                                ),
-                            },
-                        },
-                        capture: None,
-                        process: None,
-                        stale_listener_owners: Vec::new(),
-                    });
-                }
-            }
+            RegistrationSlot::Captured(origin_capture) => captures.push(*origin_capture),
             RegistrationSlot::Blocked {
                 scope,
                 path,
@@ -673,7 +629,11 @@ fn expand_registration_captures(
                 candidate: Candidate {
                     label: registration_label(scope, &path),
                     state: CandidateState::Blocked {
-                        reason: reason.to_string(),
+                        reason: format!(
+                            "{reason}; promised by {} registration {}",
+                            promised.source.scope,
+                            promised.source.path.display()
+                        ),
                     },
                 },
                 capture: None,
@@ -2059,6 +2019,7 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server_process::canonical_test_start_token;
     use std::net::TcpListener;
     use std::thread;
 
@@ -2310,7 +2271,12 @@ mod tests {
             .inspect(port)
             .unwrap()
             .identity;
-        stale_identity.start_token.push_str("-stale");
+        let alternative = canonical_test_start_token(1);
+        stale_identity.start_token = if stale_identity.start_token == alternative {
+            canonical_test_start_token(2)
+        } else {
+            alternative
+        };
         let mut stale = live.clone();
         stale.pid = std::process::id();
         stale.process_identity = Some(stale_identity);
@@ -2575,7 +2541,7 @@ mod tests {
             origin_local_runfile: None,
         };
         let identity = ProcessIdentity {
-            start_token: "opaque".to_string(),
+            start_token: canonical_test_start_token(1),
             executable,
             argv: vec![
                 "llama-server".to_string(),
@@ -3075,6 +3041,111 @@ mod tests {
         assert!(matches!(child.try_wait(), Ok(None)));
         stop_child(&mut child).unwrap();
         server.join().unwrap();
+    }
+
+    #[test]
+    fn promised_origin_expansion_keeps_independent_capture_and_source_aware_blocker() {
+        use crate::server_registration::{
+            PromisedOriginRegistration, RegistrationBlock, RegistrationCoordinate,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let local_path = root
+            .path()
+            .join("workspace")
+            .join(".ferric")
+            .join("server.json");
+        let global_path = root.path().join("config").join("server.json");
+        let blocked_path = root
+            .path()
+            .join("blocked-workspace")
+            .join(".ferric")
+            .join("server.json");
+        let executable = root.path().join(if cfg!(windows) {
+            "llama-server.exe"
+        } else {
+            "llama-server"
+        });
+        let runfile = |pid, token_coordinate| ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid,
+            port: 8080,
+            base_url: "http://127.0.0.1:8080/v1".to_string(),
+            tailscale: false,
+            model: None,
+            context_size: None,
+            sampling_seed: None,
+            parallel_slots: None,
+            process_identity: Some(ProcessIdentity {
+                start_token: canonical_test_start_token(token_coordinate),
+                executable: executable.clone(),
+                argv: vec![
+                    "llama-server".to_string(),
+                    "--port".to_string(),
+                    "8080".to_string(),
+                ],
+            }),
+            origin_local_runfile: Some(local_path.clone()),
+        };
+        let direct_runfile = runfile(1, 1);
+        let changed_origin_runfile = runfile(2, 2);
+        let source = RegistrationCoordinate {
+            scope: RegistrationScope::Global,
+            path: global_path,
+        };
+        let inventory = RegistrationInventory {
+            local: RegistrationSlot::Captured(Box::new(CapturedRegistration {
+                scope: RegistrationScope::Local,
+                path: local_path.clone(),
+                raw: b"direct-local-snapshot".to_vec(),
+                runfile: direct_runfile.clone(),
+            })),
+            global: None,
+            promised_origins: vec![
+                PromisedOriginRegistration {
+                    source: source.clone(),
+                    expected_runfile: direct_runfile.clone(),
+                    slot: RegistrationSlot::Captured(Box::new(CapturedRegistration {
+                        scope: RegistrationScope::Origin,
+                        path: local_path,
+                        raw: b"changed-origin-snapshot".to_vec(),
+                        runfile: changed_origin_runfile.clone(),
+                    })),
+                },
+                PromisedOriginRegistration {
+                    source: source.clone(),
+                    expected_runfile: direct_runfile,
+                    slot: RegistrationSlot::Blocked {
+                        scope: RegistrationScope::Origin,
+                        path: blocked_path.clone(),
+                        reason: RegistrationBlock::NonRegular,
+                    },
+                },
+            ],
+        };
+
+        let (captures, observations) = expand_registration_captures(inventory);
+        assert_eq!(captures.len(), 2);
+        assert!(captures.iter().any(|capture| {
+            capture.scope == RegistrationScope::Local && capture.raw == b"direct-local-snapshot"
+        }));
+        assert!(captures.iter().any(|capture| {
+            capture.scope == RegistrationScope::Origin
+                && capture.raw == b"changed-origin-snapshot"
+                && capture.runfile == changed_origin_runfile
+        }));
+        assert_eq!(observations.len(), 1);
+        assert_eq!(
+            observations[0].candidate.label,
+            registration_label(RegistrationScope::Origin, &blocked_path)
+        );
+        assert!(matches!(
+            &observations[0].candidate.state,
+            CandidateState::Blocked { reason }
+                if reason.contains("promised by global registration")
+                    && reason.contains(&source.path.display().to_string())
+        ));
     }
 
     #[test]

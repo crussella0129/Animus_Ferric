@@ -140,21 +140,22 @@ pub(crate) fn resolve(candidates: &[Candidate]) -> Resolution {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server_process::canonical_test_start_token;
     use std::path::PathBuf;
 
-    fn identity(token: &str) -> ProcessIdentity {
+    fn identity(coordinate: u64) -> ProcessIdentity {
         ProcessIdentity {
-            start_token: token.to_string(),
+            start_token: canonical_test_start_token(coordinate),
             executable: PathBuf::from("example-engine"),
             argv: vec!["example-engine".to_string(), "--serve".to_string()],
         }
     }
 
-    fn verified(label: &str, token: &str, key: &[u8]) -> Candidate {
+    fn verified(label: &str, coordinate: u64, key: &[u8]) -> Candidate {
         Candidate {
             label: label.to_string(),
             state: CandidateState::Verified {
-                identity: identity(token),
+                identity: identity(coordinate),
                 registration_key: key.to_vec(),
                 http_healthy: true,
                 listener_present: true,
@@ -174,7 +175,7 @@ mod tests {
 
     #[test]
     fn stale_local_does_not_shadow_unique_live_global() {
-        let candidates = [stale("local"), verified("global", "b", b"B")];
+        let candidates = [stale("local"), verified("global", 2, b"B")];
         assert_eq!(
             resolve(&candidates),
             Resolution::One {
@@ -191,8 +192,8 @@ mod tests {
     #[test]
     fn exact_process_and_registration_group_as_aliases() {
         let candidates = [
-            verified("local", "same", b"same-record"),
-            verified("global", "same", b"same-record"),
+            verified("local", 1, b"same-record"),
+            verified("global", 1, b"same-record"),
         ];
         assert!(matches!(
             resolve(&candidates),
@@ -206,10 +207,10 @@ mod tests {
 
     #[test]
     fn alias_health_and_listener_facts_are_aggregated_conservatively() {
-        let healthy = verified("local", "same", b"same-record");
-        let mut degraded = verified("global", "same", b"same-record");
+        let healthy = verified("local", 1, b"same-record");
+        let mut degraded = verified("global", 1, b"same-record");
         degraded.state = CandidateState::Verified {
-            identity: identity("same"),
+            identity: identity(1),
             registration_key: b"same-record".to_vec(),
             http_healthy: false,
             listener_present: true,
@@ -229,7 +230,7 @@ mod tests {
 
     #[test]
     fn distinct_live_processes_fail_closed() {
-        let candidates = [verified("local", "a", b"A"), verified("global", "b", b"B")];
+        let candidates = [verified("local", 1, b"A"), verified("global", 2, b"B")];
         assert!(matches!(
             resolve(&candidates),
             Resolution::Blocked { reasons } if reasons.len() == 1
@@ -238,17 +239,14 @@ mod tests {
 
     #[test]
     fn same_pid_identity_with_different_registration_fails_closed() {
-        let candidates = [
-            verified("local", "same", b"A"),
-            verified("global", "same", b"B"),
-        ];
+        let candidates = [verified("local", 1, b"A"), verified("global", 1, b"B")];
         assert!(matches!(resolve(&candidates), Resolution::Blocked { .. }));
     }
 
     #[test]
     fn any_uninspectable_peer_blocks_destructive_resolution() {
         let candidates = [
-            verified("global", "b", b"B"),
+            verified("global", 2, b"B"),
             Candidate {
                 label: "local".to_string(),
                 state: CandidateState::Blocked {

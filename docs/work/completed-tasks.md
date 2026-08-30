@@ -1458,3 +1458,34 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   must close the missing fault, concurrency, output-contract, CI, and
   provenance matrices before report-driven calibration or compact-command work
   resumes.
+
+## T-11701 (sprint 117)
+
+- **Description:** Enforced canonical current-OS schema-v2 process-start
+  tokens and replaced fallback-shaped registration discovery with independent,
+  lossless local, global, and promised-origin snapshots. Promised origins now
+  retain their source coordinate, expected record, typed state, and exact raw
+  bytes even when they alias a configured path or contain a changed valid
+  record. Conditional cleanup now exposes deterministic moved-read and
+  moved-remove failure seams while preserving the same-parent atomic move,
+  no-clobber restore, and recovery-path contract. Lifecycle expansion consumes
+  the captured origin snapshot without a second filesystem read, and synthetic
+  Windows/Linux identities use canonical same-OS tokens.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T14:57:55-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_process.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/src/server_resolution.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, INT-0008,
+  Sprint 117 research and finalized plans, `docs/SUMMARY.md`, and the Book work
+  ledgers.
+- **Verification:** all four frozen E01 acceptance tests and the focused strict
+  token rejection regression passed; the integrated Ferric CLI all-feature
+  package gate passed 225 unit tests, 6 benchmark integrations, 69 CLI
+  integrations, 3 model-free lifecycle fixtures, and 3 template-hygiene tests.
+  All-target/all-feature Clippy passed with warnings denied, formatting and
+  diff checks passed, Windows and native WSL Linux token validation passed, and
+  the Sprint 114 protected artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** PENDING

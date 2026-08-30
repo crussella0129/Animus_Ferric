@@ -27,6 +27,28 @@ use std::time::{Duration, Instant};
 
 const SENTINEL_NAME: &str = "unrelated-sentinel.txt";
 
+fn canonical_test_start_token(coordinate: u64) -> String {
+    assert!(
+        coordinate > 0,
+        "test start-token coordinate must be positive"
+    );
+
+    #[cfg(windows)]
+    {
+        format!("windows-filetime:{coordinate}")
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        format!("linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:{coordinate}")
+    }
+}
+
 fn ferric_executable() -> &'static str {
     env!("CARGO_BIN_EXE_ferric")
 }
@@ -615,8 +637,12 @@ fn model_free_server_lifecycle_fixture_e2e() {
         .as_str()
         .unwrap()
         .to_string();
-    stale["process_identity"]["start_token"] =
-        serde_json::json!(format!("{old_token}-deliberately-stale"));
+    let alternative = canonical_test_start_token(1);
+    stale["process_identity"]["start_token"] = serde_json::json!(if old_token == alternative {
+        canonical_test_start_token(2)
+    } else {
+        alternative
+    });
     stale["origin_local_runfile"] = serde_json::json!(local_a.to_string_lossy().into_owned());
     write_bytes(&local_a, &serde_json::to_vec_pretty(&stale).unwrap());
 

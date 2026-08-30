@@ -167,3 +167,4 @@
   - [Test report](sprints/s116/sprint-tests/test-report.md)
   - [Blocking test critique](sprints/s116/sprint-tests/critique.md)
   - [Failure report](sprints/s116/failure-report.md)
+- [Sprint 117](sprints/s117/sprint-meta.md)

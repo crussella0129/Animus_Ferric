@@ -27,6 +27,15 @@ pub(crate) enum RegistrationScope {
     Origin,
 }
 
+/// One typed registration coordinate. Keeping the scope beside the exact
+/// absolute path prevents later diagnostics from collapsing an origin into a
+/// same-path local capture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RegistrationCoordinate {
+    pub(crate) scope: RegistrationScope,
+    pub(crate) path: PathBuf,
+}
+
 impl fmt::Display for RegistrationScope {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -91,6 +100,20 @@ pub(crate) enum RegistrationSlot {
 pub(crate) struct RegistrationInventory {
     pub(crate) local: RegistrationSlot,
     pub(crate) global: Option<RegistrationSlot>,
+    /// Every origin promised by a valid captured global v2 registration.
+    ///
+    /// The origin is captured independently even when it names the configured
+    /// local path. `expected_runfile` is the source record against which later
+    /// resolution can diagnose a changed-but-valid origin without discarding
+    /// either capture's exact bytes.
+    pub(crate) promised_origins: Vec<PromisedOriginRegistration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PromisedOriginRegistration {
+    pub(crate) source: RegistrationCoordinate,
+    pub(crate) expected_runfile: ServerRunfile,
+    pub(crate) slot: RegistrationSlot,
 }
 
 /// Capture both configured runfile locations without local-first fallback.
@@ -102,7 +125,34 @@ pub(crate) fn inventory_runfiles(
     let global = global_path
         .as_deref()
         .map(|path| capture_registration_path(RegistrationScope::Global, path));
-    RegistrationInventory { local, global }
+    let promised_origins = global
+        .iter()
+        .filter_map(|slot| match slot {
+            RegistrationSlot::Captured(captured)
+                if captured.runfile.schema_version == IDENTITY_SCHEMA_VERSION =>
+            {
+                let origin = captured
+                    .runfile
+                    .origin_local_runfile
+                    .as_deref()
+                    .expect("validated schema-v2 registration has an origin");
+                Some(PromisedOriginRegistration {
+                    source: RegistrationCoordinate {
+                        scope: captured.scope,
+                        path: captured.path.clone(),
+                    },
+                    expected_runfile: captured.runfile.clone(),
+                    slot: capture_registration_path(RegistrationScope::Origin, origin),
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    RegistrationInventory {
+        local,
+        global,
+        promised_origins,
+    }
 }
 
 /// Capture an arbitrary registration path. This is also used to expand the
@@ -243,9 +293,9 @@ pub(crate) fn validate_runfile(
                 .process_identity
                 .as_ref()
                 .ok_or_else(|| "schema 2 requires process_identity".to_string())?;
-            if identity.start_token.trim().is_empty() {
-                return Err("schema 2 process_identity requires a start_token".to_string());
-            }
+            crate::server_process::validate_start_token(&identity.start_token).map_err(
+                |detail| format!("schema 2 process_identity has invalid start_token: {detail}"),
+            )?;
             if !identity.executable.is_absolute() {
                 return Err(
                     "schema 2 process_identity executable must be an absolute path".to_string(),
@@ -1000,16 +1050,26 @@ impl std::error::Error for RemovalError {}
 pub(crate) fn remove_if_unchanged(
     captured: &CapturedRegistration,
 ) -> Result<RemovalOutcome, RemovalError> {
-    remove_if_unchanged_impl(captured, |_| {}, persist_bytes_noclobber)
+    remove_if_unchanged_impl(
+        captured,
+        |_| {},
+        |path| fs::read(path),
+        |path| fs::remove_file(path),
+        persist_bytes_noclobber,
+    )
 }
 
-fn remove_if_unchanged_impl<F, R>(
+fn remove_if_unchanged_impl<F, Q, D, R>(
     captured: &CapturedRegistration,
     after_rename: F,
+    read_moved: Q,
+    remove_moved: D,
     restore_changed: R,
 ) -> Result<RemovalOutcome, RemovalError>
 where
     F: FnOnce(&Path),
+    Q: FnOnce(&Path) -> io::Result<Vec<u8>>,
+    D: FnOnce(&Path) -> io::Result<()>,
     R: FnOnce(&Path, &[u8]) -> Result<(), PersistFailure>,
 {
     let original = &captured.path;
@@ -1082,7 +1142,7 @@ where
             detail: "atomically moved entry is not a regular non-symlink file".to_string(),
         });
     }
-    let moved_raw = match fs::read(&moved) {
+    let moved_raw = match read_moved(&moved) {
         Ok(raw) => raw,
         Err(error) => {
             let preserved = keep_holding_dir(holding_dir, "registration");
@@ -1095,7 +1155,7 @@ where
     };
 
     if moved_raw == captured.raw {
-        if let Err(error) = fs::remove_file(&moved) {
+        if let Err(error) = remove_moved(&moved) {
             let preserved = keep_holding_dir(holding_dir, "registration");
             return Err(RemovalError {
                 path: original.clone(),
@@ -1185,9 +1245,30 @@ mod tests {
         }
     }
 
-    fn identity(token: &str) -> ProcessIdentity {
+    fn canonical_start_token(discriminator: u64) -> String {
+        #[cfg(windows)]
+        {
+            format!(
+                "windows-filetime:{}",
+                133_999_123_456_789_000 + discriminator
+            )
+        }
+        #[cfg(target_os = "linux")]
+        {
+            format!(
+                "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:{}",
+                987_000 + discriminator
+            )
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            panic!("schema-v2 registration authority is supported only on Windows and Linux");
+        }
+    }
+
+    fn identity(discriminator: u64) -> ProcessIdentity {
         ProcessIdentity {
-            start_token: token.to_string(),
+            start_token: canonical_start_token(discriminator),
             executable: absolute_path(Path::new("llama-server")).unwrap(),
             argv: vec![
                 "llama-server".to_string(),
@@ -1197,10 +1278,10 @@ mod tests {
         }
     }
 
-    fn v2_runfile(origin: &Path, token: &str) -> ServerRunfile {
+    fn v2_runfile(origin: &Path, discriminator: u64) -> ServerRunfile {
         let mut runfile = legacy_runfile(1234);
         runfile.schema_version = IDENTITY_SCHEMA_VERSION;
-        runfile.process_identity = Some(identity(token));
+        runfile.process_identity = Some(identity(discriminator));
         runfile.origin_local_runfile = Some(origin.to_path_buf());
         runfile
     }
@@ -1220,7 +1301,7 @@ mod tests {
     }
 
     #[test]
-    fn inventory_preserves_independent_absent_slots() {
+    fn registration_inventory_retains_both_scopes_and_raw_bytes() {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("workspace");
         let global = root.path().join("config").join("server.json");
@@ -1241,10 +1322,97 @@ mod tests {
                 ref path
             }) if *path == absolute_path(&global).unwrap()
         ));
+        assert!(inventory.promised_origins.is_empty());
         assert_eq!(select_unique(&inventory).unwrap(), None);
 
         let without_global = inventory_runfiles(&workspace, None);
         assert!(without_global.global.is_none());
+        assert!(without_global.promised_origins.is_empty());
+
+        // A malformed local slot never hides a captured global slot, and both
+        // retain their own typed coordinate.
+        let local = absolute_path(&runfile_path(&workspace)).unwrap();
+        fs::create_dir_all(local.parent().unwrap()).unwrap();
+        fs::write(&local, b"{not-json").unwrap();
+        let global_v1_raw = write_runfile(&global, &legacy_runfile(77));
+        let inventory = inventory_runfiles(&workspace, Some(global.clone()));
+        assert!(matches!(
+            inventory.local,
+            RegistrationSlot::Blocked {
+                scope: RegistrationScope::Local,
+                ref path,
+                reason: RegistrationBlock::Malformed(_),
+            } if path == &local
+        ));
+        let global_capture = captured(inventory.global.as_ref().unwrap());
+        assert_eq!(global_capture.scope, RegistrationScope::Global);
+        assert_eq!(global_capture.raw, global_v1_raw);
+
+        // A valid global-v2 promise always causes a second observation of its
+        // origin, even when that origin is the configured local path. A valid
+        // but different origin record retains its raw bytes for typed conflict
+        // reporting instead of becoming a captureless string.
+        let local_v1_raw = write_runfile(&local, &legacy_runfile(78));
+        let global_v2 = v2_runfile(&local, 20);
+        write_runfile(&global, &global_v2);
+        let inventory = inventory_runfiles(&workspace, Some(global.clone()));
+        assert_eq!(inventory.promised_origins.len(), 1);
+        let promise = &inventory.promised_origins[0];
+        assert_eq!(promise.source.scope, RegistrationScope::Global);
+        assert_eq!(promise.source.path, absolute_path(&global).unwrap());
+        assert_eq!(promise.expected_runfile, global_v2);
+        let origin_capture = captured(&promise.slot);
+        assert_eq!(origin_capture.scope, RegistrationScope::Origin);
+        assert_eq!(origin_capture.path, local);
+        assert_eq!(origin_capture.raw, local_v1_raw);
+        assert_ne!(origin_capture.runfile, promise.expected_runfile);
+
+        // Matching, absent, and blocked origins remain distinct typed slots.
+        let matching = v2_runfile(&local, 21);
+        let matching_raw = write_runfile(&local, &matching);
+        write_runfile(&global, &matching);
+        let inventory = inventory_runfiles(&workspace, Some(global.clone()));
+        let matching_origin = captured(&inventory.promised_origins[0].slot);
+        assert_eq!(matching_origin.raw, matching_raw);
+        assert_eq!(matching_origin.runfile, matching);
+
+        let absent_origin = absolute_path(
+            &root
+                .path()
+                .join("absent-workspace")
+                .join(".ferric")
+                .join("server.json"),
+        )
+        .unwrap();
+        write_runfile(&global, &v2_runfile(&absent_origin, 22));
+        let inventory = inventory_runfiles(&workspace, Some(global.clone()));
+        assert!(matches!(
+            inventory.promised_origins[0].slot,
+            RegistrationSlot::Absent {
+                scope: RegistrationScope::Origin,
+                ref path,
+            } if path == &absent_origin
+        ));
+
+        let blocked_origin = absolute_path(
+            &root
+                .path()
+                .join("blocked-workspace")
+                .join(".ferric")
+                .join("server.json"),
+        )
+        .unwrap();
+        fs::create_dir_all(&blocked_origin).unwrap();
+        write_runfile(&global, &v2_runfile(&blocked_origin, 23));
+        let inventory = inventory_runfiles(&workspace, Some(global));
+        assert!(matches!(
+            inventory.promised_origins[0].slot,
+            RegistrationSlot::Blocked {
+                scope: RegistrationScope::Origin,
+                ref path,
+                reason: RegistrationBlock::NonRegular,
+            } if path == &blocked_origin
+        ));
     }
 
     #[test]
@@ -1330,7 +1498,7 @@ mod tests {
 
         let v1_with_identity = root.path().join("v1-with-identity.json");
         let mut downgraded = legacy_runfile(3);
-        downgraded.process_identity = Some(identity("unexpected"));
+        downgraded.process_identity = Some(identity(1));
         write_runfile(&v1_with_identity, &downgraded);
         assert!(matches!(
             capture_registration_path(RegistrationScope::Global, &v1_with_identity),
@@ -1374,7 +1542,7 @@ mod tests {
         let local_a = absolute_path(&runfile_path(&workspace_a)).unwrap();
         let local_b = absolute_path(&runfile_path(&workspace_b)).unwrap();
         let global = root.path().join("config").join("server.json");
-        let runfile = v2_runfile(&local_b, "same-process");
+        let runfile = v2_runfile(&local_b, 2);
 
         write_runfile(&global, &runfile);
         assert!(matches!(
@@ -1418,7 +1586,7 @@ mod tests {
     fn v2_origin_must_be_absolute_and_have_local_runfile_shape() {
         let root = tempfile::tempdir().unwrap();
         let global = root.path().join("global.json");
-        let relative = v2_runfile(Path::new("workspace/.ferric/server.json"), "token");
+        let relative = v2_runfile(Path::new("workspace/.ferric/server.json"), 3);
         write_runfile(&global, &relative);
         assert!(matches!(
             capture_registration_path(RegistrationScope::Global, &global),
@@ -1428,7 +1596,7 @@ mod tests {
             } if detail.contains("must be absolute")
         ));
 
-        let wrong_shape = v2_runfile(&root.path().join("server.json"), "token");
+        let wrong_shape = v2_runfile(&root.path().join("server.json"), 4);
         write_runfile(&global, &wrong_shape);
         assert!(matches!(
             capture_registration_path(RegistrationScope::Global, &global),
@@ -1440,31 +1608,56 @@ mod tests {
     }
 
     #[test]
-    fn v2_identity_values_must_be_authoritative() {
+    fn runfile_schema_authority_matrix() {
         let root = tempfile::tempdir().unwrap();
         let global = root.path().join("global.json");
         let origin = absolute_path(&root.path().join("workspace/.ferric/server.json")).unwrap();
 
+        let legacy_raw = write_runfile(&global, &legacy_runfile(1));
+        let legacy = captured(&capture_registration_path(
+            RegistrationScope::Global,
+            &global,
+        ))
+        .clone();
+        assert_eq!(legacy.raw, legacy_raw);
+        assert_eq!(legacy.runfile.schema_version, LEGACY_SCHEMA_VERSION);
+        assert!(legacy.runfile.process_identity.is_none());
+
+        let valid_v2 = v2_runfile(&origin, 5);
+        write_runfile(&global, &valid_v2);
+        assert_eq!(
+            captured(&capture_registration_path(
+                RegistrationScope::Global,
+                &global,
+            ))
+            .runfile,
+            valid_v2
+        );
+
         let mut cases = Vec::new();
-        let mut zero_pid = v2_runfile(&origin, "token");
+        let mut zero_pid = v2_runfile(&origin, 6);
         zero_pid.pid = 0;
         cases.push((zero_pid, "nonzero pid"));
-        let mut zero_port = v2_runfile(&origin, "token");
+        let mut zero_port = v2_runfile(&origin, 7);
         zero_port.port = 0;
         cases.push((zero_port, "nonzero port"));
-        let empty_token = v2_runfile(&origin, "   ");
+        let mut empty_token = v2_runfile(&origin, 8);
+        empty_token.process_identity.as_mut().unwrap().start_token = "   ".to_string();
         cases.push((empty_token, "start_token"));
-        let mut relative_executable = v2_runfile(&origin, "token");
+        let mut missing_identity = v2_runfile(&origin, 9);
+        missing_identity.process_identity = None;
+        cases.push((missing_identity, "requires process_identity"));
+        let mut relative_executable = v2_runfile(&origin, 10);
         relative_executable
             .process_identity
             .as_mut()
             .unwrap()
             .executable = PathBuf::from("llama-server");
         cases.push((relative_executable, "absolute path"));
-        let mut empty_argv = v2_runfile(&origin, "token");
+        let mut empty_argv = v2_runfile(&origin, 11);
         empty_argv.process_identity.as_mut().unwrap().argv.clear();
         cases.push((empty_argv, "observed argv"));
-        let mut empty_argv_element = v2_runfile(&origin, "token");
+        let mut empty_argv_element = v2_runfile(&origin, 12);
         empty_argv_element
             .process_identity
             .as_mut()
@@ -1472,9 +1665,25 @@ mod tests {
             .argv
             .push(String::new());
         cases.push((empty_argv_element, "argv elements"));
-        let mut divergent_base_url = v2_runfile(&origin, "token");
-        divergent_base_url.base_url = "http://127.0.0.1:9090/v1".to_string();
-        cases.push((divergent_base_url, "non-Tailscale base_url"));
+        let mut missing_origin = v2_runfile(&origin, 13);
+        missing_origin.origin_local_runfile = None;
+        cases.push((missing_origin, "requires origin_local_runfile"));
+        for (index, base_url) in [
+            "https://127.0.0.1:8080/v1",
+            "http://localhost:8080/v1",
+            "http://127.0.0.1:9090/v1",
+            "http://127.0.0.1:8080/health",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut divergent_base_url = v2_runfile(&origin, 20 + index as u64);
+            divergent_base_url.base_url = base_url.to_string();
+            cases.push((divergent_base_url, "non-Tailscale base_url"));
+        }
+        let mut unknown_version = v2_runfile(&origin, 30);
+        unknown_version.schema_version = 99;
+        cases.push((unknown_version, "unsupported schema version"));
 
         for (runfile, expected) in cases {
             write_runfile(&global, &runfile);
@@ -1488,8 +1697,57 @@ mod tests {
         }
     }
 
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
-    fn unique_selection_accepts_single_duplicate_and_same_v2_record() {
+    fn runfile_schema_rejects_untagged_foreign_or_noncanonical_start_tokens() {
+        let root = tempfile::tempdir().unwrap();
+        let global = root.path().join("global.json");
+        let origin = absolute_path(&root.path().join("workspace/.ferric/server.json")).unwrap();
+
+        #[cfg(windows)]
+        let invalid_tokens = [
+            "token",
+            "opaque",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
+            "windows-filetime:0",
+            "windows-filetime:01",
+            "windows-filetime:+1",
+            "windows-filetime:1extra",
+            " windows-filetime:1",
+            "windows-filetime:1 ",
+        ];
+        #[cfg(target_os = "linux")]
+        let invalid_tokens = [
+            "token",
+            "opaque",
+            "windows-filetime:1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:0",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:01",
+            "linux-boot-id:00000000-1111-4222-8333-44444444444;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;ticks-start:1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1;extra",
+            " linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
+        ];
+
+        for (index, token) in invalid_tokens.into_iter().enumerate() {
+            let mut runfile = v2_runfile(&origin, 40 + index as u64);
+            runfile.process_identity.as_mut().unwrap().start_token = token.to_string();
+            write_runfile(&global, &runfile);
+            assert!(
+                matches!(
+                    capture_registration_path(RegistrationScope::Global, &global),
+                    RegistrationSlot::Blocked {
+                        reason: RegistrationBlock::InvalidSchema(detail),
+                        ..
+                    } if detail.contains("start_token")
+                ),
+                "token unexpectedly accepted: {token}"
+            );
+        }
+    }
+
+    #[test]
+    fn identical_and_parse_equal_mirrors_keep_scope_tokens() {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("workspace");
         let local = absolute_path(&runfile_path(&workspace)).unwrap();
@@ -1511,7 +1769,7 @@ mod tests {
             RegistrationScope::Local
         );
 
-        let local_v2 = v2_runfile(&local, "shared-token");
+        let local_v2 = v2_runfile(&local, 12);
         write_runfile(&local, &local_v2);
         fs::write(&global, serde_json::to_vec(&local_v2).unwrap()).unwrap();
         let inventory = inventory_runfiles(&workspace, Some(global));
@@ -1519,6 +1777,16 @@ mod tests {
             captured(&inventory.local).raw,
             captured(inventory.global.as_ref().unwrap()).raw
         );
+        assert_eq!(captured(&inventory.local).scope, RegistrationScope::Local);
+        assert_eq!(
+            captured(inventory.global.as_ref().unwrap()).scope,
+            RegistrationScope::Global
+        );
+        assert_eq!(inventory.promised_origins.len(), 1);
+        let origin_capture = captured(&inventory.promised_origins[0].slot);
+        assert_eq!(origin_capture.scope, RegistrationScope::Origin);
+        assert_eq!(origin_capture.raw, captured(&inventory.local).raw);
+        assert_eq!(origin_capture.runfile, local_v2);
         assert_eq!(
             select_unique(&inventory).unwrap().unwrap().scope,
             RegistrationScope::Local
@@ -1540,7 +1808,7 @@ mod tests {
         ));
 
         let local_path = absolute_path(&local).unwrap();
-        let local_v2 = v2_runfile(&local_path, "same-identity");
+        let local_v2 = v2_runfile(&local_path, 13);
         let mut contradictory_global = local_v2.clone();
         contradictory_global.port = 9090;
         contradictory_global.base_url = "http://127.0.0.1:9090/v1".to_string();
@@ -1570,7 +1838,7 @@ mod tests {
         let workspace = root.path().join("workspace");
         let local = absolute_path(&runfile_path(&workspace)).unwrap();
         let global = root.path().join("config").join("server.json");
-        let runfile = v2_runfile(&local, "publish-token");
+        let runfile = v2_runfile(&local, 14);
 
         let published = publish_mirrored(&workspace, Some(&global), &runfile).unwrap();
         assert_eq!(fs::read(&local).unwrap(), fs::read(&global).unwrap());
@@ -1590,7 +1858,7 @@ mod tests {
         let local_only_root = tempfile::tempdir().unwrap();
         let local_only_workspace = local_only_root.path().join("workspace");
         let local_only_path = absolute_path(&runfile_path(&local_only_workspace)).unwrap();
-        let local_only_runfile = v2_runfile(&local_only_path, "local-only-token");
+        let local_only_runfile = v2_runfile(&local_only_path, 15);
         let local_only =
             publish_mirrored(&local_only_workspace, None, &local_only_runfile).unwrap();
         assert!(local_only.global.is_none());
@@ -1605,7 +1873,7 @@ mod tests {
         let global = root.path().join("config").join("server.json");
         fs::create_dir_all(global.parent().unwrap()).unwrap();
         fs::write(&global, b"existing-global").unwrap();
-        let runfile = v2_runfile(&local, "rollback-token");
+        let runfile = v2_runfile(&local, 16);
 
         let error = publish_mirrored(&workspace, Some(&global), &runfile).unwrap_err();
         let rollback_capture = match error {
@@ -1623,7 +1891,90 @@ mod tests {
     }
 
     #[test]
-    fn remove_if_unchanged_deletes_only_exact_capture() {
+    fn concurrent_lifecycle_operations_are_per_path_safe() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace_a = root.path().join("workspace-a");
+        let workspace_b = root.path().join("workspace-b");
+        let local_a = absolute_path(&runfile_path(&workspace_a)).unwrap();
+        let local_b = absolute_path(&runfile_path(&workspace_b)).unwrap();
+        let global = root.path().join("config/server.json");
+        let runfile_a = v2_runfile(&local_a, 60);
+        let runfile_b = v2_runfile(&local_b, 61);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+
+        let (result_a, result_b) = std::thread::scope(|scope| {
+            let barrier_a = barrier.clone();
+            let barrier_b = barrier.clone();
+            let first_workspace = workspace_a.clone();
+            let first_global = global.clone();
+            let first_runfile = runfile_a.clone();
+            let second_workspace = workspace_b.clone();
+            let second_global = global.clone();
+            let second_runfile = runfile_b.clone();
+            let first = scope.spawn(move || {
+                barrier_a.wait();
+                publish_mirrored(&first_workspace, Some(&first_global), &first_runfile)
+            });
+            let second = scope.spawn(move || {
+                barrier_b.wait();
+                publish_mirrored(&second_workspace, Some(&second_global), &second_runfile)
+            });
+            barrier.wait();
+            (first.join().unwrap(), second.join().unwrap())
+        });
+
+        let (winner, loser_workspace, loser_local) = match (result_a, result_b) {
+            (Ok(winner), Err(PublishError::Mirror { local, .. })) => (winner, workspace_b, *local),
+            (Err(PublishError::Mirror { local, .. }), Ok(winner)) => (winner, workspace_a, *local),
+            outcomes => panic!("exactly one shared-global publisher must win: {outcomes:?}"),
+        };
+        assert_eq!(fs::read(&global).unwrap(), winner.local.raw);
+
+        // Before attempt-owned compensation, the losing workspace observes a
+        // typed local/global split rather than a local-first winner.
+        let split = inventory_runfiles(&loser_workspace, Some(global.clone()));
+        assert!(matches!(split.local, RegistrationSlot::Captured(_)));
+        assert!(matches!(split.global, Some(RegistrationSlot::Captured(_))));
+        assert!(matches!(
+            select_unique(&split),
+            Err(SelectionError::Conflict { .. })
+        ));
+        assert_eq!(
+            remove_if_unchanged(&loser_local).unwrap(),
+            RemovalOutcome::Removed
+        );
+        assert!(!loser_local.path.exists());
+        assert_eq!(fs::read(&global).unwrap(), winner.local.raw);
+
+        // Script a second cleanup while the first client holds the atomically
+        // isolated entry. It must observe typed absence; the first remains the
+        // sole remover. Real simultaneous process races remain for T-11706.
+        let cleanup_path = root.path().join("cleanup/.ferric/server.json");
+        write_runfile(&cleanup_path, &legacy_runfile(90));
+        let cleanup_capture = captured(&capture_registration_path(
+            RegistrationScope::Local,
+            &cleanup_path,
+        ))
+        .clone();
+        let nested_outcome = std::cell::RefCell::new(None);
+        assert_eq!(
+            remove_if_unchanged_impl(
+                &cleanup_capture,
+                |_| {
+                    nested_outcome.replace(Some(remove_if_unchanged(&cleanup_capture).unwrap()));
+                },
+                |path| fs::read(path),
+                |path| fs::remove_file(path),
+                persist_bytes_noclobber,
+            )
+            .unwrap(),
+            RemovalOutcome::Removed
+        );
+        assert_eq!(nested_outcome.into_inner(), Some(RemovalOutcome::Absent));
+    }
+
+    #[test]
+    fn atomic_conditional_removal_matrix() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".ferric").join("server.json");
         write_runfile(&path, &legacy_runfile(1));
@@ -1638,6 +1989,65 @@ mod tests {
             remove_if_unchanged(&capture).unwrap(),
             RemovalOutcome::Absent
         );
+
+        let parse_equal = root.path().join("parse-equal/.ferric/server.json");
+        let record = legacy_runfile(2);
+        write_runfile(&parse_equal, &record);
+        let capture = captured(&capture_registration_path(
+            RegistrationScope::Local,
+            &parse_equal,
+        ))
+        .clone();
+        let compact = serde_json::to_vec(&record).unwrap();
+        fs::write(&parse_equal, &compact).unwrap();
+        let preserved = match remove_if_unchanged(&capture).unwrap() {
+            RemovalOutcome::ReplacementPreserved { path, .. } => path,
+            outcome => panic!("parse-equal changed bytes must be preserved: {outcome:?}"),
+        };
+        assert_eq!(fs::read(&parse_equal).unwrap(), compact);
+        assert_eq!(fs::read(preserved).unwrap(), compact);
+
+        for (label, fail_read) in [("read", true), ("remove", false)] {
+            let path = root
+                .path()
+                .join(format!("{label}-failure/.ferric/server.json"));
+            write_runfile(&path, &legacy_runfile(3));
+            let capture =
+                captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
+            let result = if fail_read {
+                remove_if_unchanged_impl(
+                    &capture,
+                    |_| {},
+                    |_| {
+                        Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "injected read",
+                        ))
+                    },
+                    |path| fs::remove_file(path),
+                    persist_bytes_noclobber,
+                )
+            } else {
+                remove_if_unchanged_impl(
+                    &capture,
+                    |_| {},
+                    |path| fs::read(path),
+                    |_| {
+                        Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "injected remove",
+                        ))
+                    },
+                    persist_bytes_noclobber,
+                )
+            };
+            let error = result.unwrap_err();
+            let holding = error
+                .preserved_at
+                .expect("failed entry remains recoverable");
+            assert_eq!(fs::read(holding).unwrap(), capture.raw);
+            assert!(!path.exists());
+        }
     }
 
     #[test]
@@ -1753,6 +2163,8 @@ mod tests {
             |original| {
                 fs::write(original, &replacement).unwrap();
             },
+            |path| fs::read(path),
+            |path| fs::remove_file(path),
             persist_bytes_noclobber,
         )
         .unwrap();
@@ -1774,6 +2186,8 @@ mod tests {
         let error = remove_if_unchanged_impl(
             &capture,
             |_| {},
+            |path| fs::read(path),
+            |path| fs::remove_file(path),
             |_, _| {
                 Err(PersistFailure {
                     kind: io::ErrorKind::PermissionDenied,
