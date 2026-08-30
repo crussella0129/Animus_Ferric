@@ -144,27 +144,6 @@ fn wait_for_child_exit(
     }
 }
 
-fn run_cli_status_bounded(label: &str, command: &mut Command) -> ExitStatus {
-    let mut child = command
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap_or_else(|error| panic!("could not spawn {label}: {error}"));
-    match wait_for_child_exit(&mut child, CLI_TIMEOUT)
-        .unwrap_or_else(|error| panic!("could not observe {label}: {error}"))
-    {
-        Some(status) => status,
-        None => {
-            let kill = child.kill();
-            let reaped = wait_for_child_exit(&mut child, CHILD_EXIT_GRACE)
-                .unwrap_or_else(|error| panic!("could not reap timed-out {label}: {error}"));
-            panic!(
-                "{label} exceeded the {CLI_TIMEOUT:?} CLI watchdog; kill={kill:?} reaped={reaped:?}"
-            );
-        }
-    }
-}
-
 fn run_cli_output_bounded(label: &str, command: &mut Command) -> Output {
     // Files, rather than pipes, prevent an incorrectly spawned daemon from
     // keeping `wait_with_output` blocked by inherited writer handles.
@@ -861,9 +840,9 @@ fn launch_managed_fixture_with_retry(
                 "--port",
                 &port.to_string(),
             ]);
-        let status = run_cli_status_bounded("real `ferric server up`", &mut command);
+        let output = run_cli_output_bounded("real `ferric server up`", &mut command);
         let address_in_use = marker_matches(&bind_diagnostic, ADDRESS_IN_USE_DIAGNOSTIC);
-        if status.success() {
+        if output.status.success() {
             assert!(
                 !bind_diagnostic.exists(),
                 "managed fixture reported a bind failure despite successful launch"
@@ -878,11 +857,17 @@ fn launch_managed_fixture_with_retry(
         }
         if address_in_use {
             panic!(
-                "real `ferric server up` exhausted {PORT_ATTEMPTS} diagnosed address-in-use attempts"
+                "real `ferric server up` exhausted {PORT_ATTEMPTS} diagnosed address-in-use attempts ({}):\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
             );
         }
         panic!(
-            "real `ferric server up` failed without the fixture's exact address-in-use diagnostic: {status}"
+            "real `ferric server up` failed without the fixture's exact address-in-use diagnostic ({}):\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
     }
     unreachable!("the diagnosed bind retry loop always returns or panics")

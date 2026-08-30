@@ -41,9 +41,12 @@ jobs:
       - name: clippy with backend-openai
         run: cargo clippy -p ferric-cli --features backend-openai --all-targets -- -D warnings
 
-  # Runs the model-free lifecycle fixture natively on both supported CI hosts.
-  # Tests are serialized because they exercise process, listener, and runfile
-  # ownership boundaries.
+  # Runs the model-free lifecycle fixture on both supported CI hosts. Tests are
+  # serialized because they exercise process, listener, and runfile ownership
+  # boundaries. On Linux, the positive-path fixture gets an isolated PID,
+  # network, and proc namespace so every relevant peer is visible to the
+  # capability-free runner identity. Deterministic tests separately prove that
+  # an uninspectable peer remains non-authorizing in the production classifier.
   lifecycle-fixture:
     name: lifecycle fixture (${{ matrix.os }})
     timeout-minutes: 12
@@ -57,8 +60,54 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: clippy lifecycle fixture
         run: cargo clippy -p ferric-cli --features lifecycle-fixture --all-targets --locked -- -D warnings
-      - name: test lifecycle fixture serially
+      - name: test lifecycle fixture serially (Windows)
+        if: runner.os == 'Windows'
         run: cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1
+      - name: build lifecycle fixture test (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_bin="$(
+            cargo test -p ferric-cli --features lifecycle-fixture \
+              --test server_lifecycle_fixture --locked --no-run \
+              --message-format=json |
+            jq -sr '
+              [
+                .[] |
+                select(.reason == "compiler-artifact" and
+                       .target.name == "server_lifecycle_fixture" and
+                       .profile.test == true) |
+                .executable // empty
+              ] as $executables |
+              if ($executables | length) == 1 then
+                $executables[0]
+              else
+                error("expected exactly one lifecycle fixture executable")
+              end
+            '
+          )"
+          test -n "$test_bin"
+          test_bin="$(realpath "$test_bin")"
+          test -x "$test_bin"
+          printf '%s\n' "$test_bin" > "$RUNNER_TEMP/ferric-lifecycle-test-bin"
+      - name: test lifecycle fixture serially (isolated non-root Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_bin="$(cat "$RUNNER_TEMP/ferric-lifecycle-test-bin")"
+          test -x "$test_bin"
+          runner_uid="$(id -u)"
+          runner_gid="$(id -g)"
+          sudo -n unshare --pid --net --fork --mount-proc \
+            --kill-child=SIGKILL \
+            /bin/sh -ceu '
+              ip link set lo up
+              exec setpriv --reuid="$1" --regid="$2" --clear-groups \
+                --no-new-privs --inh-caps=-all --ambient-caps=-all \
+                --bounding-set=-all "$3" --test-threads=1
+            ' _ "$runner_uid" "$runner_gid" "$test_bin"
 
   # Portability gate: Ferric must keep type-checking for Raspberry Pi /
   # Orange Pi / Jetson class aarch64 Linux targets (ADR-004).
