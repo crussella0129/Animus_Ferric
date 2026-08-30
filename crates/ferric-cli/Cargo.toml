@@ -10,8 +10,17 @@ repository.workspace = true
 name = "ferric"
 path = "src/main.rs"
 
+[[bin]]
+name = "ferric-lifecycle-fixture"
+path = "src/bin/ferric_lifecycle_fixture.rs"
+required-features = ["lifecycle-fixture"]
+
 [features]
 default = []
+
+# Test-only model-free stand-in for llama-server. The required-feature binary
+# target keeps it out of normal/release Ferric builds.
+lifecycle-fixture = []
 
 backend-openai = [
     "ferric-provider/backend-openai",

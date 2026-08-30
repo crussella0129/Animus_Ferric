@@ -281,7 +281,13 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
         eprintln!("autonomy check infrastructure: {error}");
         return ExitCode::FAILURE;
     }
-    let resolved_api_base = crate::backend::resolved_base_url(args.api_base.as_deref());
+    let resolved_api_base = match crate::backend::resolved_base_url(args.api_base.as_deref()) {
+        Ok(base) => base,
+        Err(error) => {
+            eprintln!("autonomy server discovery: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     if let Err(error) = preflight_openai_server(
         &resolved_api_base,
         args.model.as_deref().expect("validated model"),
@@ -1137,12 +1143,24 @@ fn managed_server_binding(
 ) -> Result<Option<ManagedServerBinding>, String> {
     let workspace = std::env::current_dir()
         .map_err(|error| format!("resolve current directory for server runfile: {error}"))?;
-    let Some(runfile) = crate::server::read_runfile(&workspace) else {
-        return if strict {
-            Err("paired/evidence mode requires a managed `ferric server` runfile".to_string())
-        } else {
-            Ok(None)
-        };
+    let runfile = match crate::server::read_runfile_result(&workspace) {
+        Ok(Some(runfile)) => runfile,
+        Ok(None) => {
+            return if strict {
+                Err("paired/evidence mode requires a managed `ferric server` runfile".to_string())
+            } else {
+                Ok(None)
+            };
+        }
+        Err(error) => {
+            return Err(if strict {
+                format!(
+                    "paired/evidence mode found blocked managed-server registration state: {error}"
+                )
+            } else {
+                format!("managed-server registration state is blocked: {error}")
+            });
+        }
     };
     if normalized_endpoint(&runfile.base_url) != normalized_endpoint(resolved_api_base) {
         return if strict {
@@ -3371,6 +3389,7 @@ mod tests {
         std::fs::write(&model, b"model").unwrap();
         let model = model.display().to_string();
         let runfile = crate::server::ServerRunfile {
+            schema_version: 1,
             engine: crate::server::Engine::LlamaServer,
             pid: 1234,
             port: 8080,
@@ -3380,6 +3399,8 @@ mod tests {
             context_size: Some(8192),
             sampling_seed: Some(42),
             parallel_slots: Some(1),
+            process_identity: None,
+            origin_local_runfile: None,
         };
         let snapshot = crate::server::RegisteredServerSnapshot {
             pid: 1234,
