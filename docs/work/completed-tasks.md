@@ -1580,3 +1580,38 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   SHA-256
   `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
 - **Commit:** `9a0f290cbc9dd5d7cfdf403f3cfeb5b293de1bcf`
+
+## T-11705 (sprint 117)
+
+- **Description:** Made schema-v2 launch publication a single serialized,
+  independently durable transaction across configured local and global paths.
+  Each scope now creates an exclusive same-parent stage, writes and flushes the
+  complete bytes, syncs the file, atomically persists without replacement, and
+  syncs parent metadata where supported before publication is reported. One
+  compensation coordinator now stops, waits, and reaps the exact retained child,
+  proves listener release before rollback, conditionally removes only unchanged
+  attempt-owned finals and stages using captured bytes and file identity, and
+  preserves every replacement or recovery clue with a typed partial outcome.
+  Tailscale launch, doctor, status, and down paths fail closed before external,
+  process, model, network, registration, or stage effects while explaining that
+  scoped proxy cleanup is unavailable.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T18:48:33-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, `docs/commands.md`,
+  `docs/server-configuration.md`, and the Book work ledgers.
+- **Verification:** all three frozen E05 acceptance tests and the doctor,
+  Tailscale-registration, blocked-command, and exact-stage-cleanup supplements
+  passed, covering one-time serialization, durability/no-clobber ordering,
+  precommit and committed failures, retained-child stop/wait/reap and listener
+  gates, exact final/stage compensation, concurrent replacement preservation,
+  and real CLI zero-side-effect Tailscale refusal. The complete serial Ferric
+  CLI all-feature gate passed 246 unit tests, 6 benchmark integrations, 69 CLI
+  integrations, 3 model-free lifecycle fixtures, and 3 template-hygiene tests.
+  All-target/all-feature Clippy passed with warnings denied; formatting and diff
+  checks passed. Adversarial review's stage-path authority finding was closed by
+  retaining and revalidating opened-file identity before cleanup. The protected
+  Sprint 114 artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** PENDING

@@ -263,5 +263,4 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Sprint 117 — T-11606 acceptance recovery
 
-- [ ] T-11705 (sprint 117) [intent: INT-0008]: Make launch publication, retained-child compensation, and early Tailscale refusal complete and deterministically fault-injectable. — touches: `crates/ferric-cli/src/server_registration.rs`, `crates/ferric-cli/src/server.rs`, `crates/ferric-cli/src/bin/ferric_lifecycle_fixture.rs`, `docs/server-configuration.md`, `docs/commands.md`
 - [ ] T-11706 (sprint 117) [intent: INT-0008]: Prove all finalized clauses with real client races, hardened model-free fixtures, native smokes, serialized Windows/Linux CI, AArch64 compile coverage, and immutable Sprint evidence. — touches: `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, `crates/ferric-cli/src/bin/ferric_lifecycle_fixture.rs`, `crates/ferric-cli/src/server*.rs`, `crates/ferric-cli/Cargo.toml`, `.github/workflows/ci.yml`, operator docs, `docs/sprints/s117/sprint-tests/`

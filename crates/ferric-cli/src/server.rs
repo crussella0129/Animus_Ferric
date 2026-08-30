@@ -25,10 +25,11 @@ use crate::server_process::{
     loopback_listener_state,
 };
 use crate::server_registration::{
-    CapturedRegistration, PublishError, RegistrationCoordinate, RegistrationInventory,
-    RegistrationScope, RegistrationSlot, RemovalError, RemovalFailureKind, RemovalOutcome,
-    ReplacementError, ReplacementOutcome, inventory_runfiles, publish_mirrored,
-    remove_if_unchanged, replace_if_unchanged, validate_runfile,
+    CapturedRegistration, PublicationAttempt, PublicationStage, PublishError,
+    PublishedRegistrations, RegistrationCoordinate, RegistrationInventory, RegistrationScope,
+    RegistrationSlot, RemovalError, RemovalFailureKind, RemovalOutcome, ReplacementError,
+    ReplacementOutcome, inventory_runfiles, publish_mirrored, remove_if_unchanged,
+    remove_publication_stage_if_unchanged, replace_if_unchanged, validate_runfile,
 };
 use crate::server_resolution::{
     Candidate, CandidateState, HealthState, Resolution, ResolutionIssue, ResolutionIssueKind,
@@ -680,31 +681,159 @@ fn stop_child<C: SpawnedChild>(child: &mut C) -> Result<(), String> {
     })
 }
 
-fn require_listener_released_with<L: ListenerInspector>(
-    listener: &L,
-    pid: u32,
-    port: u16,
-) -> Result<(), String> {
-    match listener.listener_state(pid, port) {
-        ListenerState::Absent => Ok(()),
-        ListenerState::OwnedByTarget | ListenerState::OwnedByTargetWildcard => Err(format!(
+fn listener_release_error(pid: u32, port: u16, listener: &ListenerState) -> Option<String> {
+    match listener {
+        ListenerState::Absent => None,
+        ListenerState::OwnedByTarget | ListenerState::OwnedByTargetWildcard => Some(format!(
             "numeric PID {pid} still owns registered port {port} after retained-process exit"
         )),
-        ListenerState::OwnedByOther(owners) => Err(format!(
+        ListenerState::OwnedByOther(owners) => Some(format!(
             "registered port {port} remains owned by PIDs {owners:?} after retained-process exit"
         )),
-        ListenerState::Uninspectable(error) => Err(format!(
+        ListenerState::Uninspectable(error) => Some(format!(
             "registered port {port} ownership is uninspectable after retained-process exit: {error}"
         )),
     }
 }
 
-fn require_listener_released(pid: u32, port: u16) -> Result<(), String> {
-    require_listener_released_with(&NativeListenerInspector, pid, port)
-}
-
 /// Stop the exact process object retained before readiness and publication.
 /// Registration rollback is authorized only after this returns `Ok(())`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RetainedTerminateOutcome {
+    Signalled,
+    AlreadyExited,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RetainedWaitOutcome {
+    Exited,
+    TimedOut,
+    Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChildReapOutcome {
+    Reaped,
+    Failed(String),
+    NotAttempted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ManagedChildShutdownReport {
+    pid: u32,
+    port: u16,
+    terminate: RetainedTerminateOutcome,
+    wait: RetainedWaitOutcome,
+    reap: ChildReapOutcome,
+    listener: Option<ListenerState>,
+}
+
+impl ManagedChildShutdownReport {
+    fn exit_proven(&self) -> bool {
+        matches!(self.wait, RetainedWaitOutcome::Exited)
+    }
+
+    fn cleanup_authorized(&self) -> bool {
+        self.exit_proven()
+            && self.reap == ChildReapOutcome::Reaped
+            && self.listener == Some(ListenerState::Absent)
+    }
+
+    fn diagnostics(&self) -> Vec<String> {
+        let mut diagnostics = Vec::new();
+        if let RetainedTerminateOutcome::Failed(error) = &self.terminate {
+            diagnostics.push(format!(
+                "terminate retained process object for PID {}: {error}",
+                self.pid
+            ));
+        }
+        match &self.wait {
+            RetainedWaitOutcome::Exited => {}
+            RetainedWaitOutcome::TimedOut => diagnostics.push(format!(
+                "retained process object for PID {} did not exit within 10s",
+                self.pid
+            )),
+            RetainedWaitOutcome::Failed(error) => diagnostics.push(format!(
+                "wait for retained process object for PID {}: {error}",
+                self.pid
+            )),
+        }
+        match &self.reap {
+            ChildReapOutcome::Reaped | ChildReapOutcome::NotAttempted => {}
+            ChildReapOutcome::Failed(error) => diagnostics.push(error.clone()),
+        }
+        match &self.listener {
+            Some(ListenerState::Absent) | None => {}
+            Some(listener) => {
+                diagnostics.extend(listener_release_error(self.pid, self.port, listener));
+            }
+        }
+        diagnostics
+    }
+
+    fn into_result(self) -> Result<(), String> {
+        if self.cleanup_authorized() {
+            Ok(())
+        } else {
+            Err(self.diagnostics().join("; "))
+        }
+    }
+}
+
+fn stop_managed_child_report_with<C, P, L>(
+    child: &mut C,
+    process: &P,
+    port: u16,
+    listener: &L,
+) -> ManagedChildShutdownReport
+where
+    C: SpawnedChild,
+    P: RetainedProcessHandle,
+    L: ListenerInspector,
+{
+    let pid = process.pid();
+    let terminate = match process.terminate() {
+        Ok(true) => RetainedTerminateOutcome::Signalled,
+        Ok(false) => RetainedTerminateOutcome::AlreadyExited,
+        Err(error) => RetainedTerminateOutcome::Failed(error.to_string()),
+    };
+    let wait = match process.wait(Duration::from_secs(10)) {
+        Ok(true) => RetainedWaitOutcome::Exited,
+        Ok(false) => RetainedWaitOutcome::TimedOut,
+        Err(error) => RetainedWaitOutcome::Failed(error.to_string()),
+    };
+    if wait != RetainedWaitOutcome::Exited {
+        return ManagedChildShutdownReport {
+            pid,
+            port,
+            terminate,
+            wait,
+            reap: ChildReapOutcome::NotAttempted,
+            listener: None,
+        };
+    }
+
+    // Once retained-handle exit is proven, reaping the original Child is
+    // unconditional. Listener inspection follows even when reaping reports an
+    // error so the recovery report retains every independently known fact.
+    let reap = match child.wait() {
+        Ok(_) => ChildReapOutcome::Reaped,
+        Err(error) => {
+            ChildReapOutcome::Failed(format!("reap exited child PID {}: {error}", child.pid()))
+        }
+    };
+    let listener = listener.listener_state(pid, port);
+    ManagedChildShutdownReport {
+        pid,
+        port,
+        terminate,
+        wait,
+        reap,
+        listener: Some(listener),
+    }
+}
+
 fn stop_managed_child_with<C, P, L>(
     child: &mut C,
     process: &P,
@@ -716,32 +845,7 @@ where
     P: RetainedProcessHandle,
     L: ListenerInspector,
 {
-    process
-        .terminate()
-        .map_err(|error| format!("terminate retained process object: {error}"))?;
-    match process.wait(Duration::from_secs(10)) {
-        Ok(true) => {}
-        Ok(false) => {
-            return Err("retained process object did not exit within 10s".to_string());
-        }
-        Err(error) => return Err(format!("wait for retained process object: {error}")),
-    }
-
-    // Once retained-handle exit is proven, reaping the original Child is
-    // unconditional. A residual or uninspectable listener is a failed cleanup
-    // postcondition, but must not leak the known-exited child.
-    let reap_error = child
-        .wait()
-        .map(|_| ())
-        .map_err(|error| format!("reap exited child PID {}: {error}", child.pid()))
-        .err();
-    let listener_error = require_listener_released_with(listener, process.pid(), port).err();
-    match (reap_error, listener_error) {
-        (None, None) => Ok(()),
-        (Some(reap), None) => Err(reap),
-        (None, Some(listener)) => Err(listener),
-        (Some(reap), Some(listener)) => Err(format!("{reap}; {listener}")),
-    }
+    stop_managed_child_report_with(child, process, port, listener).into_result()
 }
 
 fn stop_managed_child(child: &mut Child, process: &LiveProcess, port: u16) -> Result<(), String> {
@@ -2011,14 +2115,14 @@ fn validate_launch_preconditions(
     args: &ServerUpArgs,
     global_runfile: Option<&Path>,
 ) -> Result<(), String> {
-    if args.port == 0 {
-        return Err("--port must be greater than zero".to_string());
-    }
     if args.tailscale {
         return Err(
-            "--tailscale is temporarily fail-closed: Ferric cannot yet prove ownership of durable Tailscale Serve state during rollback and teardown"
+            "--tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable"
                 .to_string(),
         );
+    }
+    if args.port == 0 {
+        return Err("--port must be greater than zero".to_string());
     }
 
     if args.engine == Engine::LlamaServer {
@@ -2063,6 +2167,426 @@ fn validate_launch_preconditions(
         ));
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PublicationDisposition {
+    Ready,
+    RolledBack,
+    RecoveryHeld,
+    RecoveryPartial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PublicationStageReport {
+    scope: RegistrationScope,
+    final_path: PathBuf,
+    path: PathBuf,
+    outcome: DownRegistrationOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PublicationCompletionReport {
+    disposition: PublicationDisposition,
+    published: Option<PublishedRegistrations>,
+    shutdown: Option<ManagedChildShutdownReport>,
+    finals: Vec<DownRegistrationReport>,
+    stages: Vec<PublicationStageReport>,
+    diagnostics: Vec<String>,
+    success: bool,
+}
+
+trait PublicationCompensationEffects {
+    fn remove_final(
+        &mut self,
+        captured: &CapturedRegistration,
+    ) -> Result<RemovalOutcome, RemovalError>;
+
+    fn remove_stage(&mut self, stage: &PublicationStage) -> Result<RemovalOutcome, RemovalError>;
+}
+
+struct NativePublicationCompensationEffects;
+
+impl PublicationCompensationEffects for NativePublicationCompensationEffects {
+    fn remove_final(
+        &mut self,
+        captured: &CapturedRegistration,
+    ) -> Result<RemovalOutcome, RemovalError> {
+        remove_if_unchanged(captured)
+    }
+
+    fn remove_stage(&mut self, stage: &PublicationStage) -> Result<RemovalOutcome, RemovalError> {
+        remove_publication_stage_if_unchanged(stage)
+    }
+}
+
+fn publication_failure_parts(
+    error: PublishError,
+) -> (String, Vec<CapturedRegistration>, Vec<PublicationStage>) {
+    let rendered = error.to_string();
+    let attempt = match error {
+        PublishError::Write { attempt, .. }
+        | PublishError::Mirror { attempt, .. }
+        | PublishError::Durability { attempt, .. } => Some(*attempt),
+        PublishError::Invalid { .. } | PublishError::Serialize(_) => None,
+    };
+    let Some(PublicationAttempt {
+        finals,
+        stages,
+        terminal_phase,
+        final_committed,
+    }) = attempt
+    else {
+        return (rendered, Vec::new(), Vec::new());
+    };
+    (
+        format!(
+            "{rendered}; terminal persistence phase={terminal_phase:?} terminal-final-committed={final_committed} published-finals={} retained-stages={}",
+            finals.len(),
+            stages.len()
+        ),
+        finals,
+        stages,
+    )
+}
+
+fn published_finals(published: &PublishedRegistrations) -> Vec<CapturedRegistration> {
+    let mut finals = vec![published.local.clone()];
+    finals.extend(published.global.iter().cloned());
+    finals
+}
+
+fn publication_removal_outcome(
+    result: Result<RemovalOutcome, RemovalError>,
+) -> DownRegistrationOutcome {
+    match result {
+        Ok(RemovalOutcome::Removed) => DownRegistrationOutcome::Removed,
+        Ok(RemovalOutcome::Absent) => DownRegistrationOutcome::AlreadyAbsent,
+        Ok(RemovalOutcome::ReplacementPreserved { path, detail }) => {
+            DownRegistrationOutcome::ReplacementPreserved { path, detail }
+        }
+        Err(error) => match error.kind {
+            RemovalFailureKind::Restore => DownRegistrationOutcome::RestoreFailed {
+                preserved_at: error.preserved_at,
+                detail: error.detail,
+            },
+            RemovalFailureKind::Remove => DownRegistrationOutcome::RemovalFailed {
+                preserved_at: error.preserved_at,
+                detail: error.detail,
+            },
+            RemovalFailureKind::Other => DownRegistrationOutcome::CleanupFailed {
+                preserved_at: error.preserved_at,
+                detail: error.detail,
+            },
+        },
+    }
+}
+
+fn publication_cleanup_complete(outcome: &DownRegistrationOutcome) -> bool {
+    matches!(
+        outcome,
+        DownRegistrationOutcome::Removed | DownRegistrationOutcome::AlreadyAbsent
+    )
+}
+
+fn publication_cleanup_alias_error(
+    finals: &[CapturedRegistration],
+    stages: &[PublicationStage],
+) -> Option<String> {
+    let mut paths = finals
+        .iter()
+        .map(|capture| ("published final", capture.path.as_path()))
+        .chain(
+            stages
+                .iter()
+                .map(|stage| ("publication stage", stage.path.as_path())),
+        )
+        .collect::<Vec<_>>();
+    paths.sort_by(|left, right| left.1.cmp(right.1));
+    for (index, (left_kind, left)) in paths.iter().enumerate() {
+        for (right_kind, right) in &paths[index + 1..] {
+            if left == right {
+                return Some(format!(
+                    "{left_kind} and {right_kind} share one cleanup path {}; no cleanup was attempted",
+                    left.display()
+                ));
+            }
+            if distinct_mutation_paths_may_alias(left, right) {
+                return Some(format!(
+                    "{left_kind} {} and {right_kind} {} may alias; no cleanup was attempted",
+                    left.display(),
+                    right.display()
+                ));
+            }
+        }
+    }
+    None
+}
+
+fn held_publication_final(capture: &CapturedRegistration, detail: &str) -> DownRegistrationReport {
+    DownRegistrationReport {
+        coordinate: RegistrationCoordinate {
+            scope: capture.scope,
+            path: capture.path.clone(),
+        },
+        outcome: DownRegistrationOutcome::Held {
+            detail: detail.to_string(),
+        },
+    }
+}
+
+fn held_publication_stage(stage: &PublicationStage, detail: &str) -> PublicationStageReport {
+    PublicationStageReport {
+        scope: stage.scope,
+        final_path: stage.final_path.clone(),
+        path: stage.path.clone(),
+        outcome: DownRegistrationOutcome::Held {
+            detail: detail.to_string(),
+        },
+    }
+}
+
+fn complete_publication_with<C, P, L, E>(
+    child: &mut C,
+    process: &P,
+    port: u16,
+    publication: Result<PublishedRegistrations, PublishError>,
+    listener: &L,
+    effects: &mut E,
+) -> PublicationCompletionReport
+where
+    C: SpawnedChild,
+    P: RetainedProcessHandle,
+    L: ListenerInspector,
+    E: PublicationCompensationEffects,
+{
+    let (failure, finals, stages) = match publication {
+        Ok(published) => match child.try_wait() {
+            Ok(None) => {
+                return PublicationCompletionReport {
+                    disposition: PublicationDisposition::Ready,
+                    published: Some(published),
+                    shutdown: None,
+                    finals: Vec::new(),
+                    stages: Vec::new(),
+                    diagnostics: Vec::new(),
+                    success: true,
+                };
+            }
+            Ok(Some(status)) => (
+                format!("engine process exited during registration publication ({status})"),
+                published_finals(&published),
+                Vec::new(),
+            ),
+            Err(error) => (
+                format!("could not confirm the engine child after publication: {error}"),
+                published_finals(&published),
+                Vec::new(),
+            ),
+        },
+        Err(error) => publication_failure_parts(error),
+    };
+
+    let shutdown = stop_managed_child_report_with(child, process, port, listener);
+    let mut diagnostics = vec![failure];
+    diagnostics.extend(shutdown.diagnostics());
+    if !shutdown.cleanup_authorized() {
+        let detail = "published recovery state is held because exact child exit, reap, and listener release were not all proven";
+        return PublicationCompletionReport {
+            disposition: PublicationDisposition::RecoveryHeld,
+            published: None,
+            shutdown: Some(shutdown),
+            finals: finals
+                .iter()
+                .map(|capture| held_publication_final(capture, detail))
+                .collect(),
+            stages: stages
+                .iter()
+                .map(|stage| held_publication_stage(stage, detail))
+                .collect(),
+            diagnostics,
+            success: false,
+        };
+    }
+
+    if let Some(error) = publication_cleanup_alias_error(&finals, &stages) {
+        diagnostics.push(error.clone());
+        return PublicationCompletionReport {
+            disposition: PublicationDisposition::RecoveryPartial,
+            published: None,
+            shutdown: Some(shutdown),
+            finals: finals
+                .iter()
+                .map(|capture| held_publication_final(capture, &error))
+                .collect(),
+            stages: stages
+                .iter()
+                .map(|stage| held_publication_stage(stage, &error))
+                .collect(),
+            diagnostics,
+            success: false,
+        };
+    }
+
+    let final_reports = finals
+        .iter()
+        .map(|capture| DownRegistrationReport {
+            coordinate: RegistrationCoordinate {
+                scope: capture.scope,
+                path: capture.path.clone(),
+            },
+            outcome: publication_removal_outcome(effects.remove_final(capture)),
+        })
+        .collect::<Vec<_>>();
+    let stage_reports = stages
+        .iter()
+        .map(|stage| PublicationStageReport {
+            scope: stage.scope,
+            final_path: stage.final_path.clone(),
+            path: stage.path.clone(),
+            outcome: publication_removal_outcome(effects.remove_stage(stage)),
+        })
+        .collect::<Vec<_>>();
+    let complete = final_reports
+        .iter()
+        .all(|report| publication_cleanup_complete(&report.outcome))
+        && stage_reports
+            .iter()
+            .all(|report| publication_cleanup_complete(&report.outcome));
+    if !complete {
+        diagnostics.push(
+            "publication compensation was partial; every preserved path is reported".to_string(),
+        );
+    }
+    PublicationCompletionReport {
+        disposition: if complete {
+            PublicationDisposition::RolledBack
+        } else {
+            PublicationDisposition::RecoveryPartial
+        },
+        published: None,
+        shutdown: Some(shutdown),
+        finals: final_reports,
+        stages: stage_reports,
+        diagnostics,
+        success: false,
+    }
+}
+
+fn render_publication_cleanup(subject: &str, outcome: &DownRegistrationOutcome) -> String {
+    match outcome {
+        DownRegistrationOutcome::Removed => format!("[removed] {subject}"),
+        DownRegistrationOutcome::AlreadyAbsent => format!("[already-absent] {subject}"),
+        DownRegistrationOutcome::ReplacementPreserved { path, detail } => format!(
+            "[replacement-preserved] {subject} preserved-at={} detail={detail}",
+            path.display()
+        ),
+        DownRegistrationOutcome::RestoreFailed {
+            preserved_at,
+            detail,
+        } => format!(
+            "[restore-failed] {subject} holding={} detail={detail}",
+            preserved_at
+                .as_ref()
+                .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+        ),
+        DownRegistrationOutcome::RemovalFailed {
+            preserved_at,
+            detail,
+        } => format!(
+            "[removal-failed] {subject} holding={} detail={detail}",
+            preserved_at
+                .as_ref()
+                .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+        ),
+        DownRegistrationOutcome::CleanupFailed {
+            preserved_at,
+            detail,
+        } => format!(
+            "[cleanup-failed] {subject} holding={} detail={detail}",
+            preserved_at
+                .as_ref()
+                .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+        ),
+        DownRegistrationOutcome::Held { detail } => {
+            format!("[held] {subject} detail={detail}")
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderedPublicationReport {
+    stdout: Vec<String>,
+    stderr: Vec<String>,
+    success: bool,
+}
+
+fn render_publication_report(report: &PublicationCompletionReport) -> RenderedPublicationReport {
+    let mut stdout = report
+        .finals
+        .iter()
+        .map(|final_report| {
+            render_publication_cleanup(
+                &format!(
+                    "{} published registration {}",
+                    final_report.coordinate.scope,
+                    final_report.coordinate.path.display()
+                ),
+                &final_report.outcome,
+            )
+        })
+        .chain(report.stages.iter().map(|stage_report| {
+            render_publication_cleanup(
+                &format!(
+                    "{} publication stage {} for final {}",
+                    stage_report.scope,
+                    stage_report.path.display(),
+                    stage_report.final_path.display()
+                ),
+                &stage_report.outcome,
+            )
+        }))
+        .collect::<Vec<_>>();
+    if let Some(shutdown) = &report.shutdown {
+        stdout.push(format!(
+            "[shutdown] pid={} terminate={:?} wait={:?} reap={:?} listener={:?}",
+            shutdown.pid, shutdown.terminate, shutdown.wait, shutdown.reap, shutdown.listener
+        ));
+    }
+    stdout.push(match report.disposition {
+        PublicationDisposition::Ready => "[state] ready".to_string(),
+        PublicationDisposition::RolledBack => {
+            "[state] publication failed; rollback complete".to_string()
+        }
+        PublicationDisposition::RecoveryHeld => {
+            "[state] publication failed; recovery state held".to_string()
+        }
+        PublicationDisposition::RecoveryPartial => {
+            "[state] publication failed; rollback partial".to_string()
+        }
+    });
+    RenderedPublicationReport {
+        stdout,
+        stderr: report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| format!("[diagnostic] {diagnostic}"))
+            .collect(),
+        success: report.success,
+    }
+}
+
+fn emit_publication_report(report: PublicationCompletionReport) -> Option<PublishedRegistrations> {
+    let rendered = render_publication_report(&report);
+    if !rendered.success {
+        for line in rendered.stdout {
+            println!("{line}");
+        }
+        for line in rendered.stderr {
+            eprintln!("{line}");
+        }
+    }
+    report.published
 }
 
 fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
@@ -2164,95 +2688,19 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         process_identity: Some(process_facts.identity),
         origin_local_runfile: Some(local_path),
     };
-    let published = match publish_mirrored(workspace, global_path.as_deref(), &runfile) {
-        Ok(published) => published,
-        Err(PublishError::Durability {
-            path,
-            detail,
-            published,
-        }) => {
-            eprintln!(
-                "registration committed at {} but its directory durability check failed: {detail}; stopping the owned child before exact-byte rollback",
-                path.display()
-            );
-            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
-                eprintln!(
-                    "could not prove exact child exit ({stop_error}); published registrations are kept for recovery"
-                );
-                return ExitCode::FAILURE;
-            }
-            clean_captured_registration(&published.local);
-            if let Some(global) = &published.global {
-                clean_captured_registration(global);
-            }
-            return ExitCode::FAILURE;
-        }
-        Err(PublishError::Mirror {
-            path,
-            detail,
-            local,
-        }) => {
-            eprintln!(
-                "global registration publication failed at {}: {detail}; stopping the owned child before local rollback",
-                path.display()
-            );
-            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
-                eprintln!(
-                    "could not prove exact child exit ({stop_error}); local registration at {} is kept for recovery",
-                    local.path.display()
-                );
-                return ExitCode::FAILURE;
-            }
-            if !clean_captured_registration(&local) {
-                eprintln!(
-                    "the child is stopped, but local publication rollback was partial at {}",
-                    local.path.display()
-                );
-            }
-            return ExitCode::FAILURE;
-        }
-        Err(error) => {
-            eprintln!("server registration publication failed: {error}");
-            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
-                eprintln!("could not confirm exact child shutdown: {stop_error}");
-            }
-            return ExitCode::FAILURE;
-        }
+    let publication = publish_mirrored(workspace, global_path.as_deref(), &runfile);
+    let mut compensation = NativePublicationCompensationEffects;
+    let completion = complete_publication_with(
+        &mut child,
+        &managed_process,
+        cfg.port,
+        publication,
+        &NativeListenerInspector,
+        &mut compensation,
+    );
+    let Some(published) = emit_publication_report(completion) else {
+        return ExitCode::FAILURE;
     };
-
-    match child.try_wait() {
-        Ok(None) => {}
-        Ok(Some(status)) => {
-            eprintln!(
-                "engine process exited during registration publication ({status}); rolling back unchanged registrations"
-            );
-            if let Err(error) = require_listener_released(pid, cfg.port) {
-                eprintln!(
-                    "published registrations are kept because endpoint release is not proven: {error}"
-                );
-                return ExitCode::FAILURE;
-            }
-            clean_captured_registration(&published.local);
-            if let Some(global) = &published.global {
-                clean_captured_registration(global);
-            }
-            return ExitCode::FAILURE;
-        }
-        Err(error) => {
-            eprintln!("could not confirm the engine child after publication: {error}");
-            if let Err(stop_error) = stop_managed_child(&mut child, &managed_process, cfg.port) {
-                eprintln!(
-                    "could not prove exact child exit ({stop_error}); published registrations are kept for recovery"
-                );
-                return ExitCode::FAILURE;
-            }
-            clean_captured_registration(&published.local);
-            if let Some(global) = &published.global {
-                clean_captured_registration(global);
-            }
-            return ExitCode::FAILURE;
-        }
-    }
 
     println!("server ready: {} (pid {pid})", base_url);
     println!("registered locally at {}", published.local.path.display());
@@ -3338,7 +3786,7 @@ fn next_action_text(action: &StatusNextAction) -> String {
             path.display()
         ),
         StatusNextAction::InspectTailscale { port } => format!(
-            "registration port {port} claims durable Tailscale Serve state; inspect and remove only that exact Serve endpoint with Tailscale tooling (Ferric cannot safely reset it)"
+            "registration port {port} claims durable Tailscale Serve state; scoped proxy cleanup is unavailable, so Ferric will not inspect or signal its PID, delete its registration, invoke Tailscale, or run a blind node-wide reset; inspect and remove only that exact Serve endpoint with Tailscale tooling"
         ),
         StatusNextAction::ResolveConflict { coordinates } => format!(
             "resolve the {} conflicting registration coordinate(s) without signalling a process, then rerun `ferric server status`",
@@ -3426,39 +3874,6 @@ fn status_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
-    }
-}
-
-fn clean_captured_registration(captured: &CapturedRegistration) -> bool {
-    match remove_if_unchanged(captured) {
-        Ok(RemovalOutcome::Removed) => {
-            println!(
-                "removed unchanged {} registration at {}",
-                captured.scope,
-                captured.path.display()
-            );
-            true
-        }
-        Ok(RemovalOutcome::Absent) => {
-            println!(
-                "{} registration already absent at {}",
-                captured.scope,
-                captured.path.display()
-            );
-            true
-        }
-        Ok(RemovalOutcome::ReplacementPreserved { path, detail }) => {
-            eprintln!(
-                "kept replacement for {} registration at {}: {detail}",
-                captured.scope,
-                path.display()
-            );
-            false
-        }
-        Err(error) => {
-            eprintln!("registration cleanup incomplete: {error}");
-            false
-        }
     }
 }
 
@@ -4295,17 +4710,19 @@ struct DoctorReport {
 }
 
 fn static_doctor_blocker(args: &ServerUpArgs) -> Option<DoctorReport> {
-    let mut lines = Vec::new();
     if args.tailscale {
-        lines.push(
-            "[BLOCKED] --tailscale is fail-closed before registration, PID, engine, model, or network probes because Ferric cannot yet compare-and-remove only the Serve endpoint it owns"
-                .to_string(),
-        );
-        lines.push(
-            "[next] leave the registration untouched and inspect exact Serve ownership with Tailscale tooling; do not run a blind node-wide reset"
-                .to_string(),
-        );
+        return Some(DoctorReport {
+            lines: vec![
+                "[BLOCKED] --tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable"
+                    .to_string(),
+                "[next] leave every registration untouched; Ferric will not inspect or signal a PID, delete registration bytes, invoke Tailscale, or run a blind node-wide reset"
+                    .to_string(),
+            ],
+            success: false,
+        });
     }
+
+    let mut lines = Vec::new();
     if args.port == 0 {
         lines.push("[INVALID] --port must be greater than zero".to_string());
     }
@@ -4438,6 +4855,28 @@ fn doctor_report_after_discovery<E: DoctorProbeEffects>(
     execute_doctor_probes(args, discovery, effects)
 }
 
+fn doctor_report_with<D, E>(args: &ServerUpArgs, discover: D, effects: &mut E) -> DoctorReport
+where
+    D: FnOnce() -> Result<ManagedServerDiscovery, String>,
+    E: DoctorProbeEffects,
+{
+    if let Some(report) = static_doctor_blocker(args) {
+        return report;
+    }
+    let discovery = match discover() {
+        Ok(discovery) => discovery,
+        Err(error) => {
+            return DoctorReport {
+                lines: vec![format!(
+                    "[BLOCKED] resolve managed discovery scope: {error}"
+                )],
+                success: false,
+            };
+        }
+    };
+    doctor_report_after_discovery(args, &discovery, effects)
+}
+
 fn emit_doctor_report(report: DoctorReport) -> ExitCode {
     for line in report.lines {
         println!("{line}");
@@ -4450,25 +4889,13 @@ fn emit_doctor_report(report: DoctorReport) -> ExitCode {
 }
 
 fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
-    if let Some(report) = static_doctor_blocker(args) {
-        return emit_doctor_report(report);
-    }
-    let scope = match ManagedDiscoveryScope::for_workspace(workspace) {
-        Ok(scope) => scope,
-        Err(error) => {
-            return emit_doctor_report(DoctorReport {
-                lines: vec![format!(
-                    "[BLOCKED] resolve managed discovery scope: {error}"
-                )],
-                success: false,
-            });
-        }
-    };
-    let discovery = discover_managed_server_in(&scope);
     let mut effects = NativeDoctorProbeEffects;
-    emit_doctor_report(doctor_report_after_discovery(
+    emit_doctor_report(doctor_report_with(
         args,
-        &discovery,
+        || {
+            let scope = ManagedDiscoveryScope::for_workspace(workspace)?;
+            Ok(discover_managed_server_in(&scope))
+        },
         &mut effects,
     ))
 }
@@ -4478,7 +4905,7 @@ mod tests {
     use super::*;
     use crate::server_process::canonical_test_start_token;
     use crate::server_registration::{
-        PromisedOriginRegistration, RegistrationBlock, capture_registration_path,
+        PersistencePhase, PromisedOriginRegistration, RegistrationBlock, capture_registration_path,
     };
     use std::cell::RefCell;
     use std::collections::VecDeque;
@@ -4862,43 +5289,84 @@ mod tests {
 
     #[test]
     fn tailscale_registration_blocks_before_process_inspection() {
-        let coordinate = discovery_fixture_coordinate(RegistrationScope::Local, "tailscale");
-        let mut runfile = discovery_fixture_runfile(4201, "tailscale");
-        runfile.tailscale = true;
-        let raw = serde_json::to_vec(&runfile).unwrap();
-        let inventory = RegistrationInventory {
-            local: RegistrationSlot::Captured(Box::new(CapturedRegistration {
-                scope: coordinate.scope,
-                path: coordinate.path,
-                raw,
-                runfile,
-            })),
-            global: None,
-            promised_origins: Vec::new(),
-        };
-        let observer_calls = Rc::new(RefCell::new(0_usize));
-        let calls = Rc::clone(&observer_calls);
-        let discovery = discover_inventory_with(
-            inventory,
-            move |_capture| {
-                *calls.borrow_mut() += 1;
-                panic!("Tailscale blocker must precede process acquisition")
-            },
-            &mut PanicHealth,
-            |_observation| panic!("Tailscale blocker must precede retained reinspection"),
-        );
-        assert_eq!(*observer_calls.borrow(), 0);
-        assert!(matches!(
-            discovery.managed.state,
-            ManagedServerState::Unverifiable { .. }
-        ));
-        assert!(matches!(
-            discovery.managed.observations[0].state,
-            ManagedRegistrationState::Captured {
-                runtime: RuntimeObservation::NotInspected,
-                ..
-            }
-        ));
+        let root = tempfile::tempdir().unwrap();
+        for (process_case, pid, simulated_present) in
+            [("present", 4201, true), ("absent", 4202, false)]
+        {
+            let registration_path = root
+                .path()
+                .join(process_case)
+                .join("workspace/.ferric/server.json");
+            std::fs::create_dir_all(registration_path.parent().unwrap()).unwrap();
+            let mut runfile = discovery_fixture_runfile(pid, process_case);
+            runfile.tailscale = true;
+            runfile.origin_local_runfile = Some(registration_path.clone());
+            let mut raw = if simulated_present {
+                serde_json::to_vec_pretty(&runfile).unwrap()
+            } else {
+                serde_json::to_vec(&runfile).unwrap()
+            };
+            raw.push(b'\n');
+            std::fs::write(&registration_path, &raw).unwrap();
+            let inventory = RegistrationInventory {
+                local: capture_registration_path(RegistrationScope::Local, &registration_path),
+                global: None,
+                promised_origins: Vec::new(),
+            };
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let calls = Rc::clone(&ledger);
+            let discovery = discover_inventory_with(
+                inventory,
+                move |capture| {
+                    calls
+                        .borrow_mut()
+                        .push(LifecycleEvent::Acquire(capture.runfile.pid));
+                    if simulated_present {
+                        blocked_observation_with_facts(
+                            capture,
+                            "simulated present process".to_string(),
+                            Some(discovery_fixture_identity(u64::from(pid))),
+                            Some(ListenerState::OwnedByTarget),
+                            HealthState::NotProbed,
+                        )
+                    } else {
+                        stale_observation(
+                            capture,
+                            "simulated absent process".to_string(),
+                            None,
+                            ListenerState::Absent,
+                        )
+                    }
+                },
+                &mut PanicHealth,
+                |_observation| panic!("Tailscale blocker must precede retained reinspection"),
+            );
+            assert!(ledger.borrow().is_empty(), "{process_case}");
+            assert!(matches!(
+                discovery.managed.state,
+                ManagedServerState::Unverifiable { .. }
+            ));
+            assert!(matches!(
+                discovery.managed.observations[0].state,
+                ManagedRegistrationState::Captured {
+                    runtime: RuntimeObservation::NotInspected,
+                    ..
+                }
+            ));
+            let plan = down_plan_from_lifecycle(discovery);
+            let mut effects = ScriptedDownEffects::new(
+                Vec::<ListenerState>::new(),
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Rc::clone(&ledger),
+            );
+            let report = execute_down_plan(plan, &mut effects);
+            let rendered = render_down_with_ledger(&report, &ledger);
+            assert_eq!(report.disposition, DownDisposition::Blocked);
+            assert!(!report.signalled);
+            assert!(rendered.stdout.iter().all(|line| !line.contains("stopped")));
+            assert_eq!(*ledger.borrow(), vec![LifecycleEvent::Render]);
+            assert_eq!(std::fs::read(&registration_path).unwrap(), raw);
+        }
     }
 
     #[test]
@@ -5278,15 +5746,39 @@ mod tests {
     }
 
     #[test]
-    fn doctor_blocks_before_external_probes() {
+    fn doctor_tailscale_block_precedes_binary_model_and_network_probes() {
         let mut tailscale_args = doctor_fixture_args();
         tailscale_args.tailscale = true;
+        tailscale_args.port = 0;
+        tailscale_args.ctx = 0;
+        tailscale_args.model = None;
+        tailscale_args.parallel = Some(0);
         let mut effects = RecordingDoctorEffects::default();
-        let report = static_doctor_blocker(&tailscale_args).expect("Tailscale must block");
+        let discovery_calls = Rc::new(RefCell::new(0_usize));
+        let calls = Rc::clone(&discovery_calls);
+        let report = doctor_report_with(
+            &tailscale_args,
+            move || {
+                *calls.borrow_mut() += 1;
+                Ok(discovery_fixture_ready())
+            },
+            &mut effects,
+        );
         assert!(!report.success);
-        assert!(report.lines[0].contains("before registration, PID, engine, model, or network"));
+        assert_eq!(
+            report.lines,
+            vec![
+                "[BLOCKED] --tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable",
+                "[next] leave every registration untouched; Ferric will not inspect or signal a PID, delete registration bytes, invoke Tailscale, or run a blind node-wide reset",
+            ]
+        );
+        assert_eq!(*discovery_calls.borrow(), 0);
         assert!(effects.events.is_empty());
+    }
 
+    #[test]
+    fn doctor_blocks_before_external_probes() {
+        let mut effects = RecordingDoctorEffects::default();
         for discovery in [
             discovery_fixture_degraded(ListenerState::OwnedByTarget, HealthState::Unhealthy),
             discovery_fixture_stale_only(),
@@ -5612,6 +6104,7 @@ mod tests {
         Publish,
         Revalidate,
         Remove(PathBuf, String),
+        RemoveStage(PathBuf, Option<String>),
         Replace(PathBuf, String, String),
         Render,
     }
@@ -5853,6 +6346,54 @@ mod tests {
         }
     }
 
+    struct ScriptedPublicationEffects {
+        final_removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
+        stage_removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
+        ledger: EventLedger,
+    }
+
+    impl ScriptedPublicationEffects {
+        fn new(
+            final_removals: impl IntoIterator<Item = Result<RemovalOutcome, RemovalError>>,
+            stage_removals: impl IntoIterator<Item = Result<RemovalOutcome, RemovalError>>,
+            ledger: EventLedger,
+        ) -> Self {
+            Self {
+                final_removals: final_removals.into_iter().collect(),
+                stage_removals: stage_removals.into_iter().collect(),
+                ledger,
+            }
+        }
+    }
+
+    impl PublicationCompensationEffects for ScriptedPublicationEffects {
+        fn remove_final(
+            &mut self,
+            captured: &CapturedRegistration,
+        ) -> Result<RemovalOutcome, RemovalError> {
+            self.ledger.borrow_mut().push(LifecycleEvent::Remove(
+                captured.path.clone(),
+                ferric_bench::sha256_bytes(&captured.raw),
+            ));
+            self.final_removals
+                .pop_front()
+                .expect("scripted publication-final removal")
+        }
+
+        fn remove_stage(
+            &mut self,
+            stage: &PublicationStage,
+        ) -> Result<RemovalOutcome, RemovalError> {
+            self.ledger.borrow_mut().push(LifecycleEvent::RemoveStage(
+                stage.path.clone(),
+                stage.raw.as_deref().map(ferric_bench::sha256_bytes),
+            ));
+            self.stage_removals
+                .pop_front()
+                .expect("scripted publication-stage removal")
+        }
+    }
+
     struct ScriptedAdoptionEffects {
         replacements: VecDeque<Result<ReplacementOutcome, ReplacementError>>,
         ledger: EventLedger,
@@ -5889,6 +6430,15 @@ mod tests {
 
     fn render_down_with_ledger(report: &DownReport, ledger: &EventLedger) -> RenderedDownReport {
         let rendered = render_down_report(report);
+        ledger.borrow_mut().push(LifecycleEvent::Render);
+        rendered
+    }
+
+    fn render_publication_with_ledger(
+        report: &PublicationCompletionReport,
+        ledger: &EventLedger,
+    ) -> RenderedPublicationReport {
+        let rendered = render_publication_report(report);
         ledger.borrow_mut().push(LifecycleEvent::Render);
         rendered
     }
@@ -6815,6 +7365,61 @@ mod tests {
     }
 
     #[test]
+    fn tailscale_blocked_commands_preserve_records_and_never_reset() {
+        let root = tempfile::tempdir().unwrap();
+        let registration_path = root.path().join("workspace/.ferric/server.json");
+        std::fs::create_dir_all(registration_path.parent().unwrap()).unwrap();
+
+        let mut runfile = discovery_fixture_runfile(6490, "tailscale-preserved");
+        runfile.tailscale = true;
+        runfile.origin_local_runfile = Some(registration_path.clone());
+        let mut original = serde_json::to_vec_pretty(&runfile).unwrap();
+        original.push(b'\n');
+        std::fs::write(&registration_path, &original).unwrap();
+
+        let inventory = RegistrationInventory {
+            local: capture_registration_path(RegistrationScope::Local, &registration_path),
+            global: None,
+            promised_origins: Vec::new(),
+        };
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let acquire_ledger = Rc::clone(&ledger);
+        let discovery = discover_inventory_before_health_with(inventory, move |_capture| {
+            acquire_ledger
+                .borrow_mut()
+                .push(LifecycleEvent::Acquire(6490));
+            panic!("Tailscale registration must block before process acquisition")
+        });
+        assert!(ledger.borrow().is_empty());
+
+        let status = render_status(&status_report(&discovery.managed));
+        let expected_guidance = format!(
+            "[next] registration port {} claims durable Tailscale Serve state; scoped proxy cleanup is unavailable, so Ferric will not inspect or signal its PID, delete its registration, invoke Tailscale, or run a blind node-wide reset; inspect and remove only that exact Serve endpoint with Tailscale tooling",
+            runfile.port
+        );
+        assert_eq!(status.stdout.last(), Some(&expected_guidance));
+        assert!(!status.success);
+        assert_eq!(std::fs::read(&registration_path).unwrap(), original);
+
+        let plan = down_plan_from_lifecycle(discovery);
+        let mut effects = ScriptedDownEffects::new(
+            Vec::<ListenerState>::new(),
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let report = execute_down_plan(plan, &mut effects);
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, DownDisposition::Blocked);
+        assert!(!report.success);
+        assert!(!report.signalled);
+        assert!(!report.exit_proven);
+        assert_eq!(rendered.stdout.last(), Some(&expected_guidance));
+        assert!(rendered.stdout.iter().all(|line| !line.contains("stopped")));
+        assert_eq!(*ledger.borrow(), vec![LifecycleEvent::Render]);
+        assert_eq!(std::fs::read(&registration_path).unwrap(), original);
+    }
+
+    #[test]
     fn live_v1_guidance_and_explicit_adoption() {
         let pid = 6501;
         let (captures, facts) = legacy_adoption_fixture(pid);
@@ -7710,7 +8315,8 @@ mod tests {
 
         let recovery_ledger = Rc::new(RefCell::new(Vec::new()));
         let process = ScriptedProcess::new(pid, "generation-b", Rc::clone(&recovery_ledger))
-            .with_terminate(Err(ProcessError::Operation("access denied".to_string())));
+            .with_terminate(Err(ProcessError::Operation("access denied".to_string())))
+            .with_wait(Ok(false));
         let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&recovery_ledger));
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&recovery_ledger));
         let mut child = ScriptedChild::new(
@@ -7729,6 +8335,7 @@ mod tests {
                 LifecycleEvent::Acquire(pid),
                 LifecycleEvent::ChildTryWait(pid),
                 LifecycleEvent::Terminate("generation-b"),
+                LifecycleEvent::RetainedWait("generation-b"),
             ]
         );
     }
@@ -7755,6 +8362,396 @@ mod tests {
                 LifecycleEvent::Listener(pid, port),
             ],
             "known-exited child must be reaped before listener postcondition reporting"
+        );
+    }
+
+    #[test]
+    fn partial_publication_stops_child_and_compensates_exactly() {
+        fn mirrored_captures(pid: u32) -> (CapturedRegistration, CapturedRegistration) {
+            let local =
+                discovery_fixture_capture(RegistrationScope::Local, pid, "publication-local");
+            let global = CapturedRegistration {
+                scope: RegistrationScope::Global,
+                path: discovery_fixture_path("publication-global"),
+                raw: local.raw.clone(),
+                runfile: local.runfile.clone(),
+            };
+            (local, global)
+        }
+
+        fn publication_stage(scope: RegistrationScope, final_path: &Path) -> PublicationStage {
+            PublicationStage {
+                scope,
+                final_path: final_path.to_path_buf(),
+                path: final_path.with_file_name(".server-registration-stage"),
+                raw: Some(b"exact staged registration bytes".to_vec()),
+                identity: None,
+            }
+        }
+
+        fn mirror_failure(
+            local: &CapturedRegistration,
+            stage: &PublicationStage,
+        ) -> Result<PublishedRegistrations, PublishError> {
+            Err(PublishError::Mirror {
+                path: stage.final_path.clone(),
+                detail: "injected global precommit failure".to_string(),
+                local: Box::new(local.clone()),
+                attempt: Box::new(PublicationAttempt {
+                    finals: vec![local.clone()],
+                    stages: vec![stage.clone()],
+                    terminal_phase: PersistencePhase::FileSync,
+                    final_committed: false,
+                }),
+            })
+        }
+
+        let pid = 4401;
+        let port = 9441;
+        let (local, global) = mirrored_captures(pid);
+        let global_stage = publication_stage(RegistrationScope::Global, &global.path);
+
+        // A global precommit failure retains the local final and global stage
+        // until exact exit/reap/listener release, then removes finals before
+        // stages and renders only after every outcome is known.
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "global-precommit", Rc::clone(&ledger));
+        let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+        let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+        let mut effects = ScriptedPublicationEffects::new(
+            [Ok(RemovalOutcome::Removed)],
+            [Ok(RemovalOutcome::Removed)],
+            Rc::clone(&ledger),
+        );
+        let report = complete_publication_with(
+            &mut child,
+            &process,
+            port,
+            mirror_failure(&local, &global_stage),
+            &listener,
+            &mut effects,
+        );
+        let rendered = render_publication_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+        assert!(!report.success);
+        assert!(
+            rendered
+                .stdout
+                .last()
+                .unwrap()
+                .contains("rollback complete")
+        );
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Terminate("global-precommit"),
+                LifecycleEvent::RetainedWait("global-precommit"),
+                LifecycleEvent::ChildWait(pid),
+                LifecycleEvent::Listener(pid, port),
+                scripted_remove_event(&local),
+                LifecycleEvent::RemoveStage(
+                    global_stage.path.clone(),
+                    global_stage.raw.as_deref().map(ferric_bench::sha256_bytes),
+                ),
+                LifecycleEvent::Render,
+            ]
+        );
+
+        // A signal error is not itself exit proof, but the exact retained
+        // handle is still deliberately waited. A successful retained wait,
+        // reap, and absent-listener check independently authorize rollback.
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "signal-error-exited", Rc::clone(&ledger))
+            .with_terminate(Err(ProcessError::Operation("signal denied".to_string())))
+            .with_wait(Ok(true));
+        let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+        let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+        let mut effects = ScriptedPublicationEffects::new(
+            [Ok(RemovalOutcome::Removed)],
+            [Ok(RemovalOutcome::Removed)],
+            Rc::clone(&ledger),
+        );
+        let report = complete_publication_with(
+            &mut child,
+            &process,
+            port,
+            mirror_failure(&local, &global_stage),
+            &listener,
+            &mut effects,
+        );
+        render_publication_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("signal denied"))
+        );
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Terminate("signal-error-exited"),
+                LifecycleEvent::RetainedWait("signal-error-exited"),
+                LifecycleEvent::ChildWait(pid),
+                LifecycleEvent::Listener(pid, port),
+                scripted_remove_event(&local),
+                LifecycleEvent::RemoveStage(
+                    global_stage.path.clone(),
+                    global_stage.raw.as_deref().map(ferric_bench::sha256_bytes),
+                ),
+                LifecycleEvent::Render,
+            ]
+        );
+
+        // A local committed-but-durability failure is also a partial
+        // publication, even though no stage remains.
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "local-durability", Rc::clone(&ledger));
+        let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+        let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+        let published_local = PublishedRegistrations {
+            local: local.clone(),
+            global: None,
+        };
+        let failure = Err(PublishError::Durability {
+            path: local.path.clone(),
+            detail: "injected local parent-sync failure".to_string(),
+            published: Box::new(published_local),
+            attempt: Box::new(PublicationAttempt {
+                finals: vec![local.clone()],
+                stages: Vec::new(),
+                terminal_phase: PersistencePhase::ParentSync,
+                final_committed: true,
+            }),
+        });
+        let mut effects = ScriptedPublicationEffects::new(
+            [Ok(RemovalOutcome::Removed)],
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let report =
+            complete_publication_with(&mut child, &process, port, failure, &listener, &mut effects);
+        render_publication_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+        assert_eq!(report.finals.len(), 1);
+        assert!(report.stages.is_empty());
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::Terminate("local-durability"),
+                LifecycleEvent::RetainedWait("local-durability"),
+                LifecycleEvent::ChildWait(pid),
+                LifecycleEvent::Listener(pid, port),
+                scripted_remove_event(&local),
+                LifecycleEvent::Render,
+            ]
+        );
+
+        // A child observed exited after both finals appear still goes through
+        // the retained wait/reap/listener proof before either final rolls back.
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "exit-during-publication", Rc::clone(&ledger))
+            .with_terminate(Ok(false))
+            .with_wait(Ok(true));
+        let mut child = ScriptedChild::new(
+            pid,
+            [Ok(Some(ScriptedExit("exited during publication")))],
+            Rc::clone(&ledger),
+        );
+        let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+        let mut effects = ScriptedPublicationEffects::new(
+            [Ok(RemovalOutcome::Removed), Ok(RemovalOutcome::Removed)],
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let report = complete_publication_with(
+            &mut child,
+            &process,
+            port,
+            Ok(PublishedRegistrations {
+                local: local.clone(),
+                global: Some(global.clone()),
+            }),
+            &listener,
+            &mut effects,
+        );
+        render_publication_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::ChildTryWait(pid),
+                LifecycleEvent::Terminate("exit-during-publication"),
+                LifecycleEvent::RetainedWait("exit-during-publication"),
+                LifecycleEvent::ChildWait(pid),
+                LifecycleEvent::Listener(pid, port),
+                scripted_remove_event(&local),
+                scripted_remove_event(&global),
+                LifecycleEvent::Render,
+            ]
+        );
+
+        // Every unproved exit/reap/listener row holds both finals and stages
+        // and produces no removal event.
+        for case in [
+            "terminate-error",
+            "wait-timeout",
+            "wait-error",
+            "reap-error",
+            "listener-survived",
+        ] {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = match case {
+                "terminate-error" => ScriptedProcess::new(pid, case, Rc::clone(&ledger))
+                    .with_terminate(Err(ProcessError::Operation("signal denied".to_string())))
+                    .with_wait(Ok(false)),
+                "wait-timeout" => {
+                    ScriptedProcess::new(pid, case, Rc::clone(&ledger)).with_wait(Ok(false))
+                }
+                "wait-error" => ScriptedProcess::new(pid, case, Rc::clone(&ledger)).with_wait(Err(
+                    ProcessError::Operation("retained wait failed".to_string()),
+                )),
+                "reap-error" | "listener-survived" => {
+                    ScriptedProcess::new(pid, case, Rc::clone(&ledger))
+                }
+                _ => unreachable!(),
+            };
+            let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+            if case == "reap-error" {
+                child.wait = VecDeque::from([Err("child reap failed".to_string())]);
+            }
+            let listener = ScriptedListener::new(
+                if case == "listener-survived" {
+                    ListenerState::OwnedByTarget
+                } else {
+                    ListenerState::Absent
+                },
+                Rc::clone(&ledger),
+            );
+            let mut effects = ScriptedPublicationEffects::new(
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Rc::clone(&ledger),
+            );
+            let report = complete_publication_with(
+                &mut child,
+                &process,
+                port,
+                mirror_failure(&local, &global_stage),
+                &listener,
+                &mut effects,
+            );
+            render_publication_with_ledger(&report, &ledger);
+            assert_eq!(
+                report.disposition,
+                PublicationDisposition::RecoveryHeld,
+                "{case}"
+            );
+            assert!(
+                report
+                    .finals
+                    .iter()
+                    .all(|entry| matches!(entry.outcome, DownRegistrationOutcome::Held { .. }))
+            );
+            assert!(
+                report
+                    .stages
+                    .iter()
+                    .all(|entry| matches!(entry.outcome, DownRegistrationOutcome::Held { .. }))
+            );
+            assert!(ledger.borrow().iter().all(|event| !matches!(
+                event,
+                LifecycleEvent::Remove(_, _) | LifecycleEvent::RemoveStage(_, _)
+            )));
+            assert_eq!(ledger.borrow().last(), Some(&LifecycleEvent::Render));
+        }
+
+        // Cleanup continues across a concurrent final replacement, a second
+        // final's conditional-removal failure, and a stage-cleanup failure;
+        // every preserved path survives in the structured and rendered report.
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(pid, "partial-cleanup", Rc::clone(&ledger));
+        let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
+        let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
+        let replacement_path = discovery_fixture_path("concurrent-replacement");
+        let final_holding = discovery_fixture_path("final-holding");
+        let stage_holding = discovery_fixture_path("stage-holding");
+        let published = PublishedRegistrations {
+            local: local.clone(),
+            global: Some(global.clone()),
+        };
+        let failure = Err(PublishError::Durability {
+            path: global.path.clone(),
+            detail: "injected global durability and stage cleanup failure".to_string(),
+            published: Box::new(published),
+            attempt: Box::new(PublicationAttempt {
+                finals: vec![local.clone(), global.clone()],
+                stages: vec![global_stage.clone()],
+                terminal_phase: PersistencePhase::StageCleanup,
+                final_committed: true,
+            }),
+        });
+        let mut effects = ScriptedPublicationEffects::new(
+            [
+                Ok(RemovalOutcome::ReplacementPreserved {
+                    path: replacement_path.clone(),
+                    detail: "concurrent replacement preserved".to_string(),
+                }),
+                Err(RemovalError {
+                    path: global.path.clone(),
+                    kind: RemovalFailureKind::Remove,
+                    detail: "conditional final cleanup failed".to_string(),
+                    preserved_at: Some(final_holding.clone()),
+                }),
+            ],
+            [Err(RemovalError {
+                path: global_stage.path.clone(),
+                kind: RemovalFailureKind::Remove,
+                detail: "conditional stage cleanup failed".to_string(),
+                preserved_at: Some(stage_holding.clone()),
+            })],
+            Rc::clone(&ledger),
+        );
+        let report =
+            complete_publication_with(&mut child, &process, port, failure, &listener, &mut effects);
+        let rendered = render_publication_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, PublicationDisposition::RecoveryPartial);
+        assert!(
+            rendered
+                .stdout
+                .iter()
+                .any(|line| { line.contains(&replacement_path.display().to_string()) })
+        );
+        assert!(
+            rendered
+                .stdout
+                .iter()
+                .any(|line| line.contains(&final_holding.display().to_string()))
+        );
+        assert!(
+            rendered
+                .stdout
+                .iter()
+                .any(|line| line.contains(&stage_holding.display().to_string()))
+        );
+        assert_eq!(
+            ledger
+                .borrow()
+                .iter()
+                .rev()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![
+                LifecycleEvent::Render,
+                LifecycleEvent::RemoveStage(
+                    global_stage.path.clone(),
+                    global_stage.raw.as_deref().map(ferric_bench::sha256_bytes),
+                ),
+                scripted_remove_event(&global),
+                scripted_remove_event(&local),
+            ],
+            "all finals must be attempted before stages and rendering"
         );
     }
 
@@ -9084,15 +10081,19 @@ mod tests {
     #[test]
     fn launch_preflight_blocks_unowned_durable_tailscale_state() {
         let dir = tempfile::tempdir().unwrap();
-        let model = dir.path().join("model.gguf");
-        std::fs::write(&model, b"model").unwrap();
-        let mut args = llama_args(&model);
+        let missing_model = dir.path().join("missing.gguf");
+        let mut args = llama_args(&missing_model);
         args.tailscale = true;
+        args.port = 0;
+        args.ctx = 0;
+        args.parallel = Some(0);
 
         let error = validate_launch_preconditions(dir.path(), &args, None)
             .expect_err("Tailscale Serve mutation must remain fail-closed");
-        assert!(error.contains("temporarily fail-closed"), "{error}");
-        assert!(error.contains("ownership"), "{error}");
+        assert_eq!(
+            error,
+            "--tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable"
+        );
     }
 
     #[test]

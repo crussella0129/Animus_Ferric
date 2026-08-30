@@ -8,7 +8,7 @@
 
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use tempfile::{Builder, NamedTempFile};
@@ -476,6 +476,116 @@ pub(crate) struct PublishedRegistrations {
     pub(crate) global: Option<CapturedRegistration>,
 }
 
+/// One persistence boundary reached by a publication attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PersistencePhase {
+    CreateStage,
+    WriteAll,
+    Flush,
+    FileSync,
+    PersistNoClobber,
+    StageCleanup,
+    ParentSync,
+}
+
+/// An exclusive same-parent stage retained after a failed publication.
+/// Missing raw bytes or file identity means the stage path is known but
+/// automated cleanup is not authorized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PublicationStage {
+    pub(crate) scope: RegistrationScope,
+    pub(crate) final_path: PathBuf,
+    pub(crate) path: PathBuf,
+    pub(crate) raw: Option<Vec<u8>>,
+    pub(crate) identity: Option<PublicationStageIdentity>,
+}
+
+/// Stable identity of the open stage file. On Unix this is `(device, inode)`;
+/// on Windows it is `(volume serial number, file index)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PublicationStageIdentity {
+    first: u64,
+    second: u64,
+}
+
+#[cfg(unix)]
+fn publication_stage_identity(file: &fs::File) -> io::Result<PublicationStageIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = file.metadata()?;
+    Ok(PublicationStageIdentity {
+        first: metadata.dev(),
+        second: metadata.ino(),
+    })
+}
+
+#[cfg(windows)]
+fn publication_stage_identity(file: &fs::File) -> io::Result<PublicationStageIdentity> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[repr(C)]
+    struct FileTime {
+        _low_date_time: u32,
+        _high_date_time: u32,
+    }
+
+    #[repr(C)]
+    struct ByHandleFileInformation {
+        _file_attributes: u32,
+        _creation_time: FileTime,
+        _last_access_time: FileTime,
+        _last_write_time: FileTime,
+        volume_serial_number: u32,
+        _file_size_high: u32,
+        _file_size_low: u32,
+        _number_of_links: u32,
+        file_index_high: u32,
+        file_index_low: u32,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetFileInformationByHandle"]
+        fn get_file_information_by_handle(
+            file: *mut c_void,
+            information: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    // SAFETY: the output structure is plain data and the borrowed file handle
+    // remains live for the duration of the call.
+    let mut information: ByHandleFileInformation = unsafe { std::mem::zeroed() };
+    let ok = unsafe { get_file_information_by_handle(file.as_raw_handle(), &mut information) };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(PublicationStageIdentity {
+        first: u64::from(information.volume_serial_number),
+        second: u64::from(information.file_index_high) << 32
+            | u64::from(information.file_index_low),
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn publication_stage_identity(_file: &fs::File) -> io::Result<PublicationStageIdentity> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "stable file identity is unavailable on this platform",
+    ))
+}
+
+/// Exact recovery state produced by a failed publication attempt. The launch
+/// coordinator owns this value until retained-child exit and listener release
+/// are proven; only then may it conditionally remove these finals and stages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PublicationAttempt {
+    pub(crate) finals: Vec<CapturedRegistration>,
+    pub(crate) stages: Vec<PublicationStage>,
+    pub(crate) terminal_phase: PersistencePhase,
+    pub(crate) final_committed: bool,
+}
+
 /// Atomic publication failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PublishError {
@@ -489,6 +599,7 @@ pub(crate) enum PublishError {
         scope: RegistrationScope,
         path: PathBuf,
         detail: String,
+        attempt: Box<PublicationAttempt>,
     },
     Mirror {
         path: PathBuf,
@@ -496,6 +607,7 @@ pub(crate) enum PublishError {
         /// Exact local capture which the process-owning caller must pass to
         /// `remove_if_unchanged` only after stopping and waiting for its child.
         local: Box<CapturedRegistration>,
+        attempt: Box<PublicationAttempt>,
     },
     /// A final path was committed, but syncing its parent directory failed.
     /// The process-owning caller must stop/wait its child before conditionally
@@ -504,6 +616,7 @@ pub(crate) enum PublishError {
         path: PathBuf,
         detail: String,
         published: Box<PublishedRegistrations>,
+        attempt: Box<PublicationAttempt>,
     },
 }
 
@@ -524,6 +637,7 @@ impl fmt::Display for PublishError {
                 scope,
                 path,
                 detail,
+                ..
             } => write!(
                 formatter,
                 "publish {scope} registration at {}: {detail}",
@@ -533,6 +647,7 @@ impl fmt::Display for PublishError {
                 path,
                 detail,
                 local,
+                ..
             } => write!(
                 formatter,
                 "publish global registration at {}: {detail}; local registration at {} requires caller-owned rollback after child shutdown",
@@ -543,6 +658,7 @@ impl fmt::Display for PublishError {
                 path,
                 detail,
                 published,
+                ..
             } => write!(
                 formatter,
                 "registration was committed at {} but its parent-directory durability check failed: {detail}; {} published scope(s) require caller-owned rollback after child shutdown",
@@ -561,6 +677,107 @@ pub(crate) fn publish_mirrored(
     workspace: &Path,
     global_path: Option<&Path>,
     runfile: &ServerRunfile,
+) -> Result<PublishedRegistrations, PublishError> {
+    publish_mirrored_with(
+        workspace,
+        global_path,
+        runfile,
+        &mut NativePersistenceEffects,
+    )
+}
+
+/// Persistence boundary used by publication fault matrices. The production
+/// implementation below still performs every filesystem operation; scripted
+/// implementations can fail one exact phase without replacing the atomic
+/// no-clobber algorithm with an in-memory imitation.
+pub(crate) trait PersistenceEffects {
+    fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>>;
+
+    fn create_stage(&mut self, final_path: &Path, parent: &Path) -> io::Result<NamedTempFile>;
+
+    fn write_all(
+        &mut self,
+        final_path: &Path,
+        stage: &mut NamedTempFile,
+        raw: &[u8],
+    ) -> io::Result<()>;
+
+    fn flush(&mut self, final_path: &Path, stage: &mut NamedTempFile) -> io::Result<()>;
+
+    fn sync_file(&mut self, final_path: &Path, stage: &NamedTempFile) -> io::Result<()>;
+
+    fn persist_noclobber(
+        &mut self,
+        final_path: &Path,
+        stage: NamedTempFile,
+    ) -> Result<(), StagePersistError>;
+
+    fn sync_parent(&mut self, final_path: &Path, parent: &Path) -> io::Result<()>;
+}
+
+#[derive(Debug)]
+pub(crate) struct StagePersistError {
+    pub(crate) error: io::Error,
+    pub(crate) stage: NamedTempFile,
+}
+
+struct NativePersistenceEffects;
+
+impl PersistenceEffects for NativePersistenceEffects {
+    fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>> {
+        serde_json::to_vec_pretty(runfile)
+    }
+
+    fn create_stage(&mut self, _final_path: &Path, parent: &Path) -> io::Result<NamedTempFile> {
+        Builder::new()
+            .prefix(".server-registration-")
+            .tempfile_in(parent)
+    }
+
+    fn write_all(
+        &mut self,
+        _final_path: &Path,
+        stage: &mut NamedTempFile,
+        raw: &[u8],
+    ) -> io::Result<()> {
+        stage.write_all(raw)
+    }
+
+    fn flush(&mut self, _final_path: &Path, stage: &mut NamedTempFile) -> io::Result<()> {
+        stage.as_file_mut().flush()
+    }
+
+    fn sync_file(&mut self, _final_path: &Path, stage: &NamedTempFile) -> io::Result<()> {
+        stage.as_file().sync_all()
+    }
+
+    fn persist_noclobber(
+        &mut self,
+        final_path: &Path,
+        stage: NamedTempFile,
+    ) -> Result<(), StagePersistError> {
+        stage
+            .persist_noclobber(final_path)
+            .map(drop)
+            .map_err(|error| StagePersistError {
+                error: error.error,
+                stage: error.file,
+            })
+    }
+
+    fn sync_parent(&mut self, _final_path: &Path, parent: &Path) -> io::Result<()> {
+        sync_parent_directory(parent)
+    }
+}
+
+/// Serialize once and publish through an injectable phase boundary. This is
+/// crate-visible so launch compensation tests can use the real publication
+/// state machine with deterministic filesystem faults.
+pub(crate) fn publish_mirrored_with<E: PersistenceEffects>(
+    workspace: &Path,
+    global_path: Option<&Path>,
+    runfile: &ServerRunfile,
+    effects: &mut E,
 ) -> Result<PublishedRegistrations, PublishError> {
     let local_path =
         absolute_path(&runfile_path(workspace)).map_err(|error| PublishError::Invalid {
@@ -606,14 +823,18 @@ pub(crate) fn publish_mirrored(
 
     // This is deliberately the sole serialization call. Both scopes receive
     // clones of this exact byte vector.
-    let raw = serde_json::to_vec_pretty(runfile)
+    let raw = effects
+        .serialize(runfile)
         .map_err(|error| PublishError::Serialize(error.to_string()))?;
-    if let Err(error) = persist_bytes_noclobber(&local_path, &raw) {
+    if let Err(error) = persist_bytes_noclobber_with(&local_path, &raw, effects, true) {
+        let detail = error.to_string();
         if !error.committed {
+            let attempt = error.into_attempt(RegistrationScope::Local, Vec::new());
             return Err(PublishError::Write {
                 scope: RegistrationScope::Local,
                 path: local_path,
-                detail: error.to_string(),
+                detail,
+                attempt: Box::new(attempt),
             });
         }
         let local = CapturedRegistration {
@@ -622,13 +843,15 @@ pub(crate) fn publish_mirrored(
             raw,
             runfile: runfile.clone(),
         };
+        let attempt = error.into_attempt(RegistrationScope::Local, vec![local.clone()]);
         return Err(PublishError::Durability {
             path: local_path,
-            detail: error.to_string(),
+            detail,
             published: Box::new(PublishedRegistrations {
                 local,
                 global: None,
             }),
+            attempt: Box::new(attempt),
         });
     }
     let local = CapturedRegistration {
@@ -639,7 +862,8 @@ pub(crate) fn publish_mirrored(
     };
 
     let global = if let Some(global_path) = global_path {
-        if let Err(error) = persist_bytes_noclobber(&global_path, &raw) {
+        if let Err(error) = persist_bytes_noclobber_with(&global_path, &raw, effects, true) {
+            let detail = error.to_string();
             if error.committed {
                 let global = CapturedRegistration {
                     scope: RegistrationScope::Global,
@@ -647,19 +871,26 @@ pub(crate) fn publish_mirrored(
                     raw,
                     runfile: runfile.clone(),
                 };
+                let attempt = error.into_attempt(
+                    RegistrationScope::Global,
+                    vec![local.clone(), global.clone()],
+                );
                 return Err(PublishError::Durability {
                     path: global_path,
-                    detail: error.to_string(),
+                    detail,
                     published: Box::new(PublishedRegistrations {
                         local,
                         global: Some(global),
                     }),
+                    attempt: Box::new(attempt),
                 });
             }
+            let attempt = error.into_attempt(RegistrationScope::Global, vec![local.clone()]);
             return Err(PublishError::Mirror {
                 path: global_path,
-                detail: error.to_string(),
+                detail,
                 local: Box::new(local),
+                attempt: Box::new(attempt),
             });
         }
         Some(CapturedRegistration {
@@ -680,6 +911,45 @@ struct PersistFailure {
     kind: io::ErrorKind,
     detail: String,
     committed: bool,
+    phase: PersistencePhase,
+    stage: Option<Box<RetainedStage>>,
+}
+
+#[derive(Debug)]
+struct RetainedStage {
+    final_path: PathBuf,
+    path: PathBuf,
+    raw: Option<Vec<u8>>,
+    identity: Option<PublicationStageIdentity>,
+}
+
+impl PersistFailure {
+    fn into_attempt(
+        self,
+        scope: RegistrationScope,
+        finals: Vec<CapturedRegistration>,
+    ) -> PublicationAttempt {
+        let stages = self
+            .stage
+            .into_iter()
+            .map(|stage| {
+                let stage = *stage;
+                PublicationStage {
+                    scope,
+                    final_path: stage.final_path,
+                    path: stage.path,
+                    raw: stage.raw,
+                    identity: stage.identity,
+                }
+            })
+            .collect();
+        PublicationAttempt {
+            finals,
+            stages,
+            terminal_phase: self.phase,
+            final_committed: self.committed,
+        }
+    }
 }
 
 impl fmt::Display for PersistFailure {
@@ -688,62 +958,301 @@ impl fmt::Display for PersistFailure {
     }
 }
 
-fn persist_failure(context: impl fmt::Display, error: io::Error) -> PersistFailure {
+fn persist_failure(
+    phase: PersistencePhase,
+    context: impl fmt::Display,
+    error: io::Error,
+) -> PersistFailure {
     PersistFailure {
         kind: error.kind(),
         detail: format!("{context}: {error}"),
         committed: false,
+        phase,
+        stage: None,
     }
 }
 
 fn persist_bytes_noclobber(path: &Path, raw: &[u8]) -> Result<(), PersistFailure> {
+    persist_bytes_noclobber_with(path, raw, &mut NativePersistenceEffects, false)
+}
+
+struct OpenStageSnapshot {
+    raw: Option<Vec<u8>>,
+    identity: Option<PublicationStageIdentity>,
+    diagnostics: Vec<String>,
+}
+
+fn snapshot_open_stage(stage: &NamedTempFile) -> OpenStageSnapshot {
+    let mut diagnostics = Vec::new();
+    let raw = (|| {
+        let mut open_stage = stage.as_file().try_clone()?;
+        open_stage.seek(SeekFrom::Start(0))?;
+        let mut raw = Vec::new();
+        open_stage.read_to_end(&mut raw)?;
+        Ok::<_, io::Error>(raw)
+    })()
+    .map(Some)
+    .unwrap_or_else(|error| {
+        diagnostics.push(format!("capture bytes through open stage handle: {error}"));
+        None
+    });
+    let identity = match publication_stage_identity(stage.as_file()) {
+        Ok(identity) => Some(identity),
+        Err(error) => {
+            diagnostics.push(format!(
+                "capture identity through open stage handle: {error}"
+            ));
+            None
+        }
+    };
+    OpenStageSnapshot {
+        raw,
+        identity,
+        diagnostics,
+    }
+}
+
+fn finish_uncommitted_stage(
+    final_path: &Path,
+    stage: NamedTempFile,
+    mut failure: PersistFailure,
+    retain_for_coordinator: bool,
+) -> PersistFailure {
+    if retain_for_coordinator {
+        return retain_uncommitted_stage(final_path, stage, failure);
+    }
+
+    let stage_path = stage.path().to_path_buf();
+    let snapshot = snapshot_open_stage(&stage);
+    if let Err(error) = stage.close() {
+        for diagnostic in snapshot.diagnostics {
+            failure.detail.push_str(&format!("; {diagnostic}"));
+        }
+        failure.detail.push_str(&format!(
+            "; cleanup temporary stage {}: {error}; stage preserved for recovery",
+            stage_path.display()
+        ));
+        failure.stage = Some(Box::new(RetainedStage {
+            final_path: final_path.to_path_buf(),
+            path: stage_path,
+            raw: snapshot.raw,
+            identity: snapshot.identity,
+        }));
+    }
+    failure
+}
+
+fn retain_uncommitted_stage(
+    final_path: &Path,
+    mut stage: NamedTempFile,
+    mut failure: PersistFailure,
+) -> PersistFailure {
+    let stage_path = stage.path().to_path_buf();
+    let snapshot = snapshot_open_stage(&stage);
+    // Publication may fail while its retained child is still live. Keep the
+    // exclusive stage intact; the coordinator may remove it only after proving
+    // that exact generation exited and released its listener.
+    stage.disable_cleanup(true);
+    drop(stage);
+    for diagnostic in snapshot.diagnostics {
+        failure.detail.push_str(&format!("; {diagnostic}"));
+    }
+    failure.detail.push_str(&format!(
+        "; stage retained for post-exit cleanup at {}",
+        stage_path.display()
+    ));
+    failure.stage = Some(Box::new(RetainedStage {
+        final_path: final_path.to_path_buf(),
+        path: stage_path,
+        raw: snapshot.raw,
+        identity: snapshot.identity,
+    }));
+    failure
+}
+
+fn retained_committed_stage(
+    final_path: &Path,
+    stage_path: &Path,
+    raw: &[u8],
+    identity: Option<PublicationStageIdentity>,
+    mut detail: String,
+) -> PersistFailure {
+    if identity.is_none() {
+        detail.push_str("; original open stage identity was unavailable");
+    }
+    PersistFailure {
+        kind: io::ErrorKind::Other,
+        detail,
+        committed: true,
+        phase: PersistencePhase::StageCleanup,
+        stage: Some(Box::new(RetainedStage {
+            final_path: final_path.to_path_buf(),
+            path: stage_path.to_path_buf(),
+            raw: Some(raw.to_vec()),
+            identity,
+        })),
+    }
+}
+
+fn persist_bytes_noclobber_with<E: PersistenceEffects>(
+    path: &Path,
+    raw: &[u8],
+    effects: &mut E,
+    retain_failed_stages: bool,
+) -> Result<(), PersistFailure> {
     let parent = path.parent().ok_or_else(|| PersistFailure {
         kind: io::ErrorKind::InvalidInput,
         detail: format!("path {} has no parent", path.display()),
         committed: false,
+        phase: PersistencePhase::CreateStage,
+        stage: None,
     })?;
     fs::create_dir_all(parent).map_err(|error| {
-        persist_failure(format_args!("create parent {}", parent.display()), error)
+        persist_failure(
+            PersistencePhase::CreateStage,
+            format_args!("create parent {}", parent.display()),
+            error,
+        )
     })?;
     let parent_metadata = fs::symlink_metadata(parent).map_err(|error| {
-        persist_failure(format_args!("inspect parent {}", parent.display()), error)
+        persist_failure(
+            PersistencePhase::CreateStage,
+            format_args!("inspect parent {}", parent.display()),
+            error,
+        )
     })?;
     if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
         return Err(PersistFailure {
             kind: io::ErrorKind::InvalidInput,
             detail: format!("parent {} is not a regular directory", parent.display()),
             committed: false,
+            phase: PersistencePhase::CreateStage,
+            stage: None,
         });
     }
 
-    let mut temporary: NamedTempFile = Builder::new()
-        .prefix(".server-registration-")
-        .tempfile_in(parent)
-        .map_err(|error| {
-            persist_failure(
-                format_args!("create temporary file in {}", parent.display()),
-                error,
-            )
+    let mut temporary = effects.create_stage(path, parent).map_err(|error| {
+        persist_failure(
+            PersistencePhase::CreateStage,
+            format_args!("create temporary file in {}", parent.display()),
+            error,
+        )
+    })?;
+    let stage_path = temporary.path().to_path_buf();
+    let stage_parent = stage_path.parent();
+    if stage_parent.is_none_or(|stage_parent| !paths_match(stage_parent, parent)) {
+        let failure = PersistFailure {
+            kind: io::ErrorKind::InvalidInput,
+            detail: format!(
+                "temporary registration stage {} is not in destination parent {}",
+                stage_path.display(),
+                parent.display()
+            ),
+            committed: false,
+            phase: PersistencePhase::CreateStage,
+            stage: None,
+        };
+        return Err(finish_uncommitted_stage(
+            path,
+            temporary,
+            failure,
+            retain_failed_stages,
+        ));
+    }
+
+    if let Err(error) = effects.write_all(path, &mut temporary, raw) {
+        let failure = persist_failure(
+            PersistencePhase::WriteAll,
+            "write temporary registration",
+            error,
+        );
+        return Err(finish_uncommitted_stage(
+            path,
+            temporary,
+            failure,
+            retain_failed_stages,
+        ));
+    }
+    if let Err(error) = effects.flush(path, &mut temporary) {
+        let failure = persist_failure(
+            PersistencePhase::Flush,
+            "flush temporary registration",
+            error,
+        );
+        return Err(finish_uncommitted_stage(
+            path,
+            temporary,
+            failure,
+            retain_failed_stages,
+        ));
+    }
+    if let Err(error) = effects.sync_file(path, &temporary) {
+        let failure = persist_failure(
+            PersistencePhase::FileSync,
+            "sync temporary registration",
+            error,
+        );
+        return Err(finish_uncommitted_stage(
+            path,
+            temporary,
+            failure,
+            retain_failed_stages,
+        ));
+    }
+    let committed_stage_identity = publication_stage_identity(temporary.as_file()).ok();
+    if let Err(error) = effects.persist_noclobber(path, temporary) {
+        let failure = persist_failure(
+            PersistencePhase::PersistNoClobber,
+            "persist without replacing an existing path",
+            error.error,
+        );
+        return Err(finish_uncommitted_stage(
+            path,
+            error.stage,
+            failure,
+            retain_failed_stages,
+        ));
+    }
+    // `tempfile::persist_noclobber` can leave its original hard link behind
+    // on an interrupted/unlink-denied path. Never unlink a path after losing
+    // the stage handle: retain and report it for post-exit exact-byte cleanup.
+    match fs::symlink_metadata(&stage_path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Ok(_) => {
+            return Err(retained_committed_stage(
+                path,
+                &stage_path,
+                raw,
+                committed_stage_identity.clone(),
+                format!(
+                    "publication committed at {} but stage {} remained; stage retained for post-exit cleanup",
+                    path.display(),
+                    stage_path.display()
+                ),
+            ));
+        }
+        Err(error) => {
+            return Err(retained_committed_stage(
+                path,
+                &stage_path,
+                raw,
+                committed_stage_identity,
+                format!(
+                    "publication committed at {} but stage cleanup could not be verified: {error}",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    effects
+        .sync_parent(path, parent)
+        .map_err(|error| PersistFailure {
+            kind: error.kind(),
+            detail: format!("sync parent directory {}: {error}", parent.display()),
+            committed: true,
+            phase: PersistencePhase::ParentSync,
+            stage: None,
         })?;
-    temporary
-        .write_all(raw)
-        .map_err(|error| persist_failure("write temporary registration", error))?;
-    temporary
-        .as_file_mut()
-        .flush()
-        .map_err(|error| persist_failure("flush temporary registration", error))?;
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|error| persist_failure("sync temporary registration", error))?;
-    temporary.persist_noclobber(path).map_err(|error| {
-        persist_failure("persist without replacing an existing path", error.error)
-    })?;
-    sync_parent_directory(parent).map_err(|error| PersistFailure {
-        kind: error.kind(),
-        detail: format!("sync parent directory {}: {error}", parent.display()),
-        committed: true,
-    })?;
     Ok(())
 }
 
@@ -1067,6 +1576,70 @@ pub(crate) fn remove_if_unchanged(
     )
 }
 
+/// Conditionally remove one retained publication stage after the launch
+/// coordinator has proved retained-child exit and listener release. A stage
+/// whose exact bytes or stable open-handle identity could not be captured is
+/// recovery evidence only and is never deleted automatically.
+pub(crate) fn remove_publication_stage_if_unchanged(
+    stage: &PublicationStage,
+) -> Result<RemovalOutcome, RemovalError> {
+    let (raw, identity) = match (stage.raw.as_deref(), stage.identity.as_ref()) {
+        (Some(raw), Some(identity)) => (raw, identity),
+        _ => {
+            let missing = match (stage.raw.is_none(), stage.identity.is_none()) {
+                (true, true) => "bytes and file identity were not captured",
+                (true, false) => "bytes were not captured",
+                (false, true) => "file identity was not captured",
+                (false, false) => unreachable!(),
+            };
+            return match fs::symlink_metadata(&stage.path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(RemovalOutcome::Absent),
+                Ok(_) => Err(RemovalError {
+                    path: stage.path.clone(),
+                    kind: RemovalFailureKind::Other,
+                    detail: format!(
+                        "retained publication stage {missing}; automatic cleanup is unauthorized"
+                    ),
+                    preserved_at: Some(stage.path.clone()),
+                }),
+                Err(error) => Err(RemovalError {
+                    path: stage.path.clone(),
+                    kind: RemovalFailureKind::Other,
+                    detail: format!(
+                        "retained publication stage {missing}, and its path is uninspectable: {error}"
+                    ),
+                    preserved_at: Some(stage.path.clone()),
+                }),
+            };
+        }
+    };
+    let stage_parent = stage.path.parent();
+    let final_parent = stage.final_path.parent();
+    if stage_parent.is_none()
+        || final_parent.is_none()
+        || !paths_match(stage_parent.unwrap(), final_parent.unwrap())
+    {
+        return Err(RemovalError {
+            path: stage.path.clone(),
+            kind: RemovalFailureKind::Other,
+            detail: format!(
+                "retained publication stage is not in final-path parent {}",
+                stage.final_path.display()
+            ),
+            preserved_at: Some(stage.path.clone()),
+        });
+    }
+    remove_exact_bytes_if_unchanged_impl(
+        &stage.path,
+        raw,
+        Some(identity),
+        |_| {},
+        |path| fs::read(path),
+        |path| fs::remove_file(path),
+        persist_bytes_noclobber,
+    )
+}
+
 fn remove_if_unchanged_impl<F, Q, D, R>(
     captured: &CapturedRegistration,
     after_rename: F,
@@ -1080,7 +1653,34 @@ where
     D: FnOnce(&Path) -> io::Result<()>,
     R: FnOnce(&Path, &[u8]) -> Result<(), PersistFailure>,
 {
-    let original = &captured.path;
+    remove_exact_bytes_if_unchanged_impl(
+        &captured.path,
+        &captured.raw,
+        None,
+        after_rename,
+        read_moved,
+        remove_moved,
+        restore_changed,
+    )
+}
+
+fn remove_exact_bytes_if_unchanged_impl<F, Q, D, R>(
+    original: &Path,
+    captured_raw: &[u8],
+    expected_identity: Option<&PublicationStageIdentity>,
+    after_rename: F,
+    read_moved: Q,
+    remove_moved: D,
+    restore_changed: R,
+) -> Result<RemovalOutcome, RemovalError>
+where
+    F: FnOnce(&Path),
+    Q: FnOnce(&Path) -> io::Result<Vec<u8>>,
+    D: FnOnce(&Path) -> io::Result<()>,
+    R: FnOnce(&Path, &[u8]) -> Result<(), PersistFailure>,
+{
+    let original_path = original.to_path_buf();
+    let original = &original_path;
     let metadata = match fs::symlink_metadata(original) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -1156,6 +1756,24 @@ where
             detail: "atomically moved entry is not a regular non-symlink file".to_string(),
         });
     }
+    let identity_matches = if let Some(expected_identity) = expected_identity {
+        let moved_identity =
+            match fs::File::open(&moved).and_then(|file| publication_stage_identity(&file)) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    let preserved = keep_holding_dir(holding_dir, "registration");
+                    return Err(RemovalError {
+                        path: original.clone(),
+                        kind: RemovalFailureKind::Other,
+                        detail: format!("inspect atomically moved file identity: {error}"),
+                        preserved_at: Some(preserved),
+                    });
+                }
+            };
+        &moved_identity == expected_identity
+    } else {
+        true
+    };
     let moved_raw = match read_moved(&moved) {
         Ok(raw) => raw,
         Err(error) => {
@@ -1169,7 +1787,7 @@ where
         }
     };
 
-    if moved_raw == captured.raw {
+    if moved_raw == captured_raw && identity_matches {
         if let Err(error) = remove_moved(&moved) {
             let preserved = keep_holding_dir(holding_dir, "registration");
             return Err(RemovalError {
@@ -1207,13 +1825,19 @@ where
     // support and fails safely if another process has already recreated the
     // original name. The holding copy remains in either case, so a concurrent
     // unlink of the restored name still cannot destroy the replacement.
+    let replacement_reason = if !identity_matches {
+        "entry at the retained stage path has a different file identity"
+    } else {
+        "entry at the retained stage path has different bytes"
+    };
     match restore_changed(original, &moved_raw) {
         Ok(()) => {
             let preserved = keep_holding_dir(holding_dir, "registration");
             Ok(RemovalOutcome::ReplacementPreserved {
                 path: preserved,
-                detail: "changed entry was restored without clobbering and retained in the holding directory"
-                    .to_string(),
+                detail: format!(
+                    "{replacement_reason}; changed entry was restored without clobbering and retained in the holding directory"
+                ),
             })
         }
         Err(error) => {
@@ -1316,6 +1940,253 @@ mod tests {
         match slot {
             RegistrationSlot::Captured(captured) => captured.as_ref(),
             other => panic!("expected captured registration, got {other:?}"),
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct PersistenceEvent {
+        phase: PersistencePhase,
+        final_path: PathBuf,
+        stage_path: Option<PathBuf>,
+        byte_len: Option<usize>,
+    }
+
+    #[derive(Default)]
+    struct ScriptedPersistenceEffects {
+        events: Vec<PersistenceEvent>,
+        serializations: usize,
+        failure: Option<(PathBuf, PersistencePhase)>,
+        retain_stage_after_persist: Option<PathBuf>,
+    }
+
+    impl ScriptedPersistenceEffects {
+        fn failing(final_path: &Path, phase: PersistencePhase) -> Self {
+            Self {
+                failure: Some((final_path.to_path_buf(), phase)),
+                ..Self::default()
+            }
+        }
+
+        fn retaining_committed_stage(final_path: &Path) -> Self {
+            Self {
+                retain_stage_after_persist: Some(final_path.to_path_buf()),
+                ..Self::default()
+            }
+        }
+
+        fn fails(&self, final_path: &Path, phase: PersistencePhase) -> bool {
+            self.failure.as_ref().is_some_and(|(target, target_phase)| {
+                target == final_path && *target_phase == phase
+            })
+        }
+
+        fn record(
+            &mut self,
+            phase: PersistencePhase,
+            final_path: &Path,
+            stage_path: Option<&Path>,
+            byte_len: Option<usize>,
+        ) {
+            self.events.push(PersistenceEvent {
+                phase,
+                final_path: final_path.to_path_buf(),
+                stage_path: stage_path.map(Path::to_path_buf),
+                byte_len,
+            });
+        }
+
+        fn injected(phase: PersistencePhase) -> io::Error {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("injected {phase:?} failure"),
+            )
+        }
+    }
+
+    impl PersistenceEffects for ScriptedPersistenceEffects {
+        fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>> {
+            self.serializations += 1;
+            serde_json::to_vec_pretty(runfile)
+        }
+
+        fn create_stage(&mut self, final_path: &Path, parent: &Path) -> io::Result<NamedTempFile> {
+            if self.fails(final_path, PersistencePhase::CreateStage) {
+                self.record(PersistencePhase::CreateStage, final_path, None, None);
+                return Err(Self::injected(PersistencePhase::CreateStage));
+            }
+            let stage = NativePersistenceEffects.create_stage(final_path, parent)?;
+            self.record(
+                PersistencePhase::CreateStage,
+                final_path,
+                Some(stage.path()),
+                None,
+            );
+            Ok(stage)
+        }
+
+        fn write_all(
+            &mut self,
+            final_path: &Path,
+            stage: &mut NamedTempFile,
+            raw: &[u8],
+        ) -> io::Result<()> {
+            self.record(
+                PersistencePhase::WriteAll,
+                final_path,
+                Some(stage.path()),
+                Some(raw.len()),
+            );
+            if self.fails(final_path, PersistencePhase::WriteAll) {
+                let short = raw.len().min(7);
+                stage.write_all(&raw[..short])?;
+                return Err(Self::injected(PersistencePhase::WriteAll));
+            }
+            NativePersistenceEffects.write_all(final_path, stage, raw)
+        }
+
+        fn flush(&mut self, final_path: &Path, stage: &mut NamedTempFile) -> io::Result<()> {
+            self.record(
+                PersistencePhase::Flush,
+                final_path,
+                Some(stage.path()),
+                None,
+            );
+            if self.fails(final_path, PersistencePhase::Flush) {
+                return Err(Self::injected(PersistencePhase::Flush));
+            }
+            NativePersistenceEffects.flush(final_path, stage)
+        }
+
+        fn sync_file(&mut self, final_path: &Path, stage: &NamedTempFile) -> io::Result<()> {
+            self.record(
+                PersistencePhase::FileSync,
+                final_path,
+                Some(stage.path()),
+                None,
+            );
+            if self.fails(final_path, PersistencePhase::FileSync) {
+                return Err(Self::injected(PersistencePhase::FileSync));
+            }
+            NativePersistenceEffects.sync_file(final_path, stage)
+        }
+
+        fn persist_noclobber(
+            &mut self,
+            final_path: &Path,
+            mut stage: NamedTempFile,
+        ) -> Result<(), StagePersistError> {
+            let stage_path = stage.path().to_path_buf();
+            self.record(
+                PersistencePhase::PersistNoClobber,
+                final_path,
+                Some(&stage_path),
+                None,
+            );
+            if self.fails(final_path, PersistencePhase::PersistNoClobber) {
+                return Err(StagePersistError {
+                    error: Self::injected(PersistencePhase::PersistNoClobber),
+                    stage,
+                });
+            }
+            if self
+                .retain_stage_after_persist
+                .as_ref()
+                .is_some_and(|target| target == final_path)
+            {
+                if let Err(error) = fs::hard_link(&stage_path, final_path) {
+                    return Err(StagePersistError { error, stage });
+                }
+                stage.disable_cleanup(true);
+                drop(stage);
+                return Ok(());
+            }
+            NativePersistenceEffects.persist_noclobber(final_path, stage)
+        }
+
+        fn sync_parent(&mut self, final_path: &Path, parent: &Path) -> io::Result<()> {
+            self.record(PersistencePhase::ParentSync, final_path, None, None);
+            if self.fails(final_path, PersistencePhase::ParentSync) {
+                return Err(Self::injected(PersistencePhase::ParentSync));
+            }
+            NativePersistenceEffects.sync_parent(final_path, parent)
+        }
+    }
+
+    fn persistence_phases(
+        effects: &ScriptedPersistenceEffects,
+        final_path: &Path,
+    ) -> Vec<PersistencePhase> {
+        effects
+            .events
+            .iter()
+            .filter(|event| event.final_path == final_path)
+            .map(|event| event.phase)
+            .collect()
+    }
+
+    fn publication_stage_paths(root: &Path) -> Vec<PathBuf> {
+        fn visit(path: &Path, stages: &mut Vec<PathBuf>) {
+            let Ok(entries) = fs::read_dir(path) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    visit(&path, stages);
+                } else if path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(".server-registration-"))
+                {
+                    stages.push(path);
+                }
+            }
+        }
+        let mut stages = Vec::new();
+        visit(root, &mut stages);
+        stages.sort();
+        stages
+    }
+
+    fn replace_with_same_bytes_and_new_identity(
+        path: &Path,
+        raw: &[u8],
+    ) -> PublicationStageIdentity {
+        let mut replacement = Builder::new()
+            .prefix(".same-bytes-replacement-")
+            .tempfile_in(path.parent().unwrap())
+            .unwrap();
+        replacement.write_all(raw).unwrap();
+        replacement.as_file_mut().flush().unwrap();
+        replacement.as_file().sync_all().unwrap();
+        let identity = publication_stage_identity(replacement.as_file())
+            .expect("test filesystem exposes stable file identity");
+        let replacement_path = replacement.path().to_path_buf();
+        replacement.disable_cleanup(true);
+        drop(replacement);
+        fs::remove_file(path).unwrap();
+        fs::rename(replacement_path, path).unwrap();
+        assert_eq!(
+            publication_stage_identity(&fs::File::open(path).unwrap()).unwrap(),
+            identity
+        );
+        identity
+    }
+
+    fn publication_attempt(error: &PublishError) -> &PublicationAttempt {
+        match error {
+            PublishError::Write { attempt, .. }
+            | PublishError::Mirror { attempt, .. }
+            | PublishError::Durability { attempt, .. } => attempt,
+            other => panic!("expected persistence attempt, got {other:?}"),
+        }
+    }
+
+    fn clean_attempt_stages(attempt: &PublicationAttempt) {
+        for stage in &attempt.stages {
+            assert_eq!(
+                remove_publication_stage_if_unchanged(stage).unwrap(),
+                RemovalOutcome::Removed
+            );
         }
     }
 
@@ -1852,6 +2723,370 @@ mod tests {
     }
 
     #[test]
+    fn registration_publication_is_complete_synced_and_no_clobber() {
+        let expected_phases = vec![
+            PersistencePhase::CreateStage,
+            PersistencePhase::WriteAll,
+            PersistencePhase::Flush,
+            PersistencePhase::FileSync,
+            PersistencePhase::PersistNoClobber,
+            PersistencePhase::ParentSync,
+        ];
+
+        // Local-only and mirrored success both flow the sole serialized byte
+        // vector through complete same-parent stages before exposing finals.
+        for mirrored in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("workspace");
+            let local = absolute_path(&runfile_path(&workspace)).unwrap();
+            let global = root.path().join("config/server.json");
+            let runfile = v2_runfile(&local, 70 + u64::from(mirrored));
+            let expected_raw = serde_json::to_vec_pretty(&runfile).unwrap();
+            let mut effects = ScriptedPersistenceEffects::default();
+
+            let published = publish_mirrored_with(
+                &workspace,
+                mirrored.then_some(global.as_path()),
+                &runfile,
+                &mut effects,
+            )
+            .unwrap();
+
+            assert_eq!(effects.serializations, 1);
+            assert_eq!(published.local.raw, expected_raw);
+            assert_eq!(fs::read(&local).unwrap(), expected_raw);
+            assert_eq!(
+                serde_json::from_slice::<ServerRunfile>(&published.local.raw).unwrap(),
+                runfile
+            );
+            assert_eq!(persistence_phases(&effects, &local), expected_phases);
+            if mirrored {
+                let global_capture = published.global.as_ref().unwrap();
+                assert_eq!(global_capture.raw, published.local.raw);
+                assert_eq!(fs::read(&global).unwrap(), published.local.raw);
+                assert_eq!(
+                    serde_json::from_slice::<ServerRunfile>(&global_capture.raw).unwrap(),
+                    runfile
+                );
+                assert_eq!(persistence_phases(&effects, &global), expected_phases);
+            } else {
+                assert!(published.global.is_none());
+            }
+            let created = effects
+                .events
+                .iter()
+                .filter(|event| event.phase == PersistencePhase::CreateStage)
+                .collect::<Vec<_>>();
+            assert_eq!(created.len(), 1 + usize::from(mirrored));
+            let mut unique_stages = created
+                .iter()
+                .map(|event| event.stage_path.as_ref().unwrap())
+                .collect::<Vec<_>>();
+            unique_stages.sort();
+            unique_stages.dedup();
+            assert_eq!(unique_stages.len(), created.len());
+            for event in effects
+                .events
+                .iter()
+                .filter(|event| event.stage_path.is_some())
+            {
+                assert_eq!(
+                    event.stage_path.as_ref().unwrap().parent(),
+                    event.final_path.parent(),
+                    "every stage must be in its final's parent: {event:?}"
+                );
+            }
+            let write_lengths = effects
+                .events
+                .iter()
+                .filter(|event| event.phase == PersistencePhase::WriteAll)
+                .map(|event| event.byte_len.unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                write_lengths,
+                vec![expected_raw.len(); 1 + usize::from(mirrored)]
+            );
+            assert!(publication_stage_paths(root.path()).is_empty());
+        }
+
+        // Every precommit phase retains one explained exact stage. The launch
+        // coordinator can then remove it only after retained-child exit proof.
+        for phase in [
+            PersistencePhase::CreateStage,
+            PersistencePhase::WriteAll,
+            PersistencePhase::Flush,
+            PersistencePhase::FileSync,
+            PersistencePhase::PersistNoClobber,
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join(format!("local-{phase:?}"));
+            let local = absolute_path(&runfile_path(&workspace)).unwrap();
+            let runfile = v2_runfile(&local, 80);
+            let mut effects = ScriptedPersistenceEffects::failing(&local, phase);
+            let error =
+                publish_mirrored_with(&workspace, None, &runfile, &mut effects).unwrap_err();
+            assert_eq!(effects.serializations, 1);
+            assert!(matches!(
+                &error,
+                PublishError::Write {
+                    scope: RegistrationScope::Local,
+                    ..
+                }
+            ));
+            let attempt = publication_attempt(&error);
+            assert_eq!(attempt.terminal_phase, phase);
+            assert!(!attempt.final_committed);
+            assert!(attempt.finals.is_empty());
+            assert!(!local.exists());
+            if phase == PersistencePhase::CreateStage {
+                assert!(attempt.stages.is_empty());
+                assert!(publication_stage_paths(root.path()).is_empty());
+            } else {
+                assert_eq!(attempt.stages.len(), 1);
+                let stage = &attempt.stages[0];
+                assert_eq!(stage.scope, RegistrationScope::Local);
+                assert_eq!(stage.final_path, local);
+                assert_eq!(stage.path.parent(), local.parent());
+                assert_eq!(
+                    publication_stage_paths(root.path()),
+                    vec![stage.path.clone()]
+                );
+                if phase == PersistencePhase::WriteAll {
+                    assert_eq!(stage.raw.as_ref().unwrap().len(), 7);
+                } else {
+                    assert_eq!(
+                        stage.raw.as_ref().unwrap(),
+                        &serde_json::to_vec_pretty(&runfile).unwrap()
+                    );
+                }
+                clean_attempt_stages(attempt);
+                assert!(publication_stage_paths(root.path()).is_empty());
+            }
+
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join(format!("global-{phase:?}"));
+            let local = absolute_path(&runfile_path(&workspace)).unwrap();
+            let global = root.path().join("config/server.json");
+            let runfile = v2_runfile(&local, 81);
+            let mut effects = ScriptedPersistenceEffects::failing(&global, phase);
+            let error = publish_mirrored_with(&workspace, Some(&global), &runfile, &mut effects)
+                .unwrap_err();
+            assert_eq!(effects.serializations, 1);
+            assert!(matches!(&error, PublishError::Mirror { .. }));
+            let attempt = publication_attempt(&error);
+            assert_eq!(attempt.terminal_phase, phase);
+            assert!(!attempt.final_committed);
+            assert_eq!(attempt.finals.len(), 1);
+            assert_eq!(attempt.finals[0].path, local);
+            assert!(local.exists());
+            assert!(!global.exists());
+            if phase == PersistencePhase::CreateStage {
+                assert!(attempt.stages.is_empty());
+            } else {
+                assert_eq!(attempt.stages.len(), 1);
+                assert_eq!(attempt.stages[0].scope, RegistrationScope::Global);
+                assert_eq!(attempt.stages[0].final_path, global);
+                clean_attempt_stages(attempt);
+            }
+            assert!(publication_stage_paths(root.path()).is_empty());
+        }
+
+        // A parent-sync fault is committed durability failure for either
+        // scope, and the attempt names every final already exposed.
+        for fail_global in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("durability");
+            let local = absolute_path(&runfile_path(&workspace)).unwrap();
+            let global = root.path().join("config/server.json");
+            let runfile = v2_runfile(&local, 90 + u64::from(fail_global));
+            let target = if fail_global { &global } else { &local };
+            let mut effects =
+                ScriptedPersistenceEffects::failing(target, PersistencePhase::ParentSync);
+            let error = publish_mirrored_with(
+                &workspace,
+                fail_global.then_some(global.as_path()),
+                &runfile,
+                &mut effects,
+            )
+            .unwrap_err();
+            assert!(matches!(&error, PublishError::Durability { .. }));
+            let attempt = publication_attempt(&error);
+            assert_eq!(attempt.terminal_phase, PersistencePhase::ParentSync);
+            assert!(attempt.final_committed);
+            assert_eq!(attempt.finals.len(), 1 + usize::from(fail_global));
+            assert!(attempt.stages.is_empty());
+            assert!(local.exists());
+            assert_eq!(global.exists(), fail_global);
+            assert!(publication_stage_paths(root.path()).is_empty());
+        }
+
+        // A rare committed no-clobber operation which retains its original
+        // hard link becomes an explained StageCleanup durability failure.
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("retained-stage");
+        let local = absolute_path(&runfile_path(&workspace)).unwrap();
+        let runfile = v2_runfile(&local, 92);
+        let mut effects = ScriptedPersistenceEffects::retaining_committed_stage(&local);
+        let error = publish_mirrored_with(&workspace, None, &runfile, &mut effects).unwrap_err();
+        assert!(matches!(&error, PublishError::Durability { .. }));
+        let attempt = publication_attempt(&error);
+        assert_eq!(attempt.terminal_phase, PersistencePhase::StageCleanup);
+        assert!(attempt.final_committed);
+        assert_eq!(attempt.finals.len(), 1);
+        assert_eq!(attempt.stages.len(), 1);
+        assert_eq!(attempt.stages[0].path.parent(), local.parent());
+        assert_eq!(attempt.stages[0].raw, Some(fs::read(&local).unwrap()));
+        assert!(
+            error
+                .to_string()
+                .contains(&attempt.stages[0].path.display().to_string())
+        );
+        clean_attempt_stages(attempt);
+        assert!(local.exists());
+        assert!(publication_stage_paths(root.path()).is_empty());
+
+        // Real destination appearance exercises tempfile's atomic no-replace
+        // failure rather than a scripted substitute, for both final scopes.
+        for existing_global in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("occupied");
+            let local = absolute_path(&runfile_path(&workspace)).unwrap();
+            let global = root.path().join("config/server.json");
+            let occupied = if existing_global { &global } else { &local };
+            fs::create_dir_all(occupied.parent().unwrap()).unwrap();
+            fs::write(occupied, b"external-winner").unwrap();
+            let runfile = v2_runfile(&local, 93 + u64::from(existing_global));
+            let mut effects = ScriptedPersistenceEffects::default();
+            let error = publish_mirrored_with(
+                &workspace,
+                existing_global.then_some(global.as_path()),
+                &runfile,
+                &mut effects,
+            )
+            .unwrap_err();
+            assert_eq!(fs::read(occupied).unwrap(), b"external-winner");
+            assert!(
+                matches!(
+                    &error,
+                    PublishError::Mirror { .. } if existing_global
+                ) || matches!(
+                    &error,
+                    PublishError::Write {
+                        scope: RegistrationScope::Local,
+                        ..
+                    } if !existing_global
+                )
+            );
+            let attempt = publication_attempt(&error);
+            assert_eq!(attempt.terminal_phase, PersistencePhase::PersistNoClobber);
+            assert!(!attempt.final_committed);
+            assert_eq!(attempt.stages.len(), 1);
+            clean_attempt_stages(attempt);
+            assert!(publication_stage_paths(root.path()).is_empty());
+        }
+
+        // Even a byte-identical file at the retained pathname is not
+        // attempt-owned when its stable file identity changed.
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("same-byte-stage-race");
+        let local = absolute_path(&runfile_path(&workspace)).unwrap();
+        let runfile = v2_runfile(&local, 94);
+        let mut effects = ScriptedPersistenceEffects::failing(&local, PersistencePhase::FileSync);
+        let error = publish_mirrored_with(&workspace, None, &runfile, &mut effects).unwrap_err();
+        let stage = publication_attempt(&error).stages[0].clone();
+        let replacement_identity =
+            replace_with_same_bytes_and_new_identity(&stage.path, stage.raw.as_ref().unwrap());
+        assert_ne!(stage.identity, Some(replacement_identity));
+        let preserved = match remove_publication_stage_if_unchanged(&stage).unwrap() {
+            RemovalOutcome::ReplacementPreserved { path, detail } => {
+                assert!(detail.contains("different file identity"), "{detail}");
+                path
+            }
+            outcome => panic!("same-byte replacement must be preserved, got {outcome:?}"),
+        };
+        assert_eq!(
+            fs::read(&stage.path).unwrap(),
+            stage.raw.as_ref().unwrap().as_slice()
+        );
+        assert_eq!(
+            fs::read(preserved).unwrap(),
+            stage.raw.as_ref().unwrap().as_slice()
+        );
+
+        // Lexical aliases are rejected before serialization or stage creation.
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("alias");
+        let local = absolute_path(&runfile_path(&workspace)).unwrap();
+        let alias = local.parent().unwrap().join(".").join("server.json");
+        let runfile = v2_runfile(&local, 95);
+        let mut effects = ScriptedPersistenceEffects::default();
+        assert!(matches!(
+            publish_mirrored_with(&workspace, Some(&alias), &runfile, &mut effects),
+            Err(PublishError::Invalid {
+                scope: RegistrationScope::Global,
+                ..
+            })
+        ));
+        assert_eq!(effects.serializations, 0);
+        assert!(effects.events.is_empty());
+        assert!(publication_stage_paths(root.path()).is_empty());
+    }
+
+    #[test]
+    fn publication_stage_cleanup_is_exact_and_failure_preserving() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("cleanup");
+        let local = absolute_path(&runfile_path(&workspace)).unwrap();
+        let runfile = v2_runfile(&local, 96);
+        let mut effects = ScriptedPersistenceEffects::failing(&local, PersistencePhase::FileSync);
+        let publication_error =
+            publish_mirrored_with(&workspace, None, &runfile, &mut effects).unwrap_err();
+        let stage = publication_attempt(&publication_error).stages[0].clone();
+
+        let cleanup_error = remove_exact_bytes_if_unchanged_impl(
+            &stage.path,
+            stage.raw.as_ref().unwrap(),
+            stage.identity.as_ref(),
+            |_| {},
+            |path| fs::read(path),
+            |_| {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "injected stage cleanup failure",
+                ))
+            },
+            persist_bytes_noclobber,
+        )
+        .unwrap_err();
+        assert_eq!(cleanup_error.kind, RemovalFailureKind::Remove);
+        let preserved = cleanup_error
+            .preserved_at
+            .expect("failed cleanup retains an exact recovery path");
+        assert_eq!(fs::read(&preserved).unwrap(), stage.raw.unwrap());
+        assert!(!stage.path.exists());
+
+        let uncaptured = PublicationStage {
+            scope: RegistrationScope::Local,
+            final_path: local.clone(),
+            path: local
+                .parent()
+                .unwrap()
+                .join(".server-registration-uncaptured"),
+            raw: None,
+            identity: None,
+        };
+        assert_eq!(
+            remove_publication_stage_if_unchanged(&uncaptured).unwrap(),
+            RemovalOutcome::Absent
+        );
+        assert!(!uncaptured.path.exists());
+        fs::write(&uncaptured.path, b"unknown-stage").unwrap();
+        let error = remove_publication_stage_if_unchanged(&uncaptured).unwrap_err();
+        assert_eq!(error.preserved_at, Some(uncaptured.path.clone()));
+        assert_eq!(fs::read(&uncaptured.path).unwrap(), b"unknown-stage");
+    }
+
+    #[test]
     fn mirrored_publish_is_identical_and_never_clobbers() {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("workspace");
@@ -2140,6 +3375,8 @@ mod tests {
                     kind: io::ErrorKind::PermissionDenied,
                     detail: "injected replacement failure".to_string(),
                     committed: false,
+                    phase: PersistencePhase::PersistNoClobber,
+                    stage: None,
                 })
             },
             persist_bytes_noclobber,
@@ -2212,6 +3449,8 @@ mod tests {
                     kind: io::ErrorKind::PermissionDenied,
                     detail: "injected restore failure".to_string(),
                     committed: false,
+                    phase: PersistencePhase::PersistNoClobber,
+                    stage: None,
                 })
             },
         )

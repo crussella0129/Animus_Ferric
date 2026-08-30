@@ -117,6 +117,38 @@ fn assert_success(label: &str, output: Output) {
     );
 }
 
+fn output_lines(label: &str, stream: &str, bytes: &[u8]) -> Vec<String> {
+    String::from_utf8(bytes.to_vec())
+        .unwrap_or_else(|error| panic!("{label} {stream} was not UTF-8: {error}"))
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+fn assert_failed_output(
+    label: &str,
+    output: &Output,
+    expected_stdout: &[String],
+    expected_stderr: &[String],
+) {
+    assert!(
+        !output.status.success(),
+        "{label} unexpectedly succeeded:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output_lines(label, "stdout", &output.stdout),
+        expected_stdout,
+        "{label} stdout did not render the complete blocked contract"
+    );
+    assert_eq!(
+        output_lines(label, "stderr", &output.stderr),
+        expected_stderr,
+        "{label} stderr did not render the complete blocked contract"
+    );
+}
+
 fn unused_port() -> u16 {
     TcpListener::bind(("127.0.0.1", 0))
         .unwrap()
@@ -178,6 +210,35 @@ fn assert_only_sentinel(directory: &Path, label: &str) {
         fs::read_to_string(directory.join(SENTINEL_NAME)).unwrap(),
         label,
         "unrelated sentinel changed in {}",
+        directory.display()
+    );
+}
+
+fn assert_registration_and_sentinel(directory: &Path, label: &str, expected_raw: &[u8]) {
+    let mut entries = fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    entries.sort();
+    let mut expected_entries: Vec<std::ffi::OsString> =
+        vec![SENTINEL_NAME.into(), "server.json".into()];
+    expected_entries.sort();
+    assert_eq!(
+        entries,
+        expected_entries,
+        "registration, stage, or coordination artifacts changed in {}",
+        directory.display()
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join(SENTINEL_NAME)).unwrap(),
+        label,
+        "unrelated sentinel changed in {}",
+        directory.display()
+    );
+    assert_eq!(
+        fs::read(directory.join("server.json")).unwrap(),
+        expected_raw,
+        "durable Tailscale registration bytes changed in {}",
         directory.display()
     );
 }
@@ -680,7 +741,7 @@ fn model_free_server_lifecycle_fixture_e2e() {
 }
 
 #[test]
-fn tailscale_refusal_has_zero_external_effects() {
+fn tailscale_mode_refuses_before_side_effects() {
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
     let appdata = root.path().join("isolated-config");
@@ -700,18 +761,20 @@ fn tailscale_refusal_has_zero_external_effects() {
     assert!(endpoint_is_closed(port));
 
     let invocation_marker = root.path().join("unexpected-invocation.json");
-    let lifetime_token = root.path().join("fixture-lifetime.token");
-    let mut lifetime = FixtureLifetimeGuard::create(lifetime_token.clone(), port);
+    let refused_lifetime_token = root.path().join("refused-fixture-must-not-live.token");
 
-    // Null stdio prevents a hypothetical unexpectedly spawned engine from
-    // keeping an output pipe open. The lifetime token makes such a fixture
-    // self-terminate safely if any assertion below exposes a regression.
-    let status = isolated_ferric(&workspace, &appdata, &bin_dir)
+    // The deliberately absent lifetime token makes a hypothetical bad spawn
+    // exit immediately after leaving its invocation marker, so output capture
+    // stays bounded even when this safety property regresses.
+    let up = isolated_ferric(&workspace, &appdata, &bin_dir)
         .env(
             "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
             &invocation_marker,
         )
-        .env("FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN", &lifetime_token)
+        .env(
+            "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+            &refused_lifetime_token,
+        )
         .args([
             "server",
             "up",
@@ -721,14 +784,13 @@ fn tailscale_refusal_has_zero_external_effects() {
             "--port",
             &port.to_string(),
         ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .output()
         .unwrap();
-
-    assert!(
-        !status.success(),
-        "`server up --tailscale` must fail while scoped Serve ownership is unavailable"
+    assert_failed_output(
+        "server up --tailscale",
+        &up,
+        &[],
+        &["server launch preflight failed: --tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable".to_string()],
     );
     assert!(
         !invocation_marker.exists(),
@@ -746,8 +808,197 @@ fn tailscale_refusal_has_zero_external_effects() {
         "root"
     );
 
-    lifetime.finish();
-    assert!(!lifetime_token.exists());
+    let doctor = isolated_ferric(&workspace, &appdata, &bin_dir)
+        .env(
+            "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
+            &invocation_marker,
+        )
+        .args([
+            "server",
+            "doctor",
+            "--tailscale",
+            "--model",
+            model.to_str().unwrap(),
+            "--port",
+            &port.to_string(),
+        ])
+        .output()
+        .unwrap();
+    assert_failed_output(
+        "server doctor --tailscale",
+        &doctor,
+        &[
+            "[BLOCKED] --tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable".to_string(),
+            "[next] leave every registration untouched; Ferric will not inspect or signal a PID, delete registration bytes, invoke Tailscale, or run a blind node-wide reset".to_string(),
+        ],
+        &[],
+    );
+    assert!(
+        !invocation_marker.exists(),
+        "doctor invoked the fake engine or Tailscale executable before reporting BLOCKED"
+    );
+    assert!(endpoint_is_closed(port));
+    assert_only_sentinel(&local_dir, "workspace");
+    assert_only_sentinel(&global_dir, "global");
+
+    let process_lifetime_token = root.path().join("live-fixture.token");
+    let mut process_lifetime = FixtureLifetimeGuard::create(process_lifetime_token.clone(), port);
+    let child = Command::new(&engine)
+        .args([
+            "-m",
+            model.to_str().unwrap(),
+            "-c",
+            "4096",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+        ])
+        .env(
+            "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+            &process_lifetime_token,
+        )
+        .current_dir(&workspace)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let mut fixture = ChildGuard::new(child);
+    assert!(
+        wait_until(|| endpoint_is_healthy(port)),
+        "direct lifecycle fixture did not become healthy"
+    );
+
+    let local = local_dir.join("server.json");
+    let global = global_dir.join("server.json");
+    let base_url = "https://example-host.tailnet-example.ts.net/v1";
+    let registration = serde_json::json!({
+        "schema_version": 1,
+        "engine": "llama-server",
+        "pid": pid,
+        "port": port,
+        "base_url": base_url,
+        "tailscale": true,
+        "model": model.to_string_lossy().into_owned(),
+        "context_size": 4096
+    });
+    let mut local_raw = serde_json::to_vec_pretty(&registration).unwrap();
+    local_raw.push(b'\n');
+    let mut global_raw = serde_json::to_vec(&registration).unwrap();
+    global_raw.push(b'\n');
+    write_bytes(&local, &local_raw);
+    write_bytes(&global, &global_raw);
+
+    let status_stdout = vec![
+        format!(
+            "[captured] local registration {}: schema=1 engine=LlamaServer pid={pid} base-url={base_url} recorded-identity=legacy-none observed-identity=not-inspected listener=not-inspected health=not-probed",
+            local.display()
+        ),
+        format!(
+            "[captured] global registration {}: schema=1 engine=LlamaServer pid={pid} base-url={base_url} recorded-identity=legacy-none observed-identity=not-inspected listener=not-inspected health=not-probed",
+            global.display()
+        ),
+        "[state] unverifiable".to_string(),
+        format!(
+            "[next] registration port {port} claims durable Tailscale Serve state; scoped proxy cleanup is unavailable, so Ferric will not inspect or signal its PID, delete its registration, invoke Tailscale, or run a blind node-wide reset; inspect and remove only that exact Serve endpoint with Tailscale tooling"
+        ),
+    ];
+    let blocked_diagnostics = vec![
+        "[diagnostic] registration owns durable Tailscale Serve state".to_string(),
+        "[diagnostic] registration owns durable Tailscale Serve state".to_string(),
+    ];
+    let down_stdout = vec![
+        format!(
+            "[held] local registration {} detail=typed discovery blocked teardown mutation",
+            local.display()
+        ),
+        format!(
+            "[held] global registration {} detail=typed discovery blocked teardown mutation",
+            global.display()
+        ),
+        "[state] teardown blocked; registrations kept".to_string(),
+        format!(
+            "[next] registration port {port} claims durable Tailscale Serve state; scoped proxy cleanup is unavailable, so Ferric will not inspect or signal its PID, delete its registration, invoke Tailscale, or run a blind node-wide reset; inspect and remove only that exact Serve endpoint with Tailscale tooling"
+        ),
+    ];
+
+    for phase in ["live", "absent"] {
+        let status = isolated_ferric(&workspace, &appdata, &bin_dir)
+            .env(
+                "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
+                &invocation_marker,
+            )
+            .args(["server", "status"])
+            .output()
+            .unwrap();
+        assert_failed_output(
+            &format!("server status with {phase} Tailscale PID"),
+            &status,
+            &status_stdout,
+            &blocked_diagnostics,
+        );
+        assert!(
+            !invocation_marker.exists(),
+            "status invoked the fake engine or Tailscale executable for the {phase} PID case"
+        );
+        assert_registration_and_sentinel(&local_dir, "workspace", &local_raw);
+        assert_registration_and_sentinel(&global_dir, "global", &global_raw);
+
+        let down = isolated_ferric(&workspace, &appdata, &bin_dir)
+            .env(
+                "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
+                &invocation_marker,
+            )
+            .args(["server", "down"])
+            .output()
+            .unwrap();
+        assert_failed_output(
+            &format!("server down with {phase} Tailscale PID"),
+            &down,
+            &down_stdout,
+            &blocked_diagnostics,
+        );
+        assert!(
+            !invocation_marker.exists(),
+            "down invoked the fake engine or Tailscale executable for the {phase} PID case"
+        );
+        assert_registration_and_sentinel(&local_dir, "workspace", &local_raw);
+        assert_registration_and_sentinel(&global_dir, "global", &global_raw);
+        assert_eq!(
+            fs::read_to_string(root.path().join(SENTINEL_NAME)).unwrap(),
+            "root"
+        );
+
+        if phase == "live" {
+            assert!(
+                fixture.child_mut().try_wait().unwrap().is_none(),
+                "status or down signalled the live process named by a Tailscale registration"
+            );
+            assert!(
+                endpoint_is_healthy(port),
+                "status or down changed the live Tailscale registration listener"
+            );
+            process_lifetime.finish();
+            assert!(
+                wait_until(|| fixture.child_mut().try_wait().unwrap().is_some()),
+                "test-owned lifecycle fixture did not exit after its lifetime token was removed"
+            );
+            fixture.disarm();
+            assert!(
+                wait_until(|| endpoint_is_closed(port)),
+                "test-owned lifecycle fixture listener remained after explicit test cleanup"
+            );
+        } else {
+            assert!(
+                endpoint_is_closed(port),
+                "absent-PID Tailscale case unexpectedly created a listener"
+            );
+        }
+    }
+
+    assert!(!process_lifetime_token.exists());
+    assert!(!refused_lifetime_token.exists());
 }
 
 #[test]

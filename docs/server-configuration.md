@@ -25,15 +25,25 @@ a regular projector when supplied, and nonzero context/port values. Ferric
 retains the spawned child until its engine-specific HTTP endpoint returns 200;
 it first binds that child to a retained process object, then polls readiness,
 revalidates the same process generation, and verifies that child owns the
-expected listener. Only after those checks does it publish the same
-**runfile** bytes locally at `.ferric/server.json` and in the user config
-directory. This is what lets `ferric query` and `ferric bench`
-**auto-discover** the server—no `--api-base` needed.
+expected listener. Only after those checks does it serialize the **runfile**
+once. Each configured scope gets an exclusive same-directory stage; Ferric
+writes, flushes, and file-syncs the complete bytes, atomically commits the stage
+without replacing an existing final name, and syncs parent-directory metadata
+where the platform supports it. Success is reported only after every configured
+final contains parseable, byte-identical bytes. This is what lets `ferric
+query` and `ferric bench` **auto-discover** the server—no `--api-base` needed.
+
+Publication has a deliberately bounded durability claim. File contents are
+synced before commit. Unix also syncs the containing directory after the final
+name appears. Rust's portable file API cannot flush Windows directory metadata,
+so Windows currently claims the file-level boundary only, not unqualified
+power-loss durability for the directory entry.
 
 `doctor` is the pre-flight check; it validates presence *without* launching.
-Pure argument blockers (including `--tailscale`) return before registration or
-external probes. Otherwise doctor resolves the complete registration inventory
-first. Degraded, stale-only, conflicting, or unverifiable state returns before
+Tailscale mode returns before registration or PID inspection and before engine,
+model, or network probes. Other pure argument blockers also precede external
+probes. Otherwise doctor resolves the complete registration inventory first.
+Degraded, stale-only, conflicting, or unverifiable state returns before
 engine-version and model-file probes:
 
 ```console
@@ -119,11 +129,23 @@ discovery health probe. Only after that check may the consumer issue its own
 HTTP request.
 
 Registration publication is no-clobber and atomic per path, not one
-cross-filesystem transaction. If the second mirror cannot be published, Ferric
-stops the child it still owns before conditionally rolling back the first.
-Cleanup likewise removes only the exact bytes captured during resolution. If a
-file changes or is replaced concurrently, the replacement is preserved and the
-command reports partial cleanup.
+cross-filesystem transaction and not simultaneous visibility across scopes. A
+partial commit, committed-but-durability failure, or child exit during
+publication enters compensation through the retained child object. Ferric must
+prove that exact generation exited, reap it, and prove the listener absent
+before removing a final or attempt stage. If signal or wait cannot prove exit,
+all published finals remain as recovery clues. Once cleanup is authorized,
+Ferric compare-removes only unchanged attempt-owned finals, preserves any
+concurrent replacement, and explicitly cleans attempt stages. Every final and
+stage receives a result; cleanup errors identify all preserved paths. Partial
+compensation remains a failed launch rather than a partially registered live
+server. A signal error never authorizes cleanup by itself; Ferric still waits
+on the exact retained object, and only a successful retained wait can
+independently prove that generation exited.
+
+Later teardown cleanup likewise removes only the exact bytes captured during
+resolution. If a file changes or is replaced concurrently, the replacement is
+preserved and the command reports partial cleanup.
 
 `server down` has three practical outcomes:
 
@@ -212,7 +234,7 @@ inspected and remove only those exact unchanged files manually.
 | `--batch-size <N>` | engine default | batch size (llama-server only) |
 | `--seed <N>` | engine default | llama.cpp sampling seed; use a non-negative value for reproducibility (`-1` requests a random seed) |
 | `--parallel <N>` | engine default | nonzero number of concurrent llama-server request slots |
-| `--tailscale` | off | reserved; currently refused before any process or registration side effect |
+| `--tailscale` | off | reserved; refused before spawn, registration/PID inspection, engine/model/network probes, Tailscale invocation, or registration/stage creation |
 
 ### How the flags map to `llama-server`
 
@@ -246,19 +268,22 @@ the machine. This is also why, in the containerized topology, `ferric` and
 `llama-server` are co-located in one container rather than split across a network
 boundary (see [Container Topology & Roadmap](swarming-k8s.md)).
 
-`server up --tailscale` is temporarily fail-closed. Ferric refuses it during
-preflight, before spawning an engine or writing a registration, because it
-cannot yet compare-and-remove only the durable Tailscale Serve state it created.
+`server up --tailscale` and Tailscale doctor mode are temporarily fail-closed
+because scoped proxy cleanup is unavailable. Ferric refuses them before spawn,
+registration or PID inspection, engine/model/network probes, Tailscale
+invocation, and registration or stage creation.
 
-An existing registration with `tailscale: true` is also blocked from automatic
-teardown, even when it appears stale. Inspect the exact Serve configuration with
-`tailscale serve status` and independently verify the registered process
-creation instance, executable, arguments, and listener owner. Stop that exact
-process, then use the targeted removal syntax shown by `tailscale serve --help`
-to remove only the endpoint for the recorded port. Never use a node-wide Serve
-reset as lifecycle cleanup. Finally compare and remove only its unchanged
-local/global registration files. A future release can restore `--tailscale`
-after it can capture, own, and conditionally restore that external state.
+An existing registration with `tailscale: true` also blocks lifecycle process
+inspection and mutation before Ferric checks whether its recorded PID is
+present. `status` and `down` preserve its exact bytes, do not signal a process,
+do not delete a registration, do not invoke Tailscale, and never issue or
+recommend a blind node-wide reset. They report targeted manual inspection as an
+operator-owned recovery step. If you choose that step, independently verify the
+exact Serve endpoint and process creation instance before using current
+Tailscale tooling to remove only the recorded endpoint; then compare and remove
+only unchanged local/global registration files. A future release can restore
+`--tailscale` after it can capture, own, and conditionally restore that external
+state.
 
 ## Edge tuning
 
