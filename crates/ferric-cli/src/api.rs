@@ -366,7 +366,7 @@ pub mod server {
         let provider: Box<dyn ferric_provider::Provider> = if args.mock {
             Box::new(crate::query::mock_provider(config.protocol))
         } else {
-            crate::backend::create_provider(&backend_opts)
+            crate::backend::create_provider_in(&backend_opts, state.workspace.root())
                 .await
                 .map_err(ApiQueryError::Internal)?
         };

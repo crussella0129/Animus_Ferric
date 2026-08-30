@@ -1,4 +1,10 @@
 use clap::Args;
+use std::fmt;
+use std::path::Path;
+
+use crate::server::{
+    ManagedDiscoveryScope, ManagedServer, ManagedServerDiscovery, ManagedServerState,
+};
 
 #[cfg(feature = "backend-openai")]
 use ferric_provider::Provider;
@@ -14,8 +20,9 @@ pub struct BackendOpts {
     #[arg(long)]
     pub model: Option<String>,
 
-    /// OpenAI-compatible API base URL. Defaults to the running `ferric server`
-    /// (`.ferric/server.json` in the cwd), else `http://localhost:1234/v1`.
+    /// Explicit OpenAI-compatible API base URL. Without this flag, Ferric uses
+    /// one Ready managed local/global/origin registration, defaults only when
+    /// the full inventory is Empty, and refuses degraded or ambiguous state.
     #[arg(long)]
     pub api_base: Option<String>,
 
@@ -24,35 +31,211 @@ pub struct BackendOpts {
     pub api_key: Option<String>,
 }
 
-/// Resolve the OpenAI base URL (T-805 auto-discovery): an explicit `--api-base`
-/// wins, else the running `ferric server` runfile's `base_url`, else the
-/// built-in default.
-fn resolve_base(explicit: Option<&str>, runfile: Option<&str>) -> String {
-    explicit
-        .or(runfile)
-        .map(str::to_string)
-        .unwrap_or_else(|| "http://localhost:1234/v1".to_string())
+const DEFAULT_API_BASE: &str = "http://localhost:1234/v1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EndpointSelection {
+    Explicit {
+        base_url: String,
+    },
+    Managed {
+        scope: ManagedDiscoveryScope,
+        server: Box<ManagedServer>,
+        explicit_base_url: Option<String>,
+    },
+    Default {
+        base_url: String,
+    },
+}
+
+impl EndpointSelection {
+    pub(crate) fn base_url(&self) -> &str {
+        match self {
+            Self::Explicit { base_url } | Self::Default { base_url } => base_url,
+            Self::Managed { server, .. } => &server.runfile.base_url,
+        }
+    }
+
+    pub(crate) fn managed(&self) -> Option<(&ManagedDiscoveryScope, &ManagedServer)> {
+        match self {
+            Self::Managed { scope, server, .. } => Some((scope, server)),
+            Self::Explicit { .. } | Self::Default { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EndpointSelectionError {
+    Setup(String),
+    Degraded(Box<ManagedServerDiscovery>),
+    StaleOnly(Box<ManagedServerDiscovery>),
+    Conflict(Box<ManagedServerDiscovery>),
+    Unverifiable(Box<ManagedServerDiscovery>),
+    ExplicitManagedMismatch { explicit: String, managed: String },
+}
+
+impl fmt::Display for EndpointSelectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let issues = |discovery: &ManagedServerDiscovery| match &discovery.state {
+            ManagedServerState::Degraded { issues, .. }
+            | ManagedServerState::Conflict { issues }
+            | ManagedServerState::Unverifiable { issues } => issues
+                .iter()
+                .map(|issue| issue.detail.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+            ManagedServerState::StaleOnly { stale } => stale
+                .iter()
+                .map(|coordinate| coordinate.path.display().to_string())
+                .collect::<Vec<_>>()
+                .join("; "),
+            ManagedServerState::Empty | ManagedServerState::Ready(_) => String::new(),
+        };
+        match self {
+            Self::Setup(detail) => formatter.write_str(detail),
+            Self::Degraded(discovery) => write!(
+                formatter,
+                "managed server discovery is degraded and cannot select a backend: {}",
+                issues(discovery)
+            ),
+            Self::StaleOnly(discovery) => write!(
+                formatter,
+                "only stale server registrations remain: {}",
+                issues(discovery)
+            ),
+            Self::Conflict(discovery) => write!(
+                formatter,
+                "managed server registrations conflict: {}",
+                issues(discovery)
+            ),
+            Self::Unverifiable(discovery) => write!(
+                formatter,
+                "managed server registrations are unverifiable: {}",
+                issues(discovery)
+            ),
+            Self::ExplicitManagedMismatch { explicit, managed } => write!(
+                formatter,
+                "explicit endpoint {explicit} does not match the ready managed endpoint {managed}"
+            ),
+        }
+    }
+}
+
+pub(crate) fn automatic_endpoint_from_discovery(
+    scope: ManagedDiscoveryScope,
+    discovery: ManagedServerDiscovery,
+) -> Result<EndpointSelection, EndpointSelectionError> {
+    match &discovery.state {
+        ManagedServerState::Empty => Ok(EndpointSelection::Default {
+            base_url: DEFAULT_API_BASE.to_string(),
+        }),
+        ManagedServerState::Ready(server) => Ok(EndpointSelection::Managed {
+            scope,
+            server: Box::new(server.clone()),
+            explicit_base_url: None,
+        }),
+        ManagedServerState::Degraded { .. } => {
+            Err(EndpointSelectionError::Degraded(Box::new(discovery)))
+        }
+        ManagedServerState::StaleOnly { .. } => {
+            Err(EndpointSelectionError::StaleOnly(Box::new(discovery)))
+        }
+        ManagedServerState::Conflict { .. } => {
+            Err(EndpointSelectionError::Conflict(Box::new(discovery)))
+        }
+        ManagedServerState::Unverifiable { .. } => {
+            Err(EndpointSelectionError::Unverifiable(Box::new(discovery)))
+        }
+    }
+}
+
+pub(crate) fn select_endpoint_with<F>(
+    explicit: Option<&str>,
+    discover: F,
+) -> Result<EndpointSelection, EndpointSelectionError>
+where
+    F: FnOnce() -> Result<(ManagedDiscoveryScope, ManagedServerDiscovery), String>,
+{
+    if let Some(base_url) = explicit {
+        return Ok(EndpointSelection::Explicit {
+            base_url: base_url.to_string(),
+        });
+    }
+    let (scope, discovery) = discover().map_err(EndpointSelectionError::Setup)?;
+    automatic_endpoint_from_discovery(scope, discovery)
+}
+
+pub(crate) fn require_managed_endpoint(
+    scope: ManagedDiscoveryScope,
+    discovery: ManagedServerDiscovery,
+    explicit: Option<&str>,
+) -> Result<EndpointSelection, EndpointSelectionError> {
+    let mut selection = automatic_endpoint_from_discovery(scope, discovery)?;
+    let EndpointSelection::Managed {
+        server,
+        explicit_base_url,
+        ..
+    } = &mut selection
+    else {
+        return Err(EndpointSelectionError::Setup(
+            "strict managed mode requires a ready `ferric server`; built-in default selection is not permitted"
+                .to_string(),
+        ));
+    };
+    if let Some(explicit) = explicit {
+        if normalized_endpoint(explicit) != normalized_endpoint(&server.runfile.base_url) {
+            return Err(EndpointSelectionError::ExplicitManagedMismatch {
+                explicit: explicit.to_string(),
+                managed: server.runfile.base_url.clone(),
+            });
+        }
+        *explicit_base_url = Some(explicit.to_string());
+    }
+    Ok(selection)
+}
+
+fn normalized_endpoint(value: &str) -> &str {
+    value.trim_end_matches('/')
 }
 
 /// Resolve the endpoint exactly once for commands that launch multiple query
 /// processes. Freezing the discovered runfile URL prevents a long benchmark
 /// from silently switching servers mid-run.
-pub(crate) fn resolved_base_url(explicit: Option<&str>) -> Result<String, String> {
-    if let Some(explicit) = explicit {
-        return Ok(resolve_base(Some(explicit), None));
-    }
-    let runfile = std::env::current_dir()
-        .map_err(|error| format!("resolve current directory for server discovery: {error}"))
-        .and_then(|directory| crate::server::read_runfile_result(&directory))?;
-    Ok(resolve_base(
-        None,
-        runfile.as_ref().map(|record| record.base_url.as_str()),
-    ))
+pub(crate) fn resolved_endpoint(
+    explicit: Option<&str>,
+) -> Result<EndpointSelection, EndpointSelectionError> {
+    let workspace = std::env::current_dir().map_err(|error| {
+        EndpointSelectionError::Setup(format!(
+            "resolve current directory for server discovery: {error}"
+        ))
+    })?;
+    resolved_endpoint_in(explicit, &workspace)
+}
+
+pub(crate) fn resolved_endpoint_in(
+    explicit: Option<&str>,
+    workspace: &Path,
+) -> Result<EndpointSelection, EndpointSelectionError> {
+    select_endpoint_with(explicit, || {
+        let scope = ManagedDiscoveryScope::for_workspace(workspace)?;
+        let discovery = crate::server::discover_managed_server_in(&scope);
+        Ok((scope, discovery))
+    })
 }
 
 #[cfg(feature = "backend-openai")]
 pub async fn create_provider(
     opts: &BackendOpts,
+) -> Result<Box<dyn Provider + Send + Sync>, String> {
+    let workspace = std::env::current_dir()
+        .map_err(|error| format!("resolve current directory for server discovery: {error}"))?;
+    create_provider_in(opts, &workspace).await
+}
+
+#[cfg(feature = "backend-openai")]
+pub(crate) async fn create_provider_in(
+    opts: &BackendOpts,
+    workspace: &Path,
 ) -> Result<Box<dyn Provider + Send + Sync>, String> {
     use ferric_provider::openai::{OpenAiConfig, OpenAiProvider};
     let model_id = opts.model.clone().unwrap_or_else(|| "default".to_string());
@@ -60,7 +243,10 @@ pub async fn create_provider(
         .api_key
         .clone()
         .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-    let base_url = resolved_base_url(opts.api_base.as_deref())?;
+    let base_url = resolved_endpoint_in(opts.api_base.as_deref(), workspace)
+        .map_err(|error| error.to_string())?
+        .base_url()
+        .to_string();
     let config = OpenAiConfig {
         base_url,
         api_key: api_key.unwrap_or_else(|| "ollama".to_string()),
@@ -99,6 +285,16 @@ pub(crate) fn create_provider_with_runtime(
 ) -> Result<(Box<dyn Provider + Send + Sync>, tokio::runtime::Runtime), String> {
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     let provider = runtime.block_on(create_provider(opts))?;
+    Ok((provider, runtime))
+}
+
+#[cfg(feature = "backend-openai")]
+pub(crate) fn create_provider_with_runtime_in(
+    opts: &BackendOpts,
+    workspace: &Path,
+) -> Result<(Box<dyn Provider + Send + Sync>, tokio::runtime::Runtime), String> {
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
+    let provider = runtime.block_on(create_provider_in(opts, workspace))?;
     Ok((provider, runtime))
 }
 
@@ -148,15 +344,11 @@ mod tests {
 
     #[test]
     fn api_base_precedence() {
-        // explicit > runfile > built-in default.
-        assert_eq!(
-            resolve_base(Some("http://explicit/v1"), Some("http://runfile/v1")),
-            "http://explicit/v1"
-        );
-        assert_eq!(
-            resolve_base(None, Some("http://runfile/v1")),
-            "http://runfile/v1"
-        );
-        assert_eq!(resolve_base(None, None), "http://localhost:1234/v1");
+        let explicit = select_endpoint_with(Some("http://explicit/v1"), || {
+            panic!("explicit endpoint selection must not inspect managed registrations")
+        })
+        .unwrap();
+        assert!(matches!(explicit, EndpointSelection::Explicit { .. }));
+        assert_eq!(explicit.base_url(), "http://explicit/v1");
     }
 }

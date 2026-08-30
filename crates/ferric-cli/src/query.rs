@@ -26,7 +26,7 @@ use ferric_trace::{Event, JsonlSink};
 
 use crate::backend::BackendOpts;
 #[cfg(feature = "backend-openai")]
-use crate::backend::create_provider;
+use crate::backend::create_provider_in;
 
 /// CLI spelling of `ActionProtocol`. `grammar` is the server-enforced
 /// constrained-JSON path (the thesis); `xml` is the unconstrained
@@ -1939,7 +1939,7 @@ fn drive_real(
     let workspace = setup.workspace;
     let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
     runtime.block_on(async move {
-        let provider_box = create_provider(&args.backend_opts).await?;
+        let provider_box = create_provider_in(&args.backend_opts, workspace.root()).await?;
         let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancel_flag_clone = cancel_flag.clone();
         tokio::spawn(async move {

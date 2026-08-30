@@ -23,13 +23,18 @@ ferric server down    # stop only a verified instance, then clean registrations
 target port is occupied. For llama.cpp it also requires a regular model file,
 a regular projector when supplied, and nonzero context/port values. Ferric
 retains the spawned child until its engine-specific HTTP endpoint returns 200;
-it then binds the child to its process creation identity and verifies that child
-owns the expected listener. Only after those checks does it publish the same
+it first binds that child to a retained process object, then polls readiness,
+revalidates the same process generation, and verifies that child owns the
+expected listener. Only after those checks does it publish the same
 **runfile** bytes locally at `.ferric/server.json` and in the user config
 directory. This is what lets `ferric query` and `ferric bench`
 **auto-discover** the server—no `--api-base` needed.
 
-`doctor` is the pre-flight check; it validates presence *without* launching:
+`doctor` is the pre-flight check; it validates presence *without* launching.
+Pure argument blockers (including `--tailscale`) return before registration or
+external probes. Otherwise doctor resolves the complete registration inventory
+first. Degraded, stale-only, conflicting, or unverifiable state returns before
+engine-version and model-file probes:
 
 ```console
 $ ferric server doctor --engine llama-server --model ./model.gguf
@@ -42,23 +47,38 @@ $ ferric server doctor --engine llama-server --model ./model.gguf
 
 ```console
 $ ferric server status
-[verified] local registration ...: engine=LlamaServer pid=36792 base_url=http://127.0.0.1:8080/v1 listener=owned-loopback http=healthy
-resolved one managed server: pid=36792 base_url=http://127.0.0.1:8080/v1 aliases=2 stale=0
+[captured] local registration C:\Users\<you>\server-project\.ferric\server.json: schema=2 engine=LlamaServer pid=36792 base-url=http://127.0.0.1:8080/v1 recorded-identity=... observed-identity=... listener=owned-loopback health=healthy
+[captured] global registration %APPDATA%\ferric\server.json: schema=2 engine=LlamaServer pid=36792 base-url=http://127.0.0.1:8080/v1 recorded-identity=... observed-identity=... listener=owned-loopback health=healthy
+[captured] origin registration C:\Users\<you>\server-project\.ferric\server.json promised-by=global registration %APPDATA%\ferric\server.json: schema=2 engine=LlamaServer pid=36792 base-url=http://127.0.0.1:8080/v1 recorded-identity=... observed-identity=... listener=owned-loopback health=healthy
+[state] ready pid=36792 aliases=2 stale=0 listener=owned-loopback health=healthy
+[next] managed server is ready at http://127.0.0.1:8080/v1; continue with the intended Ferric command and omit `--api-base` to use it
 ```
 
-`status` succeeds only when schema-v2 process identity and listener ownership
-are exact and the engine-specific local HTTP endpoint returns 200. A bare TCP
-listener is not healthy, and a healthy HTTP response is never teardown
-authority. `down` independently revalidates the retained process handle and
-listener facts, waits for that exact process instance to exit, and only then
-cleans its unchanged registrations.
+`status` prints one row for every configured local and global scope and every
+origin promised by a captured global record, including absent or blocked rows.
+Persisted identity and observed identity remain separate, and every report ends
+with exactly one next safe action. It succeeds only when schema-v2 process
+identity and listener ownership are exact and the engine-specific local HTTP
+endpoint returns 200. HTTP is attempted only after ownership resolves to one
+exclusive loopback target; Ferric keeps the retained process object across that
+request and reinspects it afterward. A bare TCP listener is not healthy, and a
+healthy HTTP response is never teardown authority. This engine-specific request
+is the discovery health probe; a backend consumer subsequently makes its own
+operation-specific HTTP request after endpoint selection. That later consumer
+probe does not change lifecycle state or add teardown authority. `down`
+independently revalidates the retained process handle and listener facts. It may
+signal only the exact schema-v2 process generation when the expected listener
+is either exclusively owned by that process or proven absent, regardless of
+whether discovery health is healthy, unhealthy, or not probed. It then waits for
+that exact process instance to exit and only afterward cleans its unchanged
+registrations.
 
 A wildcard/public bind is reported explicitly and makes `status` fail. Because
-the process generation is still exact, `down` may stop that same retained
-process and verify listener release; it never treats public exposure as healthy
-managed state. Native destructive lifecycle control is supported on Windows
-and on little-endian 64-bit x86_64/AArch64 Linux. Other platforms fail closed
-until they have an equivalent retained-process adapter.
+listener ownership is non-exclusive, `down` also refuses to signal it and keeps
+the registration for recovery even when the process generation is exact. Native
+destructive lifecycle control is supported on Windows and on little-endian
+64-bit x86_64/AArch64 Linux. Other platforms fail closed until they have an
+equivalent retained-process adapter.
 
 ## Registration and teardown safety
 
@@ -78,6 +98,25 @@ workspace does not silently replace that origin with the current directory.
 Equivalent records are aliases of one managed instance; stale records are kept
 separate. A malformed, unreadable, symlinked, conflicting, or otherwise
 unverifiable entry makes resolution fail closed—no process is signalled.
+Aliases require both the same verified process key and structural equality of
+all canonical runfile metadata. Matching PIDs or start tokens alone are not
+enough. A stale peer may coexist with one selected live process only when its
+remaining listener is absent or is fully accounted for by that selected
+process.
+
+Read-only backend selection consumes this same typed result. An explicit
+`--api-base` remains an explicit endpoint and does not inspect registrations.
+Commands with an explicit workspace resolve the local registration from that
+selected workspace rather than from the launcher process's current directory.
+Without an explicit endpoint, only an empty inventory selects the built-in
+default and only a Ready inventory selects the managed endpoint. Degraded,
+stale-only, conflicting, malformed, missing-origin, or ownership-uninspectable
+state never falls through to the built-in endpoint. Strict autonomy always
+requires Ready managed discovery even when `--api-base` is supplied, and final
+validation repeats static and process discovery and requires the same process,
+metadata, aliases, origins, and exact registration revisions before its final
+discovery health probe. Only after that check may the consumer issue its own
+HTTP request.
 
 Registration publication is no-clobber and atomic per path, not one
 cross-filesystem transaction. If the second mirror cannot be published, Ferric
@@ -145,6 +184,8 @@ inspected and remove only those exact unchanged files manually.
 | `--threads <N>` | engine default | CPU threads (llama-server only) |
 | `--gpu-layers <N>` | engine default | layers to offload to GPU (llama-server only) |
 | `--batch-size <N>` | engine default | batch size (llama-server only) |
+| `--seed <N>` | engine default | llama.cpp sampling seed; use a non-negative value for reproducibility (`-1` requests a random seed) |
+| `--parallel <N>` | engine default | nonzero number of concurrent llama-server request slots |
 | `--tailscale` | off | reserved; currently refused before any process or registration side effect |
 
 ### How the flags map to `llama-server`
@@ -160,11 +201,15 @@ binary (the engine is a fixed enum). The mapping is:
 | `--threads` | `-t <n>` |
 | `--gpu-layers` | `-ngl <n>` |
 | `--batch-size` | `-b <n>` |
+| `--seed` | `--seed <n>` |
+| `--parallel` | `--parallel <n>` |
 | `--port` | `--port <n>` |
 | (fixed) | `--host 127.0.0.1` |
 
 For Ollama, `--engine ollama` runs `ollama serve` with `OLLAMA_HOST` set to the
-chosen host:port; the llama-server-only tuning flags are ignored.
+chosen host:port. The edge-resource flags are ignored by that engine, while
+`--seed` and `--parallel` are rejected because they describe llama-server
+sampling and slot behavior.
 
 ## Loopback-only, by design
 

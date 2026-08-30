@@ -1520,3 +1520,32 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   retained SHA-256
   `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
 - **Commit:** `78e1ce978874507be79bcb6ee7776f6d8e7bd772`
+
+## T-11703 (sprint 117)
+
+- **Description:** Added one lossless typed managed-server discovery contract
+  for Empty, Ready, Degraded, StaleOnly, Conflict, and Unverifiable state.
+  Resolution now validates every local, global, and promised-origin candidate,
+  groups only exact process-and-metadata aliases, reconciles stale listeners,
+  and retains observed identity/listener/health facts for truthful status.
+  Status, backend selection, strict autonomy, doctor, and down's pre-mutation
+  decision consume the shared types without blocked-state fallback. Strict
+  autonomy rejects changed revisions or peers before HTTP, brackets `/models`
+  with one retained process generation, checks cheap task infrastructure before
+  model hashing, and query/API/MCP discovery follows the selected workspace.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T16:51:50-04:00
+- **Files modified:** `crates/ferric-cli/src/server_resolution.rs`,
+  `crates/ferric-cli/src/server.rs`, `crates/ferric-cli/src/backend.rs`,
+  `crates/ferric-cli/src/autonomy_cmd.rs`, `crates/ferric-cli/src/query.rs`,
+  `crates/ferric-cli/src/api.rs`, `crates/ferric-cli/src/mcp.rs`,
+  `docs/server-configuration.md`, and the Book work ledgers.
+- **Verification:** all five frozen E03 acceptance tests and supplemental
+  retained-effect, Tailscale, promised-origin, legacy-alias, and typed-state
+  regressions passed. The complete Ferric CLI all-feature gate passed 234 unit
+  tests, 6 benchmark integrations, 69 CLI integrations, 3 model-free lifecycle
+  fixtures, and 3 template-hygiene tests. All-target/all-feature Clippy passed
+  with warnings denied; formatting and diff checks passed. The protected Sprint
+  114 artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** PENDING

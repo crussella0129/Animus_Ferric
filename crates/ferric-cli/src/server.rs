@@ -21,16 +21,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::server_process::{
     ListenerState, LiveProcess, NativeProcessRuntime, ProcessError, ProcessFacts, ProcessIdentity,
-    RetainedProcess as RetainedProcessHandle, acquire_matching_process, loopback_listener_state,
+    ProcessRuntime, RetainedProcess as RetainedProcessHandle, acquire_matching_process,
+    loopback_listener_state,
 };
 use crate::server_registration::{
-    CapturedRegistration, PublishError, RegistrationInventory, RegistrationScope, RegistrationSlot,
-    RemovalOutcome, ReplacementOutcome, inventory_runfiles, publish_mirrored, remove_if_unchanged,
-    replace_if_unchanged, validate_runfile,
+    CapturedRegistration, PublishError, RegistrationCoordinate, RegistrationInventory,
+    RegistrationScope, RegistrationSlot, RemovalOutcome, ReplacementOutcome, inventory_runfiles,
+    publish_mirrored, remove_if_unchanged, replace_if_unchanged, validate_runfile,
 };
-use crate::server_resolution::{Candidate, CandidateState, Resolution, resolve};
+use crate::server_resolution::{
+    Candidate, CandidateState, HealthState, Resolution, ResolutionIssue, ResolutionIssueKind,
+    resolve,
+};
 
-const RUNFILE_SCHEMA_V2: u8 = 2;
+pub(crate) const RUNFILE_SCHEMA_V2: u8 = 2;
 
 const fn legacy_runfile_schema() -> u8 {
     1
@@ -262,73 +266,57 @@ pub fn global_runfile_path() -> Option<PathBuf> {
     crate::config::user_config_path().map(|p| p.with_file_name("server.json"))
 }
 
-/// Resolve one healthy managed server for read-only consumers.
-///
-/// This uses the same lossless inventory, process identity, listener ownership,
-/// and stale-alias reconciliation as status/down. Static file precedence never
-/// selects an endpoint, and degraded or unverifiable registrations never fall
-/// through to an unrelated default backend.
-pub(crate) fn read_runfile_result(workspace: &Path) -> Result<Option<ServerRunfile>, String> {
-    read_runfile_result_impl(workspace, global_runfile_path())
-}
-
+#[cfg(test)]
 fn read_runfile_result_impl(
     workspace: &Path,
     global: Option<PathBuf>,
 ) -> Result<Option<ServerRunfile>, String> {
-    let observations = observe_lifecycle(workspace, global);
-    match lifecycle_resolution(&observations) {
-        Resolution::Empty => Ok(None),
-        Resolution::StaleOnly { stale } => {
+    let scope = ManagedDiscoveryScope {
+        workspace: workspace.to_path_buf(),
+        global,
+    };
+    let discovery = discover_managed_server_in(&scope);
+    match discovery.state {
+        ManagedServerState::Empty => Ok(None),
+        ManagedServerState::StaleOnly { stale } => {
             let details = stale
                 .iter()
-                .map(|index| match &observations[*index].candidate.state {
-                    CandidateState::Stale { reason } => {
-                        format!("{}: {reason}", observations[*index].candidate.label)
-                    }
-                    _ => observations[*index].candidate.label.clone(),
-                })
+                .map(|coordinate| registration_label(coordinate.scope, &coordinate.path))
                 .collect::<Vec<_>>()
                 .join("; ");
             Err(format!(
                 "only stale server registrations remain ({details}); run `ferric server down` to clean them after reviewing the reported listener state"
             ))
         }
-        Resolution::Blocked { reasons } => Err(format!(
-            "server registration resolution is blocked: {}",
-            reasons.join("; ")
-        )),
-        Resolution::One {
-            target,
-            http_healthy,
-            listener_present,
-            listener_loopback_only,
-            ..
-        } => {
-            let capture = observations[target]
-                .capture
-                .as_ref()
-                .expect("resolved target has a captured registration");
-            if !listener_present {
-                return Err(format!(
-                    "managed server PID {} has no listener on its registered port {}",
-                    capture.runfile.pid, capture.runfile.port
-                ));
-            }
-            if !listener_loopback_only {
-                return Err(format!(
-                    "managed server PID {} exposes registered port {} through a wildcard/public listener",
-                    capture.runfile.pid, capture.runfile.port
-                ));
-            }
-            if !http_healthy {
-                return Err(format!(
-                    "managed server PID {} owns the registered loopback listener, but its engine health endpoint is not healthy",
-                    capture.runfile.pid
-                ));
-            }
-            Ok(Some(capture.runfile.clone()))
+        ManagedServerState::Conflict { issues } | ManagedServerState::Unverifiable { issues } => {
+            Err(format!(
+                "server registration resolution is blocked: {}",
+                issues
+                    .iter()
+                    .map(|issue| issue.detail.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ))
         }
+        ManagedServerState::Degraded { server, .. } => match server.listener {
+            ListenerState::Absent => Err(format!(
+                "managed server PID {} has no listener on its registered port {}",
+                server.runfile.pid, server.runfile.port
+            )),
+            ListenerState::OwnedByTargetWildcard => Err(format!(
+                "managed server PID {} exposes registered port {} through a wildcard/public listener",
+                server.runfile.pid, server.runfile.port
+            )),
+            ListenerState::OwnedByTarget if server.health != HealthState::Healthy => Err(format!(
+                "managed server PID {} owns the registered loopback listener, but its engine health endpoint is not healthy",
+                server.runfile.pid
+            )),
+            other => Err(format!(
+                "managed server PID {} is degraded by listener state {other:?}",
+                server.runfile.pid
+            )),
+        },
+        ManagedServerState::Ready(server) => Ok(Some(server.runfile)),
     }
 }
 
@@ -403,13 +391,47 @@ pub(crate) struct RegisteredServerSnapshot {
 pub(crate) fn inspect_registered_server(
     runfile: &ServerRunfile,
 ) -> Result<RegisteredServerSnapshot, String> {
+    with_registered_server_effect(runfile, || {
+        if http_status_ok("127.0.0.1", runfile.port, health_path(runfile.engine)) {
+            Ok(())
+        } else {
+            Err(format!(
+                "registered server PID {} does not have a healthy engine endpoint on loopback port {}",
+                runfile.pid, runfile.port
+            ))
+        }
+    })
+    .map(|(snapshot, ())| snapshot)
+}
+
+/// Execute one synchronous consumer effect while retaining and revalidating
+/// the exact registered process generation on both sides of the effect.
+pub(crate) fn with_registered_server_effect<T, F>(
+    runfile: &ServerRunfile,
+    effect: F,
+) -> Result<(RegisteredServerSnapshot, T), String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    bracket_registered_effect_with(&NativeProcessRuntime, runfile, effect)
+}
+
+fn bracket_registered_effect_with<R, T, F>(
+    runtime: &R,
+    runfile: &ServerRunfile,
+    effect: F,
+) -> Result<(RegisteredServerSnapshot, T), String>
+where
+    R: ProcessRuntime,
+    F: FnOnce() -> Result<T, String>,
+{
     let (retained_process, facts) = if let Some(expected) = &runfile.process_identity {
-        let inspection =
-            acquire_matching_process(&NativeProcessRuntime, runfile.pid, runfile.port, expected)
-                .map_err(|error| format!("bind registered process identity: {error}"))?;
+        let inspection = acquire_matching_process(runtime, runfile.pid, runfile.port, expected)
+            .map_err(|error| format!("bind registered process identity: {error}"))?;
         (inspection.process, inspection.facts)
     } else {
-        let process = LiveProcess::acquire(runfile.pid)
+        let process = runtime
+            .acquire(runfile.pid)
             .map_err(|error| format!("acquire registered process: {error}"))?;
         let facts = process
             .inspect(runfile.port)
@@ -417,34 +439,31 @@ pub(crate) fn inspect_registered_server(
         (process, facts)
     };
     require_exclusive_registered_listener(runfile, &facts.listener)?;
-    if !http_status_ok("127.0.0.1", runfile.port, health_path(runfile.engine)) {
-        return Err(format!(
-            "registered server PID {} does not have a healthy engine endpoint on loopback port {}",
-            runfile.pid, runfile.port
-        ));
-    }
+    let effect_result = effect();
 
-    // The HTTP request creates a scheduling window. Keep the exact process
-    // object alive across that window and re-inspect it afterward so a health
-    // response from a replacement listener cannot be combined with the
-    // earlier process snapshot.
+    // Consumer I/O creates a scheduling window. Reinspect even when the
+    // effect fails so a replacement listener cannot hide the lost authority.
     let post_probe = retained_process
         .inspect(runfile.port)
-        .map_err(|error| format!("revalidate registered process after HTTP probe: {error}"))?;
+        .map_err(|error| format!("revalidate registered process after consumer effect: {error}"))?;
     if post_probe.identity != facts.identity {
         return Err(format!(
-            "registered server PID {} changed process identity during HTTP validation",
+            "registered server PID {} changed process identity during consumer effect",
             runfile.pid
         ));
     }
     require_exclusive_registered_listener(runfile, &post_probe.listener)?;
+    let effect_value = effect_result?;
 
-    Ok(RegisteredServerSnapshot {
-        pid: runfile.pid,
-        executable: post_probe.identity.executable,
-        argv: post_probe.identity.argv,
-        listener_owner_pid: runfile.pid,
-    })
+    Ok((
+        RegisteredServerSnapshot {
+            pid: runfile.pid,
+            executable: post_probe.identity.executable,
+            argv: post_probe.identity.argv,
+            listener_owner_pid: runfile.pid,
+        },
+        effect_value,
+    ))
 }
 
 fn require_exclusive_registered_listener(
@@ -835,18 +854,358 @@ where
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagedDiscoveryScope {
+    pub workspace: PathBuf,
+    pub global: Option<PathBuf>,
+}
+
+impl ManagedDiscoveryScope {
+    pub(crate) fn for_workspace(workspace: &Path) -> Result<Self, String> {
+        Ok(Self {
+            workspace: std::path::absolute(workspace)
+                .map_err(|error| format!("resolve managed discovery workspace: {error}"))?,
+            global: global_runfile_path(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ObservationId(pub usize);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PromisedOriginProvenance {
+    pub source: RegistrationCoordinate,
+    pub expected_runfile: ServerRunfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RuntimeObservation {
+    NotInspected,
+    Verified {
+        identity: ProcessIdentity,
+        listener: ListenerState,
+        health: HealthState,
+    },
+    Stale {
+        reason: String,
+        observed_identity: Option<ProcessIdentity>,
+        listener: ListenerState,
+    },
+    LegacyLive {
+        pid: u32,
+    },
+    Unverifiable {
+        reason: String,
+        observed_identity: Option<ProcessIdentity>,
+        listener: Option<ListenerState>,
+        health: HealthState,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ManagedRegistrationState {
+    Absent,
+    Blocked {
+        reason: String,
+    },
+    Captured {
+        runfile: Box<ServerRunfile>,
+        raw_sha256: String,
+        runtime: RuntimeObservation,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagedRegistrationObservation {
+    pub id: ObservationId,
+    pub coordinate: RegistrationCoordinate,
+    pub promised: Option<PromisedOriginProvenance>,
+    pub state: ManagedRegistrationState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RegistrationRevisionState {
+    Absent,
+    Blocked(String),
+    Captured(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RegistrationRevision {
+    pub coordinate: RegistrationCoordinate,
+    pub promised: Option<PromisedOriginProvenance>,
+    pub state: RegistrationRevisionState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DiscoveryFingerprint {
+    pub pid: u32,
+    pub identity: ProcessIdentity,
+    pub runfile: ServerRunfile,
+    pub revisions: Vec<RegistrationRevision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagedServer {
+    pub registration: RegistrationCoordinate,
+    pub runfile: ServerRunfile,
+    pub identity: ProcessIdentity,
+    pub listener: ListenerState,
+    pub health: HealthState,
+    pub aliases: Vec<RegistrationCoordinate>,
+    pub stale: Vec<RegistrationCoordinate>,
+    pub fingerprint: DiscoveryFingerprint,
+}
+
+impl ManagedServer {
+    pub(crate) fn ready_snapshot(&self) -> Result<RegisteredServerSnapshot, String> {
+        if self.listener != ListenerState::OwnedByTarget || self.health != HealthState::Healthy {
+            return Err(
+                "managed process snapshot requires exclusive loopback ownership and healthy HTTP"
+                    .to_string(),
+            );
+        }
+        Ok(RegisteredServerSnapshot {
+            pid: self.runfile.pid,
+            executable: self.identity.executable.clone(),
+            argv: self.identity.argv.clone(),
+            listener_owner_pid: self.runfile.pid,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ManagedServerState {
+    Empty,
+    Ready(ManagedServer),
+    Degraded {
+        server: ManagedServer,
+        issues: Vec<ResolutionIssue>,
+    },
+    StaleOnly {
+        stale: Vec<RegistrationCoordinate>,
+    },
+    Conflict {
+        issues: Vec<ResolutionIssue>,
+    },
+    Unverifiable {
+        issues: Vec<ResolutionIssue>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagedServerDiscovery {
+    pub inventory: RegistrationInventory,
+    pub observations: Vec<ManagedRegistrationObservation>,
+    pub state: ManagedServerState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StatusNextAction {
+    StartServer,
+    ContinueManaged {
+        base_url: String,
+    },
+    StopManaged {
+        pid: u32,
+    },
+    CleanStale,
+    AdoptLegacy {
+        pid: u32,
+    },
+    InspectWildcard {
+        port: u16,
+    },
+    InspectPromisedOrigin {
+        path: PathBuf,
+    },
+    InspectTailscale {
+        port: u16,
+    },
+    ResolveConflict {
+        coordinates: Vec<RegistrationCoordinate>,
+    },
+    RepairUnverifiable {
+        coordinates: Vec<RegistrationCoordinate>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ServerStatusReport {
+    pub registrations: Vec<ManagedRegistrationObservation>,
+    pub state: ManagedServerState,
+    pub next_action: StatusNextAction,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderedServerStatus {
+    stdout: Vec<String>,
+    stderr: Vec<String>,
+    success: bool,
+}
+
+struct LifecycleDiscovery {
+    managed: ManagedServerDiscovery,
+    observations: Vec<LifecycleObservation>,
+    resolution: Resolution,
+}
+
 struct LifecycleObservation {
     candidate: Candidate,
+    label: String,
     capture: Option<CapturedRegistration>,
     process: Option<LiveProcess>,
-    /// Listener owners observed while this registration's process identity was
-    /// stale. Cleanup is safe only when every such owner is independently
-    /// accounted for by a verified registration in the same inventory.
-    stale_listener_owners: Vec<u32>,
 }
 
 fn registration_label(scope: RegistrationScope, path: &Path) -> String {
     format!("{scope} registration {}", path.display())
+}
+
+fn flatten_inventory(inventory: &RegistrationInventory) -> Vec<ManagedRegistrationObservation> {
+    fn flatten_slot(
+        observations: &mut Vec<ManagedRegistrationObservation>,
+        slot: &RegistrationSlot,
+        promised: Option<PromisedOriginProvenance>,
+    ) {
+        let (coordinate, state) = match slot {
+            RegistrationSlot::Absent { scope, path } => (
+                RegistrationCoordinate {
+                    scope: *scope,
+                    path: path.clone(),
+                },
+                ManagedRegistrationState::Absent,
+            ),
+            RegistrationSlot::Blocked {
+                scope,
+                path,
+                reason,
+            } => (
+                RegistrationCoordinate {
+                    scope: *scope,
+                    path: path.clone(),
+                },
+                ManagedRegistrationState::Blocked {
+                    reason: reason.to_string(),
+                },
+            ),
+            RegistrationSlot::Captured(capture) => (
+                RegistrationCoordinate {
+                    scope: capture.scope,
+                    path: capture.path.clone(),
+                },
+                ManagedRegistrationState::Captured {
+                    runfile: Box::new(capture.runfile.clone()),
+                    raw_sha256: ferric_bench::sha256_bytes(&capture.raw),
+                    runtime: RuntimeObservation::NotInspected,
+                },
+            ),
+        };
+        observations.push(ManagedRegistrationObservation {
+            id: ObservationId(observations.len()),
+            coordinate,
+            promised,
+            state,
+        });
+    }
+
+    let mut observations = Vec::new();
+    flatten_slot(&mut observations, &inventory.local, None);
+    if let Some(global) = &inventory.global {
+        flatten_slot(&mut observations, global, None);
+    }
+    for origin in &inventory.promised_origins {
+        flatten_slot(
+            &mut observations,
+            &origin.slot,
+            Some(PromisedOriginProvenance {
+                source: origin.source.clone(),
+                expected_runfile: origin.expected_runfile.clone(),
+            }),
+        );
+    }
+    observations
+}
+
+fn static_inventory_issues(
+    observations: &[ManagedRegistrationObservation],
+) -> Vec<ResolutionIssue> {
+    let mut issues = Vec::new();
+    for observation in observations {
+        match &observation.state {
+            ManagedRegistrationState::Blocked { reason } => issues.push(ResolutionIssue {
+                coordinates: vec![observation.coordinate.clone()],
+                kind: ResolutionIssueKind::Unverifiable,
+                detail: format!(
+                    "{}: {reason}",
+                    registration_label(observation.coordinate.scope, &observation.coordinate.path)
+                ),
+            }),
+            ManagedRegistrationState::Absent if observation.promised.is_some() => {
+                issues.push(ResolutionIssue {
+                    coordinates: vec![observation.coordinate.clone()],
+                    kind: ResolutionIssueKind::Unverifiable,
+                    detail: format!(
+                        "promised origin registration {} is absent",
+                        observation.coordinate.path.display()
+                    ),
+                });
+            }
+            ManagedRegistrationState::Captured { runfile, .. } => {
+                if runfile.tailscale {
+                    issues.push(ResolutionIssue {
+                        coordinates: vec![observation.coordinate.clone()],
+                        kind: ResolutionIssueKind::Unverifiable,
+                        detail: "registration owns durable Tailscale Serve state".to_string(),
+                    });
+                }
+                if let Some(promised) = &observation.promised
+                    && runfile.as_ref() != &promised.expected_runfile
+                {
+                    issues.push(ResolutionIssue {
+                        coordinates: vec![promised.source.clone(), observation.coordinate.clone()],
+                        kind: ResolutionIssueKind::Conflict,
+                        detail: format!(
+                            "promised origin registration {} changed from the source registration metadata",
+                            observation.coordinate.path.display()
+                        ),
+                    });
+                }
+            }
+            ManagedRegistrationState::Absent => {}
+        }
+    }
+
+    let captured = observations
+        .iter()
+        .filter_map(|observation| match &observation.state {
+            ManagedRegistrationState::Captured { runfile, .. } => Some((observation, runfile)),
+            ManagedRegistrationState::Absent | ManagedRegistrationState::Blocked { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    for (left_index, (left_observation, left)) in captured.iter().enumerate() {
+        for (right_observation, right) in &captured[left_index + 1..] {
+            let same_process_key = left.pid == right.pid
+                && left
+                    .process_identity
+                    .as_ref()
+                    .zip(right.process_identity.as_ref())
+                    .is_some_and(|(left, right)| left.start_token == right.start_token);
+            if same_process_key && left != right {
+                issues.push(ResolutionIssue {
+                    coordinates: vec![
+                        left_observation.coordinate.clone(),
+                        right_observation.coordinate.clone(),
+                    ],
+                    kind: ResolutionIssueKind::Conflict,
+                    detail: "the same persisted process key has conflicting registration metadata"
+                        .to_string(),
+                });
+            }
+        }
+    }
+    issues
 }
 
 fn push_inventory_slot(
@@ -861,17 +1220,24 @@ fn push_inventory_slot(
             scope,
             path,
             reason,
-        } => observations.push(LifecycleObservation {
-            candidate: Candidate {
-                label: registration_label(scope, &path),
-                state: CandidateState::Blocked {
-                    reason: reason.to_string(),
+        } => {
+            let label = registration_label(scope, &path);
+            observations.push(LifecycleObservation {
+                candidate: Candidate {
+                    coordinate: RegistrationCoordinate { scope, path },
+                    runfile: None,
+                    state: CandidateState::Unverifiable {
+                        reason: reason.to_string(),
+                        observed_identity: None,
+                        listener: None,
+                        health: HealthState::NotProbed,
+                    },
                 },
-            },
-            capture: None,
-            process: None,
-            stale_listener_owners: Vec::new(),
-        }),
+                label,
+                capture: None,
+                process: None,
+            });
+        }
     }
 }
 
@@ -899,21 +1265,28 @@ fn expand_registration_captures(
                 scope,
                 path,
                 reason,
-            } => observations.push(LifecycleObservation {
-                candidate: Candidate {
-                    label: registration_label(scope, &path),
-                    state: CandidateState::Blocked {
-                        reason: format!(
-                            "{reason}; promised by {} registration {}",
-                            promised.source.scope,
-                            promised.source.path.display()
-                        ),
+            } => {
+                let label = registration_label(scope, &path);
+                observations.push(LifecycleObservation {
+                    candidate: Candidate {
+                        coordinate: RegistrationCoordinate { scope, path },
+                        runfile: None,
+                        state: CandidateState::Unverifiable {
+                            reason: format!(
+                                "{reason}; promised by {} registration {}",
+                                promised.source.scope,
+                                promised.source.path.display()
+                            ),
+                            observed_identity: None,
+                            listener: None,
+                            health: HealthState::NotProbed,
+                        },
                     },
-                },
-                capture: None,
-                process: None,
-                stale_listener_owners: Vec::new(),
-            }),
+                    label,
+                    capture: None,
+                    process: None,
+                });
+            }
         }
     }
     (captures, observations)
@@ -922,52 +1295,79 @@ fn expand_registration_captures(
 fn stale_observation(
     capture: CapturedRegistration,
     reason: String,
-    stale_listener_owners: Vec<u32>,
+    observed_identity: Option<ProcessIdentity>,
+    listener: ListenerState,
 ) -> LifecycleObservation {
     let label = registration_label(capture.scope, &capture.path);
     LifecycleObservation {
         candidate: Candidate {
-            label,
-            state: CandidateState::Stale { reason },
+            coordinate: RegistrationCoordinate {
+                scope: capture.scope,
+                path: capture.path.clone(),
+            },
+            runfile: Some(capture.runfile.clone()),
+            state: CandidateState::Stale {
+                reason,
+                observed_identity,
+                listener,
+            },
         },
+        label,
         capture: Some(capture),
         process: None,
-        stale_listener_owners,
     }
 }
 
 fn stale_observation_from_listener(
     capture: CapturedRegistration,
     reason: String,
+    observed_identity: Option<ProcessIdentity>,
     listener: ListenerState,
 ) -> LifecycleObservation {
-    let pid = capture.runfile.pid;
     let port = capture.runfile.port;
     match listener {
-        ListenerState::Absent => stale_observation(capture, reason, Vec::new()),
-        ListenerState::OwnedByTarget | ListenerState::OwnedByTargetWildcard => {
-            stale_observation(capture, reason, vec![pid])
-        }
-        ListenerState::OwnedByOther(owners) => stale_observation(capture, reason, owners),
-        ListenerState::Uninspectable(error) => blocked_observation(
+        ListenerState::Uninspectable(error) => blocked_observation_with_facts(
             capture,
             format!(
                 "{reason}; listener ownership on registered loopback port {port} is uninspectable: {error}"
             ),
+            observed_identity,
+            Some(ListenerState::Uninspectable(error)),
+            HealthState::NotProbed,
         ),
+        listener => stale_observation(capture, reason, observed_identity, listener),
     }
 }
 
 fn blocked_observation(capture: CapturedRegistration, reason: String) -> LifecycleObservation {
+    blocked_observation_with_facts(capture, reason, None, None, HealthState::NotProbed)
+}
+
+fn blocked_observation_with_facts(
+    capture: CapturedRegistration,
+    reason: String,
+    observed_identity: Option<ProcessIdentity>,
+    listener: Option<ListenerState>,
+    health: HealthState,
+) -> LifecycleObservation {
     let label = registration_label(capture.scope, &capture.path);
     LifecycleObservation {
         candidate: Candidate {
-            label,
-            state: CandidateState::Blocked { reason },
+            coordinate: RegistrationCoordinate {
+                scope: capture.scope,
+                path: capture.path.clone(),
+            },
+            runfile: Some(capture.runfile.clone()),
+            state: CandidateState::Unverifiable {
+                reason,
+                observed_identity,
+                listener,
+                health,
+            },
         },
+        label,
         capture: Some(capture),
         process: None,
-        stale_listener_owners: Vec::new(),
     }
 }
 
@@ -988,6 +1388,7 @@ fn observe_registration(capture: CapturedRegistration) -> LifecycleObservation {
             return stale_observation_from_listener(
                 capture,
                 format!("PID {pid} is absent"),
+                None,
                 listener,
             );
         }
@@ -1004,14 +1405,32 @@ fn observe_registration(capture: CapturedRegistration) -> LifecycleObservation {
             Ok(true) | Err(ProcessError::NotFound(_)) => stale_observation_from_listener(
                 capture,
                 format!("legacy PID {pid} is absent"),
+                None,
                 loopback_listener_state(pid, port),
             ),
-            Ok(false) => blocked_observation(
-                capture,
-                format!(
-                    "live schema-1 PID {pid} has no creation identity and cannot authorize teardown; from the workspace containing its local registration run `ferric server adopt --pid {pid}` to verify and record the current process generation without signalling it"
-                ),
-            ),
+            Ok(false) => {
+                let label = registration_label(capture.scope, &capture.path);
+                LifecycleObservation {
+                    candidate: Candidate {
+                        coordinate: RegistrationCoordinate {
+                            scope: capture.scope,
+                            path: capture.path.clone(),
+                        },
+                        runfile: Some(capture.runfile.clone()),
+                        state: CandidateState::Unverifiable {
+                            reason: format!(
+                                "live schema-1 PID {pid} has no creation identity and cannot authorize teardown"
+                            ),
+                            observed_identity: None,
+                            listener: None,
+                            health: HealthState::NotProbed,
+                        },
+                    },
+                    label,
+                    capture: Some(capture),
+                    process: Some(process),
+                }
+            }
             Err(error) => blocked_observation(
                 capture,
                 format!("could not inspect legacy PID {pid}: {error}"),
@@ -1030,6 +1449,7 @@ fn observe_registration(capture: CapturedRegistration) -> LifecycleObservation {
             return stale_observation_from_listener(
                 capture,
                 format!("PID {pid} exited during inspection"),
+                None,
                 loopback_listener_state(pid, port),
             );
         }
@@ -1044,62 +1464,94 @@ fn observe_registration(capture: CapturedRegistration) -> LifecycleObservation {
         return stale_observation_from_listener(
             capture,
             format!("PID {pid} belongs to a different process creation instance"),
+            Some(facts.identity.clone()),
             facts.listener,
         );
     }
     if facts.identity.executable != expected.executable || facts.identity.argv != expected.argv {
-        return blocked_observation(
+        return blocked_observation_with_facts(
             capture,
             format!(
                 "live process creation instance {pid} has executable/argv facts that differ from its registration"
             ),
+            Some(facts.identity),
+            Some(facts.listener),
+            HealthState::NotProbed,
         );
     }
 
-    let (listener_present, listener_loopback_only) = match facts.listener {
-        ListenerState::OwnedByTarget => (true, true),
-        ListenerState::OwnedByTargetWildcard => (true, false),
-        ListenerState::Absent => (false, true),
-        ListenerState::OwnedByOther(owners) => {
-            return blocked_observation(
-                capture,
-                format!("loopback port {} is owned by other PIDs {owners:?}", port),
-            );
-        }
+    let listener = match facts.listener {
+        ListenerState::OwnedByTarget => ListenerState::OwnedByTarget,
+        ListenerState::OwnedByTargetWildcard => ListenerState::OwnedByTargetWildcard,
+        ListenerState::Absent => ListenerState::Absent,
+        ListenerState::OwnedByOther(owners) => ListenerState::OwnedByOther(owners),
         ListenerState::Uninspectable(error) => {
-            return blocked_observation(
+            return blocked_observation_with_facts(
                 capture,
                 format!("loopback port {} ownership is uninspectable: {error}", port),
+                Some(facts.identity),
+                Some(ListenerState::Uninspectable(error)),
+                HealthState::NotProbed,
             );
         }
     };
-    let http_healthy =
-        listener_present && http_status_ok("127.0.0.1", port, health_path(capture.runfile.engine));
-    let registration_key = serde_json::to_vec(&capture.runfile)
-        .expect("a deserialized server runfile must serialize again");
+    // HTTP is deliberately deferred until all process/listener observations
+    // resolve to one exclusive target. Ambiguity must never trigger a probe.
+    let health = HealthState::NotProbed;
     let label = registration_label(capture.scope, &capture.path);
     LifecycleObservation {
         candidate: Candidate {
-            label,
+            coordinate: RegistrationCoordinate {
+                scope: capture.scope,
+                path: capture.path.clone(),
+            },
+            runfile: Some(capture.runfile.clone()),
             state: CandidateState::Verified {
                 identity: facts.identity,
-                registration_key,
-                http_healthy,
-                listener_present,
-                listener_loopback_only,
+                listener,
+                health,
             },
         },
+        label,
         capture: Some(capture),
         process: Some(process),
-        stale_listener_owners: Vec::new(),
     }
 }
 
-fn observe_lifecycle(workspace: &Path, global_path: Option<PathBuf>) -> Vec<LifecycleObservation> {
-    let inventory = inventory_runfiles(workspace, global_path);
-    let (captures, mut observations) = expand_registration_captures(inventory);
-    observations.extend(captures.into_iter().map(observe_registration));
-    observations
+fn revalidate_registration_after_health(
+    observation: &mut LifecycleObservation,
+) -> Result<(), String> {
+    let CandidateState::Verified {
+        identity, listener, ..
+    } = &observation.candidate.state
+    else {
+        return Err("post-health revalidation requires a verified observation".to_string());
+    };
+    let expected_identity = identity.clone();
+    let expected_listener = listener.clone();
+    let capture = observation
+        .capture
+        .as_ref()
+        .ok_or_else(|| "verified observation has no exact registration capture".to_string())?;
+    let process = observation.process.as_ref().ok_or_else(|| {
+        "verified observation did not retain its exact process object across HTTP health"
+            .to_string()
+    })?;
+    let facts = process.inspect(capture.runfile.port).map_err(|error| {
+        format!("retained process reinspection after HTTP health failed: {error}")
+    })?;
+    if facts.identity != expected_identity {
+        return Err(
+            "retained process identity changed while HTTP health was being checked".to_string(),
+        );
+    }
+    if facts.listener != expected_listener {
+        return Err(format!(
+            "listener ownership changed while HTTP health was being checked: before={expected_listener:?}, after={:?}",
+            facts.listener
+        ));
+    }
+    Ok(())
 }
 
 fn lifecycle_resolution(observations: &[LifecycleObservation]) -> Resolution {
@@ -1107,74 +1559,415 @@ fn lifecycle_resolution(observations: &[LifecycleObservation]) -> Resolution {
         .iter()
         .map(|observation| observation.candidate.clone())
         .collect::<Vec<_>>();
-    let resolution = resolve(&candidates);
-    let mut listener_blockers = Vec::new();
-    match &resolution {
-        Resolution::StaleOnly { stale } => {
-            for index in stale {
-                let observation = &observations[*index];
-                if !observation.stale_listener_owners.is_empty() {
-                    listener_blockers.push(format!(
-                        "{} is stale but registered port ownership remains with PIDs {:?}",
-                        observation.candidate.label, observation.stale_listener_owners
-                    ));
+    resolve(&candidates)
+}
+
+fn discovery_revisions(
+    observations: &[ManagedRegistrationObservation],
+) -> Vec<RegistrationRevision> {
+    observations
+        .iter()
+        .map(|observation| RegistrationRevision {
+            coordinate: observation.coordinate.clone(),
+            promised: observation.promised.clone(),
+            state: match &observation.state {
+                ManagedRegistrationState::Absent => RegistrationRevisionState::Absent,
+                ManagedRegistrationState::Blocked { reason } => {
+                    RegistrationRevisionState::Blocked(reason.clone())
+                }
+                ManagedRegistrationState::Captured { raw_sha256, .. } => {
+                    RegistrationRevisionState::Captured(raw_sha256.clone())
+                }
+            },
+        })
+        .collect()
+}
+
+fn update_managed_runtime_observations(
+    managed: &mut [ManagedRegistrationObservation],
+    lifecycle: &[LifecycleObservation],
+) {
+    for observation in lifecycle {
+        let Some(capture) = &observation.capture else {
+            continue;
+        };
+        let Some(target) = managed.iter_mut().find(|candidate| {
+            candidate.coordinate.scope == capture.scope
+                && candidate.coordinate.path == capture.path
+                && matches!(candidate.state, ManagedRegistrationState::Captured { .. })
+        }) else {
+            continue;
+        };
+        let runtime = match &observation.candidate.state {
+            CandidateState::Verified {
+                identity,
+                listener,
+                health,
+            } => RuntimeObservation::Verified {
+                identity: identity.clone(),
+                listener: listener.clone(),
+                health: *health,
+            },
+            CandidateState::Stale {
+                reason,
+                observed_identity,
+                listener,
+            } => RuntimeObservation::Stale {
+                reason: reason.clone(),
+                observed_identity: observed_identity.clone(),
+                listener: listener.clone(),
+            },
+            CandidateState::Unverifiable { .. } if capture.runfile.tailscale => {
+                RuntimeObservation::NotInspected
+            }
+            CandidateState::Unverifiable { .. }
+                if capture.runfile.schema_version == 1 && observation.process.is_some() =>
+            {
+                RuntimeObservation::LegacyLive {
+                    pid: capture.runfile.pid,
                 }
             }
-        }
-        Resolution::One {
-            target,
-            stale,
-            listener_present,
+            CandidateState::Unverifiable {
+                reason,
+                observed_identity,
+                listener,
+                health,
+            } => RuntimeObservation::Unverifiable {
+                reason: reason.clone(),
+                observed_identity: observed_identity.clone(),
+                listener: listener.clone(),
+                health: *health,
+            },
+        };
+        let ManagedRegistrationState::Captured {
+            runtime: target_runtime,
             ..
-        } => {
-            let target_capture = observations[*target]
-                .capture
-                .as_ref()
-                .expect("verified lifecycle target has a capture");
-            for index in stale {
-                let observation = &observations[*index];
-                if observation.stale_listener_owners.is_empty() {
-                    continue;
-                }
-                let stale_capture = observation
-                    .capture
-                    .as_ref()
-                    .expect("stale lifecycle observation has a capture");
-                let accounted_by_target = *listener_present
-                    && stale_capture.runfile.port == target_capture.runfile.port
-                    && observation
-                        .stale_listener_owners
-                        .iter()
-                        .all(|owner| *owner == target_capture.runfile.pid);
-                if !accounted_by_target {
-                    listener_blockers.push(format!(
-                        "{} is stale but registered port ownership by PIDs {:?} is not accounted for by the selected managed server",
-                        observation.candidate.label, observation.stale_listener_owners
-                    ));
-                }
-            }
-        }
-        Resolution::Empty | Resolution::Blocked { .. } => {}
-    }
-    if listener_blockers.is_empty() {
-        resolution
-    } else {
-        Resolution::Blocked {
-            reasons: listener_blockers,
-        }
+        } = &mut target.state
+        else {
+            unreachable!("captured runtime target changed state");
+        };
+        *target_runtime = runtime;
     }
 }
 
-/// Is the engine binary runnable? Tries `<program> --version`.
-fn binary_present(engine: Engine) -> bool {
-    matches!(
-        Command::new(engine.program())
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status(),
-        Ok(status) if status.success()
-    )
+fn managed_server_from_resolution(
+    observations: &[LifecycleObservation],
+    managed_observations: &[ManagedRegistrationObservation],
+    target: usize,
+    aliases: &[usize],
+    stale: &[usize],
+) -> ManagedServer {
+    let target_observation = &observations[target];
+    let capture = target_observation
+        .capture
+        .as_ref()
+        .expect("resolved managed target has a capture");
+    let CandidateState::Verified {
+        identity,
+        listener,
+        health,
+    } = &target_observation.candidate.state
+    else {
+        unreachable!("resolved managed target is verified");
+    };
+    let alias_coordinates = aliases
+        .iter()
+        .map(|index| observations[*index].candidate.coordinate.clone())
+        .collect();
+    let stale_coordinates = stale
+        .iter()
+        .map(|index| observations[*index].candidate.coordinate.clone())
+        .collect::<Vec<_>>();
+    ManagedServer {
+        registration: target_observation.candidate.coordinate.clone(),
+        runfile: capture.runfile.clone(),
+        identity: identity.clone(),
+        listener: listener.clone(),
+        health: *health,
+        aliases: alias_coordinates,
+        stale: stale_coordinates,
+        fingerprint: DiscoveryFingerprint {
+            pid: capture.runfile.pid,
+            identity: identity.clone(),
+            runfile: capture.runfile.clone(),
+            revisions: discovery_revisions(managed_observations),
+        },
+    }
+}
+
+fn managed_state_from_resolution(
+    observations: &[LifecycleObservation],
+    managed_observations: &[ManagedRegistrationObservation],
+    resolution: &Resolution,
+) -> ManagedServerState {
+    match resolution {
+        Resolution::Empty => ManagedServerState::Empty,
+        Resolution::Ready {
+            target,
+            aliases,
+            stale,
+        } => ManagedServerState::Ready(managed_server_from_resolution(
+            observations,
+            managed_observations,
+            *target,
+            aliases,
+            stale,
+        )),
+        Resolution::Degraded {
+            target,
+            aliases,
+            stale,
+            issues,
+            ..
+        } => ManagedServerState::Degraded {
+            server: managed_server_from_resolution(
+                observations,
+                managed_observations,
+                *target,
+                aliases,
+                stale,
+            ),
+            issues: issues.clone(),
+        },
+        Resolution::StaleOnly { stale } => ManagedServerState::StaleOnly {
+            stale: stale
+                .iter()
+                .map(|index| observations[*index].candidate.coordinate.clone())
+                .collect(),
+        },
+        Resolution::Conflict { issues } => ManagedServerState::Conflict {
+            issues: issues.clone(),
+        },
+        Resolution::Unverifiable { issues } => ManagedServerState::Unverifiable {
+            issues: issues.clone(),
+        },
+    }
+}
+
+fn discover_inventory_before_health_with<O>(
+    inventory: RegistrationInventory,
+    mut observe: O,
+) -> LifecycleDiscovery
+where
+    O: FnMut(CapturedRegistration) -> LifecycleObservation,
+{
+    let mut managed_observations = flatten_inventory(&inventory);
+    let static_issues = static_inventory_issues(&managed_observations);
+    if !static_issues.is_empty() {
+        let (captures, mut observations) = expand_registration_captures(inventory.clone());
+        let reason = static_issues
+            .iter()
+            .map(|issue| issue.detail.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        observations.extend(
+            captures
+                .into_iter()
+                .map(|capture| blocked_observation(capture, reason.clone())),
+        );
+        let resolution = if static_issues
+            .iter()
+            .any(|issue| issue.kind == ResolutionIssueKind::Unverifiable)
+        {
+            Resolution::Unverifiable {
+                issues: static_issues,
+            }
+        } else {
+            Resolution::Conflict {
+                issues: static_issues,
+            }
+        };
+        let state =
+            managed_state_from_resolution(&observations, &managed_observations, &resolution);
+        return LifecycleDiscovery {
+            managed: ManagedServerDiscovery {
+                inventory,
+                observations: managed_observations,
+                state,
+            },
+            observations,
+            resolution,
+        };
+    }
+
+    let (captures, mut observations) = expand_registration_captures(inventory.clone());
+    observations.extend(captures.into_iter().map(&mut observe));
+    let resolution = lifecycle_resolution(&observations);
+    update_managed_runtime_observations(&mut managed_observations, &observations);
+    let state = managed_state_from_resolution(&observations, &managed_observations, &resolution);
+    LifecycleDiscovery {
+        managed: ManagedServerDiscovery {
+            inventory,
+            observations: managed_observations,
+            state,
+        },
+        observations,
+        resolution,
+    }
+}
+
+fn complete_lifecycle_health_with<H, R>(
+    mut discovery: LifecycleDiscovery,
+    health: &mut H,
+    mut revalidate_after_health: R,
+) -> LifecycleDiscovery
+where
+    H: HealthProbe,
+    R: FnMut(&mut LifecycleObservation) -> Result<(), String>,
+{
+    let mut resolution = discovery.resolution.clone();
+
+    // A unique exact loopback owner is the only state that warrants an HTTP
+    // effect. Probe once, then apply that health result to every exact alias.
+    if let Resolution::Degraded {
+        target,
+        aliases,
+        listener: ListenerState::OwnedByTarget,
+        health: HealthState::NotProbed,
+        ..
+    } = &resolution
+    {
+        let target = *target;
+        let capture = discovery.observations[target]
+            .capture
+            .as_ref()
+            .expect("unique target has a capture");
+        let health_state = if health.status_ok(
+            "127.0.0.1",
+            capture.runfile.port,
+            health_path(capture.runfile.engine),
+        ) {
+            HealthState::Healthy
+        } else {
+            HealthState::Unhealthy
+        };
+        let mut health_indices = Vec::with_capacity(aliases.len() + 1);
+        health_indices.push(target);
+        health_indices.extend(aliases.iter().copied());
+        for index in health_indices {
+            let CandidateState::Verified {
+                health: candidate_health,
+                ..
+            } = &mut discovery.observations[index].candidate.state
+            else {
+                unreachable!("resolved alias is verified");
+            };
+            *candidate_health = health_state;
+            if let Err(error) = revalidate_after_health(&mut discovery.observations[index]) {
+                let (observed_identity, listener, health) =
+                    match &discovery.observations[index].candidate.state {
+                        CandidateState::Verified {
+                            identity,
+                            listener,
+                            health,
+                        } => (Some(identity.clone()), Some(listener.clone()), *health),
+                        _ => unreachable!("resolved alias is verified"),
+                    };
+                discovery.observations[index].candidate.state = CandidateState::Unverifiable {
+                    reason: format!("post-health authority revalidation failed: {error}"),
+                    observed_identity,
+                    listener,
+                    health,
+                };
+            }
+        }
+        resolution = lifecycle_resolution(&discovery.observations);
+    }
+
+    update_managed_runtime_observations(
+        &mut discovery.managed.observations,
+        &discovery.observations,
+    );
+    discovery.managed.state = managed_state_from_resolution(
+        &discovery.observations,
+        &discovery.managed.observations,
+        &resolution,
+    );
+    discovery.resolution = resolution;
+    discovery
+}
+
+#[cfg(test)]
+fn discover_inventory_with<O, H, R>(
+    inventory: RegistrationInventory,
+    observe: O,
+    health: &mut H,
+    revalidate_after_health: R,
+) -> LifecycleDiscovery
+where
+    O: FnMut(CapturedRegistration) -> LifecycleObservation,
+    H: HealthProbe,
+    R: FnMut(&mut LifecycleObservation) -> Result<(), String>,
+{
+    let discovery = discover_inventory_before_health_with(inventory, observe);
+    complete_lifecycle_health_with(discovery, health, revalidate_after_health)
+}
+
+fn discover_lifecycle_before_health_in(scope: &ManagedDiscoveryScope) -> LifecycleDiscovery {
+    let inventory = inventory_runfiles(&scope.workspace, scope.global.clone());
+    discover_inventory_before_health_with(inventory, observe_registration)
+}
+
+fn discover_lifecycle_in(scope: &ManagedDiscoveryScope) -> LifecycleDiscovery {
+    let discovery = discover_lifecycle_before_health_in(scope);
+    let mut health = NativeHealthProbe;
+    complete_lifecycle_health_with(discovery, &mut health, revalidate_registration_after_health)
+}
+
+pub(crate) struct PendingManagedDiscovery {
+    lifecycle: LifecycleDiscovery,
+}
+
+impl PendingManagedDiscovery {
+    pub(crate) fn discovery(&self) -> &ManagedServerDiscovery {
+        &self.lifecycle.managed
+    }
+
+    pub(crate) fn finish(self) -> ManagedServerDiscovery {
+        let mut health = NativeHealthProbe;
+        complete_lifecycle_health_with(
+            self.lifecycle,
+            &mut health,
+            revalidate_registration_after_health,
+        )
+        .managed
+    }
+}
+
+pub(crate) fn begin_managed_server_discovery_in(
+    scope: &ManagedDiscoveryScope,
+) -> PendingManagedDiscovery {
+    PendingManagedDiscovery {
+        lifecycle: discover_lifecycle_before_health_in(scope),
+    }
+}
+
+pub(crate) fn discover_managed_server_in(scope: &ManagedDiscoveryScope) -> ManagedServerDiscovery {
+    begin_managed_server_discovery_in(scope).finish()
+}
+
+trait DoctorProbeEffects {
+    fn binary_present(&mut self, engine: Engine) -> bool;
+    fn regular_file(&mut self, path: &Path) -> bool;
+}
+
+struct NativeDoctorProbeEffects;
+
+impl DoctorProbeEffects for NativeDoctorProbeEffects {
+    fn binary_present(&mut self, engine: Engine) -> bool {
+        matches!(
+            Command::new(engine.program())
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status(),
+            Ok(status) if status.success()
+        )
+    }
+
+    fn regular_file(&mut self, path: &Path) -> bool {
+        path.is_file()
+    }
 }
 
 pub fn run_server(workspace: &Path, cmd: ServerCommand) -> ExitCode {
@@ -1603,10 +2396,11 @@ fn adopt_impl(workspace: &Path, global_path: Option<PathBuf>, args: &ServerAdopt
         eprintln!("refusing adoption: registration inventory is blocked");
         for observation in blocked {
             let reason = match observation.candidate.state {
-                CandidateState::Blocked { reason } | CandidateState::Stale { reason } => reason,
+                CandidateState::Unverifiable { reason, .. }
+                | CandidateState::Stale { reason, .. } => reason,
                 CandidateState::Verified { .. } => "unexpected verified observation".to_string(),
             };
-            eprintln!("  - {}: {reason}", observation.candidate.label);
+            eprintln!("  - {}: {reason}", observation.label);
         }
         return ExitCode::FAILURE;
     }
@@ -1787,111 +2581,361 @@ fn status(workspace: &Path) -> ExitCode {
     status_impl(workspace, global_runfile_path())
 }
 
-fn status_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
-    let observations = observe_lifecycle(workspace, global_path);
-    for observation in &observations {
-        match &observation.candidate.state {
-            CandidateState::Verified {
-                http_healthy,
-                listener_present,
-                listener_loopback_only,
-                ..
-            } => {
-                let runfile = &observation
-                    .capture
-                    .as_ref()
-                    .expect("verified observations have captures")
-                    .runfile;
-                println!(
-                    "[verified] {}: engine={:?} pid={} base_url={} listener={} http={}",
-                    observation.candidate.label,
-                    runfile.engine,
-                    runfile.pid,
-                    runfile.base_url,
-                    if !*listener_present {
-                        "absent"
-                    } else if *listener_loopback_only {
-                        "owned-loopback"
-                    } else {
-                        "wildcard-public"
-                    },
-                    if *http_healthy {
-                        "healthy"
-                    } else {
-                        "not-healthy"
-                    }
-                );
+fn issue_coordinates(issues: &[ResolutionIssue]) -> Vec<RegistrationCoordinate> {
+    let mut coordinates = issues
+        .iter()
+        .flat_map(|issue| issue.coordinates.iter().cloned())
+        .collect::<Vec<_>>();
+    coordinates.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then_with(|| left.scope.to_string().cmp(&right.scope.to_string()))
+    });
+    coordinates.dedup();
+    coordinates
+}
+
+fn status_next_action(discovery: &ManagedServerDiscovery) -> StatusNextAction {
+    match &discovery.state {
+        ManagedServerState::Empty => StatusNextAction::StartServer,
+        ManagedServerState::Ready(server) => StatusNextAction::ContinueManaged {
+            base_url: server.runfile.base_url.clone(),
+        },
+        ManagedServerState::Degraded { server, .. } => match server.listener {
+            ListenerState::OwnedByTargetWildcard => StatusNextAction::InspectWildcard {
+                port: server.runfile.port,
+            },
+            ListenerState::OwnedByTarget | ListenerState::Absent => StatusNextAction::StopManaged {
+                pid: server.runfile.pid,
+            },
+            ListenerState::OwnedByOther(_) | ListenerState::Uninspectable(_) => {
+                unreachable!("conflicting or uninspectable listeners cannot resolve degraded")
             }
-            CandidateState::Stale { reason } => {
-                println!("[stale] {}: {reason}", observation.candidate.label);
+        },
+        ManagedServerState::StaleOnly { .. } => StatusNextAction::CleanStale,
+        ManagedServerState::Conflict { issues } => StatusNextAction::ResolveConflict {
+            coordinates: issue_coordinates(issues),
+        },
+        ManagedServerState::Unverifiable { issues } => {
+            if let Some(port) =
+                discovery
+                    .observations
+                    .iter()
+                    .find_map(|observation| match &observation.state {
+                        ManagedRegistrationState::Captured { runfile, .. } if runfile.tailscale => {
+                            Some(runfile.port)
+                        }
+                        ManagedRegistrationState::Absent
+                        | ManagedRegistrationState::Blocked { .. }
+                        | ManagedRegistrationState::Captured { .. } => None,
+                    })
+            {
+                return StatusNextAction::InspectTailscale { port };
             }
-            CandidateState::Blocked { reason } => {
-                eprintln!("[blocked] {}: {reason}", observation.candidate.label);
+            if let Some((path, _source)) = discovery.observations.iter().find_map(|observation| {
+                matches!(observation.state, ManagedRegistrationState::Absent)
+                    .then(|| {
+                        observation.promised.as_ref().map(|promised| {
+                            (observation.coordinate.path.clone(), promised.source.clone())
+                        })
+                    })
+                    .flatten()
+            }) {
+                return StatusNextAction::InspectPromisedOrigin { path };
+            }
+            let legacy = discovery
+                .observations
+                .iter()
+                .filter_map(|observation| match &observation.state {
+                    ManagedRegistrationState::Captured {
+                        runfile,
+                        runtime: RuntimeObservation::LegacyLive { pid },
+                        ..
+                    } => Some((*pid, runfile.as_ref())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let compatible_legacy_aliases = legacy.first().is_some_and(|(pid, runfile)| {
+                legacy
+                    .iter()
+                    .all(|(alias_pid, alias)| alias_pid == pid && alias == runfile)
+                    && discovery
+                        .observations
+                        .iter()
+                        .all(|observation| match &observation.state {
+                            ManagedRegistrationState::Absent => observation.promised.is_none(),
+                            ManagedRegistrationState::Captured {
+                                runfile: candidate,
+                                runtime: RuntimeObservation::LegacyLive { pid: candidate_pid },
+                                ..
+                            } => candidate_pid == pid && candidate.as_ref() == *runfile,
+                            ManagedRegistrationState::Blocked { .. }
+                            | ManagedRegistrationState::Captured { .. } => false,
+                        })
+            });
+            if compatible_legacy_aliases {
+                return StatusNextAction::AdoptLegacy { pid: legacy[0].0 };
+            }
+            StatusNextAction::RepairUnverifiable {
+                coordinates: issue_coordinates(issues),
             }
         }
     }
+}
 
-    match lifecycle_resolution(&observations) {
-        Resolution::Empty => {
-            println!("no server registered in local or global scope");
-            ExitCode::FAILURE
-        }
-        Resolution::StaleOnly { .. } => {
-            println!(
-                "no live managed server; stale registrations can be removed with `ferric server down`"
-            );
-            ExitCode::FAILURE
-        }
-        Resolution::Blocked { reasons } => {
-            eprintln!(
-                "server registration state is ambiguous or unverifiable; no process action is authorized"
-            );
-            for reason in reasons {
-                eprintln!("  - {reason}");
-            }
-            ExitCode::FAILURE
-        }
-        Resolution::One {
-            target,
-            aliases,
-            stale,
-            http_healthy,
-            listener_present,
-            listener_loopback_only,
+fn status_report(discovery: &ManagedServerDiscovery) -> ServerStatusReport {
+    ServerStatusReport {
+        registrations: discovery.observations.clone(),
+        state: discovery.state.clone(),
+        next_action: status_next_action(discovery),
+        success: matches!(discovery.state, ManagedServerState::Ready(_)),
+    }
+}
+
+fn listener_status(listener: &ListenerState) -> String {
+    match listener {
+        ListenerState::OwnedByTarget => "owned-loopback".to_string(),
+        ListenerState::OwnedByTargetWildcard => "wildcard-public".to_string(),
+        ListenerState::Absent => "absent".to_string(),
+        ListenerState::OwnedByOther(owners) => format!("foreign-or-shared:{owners:?}"),
+        ListenerState::Uninspectable(detail) => format!("uninspectable:{detail}"),
+    }
+}
+
+fn health_status(health: HealthState) -> &'static str {
+    match health {
+        HealthState::NotProbed => "not-probed",
+        HealthState::Healthy => "healthy",
+        HealthState::Unhealthy => "unhealthy",
+    }
+}
+
+fn render_registration_status(observation: &ManagedRegistrationObservation) -> String {
+    let promised = observation
+        .promised
+        .as_ref()
+        .map_or_else(String::new, |promised| {
+            format!(
+                " promised-by={} registration {}",
+                promised.source.scope,
+                promised.source.path.display()
+            )
+        });
+    let prefix = format!(
+        "{} registration {}{promised}",
+        observation.coordinate.scope,
+        observation.coordinate.path.display()
+    );
+    match &observation.state {
+        ManagedRegistrationState::Absent => format!(
+            "[absent] {prefix}: recorded-identity=none observed-identity=none listener=none health=none"
+        ),
+        ManagedRegistrationState::Blocked { reason } => format!(
+            "[blocked] {prefix}: {reason}; recorded-identity=unavailable observed-identity=not-inspected listener=not-inspected health=not-probed"
+        ),
+        ManagedRegistrationState::Captured {
+            runfile, runtime, ..
         } => {
-            let runfile = &observations[target]
-                .capture
-                .as_ref()
-                .expect("resolved target has a capture")
-                .runfile;
-            println!(
-                "resolved one managed server: pid={} base_url={} aliases={} stale={}",
-                runfile.pid,
-                runfile.base_url,
-                aliases.len() + 1,
-                stale.len()
+            let recorded = runfile.process_identity.as_ref().map_or_else(
+                || "legacy-none".to_string(),
+                |identity| {
+                    format!(
+                        "token={} executable={} argv={:?}",
+                        identity.start_token,
+                        identity.executable.display(),
+                        identity.argv
+                    )
+                },
             );
-            if listener_present && listener_loopback_only && http_healthy {
-                ExitCode::SUCCESS
-            } else {
-                eprintln!(
-                    "managed process identity is exact, but {}{}",
-                    if listener_present && !listener_loopback_only {
-                        "its registered port is bound through a wildcard/public listener"
-                    } else if listener_present {
-                        "its HTTP endpoint is not healthy"
-                    } else {
-                        "its expected loopback listener is absent"
-                    },
-                    if listener_present && !listener_loopback_only {
-                        "; teardown is blocked because listener ownership is non-exclusive"
-                    } else {
-                        "; teardown remains identity-authorized"
-                    }
-                );
-                ExitCode::FAILURE
-            }
+            let observed = match runtime {
+                RuntimeObservation::NotInspected => {
+                    "observed-identity=not-inspected listener=not-inspected health=not-probed"
+                        .to_string()
+                }
+                RuntimeObservation::Verified {
+                    identity,
+                    listener,
+                    health,
+                } => format!(
+                    "observed-identity=token={} executable={} argv={:?} listener={} health={}",
+                    identity.start_token,
+                    identity.executable.display(),
+                    identity.argv,
+                    listener_status(listener),
+                    health_status(*health)
+                ),
+                RuntimeObservation::Stale {
+                    reason,
+                    observed_identity,
+                    listener,
+                } => {
+                    let identity = observed_identity.as_ref().map_or_else(
+                        || "stale-unavailable".to_string(),
+                        |identity| {
+                            format!(
+                                "token={} executable={} argv={:?}",
+                                identity.start_token,
+                                identity.executable.display(),
+                                identity.argv
+                            )
+                        },
+                    );
+                    format!(
+                        "observed-identity={identity} stale-reason={reason} listener={} health=not-probed",
+                        listener_status(listener)
+                    )
+                }
+                RuntimeObservation::LegacyLive { pid } => format!(
+                    "observed-identity=legacy-live-pid:{pid} listener=unverified health=not-probed"
+                ),
+                RuntimeObservation::Unverifiable {
+                    reason,
+                    observed_identity,
+                    listener,
+                    health,
+                } => {
+                    let identity = observed_identity.as_ref().map_or_else(
+                        || "unavailable".to_string(),
+                        |identity| {
+                            format!(
+                                "token={} executable={} argv={:?}",
+                                identity.start_token,
+                                identity.executable.display(),
+                                identity.argv
+                            )
+                        },
+                    );
+                    let listener = listener
+                        .as_ref()
+                        .map_or_else(|| "unverifiable".to_string(), listener_status);
+                    format!(
+                        "observed-identity={identity} unverifiable-reason={reason} listener={listener} health={}",
+                        health_status(*health)
+                    )
+                }
+            };
+            format!(
+                "[captured] {prefix}: schema={} engine={:?} pid={} base-url={} recorded-identity={recorded} {observed}",
+                runfile.schema_version, runfile.engine, runfile.pid, runfile.base_url
+            )
         }
+    }
+}
+
+fn next_action_text(action: &StatusNextAction) -> String {
+    match action {
+        StatusNextAction::StartServer => {
+            "no registration is active; inspect required launch options with `ferric server up --help`"
+                .to_string()
+        }
+        StatusNextAction::ContinueManaged { base_url } => format!(
+            "managed server is ready at {base_url}; continue with the intended Ferric command and omit `--api-base` to use it"
+        ),
+        StatusNextAction::StopManaged { pid } => format!(
+            "managed PID {pid} is identity-authorized for recovery; run `ferric server down`"
+        ),
+        StatusNextAction::CleanStale => {
+            "only cleanup-safe stale registrations remain; run `ferric server down`".to_string()
+        }
+        StatusNextAction::AdoptLegacy { pid } => format!(
+            "verify and record the live legacy process without signalling it: `ferric server adopt --pid {pid}`"
+        ),
+        StatusNextAction::InspectWildcard { port } => format!(
+            "port {port} is wildcard/public; reconfigure it to bind only 127.0.0.1, then rerun `ferric server status` (teardown is not authorized)"
+        ),
+        StatusNextAction::InspectPromisedOrigin { path } => format!(
+            "the promised origin {} is missing or changed; restore or reconcile that exact registration, then rerun `ferric server status`",
+            path.display()
+        ),
+        StatusNextAction::InspectTailscale { port } => format!(
+            "registration port {port} claims durable Tailscale Serve state; inspect and remove only that exact Serve endpoint with Tailscale tooling (Ferric cannot safely reset it)"
+        ),
+        StatusNextAction::ResolveConflict { coordinates } => format!(
+            "resolve the {} conflicting registration coordinate(s) without signalling a process, then rerun `ferric server status`",
+            coordinates.len()
+        ),
+        StatusNextAction::RepairUnverifiable { coordinates } => format!(
+            "repair or make readable the {} unverifiable registration coordinate(s), then rerun `ferric server status` (no process action is authorized)",
+            coordinates.len()
+        ),
+    }
+}
+
+fn render_status(report: &ServerStatusReport) -> RenderedServerStatus {
+    let mut stdout = report
+        .registrations
+        .iter()
+        .map(render_registration_status)
+        .collect::<Vec<_>>();
+    let mut stderr = Vec::new();
+    match &report.state {
+        ManagedServerState::Empty => stdout.push("[state] empty".to_string()),
+        ManagedServerState::Ready(server) => stdout.push(format!(
+            "[state] ready pid={} aliases={} stale={} listener={} health={}",
+            server.runfile.pid,
+            server.aliases.len(),
+            server.stale.len(),
+            listener_status(&server.listener),
+            health_status(server.health)
+        )),
+        ManagedServerState::Degraded { server, issues } => {
+            stdout.push(format!(
+                "[state] degraded pid={} listener={} health={}",
+                server.runfile.pid,
+                listener_status(&server.listener),
+                health_status(server.health)
+            ));
+            stderr.extend(
+                issues
+                    .iter()
+                    .map(|issue| format!("[diagnostic] {}", issue.detail)),
+            );
+        }
+        ManagedServerState::StaleOnly { stale } => {
+            stdout.push(format!("[state] stale-only registrations={}", stale.len()));
+        }
+        ManagedServerState::Conflict { issues } => {
+            stdout.push("[state] conflict".to_string());
+            stderr.extend(
+                issues
+                    .iter()
+                    .map(|issue| format!("[diagnostic] {}", issue.detail)),
+            );
+        }
+        ManagedServerState::Unverifiable { issues } => {
+            stdout.push("[state] unverifiable".to_string());
+            stderr.extend(
+                issues
+                    .iter()
+                    .map(|issue| format!("[diagnostic] {}", issue.detail)),
+            );
+        }
+    }
+    stdout.push(format!("[next] {}", next_action_text(&report.next_action)));
+    RenderedServerStatus {
+        stdout,
+        stderr,
+        success: report.success,
+    }
+}
+
+fn status_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
+    let scope = ManagedDiscoveryScope {
+        workspace: workspace.to_path_buf(),
+        global: global_path,
+    };
+    let discovery = discover_managed_server_in(&scope);
+    let rendered = render_status(&status_report(&discovery));
+    for line in rendered.stdout {
+        println!("{line}");
+    }
+    for line in rendered.stderr {
+        eprintln!("{line}");
+    }
+    if rendered.success {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 
@@ -1938,7 +2982,7 @@ fn clean_registration_indices(
             complete = false;
             eprintln!(
                 "could not clean {} because no exact-byte capture exists",
-                observations[index].candidate.label
+                observations[index].label
             );
             continue;
         };
@@ -1957,7 +3001,7 @@ fn confirm_cleanup_ports_quiescent(
             quiescent = false;
             eprintln!(
                 "could not clean {} because no exact-byte capture exists",
-                observations[*index].candidate.label
+                observations[*index].label
             );
             continue;
         };
@@ -1997,19 +3041,45 @@ fn down(workspace: &Path) -> ExitCode {
     down_impl(workspace, global_runfile_path())
 }
 
+fn down_mutation_blocker(state: &ManagedServerState) -> Option<&[ResolutionIssue]> {
+    match state {
+        ManagedServerState::Conflict { issues } | ManagedServerState::Unverifiable { issues } => {
+            Some(issues)
+        }
+        ManagedServerState::Degraded { server, issues } if !server.listener.permits_teardown() => {
+            Some(issues)
+        }
+        ManagedServerState::Empty
+        | ManagedServerState::Ready(_)
+        | ManagedServerState::Degraded { .. }
+        | ManagedServerState::StaleOnly { .. } => None,
+    }
+}
+
 fn down_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
-    let mut observations = observe_lifecycle(workspace, global_path);
-    match lifecycle_resolution(&observations) {
+    let scope = ManagedDiscoveryScope {
+        workspace: workspace.to_path_buf(),
+        global: global_path,
+    };
+    let LifecycleDiscovery {
+        managed,
+        mut observations,
+        resolution,
+    } = discover_lifecycle_in(&scope);
+    if let Some(issues) = down_mutation_blocker(&managed.state) {
+        eprintln!("refusing teardown: server registration state does not authorize mutation");
+        for issue in issues {
+            eprintln!("  - {}", issue.detail);
+        }
+        return ExitCode::FAILURE;
+    }
+    match resolution {
         Resolution::Empty => {
             println!("no server registered");
             ExitCode::SUCCESS
         }
-        Resolution::Blocked { reasons } => {
-            eprintln!("refusing teardown: server registration state is ambiguous or unverifiable");
-            for reason in reasons {
-                eprintln!("  - {reason}");
-            }
-            ExitCode::FAILURE
+        Resolution::Conflict { .. } | Resolution::Unverifiable { .. } => {
+            unreachable!("typed down blocker returned before mutation")
         }
         Resolution::StaleOnly { stale } => {
             if !confirm_cleanup_ports_quiescent(&observations, &stale) {
@@ -2024,7 +3094,15 @@ fn down_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
                 ExitCode::FAILURE
             }
         }
-        Resolution::One {
+        Resolution::Degraded { ref listener, .. } if !listener.permits_teardown() => {
+            unreachable!("typed down listener blocker returned before mutation")
+        }
+        Resolution::Ready {
+            target,
+            aliases,
+            stale,
+        }
+        | Resolution::Degraded {
             target,
             aliases,
             stale,
@@ -2193,92 +3271,196 @@ fn down_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
     }
 }
 
-fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
-    let mut ok = true;
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorReport {
+    lines: Vec<String>,
+    success: bool,
+}
 
-    let bin = binary_present(args.engine);
-    println!(
+fn static_doctor_blocker(args: &ServerUpArgs) -> Option<DoctorReport> {
+    let mut lines = Vec::new();
+    if args.tailscale {
+        lines.push(
+            "[BLOCKED] --tailscale is fail-closed before registration, PID, engine, model, or network probes because Ferric cannot yet compare-and-remove only the Serve endpoint it owns"
+                .to_string(),
+        );
+        lines.push(
+            "[next] leave the registration untouched and inspect exact Serve ownership with Tailscale tooling; do not run a blind node-wide reset"
+                .to_string(),
+        );
+    }
+    if args.port == 0 {
+        lines.push("[INVALID] --port must be greater than zero".to_string());
+    }
+    if args.engine == Engine::LlamaServer {
+        if args.ctx == 0 {
+            lines.push("[INVALID] --ctx must be greater than zero for llama-server".to_string());
+        }
+        if args.model.is_none() {
+            lines.push("[MISSING] --model is required for llama-server".to_string());
+        }
+        if args.parallel == Some(0) {
+            lines.push(
+                "[INVALID] --parallel must be greater than zero for llama-server".to_string(),
+            );
+        }
+    } else if args.seed.is_some() || args.parallel.is_some() {
+        lines
+            .push("[INVALID] --seed and --parallel are supported only by llama-server".to_string());
+    }
+    (!lines.is_empty()).then_some(DoctorReport {
+        lines,
+        success: false,
+    })
+}
+
+fn registration_doctor_blocker(discovery: &ManagedServerDiscovery) -> Option<DoctorReport> {
+    if matches!(
+        discovery.state,
+        ManagedServerState::Empty | ManagedServerState::Ready(_)
+    ) {
+        return None;
+    }
+    let status = status_report(discovery);
+    let rendered = render_status(&status);
+    let mut lines = vec![format!(
+        "[BLOCKED] managed registration state is {} before engine/model probes",
+        match discovery.state {
+            ManagedServerState::Degraded { .. } => "degraded",
+            ManagedServerState::StaleOnly { .. } => "stale-only",
+            ManagedServerState::Conflict { .. } => "conflicting",
+            ManagedServerState::Unverifiable { .. } => "unverifiable",
+            ManagedServerState::Empty | ManagedServerState::Ready(_) => unreachable!(),
+        }
+    )];
+    lines.extend(rendered.stderr);
+    lines.push(format!("[next] {}", next_action_text(&status.next_action)));
+    Some(DoctorReport {
+        lines,
+        success: false,
+    })
+}
+
+fn execute_doctor_probes<E: DoctorProbeEffects>(
+    args: &ServerUpArgs,
+    discovery: &ManagedServerDiscovery,
+    effects: &mut E,
+) -> DoctorReport {
+    let mut lines = Vec::new();
+    let mut ok = true;
+    let bin = effects.binary_present(args.engine);
+    lines.push(format!(
         "[{}] engine binary `{}`",
         if bin { "ok" } else { "MISSING" },
         args.engine.program()
-    );
+    ));
     ok &= bin;
 
-    if args.port == 0 {
-        println!("[INVALID] --port must be greater than zero");
-        ok = false;
-    }
-
     if args.engine == Engine::LlamaServer {
-        if args.ctx == 0 {
-            println!("[INVALID] --ctx must be greater than zero for llama-server");
-            ok = false;
-        }
-
-        if let Some(model) = &args.model {
-            let present = Path::new(model).is_file();
-            println!(
-                "[{}] model `{}`",
-                if present { "ok" } else { "MISSING" },
-                model
-            );
-            ok &= present;
-        } else {
-            println!("[MISSING] --model is required for llama-server");
-            ok = false;
-        }
+        let model = args
+            .model
+            .as_deref()
+            .expect("static doctor validation requires a llama-server model");
+        let present = effects.regular_file(Path::new(model));
+        lines.push(format!(
+            "[{}] model `{model}`",
+            if present { "ok" } else { "MISSING" }
+        ));
+        ok &= present;
 
         if let Some(mmproj) = &args.mmproj {
-            let present = mmproj.is_file();
-            println!(
+            let present = effects.regular_file(mmproj);
+            lines.push(format!(
                 "[{}] multimodal projector `{}`",
                 if present { "ok" } else { "MISSING" },
                 mmproj.display()
-            );
+            ));
             ok &= present;
         }
-        if args.parallel == Some(0) {
-            println!("[INVALID] --parallel must be greater than zero for llama-server");
-            ok = false;
-        }
-    } else if args.seed.is_some() || args.parallel.is_some() {
-        println!("[INVALID] --seed and --parallel are supported only by llama-server");
-        ok = false;
-    }
-    if args.tailscale {
-        println!(
-            "[BLOCKED] --tailscale is temporarily fail-closed until Ferric can compare-and-remove only the Serve endpoint it owns"
-        );
-        ok = false;
     }
 
-    match read_runfile_result(workspace) {
-        Ok(Some(rf)) => {
-            println!(
+    match &discovery.state {
+        ManagedServerState::Ready(server) => {
+            lines.push(format!(
                 "[ok] exact managed process/listener identity and HTTP health at {}",
-                rf.base_url
+                server.runfile.base_url
+            ));
+            lines.push(format!(
+                "     health: {}",
+                health_url(server.runfile.engine, &server.runfile.base_url)
+            ));
+            lines.push(
+                "     verify the constrained path: `ferric bench ltd --protocol grammar`"
+                    .to_string(),
             );
-            println!("     health: {}", health_url(rf.engine, &rf.base_url));
-            println!("     verify the constrained path: `ferric bench ltd --protocol grammar`");
         }
-        Ok(None) => println!("[info] no server running — `ferric server up` to start one"),
-        Err(error) => {
-            println!("[BLOCKED] server registration inventory: {error}");
-            ok = false;
+        ManagedServerState::Empty => {
+            lines.push("[info] no server running — `ferric server up` to start one".to_string());
+        }
+        ManagedServerState::Degraded { .. }
+        | ManagedServerState::StaleOnly { .. }
+        | ManagedServerState::Conflict { .. }
+        | ManagedServerState::Unverifiable { .. } => {
+            unreachable!("blocked discovery must not reach doctor effects")
         }
     }
+    DoctorReport { lines, success: ok }
+}
 
-    if ok {
+fn doctor_report_after_discovery<E: DoctorProbeEffects>(
+    args: &ServerUpArgs,
+    discovery: &ManagedServerDiscovery,
+    effects: &mut E,
+) -> DoctorReport {
+    if let Some(report) = static_doctor_blocker(args) {
+        return report;
+    }
+    if let Some(report) = registration_doctor_blocker(discovery) {
+        return report;
+    }
+    execute_doctor_probes(args, discovery, effects)
+}
+
+fn emit_doctor_report(report: DoctorReport) -> ExitCode {
+    for line in report.lines {
+        println!("{line}");
+    }
+    if report.success {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
     }
 }
 
+fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
+    if let Some(report) = static_doctor_blocker(args) {
+        return emit_doctor_report(report);
+    }
+    let scope = match ManagedDiscoveryScope::for_workspace(workspace) {
+        Ok(scope) => scope,
+        Err(error) => {
+            return emit_doctor_report(DoctorReport {
+                lines: vec![format!(
+                    "[BLOCKED] resolve managed discovery scope: {error}"
+                )],
+                success: false,
+            });
+        }
+    };
+    let discovery = discover_managed_server_in(&scope);
+    let mut effects = NativeDoctorProbeEffects;
+    emit_doctor_report(doctor_report_after_discovery(
+        args,
+        &discovery,
+        &mut effects,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::server_process::canonical_test_start_token;
+    use crate::server_registration::PromisedOriginRegistration;
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::net::TcpListener;
@@ -2302,6 +3484,1001 @@ mod tests {
         }
     }
 
+    fn discovery_fixture_path(name: &str) -> PathBuf {
+        #[cfg(windows)]
+        {
+            PathBuf::from(format!(r"C:\fixture\{name}\.ferric\server.json"))
+        }
+        #[cfg(not(windows))]
+        {
+            PathBuf::from(format!("/fixture/{name}/.ferric/server.json"))
+        }
+    }
+
+    fn discovery_fixture_executable() -> PathBuf {
+        #[cfg(windows)]
+        {
+            PathBuf::from(r"C:\fixture\llama-server.exe")
+        }
+        #[cfg(not(windows))]
+        {
+            PathBuf::from("/fixture/llama-server")
+        }
+    }
+
+    fn discovery_fixture_identity(seed: u64) -> ProcessIdentity {
+        ProcessIdentity {
+            start_token: canonical_test_start_token(seed),
+            executable: discovery_fixture_executable(),
+            argv: vec!["llama-server".to_string(), "--serve".to_string()],
+        }
+    }
+
+    fn discovery_fixture_runfile(pid: u32, name: &str) -> ServerRunfile {
+        let port = u16::try_from(7000 + pid % 1000).unwrap();
+        ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid,
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            model: Some("model.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(discovery_fixture_identity(u64::from(pid))),
+            origin_local_runfile: Some(discovery_fixture_path(name)),
+        }
+    }
+
+    fn discovery_fixture_coordinate(
+        scope: RegistrationScope,
+        name: &str,
+    ) -> RegistrationCoordinate {
+        RegistrationCoordinate {
+            scope,
+            path: discovery_fixture_path(name),
+        }
+    }
+
+    fn discovery_fixture_observation(
+        coordinate: RegistrationCoordinate,
+        runfile: ServerRunfile,
+        runtime: RuntimeObservation,
+    ) -> ManagedRegistrationObservation {
+        ManagedRegistrationObservation {
+            id: ObservationId(0),
+            coordinate,
+            promised: None,
+            state: ManagedRegistrationState::Captured {
+                runfile: Box::new(runfile),
+                raw_sha256: "fixture-revision".to_string(),
+                runtime,
+            },
+        }
+    }
+
+    fn discovery_fixture_empty() -> ManagedServerDiscovery {
+        let local = discovery_fixture_coordinate(RegistrationScope::Local, "local");
+        let global = discovery_fixture_coordinate(RegistrationScope::Global, "global");
+        ManagedServerDiscovery {
+            inventory: RegistrationInventory {
+                local: RegistrationSlot::Absent {
+                    scope: local.scope,
+                    path: local.path.clone(),
+                },
+                global: Some(RegistrationSlot::Absent {
+                    scope: global.scope,
+                    path: global.path.clone(),
+                }),
+                promised_origins: Vec::new(),
+            },
+            observations: vec![
+                ManagedRegistrationObservation {
+                    id: ObservationId(0),
+                    coordinate: local,
+                    promised: None,
+                    state: ManagedRegistrationState::Absent,
+                },
+                ManagedRegistrationObservation {
+                    id: ObservationId(1),
+                    coordinate: global,
+                    promised: None,
+                    state: ManagedRegistrationState::Absent,
+                },
+            ],
+            state: ManagedServerState::Empty,
+        }
+    }
+
+    fn discovery_fixture_ready() -> ManagedServerDiscovery {
+        let coordinate = discovery_fixture_coordinate(RegistrationScope::Local, "local");
+        let runfile = discovery_fixture_runfile(4101, "local");
+        let identity = runfile.process_identity.clone().unwrap();
+        let raw = serde_json::to_vec(&runfile).unwrap();
+        let observation = ManagedRegistrationObservation {
+            id: ObservationId(0),
+            coordinate: coordinate.clone(),
+            promised: None,
+            state: ManagedRegistrationState::Captured {
+                runfile: Box::new(runfile.clone()),
+                raw_sha256: ferric_bench::sha256_bytes(&raw),
+                runtime: RuntimeObservation::Verified {
+                    identity: identity.clone(),
+                    listener: ListenerState::OwnedByTarget,
+                    health: HealthState::Healthy,
+                },
+            },
+        };
+        let revision = RegistrationRevision {
+            coordinate: coordinate.clone(),
+            promised: None,
+            state: RegistrationRevisionState::Captured(ferric_bench::sha256_bytes(&raw)),
+        };
+        let server = ManagedServer {
+            registration: coordinate.clone(),
+            runfile: runfile.clone(),
+            identity: identity.clone(),
+            listener: ListenerState::OwnedByTarget,
+            health: HealthState::Healthy,
+            aliases: Vec::new(),
+            stale: Vec::new(),
+            fingerprint: DiscoveryFingerprint {
+                pid: runfile.pid,
+                identity,
+                runfile: runfile.clone(),
+                revisions: vec![revision],
+            },
+        };
+        ManagedServerDiscovery {
+            inventory: RegistrationInventory {
+                local: RegistrationSlot::Captured(Box::new(CapturedRegistration {
+                    scope: RegistrationScope::Local,
+                    path: coordinate.path.clone(),
+                    raw,
+                    runfile,
+                })),
+                global: None,
+                promised_origins: Vec::new(),
+            },
+            observations: vec![observation],
+            state: ManagedServerState::Ready(server),
+        }
+    }
+
+    fn discovery_fixture_degraded(
+        listener: ListenerState,
+        health: HealthState,
+    ) -> ManagedServerDiscovery {
+        let mut discovery = discovery_fixture_ready();
+        let mut server = match &discovery.state {
+            ManagedServerState::Ready(server) => server.clone(),
+            _ => unreachable!(),
+        };
+        server.listener = listener.clone();
+        server.health = health;
+        let coordinate = server.registration.clone();
+        if let ManagedRegistrationState::Captured { runtime, .. } =
+            &mut discovery.observations[0].state
+        {
+            *runtime = RuntimeObservation::Verified {
+                identity: server.identity.clone(),
+                listener: listener.clone(),
+                health,
+            };
+        }
+        discovery.state = ManagedServerState::Degraded {
+            server,
+            issues: vec![ResolutionIssue {
+                coordinates: vec![coordinate],
+                kind: ResolutionIssueKind::Degraded,
+                detail: "fixture degraded state".to_string(),
+            }],
+        };
+        discovery
+    }
+
+    fn discovery_fixture_stale_only() -> ManagedServerDiscovery {
+        let mut discovery = discovery_fixture_ready();
+        let coordinate = discovery.observations[0].coordinate.clone();
+        if let ManagedRegistrationState::Captured { runtime, .. } =
+            &mut discovery.observations[0].state
+        {
+            *runtime = RuntimeObservation::Stale {
+                reason: "PID is absent".to_string(),
+                observed_identity: None,
+                listener: ListenerState::Absent,
+            };
+        }
+        discovery.state = ManagedServerState::StaleOnly {
+            stale: vec![coordinate],
+        };
+        discovery
+    }
+
+    fn discovery_fixture_blocked(conflict: bool) -> ManagedServerDiscovery {
+        let mut discovery = discovery_fixture_ready();
+        let coordinate = discovery.observations[0].coordinate.clone();
+        let issue = ResolutionIssue {
+            coordinates: vec![coordinate],
+            kind: if conflict {
+                ResolutionIssueKind::Conflict
+            } else {
+                ResolutionIssueKind::Unverifiable
+            },
+            detail: if conflict {
+                "fixture registration conflict"
+            } else {
+                "fixture registration is unverifiable"
+            }
+            .to_string(),
+        };
+        if conflict {
+            discovery.state = ManagedServerState::Conflict {
+                issues: vec![issue],
+            };
+        } else {
+            if let ManagedRegistrationState::Captured { runtime, .. } =
+                &mut discovery.observations[0].state
+            {
+                *runtime = RuntimeObservation::Unverifiable {
+                    reason: "fixture process inspection failed".to_string(),
+                    observed_identity: None,
+                    listener: None,
+                    health: HealthState::NotProbed,
+                };
+            }
+            discovery.state = ManagedServerState::Unverifiable {
+                issues: vec![issue],
+            };
+        }
+        discovery
+    }
+
+    struct PanicHealth;
+
+    impl HealthProbe for PanicHealth {
+        fn status_ok(&mut self, _host: &str, _port: u16, _path: &str) -> bool {
+            panic!("static registration blockers must precede HTTP health")
+        }
+    }
+
+    #[test]
+    fn tailscale_registration_blocks_before_process_inspection() {
+        let coordinate = discovery_fixture_coordinate(RegistrationScope::Local, "tailscale");
+        let mut runfile = discovery_fixture_runfile(4201, "tailscale");
+        runfile.tailscale = true;
+        let raw = serde_json::to_vec(&runfile).unwrap();
+        let inventory = RegistrationInventory {
+            local: RegistrationSlot::Captured(Box::new(CapturedRegistration {
+                scope: coordinate.scope,
+                path: coordinate.path,
+                raw,
+                runfile,
+            })),
+            global: None,
+            promised_origins: Vec::new(),
+        };
+        let observer_calls = Rc::new(RefCell::new(0_usize));
+        let calls = Rc::clone(&observer_calls);
+        let discovery = discover_inventory_with(
+            inventory,
+            move |_capture| {
+                *calls.borrow_mut() += 1;
+                panic!("Tailscale blocker must precede process acquisition")
+            },
+            &mut PanicHealth,
+            |_observation| panic!("Tailscale blocker must precede retained reinspection"),
+        );
+        assert_eq!(*observer_calls.borrow(), 0);
+        assert!(matches!(
+            discovery.managed.state,
+            ManagedServerState::Unverifiable { .. }
+        ));
+        assert!(matches!(
+            discovery.managed.observations[0].state,
+            ManagedRegistrationState::Captured {
+                runtime: RuntimeObservation::NotInspected,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn promised_origin_static_matrix_precedes_process_inspection() {
+        for changed in [false, true] {
+            let local = discovery_fixture_coordinate(RegistrationScope::Local, "local");
+            let global = discovery_fixture_coordinate(RegistrationScope::Global, "global");
+            let origin = discovery_fixture_coordinate(RegistrationScope::Origin, "origin");
+            let expected = discovery_fixture_runfile(4202, "origin");
+            let global_capture = CapturedRegistration {
+                scope: global.scope,
+                path: global.path.clone(),
+                raw: serde_json::to_vec(&expected).unwrap(),
+                runfile: expected.clone(),
+            };
+            let origin_slot = if changed {
+                let mut replacement = expected.clone();
+                replacement.context_size = Some(4096);
+                RegistrationSlot::Captured(Box::new(CapturedRegistration {
+                    scope: origin.scope,
+                    path: origin.path.clone(),
+                    raw: serde_json::to_vec(&replacement).unwrap(),
+                    runfile: replacement,
+                }))
+            } else {
+                RegistrationSlot::Absent {
+                    scope: origin.scope,
+                    path: origin.path.clone(),
+                }
+            };
+            let inventory = RegistrationInventory {
+                local: RegistrationSlot::Absent {
+                    scope: local.scope,
+                    path: local.path,
+                },
+                global: Some(RegistrationSlot::Captured(Box::new(global_capture))),
+                promised_origins: vec![PromisedOriginRegistration {
+                    source: global,
+                    expected_runfile: expected,
+                    slot: origin_slot,
+                }],
+            };
+            let result = discover_inventory_with(
+                inventory,
+                |_capture| panic!("origin blocker must precede process acquisition"),
+                &mut PanicHealth,
+                |_observation| panic!("origin blocker must precede retained reinspection"),
+            );
+            if changed {
+                assert!(matches!(
+                    result.managed.state,
+                    ManagedServerState::Conflict { .. }
+                ));
+            } else {
+                assert!(matches!(
+                    result.managed.state,
+                    ManagedServerState::Unverifiable { .. }
+                ));
+            }
+            assert_eq!(result.managed.observations.len(), 3);
+            assert!(
+                result
+                    .managed
+                    .observations
+                    .iter()
+                    .any(|observation| observation.coordinate.scope == RegistrationScope::Origin)
+            );
+        }
+    }
+
+    fn doctor_fixture_args() -> ServerUpArgs {
+        ServerUpArgs {
+            engine: Engine::LlamaServer,
+            model: Some("model.gguf".to_string()),
+            mmproj: None,
+            ctx: 8192,
+            port: 8080,
+            threads: None,
+            gpu_layers: None,
+            batch_size: None,
+            seed: Some(42),
+            parallel: Some(1),
+            tailscale: false,
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum DoctorEvent {
+        Binary,
+        File,
+    }
+
+    #[derive(Default)]
+    struct RecordingDoctorEffects {
+        events: Vec<DoctorEvent>,
+    }
+
+    impl DoctorProbeEffects for RecordingDoctorEffects {
+        fn binary_present(&mut self, _engine: Engine) -> bool {
+            self.events.push(DoctorEvent::Binary);
+            true
+        }
+
+        fn regular_file(&mut self, _path: &Path) -> bool {
+            self.events.push(DoctorEvent::File);
+            true
+        }
+    }
+
+    #[test]
+    fn status_reports_scope_identity_health_and_next_action() {
+        let empty = discovery_fixture_empty();
+        let empty_report = status_report(&empty);
+        let empty_rendered = render_status(&empty_report);
+        assert_eq!(empty_report.state, ManagedServerState::Empty);
+        assert_eq!(empty_report.next_action, StatusNextAction::StartServer);
+        assert_eq!(empty_rendered.stderr, Vec::<String>::new());
+        assert_eq!(
+            empty_rendered.stdout,
+            vec![
+                format!(
+                    "[absent] local registration {}: recorded-identity=none observed-identity=none listener=none health=none",
+                    discovery_fixture_path("local").display()
+                ),
+                format!(
+                    "[absent] global registration {}: recorded-identity=none observed-identity=none listener=none health=none",
+                    discovery_fixture_path("global").display()
+                ),
+                "[state] empty".to_string(),
+                "[next] no registration is active; inspect required launch options with `ferric server up --help`".to_string(),
+            ]
+        );
+
+        let ready = discovery_fixture_ready();
+        let ready_report = status_report(&ready);
+        let ready_rendered = render_status(&ready_report);
+        assert!(matches!(
+            ready_report.next_action,
+            StatusNextAction::ContinueManaged { .. }
+        ));
+        assert!(ready_rendered.success);
+        assert!(ready_rendered.stdout[0].contains("recorded-identity=token="));
+        assert!(ready_rendered.stdout[0].contains("observed-identity=token="));
+        assert!(ready_rendered.stdout[0].contains("listener=owned-loopback"));
+        assert!(ready_rendered.stdout[0].contains("health=healthy"));
+
+        let unhealthy =
+            discovery_fixture_degraded(ListenerState::OwnedByTarget, HealthState::Unhealthy);
+        assert!(matches!(
+            status_report(&unhealthy).next_action,
+            StatusNextAction::StopManaged { .. }
+        ));
+        let absent = discovery_fixture_degraded(ListenerState::Absent, HealthState::NotProbed);
+        assert!(matches!(
+            status_report(&absent).next_action,
+            StatusNextAction::StopManaged { .. }
+        ));
+        let wildcard =
+            discovery_fixture_degraded(ListenerState::OwnedByTargetWildcard, HealthState::Healthy);
+        assert!(matches!(
+            status_report(&wildcard).next_action,
+            StatusNextAction::InspectWildcard { .. }
+        ));
+        assert!(
+            render_status(&status_report(&wildcard))
+                .stdout
+                .last()
+                .unwrap()
+                .contains("teardown is not authorized")
+        );
+
+        let stale = discovery_fixture_stale_only();
+        assert_eq!(
+            status_report(&stale).next_action,
+            StatusNextAction::CleanStale
+        );
+
+        let mut split = discovery_fixture_ready();
+        let stale_coordinate =
+            discovery_fixture_coordinate(RegistrationScope::Global, "stale-global");
+        let stale_record = discovery_fixture_runfile(4102, "stale-global");
+        let stale_raw = serde_json::to_vec(&stale_record).unwrap();
+        split.inventory.global = Some(RegistrationSlot::Captured(Box::new(CapturedRegistration {
+            scope: stale_coordinate.scope,
+            path: stale_coordinate.path.clone(),
+            raw: stale_raw,
+            runfile: stale_record.clone(),
+        })));
+        split.observations.push(discovery_fixture_observation(
+            stale_coordinate.clone(),
+            stale_record,
+            RuntimeObservation::Stale {
+                reason: "generation changed".to_string(),
+                observed_identity: Some(discovery_fixture_identity(4102)),
+                listener: ListenerState::Absent,
+            },
+        ));
+        if let ManagedServerState::Ready(server) = &mut split.state {
+            server.stale.push(stale_coordinate);
+        }
+        let split_rendered = render_status(&status_report(&split));
+        assert_eq!(split_rendered.stdout.len(), 4);
+        assert!(split_rendered.stdout[1].contains("observed-identity=token="));
+        assert!(split_rendered.stdout[1].contains("stale-reason=generation changed"));
+
+        let conflict = discovery_fixture_blocked(true);
+        assert!(matches!(
+            status_report(&conflict).next_action,
+            StatusNextAction::ResolveConflict { .. }
+        ));
+        assert_eq!(render_status(&status_report(&conflict)).stderr.len(), 1);
+
+        let unverifiable = discovery_fixture_blocked(false);
+        assert!(matches!(
+            status_report(&unverifiable).next_action,
+            StatusNextAction::RepairUnverifiable { .. }
+        ));
+
+        let mut missing_origin = discovery_fixture_empty();
+        let origin = discovery_fixture_coordinate(RegistrationScope::Origin, "missing-origin");
+        let source = discovery_fixture_coordinate(RegistrationScope::Global, "global");
+        let expected = discovery_fixture_runfile(4103, "missing-origin");
+        let promised = PromisedOriginProvenance {
+            source: source.clone(),
+            expected_runfile: expected.clone(),
+        };
+        missing_origin
+            .observations
+            .push(ManagedRegistrationObservation {
+                id: ObservationId(2),
+                coordinate: origin.clone(),
+                promised: Some(promised),
+                state: ManagedRegistrationState::Absent,
+            });
+        missing_origin.inventory.promised_origins = vec![PromisedOriginRegistration {
+            source,
+            expected_runfile: expected,
+            slot: RegistrationSlot::Absent {
+                scope: origin.scope,
+                path: origin.path.clone(),
+            },
+        }];
+        missing_origin.state = ManagedServerState::Unverifiable {
+            issues: vec![ResolutionIssue {
+                coordinates: vec![origin.clone()],
+                kind: ResolutionIssueKind::Unverifiable,
+                detail: "promised origin is absent".to_string(),
+            }],
+        };
+        assert_eq!(
+            status_report(&missing_origin).next_action,
+            StatusNextAction::InspectPromisedOrigin {
+                path: origin.path.clone()
+            }
+        );
+        let missing_rendered = render_status(&status_report(&missing_origin));
+        assert!(missing_rendered.stdout[2].contains("promised-by=global registration"));
+
+        let mut legacy = discovery_fixture_ready();
+        let legacy_pid = 4101;
+        if let ManagedRegistrationState::Captured {
+            runfile, runtime, ..
+        } = &mut legacy.observations[0].state
+        {
+            runfile.schema_version = 1;
+            runfile.process_identity = None;
+            *runtime = RuntimeObservation::LegacyLive { pid: legacy_pid };
+        }
+        let legacy_runfile = match &legacy.observations[0].state {
+            ManagedRegistrationState::Captured { runfile, .. } => runfile.as_ref().clone(),
+            _ => unreachable!(),
+        };
+        let legacy_raw = serde_json::to_vec(&legacy_runfile).unwrap();
+        if let RegistrationSlot::Captured(local) = &mut legacy.inventory.local {
+            local.runfile = legacy_runfile.clone();
+            local.raw = legacy_raw.clone();
+        }
+        let legacy_global =
+            discovery_fixture_coordinate(RegistrationScope::Global, "legacy-global");
+        legacy.inventory.global =
+            Some(RegistrationSlot::Captured(Box::new(CapturedRegistration {
+                scope: legacy_global.scope,
+                path: legacy_global.path.clone(),
+                raw: legacy_raw,
+                runfile: legacy_runfile.clone(),
+            })));
+        let mut legacy_alias = discovery_fixture_observation(
+            legacy_global.clone(),
+            legacy_runfile,
+            RuntimeObservation::LegacyLive { pid: legacy_pid },
+        );
+        legacy_alias.id = ObservationId(1);
+        legacy.observations.push(legacy_alias);
+        legacy.state = ManagedServerState::Unverifiable {
+            issues: vec![ResolutionIssue {
+                coordinates: vec![
+                    legacy.observations[0].coordinate.clone(),
+                    legacy_global.clone(),
+                ],
+                kind: ResolutionIssueKind::Unverifiable,
+                detail: "live legacy registration".to_string(),
+            }],
+        };
+        assert_eq!(
+            status_report(&legacy).next_action,
+            StatusNextAction::AdoptLegacy { pid: legacy_pid }
+        );
+        assert!(
+            render_status(&status_report(&legacy))
+                .stdout
+                .last()
+                .unwrap()
+                .contains("`ferric server adopt --pid 4101`")
+        );
+        let mut incompatible_legacy = legacy.clone();
+        if let ManagedRegistrationState::Captured { runfile, .. } =
+            &mut incompatible_legacy.observations[1].state
+        {
+            runfile.context_size = Some(4096);
+        }
+        assert!(matches!(
+            status_report(&incompatible_legacy).next_action,
+            StatusNextAction::RepairUnverifiable { .. }
+        ));
+
+        let mut tailscale = discovery_fixture_ready();
+        if let ManagedRegistrationState::Captured {
+            runfile, runtime, ..
+        } = &mut tailscale.observations[0].state
+        {
+            runfile.tailscale = true;
+            *runtime = RuntimeObservation::NotInspected;
+        }
+        tailscale.state = ManagedServerState::Unverifiable {
+            issues: vec![ResolutionIssue {
+                coordinates: vec![tailscale.observations[0].coordinate.clone()],
+                kind: ResolutionIssueKind::Unverifiable,
+                detail: "durable Tailscale Serve state".to_string(),
+            }],
+        };
+        assert!(matches!(
+            status_report(&tailscale).next_action,
+            StatusNextAction::InspectTailscale { .. }
+        ));
+
+        for discovery in [
+            ready,
+            unhealthy,
+            absent,
+            wildcard,
+            stale,
+            split,
+            conflict,
+            unverifiable,
+            missing_origin,
+            incompatible_legacy,
+            legacy,
+            tailscale,
+        ] {
+            let rendered = render_status(&status_report(&discovery));
+            assert_eq!(
+                rendered
+                    .stdout
+                    .iter()
+                    .filter(|line| line.starts_with("[next] "))
+                    .count(),
+                1,
+                "every state must render exactly one safe next action"
+            );
+            for registration in rendered.stdout.iter().take(discovery.observations.len()) {
+                assert!(registration.contains("recorded-identity="));
+                assert!(registration.contains("observed-identity="));
+                assert!(registration.contains("listener="));
+                assert!(registration.contains("health="));
+            }
+        }
+    }
+
+    #[test]
+    fn doctor_blocks_before_external_probes() {
+        let mut tailscale_args = doctor_fixture_args();
+        tailscale_args.tailscale = true;
+        let mut effects = RecordingDoctorEffects::default();
+        let report = static_doctor_blocker(&tailscale_args).expect("Tailscale must block");
+        assert!(!report.success);
+        assert!(report.lines[0].contains("before registration, PID, engine, model, or network"));
+        assert!(effects.events.is_empty());
+
+        for discovery in [
+            discovery_fixture_degraded(ListenerState::OwnedByTarget, HealthState::Unhealthy),
+            discovery_fixture_stale_only(),
+            discovery_fixture_blocked(true),
+            discovery_fixture_blocked(false),
+        ] {
+            effects.events.clear();
+            let report =
+                doctor_report_after_discovery(&doctor_fixture_args(), &discovery, &mut effects);
+            assert!(!report.success);
+            assert!(report.lines[0].starts_with("[BLOCKED]"));
+            assert!(effects.events.is_empty());
+        }
+
+        effects.events.clear();
+        let ready = doctor_report_after_discovery(
+            &doctor_fixture_args(),
+            &discovery_fixture_ready(),
+            &mut effects,
+        );
+        assert!(ready.success);
+        assert_eq!(effects.events, vec![DoctorEvent::Binary, DoctorEvent::File]);
+    }
+
+    #[test]
+    fn registration_consumers_propagate_typed_ambiguity() {
+        let scope = ManagedDiscoveryScope {
+            workspace: discovery_fixture_path("workspace")
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf(),
+            global: Some(discovery_fixture_path("global")),
+        };
+        let explicit =
+            crate::backend::select_endpoint_with(Some("http://explicit.example/v1"), || {
+                panic!("explicit endpoint selection must not run managed discovery")
+            })
+            .unwrap();
+        assert!(matches!(
+            explicit,
+            crate::backend::EndpointSelection::Explicit { .. }
+        ));
+        assert!(
+            down_mutation_blocker(
+                &discovery_fixture_degraded(
+                    ListenerState::OwnedByTargetWildcard,
+                    HealthState::NotProbed,
+                )
+                .state
+            )
+            .is_some()
+        );
+        let fixtures = [
+            discovery_fixture_empty(),
+            discovery_fixture_ready(),
+            discovery_fixture_degraded(ListenerState::OwnedByTarget, HealthState::Unhealthy),
+            discovery_fixture_stale_only(),
+            discovery_fixture_blocked(true),
+            discovery_fixture_blocked(false),
+        ];
+        for discovery in fixtures {
+            let status = status_report(&discovery);
+            assert_eq!(status.state, discovery.state);
+
+            let mut effects = RecordingDoctorEffects::default();
+            let doctor =
+                doctor_report_after_discovery(&doctor_fixture_args(), &discovery, &mut effects);
+            let automatic =
+                crate::backend::automatic_endpoint_from_discovery(scope.clone(), discovery.clone());
+            let strict =
+                crate::backend::require_managed_endpoint(scope.clone(), discovery.clone(), None);
+            let down_blocker = down_mutation_blocker(&discovery.state);
+            match &discovery.state {
+                ManagedServerState::Empty => {
+                    assert!(matches!(
+                        automatic,
+                        Ok(crate::backend::EndpointSelection::Default { .. })
+                    ));
+                    assert!(strict.is_err());
+                    assert!(doctor.success);
+                    assert!(!effects.events.is_empty());
+                    assert!(down_blocker.is_none());
+                }
+                ManagedServerState::Ready(server) => {
+                    assert!(matches!(
+                        automatic,
+                        Ok(crate::backend::EndpointSelection::Managed { .. })
+                    ));
+                    assert!(strict.is_ok());
+                    let explicit_match = format!("{}/", server.runfile.base_url);
+                    let matching = crate::backend::require_managed_endpoint(
+                        scope.clone(),
+                        discovery.clone(),
+                        Some(&explicit_match),
+                    )
+                    .unwrap();
+                    assert!(matches!(
+                        matching,
+                        crate::backend::EndpointSelection::Managed {
+                            explicit_base_url: Some(_),
+                            ..
+                        }
+                    ));
+                    assert!(matches!(
+                        crate::backend::require_managed_endpoint(
+                            scope.clone(),
+                            discovery.clone(),
+                            Some("http://127.0.0.1:65535/v1"),
+                        ),
+                        Err(crate::backend::EndpointSelectionError::ExplicitManagedMismatch { .. })
+                    ));
+                    assert!(doctor.success);
+                    assert!(!effects.events.is_empty());
+                    assert!(down_blocker.is_none());
+                }
+                ManagedServerState::Degraded { .. } => {
+                    assert!(matches!(
+                        automatic,
+                        Err(crate::backend::EndpointSelectionError::Degraded(_))
+                    ));
+                    assert!(matches!(
+                        strict,
+                        Err(crate::backend::EndpointSelectionError::Degraded(_))
+                    ));
+                    assert!(!doctor.success);
+                    assert!(effects.events.is_empty());
+                    assert!(down_blocker.is_none());
+                }
+                ManagedServerState::StaleOnly { .. } => {
+                    assert!(matches!(
+                        automatic,
+                        Err(crate::backend::EndpointSelectionError::StaleOnly(_))
+                    ));
+                    assert!(matches!(
+                        strict,
+                        Err(crate::backend::EndpointSelectionError::StaleOnly(_))
+                    ));
+                    assert!(!doctor.success);
+                    assert!(effects.events.is_empty());
+                    assert!(down_blocker.is_none());
+                }
+                ManagedServerState::Conflict { .. } => {
+                    assert!(matches!(
+                        automatic,
+                        Err(crate::backend::EndpointSelectionError::Conflict(_))
+                    ));
+                    assert!(matches!(
+                        strict,
+                        Err(crate::backend::EndpointSelectionError::Conflict(_))
+                    ));
+                    assert!(!doctor.success);
+                    assert!(effects.events.is_empty());
+                    assert!(down_blocker.is_some());
+                }
+                ManagedServerState::Unverifiable { .. } => {
+                    assert!(matches!(
+                        automatic,
+                        Err(crate::backend::EndpointSelectionError::Unverifiable(_))
+                    ));
+                    assert!(matches!(
+                        strict,
+                        Err(crate::backend::EndpointSelectionError::Unverifiable(_))
+                    ));
+                    assert!(!doctor.success);
+                    assert!(effects.events.is_empty());
+                    assert!(down_blocker.is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn strict_autonomy_requires_fresh_managed_discovery_before_http() {
+        fn mirrored_inventory() -> RegistrationInventory {
+            let local = discovery_fixture_coordinate(RegistrationScope::Local, "strict-local");
+            let global = discovery_fixture_coordinate(RegistrationScope::Global, "strict-global");
+            let runfile = discovery_fixture_runfile(4101, "strict-local");
+            let raw = serde_json::to_vec(&runfile).unwrap();
+            RegistrationInventory {
+                local: RegistrationSlot::Captured(Box::new(CapturedRegistration {
+                    scope: local.scope,
+                    path: local.path,
+                    raw: raw.clone(),
+                    runfile: runfile.clone(),
+                })),
+                global: Some(RegistrationSlot::Captured(Box::new(CapturedRegistration {
+                    scope: global.scope,
+                    path: global.path,
+                    raw,
+                    runfile,
+                }))),
+                promised_origins: Vec::new(),
+            }
+        }
+
+        fn observe_exact(capture: CapturedRegistration) -> LifecycleObservation {
+            let identity = capture.runfile.process_identity.clone().unwrap();
+            let label = registration_label(capture.scope, &capture.path);
+            LifecycleObservation {
+                candidate: Candidate {
+                    coordinate: RegistrationCoordinate {
+                        scope: capture.scope,
+                        path: capture.path.clone(),
+                    },
+                    runfile: Some(capture.runfile.clone()),
+                    state: CandidateState::Verified {
+                        identity,
+                        listener: ListenerState::OwnedByTarget,
+                        health: HealthState::NotProbed,
+                    },
+                },
+                label,
+                capture: Some(capture),
+                process: None,
+            }
+        }
+
+        let inventory = mirrored_inventory();
+        let initial = discover_inventory_before_health_with(inventory.clone(), observe_exact);
+        let expected = match &initial.managed.state {
+            ManagedServerState::Degraded { server, .. } => server.fingerprint.clone(),
+            state => panic!("pre-health exact owner must be typed Degraded, got {state:?}"),
+        };
+        crate::autonomy_cmd::require_matching_pre_health_discovery(&initial.managed, &expected)
+            .unwrap();
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut health = ScriptedHealth {
+            results: VecDeque::from([true]),
+            ledger: ledger.clone(),
+        };
+        let ready = complete_lifecycle_health_with(initial, &mut health, |_| Ok(()));
+        assert!(matches!(ready.managed.state, ManagedServerState::Ready(_)));
+        assert_eq!(ledger.borrow().as_slice(), &[LifecycleEvent::Health(7101)]);
+        let ready_server = match &ready.managed.state {
+            ManagedServerState::Ready(server) => server,
+            _ => unreachable!(),
+        };
+        let facts = ProcessFacts {
+            identity: ready_server.identity.clone(),
+            listener: ListenerState::OwnedByTarget,
+        };
+        ledger.borrow_mut().clear();
+        let process = ScriptedProcess::new(
+            ready_server.runfile.pid,
+            "strict-generation",
+            ledger.clone(),
+        )
+        .with_inspection(Ok(facts.clone()))
+        .with_inspection(Ok(facts));
+        let runtime = ScriptedRuntime::new(Ok(process), ledger.clone());
+        bracket_registered_effect_with(&runtime, &ready_server.runfile, || {
+            ledger.borrow_mut().push(LifecycleEvent::ConsumerHttp);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            ledger.borrow().as_slice(),
+            &[
+                LifecycleEvent::Acquire(4101),
+                LifecycleEvent::Inspect("strict-generation", 7101),
+                LifecycleEvent::ConsumerHttp,
+                LifecycleEvent::Inspect("strict-generation", 7101),
+            ]
+        );
+
+        let mut changed_revision = inventory.clone();
+        let Some(RegistrationSlot::Captured(global)) = &mut changed_revision.global else {
+            unreachable!()
+        };
+        global.raw.push(b' ');
+
+        let mut missing_alias = inventory.clone();
+        let global_path = match missing_alias.global.take().unwrap() {
+            RegistrationSlot::Captured(global) => global.path,
+            _ => unreachable!(),
+        };
+        missing_alias.global = Some(RegistrationSlot::Absent {
+            scope: RegistrationScope::Global,
+            path: global_path,
+        });
+
+        let mut conflicting_peer = inventory;
+        let Some(RegistrationSlot::Captured(global)) = &mut conflicting_peer.global else {
+            unreachable!()
+        };
+        global.runfile.pid = 4102;
+        global.runfile.process_identity = Some(discovery_fixture_identity(4102));
+        global.raw = serde_json::to_vec(&global.runfile).unwrap();
+
+        for changed in [changed_revision, missing_alias, conflicting_peer] {
+            ledger.borrow_mut().clear();
+            let before_health = discover_inventory_before_health_with(changed, observe_exact);
+            assert!(
+                crate::autonomy_cmd::require_matching_pre_health_discovery(
+                    &before_health.managed,
+                    &expected,
+                )
+                .is_err()
+            );
+            assert!(
+                ledger.borrow().is_empty(),
+                "fingerprint or conflict rejection must precede HTTP health"
+            );
+        }
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum LifecycleEvent {
         Acquire(u32),
@@ -2313,6 +4490,7 @@ mod tests {
         RetainedWait(&'static str),
         Listener(u32, u16),
         Health(u16),
+        ConsumerHttp,
         ClockNow,
         Sleep,
         Publish,
@@ -2483,6 +4661,85 @@ mod tests {
                 .borrow_mut()
                 .pop_front()
                 .expect("scripted process acquisition")
+        }
+    }
+
+    impl ProcessRuntime for ScriptedRuntime {
+        type Process = ScriptedProcess;
+
+        fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
+            self.ledger.borrow_mut().push(LifecycleEvent::Acquire(pid));
+            self.acquisitions
+                .borrow_mut()
+                .pop_front()
+                .expect("scripted process acquisition")
+                .map_err(ProcessError::Operation)
+        }
+    }
+
+    #[test]
+    fn registered_consumer_effect_revalidates_retained_generation_on_every_outcome() {
+        let runfile = discovery_fixture_runfile(4101, "consumer-effect");
+        let before = ProcessFacts {
+            identity: runfile.process_identity.clone().unwrap(),
+            listener: ListenerState::OwnedByTarget,
+        };
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let process = ScriptedProcess::new(4101, "effect-error", ledger.clone())
+            .with_inspection(Ok(before.clone()))
+            .with_inspection(Ok(before.clone()));
+        let runtime = ScriptedRuntime::new(Ok(process), ledger.clone());
+        let error = bracket_registered_effect_with(&runtime, &runfile, || {
+            ledger.borrow_mut().push(LifecycleEvent::ConsumerHttp);
+            Err::<(), _>("scripted HTTP failure".to_string())
+        })
+        .unwrap_err();
+        assert_eq!(error, "scripted HTTP failure");
+        assert_eq!(
+            ledger.borrow().as_slice(),
+            &[
+                LifecycleEvent::Acquire(4101),
+                LifecycleEvent::Inspect("effect-error", 7101),
+                LifecycleEvent::ConsumerHttp,
+                LifecycleEvent::Inspect("effect-error", 7101),
+            ]
+        );
+
+        for (label, after, expected_error) in [
+            (
+                "identity-change",
+                ProcessFacts {
+                    identity: discovery_fixture_identity(4102),
+                    listener: ListenerState::OwnedByTarget,
+                },
+                "changed process identity",
+            ),
+            (
+                "listener-change",
+                ProcessFacts {
+                    identity: before.identity.clone(),
+                    listener: ListenerState::OwnedByTargetWildcard,
+                },
+                "wildcard/public listener",
+            ),
+        ] {
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(4101, label, ledger.clone())
+                .with_inspection(Ok(before.clone()))
+                .with_inspection(Ok(after));
+            let runtime = ScriptedRuntime::new(Ok(process), ledger.clone());
+            let error = bracket_registered_effect_with(&runtime, &runfile, || {
+                ledger.borrow_mut().push(LifecycleEvent::ConsumerHttp);
+                Ok(())
+            })
+            .unwrap_err();
+            assert!(error.contains(expected_error), "{label}: {error}");
+            assert_eq!(ledger.borrow()[2], LifecycleEvent::ConsumerHttp);
+            assert!(matches!(
+                ledger.borrow()[3],
+                LifecycleEvent::Inspect(_, 7101)
+            ));
         }
     }
 
@@ -4061,12 +6318,12 @@ mod tests {
         }));
         assert_eq!(observations.len(), 1);
         assert_eq!(
-            observations[0].candidate.label,
+            observations[0].label,
             registration_label(RegistrationScope::Origin, &blocked_path)
         );
         assert!(matches!(
             &observations[0].candidate.state,
-            CandidateState::Blocked { reason }
+            CandidateState::Unverifiable { reason, .. }
                 if reason.contains("promised by global registration")
                     && reason.contains(&source.path.display().to_string())
         ));
