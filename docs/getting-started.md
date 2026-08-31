@@ -131,9 +131,11 @@ uninspectable state fails closed; HTTP health alone never authorizes teardown.
 Stale-only records can be cleaned by `server down` without signalling a
 process. See [Registration and teardown
 safety](server-configuration.md#registration-and-teardown-safety) for legacy
-recovery. `server up --tailscale` is temporarily refused before side effects;
-existing `tailscale: true` records require targeted manual cleanup, never a
-node-wide Serve reset.
+recovery. `server up --tailscale` requires the supported local tailscaled API
+and journals an exact high-entropy Serve coordinate before mutation. Historical
+`tailscale: true` records without typed ownership still require targeted manual
+cleanup, never a node-wide Serve reset; see [Tailscale Serve
+exposure](server-configuration.md#tailscale-serve-exposure).
 
 If `status` finds a live historical schema-v1 record, it prints the explicit
 non-destructive recovery command `ferric server adopt --pid <PID>`. Run that

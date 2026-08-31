@@ -436,9 +436,11 @@ pub(crate) struct ServeStatusObservation {
     /// use `path_state`; readiness must remain fail-closed while shadowed.
     pub foreground_shadows: bool,
     /// An expected-host child or trailing-slash alias beneath the owned mount
-    /// wins Tailscale's longest-path lookup. Cleanup may remove Ferric's exact
-    /// parent while preserving this operator/hostile route, but must retain
-    /// journals and report the residual until it is resolved manually.
+    /// wins Tailscale's longest-path lookup. During cleanup, once Ferric's
+    /// exact mount is absent, this also records an ancestor handler that has
+    /// become effective. Cleanup may remove Ferric's exact handler while
+    /// preserving the operator/hostile route, but must retain journals and
+    /// report the residual until it is resolved manually.
     pub route_shadow: Option<String>,
     /// True only when the daemon's routing schema is the exact pinned version.
     /// A future-version cleanup may remove the known handler conservatively,
@@ -699,7 +701,7 @@ impl TailscaleServeAdapter {
             .map_err(|error| localapi_no_mutation("read cleanup status after config", error))?;
         let identity = require_identity_sandwich(before.raw_json(), after.raw_json(), false)?;
         let mut observation = if pinned {
-            project_localapi_status(config.raw_json(), fqdn, mount_path)?
+            project_localapi_status_for_pinned_cleanup(config.raw_json(), fqdn, mount_path)?
         } else {
             project_localapi_status_for_cleanup(config.raw_json(), fqdn, mount_path)?
         };
@@ -860,11 +862,19 @@ impl TailscaleServeEffects for TailscaleServeAdapter {
             prepare_localapi_off_preserving_scaffold(config.raw_json(), ownership)?
         };
         let Some(body) = body else {
-            let observation = project_localapi_status_for_cleanup(
-                config.raw_json(),
-                &ownership.fqdn,
-                &ownership.mount_path,
-            )?;
+            let observation = if pinned {
+                project_localapi_status_for_pinned_cleanup(
+                    config.raw_json(),
+                    &ownership.fqdn,
+                    &ownership.mount_path,
+                )?
+            } else {
+                project_localapi_status_for_cleanup(
+                    config.raw_json(),
+                    &ownership.fqdn,
+                    &ownership.mount_path,
+                )?
+            };
             if let Some(path) = observation.route_shadow {
                 return Err(TailscaleServeError::LocalApiNoMutation(format!(
                     "the exact Ferric Serve proxy is already absent, but Web handler {path} still overrides the journaled mount; ownership journals must remain"
@@ -907,11 +917,19 @@ impl TailscaleServeEffects for TailscaleServeAdapter {
             .map_err(|error| {
                 localapi_indeterminate("verify post-cleanup identity", error.to_string())
             })?;
-        let observation = project_localapi_status_for_cleanup(
-            removed.raw_json(),
-            &ownership.fqdn,
-            &ownership.mount_path,
-        )
+        let observation = if pinned {
+            project_localapi_status_for_pinned_cleanup(
+                removed.raw_json(),
+                &ownership.fqdn,
+                &ownership.mount_path,
+            )
+        } else {
+            project_localapi_status_for_cleanup(
+                removed.raw_json(),
+                &ownership.fqdn,
+                &ownership.mount_path,
+            )
+        }
         .map_err(|error| {
             localapi_indeterminate("project post-cleanup Serve config", error.to_string())
         })?;
@@ -1108,6 +1126,15 @@ pub(crate) fn project_localapi_status_for_cleanup(
     project_stored_coordinate(&config, fqdn, mount_path, true)
 }
 
+fn project_localapi_status_for_pinned_cleanup(
+    raw: &[u8],
+    fqdn: &str,
+    mount_path: &str,
+) -> Result<ServeStatusObservation, TailscaleServeError> {
+    let config = parse_localapi_serve_config(raw)?;
+    project_stored_coordinate(&config, fqdn, mount_path, true)
+}
+
 fn project_stored_coordinate(
     config: &Value,
     fqdn: &str,
@@ -1132,6 +1159,7 @@ fn project_stored_coordinate(
     let mut expected_web_host_present = false;
     let mut matches = Vec::new();
     let mut route_shadow = None;
+    let mut latent_cleanup_ancestor = None;
     if let Some(web_value) = root.get("Web") {
         let web = web_value.as_object().ok_or_else(|| {
             TailscaleServeError::InvalidStatus("Web must be an object".to_string())
@@ -1162,17 +1190,21 @@ fn project_stored_coordinate(
             for (candidate_path, handler) in handlers {
                 if candidate_path == mount_path {
                     matches.push((host.as_str(), handler));
-                } else if host == &expected_host
-                    && candidate_path
+                } else if host == &expected_host {
+                    let descendant_or_alias = candidate_path
                         .strip_prefix(mount_path)
-                        .is_some_and(|suffix| suffix.starts_with('/'))
-                {
-                    if preserve_descendants_for_cleanup {
-                        route_shadow.get_or_insert_with(|| candidate_path.clone());
-                    } else {
+                        .is_some_and(|suffix| suffix.starts_with('/'));
+                    if descendant_or_alias && !preserve_descendants_for_cleanup {
                         return Err(TailscaleServeError::InvalidStatus(format!(
                             "Web handler {candidate_path} is a descendant or trailing-slash alias of owned path {mount_path} and would override Ferric's advertised remote base"
                         )));
+                    }
+                    if descendant_or_alias {
+                        route_shadow.get_or_insert_with(|| candidate_path.clone());
+                    } else if preserve_descendants_for_cleanup
+                        && effective_ancestor_handler(candidate_path, mount_path)
+                    {
+                        latent_cleanup_ancestor.get_or_insert_with(|| candidate_path.clone());
                     }
                 }
             }
@@ -1194,6 +1226,9 @@ fn project_stored_coordinate(
             target: exact_proxy_target(handler, mount_path)?.to_string(),
         },
     };
+    if matches!(path_state, ServePathState::Absent) && route_shadow.is_none() {
+        route_shadow = latent_cleanup_ancestor;
+    }
     Ok(ServeStatusObservation {
         fqdn: fqdn.to_string(),
         https_port: HTTPS_PORT,
@@ -1213,6 +1248,37 @@ fn project_stored_coordinate(
         route_shadow,
         cleanup_semantics_pinned: true,
     })
+}
+
+/// Whether `candidate_path` is one of the exact ancestor keys Tailscale's
+/// pinned Serve matcher would try for a request below `mount_path`. The matcher
+/// cleans the request path, then walks `path.Dir`, checking both `parent/` and
+/// `parent` at every level (including `//` and `/` at the root). An ancestor is
+/// harmless while Ferric's more-specific exact handler exists, but becomes an
+/// effective route as soon as scoped cleanup removes that handler.
+fn effective_ancestor_handler(candidate_path: &str, mount_path: &str) -> bool {
+    let mut child = mount_path;
+    loop {
+        let Some(separator) = child.rfind('/') else {
+            return false;
+        };
+        let parent = if separator == 0 {
+            "/"
+        } else {
+            &child[..separator]
+        };
+        if candidate_path == parent
+            || (candidate_path.len() == parent.len() + 1
+                && candidate_path.starts_with(parent)
+                && candidate_path.ends_with('/'))
+        {
+            return true;
+        }
+        if parent == "/" {
+            return false;
+        }
+        child = parent;
+    }
 }
 
 fn compatible_https_only(root: &Map<String, Value>) -> bool {
@@ -1659,7 +1725,16 @@ fn prepare_localapi_off_inner(
     prune_pinned_scaffolding: bool,
 ) -> Result<Option<Vec<u8>>, TailscaleServeError> {
     ownership.validate()?;
-    let mut config = parse_localapi_serve_config_unvalidated(raw)?;
+    let mut config = if prune_pinned_scaffolding {
+        // This snapshot is fetched after the earlier cleanup observation. The
+        // pinned CAS must validate the fresh body again so a concurrent schema
+        // change cannot be accepted and reserialized under 1.102.2 semantics.
+        parse_localapi_serve_config(raw)?
+    } else {
+        // A future-version cleanup deliberately preserves unknown fields and
+        // separately refuses number-lexeme drift below.
+        parse_localapi_serve_config_unvalidated(raw)?
+    };
     match project_localapi_config_for_cleanup(&config, ownership)?.owned_state(ownership)? {
         OwnedServeState::Absent => return Ok(None),
         OwnedServeState::Exact => {}
@@ -2282,6 +2357,99 @@ mod tests {
         server.join().expect("server joined");
     }
 
+    #[test]
+    fn pinned_cleanup_observation_reports_ancestors_and_rejects_unknown_fields() {
+        for ancestor in ["/", "/_ferric"] {
+            let config = serde_json::to_vec(&serde_json::json!({
+                "TCP": {"443": {"HTTPS": true}},
+                "Web": {
+                    format!("{FQDN}:443"): {
+                        "Handlers": {ancestor: {"Text": "operator route"}}
+                    }
+                }
+            }))
+            .unwrap();
+            let observation = observe_pinned_cleanup_config(config).unwrap();
+            assert_eq!(observation.path_state, ServePathState::Absent);
+            assert_eq!(observation.route_shadow.as_deref(), Some(ancestor));
+            assert!(observation.cleanup_semantics_pinned);
+            assert_eq!(
+                observation
+                    .identity
+                    .as_ref()
+                    .expect("same-session identity")
+                    .stable_node_id,
+                "node-fixture"
+            );
+        }
+
+        let error = observe_pinned_cleanup_config(br#"{"FutureRoot":true}"#.to_vec())
+            .expect_err("pinned cleanup must retain strict schema validation");
+        assert!(matches!(
+            error,
+            TailscaleServeError::InvalidStatus(detail)
+                if detail.contains("unknown field FutureRoot")
+        ));
+    }
+
+    fn observe_pinned_cleanup_config(
+        config: Vec<u8>,
+    ) -> Result<ServeStatusObservation, TailscaleServeError> {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let address = listener.local_addr().expect("listener address");
+        let status = format!(
+            r#"{{"BackendState":"Running","CertDomains":["{FQDN}"],"Self":{{"DNSName":"{FQDN}.","ID":"node-fixture","NodeID":123,"CapMap":{{"https":[]}}}}}}"#
+        )
+        .into_bytes();
+        let etag = hex::encode(Sha256::digest(&config));
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("one LocalAPI connection");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("read timeout");
+            let mut reader = BufReader::new(stream);
+            for request_index in 0..3 {
+                let mut request = String::new();
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).expect("request header");
+                    assert!(!line.is_empty(), "unexpected request EOF");
+                    request.push_str(&line);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                let (expected, body, etag_header) = if request_index == 1 {
+                    (
+                        "GET /localapi/v0/serve-config HTTP/1.1\r\n",
+                        config.as_slice(),
+                        format!("Etag: {etag}\r\n"),
+                    )
+                } else {
+                    (
+                        "GET /localapi/v0/status?peers=false HTTP/1.1\r\n",
+                        status.as_slice(),
+                        String::new(),
+                    )
+                };
+                assert!(request.starts_with(expected), "request={request:?}");
+                write!(
+                    reader.get_mut(),
+                    "HTTP/1.1 200 OK\r\nTailscale-Cap: 142\r\nTailscale-Version: 1.102.2\r\nContent-Type: application/json\r\n{etag_header}Content-Length: {}\r\n\r\n",
+                    body.len()
+                )
+                .expect("response headers");
+                reader.get_mut().write_all(body).expect("response body");
+            }
+        });
+
+        let client = TailscaleLocalApiClient::with_test_tcp(address).expect("test LocalAPI");
+        let adapter = TailscaleServeAdapter::with_client(client);
+        let result = adapter.observe_coordinate_for_cleanup(FQDN, MOUNT);
+        server.join().expect("server joined");
+        result
+    }
+
     struct FixedEntropy(Result<[u8; TOKEN_BYTES], &'static str>);
 
     impl EntropySource for FixedEntropy {
@@ -2528,6 +2696,67 @@ mod tests {
     }
 
     #[test]
+    fn localapi_cleanup_detects_and_preserves_effective_ancestor_handlers() {
+        for ancestor in ["/", "//", "/_ferric", "/_ferric/"] {
+            let ownership = ownership_for_config(b"{}");
+            let mut active = json(&prepare_localapi_apply(b"{}", &ownership).unwrap());
+            active["Web"][format!("{FQDN}:443")]["Handlers"][ancestor] =
+                serde_json::json!({"Text": format!("preserve {ancestor}")});
+            let active = serde_json::to_vec(&active).unwrap();
+
+            let projected = project_localapi_status(&active, FQDN, MOUNT).unwrap();
+            assert_eq!(
+                projected.path_state,
+                ServePathState::Proxy {
+                    target: ownership.proxy_target.clone()
+                }
+            );
+            assert_eq!(
+                projected.route_shadow, None,
+                "{ancestor} cannot override the more-specific exact handler"
+            );
+
+            let cleanup_projection =
+                project_localapi_status_for_cleanup(&active, FQDN, MOUNT).unwrap();
+            assert_eq!(
+                cleanup_projection.route_shadow, None,
+                "{ancestor} remains latent until the exact handler is removed"
+            );
+
+            let removed = prepare_localapi_off(&active, &ownership)
+                .unwrap()
+                .expect("the exact Ferric handler still requires removal");
+            let removed = json(&removed);
+            let handlers = removed["Web"][format!("{FQDN}:443")]["Handlers"]
+                .as_object()
+                .unwrap();
+            assert_eq!(handlers.len(), 1, "only the exact handler may be removed");
+            assert_eq!(
+                handlers.get(ancestor),
+                Some(&serde_json::json!({"Text": format!("preserve {ancestor}")}))
+            );
+            assert_eq!(removed["TCP"]["443"], serde_json::json!({"HTTPS": true}));
+
+            let removed = serde_json::to_vec(&removed).unwrap();
+            let residual = project_localapi_status_for_cleanup(&removed, FQDN, MOUNT).unwrap();
+            assert_eq!(residual.path_state, ServePathState::Absent);
+            assert_eq!(residual.route_shadow.as_deref(), Some(ancestor));
+
+            let mut resolved = json(&removed);
+            resolved["Web"][format!("{FQDN}:443")]["Handlers"]
+                .as_object_mut()
+                .unwrap()
+                .remove(ancestor);
+            let resolved = serde_json::to_vec(&resolved).unwrap();
+            let resolved_projection =
+                project_localapi_status_for_cleanup(&resolved, FQDN, MOUNT).unwrap();
+            assert_eq!(resolved_projection.path_state, ServePathState::Absent);
+            assert_eq!(resolved_projection.route_shadow, None);
+            assert_eq!(prepare_localapi_off(&resolved, &ownership).unwrap(), None);
+        }
+    }
+
+    #[test]
     fn localapi_off_preserves_preexisting_and_concurrent_scaffolding() {
         let initial = format!(
             r#"{{"TCP":{{"443":{{"HTTPS":true}}}},"Web":{{"{FQDN}:443":{{"Handlers":{{}}}}}}}}"#
@@ -2544,8 +2773,8 @@ mod tests {
         let fresh = ownership_for_config(b"{}");
         let mut concurrent = json(&prepare_localapi_apply(b"{}", &fresh).unwrap());
         concurrent["TCP"]["443"] = serde_json::json!({"HTTPS": true, "HTTP": true});
-        concurrent["Web"][format!("{FQDN}:443")]["FutureHostField"] =
-            serde_json::json!({"kept": true});
+        concurrent["Web"][format!("{FQDN}:443")]["Handlers"]["/operator"] =
+            serde_json::json!({"Text": "kept"});
         concurrent["Foreground"] = serde_json::json!({
             "session": {
                 "Web": {
@@ -2556,23 +2785,43 @@ mod tests {
             }
         });
         concurrent["AllowFunnel"] = serde_json::json!({"other.tailnet-example.ts.net:443": true});
-        concurrent["FutureRoot"] = serde_json::json!({"kept": true});
         let concurrent_raw = serde_json::to_vec(&concurrent).unwrap();
         let removed = json(
             &prepare_localapi_off(&concurrent_raw, &fresh)
                 .unwrap()
                 .expect("exact path is present"),
         );
-        assert!(
-            removed["Web"][format!("{FQDN}:443")]["Handlers"]
-                .as_object()
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            removed["Web"][format!("{FQDN}:443")]["Handlers"],
+            serde_json::json!({"/operator": {"Text": "kept"}})
         );
         assert_eq!(removed["TCP"]["443"], concurrent["TCP"]["443"]);
-        for field in ["Foreground", "AllowFunnel", "FutureRoot"] {
+        for field in ["Foreground", "AllowFunnel"] {
             assert_eq!(removed[field], concurrent[field], "field={field}");
         }
+    }
+
+    #[test]
+    fn pinned_localapi_off_revalidates_the_fresh_cas_snapshot() {
+        let ownership = ownership_for_config(b"{}");
+        let mut active = json(&prepare_localapi_apply(b"{}", &ownership).unwrap());
+        active["FutureRoot"] = serde_json::json!({"must_not_be_reserialized": true});
+
+        let error = prepare_localapi_off(&serde_json::to_vec(&active).unwrap(), &ownership)
+            .expect_err("pinned cleanup must reject a newly unknown schema field");
+        assert!(matches!(
+            error,
+            TailscaleServeError::InvalidStatus(detail)
+                if detail.contains("unknown field FutureRoot")
+        ));
+
+        let body = prepare_localapi_off_preserving_scaffold(
+            &serde_json::to_vec(&active).unwrap(),
+            &ownership,
+        )
+        .expect("future-version cleanup preserves forward-compatible fields")
+        .expect("the exact handler is present");
+        assert_eq!(json(&body)["FutureRoot"], active["FutureRoot"]);
     }
 
     #[test]

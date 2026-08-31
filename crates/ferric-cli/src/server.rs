@@ -3649,8 +3649,8 @@ where
     S: TailscaleServeEffects,
     G: FnOnce() -> Result<String, String>,
 {
-    // Draw entropy before even a read-only Tailscale command so an RNG failure
-    // is a literal zero-effect precondition failure.
+    // Draw entropy before even a read-only Tailscale LocalAPI operation so an
+    // RNG failure is a literal zero-effect precondition failure.
     let token = generate()?;
     let identity = serve.self_identity().map_err(|error| error.to_string())?;
     let coordinate =
@@ -4840,10 +4840,17 @@ fn status_report_with_tailscale<S: TailscaleServeEffects>(
         Some(tailscale) => tailscale.ownership.clone(),
         None => return report,
     };
-    let status = match serve.observe_coordinate(&ownership.fqdn, &ownership.mount_path) {
+    let status = match serve.observe_coordinate_for_cleanup(&ownership.fqdn, &ownership.mount_path)
+    {
         Err(error) => TailscaleProxyStatus::Uninspectable {
             reason: error.to_string(),
         },
+        Ok(observation) if !observation.cleanup_semantics_pinned => {
+            TailscaleProxyStatus::Uninspectable {
+                reason: "the Tailscale daemon has newer routing semantics; a cleanup-only observation cannot prove the owned endpoint is active"
+                    .to_string(),
+            }
+        }
         Ok(observation) => match observation.require_publication_identity(&ownership) {
             Err(error) => TailscaleProxyStatus::Uninspectable {
                 reason: error.to_string(),
@@ -4856,7 +4863,25 @@ fn status_report_with_tailscale<S: TailscaleServeEffects>(
                         TailscaleProxyStatus::Active
                     }
                 }
-                Ok(OwnedServeState::Absent) => TailscaleProxyStatus::Pending,
+                Ok(OwnedServeState::Absent) => {
+                    if let Some(path) = &observation.route_shadow {
+                        TailscaleProxyStatus::Uninspectable {
+                            reason: format!(
+                                "Web handler {path} overrides owned path {}",
+                                observation.mount_path
+                            ),
+                        }
+                    } else if observation.foreground_shadows {
+                        TailscaleProxyStatus::Uninspectable {
+                            reason: format!(
+                                "foreground Serve state shadows {}:{}",
+                                observation.fqdn, observation.https_port
+                            ),
+                        }
+                    } else {
+                        TailscaleProxyStatus::Pending
+                    }
+                }
                 Ok(OwnedServeState::Replaced { observed_target }) => {
                     TailscaleProxyStatus::Replaced { observed_target }
                 }
@@ -6413,7 +6438,7 @@ fn execute_doctor_probes<E: DoctorProbeEffects>(
                     "[BLOCKED] Tailscale canonical self identity is unavailable: {error}"
                 ));
                 lines.push(
-                    "[next] verify Tailscale is installed, current (1.102.1 or newer), logged in, and its daemon is reachable; retry `ferric server doctor --tailscale`"
+                    "[next] verify the local Tailscale daemon reports capability 142 and version core 1.102.2, is logged in, and is reachable; retry `ferric server doctor --tailscale`"
                         .to_string(),
                 );
                 ok = false;
@@ -8051,6 +8076,92 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn status_reports_absent_ancestor_route_as_uninspectable() {
+        for ancestor in ["/", "/_ferric"] {
+            let (discovery, ownership) = discovery_fixture_ready_tailscale();
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let mut observation = tailscale_observation(&ownership, ServePathState::Absent, 'b');
+            observation.route_shadow = Some(ancestor.to_string());
+            let serve = ScriptedTailscaleServe::new([Ok(observation)], Rc::clone(&ledger));
+
+            let report = status_report_with_tailscale(&discovery, &serve);
+            let rendered = render_status(&report);
+            assert!(!report.success, "{ancestor}");
+            assert!(matches!(
+                report.tailscale.as_ref().map(|tailscale| &tailscale.status),
+                Some(TailscaleProxyStatus::Uninspectable { reason })
+                    if reason.contains(&format!("Web handler {ancestor} overrides owned path"))
+            ));
+            assert!(matches!(
+                &report.next_action,
+                StatusNextAction::RecoverOwnedTailscale {
+                    remote_base_url,
+                    mount_path,
+                    reason,
+                    subject: TailscaleRecoverySubject::ManagedProcess,
+                    apply_confirmed: true,
+                } if remote_base_url == &ownership.remote_base_url
+                    && mount_path == &ownership.mount_path
+                    && reason.contains(&format!("Web handler {ancestor} overrides owned path"))
+            ));
+            assert!(rendered.stdout.iter().any(|line| {
+                line.starts_with("[tailscale] uninspectable")
+                    && line.contains(ancestor)
+                    && line.contains(&ownership.mount_path)
+            }));
+            assert_eq!(*ledger.borrow(), vec![LifecycleEvent::TailscaleObserve]);
+        }
+    }
+
+    #[test]
+    fn status_future_version_exact_proxy_is_uninspectable() {
+        let (discovery, ownership) = discovery_fixture_ready_tailscale();
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut observation = tailscale_observation(
+            &ownership,
+            ServePathState::Proxy {
+                target: ownership.proxy_target.clone(),
+            },
+            'b',
+        );
+        observation.cleanup_semantics_pinned = false;
+        let serve = ScriptedTailscaleServe::new([Ok(observation)], Rc::clone(&ledger));
+
+        let report = status_report_with_tailscale(&discovery, &serve);
+        let rendered = render_status(&report);
+        assert!(!report.success);
+        assert!(matches!(
+            report.tailscale.as_ref().map(|tailscale| &tailscale.status),
+            Some(TailscaleProxyStatus::Uninspectable { reason })
+                if reason.contains("newer routing semantics")
+                    && reason.contains("cannot prove the owned endpoint is active")
+        ));
+        assert!(matches!(
+            &report.next_action,
+            StatusNextAction::RecoverOwnedTailscale {
+                remote_base_url,
+                mount_path,
+                reason,
+                subject: TailscaleRecoverySubject::ManagedProcess,
+                apply_confirmed: true,
+            } if remote_base_url == &ownership.remote_base_url
+                && mount_path == &ownership.mount_path
+                && reason.contains("newer routing semantics")
+        ));
+        assert!(rendered.stdout.iter().any(|line| {
+            line.starts_with("[tailscale] uninspectable")
+                && line.contains("newer routing semantics")
+        }));
+        assert!(
+            !rendered
+                .stdout
+                .iter()
+                .any(|line| line.starts_with("[tailscale] active"))
+        );
+        assert_eq!(*ledger.borrow(), vec![LifecycleEvent::TailscaleObserve]);
+    }
+
+    #[test]
     fn status_recovery_guidance_respects_native_authority() {
         for case in ["pending", "replaced", "uninspectable"] {
             let (discovery, ownership) = discovery_fixture_stale_tailscale();
@@ -8467,20 +8578,20 @@ pub(crate) mod tests {
 
         for (case, identity, status, expected_events, expected_detail) in [
             (
-                "missing-cli",
-                Err("could not launch the Tailscale CLI for identity probe".to_string()),
+                "missing-localapi",
+                Err("could not connect to Tailscale LocalAPI for identity probe".to_string()),
                 Ok(()),
                 vec![
                     DoctorEvent::Binary,
                     DoctorEvent::File,
                     DoctorEvent::TailscaleIdentity,
                 ],
-                "could not launch the Tailscale CLI",
+                "could not connect to Tailscale LocalAPI",
             ),
             (
-                "missing-or-old-cli",
+                "incompatible-tailscale",
                 Err(
-                    "missing canonical Node.Name; upgrade to Tailscale 1.102.1 or newer"
+                    "unsupported Tailscale daemon; normal operation requires capability 142 and version core 1.102.2"
                         .to_string(),
                 ),
                 Ok(()),
@@ -8489,7 +8600,7 @@ pub(crate) mod tests {
                     DoctorEvent::File,
                     DoctorEvent::TailscaleIdentity,
                 ],
-                "upgrade to Tailscale 1.102.1 or newer",
+                "requires capability 142 and version core 1.102.2",
             ),
             (
                 "identity-failure",
@@ -8529,26 +8640,26 @@ pub(crate) mod tests {
             (
                 "bounded-timeout",
                 Ok("example-host.tailnet-example.ts.net".to_string()),
-                Err("Tailscale CLI exceeded its bounded execution time".to_string()),
+                Err("Tailscale LocalAPI request exceeded its bounded deadline".to_string()),
                 vec![
                     DoctorEvent::Binary,
                     DoctorEvent::File,
                     DoctorEvent::TailscaleIdentity,
                     DoctorEvent::TailscaleStatus,
                 ],
-                "bounded execution time",
+                "bounded deadline",
             ),
             (
                 "bounded-output",
                 Ok("example-host.tailnet-example.ts.net".to_string()),
-                Err("Tailscale CLI exceeded its bounded output allowance".to_string()),
+                Err("Tailscale LocalAPI response exceeded its bounded body allowance".to_string()),
                 vec![
                     DoctorEvent::Binary,
                     DoctorEvent::File,
                     DoctorEvent::TailscaleIdentity,
                     DoctorEvent::TailscaleStatus,
                 ],
-                "bounded output allowance",
+                "bounded body allowance",
             ),
         ] {
             let mut effects = RecordingDoctorEffects {
@@ -10470,13 +10581,13 @@ pub(crate) mod tests {
                 "route-shadow-before" => {
                     let mut observation =
                         tailscale_observation(&ownership, ServePathState::Absent, 'c');
-                    observation.route_shadow = Some(format!("{}/v1", ownership.mount_path));
+                    observation.route_shadow = Some("/".to_string());
                     (vec![Ok(observation)], None)
                 }
                 "route-shadow-after" => {
                     let mut observation =
                         tailscale_observation(&ownership, ServePathState::Absent, 'c');
-                    observation.route_shadow = Some(format!("{}/v1", ownership.mount_path));
+                    observation.route_shadow = Some("/_ferric".to_string());
                     (vec![exact(), Ok(observation)], None)
                 }
                 "version-drift-before" => {
@@ -10553,6 +10664,18 @@ pub(crate) mod tests {
                 diagnostics.contains(&ownership.remote_base_url),
                 "{case}: {diagnostics}"
             );
+            if case == "route-shadow-before" {
+                assert!(
+                    diagnostics.contains("effective route / still shadows"),
+                    "{case}: {diagnostics}"
+                );
+            }
+            if case == "route-shadow-after" {
+                assert!(
+                    diagnostics.contains("effective route /_ferric still shadows"),
+                    "{case}: {diagnostics}"
+                );
+            }
             assert!(diagnostics.contains("retry `ferric server down`"));
             let events = ledger.borrow();
             assert!(
@@ -14740,17 +14863,17 @@ pub(crate) mod tests {
             report.diagnostics
         );
 
-        // If scoped cleanup removes Ferric's exact parent but a descendant
-        // still wins the advertised URL, launch compensation must hold both
-        // journals. A later `down` sees the same absent+shadow state and must
-        // remain a retryable/manual-recovery failure rather than deleting the
-        // evidence.
+        // If scoped cleanup removes Ferric's exact handler but a pre-existing
+        // ancestor then wins the advertised URL, launch compensation must hold
+        // both journals. A later `down` sees the same absent+shadow state and
+        // must remain a retryable/manual-recovery failure rather than deleting
+        // the evidence.
         let pid = 4528;
         let port = 9528;
         let ownership = tailscale_ownership(port);
         let ledger = Rc::new(RefCell::new(Vec::new()));
         let mut shadowed_absent = tailscale_observation(&ownership, ServePathState::Absent, 'e');
-        shadowed_absent.route_shadow = Some(format!("{}/v1", ownership.mount_path));
+        shadowed_absent.route_shadow = Some("/".to_string());
         let serve = ScriptedTailscaleServe::new(
             [
                 Ok(tailscale_observation(
