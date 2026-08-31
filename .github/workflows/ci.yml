@@ -104,9 +104,14 @@ jobs:
             --kill-child=SIGKILL \
             /bin/sh -ceu '
               ip link set lo up
+              # Keep an unprivileged shell as namespace PID 1 so it reaps
+              # adopted fixture children between serialized tests. Never exec
+              # the Rust harness as PID 1: exited managed children would remain
+              # zombies and poison later /proc listener-owner queries.
               exec setpriv --reuid="$1" --regid="$2" --clear-groups \
                 --no-new-privs --inh-caps=-all --ambient-caps=-all \
-                --bounding-set=-all "$3" --test-threads=1
+                --bounding-set=-all /bin/sh -ceu \
+                "test \"\$\$\" -eq 1; status=0; \"\$1\" --test-threads=1 || status=\$?; exit \"\$status\"" _ "$3"
             ' _ "$runner_uid" "$runner_gid" "$test_bin"
 
   # Portability gate: Ferric must keep type-checking for Raspberry Pi /

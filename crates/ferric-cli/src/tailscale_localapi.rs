@@ -54,7 +54,7 @@ const DEFAULT_UNIX_SOCKET: &str = "/var/run/tailscale/tailscaled.sock";
 /// `ferric-lifecycle-test` binary. The ordinary `ferric` binary ignores it,
 /// including in `--all-features` builds. The value must be a numeric loopback
 /// `SocketAddr` with a nonzero port.
-#[cfg(any(test, feature = "lifecycle-fixture"))]
+#[cfg(feature = "lifecycle-fixture")]
 pub const TEST_TCP_ENDPOINT_ENV: &str = "FERRIC_TAILSCALE_LOCALAPI_TEST_TCP";
 
 /// Errors intentionally omit LocalAPI response bodies because status and Serve
@@ -181,7 +181,7 @@ impl From<serde_json::Error> for LocalApiError {
 
 #[derive(Debug, Clone)]
 enum Endpoint {
-    #[cfg(any(test, feature = "lifecycle-fixture"))]
+    #[cfg(feature = "lifecycle-fixture")]
     Invalid(String),
     #[cfg(any(target_os = "macos", not(any(unix, windows))))]
     Unsupported,
@@ -322,7 +322,7 @@ impl TailscaleLocalApiClient {
     }
 }
 
-#[cfg(any(test, feature = "lifecycle-fixture"))]
+#[cfg(feature = "lifecycle-fixture")]
 fn parse_test_tcp_endpoint(raw: &str) -> Result<SocketAddr, String> {
     let address = raw
         .parse::<SocketAddr>()
@@ -1323,7 +1323,7 @@ enum TransportStream {
 impl TransportStream {
     fn connect(endpoint: &Endpoint, deadline: Instant) -> Result<Self, LocalApiError> {
         match endpoint {
-            #[cfg(any(test, feature = "lifecycle-fixture"))]
+            #[cfg(feature = "lifecycle-fixture")]
             Endpoint::Invalid(detail) => Err(LocalApiError::InvalidEndpoint(detail.clone())),
             #[cfg(all(unix, not(target_os = "macos")))]
             Endpoint::Unix(path) => Ok(Self::Unix(connect_unix(path, deadline)?)),
