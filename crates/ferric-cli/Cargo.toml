@@ -1,6 +1,7 @@
 [package]
 name = "ferric-cli"
 description = "The ferric binary"
+default-run = "ferric"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
