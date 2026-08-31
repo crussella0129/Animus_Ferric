@@ -262,7 +262,6 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Sprint 118 — ownership-safe Tailscale Serve lifecycle
 
-- [ ] T-11802 (sprint 118) [intent: INT-0008]: Compose write-ahead mirrored publication, exact endpoint apply/verification, and independent proxy/process failure compensation. — touches: `crates/ferric-cli/src/server.rs`, `crates/ferric-cli/src/server_registration.rs`
 - [ ] T-11803 (sprint 118) [intent: INT-0008]: Make status truthful and down proxy-first, exact-coordinate scoped, evidence-preserving, and retryable. — touches: `crates/ferric-cli/src/server.rs`, `crates/ferric-cli/src/server_resolution.rs`, `crates/ferric-cli/src/tailscale_serve.rs`
 - [ ] T-11804 (sprint 118) [intent: INT-0008]: Restore bounded read-only Tailscale doctor probes and document the compact endpoint/recovery operator surface. — touches: `crates/ferric-cli/src/server.rs`, `README.md`, `docs/commands.md`, `docs/server-configuration.md`
 - [ ] T-11805 (sprint 118) [intent: INT-0008]: Prove lifecycle clauses with deterministic fault seams and a stateful model-free fake Tailscale executable. — touches: `crates/ferric-cli/src/bin/ferric_lifecycle_fixture.rs`, `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, Sprint 118 test evidence

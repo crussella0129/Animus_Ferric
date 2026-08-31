@@ -1713,3 +1713,24 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   cross-workspace typed-resolution matrices passed; Ferric CLI all-target,
   all-feature Clippy passed with warnings denied; formatting passed.
 - **Commit:** `929266bc218b46a51e217b0107e74dd9a6e9df75`
+
+## T-11802 (sprint 118)
+
+- **Description:** Restored positive `server up --tailscale` through an
+  entropy-first coordinate, read-only self/status preparation, exact absent-path
+  collision check, ownership-bearing mirrored write-ahead journal, immediate
+  journal readback, endpoint-scoped apply, exact target verification, and final
+  child/listener/journal revalidation. Every ambiguous post-apply failure now
+  compares and removes only the unchanged token path first, independently
+  stops/reaps the exact retained child, and removes journals only when both
+  resources are proved resolved.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T01:19:38-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs` and the Book work
+  ledgers.
+- **Verification:** the four named launch ordering/drift/pre-mutation/failure
+  matrices passed, including apply-failed-but-landed, replacement-held, and
+  off-failed-but-absence-proved cases; all 67 server tests passed; Ferric CLI
+  all-target, all-feature Clippy passed with warnings denied; formatting
+  passed.
+- **Commit:** PENDING
