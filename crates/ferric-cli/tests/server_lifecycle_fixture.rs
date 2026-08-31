@@ -25,20 +25,20 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::{
-    Mutex, MutexGuard, OnceLock,
-    mpsc::{self, Sender},
+    Arc, Mutex, MutexGuard, OnceLock,
+    mpsc::{self, Receiver, Sender},
 };
 use std::thread;
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
+
 const SENTINEL_NAME: &str = "unrelated-sentinel.txt";
 const BIND_DIAGNOSTIC_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_BIND_DIAGNOSTIC";
 const READY_MARKER_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_READY_MARKER";
-const TAILSCALE_STATE_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_TAILSCALE_STATE";
-const TAILSCALE_LOG_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_TAILSCALE_LOG";
-const TAILSCALE_LOCAL_JOURNAL_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_TAILSCALE_LOCAL_JOURNAL";
-const TAILSCALE_GLOBAL_JOURNAL_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_TAILSCALE_GLOBAL_JOURNAL";
+const TAILSCALE_LOCALAPI_TEST_TCP_ENV: &str = "FERRIC_TAILSCALE_LOCALAPI_TEST_TCP";
 const TAILSCALE_FQDN: &str = "example-host.tailnet-example.ts.net";
+const TAILSCALE_STABLE_NODE_ID: &str = "node-fixture";
 const UNRELATED_SERVE_PATH: &str = "/unrelated-kept";
 const ADDRESS_IN_USE_DIAGNOSTIC: &[u8] = b"ferric-lifecycle-fixture:address-in-use:v1\n";
 const READY_MARKER: &[u8] = b"ferric-lifecycle-fixture:ready:v1\n";
@@ -77,6 +77,10 @@ fn canonical_test_start_token(coordinate: u64) -> String {
 }
 
 fn ferric_executable() -> &'static str {
+    env!("CARGO_BIN_EXE_ferric-lifecycle-test")
+}
+
+fn production_ferric_executable() -> &'static str {
     env!("CARGO_BIN_EXE_ferric")
 }
 
@@ -89,14 +93,6 @@ fn engine_filename() -> &'static str {
         "llama-server.exe"
     } else {
         "llama-server"
-    }
-}
-
-fn tailscale_filename() -> &'static str {
-    if cfg!(windows) {
-        "tailscale.exe"
-    } else {
-        "tailscale"
     }
 }
 
@@ -134,25 +130,28 @@ fn isolated_ferric(workspace: &Path, appdata: &Path, bin_dir: &Path) -> Command 
     command
 }
 
-fn isolated_tailscale_ferric(
+fn isolated_localapi_ferric(
     workspace: &Path,
     appdata: &Path,
     bin_dir: &Path,
-    state: &Path,
-    log: &Path,
+    localapi_address: std::net::SocketAddr,
 ) -> Command {
     let mut command = isolated_ferric(workspace, appdata, bin_dir);
+    command.env(
+        TAILSCALE_LOCALAPI_TEST_TCP_ENV,
+        localapi_address.to_string(),
+    );
     command
-        .env(TAILSCALE_STATE_ENV, state)
-        .env(TAILSCALE_LOG_ENV, log)
-        .env(
-            TAILSCALE_LOCAL_JOURNAL_ENV,
-            workspace.join(".ferric/server.json"),
-        )
-        .env(
-            TAILSCALE_GLOBAL_JOURNAL_ENV,
-            appdata.join("ferric/server.json"),
-        );
+}
+
+fn isolated_production_ferric(workspace: &Path, appdata: &Path, bin_dir: &Path) -> Command {
+    let mut command = Command::new(production_ferric_executable());
+    command
+        .current_dir(workspace)
+        .env("APPDATA", appdata)
+        .env("XDG_CONFIG_HOME", appdata.join("unused-xdg"))
+        .env("HOME", appdata.join("unused-home"))
+        .env("PATH", bin_dir);
     command
 }
 
@@ -451,26 +450,391 @@ fn initial_tailscale_state() -> serde_json::Value {
                 }
             }
         },
-        "FutureState": {"preserved": true}
+        "Services": {
+            "svc:demo": {
+                "TCP": {"9000": {"TCPForward": "127.0.0.1:9"}},
+                "Tun": false
+            }
+        }
     })
 }
 
-fn write_tailscale_state(path: &Path, state: &serde_json::Value) {
-    let mut bytes = serde_json::to_vec_pretty(state).unwrap();
-    bytes.push(b'\n');
-    fs::write(path, bytes).unwrap();
+fn tailscale_status() -> serde_json::Value {
+    serde_json::json!({
+        "BackendState": "Running",
+        "CertDomains": [TAILSCALE_FQDN],
+        "Self": {
+            "DNSName": format!("{TAILSCALE_FQDN}."),
+            "ID": TAILSCALE_STABLE_NODE_ID,
+            "NodeID": "node-id-fixture",
+            "CapMap": {"https": null}
+        }
+    })
 }
 
-fn read_tailscale_state(path: &Path) -> serde_json::Value {
-    serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+#[derive(Debug, Clone)]
+struct LocalApiRequestLog {
+    connection: u64,
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    if_match: Option<String>,
+    body: Vec<u8>,
+    journal_on_post: Option<JournalPostLog>,
 }
 
-fn read_tailscale_command_log(path: &Path) -> Vec<serde_json::Value> {
-    fs::read_to_string(path)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect()
+#[derive(Debug, Clone)]
+struct JournalPostLog {
+    mirrors_equal: bool,
+    schema_version: Option<u64>,
+    tailscale: Option<bool>,
+    ownership_version: Option<u64>,
+    stable_node_id: Option<String>,
+    fqdn: Option<String>,
+    https_port: Option<u64>,
+    mount_path: Option<String>,
+    proxy_target: Option<String>,
+    remote_base_url: Option<String>,
+    before_status_sha256: Option<String>,
+    tcp_map_preexisting: Option<bool>,
+    tcp_https_preexisting: Option<bool>,
+    web_map_preexisting: Option<bool>,
+    web_host_preexisting: Option<bool>,
+    apply_confirmed: Option<bool>,
+    target_healthy: bool,
+}
+
+struct FakeLocalApiState {
+    serve_config: serde_json::Value,
+    requests: Vec<LocalApiRequestLog>,
+    local_journal: PathBuf,
+    global_journal: PathBuf,
+}
+
+struct FakeLocalApi {
+    address: std::net::SocketAddr,
+    state: Arc<Mutex<FakeLocalApiState>>,
+    shutdown: Sender<()>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl FakeLocalApi {
+    fn start(
+        serve_config: serde_json::Value,
+        local_journal: PathBuf,
+        global_journal: PathBuf,
+    ) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind fake LocalAPI");
+        let address = listener.local_addr().expect("fake LocalAPI address");
+        let state = Arc::new(Mutex::new(FakeLocalApiState {
+            serve_config,
+            requests: Vec::new(),
+            local_journal,
+            global_journal,
+        }));
+        let worker_state = Arc::clone(&state);
+        let (shutdown, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            run_fake_localapi(listener, worker_state, receiver);
+        });
+        Self {
+            address,
+            state,
+            shutdown,
+            worker: Some(worker),
+        }
+    }
+
+    fn address(&self) -> std::net::SocketAddr {
+        self.address
+    }
+
+    fn serve_config(&self) -> serde_json::Value {
+        self.state.lock().unwrap().serve_config.clone()
+    }
+
+    fn requests(&self) -> Vec<LocalApiRequestLog> {
+        self.state.lock().unwrap().requests.clone()
+    }
+
+    fn stop(mut self) {
+        self.stop_inner();
+    }
+
+    fn stop_inner(&mut self) {
+        let _ = self.shutdown.send(());
+        let _ = TcpStream::connect(self.address);
+        if let Some(worker) = self.worker.take() {
+            worker.join().expect("fake LocalAPI worker joined");
+        }
+    }
+}
+
+impl Drop for FakeLocalApi {
+    fn drop(&mut self) {
+        self.stop_inner();
+    }
+}
+
+fn run_fake_localapi(
+    listener: TcpListener,
+    state: Arc<Mutex<FakeLocalApiState>>,
+    shutdown: Receiver<()>,
+) {
+    let mut connection = 0_u64;
+    loop {
+        let (mut stream, _) = listener.accept().expect("accept fake LocalAPI connection");
+        if shutdown.try_recv().is_ok() {
+            break;
+        }
+        connection += 1;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("set fake LocalAPI read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(10)))
+            .expect("set fake LocalAPI write timeout");
+        while let Some(request) = read_localapi_request(&mut stream)
+            .unwrap_or_else(|error| panic!("read fake LocalAPI request: {error}"))
+        {
+            serve_localapi_request(&mut stream, connection, request, &state);
+        }
+    }
+}
+
+struct LocalApiRequest {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    if_match: Option<String>,
+    body: Vec<u8>,
+}
+
+fn read_localapi_request(stream: &mut TcpStream) -> std::io::Result<Option<LocalApiRequest>> {
+    const HEADER_LIMIT: usize = 64 * 1024;
+    const BODY_LIMIT: usize = 1024 * 1024;
+    let mut head = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match stream.read(&mut byte) {
+            Ok(0) if head.is_empty() => return Ok(None),
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "request headers ended early",
+                ));
+            }
+            Ok(_) => {
+                head.push(byte[0]);
+                if head.len() > HEADER_LIMIT {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "request headers exceed fixture limit",
+                    ));
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) && head.is_empty() =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let text = std::str::from_utf8(&head)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "non-UTF-8 headers"))?;
+    let mut lines = text[..text.len() - 4].split("\r\n");
+    let mut request_line = lines.next().unwrap_or_default().split_whitespace();
+    let method = request_line.next().unwrap_or_default().to_string();
+    let path = request_line.next().unwrap_or_default().to_string();
+    if request_line.next() != Some("HTTP/1.1") || request_line.next().is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid HTTP/1.1 request line",
+        ));
+    }
+    let mut content_length = None;
+    let mut if_match = None;
+    let mut headers = Vec::new();
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "malformed request header")
+        })?;
+        let value = value.trim();
+        headers.push((name.to_string(), value.to_string()));
+        if name.eq_ignore_ascii_case("content-length") {
+            if content_length.is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "duplicate Content-Length",
+                ));
+            }
+            content_length = Some(value.parse::<usize>().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Content-Length")
+            })?);
+        } else if name.eq_ignore_ascii_case("if-match")
+            && if_match.replace(value.to_string()).is_some()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "duplicate If-Match",
+            ));
+        }
+    }
+    let content_length = content_length.unwrap_or(0);
+    if content_length > BODY_LIMIT {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "request body exceeds fixture limit",
+        ));
+    }
+    let mut body = vec![0_u8; content_length];
+    stream.read_exact(&mut body)?;
+    Ok(Some(LocalApiRequest {
+        method,
+        path,
+        headers,
+        if_match,
+        body,
+    }))
+}
+
+fn journal_post_log(local_journal: &Path, global_journal: &Path) -> JournalPostLog {
+    let local = fs::read(local_journal);
+    let global = fs::read(global_journal);
+    let mirrors_equal = matches!((&local, &global), (Ok(local), Ok(global)) if local == global);
+    let parsed = local
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok());
+    let ownership = parsed
+        .as_ref()
+        .and_then(|runfile| runfile.get("tailscale_serve"));
+    let string = |field: &str| {
+        ownership
+            .and_then(|ownership| ownership.get(field))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let proxy_target = string("proxy_target");
+    let target_healthy = proxy_target
+        .as_deref()
+        .and_then(|target| target.strip_prefix("http://127.0.0.1:"))
+        .and_then(|port| port.parse::<u16>().ok())
+        .is_some_and(endpoint_is_healthy);
+    JournalPostLog {
+        mirrors_equal,
+        schema_version: parsed
+            .as_ref()
+            .and_then(|runfile| runfile.get("schema_version"))
+            .and_then(serde_json::Value::as_u64),
+        tailscale: parsed
+            .as_ref()
+            .and_then(|runfile| runfile.get("tailscale"))
+            .and_then(serde_json::Value::as_bool),
+        ownership_version: ownership
+            .and_then(|ownership| ownership.get("version"))
+            .and_then(serde_json::Value::as_u64),
+        stable_node_id: string("stable_node_id"),
+        fqdn: string("fqdn"),
+        https_port: ownership
+            .and_then(|ownership| ownership.get("https_port"))
+            .and_then(serde_json::Value::as_u64),
+        mount_path: string("mount_path"),
+        proxy_target,
+        remote_base_url: string("remote_base_url"),
+        before_status_sha256: string("before_status_sha256"),
+        tcp_map_preexisting: ownership
+            .and_then(|ownership| ownership.get("tcp_map_preexisting"))
+            .and_then(serde_json::Value::as_bool),
+        tcp_https_preexisting: ownership
+            .and_then(|ownership| ownership.get("tcp_https_preexisting"))
+            .and_then(serde_json::Value::as_bool),
+        web_map_preexisting: ownership
+            .and_then(|ownership| ownership.get("web_map_preexisting"))
+            .and_then(serde_json::Value::as_bool),
+        web_host_preexisting: ownership
+            .and_then(|ownership| ownership.get("web_host_preexisting"))
+            .and_then(serde_json::Value::as_bool),
+        apply_confirmed: ownership
+            .and_then(|ownership| ownership.get("apply_confirmed"))
+            .and_then(serde_json::Value::as_bool),
+        target_healthy,
+    }
+}
+
+fn serve_localapi_request(
+    stream: &mut TcpStream,
+    connection: u64,
+    request: LocalApiRequest,
+    state: &Arc<Mutex<FakeLocalApiState>>,
+) {
+    let journal_on_post = (request.method == "POST").then(|| {
+        let state = state.lock().unwrap();
+        journal_post_log(&state.local_journal, &state.global_journal)
+    });
+    state.lock().unwrap().requests.push(LocalApiRequestLog {
+        connection,
+        method: request.method.clone(),
+        path: request.path.clone(),
+        headers: request.headers.clone(),
+        if_match: request.if_match.clone(),
+        body: request.body.clone(),
+        journal_on_post,
+    });
+
+    match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/localapi/v0/status?peers=false") => write_localapi_response(
+            stream,
+            200,
+            &serde_json::to_vec(&tailscale_status()).unwrap(),
+            None,
+        ),
+        ("GET", "/localapi/v0/serve-config") => {
+            let raw = serde_json::to_vec(&state.lock().unwrap().serve_config).unwrap();
+            let etag = hex::encode(Sha256::digest(&raw));
+            write_localapi_response(stream, 200, &raw, Some(&etag));
+        }
+        ("POST", "/localapi/v0/serve-config") => {
+            let mut state = state.lock().unwrap();
+            let current_raw = serde_json::to_vec(&state.serve_config).unwrap();
+            let current_etag = hex::encode(Sha256::digest(&current_raw));
+            if request.if_match.as_deref() != Some(current_etag.as_str()) {
+                drop(state);
+                write_localapi_response(stream, 412, br#"{"error":"precondition failed"}"#, None);
+                return;
+            }
+            let replacement: serde_json::Value = serde_json::from_slice(&request.body)
+                .expect("fake LocalAPI received valid JSON CAS body");
+            state.serve_config = replacement;
+            drop(state);
+            write_localapi_response(stream, 200, b"{}", None);
+        }
+        _ => write_localapi_response(stream, 404, br#"{"error":"not found"}"#, None),
+    }
+}
+
+fn write_localapi_response(stream: &mut TcpStream, status: u16, body: &[u8], etag: Option<&str>) {
+    let reason = match status {
+        200 => "OK",
+        404 => "Not Found",
+        412 => "Precondition Failed",
+        _ => "Fixture Error",
+    };
+    let etag_header = etag.map_or_else(String::new, |etag| format!("ETag: {etag}\r\n"));
+    write!(
+        stream,
+        "HTTP/1.1 {status} {reason}\r\nTailscale-Cap: 142\r\nTailscale-Version: 1.102.2\r\nContent-Type: application/json\r\n{etag_header}Content-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+        body.len()
+    )
+    .expect("write fake LocalAPI response headers");
+    stream
+        .write_all(body)
+        .expect("write fake LocalAPI response body");
+    stream.flush().expect("flush fake LocalAPI response");
 }
 
 #[cfg(windows)]
@@ -941,15 +1305,14 @@ fn launch_tailscale_managed_fixture_with_retry(
     appdata: &Path,
     bin_dir: &Path,
     model: &Path,
-    state: &Path,
-    log: &Path,
+    localapi_address: std::net::SocketAddr,
 ) -> (u16, FixtureLifetimeGuard, Output) {
     for attempt in 1..=PORT_ATTEMPTS {
         let port = unused_port();
         let token = root.join(format!("tailscale-managed-fixture-{attempt}.lifetime"));
         let bind_diagnostic = root.join(format!("tailscale-managed-fixture-{attempt}.bind"));
         let mut lifetime = FixtureLifetimeGuard::create(token, port);
-        let mut command = isolated_tailscale_ferric(workspace, appdata, bin_dir, state, log);
+        let mut command = isolated_localapi_ferric(workspace, appdata, bin_dir, localapi_address);
         command
             .env("FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN", lifetime.token())
             .env(BIND_DIAGNOSTIC_ENV, &bind_diagnostic)
@@ -1078,7 +1441,7 @@ fn launch_direct_fixture_with_retry(
 }
 
 struct TailscaleLifecycleEvidence {
-    command_log: Vec<serde_json::Value>,
+    requests: Vec<LocalApiRequestLog>,
     initial_state: serde_json::Value,
     final_state: serde_json::Value,
     token: String,
@@ -1102,20 +1465,18 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
     fs::write(root.path().join(SENTINEL_NAME), "root").unwrap();
 
     let (bin_dir, engine) = install_fixture(root.path());
-    let tailscale = copy_fixture_as(&bin_dir, tailscale_filename());
     assert!(engine.is_file());
-    assert!(tailscale.is_file());
     let model = root.path().join("dummy-model.gguf");
     fs::write(&model, b"model-free fixture").unwrap();
-    let state_path = root.path().join("tailscale-state.json");
-    let log_path = root.path().join("tailscale-commands.jsonl");
     let initial_state = initial_tailscale_state();
-    write_tailscale_state(&state_path, &initial_state);
+    let local = local_dir.join("server.json");
+    let global = global_dir.join("server.json");
+    let localapi = FakeLocalApi::start(initial_state.clone(), local.clone(), global.clone());
 
     let doctor_port = unused_port();
     let doctor = run_cli_output_bounded(
         "real `ferric server doctor --tailscale`",
-        isolated_tailscale_ferric(&workspace, &appdata, &bin_dir, &state_path, &log_path).args([
+        isolated_localapi_ferric(&workspace, &appdata, &bin_dir, localapi.address()).args([
             "server",
             "doctor",
             "--tailscale",
@@ -1128,7 +1489,7 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
         ]),
     );
     assert_success("real `ferric server doctor --tailscale`", doctor);
-    assert_eq!(read_tailscale_state(&state_path), initial_state);
+    assert_eq!(localapi.serve_config(), initial_state);
 
     let (port, mut process_lifetime, up) = launch_tailscale_managed_fixture_with_retry(
         root.path(),
@@ -1136,15 +1497,12 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
         &appdata,
         &bin_dir,
         &model,
-        &state_path,
-        &log_path,
+        localapi.address(),
     );
     let lifetime_token = process_lifetime.token().to_path_buf();
     let up_stdout = String::from_utf8(up.stdout.clone()).unwrap();
     assert_success("real `ferric server up --tailscale`", up);
 
-    let local = local_dir.join("server.json");
-    let global = global_dir.join("server.json");
     let raw = fs::read(&local).unwrap();
     assert_eq!(fs::read(&global).unwrap(), raw);
     let runfile: serde_json::Value = serde_json::from_slice(&raw).unwrap();
@@ -1169,6 +1527,7 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
     let local_base_url = format!("http://127.0.0.1:{port}/v1");
     assert_eq!(runfile["schema_version"], 2);
     assert_eq!(runfile["tailscale"], true);
+    assert_eq!(runfile["tailscale_serve"]["apply_confirmed"], true);
     assert_eq!(runfile["base_url"], local_base_url);
     assert_eq!(runfile["port"], port);
     assert_eq!(token.len(), 32);
@@ -1190,7 +1549,7 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
     assert!(up_stdout.contains(&format!("registered locally at {}", local.display())));
     assert!(up_stdout.contains(&format!("registered globally at {}", global.display())));
 
-    let active_state = read_tailscale_state(&state_path);
+    let active_state = localapi.serve_config();
     assert_eq!(
         active_state["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"][UNRELATED_SERVE_PATH],
         initial_state["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"][UNRELATED_SERVE_PATH]
@@ -1206,7 +1565,7 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
 
     let status = run_cli_output_bounded(
         "real `ferric server status` for Tailscale",
-        isolated_tailscale_ferric(&workspace, &appdata, &bin_dir, &state_path, &log_path)
+        isolated_localapi_ferric(&workspace, &appdata, &bin_dir, localapi.address())
             .args(["server", "status"]),
     );
     let status_stdout = String::from_utf8(status.stdout.clone()).unwrap();
@@ -1217,7 +1576,7 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
 
     let down = run_cli_output_bounded(
         "real `ferric server down` for Tailscale",
-        isolated_tailscale_ferric(&workspace, &appdata, &bin_dir, &state_path, &log_path)
+        isolated_localapi_ferric(&workspace, &appdata, &bin_dir, localapi.address())
             .args(["server", "down"]),
     );
     let down_stdout = String::from_utf8(down.stdout.clone()).unwrap();
@@ -1241,13 +1600,13 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
         "root"
     );
 
-    let state_after_first_down = read_tailscale_state(&state_path);
+    let state_after_first_down = localapi.serve_config();
     assert_eq!(state_after_first_down, initial_state);
-    let commands_after_first_down = read_tailscale_command_log(&log_path);
+    let requests_after_first_down = localapi.requests();
 
     let repeated_down = run_cli_output_bounded(
         "repeated real `ferric server down` for Tailscale",
-        isolated_tailscale_ferric(&workspace, &appdata, &bin_dir, &state_path, &log_path)
+        isolated_localapi_ferric(&workspace, &appdata, &bin_dir, localapi.address())
             .args(["server", "down"]),
     );
     let repeated_down_stdout = String::from_utf8(repeated_down.stdout.clone()).unwrap();
@@ -1259,22 +1618,18 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
     assert!(endpoint_is_closed(port));
     assert_only_sentinel(&local_dir, "workspace");
     assert_only_sentinel(&global_dir, "global");
-    let final_state = read_tailscale_state(&state_path);
+    let final_state = localapi.serve_config();
     assert_eq!(final_state, initial_state);
-    let command_log = read_tailscale_command_log(&log_path);
+    let requests = localapi.requests();
     assert_eq!(
-        command_log, commands_after_first_down,
+        requests.len(),
+        requests_after_first_down.len(),
         "repeated down after successful cleanup must not invoke Tailscale"
     );
-    assert!(command_log.iter().any(|entry| {
-        entry["journals_ready_on_apply"].as_bool() == Some(true)
-            && entry["argv"].as_array().is_some_and(|argv| {
-                argv.last().and_then(serde_json::Value::as_str) == Some(proxy_target.as_str())
-            })
-    }));
+    localapi.stop();
 
     TailscaleLifecycleEvidence {
-        command_log,
+        requests,
         initial_state,
         final_state,
         token,
@@ -1420,15 +1775,19 @@ fn model_free_server_lifecycle_fixture_e2e() {
 }
 
 #[test]
-fn tailscale_cli_lifecycle_preserves_unrelated_state() {
+fn tailscale_localapi_lifecycle_preserves_unrelated_state() {
     let evidence = run_tailscale_lifecycle_fixture();
+    assert_closed_localapi_log(&evidence);
     assert_eq!(evidence.final_state, evidence.initial_state);
     assert_eq!(
         evidence.final_state["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"]
             [UNRELATED_SERVE_PATH],
         serde_json::json!({"Text": "unrelated handler must survive"})
     );
-    assert_eq!(evidence.final_state["FutureState"]["preserved"], true);
+    assert_eq!(
+        evidence.final_state["Services"]["svc:demo"]["TCP"]["9000"]["TCPForward"],
+        "127.0.0.1:9"
+    );
     assert_eq!(evidence.token.len(), 32);
     assert!(
         evidence
@@ -1452,103 +1811,231 @@ fn tailscale_cli_lifecycle_preserves_unrelated_state() {
     );
 }
 
-#[test]
-fn tailscale_command_log_contains_no_broad_mutation() {
-    let evidence = run_tailscale_lifecycle_fixture();
-    assert!(!evidence.command_log.is_empty());
-
-    let expected_set_path = format!("--set-path={}", evidence.mount_path);
-    let mut saw_identity = false;
-    let mut saw_status = false;
-    let mut saw_apply = false;
-    let mut saw_off = false;
-    for entry in &evidence.command_log {
-        let argv = entry["argv"]
-            .as_array()
-            .expect("fixture command log argv must be an array")
-            .iter()
-            .map(|argument| {
-                argument
-                    .as_str()
-                    .expect("fixture command log argv entries must be strings")
-            })
-            .collect::<Vec<_>>();
-
-        assert!(
-            !argv
-                .iter()
-                .any(|argument| { matches!(*argument, "reset" | "set-config" | "--set-path=/") })
+fn assert_closed_localapi_log(evidence: &TailscaleLifecycleEvidence) {
+    const STATUS_PATH: &str = "/localapi/v0/status?peers=false";
+    const CONFIG_PATH: &str = "/localapi/v0/serve-config";
+    assert!(!evidence.requests.is_empty());
+    for (index, request) in evidence.requests.iter().enumerate() {
+        let mut expected_headers = vec![
+            ("Host".to_string(), "local-tailscaled.sock".to_string()),
+            ("Tailscale-Cap".to_string(), "142".to_string()),
+            ("Accept".to_string(), "application/json".to_string()),
+            ("Connection".to_string(), "keep-alive".to_string()),
+        ];
+        if request.method == "POST" {
+            expected_headers.extend([
+                (
+                    "If-Match".to_string(),
+                    request
+                        .if_match
+                        .clone()
+                        .expect("POST request must carry If-Match"),
+                ),
+                ("Content-Type".to_string(), "application/json".to_string()),
+                ("Content-Length".to_string(), request.body.len().to_string()),
+            ]);
+        }
+        assert_eq!(
+            request.headers, expected_headers,
+            "LocalAPI request headers changed for {} {}",
+            request.method, request.path
         );
-        match argv.as_slice() {
-            ["whoami", "--json"] => saw_identity = true,
-            ["serve", "status", "--json"] => saw_status = true,
-            ["serve", "--bg", "--https=443", set_path, "--yes", target]
-                if *set_path == expected_set_path && *target == evidence.proxy_target.as_str() =>
-            {
-                assert_eq!(entry["journals_ready_on_apply"], true);
-                saw_apply = true;
+        match (request.method.as_str(), request.path.as_str()) {
+            ("GET", STATUS_PATH) => {
+                assert!(request.if_match.is_none());
+                assert!(request.body.is_empty());
             }
-            ["serve", "--bg", "--https=443", set_path, "--yes", "off"]
-                if *set_path == expected_set_path =>
-            {
-                saw_off = true;
+            ("GET", CONFIG_PATH) => {
+                assert!(request.if_match.is_none());
+                assert!(request.body.is_empty());
+                let before = index
+                    .checked_sub(1)
+                    .and_then(|index| evidence.requests.get(index));
+                let after = evidence.requests.get(index + 1);
+                assert!(
+                    before.is_some_and(|neighbor| {
+                        neighbor.connection == request.connection
+                            && neighbor.method == "GET"
+                            && neighbor.path == STATUS_PATH
+                    }),
+                    "Serve-config GET was not preceded by same-session status: {request:?}"
+                );
+                assert!(
+                    after.is_some_and(|neighbor| {
+                        neighbor.connection == request.connection
+                            && neighbor.method == "GET"
+                            && neighbor.path == STATUS_PATH
+                    }),
+                    "Serve-config GET was not followed by same-session status: {request:?}"
+                );
             }
-            _ => panic!("fixture recorded forbidden or unscoped Tailscale argv: {argv:?}"),
+            ("POST", CONFIG_PATH) => {
+                let window = evidence
+                    .requests
+                    .get(index.saturating_sub(3)..index + 4)
+                    .expect("POST must have a complete seven-request transaction window");
+                assert!(
+                    window
+                        .iter()
+                        .all(|neighbor| neighbor.connection == request.connection),
+                    "POST transaction crossed LocalAPI connections: {window:?}"
+                );
+                assert_eq!(
+                    window
+                        .iter()
+                        .map(|neighbor| (neighbor.method.as_str(), neighbor.path.as_str()))
+                        .collect::<Vec<_>>(),
+                    vec![
+                        ("GET", STATUS_PATH),
+                        ("GET", CONFIG_PATH),
+                        ("GET", STATUS_PATH),
+                        ("POST", CONFIG_PATH),
+                        ("GET", STATUS_PATH),
+                        ("GET", CONFIG_PATH),
+                        ("GET", STATUS_PATH),
+                    ],
+                    "POST was not enclosed by exact same-session identity/config sandwiches"
+                );
+            }
+            _ => panic!(
+                "fixture recorded forbidden or broad LocalAPI request: {} {}",
+                request.method, request.path
+            ),
         }
     }
-    assert!(saw_identity, "fixture command log omitted `whoami --json`");
-    assert!(
-        saw_status,
-        "fixture command log omitted `serve status --json`"
+
+    let posts = evidence
+        .requests
+        .iter()
+        .filter(|request| request.method == "POST")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        posts.len(),
+        2,
+        "lifecycle must perform exactly one apply CAS and one cleanup CAS"
     );
     assert!(
-        saw_apply,
-        "fixture command log did not contain scoped apply"
+        posts.iter().all(|request| request
+            .journal_on_post
+            .as_ref()
+            .is_some_and(|journal| journal.mirrors_equal)),
+        "both ownership journals must exist and match before every CAS"
     );
-    assert!(
-        saw_off,
-        "fixture command log did not contain matching scoped off"
+
+    for (post_index, post) in posts.iter().enumerate() {
+        let journal = post
+            .journal_on_post
+            .as_ref()
+            .expect("POST must capture typed journal state");
+        assert_eq!(journal.schema_version, Some(2));
+        assert_eq!(journal.tailscale, Some(true));
+        assert_eq!(journal.ownership_version, Some(2));
+        assert_eq!(
+            journal.stable_node_id.as_deref(),
+            Some(TAILSCALE_STABLE_NODE_ID)
+        );
+        assert_eq!(journal.fqdn.as_deref(), Some(TAILSCALE_FQDN));
+        assert_eq!(journal.https_port, Some(443));
+        assert_eq!(
+            journal.mount_path.as_deref(),
+            Some(evidence.mount_path.as_str())
+        );
+        assert_eq!(
+            journal.proxy_target.as_deref(),
+            Some(evidence.proxy_target.as_str())
+        );
+        assert_eq!(
+            journal.remote_base_url.as_deref(),
+            Some(evidence.remote_base_url.as_str())
+        );
+        let before_hash = journal
+            .before_status_sha256
+            .as_deref()
+            .expect("typed ownership must include the pre-state digest");
+        assert_eq!(before_hash.len(), 64);
+        assert!(
+            before_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        );
+        assert_eq!(journal.tcp_map_preexisting, Some(true));
+        assert_eq!(journal.tcp_https_preexisting, Some(true));
+        assert_eq!(journal.web_map_preexisting, Some(true));
+        assert_eq!(journal.web_host_preexisting, Some(true));
+        assert_eq!(journal.apply_confirmed, Some(post_index == 1));
+        assert!(
+            journal.target_healthy,
+            "proxy target was not HTTP-healthy at {} CAS",
+            if post_index == 0 { "apply" } else { "cleanup" }
+        );
+    }
+
+    let initial_raw = serde_json::to_vec(&evidence.initial_state).unwrap();
+    let initial_etag = hex::encode(Sha256::digest(&initial_raw));
+    assert_eq!(posts[0].if_match.as_deref(), Some(initial_etag.as_str()));
+    let applied: serde_json::Value = serde_json::from_slice(&posts[0].body).unwrap();
+    let applied_raw = serde_json::to_vec(&applied).unwrap();
+    let applied_etag = hex::encode(Sha256::digest(&applied_raw));
+    assert_eq!(posts[1].if_match.as_deref(), Some(applied_etag.as_str()));
+
+    assert_eq!(
+        applied["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"][UNRELATED_SERVE_PATH],
+        evidence.initial_state["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"]
+            [UNRELATED_SERVE_PATH]
     );
+    assert_eq!(
+        applied["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"][&evidence.mount_path]["Proxy"],
+        evidence.proxy_target
+    );
+    let cleaned: serde_json::Value = serde_json::from_slice(&posts[1].body).unwrap();
+    assert_eq!(cleaned, evidence.initial_state);
 }
 
 #[test]
-fn tailscale_fixture_rejects_apply_without_journals() {
+fn tailscale_localapi_log_contains_no_broad_mutation_or_retry() {
+    let evidence = run_tailscale_lifecycle_fixture();
+    assert_closed_localapi_log(&evidence);
+}
+
+#[test]
+fn ordinary_ferric_ignores_lifecycle_localapi_override() {
     let _lifecycle_lock = lifecycle_test_lock();
     let root = tempfile::tempdir().unwrap();
-    let bin_dir = root.path().join("isolated-bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-    let tailscale = copy_fixture_as(&bin_dir, tailscale_filename());
-    let state_path = root.path().join("tailscale-state.json");
-    let log_path = root.path().join("tailscale-commands.jsonl");
-    let initial_state = initial_tailscale_state();
-    write_tailscale_state(&state_path, &initial_state);
-
-    let mount_path = "/_ferric/0123456789abcdef0123456789abcdef";
-    let output = Command::new(tailscale)
-        .args([
-            "serve",
-            "--bg",
-            "--https=443",
-            &format!("--set-path={mount_path}"),
-            "--yes",
-            "http://127.0.0.1:41417",
-        ])
-        .env(TAILSCALE_STATE_ENV, &state_path)
-        .env(TAILSCALE_LOG_ENV, &log_path)
-        .env_remove(TAILSCALE_LOCAL_JOURNAL_ENV)
-        .env_remove(TAILSCALE_GLOBAL_JOURNAL_ENV)
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("refuses Serve apply without both pre-published ownership journals")
+    let workspace = root.path().join("workspace");
+    let appdata = root.path().join("isolated-config");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&appdata).unwrap();
+    let (bin_dir, _engine) = install_fixture(root.path());
+    let model = root.path().join("dummy-model.gguf");
+    fs::write(&model, b"model-free fixture").unwrap();
+    let localapi = FakeLocalApi::start(
+        initial_tailscale_state(),
+        workspace.join(".ferric/server.json"),
+        appdata.join("ferric/server.json"),
     );
-    assert_eq!(read_tailscale_state(&state_path), initial_state);
-    let log = read_tailscale_command_log(&log_path);
-    assert_eq!(log.len(), 1);
-    assert_eq!(log[0]["journals_ready_on_apply"], false);
+    let mut command = isolated_production_ferric(&workspace, &appdata, &bin_dir);
+    command
+        .env(
+            TAILSCALE_LOCALAPI_TEST_TCP_ENV,
+            localapi.address().to_string(),
+        )
+        .args([
+            "server",
+            "doctor",
+            "--tailscale",
+            "--model",
+            model.to_str().unwrap(),
+            "--ctx",
+            "4096",
+            "--port",
+            &unused_port().to_string(),
+        ]);
+    let _ = run_cli_output_bounded("ordinary ferric override isolation", &mut command);
+    assert!(
+        localapi.requests().is_empty(),
+        "ordinary ferric binary honored the lifecycle-only LocalAPI TCP override"
+    );
+    localapi.stop();
 }
 
 #[test]

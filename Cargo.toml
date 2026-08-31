@@ -73,6 +73,10 @@ tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
+# Unix Tailscale LocalAPI transport uses poll/read/write with one absolute
+# deadline over the daemon's Unix-domain socket.
+libc = "0.2"
+
 # Calendar cron expressions (sprint 76, ADR-067): epoch→UTC civil-time
 # decomposition for evaluating 5-field cron schedules. Already in the tree via
 # oovra (and CI-gated on aarch64 through ferric-cli), so this is a zero-new-cost

@@ -2024,12 +2024,18 @@ mod tests {
         crate::tailscale_serve::TailscaleServeOwnership {
             version: crate::tailscale_serve::OWNERSHIP_VERSION,
             token: token.to_string(),
+            stable_node_id: "node-fixture".to_string(),
             fqdn: fqdn.to_string(),
             https_port: crate::tailscale_serve::HTTPS_PORT,
             mount_path: format!("/_ferric/{token}"),
             proxy_target: "http://127.0.0.1:8080".to_string(),
             remote_base_url: format!("https://{fqdn}/_ferric/{token}/v1"),
             before_status_sha256: "a".repeat(64),
+            tcp_map_preexisting: false,
+            tcp_https_preexisting: false,
+            web_map_preexisting: false,
+            web_host_preexisting: false,
+            apply_confirmed: true,
         }
     }
 

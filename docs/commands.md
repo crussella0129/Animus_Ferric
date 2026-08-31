@@ -112,7 +112,7 @@ metadata; Windows currently claims the file-level durability boundary only.
 | `--ctx <N>` | context window (default 4096) |
 | `--port <N>` | port on 127.0.0.1 (default 8080) |
 | `--threads <N>` · `--gpu-layers <N>` · `--batch-size <N>` | edge/latency tuning (llama-server) |
-| `--tailscale` | expose the loopback engine through an exactly owned Tailscale Serve path on HTTPS 443; the installed Tailscale CLI must support `whoami --json` (1.102.1+) |
+| `--tailscale` | expose the loopback engine through an exactly owned Tailscale Serve path on HTTPS 443; normal operation requires tailscaled capability 142 with version core 1.102.2 on Linux or Windows |
 
 - `status` — inventory local/global registrations, bind schema-v2 records to
   their process creation identity and listener owner, then report HTTP health
@@ -120,8 +120,8 @@ metadata; Windows currently claims the file-level durability boundary only.
   conditionally upgrade its unchanged local/global registrations to schema v2;
   status/down print this complete command with the recorded numeric PID
 - `doctor` — engine binary + launch inputs + registered PID/HTTP health; with
-  `--tailscale`, also bounded read-only `whoami --json` and `serve status
-  --json` checks
+  `--tailscale`, also a bounded read-only Tailscale LocalAPI identity and Serve
+  configuration check
 - `down` — stop only the uniquely verified process through its retained handle,
   prove that exact process exited and its registered listeners were released,
   then remove only unchanged registration bytes; stale-only records are cleaned
@@ -150,14 +150,46 @@ With `--tailscale`, the ordinary registration base remains
 remote base of the form
 `https://example-host.tailnet-example.ts.net/_ferric/<32-hex-token>/v1`.
 Ferric publishes the ownership-bearing registration before applying that exact
-Serve path. `status` distinguishes an exact active proxy from pending/absent,
-replaced, and uninspectable state. `down` compares and removes the exact proxy
-first, independently tears down only the verified native process, and removes
-registrations only after both resources are resolved. Ambiguous or failed
-proxy cleanup retains every registration as a retry journal and prints the
-coordinate-specific next action. Ferric never invokes `serve reset`, replaces
-the whole Serve configuration, or recommends a blind reset; unrelated handlers
-are preserved.
+Serve path with `apply_confirmed=false`, then promotes every unchanged mirror to
+`true` only after observing the exact applied proxy. Every authoritative
+snapshot is one same-session `status -> serve-config -> status` identity
+sandwich. Publication requires the same stable node ID and FQDN, a running
+backend, HTTPS capability, and the FQDN in the certificate domains; cleanup may
+survive a rename or HTTPS-policy change only when the stable node ID still
+matches, and it still targets the journaled FQDN.
+
+Normal reads and writes require LocalAPI capability 142 and Tailscale version
+core 1.102.2. Ferric validates that the returned ETag is the SHA-256 of the
+exact raw configuration body and performs one whole-document POST with that
+value in `If-Match`; it never retries a mutation. HTTP 412 proves no mutation.
+A failure after POST bytes were sent is indeterminate, so the journal remains
+until observation and scoped cleanup converge. `status` distinguishes exact,
+pending/absent, replaced, shadowed, and uninspectable states. `down` removes
+only the exact handler, preserves unrelated JSON, independently tears down only
+the verified native process, and removes registrations only after both
+resources resolve.
+
+Because the Serve ETag does not bind node/profile identity atomically, avoid
+switching Tailscale profiles while `server up --tailscale` or `server down` is
+running. Ferric's post-check detects a switch and retains recovery evidence,
+but a narrow cross-profile mutation race can only be compensated afterward.
+
+Normal operations fail closed on schema drift, duplicate keys, null handler
+objects, a true expected-host Funnel setting, effective foreground routing, and
+descendant or trailing-slash alias routes. Cleanup on a later major-1 daemon is
+best effort: it can remove only the exact handler and retains all scaffolding,
+but it never treats future routing semantics as proof of endpoint absence and
+therefore always retains the ownership journals. It refuses even that scoped
+POST if JSON reserialization could change an unknown numeric value. Ferric
+never resets or blindly replaces the node-wide Serve configuration.
+
+Production LocalAPI transport is `/var/run/tailscale/tailscaled.sock` on
+conventional Linux installations and the protected Tailscale named pipe on
+Windows. The invoking account must have permission to open that endpoint;
+preflight permission or authorization failures return before mutation. An
+access-denied response after POST bytes were sent is indeterminate and retains
+the journal. Linux packages that place the socket elsewhere and macOS's distinct
+discovery protocol are explicitly unsupported in this release.
 
 Historical `tailscale: true` records without the typed ownership object remain
 fail-closed before process or Tailscale effects. Their exact bytes are retained

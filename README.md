@@ -97,9 +97,14 @@ https://example-host.tailnet-example.ts.net/_ferric/<32-hex-token>/v1
 
 The random path is an ownership coordinate, not authentication; Tailscale
 identity and ACLs remain the access boundary. Ferric records that exact path
-before applying it, removes only that path on `down`, and retains the record
-with retry guidance when the proxy is missing, replaced, or uninspectable. It
-never resets the node-wide Serve configuration. See
+before applying it, updates Serve through Tailscale's local daemon API with an
+ETag precondition, and removes only that path on `down`. Exact cleanup preserves
+unrelated Serve JSON; ambiguous or unverified cleanup retains the journal and
+prints recovery guidance. Normal operation is pinned to Tailscale capability
+142 with version core 1.102.2 on conventional Linux installations using
+`/var/run/tailscale/tailscaled.sock` and on Windows; macOS and relocated Linux
+socket layouts are not yet supported.
+Ferric never resets the node-wide Serve configuration. See
 [server configuration](docs/server-configuration.md#tailscale-serve-exposure)
 for requirements and limitations.
 

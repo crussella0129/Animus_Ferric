@@ -16,6 +16,13 @@ name = "ferric-lifecycle-fixture"
 path = "src/bin/ferric_lifecycle_fixture.rs"
 required-features = ["lifecycle-fixture"]
 
+[[bin]]
+name = "ferric-lifecycle-test"
+path = "src/main.rs"
+required-features = ["lifecycle-fixture"]
+test = false
+bench = false
+
 [features]
 default = []
 
@@ -61,6 +68,9 @@ axum = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
