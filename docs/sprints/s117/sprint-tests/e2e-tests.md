@@ -9,18 +9,18 @@ AC-3/4/6/7 and enabling evidence toward AC-9.
 ## Evidence identity
 
 - **Immutable implementation head:**
-  `44f36a239f48c4c230e0454535451ecf62e5ffa3`.
+  `b679a25ba83069ab849b0f7f2eb8a3269eba10c5`.
 - **Authoritative CI run:**
-  [33346491895](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895),
-  push to `dev`, success, 2026-08-31T01:05:11Z through 01:09:04Z.
+  [33351978700](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700),
+  push to `dev`, success, 2026-08-31T02:51:35Z through 02:55:34Z.
 - **Local runner:** Windows x64 with Rust 1.96.0.
 
 ## Frozen end-to-end rows
 
 | Clause | Exact command | Local result |
 |---|---|---|
-| E05-C | `cargo test -p ferric-cli --all-features model_free_server_lifecycle_fixture_e2e -- --nocapture` | Exit 0; exactly 1 passed in 2.84s. Real CLI `up/status/down` and stale-local/live-global recovery used the closed-name Rust fixture and asserted no owned process, listener, registration, stage, coordination residue, or sentinel mutation. |
-| E05-D | `cargo test -p ferric-cli --all-features tailscale_mode_refuses_before_side_effects -- --nocapture` | Exit 0; exactly 1 passed in 2.85s. Real `up/doctor/status/down` cases left engine/Tailscale invocation markers absent and preserved process, listener, records, and sentinels. |
+| E05-C | `cargo test -p ferric-cli --all-features model_free_server_lifecycle_fixture_e2e -- --nocapture` | Exit 0; exactly 1 passed. Real CLI `up/status/down` and stale-local/live-global recovery used the closed-name Rust fixture and asserted no owned process, listener, registration, stage, coordination residue, or sentinel mutation. |
+| E05-D | `cargo test -p ferric-cli --all-features tailscale_mode_refuses_before_side_effects -- --nocapture` | Exit 0; exactly 1 passed. Real `up/doctor/status/down` cases left engine/Tailscale invocation markers absent and preserved process, listener, records, and sentinels. |
 
 These are rows 19 and 18 respectively in the locked nineteen-row acceptance
 API. The other seventeen rows are in [unit evidence](unit-tests.md#frozen-clause-matrices).
@@ -29,7 +29,7 @@ API. The other seventeen rows are in [unit evidence](unit-tests.md#frozen-clause
 
 `cargo test -p ferric-cli --all-features --locked
 legacy_adoption_then_down_cli_e2e -- --nocapture` exited 0 with exactly one
-pass in 0.88s. A live v1 fixture first made status/down render complete
+pass. A live v1 fixture first made status/down render complete
 adoption guidance without signalling; real adopt then published current
 identity and real down stopped that retained generation and removed unchanged
 aliases.
@@ -40,7 +40,7 @@ The explicit serialized local gate
 cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1
 ```
 
-exited 0 with all 3 tests passing in 6.64s. The harness used its process-wide lock,
+exited 0 with all 3 tests passing in 6.75s. The harness used its process-wide lock,
 pre-call lifetime tokens, 30-second CLI watchdog, independent HTTP handling,
 and diagnosed-only bind retry.
 
@@ -48,12 +48,12 @@ and diagnosed-only bind retry.
 
 | Job | Runner and result | Evidence |
 |---|---|---|
-| [99351509330](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895/job/99351509330) | `lifecycle fixture (windows-latest)`; success in 2m17s | Strict fixture Clippy passed; serialized native Windows fixture passed 3/3 in 5.35s. |
-| [99351509375](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895/job/99351509375) | `lifecycle fixture (ubuntu-latest)`; Ubuntu 24.04.4 LTS image `20260823.283.1`; success in 42s | Strict fixture Clippy passed. CI built the test as the runner, created PID/network/proc namespaces with `sudo -n unshare`, enabled loopback, then used `setpriv` to restore the runner UID/GID, clear groups, set `no_new_privs`, and empty inheritable/ambient/bounding capability sets. The serialized payload passed the same 3/3 in 1.56s. |
-| [99351509362](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895/job/99351509362) | `aarch64-unknown-linux-gnu check`; success in 34s | Workspace and lifecycle-feature/all-target surfaces compiled. This is not runtime evidence. |
-| [99351509268](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895/job/99351509268) | Windows fmt + Clippy + workspace test; success in 3m48s | Ordinary repository regression gate, including the corrected default-parallel HANDLE-release proof. |
-| [99351509302](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895/job/99351509302) | Ubuntu fmt + Clippy + workspace test; success in 1m53s | Ordinary repository gate explicitly logged the Linux pidfd, non-UTF-8 argv, and unreadable-peer fail-closed regressions as passing. |
-| [99351509210](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895/job/99351509210) | Ubuntu `backend-openai` Clippy; success in 31s | Feature-gated backend remained warning-free. |
+| [99366993811](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700/job/99366993811) | `lifecycle fixture (windows-latest)`; success in 1m43s | Strict fixture Clippy passed; serialized native Windows fixture passed 3/3. |
+| [99366993836](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700/job/99366993836) | `lifecycle fixture (ubuntu-latest)`; success in 44s | Strict fixture Clippy passed. CI built the test as the runner, created PID/network/proc namespaces with `sudo -n unshare`, enabled loopback, then used `setpriv` to restore the runner UID/GID, clear groups, set `no_new_privs`, and empty inheritable/ambient/bounding capability sets. The serialized payload passed the same 3/3. |
+| [99366993828](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700/job/99366993828) | `aarch64-unknown-linux-gnu check`; success in 33s | Workspace and lifecycle-feature/all-target surfaces compiled. This is not runtime evidence. |
+| [99366993710](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700/job/99366993710) | Windows fmt + Clippy + workspace test; success in 3m55s | Ordinary repository regression gate, including the post-publication authority correction and default-parallel HANDLE-release proof. |
+| [99366993856](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700/job/99366993856) | Ubuntu fmt + Clippy + workspace test; success in 1m49s | Ordinary repository gate explicitly logged the Linux pidfd, non-UTF-8 argv, and unreadable-peer fail-closed regressions as passing. |
+| [99366993816](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700/job/99366993816) | Ubuntu `backend-openai` Clippy; success in 29s | Feature-gated backend remained warning-free. |
 
 ## Failed-attempt correction record
 
@@ -82,9 +82,16 @@ correction but is still superseded acceptance evidence. Adversarial review
 then found incomplete in-body EARS matrices and a Windows stale-HANDLE test
 oracle that could flake under parallel numeric-handle reuse. Those gaps were
 closed without weakening production authority. The deterministic correction,
-eight 255-test parallel requalifications, and final CI run are recorded in
-[unit evidence](unit-tests.md#failed-attempt-correction-records). Final run
-`33346491895` passed all six jobs at `44f36a2`.
+eight 255-test parallel requalifications, and superseded green run
+`33346491895` are recorded in
+[unit evidence](unit-tests.md#failed-attempt-correction-records).
+
+Pre-merge review then found that successful publication still lacked a final
+retained-generation/listener inspection after persistence. Commit `b679a25`
+closes that boundary and deterministically proves identity and listener
+transitions stop/reap the retained child before exact compensation. Final run
+`33351978700` passed all six jobs at that corrected implementation head; the
+parallel pull-request run `33351980701` independently passed the same matrix.
 
 ## Linux evidence boundary
 

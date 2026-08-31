@@ -6,7 +6,7 @@ AC-3/4/6/7 and enabling evidence toward AC-9.
 ## Evidence identity
 
 - **Immutable implementation head:**
-  `44f36a239f48c4c230e0454535451ecf62e5ffa3` (`dev`).
+  `b679a25ba83069ab849b0f7f2eb8a3269eba10c5` (`dev`).
 - **Local runner:** Microsoft Windows NT 10.0.26200.0, x64,
   `rustc 1.96.0 (ac68faa20 2026-05-25)`,
   `x86_64-pc-windows-msvc`.
@@ -38,23 +38,23 @@ frozen acceptance commands were:
 
 | Clause | Exact acceptance name | Exact command | Result |
 |---|---|---|---|
-| E01-A | `registration_inventory_retains_both_scopes_and_raw_bytes` | `cargo test -p ferric-cli --all-features registration_inventory_retains_both_scopes_and_raw_bytes -- --nocapture` | 1 passed; 0 failed; 0.08s |
-| E01-B | `runfile_schema_authority_matrix` | `cargo test -p ferric-cli --all-features runfile_schema_authority_matrix -- --nocapture` | 1 passed; 0 failed; 0.19s |
-| E01-C | `concurrent_lifecycle_operations_are_per_path_safe` | `cargo test -p ferric-cli --all-features concurrent_lifecycle_operations_are_per_path_safe -- --nocapture` | 1 passed; 0 failed; 0.43s |
-| E01-D | `atomic_conditional_removal_matrix` | `cargo test -p ferric-cli --all-features atomic_conditional_removal_matrix -- --nocapture` | 1 passed; 0 failed; 0.05s |
-| E02-A | `retained_process_handle_identity_matrix` | `cargo test -p ferric-cli --all-features retained_process_handle_identity_matrix -- --nocapture` | 1 passed; 0 failed; 0.00s |
-| E02-B | `loopback_listener_ownership_matrix` | `cargo test -p ferric-cli --all-features loopback_listener_ownership_matrix -- --nocapture` | 1 passed; 0 failed; 0.00s |
-| E02-C | `spawned_child_binding_window_matrix` | `cargo test -p ferric-cli --all-features spawned_child_binding_window_matrix -- --nocapture` | 1 passed; 0 failed; 0.00s |
-| E03-A | `registration_resolution_cross_workspace_matrix` | `cargo test -p ferric-cli --all-features registration_resolution_cross_workspace_matrix -- --nocapture` | 1 passed; 0 failed; 0.03s |
-| E03-B | `status_reports_scope_identity_health_and_next_action` | `cargo test -p ferric-cli --all-features status_reports_scope_identity_health_and_next_action -- --nocapture` | 1 passed; 0 failed; 0.00s |
-| E03-C | `registration_consumers_propagate_typed_ambiguity` | `cargo test -p ferric-cli --all-features registration_consumers_propagate_typed_ambiguity -- --nocapture` | 1 passed; 0 failed; 0.09s |
-| E04-A | `down_signals_only_the_retained_handle` | `cargo test -p ferric-cli --all-features down_signals_only_the_retained_handle -- --nocapture` | 1 passed; 0 failed; 0.00s |
-| E04-B | `down_exit_and_listener_postconditions_gate_success` | `cargo test -p ferric-cli --all-features down_exit_and_listener_postconditions_gate_success -- --nocapture` | 1 passed; 0 failed; 0.00s |
-| E04-C | `down_cleanup_outcome_matrix` | `cargo test -p ferric-cli --all-features down_cleanup_outcome_matrix -- --nocapture` | 1 passed; 0 failed; 0.00s |
-| E04-D | `ambiguous_or_unverifiable_down_is_non_mutating` | `cargo test -p ferric-cli --all-features ambiguous_or_unverifiable_down_is_non_mutating -- --nocapture` | 1 passed; 0 failed; 0.10s |
-| E04-E | `live_v1_guidance_and_explicit_adoption` | `cargo test -p ferric-cli --all-features live_v1_guidance_and_explicit_adoption -- --nocapture` | 1 passed; 0 failed; 0.01s |
-| E05-A | `registration_publication_is_complete_synced_and_no_clobber` | `cargo test -p ferric-cli --all-features registration_publication_is_complete_synced_and_no_clobber -- --nocapture` | 1 passed; 0 failed; 0.21s |
-| E05-B | `partial_publication_stops_child_and_compensates_exactly` | `cargo test -p ferric-cli --all-features partial_publication_stops_child_and_compensates_exactly -- --nocapture` | 1 passed; 0 failed; 0.01s |
+| E01-A | `registration_inventory_retains_both_scopes_and_raw_bytes` | `cargo test -p ferric-cli --all-features registration_inventory_retains_both_scopes_and_raw_bytes -- --nocapture` | Exit 0; exactly 1 passed. |
+| E01-B | `runfile_schema_authority_matrix` | `cargo test -p ferric-cli --all-features runfile_schema_authority_matrix -- --nocapture` | Exit 0; exactly 1 passed. |
+| E01-C | `concurrent_lifecycle_operations_are_per_path_safe` | `cargo test -p ferric-cli --all-features concurrent_lifecycle_operations_are_per_path_safe -- --nocapture` | Exit 0; exactly 1 passed. |
+| E01-D | `atomic_conditional_removal_matrix` | `cargo test -p ferric-cli --all-features atomic_conditional_removal_matrix -- --nocapture` | Exit 0; exactly 1 passed. |
+| E02-A | `retained_process_handle_identity_matrix` | `cargo test -p ferric-cli --all-features retained_process_handle_identity_matrix -- --nocapture` | Exit 0; exactly 1 passed. |
+| E02-B | `loopback_listener_ownership_matrix` | `cargo test -p ferric-cli --all-features loopback_listener_ownership_matrix -- --nocapture` | Exit 0; exactly 1 passed. |
+| E02-C | `spawned_child_binding_window_matrix` | `cargo test -p ferric-cli --all-features spawned_child_binding_window_matrix -- --nocapture` | Exit 0; exactly 1 passed. |
+| E03-A | `registration_resolution_cross_workspace_matrix` | `cargo test -p ferric-cli --all-features registration_resolution_cross_workspace_matrix -- --nocapture` | Exit 0; exactly 1 passed. |
+| E03-B | `status_reports_scope_identity_health_and_next_action` | `cargo test -p ferric-cli --all-features status_reports_scope_identity_health_and_next_action -- --nocapture` | Exit 0; exactly 1 passed. |
+| E03-C | `registration_consumers_propagate_typed_ambiguity` | `cargo test -p ferric-cli --all-features registration_consumers_propagate_typed_ambiguity -- --nocapture` | Exit 0; exactly 1 passed. |
+| E04-A | `down_signals_only_the_retained_handle` | `cargo test -p ferric-cli --all-features down_signals_only_the_retained_handle -- --nocapture` | Exit 0; exactly 1 passed. |
+| E04-B | `down_exit_and_listener_postconditions_gate_success` | `cargo test -p ferric-cli --all-features down_exit_and_listener_postconditions_gate_success -- --nocapture` | Exit 0; exactly 1 passed. |
+| E04-C | `down_cleanup_outcome_matrix` | `cargo test -p ferric-cli --all-features down_cleanup_outcome_matrix -- --nocapture` | Exit 0; exactly 1 passed. |
+| E04-D | `ambiguous_or_unverifiable_down_is_non_mutating` | `cargo test -p ferric-cli --all-features ambiguous_or_unverifiable_down_is_non_mutating -- --nocapture` | Exit 0; exactly 1 passed. |
+| E04-E | `live_v1_guidance_and_explicit_adoption` | `cargo test -p ferric-cli --all-features live_v1_guidance_and_explicit_adoption -- --nocapture` | Exit 0; exactly 1 passed. |
+| E05-A | `registration_publication_is_complete_synced_and_no_clobber` | `cargo test -p ferric-cli --all-features registration_publication_is_complete_synced_and_no_clobber -- --nocapture` | Exit 0; exactly 1 passed. |
+| E05-B | `partial_publication_stops_child_and_compensates_exactly` | `cargo test -p ferric-cli --all-features partial_publication_stops_child_and_compensates_exactly -- --nocapture` | Exit 0; exactly 1 passed. |
 
 The filters produced no frozen zero-test or multiple-match result. Cargo also
 reported zero tests in unrelated integration binaries after filtering; those
@@ -91,11 +91,11 @@ both the unit test and its CLI E2E substring neighbor. The unambiguous rerun
 cargo test -p ferric-cli --all-features --locked server::tests::legacy_adoption_then_down -- --exact --nocapture
 ```
 
-exited 0 with exactly one pass in 0.03s.
+exited 0 with exactly one pass.
 
 Two Linux-only negative-path regressions were observed by exact name in the
 successful ordinary Ubuntu workspace job
-[99351509302](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895/job/99351509302)
+[99366993856](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700/job/99366993856)
 at the immutable head:
 
 | Exact executed name | Result and clause |
@@ -122,7 +122,7 @@ superseded head and are not used as final acceptance evidence.
 | `cargo check -p ferric-cli --features lifecycle-fixture --all-targets --target aarch64-unknown-linux-gnu --locked` | 0 | Lifecycle feature/all-target compile-check passed. This is compile evidence only, not AArch64 runtime evidence. |
 
 CI run
-[33346491895](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895)
+[33351978700](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700)
 independently passed all six jobs at the same head, including ordinary Ubuntu
 and Windows workspace gates, both native lifecycle jobs, AArch64 compilation,
 and `backend-openai` Clippy.
@@ -150,3 +150,12 @@ consecutive default-parallel runs of 255/255 tests (2,040 executions), the
 336/336 package suite, the 1,089-test workspace suite, and the successful
 Windows CI jobs. The failed attempt is retained as a flake-oracle correction,
 not represented as a production lifecycle failure.
+
+Pre-merge adversarial review then found that a successful publication could
+return `Ready` after persistence without a final retained-generation/listener
+inspection. Commit `b679a25` adds that authority gate and deterministic
+identity-transition/listener-transition compensation cases to
+`up_spawned_child_binding_precedes_readiness`. All nineteen frozen filters,
+all twenty-two Windows-applicable supplemental filters, the 336-test package
+suite, the 1,089-test workspace suite, strict local gates, and six-job push and
+pull-request CI matrices were re-run at the corrected head.

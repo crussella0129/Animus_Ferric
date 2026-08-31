@@ -1454,10 +1454,10 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   the failed close route and this task's durable disposition is **closed
   partial**. The green suites remain regression evidence, while AC-3, AC-4,
   AC-6, and AC-7 do not advance from this task.
-- **Remediation:** [T-11606 in the failed-close backlog](tasks.md#sprint-116-failed-close-remediation)
-  must close the missing fault, concurrency, output-contract, CI, and
-  provenance matrices before report-driven calibration or compact-command work
-  resumes.
+- **Remediation:** [T-11606 (Sprint 117)](#t-11606-sprint-117) closed the
+  missing fault, concurrency, output-contract, CI, and provenance matrices;
+  remaining local-model work continues in the
+  [ordered backlog](tasks.md#post-sprint-115--ordered-local-model-work).
 
 ## T-11701 (sprint 117)
 
@@ -1669,16 +1669,23 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, Sprint 117 Test
   evidence, INT-0008, and the Book work ledgers.
 - **Verification:** all nineteen literal frozen EARS commands passed at
-  immutable head `44f36a239f48c4c230e0454535451ecf62e5ffa3`; supplemental,
+  immutable head `b679a25ba83069ab849b0f7f2eb8a3269eba10c5`; supplemental,
   integration, native Windows/Linux, and real CLI rows passed; the Ferric CLI
   package passed 336/336; the workspace passed 1,089 with four intentional
   ignores; strict formatting, Clippy, AArch64 compile, and Book checks passed;
   GitHub CI run
-  [33346491895](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895)
+  [33351978700](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700)
   passed all six jobs. The final
   [test critique](../sprints/s117/sprint-tests/critique.md) is `clean`, and the
   scoped [test report](../sprints/s117/sprint-tests/test-report.md) accepts the
   affected lifecycle portions of INT-0008 AC-3/4/6/7 without claiming the
   wider workflow realized. The Sprint 114 protected artifact retained SHA-256
   `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
-- **Commit:** `44f36a239f48c4c230e0454535451ecf62e5ffa3`
+- **Pre-merge correction:** Adversarial review found that successful launch
+  publication had no retained-generation/listener reinspection after durable
+  persistence and that the Test report compressed the frozen nineteen-row API
+  into six aggregate rows. Commit `b679a25` added the final authority gate and
+  transition/compensation regressions; the corrected Test evidence restores
+  the exact nineteen-row ledger and records complete immutable-head
+  requalification before merge approval.
+- **Commit:** `b679a25ba83069ab849b0f7f2eb8a3269eba10c5`

@@ -214,9 +214,12 @@ users through an opaque wizard.
   fail-closed, and requires status/down to preserve registrations without
   signalling until exclusive loopback ownership or absence is proved.
 - 2026-08-31: Sprint 117 passed the recovered clause-level lifecycle contract
-  at immutable head `44f36a2` with all nineteen exact EARS commands, 336/336
-  package tests, 1,089 workspace passes with four intentional ignores, a clean
-  adversarial critique, and six-job CI. This accepts the affected server-
-  lifecycle portions of AC-3, AC-4, AC-6, and AC-7 and adds enabling evidence
-  toward AC-9. The broader compact workflow, macOS/platform parity, calibration,
-  model aliases, and model-backed application trial remain active work.
+  at corrected immutable head `b679a25` with all nineteen exact EARS commands,
+  336/336 package tests, 1,089 workspace passes with four intentional ignores,
+  a clean adversarial critique, and six-job CI run `33351978700`. Pre-merge
+  review caught and closed a missing post-publication retained-process/listener
+  authority check and restored the frozen nineteen-row result ledger before
+  acceptance. This accepts the affected server-lifecycle portions of AC-3,
+  AC-4, AC-6, and AC-7 and adds enabling evidence toward AC-9. The broader
+  compact workflow, macOS/platform parity, calibration, model aliases, and
+  model-backed application trial remain active work.
