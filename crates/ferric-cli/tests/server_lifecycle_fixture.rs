@@ -401,7 +401,7 @@ fn assert_registration_and_sentinel(directory: &Path, label: &str, expected_raw:
     assert_eq!(
         fs::read(directory.join("server.json")).unwrap(),
         expected_raw,
-        "durable Tailscale registration bytes changed in {}",
+        "registration bytes changed in {}",
         directory.display()
     );
 }
@@ -1393,6 +1393,110 @@ fn legacy_adoption_then_down_cli_e2e() {
     let legacy_raw = serde_json::to_vec_pretty(&legacy).unwrap();
     write_bytes(&local, &legacy_raw);
     write_bytes(&global, &legacy_raw);
+
+    let legacy_reason =
+        format!("live schema-1 PID {pid} has no creation identity and cannot authorize teardown");
+    let expected_diagnostics = vec![
+        format!(
+            "[diagnostic] local registration {}: {legacy_reason}",
+            local.display()
+        ),
+        format!(
+            "[diagnostic] global registration {}: {legacy_reason}",
+            global.display()
+        ),
+    ];
+    let expected_adopt_command = format!("ferric server adopt --pid {pid}");
+
+    let status_before_adoption = run_cli_output_bounded(
+        "status before legacy adoption",
+        isolated_ferric(&workspace, &appdata, &bin_dir)
+            .env(
+                "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+                &process_lifetime_token,
+            )
+            .args(["server", "status"]),
+    );
+    assert!(
+        !status_before_adoption.status.success(),
+        "status unexpectedly accepted a live schema-1 registration:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&status_before_adoption.stdout),
+        String::from_utf8_lossy(&status_before_adoption.stderr)
+    );
+    let status_stdout = output_lines(
+        "status before legacy adoption",
+        "stdout",
+        &status_before_adoption.stdout,
+    );
+    assert_eq!(
+        status_stdout.len(),
+        4,
+        "status must render both registrations, state, and one complete next action"
+    );
+    assert!(status_stdout[0].starts_with(&format!(
+        "[captured] local registration {}:",
+        local.display()
+    )));
+    assert!(status_stdout[1].starts_with(&format!(
+        "[captured] global registration {}:",
+        global.display()
+    )));
+    assert_eq!(status_stdout[2], "[state] unverifiable");
+    assert_eq!(
+        status_stdout[3],
+        format!(
+            "[next] verify and record the live legacy process without signalling it: `{expected_adopt_command}`"
+        )
+    );
+    assert_eq!(
+        output_lines(
+            "status before legacy adoption",
+            "stderr",
+            &status_before_adoption.stderr,
+        ),
+        expected_diagnostics
+    );
+    assert!(
+        fixture.child_mut().try_wait().unwrap().is_none(),
+        "status must not signal the live schema-1 fixture"
+    );
+    assert!(endpoint_is_healthy(port));
+    assert_registration_and_sentinel(&local_dir, "workspace", &legacy_raw);
+    assert_registration_and_sentinel(&global_dir, "global", &legacy_raw);
+
+    let down_before_adoption = run_cli_output_bounded(
+        "down before legacy adoption",
+        isolated_ferric(&workspace, &appdata, &bin_dir)
+            .env(
+                "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
+                &process_lifetime_token,
+            )
+            .args(["server", "down"]),
+    );
+    assert_failed_output(
+        "down before legacy adoption",
+        &down_before_adoption,
+        &[
+            format!(
+                "[held] local registration {} detail=typed discovery blocked teardown mutation",
+                local.display()
+            ),
+            format!(
+                "[held] global registration {} detail=typed discovery blocked teardown mutation",
+                global.display()
+            ),
+            "[state] teardown blocked; registrations kept".to_string(),
+            format!("[next] {expected_adopt_command}"),
+        ],
+        &expected_diagnostics,
+    );
+    assert!(
+        fixture.child_mut().try_wait().unwrap().is_none(),
+        "down must not signal the live schema-1 fixture"
+    );
+    assert!(endpoint_is_healthy(port));
+    assert_registration_and_sentinel(&local_dir, "workspace", &legacy_raw);
+    assert_registration_and_sentinel(&global_dir, "global", &legacy_raw);
 
     assert_success(
         "legacy adoption",

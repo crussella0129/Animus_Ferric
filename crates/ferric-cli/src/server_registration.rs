@@ -238,6 +238,13 @@ pub(crate) fn capture_registration_path(scope: RegistrationScope, path: &Path) -
     let runfile = match serde_json::from_slice::<ServerRunfile>(&raw) {
         Ok(runfile) => runfile,
         Err(error) => {
+            if let Some(detail) = schema_envelope_invalidity(&raw) {
+                return RegistrationSlot::Blocked {
+                    scope,
+                    path,
+                    reason: RegistrationBlock::InvalidSchema(detail),
+                };
+            }
             return RegistrationSlot::Blocked {
                 scope,
                 path,
@@ -259,6 +266,70 @@ pub(crate) fn capture_registration_path(scope: RegistrationScope, path: &Path) -
         raw,
         runfile,
     }))
+}
+
+/// A structural mirror of `ServerRunfile` whose authority coordinates retain
+/// their full JSON `u64` range. Deriving `Deserialize` keeps Serde's ordinary
+/// missing-field, wrong-type, nested-shape, and duplicate-field rejection; a
+/// `Value` intermediary would erase duplicate known fields before we could
+/// distinguish them from a pure numeric-range violation.
+#[derive(serde::Deserialize)]
+struct WideRunfileEnvelope {
+    #[serde(default = "legacy_schema_version_u64")]
+    schema_version: u64,
+    #[serde(rename = "engine")]
+    _engine: crate::server::Engine,
+    pid: u64,
+    port: u64,
+    #[serde(rename = "base_url")]
+    _base_url: String,
+    #[serde(default, rename = "tailscale")]
+    _tailscale: bool,
+    #[serde(default, rename = "model")]
+    _model: Option<String>,
+    #[serde(default, rename = "context_size")]
+    _context_size: Option<u32>,
+    #[serde(default, rename = "sampling_seed")]
+    _sampling_seed: Option<i64>,
+    #[serde(default, rename = "parallel_slots")]
+    _parallel_slots: Option<u32>,
+    #[serde(default, rename = "process_identity")]
+    _process_identity: Option<crate::server_process::ProcessIdentity>,
+    #[serde(default, rename = "origin_local_runfile")]
+    _origin_local_runfile: Option<PathBuf>,
+}
+
+const fn legacy_schema_version_u64() -> u64 {
+    LEGACY_SCHEMA_VERSION as u64
+}
+
+/// Recover schema-level numeric range violations from an otherwise
+/// structurally valid `ServerRunfile` envelope.
+///
+/// Serde cannot construct `ServerRunfile` when a JSON coordinate exceeds its
+/// Rust storage type, but that is an invalid claimed schema coordinate rather
+/// than malformed JSON. Keep all other deserialization errors classified as
+/// `Malformed` and promote only the explicit version/authority overflows.
+fn schema_envelope_invalidity(raw: &[u8]) -> Option<String> {
+    let envelope = serde_json::from_slice::<WideRunfileEnvelope>(raw).ok()?;
+    let version = envelope.schema_version;
+    if version > u64::from(u8::MAX) {
+        return Some(format!("unsupported schema version {version}"));
+    }
+    if version != u64::from(IDENTITY_SCHEMA_VERSION) {
+        return None;
+    }
+    for (field, coordinate, maximum) in [
+        ("pid", envelope.pid, u64::from(u32::MAX)),
+        ("port", envelope.port, u64::from(u16::MAX)),
+    ] {
+        if coordinate > maximum {
+            return Some(format!(
+                "schema 2 {field} coordinate {coordinate} exceeds maximum {maximum}"
+            ));
+        }
+    }
+    None
 }
 
 pub(crate) fn validate_runfile(
@@ -1869,7 +1940,9 @@ fn keep_holding_dir(directory: tempfile::TempDir, file_name: &str) -> PathBuf {
 mod tests {
     use super::*;
     use crate::server::Engine;
-    use crate::server_process::ProcessIdentity;
+    use crate::server_process::{
+        ListenerState, ProcessError, ProcessFacts, ProcessIdentity, ProcessRuntime, RetainedProcess,
+    };
 
     fn legacy_runfile(pid: u32) -> ServerRunfile {
         ServerRunfile {
@@ -1941,6 +2014,99 @@ mod tests {
             RegistrationSlot::Captured(captured) => captured.as_ref(),
             other => panic!("expected captured registration, got {other:?}"),
         }
+    }
+
+    fn assert_invalid_schema(
+        scope: RegistrationScope,
+        path: &Path,
+        runfile: &ServerRunfile,
+        expected: &str,
+    ) {
+        write_runfile(path, runfile);
+        assert!(
+            matches!(
+                capture_registration_path(scope, path),
+                RegistrationSlot::Blocked {
+                    reason: RegistrationBlock::InvalidSchema(detail),
+                    ..
+                } if detail.contains(expected)
+            ),
+            "{scope} row at {} did not report InvalidSchema containing {expected:?}",
+            path.display()
+        );
+    }
+
+    fn assert_raw_invalid_schema(
+        scope: RegistrationScope,
+        path: &Path,
+        raw: &[u8],
+        expected: &str,
+    ) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, raw).unwrap();
+        assert!(
+            matches!(
+                capture_registration_path(scope, path),
+                RegistrationSlot::Blocked {
+                    reason: RegistrationBlock::InvalidSchema(detail),
+                    ..
+                } if detail.contains(expected)
+            ),
+            "raw {scope} row at {} did not report InvalidSchema containing {expected:?}",
+            path.display()
+        );
+    }
+
+    fn assert_raw_malformed(scope: RegistrationScope, path: &Path, raw: &[u8]) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, raw).unwrap();
+        match capture_registration_path(scope, path) {
+            RegistrationSlot::Blocked {
+                reason: RegistrationBlock::Malformed(_),
+                ..
+            } => {}
+            other => panic!(
+                "raw {scope} row at {} was {other:?}, expected Malformed",
+                path.display()
+            ),
+        }
+    }
+
+    #[cfg(windows)]
+    fn invalid_schema_start_tokens() -> &'static [&'static str] {
+        &[
+            "",
+            "token",
+            "opaque",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
+            "windows-filetime:0",
+            "windows-filetime:01",
+            "windows-filetime:+1",
+            "windows-filetime:1extra",
+            "windows-filetime:1;trailing",
+            "windows-filetime:18446744073709551616",
+            " windows-filetime:1",
+            "windows-filetime:1 ",
+        ]
+    }
+
+    #[cfg(target_os = "linux")]
+    fn invalid_schema_start_tokens() -> &'static [&'static str] {
+        &[
+            "",
+            "token",
+            "opaque",
+            "windows-filetime:1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:0",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:01",
+            "linux-boot-id:00000000-1111-4222-8333-44444444444;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-44444444444A;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;ticks-start:1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1;extra",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:18446744073709551616",
+            " linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1 ",
+        ]
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2126,6 +2292,112 @@ mod tests {
         preserved_at: Option<PathBuf>,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum FullAdoptionEvent {
+        Acquire(u32),
+        Inspect(u32),
+        Wait(u32),
+        Terminate(u32),
+    }
+
+    #[derive(Clone)]
+    struct FullAdoptionProcess {
+        pid: u32,
+        facts: ProcessFacts,
+        events: std::sync::Arc<std::sync::Mutex<Vec<FullAdoptionEvent>>>,
+    }
+
+    impl RetainedProcess for FullAdoptionProcess {
+        fn pid(&self) -> u32 {
+            self.pid
+        }
+
+        fn inspect(&self, _port: u16) -> Result<ProcessFacts, ProcessError> {
+            self.events
+                .lock()
+                .unwrap()
+                .push(FullAdoptionEvent::Inspect(self.pid));
+            Ok(self.facts.clone())
+        }
+
+        fn terminate(&self) -> Result<bool, ProcessError> {
+            self.events
+                .lock()
+                .unwrap()
+                .push(FullAdoptionEvent::Terminate(self.pid));
+            Err(ProcessError::Operation(
+                "legacy adoption must never signal".to_string(),
+            ))
+        }
+
+        fn wait(&self, _timeout: std::time::Duration) -> Result<bool, ProcessError> {
+            self.events
+                .lock()
+                .unwrap()
+                .push(FullAdoptionEvent::Wait(self.pid));
+            Ok(false)
+        }
+    }
+
+    struct FullAdoptionRuntime {
+        process: FullAdoptionProcess,
+    }
+
+    impl ProcessRuntime for FullAdoptionRuntime {
+        type Process = FullAdoptionProcess;
+
+        fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
+            assert_eq!(pid, self.process.pid);
+            self.process
+                .events
+                .lock()
+                .unwrap()
+                .push(FullAdoptionEvent::Acquire(pid));
+            Ok(self.process.clone())
+        }
+    }
+
+    fn full_adoption_runtime(
+        runfile: &ServerRunfile,
+    ) -> (
+        FullAdoptionRuntime,
+        std::sync::Arc<std::sync::Mutex<Vec<FullAdoptionEvent>>>,
+    ) {
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let facts = ProcessFacts {
+            identity: ProcessIdentity {
+                start_token: canonical_start_token(501),
+                executable: absolute_path(Path::new("llama-server")).unwrap(),
+                argv: vec![
+                    "llama-server".to_string(),
+                    "--host".to_string(),
+                    "127.0.0.1".to_string(),
+                    "--port".to_string(),
+                    runfile.port.to_string(),
+                    "--model".to_string(),
+                    runfile.model.clone().unwrap(),
+                    "--ctx-size".to_string(),
+                    runfile.context_size.unwrap().to_string(),
+                    "--seed".to_string(),
+                    runfile.sampling_seed.unwrap().to_string(),
+                    "--parallel".to_string(),
+                    runfile.parallel_slots.unwrap().to_string(),
+                ],
+            },
+            listener: ListenerState::OwnedByTarget,
+        };
+        (
+            FullAdoptionRuntime {
+                process: FullAdoptionProcess {
+                    pid: runfile.pid,
+                    facts,
+                    events: std::sync::Arc::clone(&events),
+                },
+            },
+            events,
+        )
+    }
+
     fn process_client_coordinate(root: &Path, phase: &str, id: &str, state: &str) -> PathBuf {
         root.join(format!("{phase}-{id}.{state}"))
     }
@@ -2160,10 +2432,10 @@ mod tests {
     }
 
     struct ProcessBarrierPersistenceEffects {
+        local: PathBuf,
         global: PathBuf,
         root: PathBuf,
         id: String,
-        paused: bool,
     }
 
     impl PersistenceEffects for ProcessBarrierPersistenceEffects {
@@ -2172,10 +2444,6 @@ mod tests {
         }
 
         fn create_stage(&mut self, final_path: &Path, parent: &Path) -> io::Result<NamedTempFile> {
-            if !self.paused && paths_match(final_path, &self.global) {
-                self.paused = true;
-                process_client_barrier(&self.root, "publish-global", &self.id)?;
-            }
             NativePersistenceEffects.create_stage(final_path, parent)
         }
 
@@ -2185,6 +2453,14 @@ mod tests {
             stage: &mut NamedTempFile,
             raw: &[u8],
         ) -> io::Result<()> {
+            let phase = if paths_match(final_path, &self.local) {
+                "publish-local-stage"
+            } else if paths_match(final_path, &self.global) {
+                "publish-global-stage"
+            } else {
+                panic!("unexpected publication path {}", final_path.display());
+            };
+            process_client_barrier(&self.root, phase, &self.id)?;
             NativePersistenceEffects.write_all(final_path, stage, raw)
         }
 
@@ -2205,6 +2481,14 @@ mod tests {
         }
 
         fn sync_parent(&mut self, final_path: &Path, parent: &Path) -> io::Result<()> {
+            let phase = if paths_match(final_path, &self.local) {
+                "publish-local-committed"
+            } else if paths_match(final_path, &self.global) {
+                "publish-global-committed"
+            } else {
+                panic!("unexpected publication path {}", final_path.display());
+            };
+            process_client_barrier(&self.root, phase, &self.id)?;
             NativePersistenceEffects.sync_parent(final_path, parent)
         }
     }
@@ -2321,6 +2605,25 @@ mod tests {
         .unwrap();
     }
 
+    fn await_either_process_client(root: &Path, phase: &str, ids: [&str; 2]) -> String {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            for id in ids {
+                let ready = process_client_coordinate(root, phase, id, "ready");
+                match fs::symlink_metadata(&ready) {
+                    Ok(_) => return id.to_string(),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => panic!("inspect process coordinate {}: {error}", ready.display()),
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for either process client at phase {phase}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     fn persistence_phases(
         effects: &ScriptedPersistenceEffects,
         final_path: &Path,
@@ -2424,12 +2727,12 @@ mod tests {
                 let local = absolute_path(&runfile_path(&workspace)).unwrap();
                 let runfile = v2_runfile(&local, process_client_discriminator());
                 let mut effects = ProcessBarrierPersistenceEffects {
+                    local: local.clone(),
                     global: global.clone(),
                     root: root.clone(),
                     id: id.clone(),
-                    paused: false,
                 };
-                let kind = match publish_mirrored_with(
+                let (kind, preserved_at) = match publish_mirrored_with(
                     &workspace,
                     Some(&global),
                     &runfile,
@@ -2437,15 +2740,22 @@ mod tests {
                 ) {
                     Ok(published) => {
                         assert_eq!(published.local.raw, published.global.unwrap().raw);
-                        "published"
+                        ("published", None)
                     }
                     Err(error) => {
+                        process_client_barrier(&root, "publish-compensation", &id).unwrap();
                         let attempt = publication_attempt(&error);
+                        let mut preserved_at = None;
                         for final_registration in &attempt.finals {
-                            assert!(matches!(
-                                remove_if_unchanged(final_registration).unwrap(),
-                                RemovalOutcome::Removed | RemovalOutcome::Absent
-                            ));
+                            match remove_if_unchanged(final_registration).unwrap() {
+                                RemovalOutcome::Removed | RemovalOutcome::Absent => {}
+                                RemovalOutcome::ReplacementPreserved { path, .. } => {
+                                    assert!(
+                                        preserved_at.replace(path).is_none(),
+                                        "only one losing local final can be replacement-preserved"
+                                    );
+                                }
+                            }
                         }
                         for stage in &attempt.stages {
                             assert!(matches!(
@@ -2453,7 +2763,11 @@ mod tests {
                                 RemovalOutcome::Removed | RemovalOutcome::Absent
                             ));
                         }
-                        "compensated"
+                        if preserved_at.is_some() {
+                            ("compensated-preserved", preserved_at)
+                        } else {
+                            ("compensated", None)
+                        }
                     }
                 };
                 write_process_client_outcome(
@@ -2461,7 +2775,7 @@ mod tests {
                     &id,
                     ProcessClientOutcome {
                         kind: kind.to_string(),
-                        preserved_at: None,
+                        preserved_at,
                     },
                 );
             }
@@ -2528,6 +2842,64 @@ mod tests {
                     },
                 );
             }
+            "adopt-full" => {
+                let path = process_client_path(PROCESS_CLIENT_PATH);
+                let capture = captured_path(&path);
+                let pid = capture.runfile.pid;
+                let (runtime, events) = full_adoption_runtime(&capture.runfile);
+                process_client_barrier(&root, "adopt-full-start", &id).unwrap();
+                let summary =
+                    crate::server::execute_legacy_adoption_for_test(vec![capture], pid, &runtime);
+                assert!(summary.identity_validated);
+                assert!(summary.listener_validated);
+                let events = events.lock().unwrap().clone();
+                assert!(
+                    events
+                        .iter()
+                        .all(|event| !matches!(event, FullAdoptionEvent::Terminate(_))),
+                    "legacy adoption signalled unexpectedly: {events:?}"
+                );
+                let (kind, preserved_at) = if summary.success {
+                    assert!(summary.final_generation_revalidated);
+                    assert_eq!(
+                        events,
+                        vec![
+                            FullAdoptionEvent::Acquire(pid),
+                            FullAdoptionEvent::Inspect(pid),
+                            FullAdoptionEvent::Wait(pid),
+                            FullAdoptionEvent::Inspect(pid),
+                        ]
+                    );
+                    assert!(summary.replacement_preserved_at.is_none());
+                    ("adopted", None)
+                } else {
+                    assert!(!summary.final_generation_revalidated);
+                    assert_eq!(
+                        events,
+                        vec![
+                            FullAdoptionEvent::Acquire(pid),
+                            FullAdoptionEvent::Inspect(pid),
+                            FullAdoptionEvent::Wait(pid),
+                        ]
+                    );
+                    (
+                        "adoption-replacement-preserved",
+                        Some(
+                            summary
+                                .replacement_preserved_at
+                                .expect("losing full adoption must preserve the winner"),
+                        ),
+                    )
+                };
+                write_process_client_outcome(
+                    &root,
+                    &id,
+                    ProcessClientOutcome {
+                        kind: kind.to_string(),
+                        preserved_at,
+                    },
+                );
+            }
             "replace" => {
                 let path = process_client_path(PROCESS_CLIENT_PATH);
                 let capture = captured_path(&path);
@@ -2556,8 +2928,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn two_process_lifecycle_interleaving_is_per_path_safe() {
+    fn assert_two_process_lifecycle_interleaving_is_per_path_safe() {
         let root = tempfile::tempdir().unwrap();
         let coordinates = root.path().join("coordinates");
         fs::create_dir_all(&coordinates).unwrap();
@@ -2595,35 +2966,115 @@ mod tests {
                 (PROCESS_CLIENT_DISCRIMINATOR, "102".to_string()),
             ],
         );
-        await_process_client(&coordinates, "publish-global", "publisher-a");
-        await_process_client(&coordinates, "publish-global", "publisher-b");
-
-        for workspace in [&workspace_a, &workspace_b] {
-            let split = inventory_runfiles(workspace, Some(global.clone()));
-            assert!(matches!(split.local, RegistrationSlot::Captured(_)));
-            assert!(matches!(
-                split.global,
-                Some(RegistrationSlot::Absent { .. })
-            ));
+        for phase in [
+            "publish-local-stage",
+            "publish-local-committed",
+            "publish-global-stage",
+        ] {
+            await_process_client(&coordinates, phase, "publisher-a");
+            await_process_client(&coordinates, phase, "publisher-b");
+            for workspace in [&workspace_a, &workspace_b] {
+                let inventory = inventory_runfiles(workspace, Some(global.clone()));
+                match phase {
+                    "publish-local-stage" => {
+                        assert!(matches!(inventory.local, RegistrationSlot::Absent { .. }));
+                    }
+                    "publish-local-committed" | "publish-global-stage" => {
+                        assert!(matches!(inventory.local, RegistrationSlot::Captured(_)));
+                    }
+                    _ => unreachable!(),
+                }
+                assert!(matches!(
+                    inventory.global,
+                    Some(RegistrationSlot::Absent { .. })
+                ));
+            }
+            assert_eq!(
+                publication_stage_paths(root.path()).len(),
+                if matches!(phase, "publish-local-stage" | "publish-global-stage") {
+                    2
+                } else {
+                    0
+                },
+                "unexpected retained stages at publication checkpoint {phase}"
+            );
+            release_process_client(&coordinates, phase, "publisher-a");
+            release_process_client(&coordinates, phase, "publisher-b");
         }
 
-        release_process_client(&coordinates, "publish-global", "publisher-a");
-        release_process_client(&coordinates, "publish-global", "publisher-b");
+        let winner_id = await_either_process_client(
+            &coordinates,
+            "publish-global-committed",
+            ["publisher-a", "publisher-b"],
+        );
+        let loser_id = if winner_id == "publisher-a" {
+            "publisher-b"
+        } else {
+            "publisher-a"
+        };
+        await_process_client(&coordinates, "publish-compensation", loser_id);
+        let (winner_workspace, winner_local, loser_workspace, loser_local) =
+            if winner_id == "publisher-a" {
+                (&workspace_a, &local_a, &workspace_b, &local_b)
+            } else {
+                (&workspace_b, &local_b, &workspace_a, &local_a)
+            };
+
+        let winner_inventory = inventory_runfiles(winner_workspace, Some(global.clone()));
+        assert!(matches!(
+            winner_inventory.local,
+            RegistrationSlot::Captured(_)
+        ));
+        assert!(matches!(
+            winner_inventory.global,
+            Some(RegistrationSlot::Captured(_))
+        ));
+        assert!(select_unique(&winner_inventory).is_ok());
+
+        let loser_inventory = inventory_runfiles(loser_workspace, Some(global.clone()));
+        assert!(matches!(
+            loser_inventory.local,
+            RegistrationSlot::Captured(_)
+        ));
+        assert!(matches!(
+            loser_inventory.global,
+            Some(RegistrationSlot::Captured(_))
+        ));
+        assert!(matches!(
+            select_unique(&loser_inventory),
+            Err(SelectionError::Conflict { .. })
+        ));
+        assert_eq!(publication_stage_paths(root.path()).len(), 1);
+
+        let concurrent_loser = v2_runfile(loser_local, 103);
+        let concurrent_loser_raw = write_runfile(loser_local, &concurrent_loser);
+        release_process_client(&coordinates, "publish-global-committed", &winner_id);
+        release_process_client(&coordinates, "publish-compensation", loser_id);
         publisher_a.finish();
         publisher_b.finish();
-        let publisher_a = read_process_client_outcome(&coordinates, "publisher-a");
-        let publisher_b = read_process_client_outcome(&coordinates, "publisher-b");
-        let mut publisher_kinds = [publisher_a.kind.as_str(), publisher_b.kind.as_str()];
+        let publisher_a_outcome = read_process_client_outcome(&coordinates, "publisher-a");
+        let publisher_b_outcome = read_process_client_outcome(&coordinates, "publisher-b");
+        let mut publisher_kinds = [
+            publisher_a_outcome.kind.as_str(),
+            publisher_b_outcome.kind.as_str(),
+        ];
         publisher_kinds.sort_unstable();
-        assert_eq!(publisher_kinds, ["compensated", "published"]);
-
-        let (winner_local, loser_local) = if publisher_a.kind == "published" {
-            (&local_a, &local_b)
+        assert_eq!(publisher_kinds, ["compensated-preserved", "published"]);
+        let loser_outcome = if loser_id == "publisher-a" {
+            &publisher_a_outcome
         } else {
-            (&local_b, &local_a)
+            &publisher_b_outcome
         };
         assert_eq!(fs::read(winner_local).unwrap(), fs::read(&global).unwrap());
-        assert!(!loser_local.exists());
+        assert_eq!(fs::read(loser_local).unwrap(), concurrent_loser_raw);
+        assert_eq!(captured_path(loser_local).runfile, concurrent_loser);
+        let held_loser = loser_outcome
+            .preserved_at
+            .as_ref()
+            .expect("loser compensation must report the preserved concurrent replacement");
+        assert_eq!(fs::read(held_loser).unwrap(), concurrent_loser_raw);
+        fs::remove_file(held_loser).unwrap();
+        fs::remove_dir(held_loser.parent().unwrap()).unwrap();
         assert!(publication_stage_paths(root.path()).is_empty());
 
         let winner_capture = captured_path(winner_local);
@@ -2635,6 +3086,10 @@ mod tests {
         );
         assert_eq!(
             remove_if_unchanged(&global_capture).unwrap(),
+            RemovalOutcome::Removed
+        );
+        assert_eq!(
+            remove_if_unchanged(&captured_path(loser_local)).unwrap(),
             RemovalOutcome::Removed
         );
 
@@ -2655,7 +3110,14 @@ mod tests {
             )],
         );
         await_process_client(&coordinates, "remove-isolated", "isolating-remover");
-        assert!(!operation_path.exists());
+        let isolated = inventory_runfiles(&operation_workspace, None);
+        assert!(matches!(
+            isolated.local,
+            RegistrationSlot::Absent {
+                scope: RegistrationScope::Local,
+                ref path,
+            } if path == &operation_path
+        ));
         let replacement_publisher = ProcessClientGuard::spawn(
             "replacement publisher",
             "publish-replacement",
@@ -2670,6 +3132,11 @@ mod tests {
             ],
         );
         replacement_publisher.finish();
+        let replacement_inventory = inventory_runfiles(&operation_workspace, None);
+        assert_eq!(
+            captured(&replacement_inventory.local).runfile,
+            v2_runfile(&operation_path, 302)
+        );
         release_process_client(&coordinates, "remove-isolated", "isolating-remover");
         remover.finish();
         assert_eq!(
@@ -2714,8 +3181,18 @@ mod tests {
         );
         await_process_client(&coordinates, "replace-start", "adopter-a");
         await_process_client(&coordinates, "replace-start", "adopter-b");
+        assert_eq!(
+            captured(&inventory_runfiles(&operation_workspace, None).local)
+                .runfile
+                .schema_version,
+            LEGACY_SCHEMA_VERSION
+        );
         release_process_client(&coordinates, "replace-start", "adopter-a");
         adopter_a.finish();
+        assert_eq!(
+            captured(&inventory_runfiles(&operation_workspace, None).local).runfile,
+            v2_runfile(&operation_path, 401)
+        );
         release_process_client(&coordinates, "replace-start", "adopter-b");
         adopter_b.finish();
         let adopter_a = read_process_client_outcome(&coordinates, "adopter-a");
@@ -2735,6 +3212,73 @@ mod tests {
         );
         fs::remove_file(&held_winner).unwrap();
         fs::remove_dir(held_winner.parent().unwrap()).unwrap();
+
+        // Repeat the race through the complete adoption orchestration, not
+        // just its compare-and-replace primitive. Both child processes capture
+        // schema v1 before either acquires and inspects its retained process;
+        // the winner validates identity/listener/argv and revalidates the same
+        // generation after publication, while the loser preserves that winner.
+        write_runfile(&operation_path, &legacy_runfile(1234));
+        let full_adopter_a = ProcessClientGuard::spawn(
+            "full adopter A",
+            "adopt-full",
+            &coordinates,
+            "full-adopter-a",
+            &[(
+                PROCESS_CLIENT_PATH,
+                operation_path.to_string_lossy().into_owned(),
+            )],
+        );
+        let full_adopter_b = ProcessClientGuard::spawn(
+            "full adopter B",
+            "adopt-full",
+            &coordinates,
+            "full-adopter-b",
+            &[(
+                PROCESS_CLIENT_PATH,
+                operation_path.to_string_lossy().into_owned(),
+            )],
+        );
+        await_process_client(&coordinates, "adopt-full-start", "full-adopter-a");
+        await_process_client(&coordinates, "adopt-full-start", "full-adopter-b");
+        assert_eq!(
+            captured(&inventory_runfiles(&operation_workspace, None).local)
+                .runfile
+                .schema_version,
+            LEGACY_SCHEMA_VERSION
+        );
+        release_process_client(&coordinates, "adopt-full-start", "full-adopter-a");
+        full_adopter_a.finish();
+        let adopted = captured_path(&operation_path);
+        assert_eq!(adopted.runfile.schema_version, IDENTITY_SCHEMA_VERSION);
+        assert_eq!(
+            adopted.runfile.origin_local_runfile,
+            Some(operation_path.clone())
+        );
+        assert_eq!(
+            adopted
+                .runfile
+                .process_identity
+                .as_ref()
+                .unwrap()
+                .start_token,
+            canonical_start_token(501)
+        );
+        release_process_client(&coordinates, "adopt-full-start", "full-adopter-b");
+        full_adopter_b.finish();
+        let full_adopter_a = read_process_client_outcome(&coordinates, "full-adopter-a");
+        let full_adopter_b = read_process_client_outcome(&coordinates, "full-adopter-b");
+        assert_eq!(full_adopter_a.kind, "adopted");
+        assert_eq!(full_adopter_b.kind, "adoption-replacement-preserved");
+        let held_full_winner = full_adopter_b
+            .preserved_at
+            .expect("losing full adoption retains the concurrently adopted winner");
+        assert_eq!(
+            fs::read(&held_full_winner).unwrap(),
+            fs::read(&operation_path).unwrap()
+        );
+        fs::remove_file(&held_full_winner).unwrap();
+        fs::remove_dir(held_full_winner.parent().unwrap()).unwrap();
 
         // Both remover processes capture the same final before either runs.
         // One exact-byte removal succeeds and the other observes absence.
@@ -2760,8 +3304,16 @@ mod tests {
         );
         await_process_client(&coordinates, "remove-start", "remover-a");
         await_process_client(&coordinates, "remove-start", "remover-b");
+        assert!(matches!(
+            inventory_runfiles(&operation_workspace, None).local,
+            RegistrationSlot::Captured(_)
+        ));
         release_process_client(&coordinates, "remove-start", "remover-a");
         remover_a.finish();
+        assert!(matches!(
+            inventory_runfiles(&operation_workspace, None).local,
+            RegistrationSlot::Absent { .. }
+        ));
         release_process_client(&coordinates, "remove-start", "remover-b");
         remover_b.finish();
         assert_eq!(
@@ -2776,6 +3328,11 @@ mod tests {
         assert!(publication_stage_paths(root.path()).is_empty());
     }
 
+    #[test]
+    fn two_process_lifecycle_interleaving_is_per_path_safe() {
+        assert_two_process_lifecycle_interleaving_is_per_path_safe();
+    }
+
     fn clean_attempt_stages(attempt: &PublicationAttempt) {
         for stage in &attempt.stages {
             assert_eq!(
@@ -2785,119 +3342,299 @@ mod tests {
         }
     }
 
-    #[test]
-    fn registration_inventory_retains_both_scopes_and_raw_bytes() {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum InventorySlotCase {
+        Absent,
+        Unreadable,
+        Malformed,
+        NonRegular,
+        V1,
+        V2,
+    }
+
+    fn assert_inventory_slot_case(scope: RegistrationScope, case: InventorySlotCase) {
         let root = tempfile::tempdir().unwrap();
-        let workspace = root.path().join("workspace");
-        let global = root.path().join("config").join("server.json");
-        fs::create_dir_all(&workspace).unwrap();
+        let mut workspace = root.path().join("workspace");
+        let mut global = root.path().join("config/server.json");
+        if case == InventorySlotCase::Unreadable {
+            match scope {
+                RegistrationScope::Local => {
+                    workspace =
+                        PathBuf::from(format!("{}\0unreadable-workspace", root.path().display()));
+                }
+                RegistrationScope::Global => {
+                    global =
+                        PathBuf::from(format!("{}\0unreadable-global.json", root.path().display()));
+                }
+                RegistrationScope::Origin => unreachable!("origin has its own matrix"),
+            }
+        }
+
+        let local = runfile_path(&workspace);
+        let target = match scope {
+            RegistrationScope::Local => local.clone(),
+            RegistrationScope::Global => global.clone(),
+            RegistrationScope::Origin => unreachable!("origin has its own matrix"),
+        };
+        let expected_path = absolute_path(&target).unwrap_or_else(|_| target.clone());
+        let mut expected_capture = None;
+        match case {
+            InventorySlotCase::Absent | InventorySlotCase::Unreadable => {}
+            InventorySlotCase::Malformed => {
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                fs::write(&target, b"{not-json").unwrap();
+            }
+            InventorySlotCase::NonRegular => fs::create_dir_all(&target).unwrap(),
+            InventorySlotCase::V1 => {
+                let runfile = legacy_runfile(101);
+                let raw = write_runfile(&target, &runfile);
+                expected_capture = Some((raw, runfile));
+            }
+            InventorySlotCase::V2 => {
+                let origin = if scope == RegistrationScope::Local {
+                    expected_path.clone()
+                } else {
+                    absolute_path(&runfile_path(&root.path().join("promised-workspace"))).unwrap()
+                };
+                let runfile = v2_runfile(&origin, 102);
+                let raw = write_runfile(&target, &runfile);
+                expected_capture = Some((raw, runfile));
+            }
+        }
+
+        let inventory = inventory_runfiles(&workspace, Some(global.clone()));
+        let slot = match scope {
+            RegistrationScope::Local => &inventory.local,
+            RegistrationScope::Global => inventory.global.as_ref().unwrap(),
+            RegistrationScope::Origin => unreachable!("origin has its own matrix"),
+        };
+        match case {
+            InventorySlotCase::Absent => assert!(matches!(
+                slot,
+                RegistrationSlot::Absent {
+                    scope: actual_scope,
+                    path,
+                } if *actual_scope == scope && path == &expected_path
+            )),
+            InventorySlotCase::Unreadable => assert!(matches!(
+                slot,
+                RegistrationSlot::Blocked {
+                    scope: actual_scope,
+                    path,
+                    reason: RegistrationBlock::Unreadable(_),
+                } if *actual_scope == scope && path == &expected_path
+            )),
+            InventorySlotCase::Malformed => assert!(matches!(
+                slot,
+                RegistrationSlot::Blocked {
+                    scope: actual_scope,
+                    path,
+                    reason: RegistrationBlock::Malformed(_),
+                } if *actual_scope == scope && path == &expected_path
+            )),
+            InventorySlotCase::NonRegular => assert!(matches!(
+                slot,
+                RegistrationSlot::Blocked {
+                    scope: actual_scope,
+                    path,
+                    reason: RegistrationBlock::NonRegular,
+                } if *actual_scope == scope && path == &expected_path
+            )),
+            InventorySlotCase::V1 | InventorySlotCase::V2 => {
+                let (raw, runfile) = expected_capture.as_ref().unwrap();
+                let capture = captured(slot);
+                assert_eq!(capture.scope, scope);
+                assert_eq!(capture.path, expected_path);
+                assert_eq!(&capture.raw, raw);
+                assert_eq!(&capture.runfile, runfile);
+            }
+        }
+
+        let other = match scope {
+            RegistrationScope::Local => inventory.global.as_ref().unwrap(),
+            RegistrationScope::Global => &inventory.local,
+            RegistrationScope::Origin => unreachable!("origin has its own matrix"),
+        };
+        let (other_scope, other_path) = match scope {
+            RegistrationScope::Local => {
+                (RegistrationScope::Global, absolute_path(&global).unwrap())
+            }
+            RegistrationScope::Global => (RegistrationScope::Local, absolute_path(&local).unwrap()),
+            RegistrationScope::Origin => unreachable!("origin has its own matrix"),
+        };
+        assert!(matches!(
+            other,
+            RegistrationSlot::Absent { scope, path }
+                if *scope == other_scope && path == &other_path
+        ));
+
+        match case {
+            InventorySlotCase::Absent => assert_eq!(select_unique(&inventory).unwrap(), None),
+            InventorySlotCase::V1 | InventorySlotCase::V2 => {
+                let selected = select_unique(&inventory).unwrap().unwrap();
+                assert_eq!(selected.scope, scope);
+                assert_eq!(selected.path, expected_path);
+            }
+            InventorySlotCase::Unreadable
+            | InventorySlotCase::Malformed
+            | InventorySlotCase::NonRegular => assert!(matches!(
+                select_unique(&inventory),
+                Err(SelectionError::Blocked {
+                    scope: blocked_scope,
+                    path,
+                    ..
+                }) if blocked_scope == scope && path == expected_path
+            )),
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum PromisedOriginCase {
+        Matching,
+        Absent,
+        Changed,
+        Malformed,
+        Unreadable,
+        NonRegular,
+    }
+
+    fn assert_promised_origin_case(case: PromisedOriginCase) {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("inventory-workspace");
+        let global = root.path().join("config/server.json");
+        let origin = if matches!(case, PromisedOriginCase::Unreadable) {
+            PathBuf::from(format!("{}\0unreadable-origin", root.path().display()))
+                .join(".ferric/server.json")
+        } else {
+            absolute_path(&runfile_path(&root.path().join("origin-workspace"))).unwrap()
+        };
+        let expected = v2_runfile(&origin, 201);
+        let global_raw = write_runfile(&global, &expected);
+
+        let mut changed_capture = None;
+        match case {
+            PromisedOriginCase::Matching => {
+                let raw = write_runfile(&origin, &expected);
+                changed_capture = Some((raw, expected.clone()));
+            }
+            PromisedOriginCase::Absent | PromisedOriginCase::Unreadable => {}
+            PromisedOriginCase::Changed => {
+                let changed = v2_runfile(&origin, 202);
+                let raw = write_runfile(&origin, &changed);
+                changed_capture = Some((raw, changed));
+            }
+            PromisedOriginCase::Malformed => {
+                fs::create_dir_all(origin.parent().unwrap()).unwrap();
+                fs::write(&origin, b"{malformed-origin").unwrap();
+            }
+            PromisedOriginCase::NonRegular => fs::create_dir_all(&origin).unwrap(),
+        }
 
         let inventory = inventory_runfiles(&workspace, Some(global.clone()));
         assert!(matches!(
-            inventory.local,
+            &inventory.local,
             RegistrationSlot::Absent {
                 scope: RegistrationScope::Local,
-                ..
-            }
-        ));
-        assert!(matches!(
-            inventory.global,
-            Some(RegistrationSlot::Absent {
-                scope: RegistrationScope::Global,
-                ref path
-            }) if *path == absolute_path(&global).unwrap()
-        ));
-        assert!(inventory.promised_origins.is_empty());
-        assert_eq!(select_unique(&inventory).unwrap(), None);
-
-        let without_global = inventory_runfiles(&workspace, None);
-        assert!(without_global.global.is_none());
-        assert!(without_global.promised_origins.is_empty());
-
-        // A malformed local slot never hides a captured global slot, and both
-        // retain their own typed coordinate.
-        let local = absolute_path(&runfile_path(&workspace)).unwrap();
-        fs::create_dir_all(local.parent().unwrap()).unwrap();
-        fs::write(&local, b"{not-json").unwrap();
-        let global_v1_raw = write_runfile(&global, &legacy_runfile(77));
-        let inventory = inventory_runfiles(&workspace, Some(global.clone()));
-        assert!(matches!(
-            inventory.local,
-            RegistrationSlot::Blocked {
-                scope: RegistrationScope::Local,
-                ref path,
-                reason: RegistrationBlock::Malformed(_),
-            } if path == &local
+                path,
+            } if path == &absolute_path(&runfile_path(&workspace)).unwrap()
         ));
         let global_capture = captured(inventory.global.as_ref().unwrap());
         assert_eq!(global_capture.scope, RegistrationScope::Global);
-        assert_eq!(global_capture.raw, global_v1_raw);
+        assert_eq!(global_capture.path, absolute_path(&global).unwrap());
+        assert_eq!(global_capture.raw, global_raw);
+        assert_eq!(global_capture.runfile, expected);
 
-        // A valid global-v2 promise always causes a second observation of its
-        // origin, even when that origin is the configured local path. A valid
-        // but different origin record retains its raw bytes for typed conflict
-        // reporting instead of becoming a captureless string.
-        let local_v1_raw = write_runfile(&local, &legacy_runfile(78));
-        let global_v2 = v2_runfile(&local, 20);
-        write_runfile(&global, &global_v2);
-        let inventory = inventory_runfiles(&workspace, Some(global.clone()));
         assert_eq!(inventory.promised_origins.len(), 1);
         let promise = &inventory.promised_origins[0];
         assert_eq!(promise.source.scope, RegistrationScope::Global);
         assert_eq!(promise.source.path, absolute_path(&global).unwrap());
-        assert_eq!(promise.expected_runfile, global_v2);
-        let origin_capture = captured(&promise.slot);
-        assert_eq!(origin_capture.scope, RegistrationScope::Origin);
-        assert_eq!(origin_capture.path, local);
-        assert_eq!(origin_capture.raw, local_v1_raw);
-        assert_ne!(origin_capture.runfile, promise.expected_runfile);
+        assert_eq!(promise.expected_runfile, expected);
+        match case {
+            PromisedOriginCase::Matching | PromisedOriginCase::Changed => {
+                let (raw, runfile) = changed_capture.as_ref().unwrap();
+                let capture = captured(&promise.slot);
+                assert_eq!(capture.scope, RegistrationScope::Origin);
+                assert_eq!(capture.path, origin);
+                assert_eq!(&capture.raw, raw);
+                assert_eq!(&capture.runfile, runfile);
+                assert_eq!(
+                    capture.runfile == promise.expected_runfile,
+                    matches!(case, PromisedOriginCase::Matching)
+                );
+            }
+            PromisedOriginCase::Absent => assert!(matches!(
+                &promise.slot,
+                RegistrationSlot::Absent {
+                    scope: RegistrationScope::Origin,
+                    path,
+                } if path == &origin
+            )),
+            PromisedOriginCase::Malformed => assert!(matches!(
+                &promise.slot,
+                RegistrationSlot::Blocked {
+                    scope: RegistrationScope::Origin,
+                    path,
+                    reason: RegistrationBlock::Malformed(_),
+                } if path == &origin
+            )),
+            PromisedOriginCase::Unreadable => assert!(matches!(
+                &promise.slot,
+                RegistrationSlot::Blocked {
+                    scope: RegistrationScope::Origin,
+                    path,
+                    reason: RegistrationBlock::Unreadable(_),
+                } if path == &origin
+            )),
+            PromisedOriginCase::NonRegular => assert!(matches!(
+                &promise.slot,
+                RegistrationSlot::Blocked {
+                    scope: RegistrationScope::Origin,
+                    path,
+                    reason: RegistrationBlock::NonRegular,
+                } if path == &origin
+            )),
+        }
+    }
 
-        // Matching, absent, and blocked origins remain distinct typed slots.
-        let matching = v2_runfile(&local, 21);
-        let matching_raw = write_runfile(&local, &matching);
-        write_runfile(&global, &matching);
-        let inventory = inventory_runfiles(&workspace, Some(global.clone()));
-        let matching_origin = captured(&inventory.promised_origins[0].slot);
-        assert_eq!(matching_origin.raw, matching_raw);
-        assert_eq!(matching_origin.runfile, matching);
+    #[test]
+    fn registration_inventory_retains_both_scopes_and_raw_bytes() {
+        for scope in [RegistrationScope::Local, RegistrationScope::Global] {
+            for case in [
+                InventorySlotCase::Absent,
+                InventorySlotCase::Unreadable,
+                InventorySlotCase::Malformed,
+                InventorySlotCase::NonRegular,
+                InventorySlotCase::V1,
+                InventorySlotCase::V2,
+            ] {
+                assert_inventory_slot_case(scope, case);
+            }
+        }
 
-        let absent_origin = absolute_path(
-            &root
-                .path()
-                .join("absent-workspace")
-                .join(".ferric")
-                .join("server.json"),
-        )
-        .unwrap();
-        write_runfile(&global, &v2_runfile(&absent_origin, 22));
-        let inventory = inventory_runfiles(&workspace, Some(global.clone()));
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace-without-global");
+        let without_global = inventory_runfiles(&workspace, None);
         assert!(matches!(
-            inventory.promised_origins[0].slot,
+            without_global.local,
             RegistrationSlot::Absent {
-                scope: RegistrationScope::Origin,
+                scope: RegistrationScope::Local,
                 ref path,
-            } if path == &absent_origin
+            } if *path == absolute_path(&runfile_path(&workspace)).unwrap()
         ));
+        assert!(without_global.global.is_none());
+        assert!(without_global.promised_origins.is_empty());
+        assert_eq!(select_unique(&without_global).unwrap(), None);
 
-        let blocked_origin = absolute_path(
-            &root
-                .path()
-                .join("blocked-workspace")
-                .join(".ferric")
-                .join("server.json"),
-        )
-        .unwrap();
-        fs::create_dir_all(&blocked_origin).unwrap();
-        write_runfile(&global, &v2_runfile(&blocked_origin, 23));
-        let inventory = inventory_runfiles(&workspace, Some(global));
-        assert!(matches!(
-            inventory.promised_origins[0].slot,
-            RegistrationSlot::Blocked {
-                scope: RegistrationScope::Origin,
-                ref path,
-                reason: RegistrationBlock::NonRegular,
-            } if path == &blocked_origin
-        ));
+        for case in [
+            PromisedOriginCase::Matching,
+            PromisedOriginCase::Absent,
+            PromisedOriginCase::Changed,
+            PromisedOriginCase::Malformed,
+            PromisedOriginCase::Unreadable,
+            PromisedOriginCase::NonRegular,
+        ] {
+            assert_promised_origin_case(case);
+        }
     }
 
     #[test]
@@ -3119,6 +3856,70 @@ mod tests {
             valid_v2
         );
 
+        for (field, coordinate, expected) in [
+            (
+                "pid",
+                u64::from(u32::MAX) + 1,
+                "pid coordinate 4294967296 exceeds maximum 4294967295",
+            ),
+            (
+                "port",
+                u64::from(u16::MAX) + 1,
+                "port coordinate 65536 exceeds maximum 65535",
+            ),
+        ] {
+            let mut envelope = serde_json::to_value(&valid_v2).unwrap();
+            envelope[field] = serde_json::Value::from(coordinate);
+            let raw = serde_json::to_vec_pretty(&envelope).unwrap();
+            assert_raw_invalid_schema(RegistrationScope::Global, &global, &raw, expected);
+        }
+
+        let mut version_overflow = serde_json::to_value(&valid_v2).unwrap();
+        version_overflow["schema_version"] = serde_json::Value::from(u64::from(u8::MAX) + 1);
+        assert_raw_invalid_schema(
+            RegistrationScope::Global,
+            &global,
+            &serde_json::to_vec_pretty(&version_overflow).unwrap(),
+            "unsupported schema version 256",
+        );
+
+        let mut wrong_type_with_pid_overflow = serde_json::to_value(&valid_v2).unwrap();
+        wrong_type_with_pid_overflow["pid"] = serde_json::Value::from(u64::from(u32::MAX) + 1);
+        wrong_type_with_pid_overflow["base_url"] = serde_json::Value::from(7);
+        assert_raw_malformed(
+            RegistrationScope::Global,
+            &global,
+            &serde_json::to_vec_pretty(&wrong_type_with_pid_overflow).unwrap(),
+        );
+
+        let mut missing_with_port_overflow = serde_json::to_value(&valid_v2).unwrap();
+        missing_with_port_overflow["port"] = serde_json::Value::from(u64::from(u16::MAX) + 1);
+        missing_with_port_overflow
+            .as_object_mut()
+            .unwrap()
+            .remove("base_url");
+        assert_raw_malformed(
+            RegistrationScope::Global,
+            &global,
+            &serde_json::to_vec_pretty(&missing_with_port_overflow).unwrap(),
+        );
+
+        let mut duplicate_with_pid_overflow = serde_json::to_value(&valid_v2).unwrap();
+        duplicate_with_pid_overflow["pid"] = serde_json::Value::from(u64::from(u32::MAX) + 1);
+        let duplicate_with_pid_overflow =
+            serde_json::to_string(&duplicate_with_pid_overflow).unwrap();
+        let duplicate_with_pid_overflow = format!(
+            "{{\"pid\":1,{}",
+            duplicate_with_pid_overflow
+                .strip_prefix('{')
+                .expect("serialized runfile is a JSON object")
+        );
+        assert_raw_malformed(
+            RegistrationScope::Global,
+            &global,
+            duplicate_with_pid_overflow.as_bytes(),
+        );
+
         let mut cases = Vec::new();
         let mut zero_pid = v2_runfile(&origin, 6);
         zero_pid.pid = 0;
@@ -3139,10 +3940,17 @@ mod tests {
             .unwrap()
             .executable = PathBuf::from("llama-server");
         cases.push((relative_executable, "absolute path"));
-        let mut empty_argv = v2_runfile(&origin, 11);
+        let mut empty_executable = v2_runfile(&origin, 11);
+        empty_executable
+            .process_identity
+            .as_mut()
+            .unwrap()
+            .executable = PathBuf::new();
+        cases.push((empty_executable, "absolute path"));
+        let mut empty_argv = v2_runfile(&origin, 12);
         empty_argv.process_identity.as_mut().unwrap().argv.clear();
         cases.push((empty_argv, "observed argv"));
-        let mut empty_argv_element = v2_runfile(&origin, 12);
+        let mut empty_argv_element = v2_runfile(&origin, 13);
         empty_argv_element
             .process_identity
             .as_mut()
@@ -3150,9 +3958,13 @@ mod tests {
             .argv
             .push(String::new());
         cases.push((empty_argv_element, "argv elements"));
-        let mut missing_origin = v2_runfile(&origin, 13);
+        let mut missing_origin = v2_runfile(&origin, 14);
         missing_origin.origin_local_runfile = None;
         cases.push((missing_origin, "requires origin_local_runfile"));
+        let relative_origin = v2_runfile(Path::new("workspace/.ferric/server.json"), 15);
+        cases.push((relative_origin, "must be absolute"));
+        let wrong_suffix_origin = v2_runfile(&root.path().join("workspace/server.json"), 16);
+        cases.push((wrong_suffix_origin, "must end in .ferric/server.json"));
         for (index, base_url) in [
             "https://127.0.0.1:8080/v1",
             "http://localhost:8080/v1",
@@ -3170,16 +3982,27 @@ mod tests {
         unknown_version.schema_version = 99;
         cases.push((unknown_version, "unsupported schema version"));
 
-        for (runfile, expected) in cases {
-            write_runfile(&global, &runfile);
-            assert!(matches!(
-                capture_registration_path(RegistrationScope::Global, &global),
-                RegistrationSlot::Blocked {
-                    reason: RegistrationBlock::InvalidSchema(detail),
-                    ..
-                } if detail.contains(expected)
-            ));
+        #[cfg(any(windows, target_os = "linux"))]
+        for (index, token) in invalid_schema_start_tokens().iter().enumerate() {
+            let mut runfile = v2_runfile(&origin, 40 + index as u64);
+            runfile.process_identity.as_mut().unwrap().start_token = (*token).to_string();
+            cases.push((runfile, "start_token"));
         }
+
+        for (runfile, expected) in cases {
+            assert_invalid_schema(RegistrationScope::Global, &global, &runfile, expected);
+        }
+
+        let local = absolute_path(&runfile_path(&root.path().join("local-workspace"))).unwrap();
+        let other_local =
+            absolute_path(&runfile_path(&root.path().join("different-workspace"))).unwrap();
+        let self_mismatched = v2_runfile(&other_local, 90);
+        assert_invalid_schema(
+            RegistrationScope::Local,
+            &local,
+            &self_mismatched,
+            "does not name its own registration",
+        );
     }
 
     #[cfg(any(windows, target_os = "linux"))]
@@ -3189,45 +4012,10 @@ mod tests {
         let global = root.path().join("global.json");
         let origin = absolute_path(&root.path().join("workspace/.ferric/server.json")).unwrap();
 
-        #[cfg(windows)]
-        let invalid_tokens = [
-            "token",
-            "opaque",
-            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
-            "windows-filetime:0",
-            "windows-filetime:01",
-            "windows-filetime:+1",
-            "windows-filetime:1extra",
-            " windows-filetime:1",
-            "windows-filetime:1 ",
-        ];
-        #[cfg(target_os = "linux")]
-        let invalid_tokens = [
-            "token",
-            "opaque",
-            "windows-filetime:1",
-            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:0",
-            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:01",
-            "linux-boot-id:00000000-1111-4222-8333-44444444444;start-ticks:1",
-            "linux-boot-id:00000000-1111-4222-8333-444444444444;ticks-start:1",
-            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1;extra",
-            " linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
-        ];
-
-        for (index, token) in invalid_tokens.into_iter().enumerate() {
+        for (index, token) in invalid_schema_start_tokens().iter().enumerate() {
             let mut runfile = v2_runfile(&origin, 40 + index as u64);
-            runfile.process_identity.as_mut().unwrap().start_token = token.to_string();
-            write_runfile(&global, &runfile);
-            assert!(
-                matches!(
-                    capture_registration_path(RegistrationScope::Global, &global),
-                    RegistrationSlot::Blocked {
-                        reason: RegistrationBlock::InvalidSchema(detail),
-                        ..
-                    } if detail.contains("start_token")
-                ),
-                "token unexpectedly accepted: {token}"
-            );
+            runfile.process_identity.as_mut().unwrap().start_token = (*token).to_string();
+            assert_invalid_schema(RegistrationScope::Global, &global, &runfile, "start_token");
         }
     }
 
@@ -3516,29 +4304,74 @@ mod tests {
         }
 
         // A rare committed no-clobber operation which retains its original
-        // hard link becomes an explained StageCleanup durability failure.
-        let root = tempfile::tempdir().unwrap();
-        let workspace = root.path().join("retained-stage");
-        let local = absolute_path(&runfile_path(&workspace)).unwrap();
-        let runfile = v2_runfile(&local, 92);
-        let mut effects = ScriptedPersistenceEffects::retaining_committed_stage(&local);
-        let error = publish_mirrored_with(&workspace, None, &runfile, &mut effects).unwrap_err();
-        assert!(matches!(&error, PublishError::Durability { .. }));
-        let attempt = publication_attempt(&error);
-        assert_eq!(attempt.terminal_phase, PersistencePhase::StageCleanup);
-        assert!(attempt.final_committed);
-        assert_eq!(attempt.finals.len(), 1);
-        assert_eq!(attempt.stages.len(), 1);
-        assert_eq!(attempt.stages[0].path.parent(), local.parent());
-        assert_eq!(attempt.stages[0].raw, Some(fs::read(&local).unwrap()));
-        assert!(
-            error
-                .to_string()
-                .contains(&attempt.stages[0].path.display().to_string())
-        );
-        clean_attempt_stages(attempt);
-        assert!(local.exists());
-        assert!(publication_stage_paths(root.path()).is_empty());
+        // hard link becomes an explained StageCleanup durability failure at
+        // either scope. The global row must retain both already-committed
+        // finals plus the exact global recovery stage.
+        for fail_global in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join(if fail_global {
+                "retained-global-stage"
+            } else {
+                "retained-local-stage"
+            });
+            let local = absolute_path(&runfile_path(&workspace)).unwrap();
+            let global = root.path().join("config/server.json");
+            let target = if fail_global { &global } else { &local };
+            let runfile = v2_runfile(&local, 92 + u64::from(fail_global));
+            let expected_raw = serde_json::to_vec_pretty(&runfile).unwrap();
+            let mut effects = ScriptedPersistenceEffects::retaining_committed_stage(target);
+            let error = publish_mirrored_with(
+                &workspace,
+                fail_global.then_some(global.as_path()),
+                &runfile,
+                &mut effects,
+            )
+            .unwrap_err();
+            assert!(matches!(&error, PublishError::Durability { .. }));
+            let attempt = publication_attempt(&error);
+            assert_eq!(attempt.terminal_phase, PersistencePhase::StageCleanup);
+            assert!(attempt.final_committed);
+            assert_eq!(attempt.finals.len(), 1 + usize::from(fail_global));
+            assert_eq!(attempt.finals[0].scope, RegistrationScope::Local);
+            assert_eq!(attempt.finals[0].path, local);
+            assert_eq!(attempt.finals[0].raw, expected_raw);
+            assert_eq!(fs::read(&local).unwrap(), expected_raw);
+            if fail_global {
+                assert_eq!(attempt.finals[1].scope, RegistrationScope::Global);
+                assert_eq!(attempt.finals[1].path, global);
+                assert_eq!(attempt.finals[1].raw, expected_raw);
+                assert_eq!(fs::read(&global).unwrap(), expected_raw);
+            } else {
+                assert!(!global.exists());
+            }
+            assert_eq!(attempt.stages.len(), 1);
+            let stage = &attempt.stages[0];
+            assert_eq!(
+                stage.scope,
+                if fail_global {
+                    RegistrationScope::Global
+                } else {
+                    RegistrationScope::Local
+                }
+            );
+            assert_eq!(stage.final_path, *target);
+            assert_eq!(stage.path.parent(), target.parent());
+            assert_eq!(stage.raw.as_deref(), Some(expected_raw.as_slice()));
+            assert_eq!(fs::read(&stage.path).unwrap(), expected_raw);
+            assert_eq!(
+                publication_stage_paths(root.path()),
+                vec![stage.path.clone()]
+            );
+            assert!(
+                error
+                    .to_string()
+                    .contains(&stage.path.display().to_string())
+            );
+            clean_attempt_stages(attempt);
+            assert!(local.exists());
+            assert_eq!(global.exists(), fail_global);
+            assert!(publication_stage_paths(root.path()).is_empty());
+        }
 
         // Real destination appearance exercises tempfile's atomic no-replace
         // failure rather than a scripted substitute, for both final scopes.
@@ -3820,6 +4653,108 @@ mod tests {
             RemovalOutcome::Removed
         );
         assert_eq!(nested_outcome.into_inner(), Some(RemovalOutcome::Absent));
+
+        assert_two_process_lifecycle_interleaving_is_per_path_safe();
+    }
+
+    fn assert_changed_entry_restore_success() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(".ferric").join("server.json");
+        write_runfile(&path, &legacy_runfile(1));
+        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
+        let replacement = write_runfile(&path, &legacy_runfile(2));
+
+        let preserved = match remove_if_unchanged(&capture).unwrap() {
+            RemovalOutcome::ReplacementPreserved { path, detail } => {
+                assert!(detail.contains("restored without clobbering"), "{detail}");
+                path
+            }
+            outcome => panic!("changed bytes must be preserved, got {outcome:?}"),
+        };
+        assert_eq!(fs::read(&path).unwrap(), replacement);
+        assert_eq!(fs::read(preserved).unwrap(), replacement);
+    }
+
+    fn assert_replacement_after_atomic_move_is_preserved() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(".ferric").join("server.json");
+        write_runfile(&path, &legacy_runfile(1));
+        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
+        let replacement = serde_json::to_vec_pretty(&legacy_runfile(2)).unwrap();
+
+        let outcome = remove_if_unchanged_impl(
+            &capture,
+            |original| {
+                fs::write(original, &replacement).unwrap();
+            },
+            |path| fs::read(path),
+            |path| fs::remove_file(path),
+            persist_bytes_noclobber,
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            RemovalOutcome::ReplacementPreserved { ref path, ref detail }
+                if path == &capture.path && detail.contains("replacement appeared")
+        ));
+        assert_eq!(fs::read(&path).unwrap(), replacement);
+    }
+
+    fn assert_occupied_original_preserves_both_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(".ferric").join("server.json");
+        write_runfile(&path, &legacy_runfile(1));
+        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
+        let changed = write_runfile(&path, &legacy_runfile(2));
+        let concurrent = b"concurrent-original-winner".to_vec();
+
+        let preserved = match remove_if_unchanged_impl(
+            &capture,
+            |original| fs::write(original, &concurrent).unwrap(),
+            |path| fs::read(path),
+            |path| fs::remove_file(path),
+            persist_bytes_noclobber,
+        )
+        .unwrap()
+        {
+            RemovalOutcome::ReplacementPreserved { path, detail } => {
+                assert!(detail.contains("concurrent entry occupies"), "{detail}");
+                path
+            }
+            outcome => panic!("occupied original must preserve both entries: {outcome:?}"),
+        };
+        assert_eq!(fs::read(&path).unwrap(), concurrent);
+        assert_eq!(fs::read(preserved).unwrap(), changed);
+    }
+
+    fn assert_changed_entry_restore_failure_is_preserved() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(".ferric").join("server.json");
+        write_runfile(&path, &legacy_runfile(1));
+        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
+        let replacement = write_runfile(&path, &legacy_runfile(2));
+
+        let error = remove_if_unchanged_impl(
+            &capture,
+            |_| {},
+            |path| fs::read(path),
+            |path| fs::remove_file(path),
+            |_, _| {
+                Err(PersistFailure {
+                    kind: io::ErrorKind::PermissionDenied,
+                    detail: "injected restore failure".to_string(),
+                    committed: false,
+                    phase: PersistencePhase::PersistNoClobber,
+                    stage: None,
+                })
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, RemovalFailureKind::Restore);
+        assert!(error.detail.contains("could not restore changed entry"));
+        let preserved = error.preserved_at.expect("moved bytes must be retained");
+        assert_eq!(fs::read(preserved).unwrap(), replacement);
+        assert!(!path.exists());
     }
 
     #[test]
@@ -3856,6 +4791,39 @@ mod tests {
         assert_eq!(fs::read(&parse_equal).unwrap(), compact);
         assert_eq!(fs::read(preserved).unwrap(), compact);
 
+        let nonregular = root.path().join("nonregular/.ferric/server.json");
+        write_runfile(&nonregular, &legacy_runfile(3));
+        let capture = captured(&capture_registration_path(
+            RegistrationScope::Local,
+            &nonregular,
+        ))
+        .clone();
+        fs::remove_file(&nonregular).unwrap();
+        fs::create_dir(&nonregular).unwrap();
+        let error = remove_if_unchanged(&capture).unwrap_err();
+        assert_eq!(error.kind, RemovalFailureKind::Other);
+        assert_eq!(error.path, capture.path);
+        assert!(error.detail.contains("not a regular non-symlink file"));
+        assert!(error.preserved_at.is_none());
+        assert!(nonregular.is_dir());
+
+        let unreadable_path = PathBuf::from(format!(
+            "{}\0unreadable/.ferric/server.json",
+            root.path().display()
+        ));
+        let unreadable_runfile = legacy_runfile(4);
+        let unreadable_capture = CapturedRegistration {
+            scope: RegistrationScope::Local,
+            path: unreadable_path.clone(),
+            raw: serde_json::to_vec_pretty(&unreadable_runfile).unwrap(),
+            runfile: unreadable_runfile,
+        };
+        let error = remove_if_unchanged(&unreadable_capture).unwrap_err();
+        assert_eq!(error.kind, RemovalFailureKind::Other);
+        assert_eq!(error.path, unreadable_path);
+        assert!(error.detail.contains("inspect current entry"));
+        assert!(error.preserved_at.is_none());
+
         for (label, fail_read) in [("read", true), ("remove", false)] {
             let path = root
                 .path()
@@ -3891,12 +4859,30 @@ mod tests {
                 )
             };
             let error = result.unwrap_err();
+            assert_eq!(
+                error.kind,
+                if fail_read {
+                    RemovalFailureKind::Other
+                } else {
+                    RemovalFailureKind::Remove
+                }
+            );
+            assert!(error.detail.contains(if fail_read {
+                "read atomically moved entry"
+            } else {
+                "remove unchanged moved entry"
+            }));
             let holding = error
                 .preserved_at
                 .expect("failed entry remains recoverable");
             assert_eq!(fs::read(holding).unwrap(), capture.raw);
             assert!(!path.exists());
         }
+
+        assert_replacement_after_atomic_move_is_preserved();
+        assert_changed_entry_restore_success();
+        assert_occupied_original_preserves_both_entries();
+        assert_changed_entry_restore_failure_is_preserved();
     }
 
     #[test]
@@ -3987,72 +4973,16 @@ mod tests {
 
     #[test]
     fn changed_entry_is_restored_or_retained_with_exact_bytes() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
-        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let replacement = write_runfile(&path, &legacy_runfile(2));
-
-        let preserved = match remove_if_unchanged(&capture).unwrap() {
-            RemovalOutcome::ReplacementPreserved { path, .. } => path,
-            outcome => panic!("changed bytes must be preserved, got {outcome:?}"),
-        };
-        assert_eq!(fs::read(&path).unwrap(), replacement);
-        assert_eq!(fs::read(preserved).unwrap(), replacement);
+        assert_changed_entry_restore_success();
     }
 
     #[test]
     fn replacement_created_after_atomic_move_is_never_deleted() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
-        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let replacement = serde_json::to_vec_pretty(&legacy_runfile(2)).unwrap();
-
-        let outcome = remove_if_unchanged_impl(
-            &capture,
-            |original| {
-                fs::write(original, &replacement).unwrap();
-            },
-            |path| fs::read(path),
-            |path| fs::remove_file(path),
-            persist_bytes_noclobber,
-        )
-        .unwrap();
-        assert!(matches!(
-            outcome,
-            RemovalOutcome::ReplacementPreserved { ref path, .. } if path == &capture.path
-        ));
-        assert_eq!(fs::read(&path).unwrap(), replacement);
+        assert_replacement_after_atomic_move_is_preserved();
     }
 
     #[test]
     fn changed_entry_restore_io_failure_is_error_with_preserved_bytes() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
-        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let replacement = write_runfile(&path, &legacy_runfile(2));
-
-        let error = remove_if_unchanged_impl(
-            &capture,
-            |_| {},
-            |path| fs::read(path),
-            |path| fs::remove_file(path),
-            |_, _| {
-                Err(PersistFailure {
-                    kind: io::ErrorKind::PermissionDenied,
-                    detail: "injected restore failure".to_string(),
-                    committed: false,
-                    phase: PersistencePhase::PersistNoClobber,
-                    stage: None,
-                })
-            },
-        )
-        .unwrap_err();
-        assert!(error.detail.contains("could not restore changed entry"));
-        let preserved = error.preserved_at.expect("moved bytes must be retained");
-        assert_eq!(fs::read(preserved).unwrap(), replacement);
-        assert!(!path.exists());
+        assert_changed_entry_restore_failure_is_preserved();
     }
 }

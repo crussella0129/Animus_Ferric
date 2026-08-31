@@ -642,11 +642,33 @@ mod platform {
                 ))
             })
         }
+
+        fn close_handle(&mut self) -> Result<(), ProcessError> {
+            if self.handle.is_null() {
+                return Ok(());
+            }
+
+            if unsafe { CloseHandle(self.handle) } == 0 {
+                return Err(ProcessError::Operation(format!(
+                    "release retained process HANDLE for PID {}: {}",
+                    self.pid,
+                    std::io::Error::last_os_error()
+                )));
+            }
+
+            self.handle = ptr::null_mut();
+            Ok(())
+        }
+
+        #[cfg(test)]
+        fn release_for_test(mut self) -> Result<(), ProcessError> {
+            self.close_handle()
+        }
     }
 
     impl Drop for LiveProcess {
         fn drop(&mut self) {
-            let _ = unsafe { CloseHandle(self.handle) };
+            let _ = self.close_handle();
         }
     }
 
@@ -1085,7 +1107,6 @@ mod platform {
         const NATIVE_SMOKE_HELPER_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_HELPER";
         const NATIVE_SMOKE_MODE_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_MODE";
         const NATIVE_SMOKE_READY_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_READY";
-        const ERROR_INVALID_HANDLE: i32 = 6;
         const NATIVE_SMOKE_TIMEOUT: Duration = Duration::from_secs(15);
         static NEXT_READY_MARKER: AtomicU64 = AtomicU64::new(0);
 
@@ -1465,7 +1486,18 @@ mod platform {
                     false,
                 ),
                 (
-                    "shared or multiple IPv4 loopback",
+                    "multiple foreign IPv4 loopback owners",
+                    Ok(RelevantListenerOwners {
+                        loopback: vec![30, 20, 30],
+                        wildcard: vec![],
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByOther(vec![20, 30]),
+                    false,
+                ),
+                (
+                    "target and foreign shared IPv4 loopback",
                     Ok(RelevantListenerOwners {
                         loopback: vec![20, 10, 20],
                         wildcard: vec![],
@@ -1604,17 +1636,9 @@ mod platform {
                 0,
                 "duplicated process HANDLE must remain valid while retained"
             );
-            drop(retained);
-            assert_eq!(
-                unsafe { GetHandleInformation(duplicated_handle, &mut handle_flags) },
-                0,
-                "dropping LiveProcess must release its duplicated HANDLE"
-            );
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(ERROR_INVALID_HANDLE),
-                "released HANDLE must be rejected as invalid"
-            );
+            retained
+                .release_for_test()
+                .expect("the LiveProcess drop path must release its duplicated HANDLE");
 
             let (wildcard, wildcard_port) = spawn_retained_smoke_child("ipv4-wildcard");
             let wildcard_state = wait_for_listener_state(
@@ -2537,6 +2561,37 @@ mod platform {
                 .unwrap_or_else(ListenerState::Uninspectable)
         }
 
+        fn ipv6_wildcard_listener_fixture() -> RelevantListenerInodes {
+            let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+                0: 00000000000000000000000001000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 55555 1 0000000000000000\n\
+                1: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 66666 1 0000000000000000\n";
+            listening_loopback_relevant_inodes(table, 8080, AddressFamily::V6).unwrap()
+        }
+
+        fn assert_uninspectable_shared_listener_owner_is_not_exclusive() {
+            let relevant = RelevantListenerInodes {
+                loopback: HashSet::from(["shared".to_string()]),
+                wildcard: HashSet::new(),
+            };
+            let state = classified_listener_state(
+                10,
+                8080,
+                &relevant,
+                complete_socket_inventory(&["shared"]),
+                vec![(
+                    20,
+                    ProcessSocketInventory::Uninspectable(
+                        "permission denied while reading inherited socket descriptors".to_string(),
+                    ),
+                )],
+            );
+            let ListenerState::Uninspectable(detail) = state else {
+                panic!("uninspectable shared owner was misclassified as exclusive")
+            };
+            assert!(detail.contains("PID 20 is uninspectable"));
+            assert!(!ListenerState::Uninspectable(detail).permits_teardown());
+        }
+
         #[test]
         fn proc_stat_parser_handles_spaces_and_closing_parentheses_in_comm() {
             let stat =
@@ -2595,6 +2650,19 @@ mod platform {
             assert_eq!(foreign, ListenerState::OwnedByOther(vec![20]));
             assert!(!foreign.permits_teardown());
 
+            let multiple_foreign = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                complete_socket_inventory(&[]),
+                vec![
+                    (20, complete_socket_inventory(&["loopback"])),
+                    (30, complete_socket_inventory(&["loopback"])),
+                ],
+            );
+            assert_eq!(multiple_foreign, ListenerState::OwnedByOther(vec![20, 30]));
+            assert!(!multiple_foreign.permits_teardown());
+
             let shared = classified_listener_state(
                 10,
                 8080,
@@ -2619,15 +2687,30 @@ mod platform {
             assert_eq!(wildcard_state, ListenerState::OwnedByTargetWildcard);
             assert!(!wildcard_state.permits_teardown());
 
-            // The same wildcard set models both IPv4 wildcard and Linux IPv6
-            // wildcard/dual-stack observations; neither can authorize an
-            // IPv4-loopback teardown.
+            let ipv6_wildcard = ipv6_wildcard_listener_fixture();
+            assert_eq!(
+                ipv6_wildcard,
+                RelevantListenerInodes {
+                    loopback: HashSet::new(),
+                    wildcard: HashSet::from(["66666".to_string()]),
+                }
+            );
+            let ipv6_wildcard_state = classified_listener_state(
+                10,
+                8080,
+                &ipv6_wildcard,
+                complete_socket_inventory(&["66666"]),
+                vec![],
+            );
+            assert_eq!(ipv6_wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!ipv6_wildcard_state.permits_teardown());
+
             let dual_stack = classified_listener_state(
                 10,
                 8080,
-                &wildcard,
-                complete_socket_inventory(&["wildcard"]),
-                vec![(20, complete_socket_inventory(&["wildcard"]))],
+                &ipv6_wildcard,
+                complete_socket_inventory(&["66666"]),
+                vec![(20, complete_socket_inventory(&["66666"]))],
             );
             assert_eq!(dual_stack, ListenerState::OwnedByOther(vec![10, 20]));
             assert!(!dual_stack.permits_teardown());
@@ -2641,30 +2724,13 @@ mod platform {
             );
             assert!(matches!(uninspectable, ListenerState::Uninspectable(_)));
             assert!(!uninspectable.permits_teardown());
+
+            assert_uninspectable_shared_listener_owner_is_not_exclusive();
         }
 
         #[test]
         fn linux_uninspectable_shared_listener_owner_is_not_exclusive() {
-            let relevant = RelevantListenerInodes {
-                loopback: HashSet::from(["shared".to_string()]),
-                wildcard: HashSet::new(),
-            };
-            let state = classified_listener_state(
-                10,
-                8080,
-                &relevant,
-                complete_socket_inventory(&["shared"]),
-                vec![(
-                    20,
-                    ProcessSocketInventory::Uninspectable(
-                        "permission denied while reading inherited socket descriptors".to_string(),
-                    ),
-                )],
-            );
-            let ListenerState::Uninspectable(detail) = state else {
-                panic!("uninspectable shared owner was misclassified as exclusive")
-            };
-            assert!(detail.contains("PID 20 is uninspectable"));
+            assert_uninspectable_shared_listener_owner_is_not_exclusive();
         }
 
         #[test]
@@ -2685,11 +2751,8 @@ mod platform {
 
         #[test]
         fn tcp6_parser_ignores_ipv6_loopback_but_keeps_wildcard() {
-            let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
-                0: 00000000000000000000000001000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 55555 1 0000000000000000\n\
-                1: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 66666 1 0000000000000000\n";
             assert_eq!(
-                listening_loopback_relevant_inodes(table, 8080, AddressFamily::V6).unwrap(),
+                ipv6_wildcard_listener_fixture(),
                 RelevantListenerInodes {
                     loopback: HashSet::new(),
                     wildcard: HashSet::from(["66666".to_string()]),

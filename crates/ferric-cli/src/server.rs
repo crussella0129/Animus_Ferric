@@ -1148,17 +1148,17 @@ struct RenderedServerStatus {
     success: bool,
 }
 
-struct LifecycleDiscovery {
+struct LifecycleDiscovery<P = LiveProcess> {
     managed: ManagedServerDiscovery,
-    observations: Vec<LifecycleObservation>,
+    observations: Vec<LifecycleObservation<P>>,
     resolution: Resolution,
 }
 
-struct LifecycleObservation {
+struct LifecycleObservation<P = LiveProcess> {
     candidate: Candidate,
     label: String,
     capture: Option<CapturedRegistration>,
-    process: Option<LiveProcess>,
+    process: Option<P>,
 }
 
 fn registration_label(scope: RegistrationScope, path: &Path) -> String {
@@ -3450,6 +3450,48 @@ where
     }
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LegacyAdoptionTestSummary {
+    pub success: bool,
+    pub identity_validated: bool,
+    pub listener_validated: bool,
+    pub final_generation_revalidated: bool,
+    pub replacement_preserved_at: Option<PathBuf>,
+}
+
+/// Narrow test seam for cross-process adoption races. The caller supplies the
+/// retained-process runtime and owns its inspect/signal ledger; production
+/// conditional replacement remains in `NativeAdoptionEffects` so the race
+/// crosses the same filesystem CAS boundary as the CLI.
+#[cfg(test)]
+pub(crate) fn execute_legacy_adoption_for_test<R: ProcessRuntime>(
+    captures: Vec<CapturedRegistration>,
+    pid: u32,
+    runtime: &R,
+) -> LegacyAdoptionTestSummary {
+    let mut effects = NativeAdoptionEffects;
+    let report = execute_legacy_adoption(captures, pid, runtime, &mut effects);
+    let replacement_preserved_at =
+        report
+            .registrations
+            .iter()
+            .find_map(|registration| match &registration.transition {
+                AdoptionAliasTransition::ReplacementPreserved { path, .. } => Some(path.clone()),
+                AdoptionAliasTransition::Held { .. }
+                | AdoptionAliasTransition::Adopted
+                | AdoptionAliasTransition::Absent
+                | AdoptionAliasTransition::ReplaceFailed { .. } => None,
+            });
+    LegacyAdoptionTestSummary {
+        success: report.success,
+        identity_validated: report.identity_validated,
+        listener_validated: report.listener_validated,
+        final_generation_revalidated: report.final_generation_revalidated,
+        replacement_preserved_at,
+    }
+}
+
 fn render_adoption_report(report: &AdoptionReport) -> RenderedAdoptionReport {
     let mut stdout = report
         .registrations
@@ -4101,8 +4143,8 @@ fn down_mutation_blocker(state: &ManagedServerState) -> Option<&[ResolutionIssue
     }
 }
 
-fn captures_for_indices(
-    observations: &[LifecycleObservation],
+fn captures_for_indices<P>(
+    observations: &[LifecycleObservation<P>],
     mut indices: Vec<usize>,
 ) -> Result<Vec<CapturedRegistration>, String> {
     indices.sort_unstable();
@@ -4156,7 +4198,7 @@ fn retained_target_down_plan<P>(
     })
 }
 
-fn down_plan_from_lifecycle(mut discovery: LifecycleDiscovery) -> DownPlan<LiveProcess> {
+fn down_plan_from_lifecycle<P>(mut discovery: LifecycleDiscovery<P>) -> DownPlan<P> {
     if let Some(issues) = down_mutation_blocker(&discovery.managed.state) {
         let guidance = match status_next_action(&discovery.managed) {
             StatusNextAction::AdoptLegacy { pid } => {
@@ -4990,7 +5032,7 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::server_process::canonical_test_start_token;
     use crate::server_registration::{
@@ -5381,7 +5423,7 @@ mod tests {
     }
 
     #[test]
-    fn tailscale_registration_blocks_before_process_inspection() {
+    pub(crate) fn tailscale_registration_blocks_before_process_inspection() {
         let root = tempfile::tempdir().unwrap();
         for (process_case, pid, simulated_present) in
             [("present", 4201, true), ("absent", 4202, false)]
@@ -5463,7 +5505,7 @@ mod tests {
     }
 
     #[test]
-    fn promised_origin_static_matrix_precedes_process_inspection() {
+    pub(crate) fn promised_origin_static_matrix_precedes_process_inspection() {
         for changed in [false, true] {
             let local = discovery_fixture_coordinate(RegistrationScope::Local, "local");
             let global = discovery_fixture_coordinate(RegistrationScope::Global, "global");
@@ -5567,6 +5609,165 @@ mod tests {
             self.events.push(DoctorEvent::File);
             true
         }
+    }
+
+    fn expected_status_listener(listener: &ListenerState) -> String {
+        match listener {
+            ListenerState::OwnedByTarget => "owned-loopback".to_string(),
+            ListenerState::OwnedByTargetWildcard => "wildcard-public".to_string(),
+            ListenerState::Absent => "absent".to_string(),
+            ListenerState::OwnedByOther(owners) => format!("foreign-or-shared:{owners:?}"),
+            ListenerState::Uninspectable(detail) => format!("uninspectable:{detail}"),
+        }
+    }
+
+    fn expected_status_health(health: HealthState) -> &'static str {
+        match health {
+            HealthState::NotProbed => "not-probed",
+            HealthState::Healthy => "healthy",
+            HealthState::Unhealthy => "unhealthy",
+        }
+    }
+
+    fn expected_registration_status(observation: &ManagedRegistrationObservation) -> String {
+        let promised = observation
+            .promised
+            .as_ref()
+            .map_or_else(String::new, |promised| {
+                format!(
+                    " promised-by={} registration {}",
+                    promised.source.scope,
+                    promised.source.path.display()
+                )
+            });
+        let prefix = format!(
+            "{} registration {}{promised}",
+            observation.coordinate.scope,
+            observation.coordinate.path.display()
+        );
+        match &observation.state {
+            ManagedRegistrationState::Absent => format!(
+                "[absent] {prefix}: recorded-identity=none observed-identity=none listener=none health=none"
+            ),
+            ManagedRegistrationState::Blocked { reason } => format!(
+                "[blocked] {prefix}: {reason}; recorded-identity=unavailable observed-identity=not-inspected listener=not-inspected health=not-probed"
+            ),
+            ManagedRegistrationState::Captured {
+                runfile, runtime, ..
+            } => {
+                let recorded = runfile.process_identity.as_ref().map_or_else(
+                    || "legacy-none".to_string(),
+                    |identity| {
+                        format!(
+                            "token={} executable={} argv={:?}",
+                            identity.start_token,
+                            identity.executable.display(),
+                            identity.argv
+                        )
+                    },
+                );
+                let observed = match runtime {
+                    RuntimeObservation::NotInspected => {
+                        "observed-identity=not-inspected listener=not-inspected health=not-probed"
+                            .to_string()
+                    }
+                    RuntimeObservation::Verified {
+                        identity,
+                        listener,
+                        health,
+                    } => format!(
+                        "observed-identity=token={} executable={} argv={:?} listener={} health={}",
+                        identity.start_token,
+                        identity.executable.display(),
+                        identity.argv,
+                        expected_status_listener(listener),
+                        expected_status_health(*health)
+                    ),
+                    RuntimeObservation::Stale {
+                        reason,
+                        observed_identity,
+                        listener,
+                    } => {
+                        let identity = observed_identity.as_ref().map_or_else(
+                            || "stale-unavailable".to_string(),
+                            |identity| {
+                                format!(
+                                    "token={} executable={} argv={:?}",
+                                    identity.start_token,
+                                    identity.executable.display(),
+                                    identity.argv
+                                )
+                            },
+                        );
+                        format!(
+                            "observed-identity={identity} stale-reason={reason} listener={} health=not-probed",
+                            expected_status_listener(listener)
+                        )
+                    }
+                    RuntimeObservation::LegacyLive { pid } => format!(
+                        "observed-identity=legacy-live-pid:{pid} listener=unverified health=not-probed"
+                    ),
+                    RuntimeObservation::Unverifiable {
+                        reason,
+                        observed_identity,
+                        listener,
+                        health,
+                    } => {
+                        let identity = observed_identity.as_ref().map_or_else(
+                            || "unavailable".to_string(),
+                            |identity| {
+                                format!(
+                                    "token={} executable={} argv={:?}",
+                                    identity.start_token,
+                                    identity.executable.display(),
+                                    identity.argv
+                                )
+                            },
+                        );
+                        let listener = listener
+                            .as_ref()
+                            .map_or_else(|| "unverifiable".to_string(), expected_status_listener);
+                        format!(
+                            "observed-identity={identity} unverifiable-reason={reason} listener={listener} health={}",
+                            expected_status_health(*health)
+                        )
+                    }
+                };
+                format!(
+                    "[captured] {prefix}: schema={} engine={:?} pid={} base-url={} recorded-identity={recorded} {observed}",
+                    runfile.schema_version, runfile.engine, runfile.pid, runfile.base_url
+                )
+            }
+        }
+    }
+
+    fn assert_status_matrix_row(
+        discovery: &ManagedServerDiscovery,
+        expected_action: StatusNextAction,
+        expected_state: &str,
+        expected_next: &str,
+        expected_stderr: &[String],
+        expected_success: bool,
+    ) {
+        let before = discovery.clone();
+        let report = status_report(discovery);
+        assert_eq!(discovery, &before, "status reporting must be pure");
+        assert_eq!(report.registrations, discovery.observations);
+        assert_eq!(report.state, discovery.state);
+        assert_eq!(report.next_action, expected_action);
+        assert_eq!(report.success, expected_success);
+
+        let rendered = render_status(&report);
+        let mut expected_stdout = discovery
+            .observations
+            .iter()
+            .map(expected_registration_status)
+            .collect::<Vec<_>>();
+        expected_stdout.push(expected_state.to_string());
+        expected_stdout.push(expected_next.to_string());
+        assert_eq!(rendered.stdout, expected_stdout);
+        assert_eq!(rendered.stderr, expected_stderr);
+        assert_eq!(rendered.success, expected_success);
     }
 
     #[test]
@@ -5805,37 +6006,127 @@ mod tests {
             StatusNextAction::InspectTailscale { .. }
         ));
 
-        for discovery in [
-            ready,
-            unhealthy,
-            absent,
-            wildcard,
-            stale,
-            split,
-            conflict,
-            unverifiable,
-            missing_origin,
-            incompatible_legacy,
-            legacy,
-            tailscale,
-        ] {
-            let rendered = render_status(&status_report(&discovery));
-            assert_eq!(
-                rendered
-                    .stdout
-                    .iter()
-                    .filter(|line| line.starts_with("[next] "))
-                    .count(),
-                1,
-                "every state must render exactly one safe next action"
+        let local_coordinate = discovery_fixture_coordinate(RegistrationScope::Local, "local");
+        let mut legacy_coordinates = vec![local_coordinate.clone(), legacy_global];
+        legacy_coordinates.sort_by(|left, right| {
+            left.path
+                .cmp(&right.path)
+                .then_with(|| left.scope.to_string().cmp(&right.scope.to_string()))
+        });
+
+        assert_status_matrix_row(
+            &empty,
+            StatusNextAction::StartServer,
+            "[state] empty",
+            "[next] no registration is active; inspect required launch options with `ferric server up --help`",
+            &[],
+            false,
+        );
+        for (discovery, stale_count) in [(&ready, 0), (&split, 1)] {
+            assert_status_matrix_row(
+                discovery,
+                StatusNextAction::ContinueManaged {
+                    base_url: "http://127.0.0.1:7101/v1".to_string(),
+                },
+                &format!(
+                    "[state] ready pid=4101 aliases=0 stale={stale_count} listener=owned-loopback health=healthy"
+                ),
+                "[next] managed server is ready at http://127.0.0.1:7101/v1; continue with the intended Ferric command and omit `--api-base` to use it",
+                &[],
+                true,
             );
-            for registration in rendered.stdout.iter().take(discovery.observations.len()) {
-                assert!(registration.contains("recorded-identity="));
-                assert!(registration.contains("observed-identity="));
-                assert!(registration.contains("listener="));
-                assert!(registration.contains("health="));
-            }
         }
+        assert_status_matrix_row(
+            &unhealthy,
+            StatusNextAction::StopManaged { pid: 4101 },
+            "[state] degraded pid=4101 listener=owned-loopback health=unhealthy",
+            "[next] managed PID 4101 is identity-authorized for recovery; run `ferric server down`",
+            &["[diagnostic] fixture degraded state".to_string()],
+            false,
+        );
+        assert_status_matrix_row(
+            &absent,
+            StatusNextAction::StopManaged { pid: 4101 },
+            "[state] degraded pid=4101 listener=absent health=not-probed",
+            "[next] managed PID 4101 is identity-authorized for recovery; run `ferric server down`",
+            &["[diagnostic] fixture degraded state".to_string()],
+            false,
+        );
+        assert_status_matrix_row(
+            &wildcard,
+            StatusNextAction::InspectWildcard { port: 7101 },
+            "[state] degraded pid=4101 listener=wildcard-public health=healthy",
+            "[next] port 7101 is wildcard/public; reconfigure it to bind only 127.0.0.1, then rerun `ferric server status` (teardown is not authorized)",
+            &["[diagnostic] fixture degraded state".to_string()],
+            false,
+        );
+        assert_status_matrix_row(
+            &stale,
+            StatusNextAction::CleanStale,
+            "[state] stale-only registrations=1",
+            "[next] only cleanup-safe stale registrations remain; run `ferric server down`",
+            &[],
+            false,
+        );
+        assert_status_matrix_row(
+            &conflict,
+            StatusNextAction::ResolveConflict {
+                coordinates: vec![local_coordinate.clone()],
+            },
+            "[state] conflict",
+            "[next] resolve the 1 conflicting registration coordinate(s) without signalling a process, then rerun `ferric server status`",
+            &["[diagnostic] fixture registration conflict".to_string()],
+            false,
+        );
+        assert_status_matrix_row(
+            &unverifiable,
+            StatusNextAction::RepairUnverifiable {
+                coordinates: vec![local_coordinate],
+            },
+            "[state] unverifiable",
+            "[next] repair or make readable the 1 unverifiable registration coordinate(s), then rerun `ferric server status` (no process action is authorized)",
+            &["[diagnostic] fixture registration is unverifiable".to_string()],
+            false,
+        );
+        assert_status_matrix_row(
+            &missing_origin,
+            StatusNextAction::InspectPromisedOrigin {
+                path: origin.path.clone(),
+            },
+            "[state] unverifiable",
+            &format!(
+                "[next] the promised origin {} is missing or changed; restore or reconcile that exact registration, then rerun `ferric server status`",
+                origin.path.display()
+            ),
+            &["[diagnostic] promised origin is absent".to_string()],
+            false,
+        );
+        assert_status_matrix_row(
+            &incompatible_legacy,
+            StatusNextAction::RepairUnverifiable {
+                coordinates: legacy_coordinates,
+            },
+            "[state] unverifiable",
+            "[next] repair or make readable the 2 unverifiable registration coordinate(s), then rerun `ferric server status` (no process action is authorized)",
+            &["[diagnostic] live legacy registration".to_string()],
+            false,
+        );
+        assert_status_matrix_row(
+            &legacy,
+            StatusNextAction::AdoptLegacy { pid: legacy_pid },
+            "[state] unverifiable",
+            "[next] verify and record the live legacy process without signalling it: `ferric server adopt --pid 4101`",
+            &["[diagnostic] live legacy registration".to_string()],
+            false,
+        );
+        assert_status_matrix_row(
+            &tailscale,
+            StatusNextAction::InspectTailscale { port: 7101 },
+            "[state] unverifiable",
+            "[next] registration port 7101 claims durable Tailscale Serve state; scoped proxy cleanup is unavailable, so Ferric will not inspect or signal its PID, delete its registration, invoke Tailscale, or run a blind node-wide reset; inspect and remove only that exact Serve endpoint with Tailscale tooling",
+            &["[diagnostic] durable Tailscale Serve state".to_string()],
+            false,
+        );
     }
 
     #[test]
@@ -5896,6 +6187,196 @@ mod tests {
         assert_eq!(effects.events, vec![DoctorEvent::Binary, DoctorEvent::File]);
     }
 
+    fn assert_blocked_down_consumer(discovery: &ManagedServerDiscovery, resolution: Resolution) {
+        let expected_held = discovery
+            .observations
+            .iter()
+            .filter(|observation| !matches!(observation.state, ManagedRegistrationState::Absent))
+            .count();
+        assert!(
+            expected_held > 0,
+            "blocked fixture must carry recovery state"
+        );
+        let plan = down_plan_from_lifecycle(LifecycleDiscovery::<ScriptedProcess> {
+            managed: discovery.clone(),
+            observations: Vec::new(),
+            resolution,
+        });
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut effects = ScriptedDownEffects::new(
+            Vec::<ListenerState>::new(),
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&ledger),
+        );
+        let report = execute_down_plan(plan, &mut effects);
+        let rendered = render_down_with_ledger(&report, &ledger);
+        assert_eq!(report.disposition, DownDisposition::Blocked);
+        assert_eq!(report.registrations.len(), expected_held);
+        assert!(report.registrations.iter().all(|registration| matches!(
+            registration.outcome,
+            DownRegistrationOutcome::Held { .. }
+        )));
+        assert!(!report.signalled);
+        assert!(rendered.stdout.iter().all(|line| !line.contains("stopped")));
+        assert_eq!(
+            *ledger.borrow(),
+            vec![LifecycleEvent::Render],
+            "blocked down must not revalidate, inspect, signal, wait, inspect a listener, or remove"
+        );
+    }
+
+    fn assert_down_consumer_matrix_row(discovery: &ManagedServerDiscovery) {
+        match &discovery.state {
+            ManagedServerState::Empty => {
+                let ledger = Rc::new(RefCell::new(Vec::new()));
+                let plan = down_plan_from_lifecycle(LifecycleDiscovery::<ScriptedProcess> {
+                    managed: discovery.clone(),
+                    observations: Vec::new(),
+                    resolution: Resolution::Empty,
+                });
+                let mut effects = ScriptedDownEffects::new(
+                    Vec::<ListenerState>::new(),
+                    Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                    Rc::clone(&ledger),
+                );
+                let report = execute_down_plan(plan, &mut effects);
+                render_down_with_ledger(&report, &ledger);
+                assert_eq!(report.disposition, DownDisposition::Empty);
+                assert!(report.success);
+                assert_eq!(*ledger.borrow(), vec![LifecycleEvent::Render]);
+            }
+            ManagedServerState::Ready(server) | ManagedServerState::Degraded { server, .. } => {
+                let capture = match &discovery.inventory.local {
+                    RegistrationSlot::Captured(capture) => capture.as_ref().clone(),
+                    slot => panic!("target fixture lost its local capture: {slot:?}"),
+                };
+                let ledger = Rc::new(RefCell::new(Vec::new()));
+                let process =
+                    ScriptedProcess::new(server.runfile.pid, "consumer-down", Rc::clone(&ledger))
+                        .with_inspection(Ok(ProcessFacts {
+                            identity: server.identity.clone(),
+                            listener: server.listener.clone(),
+                        }));
+                let candidate = Candidate {
+                    coordinate: server.registration.clone(),
+                    runfile: Some(server.runfile.clone()),
+                    state: CandidateState::Verified {
+                        identity: server.identity.clone(),
+                        listener: server.listener.clone(),
+                        health: server.health,
+                    },
+                };
+                let resolution = match &discovery.state {
+                    ManagedServerState::Ready(_) => Resolution::Ready {
+                        target: 0,
+                        aliases: Vec::new(),
+                        stale: Vec::new(),
+                    },
+                    ManagedServerState::Degraded { issues, .. } => Resolution::Degraded {
+                        target: 0,
+                        aliases: Vec::new(),
+                        stale: Vec::new(),
+                        listener: server.listener.clone(),
+                        health: server.health,
+                        issues: issues.clone(),
+                    },
+                    _ => unreachable!(),
+                };
+                let plan = down_plan_from_lifecycle(LifecycleDiscovery {
+                    managed: discovery.clone(),
+                    observations: vec![LifecycleObservation {
+                        label: registration_label(capture.scope, &capture.path),
+                        candidate,
+                        capture: Some(capture.clone()),
+                        process: Some(process),
+                    }],
+                    resolution,
+                });
+                let mut effects = ScriptedDownEffects::new(
+                    [ListenerState::Absent],
+                    [Ok(RemovalOutcome::Removed)],
+                    Rc::clone(&ledger),
+                );
+                let report = execute_down_plan(plan, &mut effects);
+                render_down_with_ledger(&report, &ledger);
+                assert_eq!(report.disposition, DownDisposition::Stopped);
+                assert!(report.success);
+                assert_eq!(report.registrations.len(), 1);
+                assert_eq!(
+                    *ledger.borrow(),
+                    vec![
+                        LifecycleEvent::Revalidate,
+                        LifecycleEvent::Inspect("consumer-down", server.runfile.port),
+                        LifecycleEvent::Terminate("consumer-down"),
+                        LifecycleEvent::RetainedWait("consumer-down"),
+                        LifecycleEvent::Listener(server.runfile.pid, server.runfile.port),
+                        scripted_remove_event(&capture),
+                        LifecycleEvent::Render,
+                    ]
+                );
+            }
+            ManagedServerState::StaleOnly { .. } => {
+                let capture = match &discovery.inventory.local {
+                    RegistrationSlot::Captured(capture) => capture.as_ref().clone(),
+                    slot => panic!("stale fixture lost its local capture: {slot:?}"),
+                };
+                let ledger = Rc::new(RefCell::new(Vec::new()));
+                let plan = down_plan_from_lifecycle(LifecycleDiscovery::<ScriptedProcess> {
+                    managed: discovery.clone(),
+                    observations: vec![LifecycleObservation {
+                        candidate: Candidate {
+                            coordinate: RegistrationCoordinate {
+                                scope: capture.scope,
+                                path: capture.path.clone(),
+                            },
+                            runfile: Some(capture.runfile.clone()),
+                            state: CandidateState::Stale {
+                                reason: "PID is absent".to_string(),
+                                observed_identity: None,
+                                listener: ListenerState::Absent,
+                            },
+                        },
+                        label: registration_label(capture.scope, &capture.path),
+                        capture: Some(capture.clone()),
+                        process: None,
+                    }],
+                    resolution: Resolution::StaleOnly { stale: vec![0] },
+                });
+                let mut effects = ScriptedDownEffects::new(
+                    [ListenerState::Absent],
+                    [Ok(RemovalOutcome::Removed)],
+                    Rc::clone(&ledger),
+                );
+                let report = execute_down_plan(plan, &mut effects);
+                render_down_with_ledger(&report, &ledger);
+                assert_eq!(report.disposition, DownDisposition::StaleCleaned);
+                assert!(report.success);
+                assert_eq!(report.registrations.len(), 1);
+                assert_eq!(
+                    *ledger.borrow(),
+                    vec![
+                        LifecycleEvent::Revalidate,
+                        LifecycleEvent::Listener(capture.runfile.pid, capture.runfile.port),
+                        scripted_remove_event(&capture),
+                        LifecycleEvent::Render,
+                    ]
+                );
+            }
+            ManagedServerState::Conflict { issues } => assert_blocked_down_consumer(
+                discovery,
+                Resolution::Conflict {
+                    issues: issues.clone(),
+                },
+            ),
+            ManagedServerState::Unverifiable { issues } => assert_blocked_down_consumer(
+                discovery,
+                Resolution::Unverifiable {
+                    issues: issues.clone(),
+                },
+            ),
+        }
+    }
+
     #[test]
     fn registration_consumers_propagate_typed_ambiguity() {
         let scope = ManagedDiscoveryScope {
@@ -5935,6 +6416,7 @@ mod tests {
             discovery_fixture_blocked(false),
         ];
         for discovery in fixtures {
+            assert_down_consumer_matrix_row(&discovery);
             let status = status_report(&discovery);
             assert_eq!(status.state, discovery.state);
 
@@ -6043,6 +6525,16 @@ mod tests {
                 }
             }
         }
+
+        // The frozen E03-C command owns the consumer-effect proof. Keep the
+        // focused neighbors as independently runnable regressions, but invoke
+        // their real autonomy/HTTP revalidation, doctor probe-ordering, and
+        // down mutation ledgers here so a name-filtered acceptance run cannot
+        // pass on policy-return values alone.
+        strict_autonomy_requires_fresh_managed_discovery_before_http();
+        registered_consumer_effect_revalidates_retained_generation_on_every_outcome();
+        doctor_blocks_before_external_probes();
+        ambiguous_or_unverifiable_down_is_non_mutating();
     }
 
     #[test]
@@ -7240,6 +7732,12 @@ mod tests {
                 LifecycleEvent::Render,
             ]
         );
+
+        // Retained wait is the down-process postcondition; the companion
+        // spawned-child seam proves that a known-exited owned child is also
+        // reaped before a residual listener can turn the result into failure.
+        // Invoke it from the frozen E04-B name as required by the locked row.
+        stop_managed_child_reaps_proven_exit_before_listener_failure();
     }
 
     #[test]
@@ -7264,7 +7762,7 @@ mod tests {
                 expected: stopped_expected,
                 pid: 6299,
                 port: stopped_port,
-                captures: vec![stopped_capture],
+                captures: vec![stopped_capture.clone()],
                 expected_revisions: Vec::new(),
             },
             &mut stopped_effects,
@@ -7277,6 +7775,19 @@ mod tests {
                 .stdout
                 .last()
                 .is_some_and(|line| line.starts_with("[state] stopped"))
+        );
+        assert_eq!(
+            *stopped_ledger.borrow(),
+            vec![
+                LifecycleEvent::Revalidate,
+                LifecycleEvent::Inspect("stopped", stopped_port),
+                LifecycleEvent::Terminate("stopped"),
+                LifecycleEvent::RetainedWait("stopped"),
+                LifecycleEvent::Listener(6299, stopped_port),
+                scripted_remove_event(&stopped_capture),
+                LifecycleEvent::Render,
+            ],
+            "the stopped row must preserve the same exact per-path order as every stale cleanup row"
         );
 
         let holding = discovery_fixture_path("holding");
@@ -7866,12 +8377,123 @@ mod tests {
         };
         let rendered_status = render_status(&status_report(&managed));
         let expected_command = format!("ferric server adopt --pid {pid}");
-        assert!(
-            rendered_status
-                .stdout
-                .iter()
-                .any(|line| line.contains(&expected_command))
+        let expected_status_guidance = format!(
+            "[next] verify and record the live legacy process without signalling it: `{expected_command}`"
         );
+        assert_eq!(rendered_status.stdout.len(), managed.observations.len() + 2);
+        assert_eq!(
+            &rendered_status.stdout[..managed.observations.len()],
+            managed
+                .observations
+                .iter()
+                .map(expected_registration_status)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            rendered_status.stdout.last(),
+            Some(&expected_status_guidance)
+        );
+
+        // The E04-E trigger is one live legacy registration, not only a
+        // mirrored pair. Exercise a real local capture so both status and down
+        // must preserve its exact bytes while rendering the complete command.
+        let local_only_root = tempfile::tempdir().unwrap();
+        let mut local_only_capture = captures[0].clone();
+        local_only_capture.path = local_only_root.path().join("workspace/.ferric/server.json");
+        std::fs::create_dir_all(local_only_capture.path.parent().unwrap()).unwrap();
+        std::fs::write(&local_only_capture.path, &local_only_capture.raw).unwrap();
+        let local_only_coordinate = RegistrationCoordinate {
+            scope: RegistrationScope::Local,
+            path: local_only_capture.path.clone(),
+        };
+        let local_only_detail = format!(
+            "live schema-1 PID {pid} has no creation identity and cannot authorize teardown"
+        );
+        let local_only_issues = vec![ResolutionIssue {
+            coordinates: vec![local_only_coordinate.clone()],
+            kind: ResolutionIssueKind::Unverifiable,
+            detail: local_only_detail.clone(),
+        }];
+        let local_only_managed = ManagedServerDiscovery {
+            inventory: RegistrationInventory {
+                local: RegistrationSlot::Captured(Box::new(local_only_capture.clone())),
+                global: None,
+                promised_origins: Vec::new(),
+            },
+            observations: vec![ManagedRegistrationObservation {
+                id: ObservationId(0),
+                coordinate: local_only_coordinate.clone(),
+                promised: None,
+                state: ManagedRegistrationState::Captured {
+                    runfile: Box::new(local_only_capture.runfile.clone()),
+                    raw_sha256: ferric_bench::sha256_bytes(&local_only_capture.raw),
+                    runtime: RuntimeObservation::LegacyLive { pid },
+                },
+            }],
+            state: ManagedServerState::Unverifiable {
+                issues: local_only_issues.clone(),
+            },
+        };
+        assert_status_matrix_row(
+            &local_only_managed,
+            StatusNextAction::AdoptLegacy { pid },
+            "[state] unverifiable",
+            &expected_status_guidance,
+            &[format!("[diagnostic] {local_only_detail}")],
+            false,
+        );
+        assert_eq!(
+            std::fs::read(&local_only_capture.path).unwrap(),
+            local_only_capture.raw
+        );
+
+        let local_only_plan = down_plan_from_lifecycle(LifecycleDiscovery::<ScriptedProcess> {
+            managed: local_only_managed,
+            observations: Vec::new(),
+            resolution: Resolution::Unverifiable {
+                issues: local_only_issues,
+            },
+        });
+        let local_only_ledger = Rc::new(RefCell::new(Vec::new()));
+        let mut local_only_effects = ScriptedDownEffects::new(
+            Vec::<ListenerState>::new(),
+            Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+            Rc::clone(&local_only_ledger),
+        );
+        let local_only_report = execute_down_plan(local_only_plan, &mut local_only_effects);
+        let local_only_rendered = render_down_with_ledger(&local_only_report, &local_only_ledger);
+        assert_eq!(local_only_report.disposition, DownDisposition::Blocked);
+        assert!(!local_only_report.signalled);
+        assert_eq!(local_only_report.registrations.len(), 1);
+        assert_eq!(
+            local_only_report.registrations[0].coordinate,
+            local_only_coordinate
+        );
+        assert!(matches!(
+            local_only_report.registrations[0].outcome,
+            DownRegistrationOutcome::Held { .. }
+        ));
+        assert_eq!(
+            local_only_rendered.stdout,
+            vec![
+                format!(
+                    "[held] local registration {} detail=typed discovery blocked teardown mutation",
+                    local_only_capture.path.display()
+                ),
+                "[state] teardown blocked; registrations kept".to_string(),
+                format!("[next] {expected_command}"),
+            ]
+        );
+        assert_eq!(
+            local_only_rendered.stderr,
+            vec![format!("[diagnostic] {local_only_detail}")]
+        );
+        assert_eq!(*local_only_ledger.borrow(), vec![LifecycleEvent::Render]);
+        assert_eq!(
+            std::fs::read(&local_only_capture.path).unwrap(),
+            local_only_capture.raw
+        );
+
         let mut global_only = managed.clone();
         global_only.inventory.local = RegistrationSlot::Absent {
             scope: coordinates[0].scope,
@@ -7885,7 +8507,7 @@ mod tests {
             StatusNextAction::RepairUnverifiable { .. }
         ));
 
-        let plan = down_plan_from_lifecycle(LifecycleDiscovery {
+        let plan = down_plan_from_lifecycle(LifecycleDiscovery::<ScriptedProcess> {
             managed,
             observations: Vec::new(),
             resolution: Resolution::Unverifiable { issues },
@@ -7910,10 +8532,14 @@ mod tests {
                 ))
         );
         assert!(
-            rendered_down
-                .stdout
+            rendered_down.stdout[..2]
                 .iter()
-                .any(|line| line.contains(&expected_command))
+                .zip(&coordinates)
+                .all(|(line, coordinate)| line.contains(&coordinate.path.display().to_string()))
+        );
+        assert_eq!(
+            rendered_down.stdout.last(),
+            Some(&format!("[next] {expected_command}"))
         );
         assert_eq!(*down_ledger.borrow(), vec![LifecycleEvent::Render]);
 
@@ -7960,6 +8586,13 @@ mod tests {
                 LifecycleEvent::Render,
             ]
         );
+
+        // The exact E04-E acceptance name must execute the negative
+        // executable/argv/listener, conditional replacement, final-generation
+        // and rollback rows; differently named focused tests remain useful but
+        // cannot carry this frozen row on their own.
+        legacy_adoption_coordinates_require_closed_engine_and_every_recorded_value();
+        legacy_adoption_transition_and_rollback_matrix();
     }
 
     #[test]
@@ -9006,6 +9639,19 @@ mod tests {
             "reap-error",
             "listener-survived",
         ] {
+            let recovery_root = tempfile::tempdir().unwrap();
+            let mut held_local = local.clone();
+            held_local.path = recovery_root.path().join("local-server.json");
+            std::fs::write(&held_local.path, &held_local.raw).unwrap();
+            let mut held_stage = global_stage.clone();
+            held_stage.final_path = recovery_root.path().join("global-server.json");
+            held_stage.path = recovery_root.path().join(".server-registration-held-stage");
+            let held_stage_raw = held_stage
+                .raw
+                .as_ref()
+                .expect("scripted held stage has exact bytes")
+                .clone();
+            std::fs::write(&held_stage.path, &held_stage_raw).unwrap();
             let ledger = Rc::new(RefCell::new(Vec::new()));
             let process = match case {
                 "terminate-error" => ScriptedProcess::new(pid, case, Rc::clone(&ledger))
@@ -9043,16 +9689,29 @@ mod tests {
                 &mut child,
                 &process,
                 port,
-                mirror_failure(&local, &global_stage),
+                mirror_failure(&held_local, &held_stage),
                 &listener,
                 &mut effects,
             );
-            render_publication_with_ledger(&report, &ledger);
+            let rendered = render_publication_with_ledger(&report, &ledger);
             assert_eq!(
                 report.disposition,
                 PublicationDisposition::RecoveryHeld,
                 "{case}"
             );
+            assert_eq!(report.finals.len(), 1, "{case}");
+            assert_eq!(
+                report.finals[0].coordinate,
+                RegistrationCoordinate {
+                    scope: held_local.scope,
+                    path: held_local.path.clone(),
+                },
+                "{case}"
+            );
+            assert_eq!(report.stages.len(), 1, "{case}");
+            assert_eq!(report.stages[0].scope, held_stage.scope, "{case}");
+            assert_eq!(report.stages[0].final_path, held_stage.final_path, "{case}");
+            assert_eq!(report.stages[0].path, held_stage.path, "{case}");
             assert!(
                 report
                     .finals
@@ -9064,6 +9723,30 @@ mod tests {
                     .stages
                     .iter()
                     .all(|entry| matches!(entry.outcome, DownRegistrationOutcome::Held { .. }))
+            );
+            assert!(
+                rendered
+                    .stdout
+                    .iter()
+                    .any(|line| line.contains(&held_local.path.display().to_string())),
+                "{case}: every held final must survive rendering"
+            );
+            assert!(
+                rendered
+                    .stdout
+                    .iter()
+                    .any(|line| line.contains(&held_stage.path.display().to_string())),
+                "{case}: every held stage must survive rendering"
+            );
+            assert_eq!(
+                std::fs::read(&held_local.path).unwrap(),
+                held_local.raw,
+                "{case}: held final bytes changed"
+            );
+            assert_eq!(
+                std::fs::read(&held_stage.path).unwrap(),
+                held_stage_raw,
+                "{case}: held stage bytes changed"
             );
             assert!(ledger.borrow().iter().all(|event| !matches!(
                 event,

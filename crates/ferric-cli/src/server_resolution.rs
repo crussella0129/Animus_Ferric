@@ -623,6 +623,14 @@ mod tests {
         changed.process_identity.as_mut().unwrap().executable =
             PathBuf::from("/fixture/other-llama-server");
         metadata_variants.push(changed);
+        let mut changed = baseline.clone();
+        changed
+            .process_identity
+            .as_mut()
+            .unwrap()
+            .argv
+            .push("--different-coordinate".to_string());
+        metadata_variants.push(changed);
         for changed in metadata_variants {
             assert!(matches!(
                 resolve(&[
@@ -719,6 +727,42 @@ mod tests {
                     RegistrationScope::Local,
                     "local",
                     runfile(3),
+                    ListenerState::OwnedByTarget,
+                ),
+                live.clone(),
+            ]),
+            Resolution::Conflict { .. }
+        ));
+        assert!(matches!(
+            resolve(&[
+                stale(
+                    RegistrationScope::Local,
+                    "local",
+                    runfile(3),
+                    ListenerState::OwnedByOther(vec![selected.pid]),
+                ),
+                live.clone(),
+            ]),
+            Resolution::Conflict { .. }
+        ));
+        assert!(matches!(
+            resolve(&[
+                stale(
+                    RegistrationScope::Local,
+                    "local",
+                    accounted_stale.clone(),
+                    ListenerState::OwnedByOther(Vec::new()),
+                ),
+                live.clone(),
+            ]),
+            Resolution::Conflict { .. }
+        ));
+        assert!(matches!(
+            resolve(&[
+                stale(
+                    RegistrationScope::Local,
+                    "local",
+                    runfile(3),
                     ListenerState::Uninspectable("permission denied".to_string()),
                 ),
                 live,
@@ -734,6 +778,30 @@ mod tests {
                 ListenerState::OwnedByTarget,
             )]),
             Resolution::Conflict { .. }
+        ));
+
+        for listener in [
+            ListenerState::OwnedByOther(vec![9999]),
+            ListenerState::OwnedByTargetWildcard,
+        ] {
+            assert!(matches!(
+                resolve(&[stale(
+                    RegistrationScope::Local,
+                    "stale-blocked",
+                    runfile(3),
+                    listener,
+                )]),
+                Resolution::Conflict { .. }
+            ));
+        }
+        assert!(matches!(
+            resolve(&[stale(
+                RegistrationScope::Local,
+                "stale-uninspectable",
+                runfile(3),
+                ListenerState::Uninspectable("permission denied".to_string()),
+            )]),
+            Resolution::Unverifiable { .. }
         ));
 
         let live_a = verified(RegistrationScope::Local, "a", runfile(10));
@@ -754,6 +822,13 @@ mod tests {
             first, second,
             "live conflicts must precede target selection"
         );
+
+        // These inventory-level blockers are part of E03-A as well. Calling
+        // their shared rows here keeps the frozen exact-name command honest:
+        // it must prove both present/absent Tailscale PIDs make zero process
+        // calls and missing/changed origins block before acquisition.
+        crate::server::tests::tailscale_registration_blocks_before_process_inspection();
+        crate::server::tests::promised_origin_static_matrix_precedes_process_inspection();
     }
 
     #[test]
