@@ -1649,3 +1649,36 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   protected Sprint 114 artifact retained SHA-256
   `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
 - **Commit:** `7bdd09c082d76ca3a1f187902adaf41912e5f80f`
+
+## T-11606 (sprint 117)
+
+- **Description:** Recovered Sprint 116's failed-close lifecycle acceptance at
+  the clause level. Canonical tagged process-generation identity, lossless
+  local/global/promised-origin inventory, retained Windows HANDLE/Linux pidfd
+  authority, exact listener ownership, typed six-state discovery, conditional
+  teardown/adoption, durable no-clobber publication, and exact compensation
+  now have executable in-body matrices. Real concurrent clients and real CLI
+  fixtures cover publication, adoption, stale recovery, down, and Tailscale
+  refusal without replacing safety authority with fixture shortcuts.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T21:27:24-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_process.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/src/server_resolution.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, Sprint 117 Test
+  evidence, INT-0008, and the Book work ledgers.
+- **Verification:** all nineteen literal frozen EARS commands passed at
+  immutable head `44f36a239f48c4c230e0454535451ecf62e5ffa3`; supplemental,
+  integration, native Windows/Linux, and real CLI rows passed; the Ferric CLI
+  package passed 336/336; the workspace passed 1,089 with four intentional
+  ignores; strict formatting, Clippy, AArch64 compile, and Book checks passed;
+  GitHub CI run
+  [33346491895](https://github.com/crussella0129/Animus_Ferric/actions/runs/33346491895)
+  passed all six jobs. The final
+  [test critique](../sprints/s117/sprint-tests/critique.md) is `clean`, and the
+  scoped [test report](../sprints/s117/sprint-tests/test-report.md) accepts the
+  affected lifecycle portions of INT-0008 AC-3/4/6/7 without claiming the
+  wider workflow realized. The Sprint 114 protected artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** `44f36a239f48c4c230e0454535451ecf62e5ffa3`
