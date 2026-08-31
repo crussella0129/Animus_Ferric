@@ -3260,6 +3260,26 @@ where
     }
 }
 
+fn with_prepared_tailscale_launch<S, G, L, T>(
+    enabled: bool,
+    port: u16,
+    serve: &S,
+    generate: G,
+    launch: L,
+) -> Result<T, String>
+where
+    S: TailscaleServeEffects,
+    G: FnOnce() -> Result<String, String>,
+    L: FnOnce(Option<TailscaleServeOwnership>) -> T,
+{
+    let ownership = if enabled {
+        Some(prepare_tailscale_ownership_with(port, serve, generate)?)
+    } else {
+        None
+    };
+    Ok(launch(ownership))
+}
+
 fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
     let global_path = global_runfile_path();
     if let Err(error) = validate_launch_preconditions(workspace, args, global_path.as_deref()) {
@@ -3269,44 +3289,44 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
 
     let cfg = config_from(args);
     let serve = TailscaleServeAdapter::native();
-    let tailscale_serve = if cfg.tailscale {
-        match prepare_tailscale_ownership_with(cfg.port, &serve, || {
-            generate_token().map_err(|error| error.to_string())
-        }) {
-            Ok(ownership) => Some(ownership),
-            Err(error) => {
-                eprintln!("Tailscale Serve launch preparation failed: {error}");
-                return ExitCode::FAILURE;
-            }
-        }
-    } else {
-        None
-    };
     let launch = command(&cfg);
-
-    let mut proc = Command::new(&launch.program);
-    proc.args(&launch.args);
-    for (k, v) in &launch.env {
-        proc.env(k, v);
-    }
-    println!("Launching {} on {} ...", launch.program, cfg.base_url());
-    let mut health = NativeHealthProbe;
-    let mut clock = SystemLifecycleClock;
-    let mut compensation = NativePublicationCompensationEffects;
-    let launched = orchestrate_launch_with(
-        workspace,
-        global_path.as_deref(),
-        &cfg,
-        tailscale_serve,
+    let launched = match with_prepared_tailscale_launch(
+        cfg.tailscale,
+        cfg.port,
         &serve,
-        || proc.spawn().map_err(|error| error.to_string()),
-        &NativeSpawnedProcessRuntime,
-        &NativeListenerInspector,
-        &mut health,
-        &mut clock,
-        publish_mirrored,
-        &mut compensation,
-    );
+        || generate_token().map_err(|error| error.to_string()),
+        |tailscale_serve| {
+            let mut proc = Command::new(&launch.program);
+            proc.args(&launch.args);
+            for (k, v) in &launch.env {
+                proc.env(k, v);
+            }
+            println!("Launching {} on {} ...", launch.program, cfg.base_url());
+            let mut health = NativeHealthProbe;
+            let mut clock = SystemLifecycleClock;
+            let mut compensation = NativePublicationCompensationEffects;
+            orchestrate_launch_with(
+                workspace,
+                global_path.as_deref(),
+                &cfg,
+                tailscale_serve,
+                &serve,
+                || proc.spawn().map_err(|error| error.to_string()),
+                &NativeSpawnedProcessRuntime,
+                &NativeListenerInspector,
+                &mut health,
+                &mut clock,
+                publish_mirrored,
+                &mut compensation,
+            )
+        },
+    ) {
+        Ok(launched) => launched,
+        Err(error) => {
+            eprintln!("Tailscale Serve launch preparation failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let launched = match launched {
         Ok(launched) => launched,
         Err(LaunchOrchestrationError::Spawn(error)) => {
@@ -9494,14 +9514,21 @@ pub(crate) mod tests {
             )
         }));
 
+        let repeated_plan = down_plan_from_lifecycle(LifecycleDiscovery::<ScriptedProcess> {
+            managed: discovery_fixture_empty(),
+            observations: Vec::new(),
+            resolution: Resolution::Empty,
+        });
+        let repeated_ledger = Rc::new(RefCell::new(Vec::new()));
         let mut repeated = ScriptedDownEffects::new(
             Vec::<ListenerState>::new(),
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
-            Rc::new(RefCell::new(Vec::new())),
+            Rc::clone(&repeated_ledger),
         );
-        let empty = execute_down_plan(DownPlan::<ScriptedProcess>::Empty, &mut repeated);
+        let empty = execute_down_plan(repeated_plan, &mut repeated);
         assert!(empty.success);
         assert_eq!(empty.disposition, DownDisposition::Empty);
+        assert!(repeated_ledger.borrow().is_empty());
     }
 
     #[test]
@@ -12757,11 +12784,20 @@ pub(crate) mod tests {
     fn tailscale_pre_mutation_failures_never_apply() {
         let ledger = Rc::new(RefCell::new(Vec::new()));
         let serve = ScriptedTailscaleServe::new([], Rc::clone(&ledger));
-        let entropy = prepare_tailscale_ownership_with(9523, &serve, || {
-            Err("injected entropy failure".to_string())
-        });
+        let engine_spawns = Rc::new(RefCell::new(0_u8));
+        let spawn_marker = Rc::clone(&engine_spawns);
+        let entropy = with_prepared_tailscale_launch(
+            true,
+            9523,
+            &serve,
+            || Err("injected entropy failure".to_string()),
+            move |_ownership| {
+                *spawn_marker.borrow_mut() += 1;
+            },
+        );
         assert!(entropy.unwrap_err().contains("injected entropy failure"));
         assert!(ledger.borrow().is_empty());
+        assert_eq!(*engine_spawns.borrow(), 0);
 
         let ledger = Rc::new(RefCell::new(Vec::new()));
         let serve = ScriptedTailscaleServe::new([], Rc::clone(&ledger));
@@ -12770,11 +12806,20 @@ pub(crate) mod tests {
                 operation: "injected identity capture",
             },
         )]);
-        let identity = prepare_tailscale_ownership_with(9523, &serve, || {
-            Ok("00112233445566778899aabbccddeeff".to_string())
-        });
+        let engine_spawns = Rc::new(RefCell::new(0_u8));
+        let spawn_marker = Rc::clone(&engine_spawns);
+        let identity = with_prepared_tailscale_launch(
+            true,
+            9523,
+            &serve,
+            || Ok("00112233445566778899aabbccddeeff".to_string()),
+            move |_ownership| {
+                *spawn_marker.borrow_mut() += 1;
+            },
+        );
         assert!(identity.unwrap_err().contains("injected identity capture"));
         assert_eq!(*ledger.borrow(), vec![LifecycleEvent::TailscaleIdentity]);
+        assert_eq!(*engine_spawns.borrow(), 0);
 
         let ledger = Rc::new(RefCell::new(Vec::new()));
         let serve = ScriptedTailscaleServe::new(

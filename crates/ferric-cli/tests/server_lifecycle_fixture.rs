@@ -1241,9 +1241,31 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
         "root"
     );
 
+    let state_after_first_down = read_tailscale_state(&state_path);
+    assert_eq!(state_after_first_down, initial_state);
+    let commands_after_first_down = read_tailscale_command_log(&log_path);
+
+    let repeated_down = run_cli_output_bounded(
+        "repeated real `ferric server down` for Tailscale",
+        isolated_tailscale_ferric(&workspace, &appdata, &bin_dir, &state_path, &log_path)
+            .args(["server", "down"]),
+    );
+    let repeated_down_stdout = String::from_utf8(repeated_down.stdout.clone()).unwrap();
+    assert_success(
+        "repeated real `ferric server down` for Tailscale",
+        repeated_down,
+    );
+    assert!(repeated_down_stdout.contains("[state] no server registered"));
+    assert!(endpoint_is_closed(port));
+    assert_only_sentinel(&local_dir, "workspace");
+    assert_only_sentinel(&global_dir, "global");
     let final_state = read_tailscale_state(&state_path);
     assert_eq!(final_state, initial_state);
     let command_log = read_tailscale_command_log(&log_path);
+    assert_eq!(
+        command_log, commands_after_first_down,
+        "repeated down after successful cleanup must not invoke Tailscale"
+    );
     assert!(command_log.iter().any(|entry| {
         entry["journals_ready_on_apply"].as_bool() == Some(true)
             && entry["argv"].as_array().is_some_and(|argv| {
