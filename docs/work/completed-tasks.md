@@ -1734,3 +1734,24 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   all-target, all-feature Clippy passed with warnings denied; formatting
   passed.
 - **Commit:** `001170bdf665167b75a7f519b1625fedec275bcc`
+
+## T-11803 (sprint 118)
+
+- **Description:** Made status combine the existing native lifecycle state with
+  exact observation of the recorded Tailscale Serve coordinate, reporting
+  active, pending, replaced, or uninspectable state and succeeding only when
+  both the native process and proxy are ready. Down now revalidates journals,
+  reconciles the exact proxy before independently stopping the retained process,
+  proves listener release, revalidates again, and conditionally removes
+  registrations only when both resources resolve. Ambiguous, replaced,
+  unreadable, post-off, and reported-off-failure rows retain coordinate-specific
+  journals so a later absent-state retry can converge safely.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T01:39:12-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/tailscale_serve.rs`, and the Book work ledgers.
+- **Verification:** all four named status/down proxy-state, cleanup-order,
+  failure-retention, and idempotent-retry tests passed; all 71 server tests
+  passed; Ferric CLI all-target, all-feature Clippy passed with warnings
+  denied; formatting passed.
+- **Commit:** PENDING

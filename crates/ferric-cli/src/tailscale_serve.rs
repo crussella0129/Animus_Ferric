@@ -5,11 +5,6 @@
 //! an exact high-entropy `/_ferric/<token>` path. In particular, there is no
 //! route to `reset`, `set-config`, a root-path handler, or an unscoped `off`.
 
-// T-11801 lands the closed adapter before T-11802/T-11804 wire its production
-// lifecycle call sites. Keep that staged boundary warning-clean; later build
-// tasks remove this allowance as the production surface becomes reachable.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Read;
@@ -103,6 +98,7 @@ impl TailscaleServeOwnership {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn proxy_port(&self) -> Result<u16, TailscaleServeError> {
         proxy_target_port(&self.proxy_target)
     }
@@ -158,13 +154,7 @@ impl EntropySource for OsEntropy {
     }
 }
 
-pub(crate) fn prepare_coordinate(
-    port: u16,
-    fqdn: &str,
-) -> Result<TailscaleServeCoordinate, TailscaleServeError> {
-    prepare_coordinate_with_entropy(port, fqdn, &OsEntropy)
-}
-
+#[cfg(test)]
 pub(crate) fn prepare_coordinate_with_entropy<E: EntropySource>(
     port: u16,
     fqdn: &str,
