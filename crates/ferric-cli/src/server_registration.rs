@@ -285,6 +285,8 @@ struct WideRunfileEnvelope {
     _base_url: String,
     #[serde(default, rename = "tailscale")]
     _tailscale: bool,
+    #[serde(default, rename = "tailscale_serve")]
+    _tailscale_serve: Option<crate::tailscale_serve::TailscaleServeOwnership>,
     #[serde(default, rename = "model")]
     _model: Option<String>,
     #[serde(default, rename = "context_size")]
@@ -339,9 +341,13 @@ pub(crate) fn validate_runfile(
 ) -> Result<(), String> {
     match runfile.schema_version {
         LEGACY_SCHEMA_VERSION => {
-            if runfile.process_identity.is_some() || runfile.origin_local_runfile.is_some() {
+            if runfile.process_identity.is_some()
+                || runfile.origin_local_runfile.is_some()
+                || runfile.tailscale_serve.is_some()
+            {
                 return Err(
-                    "schema 1 must not carry process_identity or origin_local_runfile".to_string(),
+                    "schema 1 must not carry process_identity, origin_local_runfile, or tailscale_serve"
+                        .to_string(),
                 );
             }
         }
@@ -352,13 +358,22 @@ pub(crate) fn validate_runfile(
             if runfile.port == 0 {
                 return Err("schema 2 requires a nonzero port".to_string());
             }
-            if !runfile.tailscale {
-                let expected_base_url = format!("http://127.0.0.1:{}/v1", runfile.port);
-                if runfile.base_url != expected_base_url {
-                    return Err(format!(
-                        "schema 2 non-Tailscale base_url must be {expected_base_url}"
-                    ));
-                }
+            let expected_base_url = format!("http://127.0.0.1:{}/v1", runfile.port);
+            if runfile.base_url != expected_base_url {
+                return Err(format!(
+                    "schema 2 base_url must remain the local endpoint {expected_base_url}"
+                ));
+            }
+            if !runfile.tailscale && runfile.tailscale_serve.is_some() {
+                return Err(
+                    "schema 2 non-Tailscale registration must not carry tailscale_serve ownership"
+                        .to_string(),
+                );
+            }
+            if let Some(ownership) = &runfile.tailscale_serve {
+                ownership
+                    .validate_for_port(runfile.port)
+                    .map_err(|error| format!("schema 2 tailscale_serve is invalid: {error}"))?;
             }
             let identity = runfile
                 .process_identity
@@ -1952,6 +1967,7 @@ mod tests {
             port: 8080,
             base_url: "http://127.0.0.1:8080/v1".to_string(),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("model.gguf".to_string()),
             context_size: Some(4096),
             sampling_seed: Some(42),
@@ -2000,6 +2016,21 @@ mod tests {
         runfile.process_identity = Some(identity(discriminator));
         runfile.origin_local_runfile = Some(origin.to_path_buf());
         runfile
+    }
+
+    fn tailscale_ownership() -> crate::tailscale_serve::TailscaleServeOwnership {
+        let token = "00112233445566778899aabbccddeeff";
+        let fqdn = "example-host.tailnet-example.ts.net";
+        crate::tailscale_serve::TailscaleServeOwnership {
+            version: crate::tailscale_serve::OWNERSHIP_VERSION,
+            token: token.to_string(),
+            fqdn: fqdn.to_string(),
+            https_port: crate::tailscale_serve::HTTPS_PORT,
+            mount_path: format!("/_ferric/{token}"),
+            proxy_target: "http://127.0.0.1:8080".to_string(),
+            remote_base_url: format!("https://{fqdn}/_ferric/{token}/v1"),
+            before_status_sha256: "a".repeat(64),
+        }
     }
 
     fn write_runfile(path: &Path, runfile: &ServerRunfile) -> Vec<u8> {
@@ -3976,7 +4007,7 @@ mod tests {
         {
             let mut divergent_base_url = v2_runfile(&origin, 20 + index as u64);
             divergent_base_url.base_url = base_url.to_string();
-            cases.push((divergent_base_url, "non-Tailscale base_url"));
+            cases.push((divergent_base_url, "base_url must remain"));
         }
         let mut unknown_version = v2_runfile(&origin, 30);
         unknown_version.schema_version = 99;
@@ -4003,6 +4034,73 @@ mod tests {
             &self_mismatched,
             "does not name its own registration",
         );
+    }
+
+    #[test]
+    fn runfile_schema_is_additive_and_validated() {
+        let root = tempfile::tempdir().unwrap();
+        let global = root.path().join("global.json");
+        let origin = absolute_path(&root.path().join("workspace/.ferric/server.json")).unwrap();
+
+        let old_false = br#"{"schema_version":2,"engine":"llama-server","pid":1234,"port":8080,"base_url":"http://127.0.0.1:8080/v1","tailscale":false,"process_identity":{"start_token":"linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:987005","executable":"/fixture/llama-server","argv":["llama-server"]},"origin_local_runfile":"/fixture/.ferric/server.json"}"#;
+        let decoded = serde_json::from_slice::<ServerRunfile>(old_false).unwrap();
+        assert!(decoded.tailscale_serve.is_none());
+
+        let mut owned = v2_runfile(&origin, 100);
+        owned.tailscale = true;
+        owned.tailscale_serve = Some(tailscale_ownership());
+        let raw = write_runfile(&global, &owned);
+        let slot = capture_registration_path(RegistrationScope::Global, &global);
+        let captured = captured(&slot);
+        assert_eq!(captured.runfile, owned);
+        assert_eq!(captured.raw, raw);
+
+        let mut boolean_only = owned.clone();
+        boolean_only.tailscale_serve = None;
+        validate_runfile(RegistrationScope::Global, &global, &boolean_only)
+            .expect("historical boolean-only records remain structurally readable");
+
+        let mut cases = Vec::new();
+        let mut invalid_token = owned.clone();
+        invalid_token.tailscale_serve.as_mut().unwrap().token = "0".repeat(31);
+        cases.push(invalid_token);
+        let mut invalid_path = owned.clone();
+        invalid_path.tailscale_serve.as_mut().unwrap().mount_path = "/_ferric/wrong".to_string();
+        cases.push(invalid_path);
+        let mut invalid_target = owned.clone();
+        invalid_target
+            .tailscale_serve
+            .as_mut()
+            .unwrap()
+            .proxy_target = "http://127.0.0.1:9090".to_string();
+        cases.push(invalid_target);
+        let mut invalid_port = owned.clone();
+        invalid_port.tailscale_serve.as_mut().unwrap().https_port = 8443;
+        cases.push(invalid_port);
+        let mut invalid_digest = owned.clone();
+        invalid_digest
+            .tailscale_serve
+            .as_mut()
+            .unwrap()
+            .before_status_sha256 = "not-a-digest".to_string();
+        cases.push(invalid_digest);
+        let mut invalid_remote = owned.clone();
+        invalid_remote
+            .tailscale_serve
+            .as_mut()
+            .unwrap()
+            .remote_base_url = "https://example.invalid/v1".to_string();
+        cases.push(invalid_remote);
+        let mut metadata_disagreement = owned.clone();
+        metadata_disagreement.tailscale = false;
+        cases.push(metadata_disagreement);
+
+        for invalid in cases {
+            assert!(
+                validate_runfile(RegistrationScope::Global, &global, &invalid).is_err(),
+                "invalid ownership shape authorized schema-v2 registration: {invalid:?}"
+            );
+        }
     }
 
     #[cfg(any(windows, target_os = "linux"))]

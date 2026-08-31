@@ -1689,3 +1689,27 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   the exact nineteen-row ledger and records complete immutable-head
   requalification before merge approval.
 - **Commit:** `b679a25ba83069ab849b0f7f2eb8a3269eba10c5`
+
+## T-11801 (sprint 118)
+
+- **Description:** Added a closed, bounded Tailscale Serve adapter with exact
+  read/apply/off argv, duplicate-safe status projection, canonical provenance,
+  strict self-FQDN and 128-bit ownership-token preparation, plus an additive
+  schema-v2 ownership object. Typed records retain a loopback local base and
+  can enter native lifecycle resolution; legacy boolean-only records remain
+  readable but non-authorizing before process or Tailscale effects.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T01:08:51-04:00
+- **Files modified:** `Cargo.toml`, `Cargo.lock`,
+  `crates/ferric-cli/Cargo.toml`, `crates/ferric-cli/src/main.rs`,
+  `crates/ferric-cli/src/tailscale_serve.rs`,
+  `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/src/server_resolution.rs`,
+  `crates/ferric-cli/src/autonomy_cmd.rs`, Sprint 118 research/plan/meta
+  records, INT-0008, the Book summary, and the Book work ledgers.
+- **Verification:** all adapter and Tailscale legacy-safety tests passed (10
+  passed, one intentional subprocess-helper ignore); additive schema and
+  cross-workspace typed-resolution matrices passed; Ferric CLI all-target,
+  all-feature Clippy passed with warnings denied; formatting passed.
+- **Commit:** PENDING

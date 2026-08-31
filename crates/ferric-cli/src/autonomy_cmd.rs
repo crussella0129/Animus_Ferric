@@ -3490,6 +3490,7 @@ mod tests {
             port: 8080,
             base_url: "http://127.0.0.1:8080/v1".to_string(),
             tailscale: false,
+            tailscale_serve: None,
             model: Some(model.clone()),
             context_size: Some(8192),
             sampling_seed: Some(42),

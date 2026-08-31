@@ -35,6 +35,7 @@ use crate::server_resolution::{
     Candidate, CandidateState, HealthState, Resolution, ResolutionIssue, ResolutionIssueKind,
     resolve,
 };
+use crate::tailscale_serve::TailscaleServeOwnership;
 
 pub(crate) const RUNFILE_SCHEMA_V2: u8 = 2;
 
@@ -242,6 +243,11 @@ pub struct ServerRunfile {
     pub base_url: String,
     #[serde(default)]
     pub tailscale: bool,
+    /// Exact endpoint-scoped Tailscale Serve recovery authority. Historical
+    /// boolean-only records deserialize without this object and remain
+    /// deliberately non-authorizing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tailscale_serve: Option<TailscaleServeOwnership>,
     /// Additive launch provenance. Old runfiles deserialize these fields as
     /// unknown rather than silently claiming a reproducible setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1255,7 +1261,7 @@ fn static_inventory_issues(
                 });
             }
             ManagedRegistrationState::Captured { runfile, .. } => {
-                if runfile.tailscale {
+                if runfile.tailscale && runfile.tailscale_serve.is_none() {
                     issues.push(ResolutionIssue {
                         coordinates: vec![observation.coordinate.clone()],
                         kind: ResolutionIssueKind::Unverifiable,
@@ -1476,7 +1482,7 @@ fn blocked_observation_with_facts(
 fn observe_registration(capture: CapturedRegistration) -> LifecycleObservation {
     let pid = capture.runfile.pid;
     let port = capture.runfile.port;
-    if capture.runfile.tailscale {
+    if capture.runfile.tailscale && capture.runfile.tailscale_serve.is_none() {
         return blocked_observation(
             capture,
             "this registration owns durable Tailscale Serve state that this build cannot yet compare-and-remove safely; stop the engine and remove that exact Serve endpoint with Tailscale tooling before removing the registration"
@@ -1719,7 +1725,9 @@ fn update_managed_runtime_observations(
                 observed_identity: observed_identity.clone(),
                 listener: listener.clone(),
             },
-            CandidateState::Unverifiable { .. } if capture.runfile.tailscale => {
+            CandidateState::Unverifiable { .. }
+                if capture.runfile.tailscale && capture.runfile.tailscale_serve.is_none() =>
+            {
                 RuntimeObservation::NotInspected
             }
             CandidateState::Unverifiable { .. }
@@ -2724,6 +2732,7 @@ where
         port: cfg.port,
         base_url: base_url.clone(),
         tailscale: cfg.tailscale,
+        tailscale_serve: None,
         model: cfg.model.clone(),
         context_size: (cfg.engine == Engine::LlamaServer).then_some(cfg.ctx),
         sampling_seed: cfg.seed,
@@ -5144,6 +5153,7 @@ pub(crate) mod tests {
             port,
             base_url: format!("http://127.0.0.1:{port}/v1"),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("model.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -5176,6 +5186,7 @@ pub(crate) mod tests {
             port,
             base_url: format!("http://127.0.0.1:{port}/v1"),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("model.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -5463,7 +5474,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    pub(crate) fn tailscale_registration_blocks_before_process_inspection() {
+    pub(crate) fn legacy_tailscale_registration_remains_unowned() {
         let root = tempfile::tempdir().unwrap();
         for (process_case, pid, simulated_present) in
             [("present", 4201, true), ("absent", 4202, false)]
@@ -11848,6 +11859,7 @@ pub(crate) mod tests {
             port,
             base_url: format!("http://127.0.0.1:{port}/v1"),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("example.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -11933,6 +11945,7 @@ pub(crate) mod tests {
             port,
             base_url: format!("http://127.0.0.1:{port}/v1"),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("example.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -11996,6 +12009,7 @@ pub(crate) mod tests {
             port,
             base_url: format!("http://127.0.0.1:{port}/v1"),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("example.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -12049,6 +12063,7 @@ pub(crate) mod tests {
             port,
             base_url: format!("http://127.0.0.1:{port}/v1"),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("example.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -12108,6 +12123,7 @@ pub(crate) mod tests {
             port,
             base_url: format!("http://127.0.0.1:{port}/v1"),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("example.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -12165,6 +12181,7 @@ pub(crate) mod tests {
             port,
             base_url: format!("http://127.0.0.1:{port}/v1"),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("example.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -12205,6 +12222,7 @@ pub(crate) mod tests {
             port: 8080,
             base_url: "http://127.0.0.1:8080/v1".to_string(),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("model.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -12356,6 +12374,7 @@ pub(crate) mod tests {
                 port: 8080,
                 base_url: "http://127.0.0.1:8080/v1".to_string(),
                 tailscale: false,
+                tailscale_serve: None,
                 model: None,
                 context_size: None,
                 sampling_seed: None,
@@ -12384,6 +12403,7 @@ pub(crate) mod tests {
                 port: 8080,
                 base_url: "https://example-host.tailnet-example.ts.net/v1".to_string(),
                 tailscale: true,
+                tailscale_serve: None,
                 model: None,
                 context_size: None,
                 sampling_seed: None,
@@ -12472,6 +12492,7 @@ pub(crate) mod tests {
             port,
             base_url: format!("http://127.0.0.1:{port}/v1"),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("model.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -12863,6 +12884,7 @@ pub(crate) mod tests {
             port: 8080,
             base_url: "http://127.0.0.1:8080/v1".to_string(),
             tailscale: false,
+            tailscale_serve: None,
             model: None,
             context_size: None,
             sampling_seed: None,
@@ -12947,6 +12969,7 @@ pub(crate) mod tests {
             port: 8080,
             base_url: "http://127.0.0.1:8080/v1".to_string(),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("model.gguf".to_string()),
             context_size: Some(4096),
             sampling_seed: Some(42),

@@ -55,6 +55,10 @@ sha2 = "0.11"
 # digest 0.11's output no longer implements LowerHex; use the RustCrypto
 # ecosystem's canonical byte-to-lowercase-hex encoder instead.
 hex = "0.4"
+# Crash-safe external ownership coordinates use one OS-CSPRNG draw. Keeping
+# the dependency at the workspace boundary makes the 128-bit contract
+# explicit and available to the CLI without a platform-specific RNG shim.
+getrandom = "0.4"
 futures-executor = "0.3"
 rustyline = "18"
 axum = "0.8"

@@ -239,7 +239,6 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Post-Sprint 115 — ordered local-model work
 
-- [ ] T-11510 (backlog) [intent: INT-0008]: Restore `server up --tailscale` only after Ferric can capture the exact preexisting Serve configuration, publish an ownership token, and compare-and-restore or remove only its own proxy state on every launch failure and verified down; never use a blind node-wide reset. — touches: `crates/ferric-cli/src/server.rs`, Tailscale adapter/state schema, isolated fake-CLI integration tests, server/operator docs
 - [ ] T-11505 (backlog) [intent: INT-0007, INT-0008]: Add a positive finite `bench --timeout-scale` and an explicit query/bench output-token override, retain every effective timeout/output limit in result and trace provenance, and add model-free large-action plus overflow/argv regressions without silently changing current defaults. — touches: `crates/ferric-bench`, `crates/ferric-cli`, `crates/ferric-core`, `crates/ferric-loop`, `crates/ferric-provider`, docs
 - [ ] T-11506 (backlog, after T-11505) [intent: INT-0007]: Qualify the changed backend-enabled release and create a fresh append-only managed Qwen runtime handoff for T-11410. Preserve attempts 001/002 byte-for-byte; never treat the expired attempt-002 handoff as live. — touches: release/runtime qualification controls, owned server registrations
 - [ ] T-11410 (backlog, after T-11506) [intent: INT-0007]: Run the frozen MH-RS01 app through the one-turn segment and explicit linked continuation with no Codex repair. The external counter-app report is excluded from acceptance evidence. — touches: `target/s114-experiment/app-workspace/`, `target/s114-experiment/app-traces/`, future app-run evidence
@@ -260,3 +259,10 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 ## Post-Sprint 117 lifecycle carry-forward
 
 - [ ] T-11707 (backlog, before AC-8 platform parity is claimed) [intent: INT-0008]: Design and prove ordinary-host Linux lifecycle authority that does not require complete enumeration of every unrelated `/proc/<pid>/fd` peer. Preserve the current fail-closed result for unreadable or shared owners; do not infer exclusivity from incomplete visibility. Prefer a durable launch-owned authority coordinate or equivalent kernel-backed proof, and add shared-host positive and negative CI coverage before changing teardown authorization. — touches: `crates/ferric-cli/src/server_process.rs`, lifecycle registration/ownership schema, Linux integration fixtures, CI, server/operator docs
+
+## Sprint 118 — ownership-safe Tailscale Serve lifecycle
+
+- [ ] T-11802 (sprint 118) [intent: INT-0008]: Compose write-ahead mirrored publication, exact endpoint apply/verification, and independent proxy/process failure compensation. — touches: `crates/ferric-cli/src/server.rs`, `crates/ferric-cli/src/server_registration.rs`
+- [ ] T-11803 (sprint 118) [intent: INT-0008]: Make status truthful and down proxy-first, exact-coordinate scoped, evidence-preserving, and retryable. — touches: `crates/ferric-cli/src/server.rs`, `crates/ferric-cli/src/server_resolution.rs`, `crates/ferric-cli/src/tailscale_serve.rs`
+- [ ] T-11804 (sprint 118) [intent: INT-0008]: Restore bounded read-only Tailscale doctor probes and document the compact endpoint/recovery operator surface. — touches: `crates/ferric-cli/src/server.rs`, `README.md`, `docs/commands.md`, `docs/server-configuration.md`
+- [ ] T-11805 (sprint 118) [intent: INT-0008]: Prove lifecycle clauses with deterministic fault seams and a stateful model-free fake Tailscale executable. — touches: `crates/ferric-cli/src/bin/ferric_lifecycle_fixture.rs`, `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, Sprint 118 test evidence
