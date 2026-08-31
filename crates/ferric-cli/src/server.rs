@@ -7590,7 +7590,7 @@ pub(crate) mod tests {
         assert!(all.contains("exact-coordinate"));
         assert!(!all.contains("serve reset"));
         assert!(!all.contains("set-config"));
-        assert!(!all.contains("C:\\Users\\charl"));
+        assert!(!all.contains("C:\\Users\\<you>"));
         assert!(!all.contains("tailnet.ts.net"));
     }
 
