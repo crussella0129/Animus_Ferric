@@ -1832,7 +1832,21 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   Build, Test, and Loop audit.
 - **Substantive LocalAPI correction:** `625fbba116cb5eb04030dd52d07f3ac64d90a84d`
 - **Final adversarial correction:** `9ff40c02c0df38e3d08e04c7f030f676bffcd970`
-- **Accepted tested code head:** `d5e61b7f951ca838ea2aed7cefaa2468282bb164`
+- **PR-CI third Loop re-entry:** PR run `33385435515` at evidence head
+  `85f5e5b` rejected three Clippy feature matrices and a Linux lifecycle
+  topology that passed only 3/5 after namespace PID 1 failed to reap an
+  adopted fixture child. Commit `2f976dcbd4279af3ed3f65588f2d7bde6be2c0b2`
+  narrowed the lifecycle-only cfg boundary and installed an unprivileged PID-1
+  reaper; push/PR runs `33387648205` and `33387653011` passed.
+- **Hard-cleanup and quoting corrections:** Follow-up review superseded that
+  green head because the credential transition could clear `PDEATHSIG`.
+  Commit `a4bf920a57ca6fc38c50a390ef4722f85b8e286e` restored it with
+  `setpriv --pdeathsig keep`; runs `33388127765` and `33388132395` then exposed
+  an apostrophe that terminated the wrapper's outer single-quoted shell
+  program. Commit `7633f8c0675664e51c8a4e88e4aaafe0d20880e9` repaired that
+  quoting and passed the exact isolated wrapper locally 5/5. Final push/PR
+  runs `33388704624` and `33388709925` both passed at that exact head.
+- **Accepted tested code head:** `7633f8c0675664e51c8a4e88e4aaafe0d20880e9`
 
 ## T-11510 (sprint 118)
 
@@ -1845,12 +1859,14 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   ETag/`If-Match` CAS, and substantive adversarial correction
   `9ff40c02c0df38e3d08e04c7f030f676bffcd970` added effective ancestor-route
   retention and truthful LocalAPI diagnostics. A final comment-only
-  terminology alignment produced tested head
-  `d5e61b7f951ca838ea2aed7cefaa2468282bb164`. Those retained records are the
-  implementation history; `d5e61b7` is the accepted code outcome for this
-  umbrella task.
+  terminology alignment produced intermediate head `d5e61b7`. PR CI and
+  follow-up review then required the cfg-matrix, PID-1 reaper, preserved
+  parent-death signal, and shell-quoting corrections recorded above. Those
+  retained records are the implementation history;
+  `7633f8c0675664e51c8a4e88e4aaafe0d20880e9` is the accepted code outcome for
+  this umbrella task.
 - **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
-- **Completed:** 2026-08-31T06:49:11-04:00
+- **Completed:** 2026-08-31T08:09:32-04:00
 - **Scope closed:** `server up --tailscale` now uses durable phased ownership,
   one exact LocalAPI CAS per mutation attempt, same-session identity binding,
   proxy-first compensation and teardown, truthful status/doctor output, and
@@ -1862,4 +1878,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   [Sprint 118 Test report](../sprints/s118/sprint-tests/test-report.md),
   [Test critique](../sprints/s118/sprint-tests/critique.md), and
   [post-Loop adversarial review](../sprints/s118/post-loop-adversarial-review.md).
-- **Accepted code head:** `d5e61b7f951ca838ea2aed7cefaa2468282bb164`
+- **Accepted code head:** `7633f8c0675664e51c8a4e88e4aaafe0d20880e9`

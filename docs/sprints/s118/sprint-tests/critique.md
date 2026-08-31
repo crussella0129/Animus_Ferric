@@ -4,10 +4,58 @@
 
 The mandatory post-evidence adversarial pass examined every Sprint 118 phase,
 and parallel independent code/security reviews examined final tested code head
-`d5e61b7f951ca838ea2aed7cefaa2468282bb164`. That pass initially found P2
-implementation and evidence defects, reopened Loop, and required corrections.
-The final re-review found no remaining P0, P1, or P2 issue. The following P3
-limitations are retained rather than overstated as closed.
+`7633f8c0675664e51c8a4e88e4aaafe0d20880e9`. The complete sprint re-entered
+Loop three times: first for the unsafe CLI mutation boundary, second for the
+post-evidence code and provenance findings, and third for CI portability and
+lifecycle-harness defects. Final re-review found no remaining P0, P1, or P2
+issue. The following P3 limitations are retained rather than overstated as
+closed.
+
+## Resolved third-Loop findings
+
+- **P2 cfg/dead-code matrix gap:** PR run `33385435515` showed that
+  lifecycle-only TCP endpoint symbols were compiled but unused in default and
+  `backend-openai` Clippy configurations. Commit `2f976dc` narrowed the four
+  ownership cfgs to `feature = "lifecycle-fixture"`; default,
+  `backend-openai`, and lifecycle-feature Clippy then passed.
+- **P2 PID-1 zombie/reaping gap:** the same run's isolated Linux lifecycle job
+  passed 3/5 because the Rust harness was namespace PID 1 and did not reap an
+  adopted detached fixture child. Commit `2f976dc` kept an unprivileged
+  `/bin/sh` as PID 1 and serialized the harness beneath it. Both operating
+  systems subsequently passed 5/5, while the deterministic production
+  fail-closed classifier test remained green.
+- **P2 hard-cleanup gap:** review of the green `2f976dc` head found that the
+  credential transition could clear the `PDEATHSIG` installed by
+  `unshare --kill-child=SIGKILL`. Commit `a4bf920` added
+  `setpriv --pdeathsig keep`; a bounded parent-SIGKILL proof observed the
+  namespace child exit with its parent.
+- **P2 workflow quoting gap:** `a4bf920` runs `33388127765` and `33388132395`
+  failed before the harness because an apostrophe in a comment terminated the
+  outer single-quoted shell program and exposed an unset `$1`. Commit
+  `7633f8c` removed the apostrophe; exact local wrapper execution passed 5/5,
+  and independent shell review found no remaining P0-P2 defect.
+
+The exact-head push and PR runs `33388704624` and `33388709925` both passed.
+No lifecycle-infrastructure result is used to close T-11707's ordinary-host
+Linux authority limitation.
+
+### Retained CI-wrapper qualifications [P3]
+
+- The nested shell remains maintenance-sensitive: a future literal apostrophe
+  inside the outer single-quoted program would reopen the quoting defect.
+  Exact-script execution and CI cover the present bytes; future wrapper edits
+  require the same shell-focused review.
+- Ubuntu's installed `unshare` does not provide the newer signal-forwarding
+  option used on some util-linux versions and does not transparently forward
+  ordinary termination while waiting. The wrapper therefore relies on
+  `--kill-child=SIGKILL`, restored `PDEATHSIG`, and the bounded CI job cleanup
+  for hard process-tree termination.
+- Orphan reaping relies on the Ubuntu runner's `/bin/sh` behavior as namespace
+  PID 1. Both exact local execution and final Ubuntu CI passed; a runner shell
+  change requires requalification.
+- If the harness itself terminates by signal, the shell exposes a nonzero
+  `128 + signal` status rather than preserving richer signal identity. This
+  still fails the job and cannot create a false pass.
 
 ## Concerns
 

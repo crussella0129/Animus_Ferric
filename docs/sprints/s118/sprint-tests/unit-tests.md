@@ -1,7 +1,8 @@
 # Sprint 118 Unit and Composition Test Results
 
-- **Tested code head:** `d5e61b7f951ca838ea2aed7cefaa2468282bb164`
-- **Executed:** 2026-08-31 on `x86_64-pc-windows-msvc`
+- **Tested code head:** `7633f8c0675664e51c8a4e88e4aaafe0d20880e9`
+- **Executed:** 2026-08-31 on `x86_64-pc-windows-msvc`, with final
+  exact-head CI on Ubuntu and Windows
 - **Toolchain:** Rust/Cargo 1.96.0
 - **Intent oracle:** [INT-0008 AC-3, AC-4, AC-6, AC-7, and enabling
   AC-9](../../../intents/INT-0008-unified-local-model-workflow.md#acceptance-criteria)
@@ -109,15 +110,21 @@ deviation, not a retroactive pass for the obsolete transport.
 |---|---|
 | `cargo fmt --all -- --check` | passed |
 | workspace all-target/all-feature Clippy with `-D warnings` | passed |
+| `cargo clippy --all-targets -- -D warnings` | passed on Ubuntu and Windows in both final exact-head CI runs |
+| `cargo clippy -p ferric-cli --features backend-openai --all-targets -- -D warnings` | passed on Ubuntu in both final exact-head CI runs |
+| `cargo clippy -p ferric-cli --features lifecycle-fixture --all-targets --locked -- -D warnings` | passed on Ubuntu and Windows in both final exact-head CI runs |
 | LocalAPI focused suite | passed: 19, failed: 0 |
 | Serve focused suite | passed: 17, failed: 0 |
 | `cargo test -p ferric-cli --all-features server::tests` | passed: 84, failed: 0, ignored: 0 |
 | frozen `cargo test -p ferric-cli --all-features tailscale_` | passed: 55 unit plus 2 lifecycle; all other selected targets ran 0 tests |
 | `cargo test -p ferric-cli --test server_lifecycle_fixture --all-features -- --test-threads=1 --nocapture` | passed: 5, failed: 0, ignored: 0 |
+| exact isolated Linux lifecycle wrapper at `7633f8c` | passed: 5, failed: 0, ignored: 0 |
 | `cargo test --workspace --all-targets --all-features` | passed outside the restricted sandbox; the restricted attempt could not qualify its nested Python child |
 | `cargo test --workspace --doc` | passed |
 | default-feature `ferric` check for `aarch64-unknown-linux-gnu` | passed |
 | all-feature aarch64 check | environment-blocked at `ring`: `aarch64-linux-gnu-gcc` is not installed; no Ferric diagnostic |
+| push run [33388704624](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388704624) | completed successfully at exact head `7633f8c` |
+| PR run [33388709925](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388709925) | completed successfully at exact head `7633f8c` |
 | `git diff --check` | passed before evidence reconciliation |
 
 The immutable package-specific command `cargo test -p ferric-cli --doc` exited
@@ -126,5 +133,34 @@ binary/integration-only and has doctests disabled. The applicable supplemental
 `cargo test --workspace --doc` gate passed. This preserves the frozen command's
 exact result instead of relabeling it green.
 
-No GitHub CI conclusion exists before the sprint PR. These are the
-authoritative local results for the frozen code head; remote CI is pending.
+## CI-discovered configuration and wrapper corrections
+
+The first evidence head, `85f5e5b`, was not accepted. PR run
+[33385435515](https://github.com/crussella0129/Animus_Ferric/actions/runs/33385435515)
+completed with failure: default Clippy failed on Ubuntu and Windows and
+`backend-openai` Clippy failed on Ubuntu because `TEST_TCP_ENDPOINT_ENV`,
+`Endpoint::Invalid`, and `parse_test_tcp_endpoint` were present but unused when
+the lifecycle-fixture feature was absent. The same run's isolated Linux
+lifecycle job passed only 3/5 because the Rust harness itself was namespace
+PID 1 and left an adopted managed child as a zombie between serialized tests.
+
+Commit `2f976dc` narrowed the four test-endpoint cfg sites to the
+`lifecycle-fixture` feature and kept an unprivileged `/bin/sh` as namespace PID
+1 to reap adopted fixture children. Push run
+[33387648205](https://github.com/crussella0129/Animus_Ferric/actions/runs/33387648205)
+and PR run
+[33387653011](https://github.com/crussella0129/Animus_Ferric/actions/runs/33387653011)
+completed successfully, but that head was superseded after review found that
+the credential drop could clear the parent-death signal installed by
+`unshare --kill-child=SIGKILL`.
+
+Commit `a4bf920` added `setpriv --pdeathsig keep`. Its push run
+[33388127765](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388127765)
+and PR run
+[33388132395](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388132395)
+completed with failure only in the Ubuntu lifecycle job: an apostrophe in a
+comment terminated the outer single-quoted shell program, so outer Bash with
+`set -u` expanded an unset `$1` before the harness ran. Commit `7633f8c`
+removed that quote hazard. The exact isolated wrapper then passed 5/5 locally,
+and final exact-head push run `33388704624` and PR run `33388709925` both
+completed successfully with every Ubuntu and Windows job green.

@@ -3,7 +3,7 @@
 ## Verdict
 
 **Pass at corrected implementation head
-`d5e61b7f951ca838ea2aed7cefaa2468282bb164`.** The post-Loop adversarial
+`7633f8c0675664e51c8a4e88e4aaafe0d20880e9`.** The post-Loop adversarial
 review rejected the first CLI-backed implementation, replaced that mutation
 boundary with a direct Tailscale LocalAPI ETag/`If-Match` CAS, and reran the
 applicable frozen and supplemental gates. The corrected LocalAPI suite passed
@@ -12,13 +12,21 @@ tests passed, and all five serialized lifecycle fixtures passed.
 
 The requested post-evidence five-phase audit initially found additional P2s,
 reopened Loop, and required ancestor-route, future-version status, pinned
-fresh-CAS validation, operator wording, and Book provenance corrections. Final
-independent re-review found no remaining P0, P1, or P2 issue. P3 limitations
+fresh-CAS validation, operator wording, and Book provenance corrections. PR CI
+then forced a third Loop re-entry: the test-only TCP seam leaked dead-code
+items into default/backend feature matrices, and the first Linux namespace
+topology ran the Rust harness as PID 1, leaving an adopted managed child as a
+zombie between tests. The corrected unprivileged PID-1 reaper passed on both
+operating systems; follow-up review also restored `PDEATHSIG` across the
+credential drop and corrected an apostrophe that broke the outer CI shell's
+single-quoted program. Final independent re-review found no remaining P0, P1,
+or P2 issue. P3 limitations
 remain explicit: no successful native Linux UDS or Windows pipe exchange, a
 narrow Unix two-step `CLOEXEC` fork-inheritance window, no live-tailnet run,
 the upstream status-identity/Serve-ETag atomicity gap, and imprecise precedence
 when several effective ancestor diagnostics coexist. None is represented as
-tested away.
+tested away. The Test critique separately retains P3 CI-wrapper maintenance,
+runner-shell, and signal-propagation qualifications.
 
 This advances the affected parts of INT-0008 AC-3, AC-4, AC-6, and AC-7 and
 provides model-free enabling evidence toward AC-9. It does not realize the
@@ -56,6 +64,9 @@ Detailed arrangements and evidence boundaries are retained in the
 
 - `cargo fmt --all -- --check` passed.
 - Workspace all-target/all-feature Clippy passed with warnings denied.
+- Exact-head CI also passed default Clippy on Ubuntu and Windows,
+  `backend-openai` Clippy on Ubuntu, and `lifecycle-fixture` Clippy on Ubuntu
+  and Windows.
 - LocalAPI tests passed 19/19; Serve tests passed 17/17; the server substring
   filter passed 84/84 (including six `api::server::tests`); lifecycle fixtures
   passed 5/5.
@@ -91,7 +102,7 @@ identity-switch, route-shadow, shared-scaffold, version-drift, transport, and
 fixture-isolation cases that the earlier argv ledger could not prove. The Loop
 was reopened rather than PRing that implementation.
 
-Final tested head `d5e61b7` includes the LocalAPI correction begun at
+Final tested head `7633f8c` includes the LocalAPI correction begun at
 `625fbba`, plus the mandatory final-audit fixes. It uses a bounded client over the
 Linux Unix-domain socket or Windows protected named pipe, pins the normal
 capability/version contract, validates duplicate-safe status and Serve JSON,
@@ -108,9 +119,24 @@ The complete correction and five-phase audit are recorded in the
 independent re-reviews found no remaining P0-P2 issue and retained only the P3
 limitations named above.
 
+PR run `33385435515` exposed the third re-entry at evidence head `85f5e5b`:
+three Clippy configurations rejected lifecycle-only dead code, and the Linux
+lifecycle job passed only 3/5 after namespace PID 1 failed to reap a detached
+managed child. Commit `2f976dc` narrowed the cfg boundary and made an
+unprivileged shell the namespace reaper; push/PR runs `33387648205` and
+`33387653011` passed, but that head was superseded when review found that the
+credential transition could clear `PDEATHSIG`. Commit `a4bf920` restored that
+signal contract with `setpriv --pdeathsig keep`; its runs `33388127765` and
+`33388132395` then caught a shell-quoting defect caused by the apostrophe in a
+comment. Commit `7633f8c` repaired the quoting. The exact corrected wrapper
+passed all 5 tests locally in an isolated PID/network/proc namespace before
+the final exact-head push and PR CI runs were accepted.
+
 ## Environment and CI conclusion
 
-Local execution used Rust/Cargo 1.96.0 on x86_64 Windows. There is no Sprint
-118 GitHub CI conclusion before its PR is opened, so the authoritative Test
-conclusion is local at the exact corrected head. Remote checks are pending and
-are neither inferred nor claimed here.
+Local execution used Rust/Cargo 1.96.0 on x86_64 Windows, with the corrected
+Linux lifecycle wrapper rerun under WSL in an isolated PID/network/proc
+namespace as unprivileged UID/GID 1000. GitHub push run `33388704624` and PR
+run `33388709925` both completed successfully at the same final code head
+across Ubuntu and Windows. The subsequent evidence-only commit must also pass
+CI before merge.

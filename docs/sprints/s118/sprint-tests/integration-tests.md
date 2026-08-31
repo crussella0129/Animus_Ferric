@@ -1,6 +1,6 @@
 # Sprint 118 Integration Test Results
 
-- **Tested code head:** `d5e61b7f951ca838ea2aed7cefaa2468282bb164`
+- **Tested code head:** `7633f8c0675664e51c8a4e88e4aaafe0d20880e9`
 - **Primary command:** `cargo test -p ferric-cli --all-features server::tests`
 - **Result:** 84 passed, 0 failed, 0 ignored. The substring filter includes
   six `api::server::tests` alongside the server composition tests.
@@ -55,6 +55,39 @@ handler and never tears down shared scaffolding. It fails closed if JSON
 reserialization would change any numeric lexeme, so future unknown numeric
 state is not silently rewritten.
 
+## CI and Linux fixture reconciliation
+
+PR run
+[33385435515](https://github.com/crussella0129/Animus_Ferric/actions/runs/33385435515)
+at `85f5e5b` rejected the first completed-looking evidence state. Default
+Clippy failed on Ubuntu and Windows and `backend-openai` Clippy failed on
+Ubuntu because lifecycle-only TCP endpoint items remained present in
+non-lifecycle test configurations. The same run's isolated Linux lifecycle
+job passed 3/5: running the Rust harness as namespace PID 1 left an adopted
+managed child as a zombie, and a later listener-owner query correctly failed
+closed rather than treating incomplete `/proc` inspection as authority.
+
+Commit `2f976dc` narrowed the TCP seam's cfg boundary and placed the serialized
+harness under an unprivileged `/bin/sh` namespace PID-1 reaper. Push run
+[33387648205](https://github.com/crussella0129/Animus_Ferric/actions/runs/33387648205)
+and PR run
+[33387653011](https://github.com/crussella0129/Animus_Ferric/actions/runs/33387653011)
+completed successfully, but the head was superseded when adversarial review
+found that the UID/GID transition could clear the `PDEATHSIG` supporting
+`unshare --kill-child=SIGKILL`. Commit `a4bf920` restored that contract with
+`setpriv --pdeathsig keep`; its push/PR runs `33388127765` and `33388132395`
+then failed only the Ubuntu lifecycle job before the harness because an
+apostrophe broke the outer shell program's single-quote boundary.
+
+Commit `7633f8c` removed the quote hazard. The exact isolated wrapper passed
+5/5 locally, and final push run
+[33388704624](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388704624)
+and PR run
+[33388709925](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388709925)
+both completed successfully at the full tested code head. Their Ubuntu and
+Windows default and lifecycle jobs, plus the Ubuntu backend and aarch64 jobs,
+were all green.
+
 ## Regression boundary
 
 The complete workspace all-target/all-feature test command passed outside the
@@ -62,6 +95,9 @@ restricted sandbox. The restricted run could not qualify a nested benchmark
 Python child; granting ordinary child-process permission to the identical
 command produced the authoritative green result. Workspace Clippy with
 warnings denied, formatting, applicable doc tests, and help smokes also passed.
+Final exact-head CI additionally passed default Clippy and workspace tests on
+Ubuntu and Windows, `backend-openai` Clippy on Ubuntu, and
+`lifecycle-fixture` Clippy and tests on both operating systems.
 
 The default-feature `ferric` aarch64 Linux check passed. The all-feature cross
 check was blocked only when `ring` requested the absent
@@ -73,3 +109,9 @@ The locked plan's CLI-specific adapter/probe/fixture mechanisms are superseded
 by direct LocalAPI evidence, as detailed in
 [the post-Loop review](../post-loop-adversarial-review.md). The locked files
 remain unchanged, and no obsolete CLI test name is reported as executed.
+
+The isolated Linux namespace makes every relevant peer visible to the
+capability-free fixture identity; it is not evidence that ordinary shared-host
+Linux can completely enumerate every unrelated `/proc/<pid>/fd` peer.
+T-11707 therefore remains open and the production classifier continues to
+fail closed for unreadable or shared owners.

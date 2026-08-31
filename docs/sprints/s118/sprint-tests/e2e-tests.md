@@ -1,6 +1,6 @@
 # Sprint 118 End-to-End Test Results
 
-- **Tested code head:** `d5e61b7f951ca838ea2aed7cefaa2468282bb164`
+- **Tested code head:** `7633f8c0675664e51c8a4e88e4aaafe0d20880e9`
 - **Command:** `cargo test -p ferric-cli --test server_lifecycle_fixture --all-features -- --test-threads=1 --nocapture`
 - **Result:** 5 passed, 0 failed, 0 ignored.
 
@@ -48,6 +48,45 @@ T-11805-E01/E03. The old
 `tailscale_command_log_contains_no_broad_mutation` names were not executed and
 are not claimed as passes.
 
+## Linux fixture correction and exact-head CI
+
+The first PR lifecycle run at evidence head `85f5e5b` was not accepted. Run
+[33385435515](https://github.com/crussella0129/Animus_Ferric/actions/runs/33385435515)
+passed the Windows lifecycle job but the isolated Ubuntu job passed only 3/5.
+The Rust test harness was namespace PID 1, so an adopted detached managed child
+remained a zombie between serialized tests and poisoned a later `/proc`
+listener-owner query. The production classifier correctly failed closed; the
+fixture topology, not that authority rule, required correction. The same run
+also exposed the lifecycle-only TCP endpoint's default/backend Clippy cfg gap.
+
+Commit `2f976dc` narrowed that cfg boundary and kept an unprivileged `/bin/sh`
+as namespace PID 1 to reap adopted children while the Rust harness ran beneath
+it. Push run
+[33387648205](https://github.com/crussella0129/Animus_Ferric/actions/runs/33387648205)
+and PR run
+[33387653011](https://github.com/crussella0129/Animus_Ferric/actions/runs/33387653011)
+completed successfully with both operating-system lifecycle jobs green, but
+review superseded that head because the credential transition could clear the
+parent-death signal behind `unshare --kill-child=SIGKILL`.
+
+Commit `a4bf920` added `setpriv --pdeathsig keep`. Its push run
+[33388127765](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388127765)
+and PR run
+[33388132395](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388132395)
+kept the Windows lifecycle job and every non-lifecycle job green, but the
+Ubuntu lifecycle job failed before the harness: an apostrophe in a comment
+closed the outer single-quoted shell program and exposed an unset `$1` to
+outer Bash with `set -u`.
+
+Commit `7633f8c` removed that quote hazard. The exact isolated Linux wrapper
+passed 5/5 locally. Final push run
+[33388704624](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388704624)
+and PR run
+[33388709925](https://github.com/crussella0129/Animus_Ferric/actions/runs/33388709925)
+both completed successfully at
+`7633f8c0675664e51c8a4e88e4aaafe0d20880e9`, including green serialized
+lifecycle jobs on Ubuntu and Windows.
+
 ## Operator smoke and protected evidence
 
 - `cargo run -p ferric-cli --bin ferric -- server up --help`: passed.
@@ -65,6 +104,12 @@ uses the isolated loopback TCP test seam. Windows adds a real named-pipe
 negative pending-I/O timeout/cancellation/poisoned-nonreuse case, while Linux
 compiles the Unix-domain-socket implementation; neither platform has a
 successful native pipe/UDS fake-or-real-daemon exchange in this sprint.
+
+The isolated Linux namespace intentionally makes all relevant peers visible
+to one capability-free runner identity. It does not prove ordinary-host Linux
+lifecycle authority when unrelated `/proc/<pid>/fd` peers are unreadable or
+shared. T-11707 remains open; production teardown continues to fail closed
+when ownership visibility is incomplete.
 
 The upstream status and Serve-config endpoints do not provide one atomic
 StableNodeID/FQDN/ETag authority. Same-session sandwiches detect profile drift
