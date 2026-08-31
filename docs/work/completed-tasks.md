@@ -1776,3 +1776,27 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   test passed; all 72 server tests passed; Ferric CLI all-target, all-feature
   Clippy passed with warnings denied; formatting passed.
 - **Commit:** `032e441b77cfb3026ecf3a15b0556630081ed054`
+
+## T-11805 (sprint 118)
+
+- **Description:** Added deterministic composition seams for the complete
+  Tailscale launch, status, down, retry, revision, and legacy-safety fault
+  matrix, plus a stateful model-free fake Tailscale executable. The real Ferric
+  CLI fixture now proves mirrored ownership journals exist before exact scoped
+  apply, preserves unrelated Serve state, reports the tokenized remote base,
+  removes the exact proxy while its target remains live, then stops the process
+  and removes both journals. A direct negative fixture test proves apply fails
+  without journals, and the complete command ledger rejects broad or unscoped
+  mutation argv.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T02:13:01-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/bin/ferric_lifecycle_fixture.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, and the Book work
+  ledgers.
+- **Verification:** the named aggregate fault-seam matrix passed; the Tailscale
+  filter passed 17 tests with one intentional subprocess-helper ignore and all
+  three Tailscale fixture tests passed; all 73 server tests and all five
+  lifecycle fixture tests passed; Ferric CLI all-target, all-feature Clippy
+  passed with warnings denied; formatting and diff checks passed.
+- **Commit:** PENDING

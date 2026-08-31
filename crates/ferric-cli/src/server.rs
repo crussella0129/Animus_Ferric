@@ -6378,6 +6378,33 @@ pub(crate) mod tests {
     #[test]
     pub(crate) fn legacy_tailscale_registration_remains_unowned() {
         let root = tempfile::tempdir().unwrap();
+        for scope in [
+            RegistrationScope::Local,
+            RegistrationScope::Global,
+            RegistrationScope::Origin,
+        ] {
+            let path = root
+                .path()
+                .join(format!("scope-{scope}"))
+                .join("server.json");
+            let mut runfile = discovery_fixture_runfile(4199, "legacy-scope");
+            runfile.tailscale = true;
+            runfile.tailscale_serve = None;
+            let raw = serde_json::to_vec_pretty(&runfile).unwrap();
+            let observation = observe_registration(CapturedRegistration {
+                scope,
+                path: path.clone(),
+                raw: raw.clone(),
+                runfile,
+            });
+            assert!(observation.process.is_none(), "{scope}");
+            assert!(matches!(
+                observation.candidate.state,
+                CandidateState::Unverifiable { .. }
+            ));
+            assert_eq!(observation.capture.as_ref().unwrap().raw, raw, "{scope}");
+            assert_eq!(observation.capture.as_ref().unwrap().path, path, "{scope}");
+        }
         for (process_case, pid, simulated_present) in
             [("present", 4201, true), ("absent", 4202, false)]
         {
@@ -6441,6 +6468,22 @@ pub(crate) mod tests {
                     ..
                 }
             ));
+            let status = render_status(&status_report(&discovery.managed));
+            assert!(!status.success, "{process_case}");
+            assert!(
+                status
+                    .stdout
+                    .iter()
+                    .any(|line| line.contains("tailscale=legacy-unowned")),
+                "{process_case}: {:?}",
+                status.stdout
+            );
+            assert!(status.stdout.iter().any(|line| {
+                line.starts_with("[next]")
+                    && line.contains("remove only that exact Serve endpoint")
+                    && line.contains("will not inspect or signal")
+                    && line.contains("blind node-wide reset")
+            }));
             let plan = down_plan_from_lifecycle(discovery);
             let mut effects = ScriptedDownEffects::new(
                 Vec::<ListenerState>::new(),
@@ -7151,6 +7194,17 @@ pub(crate) mod tests {
             );
             let report = status_report_with_tailscale(&discovery, &serve);
             let rendered = render_status(&report);
+            assert!(matches!(report.state, ManagedServerState::Ready(_)));
+            assert_eq!(
+                report
+                    .tailscale
+                    .as_ref()
+                    .map(|tailscale| &tailscale.ownership),
+                Some(&ownership)
+            );
+            assert!(rendered.stdout.iter().any(|line| {
+                line.contains(&ownership.remote_base_url) && line.contains(&ownership.mount_path)
+            }));
             match case {
                 "active" => {
                     assert!(report.success);
@@ -7165,14 +7219,41 @@ pub(crate) mod tests {
                         Some(TailscaleProxyStatus::Active)
                     ));
                 }
-                "pending" => assert!(matches!(
-                    report.tailscale.as_ref().map(|tailscale| &tailscale.status),
-                    Some(TailscaleProxyStatus::Pending)
-                )),
-                "replaced" => assert!(matches!(
-                    report.tailscale.as_ref().map(|tailscale| &tailscale.status),
-                    Some(TailscaleProxyStatus::Replaced { .. })
-                )),
+                "pending" => {
+                    assert!(!report.success);
+                    assert!(matches!(
+                        report.tailscale.as_ref().map(|tailscale| &tailscale.status),
+                        Some(TailscaleProxyStatus::Pending)
+                    ));
+                    assert!(matches!(
+                        &report.next_action,
+                        StatusNextAction::RecoverOwnedTailscale {
+                            remote_base_url,
+                            mount_path,
+                            reason,
+                        } if remote_base_url == &ownership.remote_base_url
+                            && mount_path == &ownership.mount_path
+                            && reason.contains("absent")
+                    ));
+                }
+                "replaced" => {
+                    assert!(!report.success);
+                    assert!(matches!(
+                        report.tailscale.as_ref().map(|tailscale| &tailscale.status),
+                        Some(TailscaleProxyStatus::Replaced { observed_target })
+                            if observed_target == "http://127.0.0.1:7999"
+                    ));
+                    assert!(matches!(
+                        &report.next_action,
+                        StatusNextAction::RecoverOwnedTailscale {
+                            remote_base_url,
+                            mount_path,
+                            reason,
+                        } if remote_base_url == &ownership.remote_base_url
+                            && mount_path == &ownership.mount_path
+                            && reason.contains("7999")
+                    ));
+                }
                 _ => unreachable!(),
             }
             assert_eq!(rendered.success, case == "active");
@@ -7198,6 +7279,7 @@ pub(crate) mod tests {
             Rc::clone(&ledger),
         );
         let report = status_report_with_tailscale(&discovery, &serve);
+        let rendered = render_status(&report);
         assert!(!report.success);
         assert!(matches!(
             report.tailscale.as_ref().map(|tailscale| &tailscale.status),
@@ -7211,6 +7293,54 @@ pub(crate) mod tests {
                 ..
             } if remote_base_url == ownership.remote_base_url && mount_path == ownership.mount_path
         ));
+        assert!(rendered.stdout.iter().any(|line| {
+            line.starts_with("[tailscale] uninspectable")
+                && line.contains(&ownership.remote_base_url)
+                && line.contains(&ownership.mount_path)
+        }));
+        assert_eq!(*ledger.borrow(), vec![LifecycleEvent::TailscaleObserve]);
+
+        let (mut discovery, ownership) = discovery_fixture_ready_tailscale();
+        let ManagedServerState::Ready(mut server) = discovery.state.clone() else {
+            unreachable!("typed status fixture must start ready")
+        };
+        server.health = HealthState::Unhealthy;
+        discovery.state = ManagedServerState::Degraded {
+            issues: vec![ResolutionIssue {
+                coordinates: vec![server.registration.clone()],
+                kind: ResolutionIssueKind::Degraded,
+                detail: "injected native degradation".to_string(),
+            }],
+            server,
+        };
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [Ok(tailscale_observation(
+                &ownership,
+                ServePathState::Proxy {
+                    target: ownership.proxy_target.clone(),
+                },
+                'b',
+            ))],
+            Rc::clone(&ledger),
+        );
+        let report = status_report_with_tailscale(&discovery, &serve);
+        let rendered = render_status(&report);
+        assert!(
+            !report.success,
+            "active proxy cannot hide degraded native state"
+        );
+        assert!(matches!(
+            report.tailscale.as_ref().map(|tailscale| &tailscale.status),
+            Some(TailscaleProxyStatus::Active)
+        ));
+        assert!(
+            rendered
+                .stdout
+                .iter()
+                .any(|line| line.starts_with("[state] degraded"))
+        );
+        assert!(!rendered.success);
         assert_eq!(*ledger.borrow(), vec![LifecycleEvent::TailscaleObserve]);
     }
 
@@ -7979,6 +8109,7 @@ pub(crate) mod tests {
     }
 
     type EventLedger = Rc<RefCell<Vec<LifecycleEvent>>>;
+    type ScriptedObserveWrite = Option<(PathBuf, Vec<u8>)>;
 
     struct ScriptedTailscaleServe {
         identities: RefCell<VecDeque<Result<String, crate::tailscale_serve::TailscaleServeError>>>,
@@ -7992,6 +8123,7 @@ pub(crate) mod tests {
         >,
         applies: RefCell<VecDeque<Result<(), crate::tailscale_serve::TailscaleServeError>>>,
         offs: RefCell<VecDeque<Result<(), crate::tailscale_serve::TailscaleServeError>>>,
+        observe_writes: RefCell<VecDeque<ScriptedObserveWrite>>,
         ledger: EventLedger,
     }
 
@@ -8012,6 +8144,7 @@ pub(crate) mod tests {
                 observations: RefCell::new(observations.into_iter().collect()),
                 applies: RefCell::new(VecDeque::from([Ok(())])),
                 offs: RefCell::new(VecDeque::from([Ok(())])),
+                observe_writes: RefCell::new(VecDeque::new()),
                 ledger,
             }
         }
@@ -8026,6 +8159,14 @@ pub(crate) mod tests {
 
         fn with_off(self, result: Result<(), crate::tailscale_serve::TailscaleServeError>) -> Self {
             *self.offs.borrow_mut() = VecDeque::from([result]);
+            self
+        }
+
+        fn with_observe_writes(
+            self,
+            writes: impl IntoIterator<Item = ScriptedObserveWrite>,
+        ) -> Self {
+            *self.observe_writes.borrow_mut() = writes.into_iter().collect();
             self
         }
     }
@@ -8066,6 +8207,9 @@ pub(crate) mod tests {
             self.ledger
                 .borrow_mut()
                 .push(LifecycleEvent::TailscaleObserve);
+            if let Some(Some((path, raw))) = self.observe_writes.borrow_mut().pop_front() {
+                fs::write(path, raw).expect("scripted concurrent registration replacement");
+            }
             self.observations
                 .borrow_mut()
                 .pop_front()
@@ -8116,6 +8260,17 @@ pub(crate) mod tests {
             mount_path: ownership.mount_path.clone(),
             status_sha256: digest.to_string().repeat(64),
             path_state,
+        }
+    }
+
+    fn representative_revision(capture: &CapturedRegistration) -> RegistrationRevision {
+        RegistrationRevision {
+            coordinate: RegistrationCoordinate {
+                scope: capture.scope,
+                path: capture.path.clone(),
+            },
+            promised: None,
+            state: RegistrationRevisionState::Captured(ferric_bench::sha256_bytes(&capture.raw)),
         }
     }
 
@@ -8365,8 +8520,14 @@ pub(crate) mod tests {
     impl DownEffects for ScriptedDownEffects {
         fn revalidate_registrations(
             &mut self,
-            _expected: &[RegistrationRevision],
+            expected: &[RegistrationRevision],
         ) -> Result<(), String> {
+            if self.tailscale.is_some() {
+                assert!(
+                    !expected.is_empty(),
+                    "typed Tailscale teardown must carry captured registration revisions"
+                );
+            }
             self.ledger.borrow_mut().push(LifecycleEvent::Revalidate);
             self.revalidations
                 .pop_front()
@@ -8937,57 +9098,32 @@ pub(crate) mod tests {
                     pid,
                     port,
                     captures: vec![capture.clone()],
-                    expected_revisions: Vec::new(),
+                    expected_revisions: vec![representative_revision(&capture)],
                 },
                 &mut effects,
             );
 
             assert!(report.success, "active={active}: {report:?}");
+            assert_eq!(report.disposition, DownDisposition::Stopped);
+            assert!(report.signalled && report.exit_proven && report.listener_released);
             let events = ledger.borrow();
-            assert_eq!(
-                events
-                    .iter()
-                    .filter(|event| **event == LifecycleEvent::Revalidate)
-                    .count(),
-                2
-            );
-            let first_observe = events
-                .iter()
-                .position(|event| *event == LifecycleEvent::TailscaleObserve)
-                .unwrap();
-            let inspect = events
-                .iter()
-                .position(|event| matches!(event, LifecycleEvent::Inspect("owned-down", _)))
-                .unwrap();
-            let listener = events
-                .iter()
-                .position(|event| matches!(event, LifecycleEvent::Listener(_, _)))
-                .unwrap();
-            let final_revalidate = events
-                .iter()
-                .rposition(|event| *event == LifecycleEvent::Revalidate)
-                .unwrap();
-            let remove = events
-                .iter()
-                .position(|event| matches!(event, LifecycleEvent::Remove(_, _)))
-                .unwrap();
-            assert!(
-                first_observe < inspect && listener < final_revalidate && final_revalidate < remove
-            );
-            assert_eq!(
-                events
-                    .iter()
-                    .filter(|event| **event == LifecycleEvent::TailscaleOff)
-                    .count(),
-                usize::from(active)
-            );
-            assert_eq!(
-                events
-                    .iter()
-                    .filter(|event| **event == LifecycleEvent::TailscaleObserve)
-                    .count(),
-                if active { 2 } else { 1 }
-            );
+            let mut expected_events =
+                vec![LifecycleEvent::Revalidate, LifecycleEvent::TailscaleObserve];
+            if active {
+                expected_events.extend([
+                    LifecycleEvent::TailscaleOff,
+                    LifecycleEvent::TailscaleObserve,
+                ]);
+            }
+            expected_events.extend([
+                LifecycleEvent::Inspect("owned-down", port),
+                LifecycleEvent::Terminate("owned-down"),
+                LifecycleEvent::RetainedWait("owned-down"),
+                LifecycleEvent::Listener(pid, port),
+                LifecycleEvent::Revalidate,
+                scripted_remove_event(&capture),
+            ]);
+            assert_eq!(*events, expected_events, "active={active}");
         }
     }
 
@@ -9080,6 +9216,7 @@ pub(crate) mod tests {
                     identity: expected.clone(),
                     listener: ListenerState::OwnedByTarget,
                 }));
+            let revision = representative_revision(&capture);
             let mut effects = ScriptedDownEffects::new(
                 [ListenerState::Absent],
                 Vec::<Result<RemovalOutcome, RemovalError>>::new(),
@@ -9094,12 +9231,13 @@ pub(crate) mod tests {
                     pid,
                     port,
                     captures: vec![capture],
-                    expected_revisions: Vec::new(),
+                    expected_revisions: vec![revision],
                 },
                 &mut effects,
             );
 
             assert!(!report.success, "{case}");
+            assert_eq!(report.disposition, DownDisposition::Failed, "{case}");
             assert!(report.signalled, "{case}");
             assert!(report.exit_proven && report.listener_released, "{case}");
             assert!(
@@ -9135,13 +9273,141 @@ pub(crate) mod tests {
                     .any(|event| matches!(event, LifecycleEvent::Inspect("proxy-failure", _)))
             );
             assert!(events.contains(&LifecycleEvent::Terminate("proxy-failure")));
-            assert_eq!(
-                events
-                    .iter()
-                    .filter(|event| **event == LifecycleEvent::TailscaleOff)
-                    .count(),
-                usize::from(matches!(case, "off-failed" | "post-off-unreadable"))
+            let mut expected_events =
+                vec![LifecycleEvent::Revalidate, LifecycleEvent::TailscaleObserve];
+            if matches!(case, "off-failed" | "post-off-unreadable") {
+                expected_events.extend([
+                    LifecycleEvent::TailscaleOff,
+                    LifecycleEvent::TailscaleObserve,
+                ]);
+            }
+            expected_events.extend([
+                LifecycleEvent::Inspect("proxy-failure", port),
+                LifecycleEvent::Terminate("proxy-failure"),
+                LifecycleEvent::RetainedWait("proxy-failure"),
+                LifecycleEvent::Listener(pid, port),
+            ]);
+            assert_eq!(*events, expected_events, "{case}");
+            let expected_diagnostic = match case {
+                "replaced" => "now targets",
+                "duplicate" => "duplicate exact token path",
+                "malformed" => "malformed handler projection",
+                "unreadable" => "bounded execution time",
+                "off-failed" => "reported failure",
+                "post-off-unreadable" => "could not prove Tailscale Serve absence",
+                _ => unreachable!(),
+            };
+            assert!(
+                diagnostics.contains(expected_diagnostic),
+                "{case}: {diagnostics}"
             );
+        }
+
+        for (case, revalidations, expect_proxy_cleanup) in [
+            (
+                "pre-proxy-revision-change",
+                VecDeque::from([Err("registration changed before proxy cleanup".to_string())]),
+                false,
+            ),
+            (
+                "post-resource-revision-change",
+                VecDeque::from([
+                    Ok(()),
+                    Err("registration changed after resource cleanup".to_string()),
+                ]),
+                true,
+            ),
+        ] {
+            let pid = 6361;
+            let (capture, ownership) =
+                discovery_fixture_tailscale_capture(RegistrationScope::Local, pid, case);
+            let port = capture.runfile.port;
+            let expected = capture.runfile.process_identity.clone().unwrap();
+            let revision = representative_revision(&capture);
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let serve = ScriptedTailscaleServe::new(
+                if expect_proxy_cleanup {
+                    vec![
+                        Ok(tailscale_observation(
+                            &ownership,
+                            ServePathState::Proxy {
+                                target: ownership.proxy_target.clone(),
+                            },
+                            'b',
+                        )),
+                        Ok(tailscale_observation(
+                            &ownership,
+                            ServePathState::Absent,
+                            'c',
+                        )),
+                    ]
+                } else {
+                    Vec::new()
+                },
+                Rc::clone(&ledger),
+            );
+            let process = ScriptedProcess::new(pid, "revision-failure", Rc::clone(&ledger))
+                .with_inspection(Ok(ProcessFacts {
+                    identity: expected.clone(),
+                    listener: ListenerState::OwnedByTarget,
+                }));
+            let mut effects = ScriptedDownEffects::new(
+                if expect_proxy_cleanup {
+                    vec![ListenerState::Absent]
+                } else {
+                    Vec::new()
+                },
+                Vec::<Result<RemovalOutcome, RemovalError>>::new(),
+                Rc::clone(&ledger),
+            )
+            .with_tailscale(serve);
+            effects.revalidations = revalidations;
+
+            let report = execute_down_plan(
+                DownPlan::Target {
+                    process,
+                    expected,
+                    pid,
+                    port,
+                    captures: vec![capture],
+                    expected_revisions: vec![revision],
+                },
+                &mut effects,
+            );
+
+            assert_eq!(report.disposition, DownDisposition::Failed, "{case}");
+            assert!(report.registrations.iter().all(|registration| matches!(
+                registration.outcome,
+                DownRegistrationOutcome::Held { .. }
+            )));
+            assert!(
+                report
+                    .diagnostics
+                    .join(" ")
+                    .contains("registration changed")
+            );
+            let events = ledger.borrow();
+            if expect_proxy_cleanup {
+                assert_eq!(
+                    *events,
+                    vec![
+                        LifecycleEvent::Revalidate,
+                        LifecycleEvent::TailscaleObserve,
+                        LifecycleEvent::TailscaleOff,
+                        LifecycleEvent::TailscaleObserve,
+                        LifecycleEvent::Inspect("revision-failure", port),
+                        LifecycleEvent::Terminate("revision-failure"),
+                        LifecycleEvent::RetainedWait("revision-failure"),
+                        LifecycleEvent::Listener(pid, port),
+                        LifecycleEvent::Revalidate,
+                    ],
+                    "{case}"
+                );
+                assert!(report.signalled && report.exit_proven && report.listener_released);
+            } else {
+                assert_eq!(*events, vec![LifecycleEvent::Revalidate], "{case}");
+                assert!(!report.signalled && !report.exit_proven && !report.listener_released);
+            }
         }
     }
 
@@ -9165,10 +9431,11 @@ pub(crate) mod tests {
             Rc::clone(&ledger),
         )
         .with_tailscale(serve);
+        let revision = representative_revision(&capture);
         let stale = execute_down_plan(
             DownPlan::<ScriptedProcess>::Stale {
                 captures: vec![capture],
-                expected_revisions: Vec::new(),
+                expected_revisions: vec![revision],
             },
             &mut effects,
         );
@@ -9205,6 +9472,7 @@ pub(crate) mod tests {
             Rc::clone(&ledger),
         )
         .with_tailscale(serve);
+        let revision = representative_revision(&capture);
         let exited = execute_down_plan(
             DownPlan::Target {
                 process,
@@ -9212,7 +9480,7 @@ pub(crate) mod tests {
                 pid,
                 port,
                 captures: vec![capture],
-                expected_revisions: Vec::new(),
+                expected_revisions: vec![revision],
             },
             &mut effects,
         );
@@ -9234,6 +9502,17 @@ pub(crate) mod tests {
         let empty = execute_down_plan(DownPlan::<ScriptedProcess>::Empty, &mut repeated);
         assert!(empty.success);
         assert_eq!(empty.disposition, DownDisposition::Empty);
+    }
+
+    #[test]
+    fn tailscale_fault_seam_clause_matrix() {
+        tailscale_pre_mutation_failures_never_apply();
+        tailscale_launch_failure_matrix_holds_or_compensates_exactly();
+        status_reports_each_proxy_state();
+        down_cleans_proxy_before_process();
+        down_proxy_failure_matrix_preserves_journal();
+        down_retries_absent_proxy_and_stale_process();
+        legacy_tailscale_registration_remains_unowned();
     }
 
     #[test]
@@ -12265,6 +12544,35 @@ pub(crate) mod tests {
         EventLedger,
         PathBuf,
     ) {
+        scripted_tailscale_launch_case_with(
+            root,
+            label,
+            pid,
+            port,
+            serve,
+            inspections,
+            std::iter::repeat_with(|| Ok(None)).take(8),
+            [true],
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scripted_tailscale_launch_case_with(
+        root: &Path,
+        label: &str,
+        pid: u32,
+        port: u16,
+        serve: &ScriptedTailscaleServe,
+        inspections: impl IntoIterator<Item = Result<ProcessFacts, ProcessError>>,
+        child_try_wait: impl IntoIterator<Item = Result<Option<ScriptedExit>, String>>,
+        health_results: impl IntoIterator<Item = bool>,
+        publication_error: Option<PublishError>,
+    ) -> (
+        Result<LaunchOrchestrationSuccess, LaunchOrchestrationError>,
+        EventLedger,
+        PathBuf,
+    ) {
         let workspace = root.join(label);
         let ledger = Rc::clone(&serve.ledger);
         let mut process = ScriptedProcess::new(pid, "tailscale-generation", Rc::clone(&ledger));
@@ -12274,7 +12582,7 @@ pub(crate) mod tests {
         let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
         let mut health = ScriptedHealth {
-            results: VecDeque::from([true]),
+            results: health_results.into_iter().collect(),
             ledger: Rc::clone(&ledger),
         };
         let mut clock = ScriptedClock {
@@ -12300,7 +12608,7 @@ pub(crate) mod tests {
                 spawn_ledger.borrow_mut().push(LifecycleEvent::Spawn(pid));
                 Ok(ScriptedChild::new(
                     pid,
-                    std::iter::repeat_with(|| Ok(None)).take(8),
+                    child_try_wait,
                     Rc::clone(&spawn_ledger),
                 ))
             },
@@ -12309,7 +12617,11 @@ pub(crate) mod tests {
             &mut health,
             &mut clock,
             |workspace, global, runfile| {
-                publish_mirrored_with(workspace, global, runfile, &mut persistence)
+                if let Some(error) = publication_error {
+                    Err(error)
+                } else {
+                    publish_mirrored_with(workspace, global, runfile, &mut persistence)
+                }
             },
             &mut compensation,
         );
@@ -12450,6 +12762,178 @@ pub(crate) mod tests {
         });
         assert!(entropy.unwrap_err().contains("injected entropy failure"));
         assert!(ledger.borrow().is_empty());
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new([], Rc::clone(&ledger));
+        *serve.identities.borrow_mut() = VecDeque::from([Err(
+            crate::tailscale_serve::TailscaleServeError::CommandExit {
+                operation: "injected identity capture",
+            },
+        )]);
+        let identity = prepare_tailscale_ownership_with(9523, &serve, || {
+            Ok("00112233445566778899aabbccddeeff".to_string())
+        });
+        assert!(identity.unwrap_err().contains("injected identity capture"));
+        assert_eq!(*ledger.borrow(), vec![LifecycleEvent::TailscaleIdentity]);
+
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [Err(
+                crate::tailscale_serve::TailscaleServeError::CommandTimeout,
+            )],
+            Rc::clone(&ledger),
+        );
+        let capture = prepare_tailscale_ownership_with(9523, &serve, || {
+            Ok("00112233445566778899aabbccddeeff".to_string())
+        });
+        assert!(
+            capture
+                .unwrap_err()
+                .contains("proposed Tailscale Serve path")
+        );
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::TailscaleIdentity,
+                LifecycleEvent::TailscaleObserve,
+            ]
+        );
+
+        let port = 9523;
+        let ownership = tailscale_ownership(port);
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [Ok(tailscale_observation(
+                &ownership,
+                ServePathState::Proxy {
+                    target: "http://127.0.0.1:9999".to_string(),
+                },
+                'b',
+            ))],
+            Rc::clone(&ledger),
+        );
+        let collision =
+            prepare_tailscale_ownership_with(port, &serve, || Ok(ownership.token.clone()));
+        assert!(collision.unwrap_err().contains("already claimed"));
+        assert_eq!(
+            *ledger.borrow(),
+            vec![
+                LifecycleEvent::TailscaleIdentity,
+                LifecycleEvent::TailscaleObserve,
+            ]
+        );
+
+        let root = tempfile::tempdir().unwrap();
+        let pid = 4540;
+        let port = 9540;
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new([], Rc::clone(&ledger));
+        let facts = exact_launch_facts(pid);
+        let (readiness, ledger, journal) = scripted_tailscale_launch_case_with(
+            root.path(),
+            "readiness-failure",
+            pid,
+            port,
+            &serve,
+            [Ok(facts)],
+            [Ok(None), Ok(Some(ScriptedExit("injected readiness exit")))],
+            [],
+            None,
+        );
+        assert!(matches!(
+            readiness,
+            Err(LaunchOrchestrationError::Readiness { .. })
+        ));
+        assert!(!journal.exists());
+        assert!(ledger.borrow().iter().all(|event| !matches!(
+            event,
+            LifecycleEvent::TailscaleApply
+                | LifecycleEvent::TailscaleOff
+                | LifecycleEvent::Persistence(_, _)
+        )));
+
+        for (label, inspection) in [
+            (
+                "identity-inspection-failure",
+                Err(ProcessError::Operation(
+                    "injected identity inspection failure".to_string(),
+                )),
+            ),
+            (
+                "listener-inspection-failure",
+                Ok(ProcessFacts {
+                    identity: discovery_fixture_identity(u64::from(pid + 1)),
+                    listener: ListenerState::OwnedByOther(vec![9900]),
+                }),
+            ),
+        ] {
+            let case_pid = pid + 1;
+            let case_port = port + 1;
+            let ledger = Rc::new(RefCell::new(Vec::new()));
+            let serve = ScriptedTailscaleServe::new([], Rc::clone(&ledger));
+            let (result, ledger, journal) = scripted_tailscale_launch_case(
+                root.path(),
+                label,
+                case_pid,
+                case_port,
+                &serve,
+                [inspection],
+            );
+            assert!(matches!(result, Err(LaunchOrchestrationError::Inspect(_))));
+            assert!(!journal.exists());
+            let events = ledger.borrow();
+            assert!(events.contains(&LifecycleEvent::Terminate("tailscale-generation")));
+            assert!(events.iter().all(|event| !matches!(
+                event,
+                LifecycleEvent::TailscaleObserve
+                    | LifecycleEvent::TailscaleApply
+                    | LifecycleEvent::TailscaleOff
+                    | LifecycleEvent::Persistence(_, _)
+            )));
+        }
+
+        let pid = 4542;
+        let port = 9542;
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new([], Rc::clone(&ledger));
+        let publication_error = PublishError::Invalid {
+            scope: RegistrationScope::Local,
+            path: root.path().join("publication-failure/.ferric/server.json"),
+            detail: "injected journal publication failure".to_string(),
+        };
+        let facts = exact_launch_facts(pid);
+        let (publication, ledger, journal) = scripted_tailscale_launch_case_with(
+            root.path(),
+            "publication-failure",
+            pid,
+            port,
+            &serve,
+            [Ok(facts)],
+            std::iter::repeat_with(|| Ok(None)).take(6),
+            [true],
+            Some(publication_error),
+        );
+        assert!(matches!(
+            publication,
+            Err(LaunchOrchestrationError::Publication(_))
+        ));
+        assert!(!journal.exists());
+        let events = ledger.borrow();
+        let terminate = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::Terminate("tailscale-generation"))
+            .unwrap();
+        let listener = events
+            .iter()
+            .position(|event| matches!(event, LifecycleEvent::Listener(_, _)))
+            .unwrap();
+        assert!(terminate < listener);
+        assert!(events.iter().all(|event| !matches!(
+            event,
+            LifecycleEvent::TailscaleObserve
+                | LifecycleEvent::TailscaleApply
+                | LifecycleEvent::TailscaleOff
+        )));
 
         let root = tempfile::tempdir().unwrap();
         let pid = 4523;
@@ -12676,6 +13160,401 @@ pub(crate) mod tests {
                 .iter()
                 .any(|line| line.contains("injected off"))
         );
+
+        // An apply error followed by a fresh proof that the coordinate is
+        // absent requires no `off`, but still stops the child before removing
+        // the write-ahead journal.
+        let pid = 4527;
+        let port = 9527;
+        let ownership = tailscale_ownership(port);
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'b',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'c',
+                )),
+            ],
+            Rc::clone(&ledger),
+        )
+        .with_apply(Err(
+            crate::tailscale_serve::TailscaleServeError::CommandExit {
+                operation: "injected apply before mutation",
+            },
+        ));
+        let facts = exact_launch_facts(pid);
+        let (result, ledger, journal) = scripted_tailscale_launch_case(
+            root.path(),
+            "apply-failed-but-absent",
+            pid,
+            port,
+            &serve,
+            [Ok(facts.clone()), Ok(facts)],
+        );
+        let Err(LaunchOrchestrationError::Publication(report)) = result else {
+            panic!("apply-failed-but-absent must compensate");
+        };
+        assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+        assert!(report.shutdown.as_ref().unwrap().cleanup_authorized());
+        assert!(!journal.exists());
+        let events = ledger.borrow();
+        assert!(
+            events
+                .iter()
+                .all(|event| *event != LifecycleEvent::TailscaleOff)
+        );
+        let apply = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::TailscaleApply)
+            .unwrap();
+        let terminate = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::Terminate("tailscale-generation"))
+            .unwrap();
+        let remove = events
+            .iter()
+            .position(|event| matches!(event, LifecycleEvent::Remove(_, _)))
+            .unwrap();
+        assert!(apply < terminate && terminate < remove);
+        drop(events);
+
+        // A wrong post-apply target is never switched off by Ferric. The
+        // independently owned child is stopped while its journal is held.
+        let pid = 4528;
+        let port = 9528;
+        let ownership = tailscale_ownership(port);
+        let replacement = "http://127.0.0.1:9997".to_string();
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'b',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Proxy {
+                        target: replacement.clone(),
+                    },
+                    'c',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Proxy {
+                        target: replacement.clone(),
+                    },
+                    'd',
+                )),
+            ],
+            Rc::clone(&ledger),
+        );
+        let facts = exact_launch_facts(pid);
+        let (result, ledger, journal) = scripted_tailscale_launch_case(
+            root.path(),
+            "post-apply-replacement",
+            pid,
+            port,
+            &serve,
+            [Ok(facts.clone()), Ok(facts)],
+        );
+        let Err(LaunchOrchestrationError::Publication(report)) = result else {
+            panic!("post-apply replacement must hold recovery evidence");
+        };
+        assert_eq!(report.disposition, PublicationDisposition::RecoveryHeld);
+        assert!(report.shutdown.as_ref().unwrap().cleanup_authorized());
+        assert!(journal.exists());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|line| line.contains(&replacement))
+        );
+        assert!(ledger.borrow().iter().all(|event| {
+            *event != LifecycleEvent::TailscaleOff && !matches!(event, LifecycleEvent::Remove(_, _))
+        }));
+
+        // Once exact cleanup starts, a failed post-off observation must hold
+        // the journal even though the exact child can still be stopped.
+        let pid = 4529;
+        let port = 9529;
+        let ownership = tailscale_ownership(port);
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'b',
+                )),
+                Err(crate::tailscale_serve::TailscaleServeError::InvalidStatus(
+                    "injected verification failure".to_string(),
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Proxy {
+                        target: ownership.proxy_target.clone(),
+                    },
+                    'c',
+                )),
+                Err(crate::tailscale_serve::TailscaleServeError::CommandTimeout),
+            ],
+            Rc::clone(&ledger),
+        );
+        let facts = exact_launch_facts(pid);
+        let (result, ledger, journal) = scripted_tailscale_launch_case(
+            root.path(),
+            "post-off-uninspectable",
+            pid,
+            port,
+            &serve,
+            [Ok(facts.clone()), Ok(facts)],
+        );
+        let Err(LaunchOrchestrationError::Publication(report)) = result else {
+            panic!("unproved post-off absence must hold recovery evidence");
+        };
+        assert_eq!(report.disposition, PublicationDisposition::RecoveryHeld);
+        assert!(journal.exists());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("could not prove Tailscale Serve absence"))
+        );
+        let events = ledger.borrow();
+        let off = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::TailscaleOff)
+            .unwrap();
+        let terminate = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::Terminate("tailscale-generation"))
+            .unwrap();
+        assert!(off < terminate);
+        assert!(
+            events
+                .iter()
+                .all(|event| !matches!(event, LifecycleEvent::Remove(_, _)))
+        );
+        drop(events);
+
+        // Final child exit after exact proxy verification still compensates
+        // proxy-first and removes the journal only after exact quiescence.
+        let pid = 4530;
+        let port = 9530;
+        let ownership = tailscale_ownership(port);
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'b',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Proxy {
+                        target: ownership.proxy_target.clone(),
+                    },
+                    'c',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Proxy {
+                        target: ownership.proxy_target.clone(),
+                    },
+                    'd',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'e',
+                )),
+            ],
+            Rc::clone(&ledger),
+        );
+        let facts = exact_launch_facts(pid);
+        let (result, ledger, journal) = scripted_tailscale_launch_case_with(
+            root.path(),
+            "child-exit-after-apply",
+            pid,
+            port,
+            &serve,
+            [Ok(facts.clone()), Ok(facts)],
+            [
+                Ok(None),
+                Ok(None),
+                Ok(None),
+                Ok(None),
+                Ok(Some(ScriptedExit("injected post-apply exit"))),
+            ],
+            [true],
+            None,
+        );
+        let Err(LaunchOrchestrationError::Publication(report)) = result else {
+            panic!("post-apply child exit must compensate");
+        };
+        assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+        assert!(!journal.exists());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("exited during Tailscale Serve publication"))
+        );
+        let events = ledger.borrow();
+        let off = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::TailscaleOff)
+            .unwrap();
+        let terminate = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::Terminate("tailscale-generation"))
+            .unwrap();
+        assert!(off < terminate);
+        drop(events);
+
+        // A final listener transfer is a distinct post-apply authority row.
+        let pid = 4531;
+        let port = 9531;
+        let ownership = tailscale_ownership(port);
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'b',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Proxy {
+                        target: ownership.proxy_target.clone(),
+                    },
+                    'c',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Proxy {
+                        target: ownership.proxy_target.clone(),
+                    },
+                    'd',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'e',
+                )),
+            ],
+            Rc::clone(&ledger),
+        );
+        let exact = exact_launch_facts(pid);
+        let drifted = ProcessFacts {
+            identity: exact.identity.clone(),
+            listener: ListenerState::OwnedByTargetWildcard,
+        };
+        let (result, _, journal) = scripted_tailscale_launch_case(
+            root.path(),
+            "listener-drift-after-apply",
+            pid,
+            port,
+            &serve,
+            [Ok(exact.clone()), Ok(exact), Ok(drifted)],
+        );
+        let Err(LaunchOrchestrationError::Publication(report)) = result else {
+            panic!("post-apply listener drift must compensate");
+        };
+        assert_eq!(report.disposition, PublicationDisposition::RolledBack);
+        assert!(!journal.exists());
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("no longer exclusively owns"))
+        );
+
+        // A concurrent final journal replacement is never deleted. The exact
+        // proxy and child are still resolved, yielding a partial recovery with
+        // the replacement bytes preserved in place.
+        let pid = 4532;
+        let port = 9532;
+        let ownership = tailscale_ownership(port);
+        let journal = runfile_path(&root.path().join("registration-replacement"));
+        let mut replacement_runfile = discovery_fixture_runfile(pid + 1, "concurrent-journal");
+        replacement_runfile.origin_local_runfile = Some(journal.clone());
+        let replacement_raw = serde_json::to_vec(&replacement_runfile).unwrap();
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'b',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Proxy {
+                        target: ownership.proxy_target.clone(),
+                    },
+                    'c',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Proxy {
+                        target: ownership.proxy_target.clone(),
+                    },
+                    'd',
+                )),
+                Ok(tailscale_observation(
+                    &ownership,
+                    ServePathState::Absent,
+                    'e',
+                )),
+            ],
+            Rc::clone(&ledger),
+        )
+        .with_observe_writes([None, Some((journal.clone(), replacement_raw.clone()))]);
+        let facts = exact_launch_facts(pid);
+        let (result, ledger, returned_journal) = scripted_tailscale_launch_case(
+            root.path(),
+            "registration-replacement",
+            pid,
+            port,
+            &serve,
+            [Ok(facts.clone()), Ok(facts.clone()), Ok(facts)],
+        );
+        assert_eq!(returned_journal, journal);
+        let Err(LaunchOrchestrationError::Publication(report)) = result else {
+            panic!("registration replacement must prevent compare-remove");
+        };
+        assert_eq!(report.disposition, PublicationDisposition::RecoveryPartial);
+        assert_eq!(fs::read(&journal).unwrap(), replacement_raw);
+        assert!(matches!(
+            report.finals[0].outcome,
+            DownRegistrationOutcome::ReplacementPreserved { .. }
+        ));
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("changed after write-ahead publication"))
+        );
+        let events = ledger.borrow();
+        let off = events
+            .iter()
+            .position(|event| *event == LifecycleEvent::TailscaleOff)
+            .unwrap();
+        let remove = events
+            .iter()
+            .position(|event| matches!(event, LifecycleEvent::Remove(_, _)))
+            .unwrap();
+        assert!(off < remove);
     }
 
     #[test]
