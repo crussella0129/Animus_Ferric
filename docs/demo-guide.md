@@ -449,10 +449,12 @@ ferric server down
 ```
 
 Edge tuning knobs for Jetson/RPi: `--threads`, `--gpu-layers`, `--batch-size`.
-`server up --tailscale` is currently refused before side effects; do not use a
-node-wide Tailscale Serve reset to clean an older `tailscale: true`
-registration. See [Registration and teardown
-safety](server-configuration.md#registration-and-teardown-safety).
+Add `--tailscale` to `server doctor` and `server up` to validate the local
+Tailscale daemon API and expose the loopback engine through one high-entropy,
+Ferric-owned Serve path. `server status` reports that exact coordinate and
+`server down` removes only the recorded path before stopping the engine. Never
+use a node-wide `tailscale serve reset` as Ferric recovery; see [Tailscale
+Serve exposure](server-configuration.md#tailscale-serve-exposure).
 
 ---
 

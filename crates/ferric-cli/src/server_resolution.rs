@@ -231,10 +231,10 @@ pub(crate) fn resolve(candidates: &[Candidate]) -> Resolution {
                     "runtime observation has no captured registration metadata",
                 ));
             }
-            (Some(record), _) if record.tailscale => coherence_issues.push(issue(
+            (Some(record), _) if record.tailscale && record.tailscale_serve.is_none() => coherence_issues.push(issue(
                 ResolutionIssueKind::Unverifiable,
                 [candidate.coordinate.clone()],
-                "registration owns durable Tailscale Serve state",
+                "registration owns durable Tailscale Serve state without endpoint-scoped ownership metadata",
             )),
             (
                 Some(record),
@@ -336,7 +336,11 @@ pub(crate) fn resolve(candidates: &[Candidate]) -> Resolution {
         else {
             unreachable!("verified alias must have verified state");
         };
-        alias_identity == target_identity && candidate.runfile.as_ref() == Some(target_runfile)
+        alias_identity == target_identity
+            && candidate
+                .runfile
+                .as_ref()
+                .is_some_and(|runfile| runfile.same_lifecycle_authority(target_runfile))
     });
     if !coherent_live_group {
         let mut coordinates = verified
@@ -466,6 +470,7 @@ mod tests {
             port: u16::try_from(8000 + value).unwrap(),
             base_url: format!("http://127.0.0.1:{}/v1", 8000 + value),
             tailscale: false,
+            tailscale_serve: None,
             model: Some("model.gguf".to_string()),
             context_size: Some(8192),
             sampling_seed: Some(42),
@@ -654,8 +659,38 @@ mod tests {
         let mut tailscale = baseline.clone();
         tailscale.tailscale = true;
         assert!(matches!(
-            resolve(&[verified(RegistrationScope::Global, "tailscale", tailscale)]),
+            resolve(&[verified(
+                RegistrationScope::Global,
+                "tailscale",
+                tailscale.clone()
+            )]),
             Resolution::Unverifiable { .. }
+        ));
+        let token = "00112233445566778899aabbccddeeff";
+        let fqdn = "example-host.tailnet-example.ts.net";
+        tailscale.tailscale_serve = Some(crate::tailscale_serve::TailscaleServeOwnership {
+            version: crate::tailscale_serve::OWNERSHIP_VERSION,
+            token: token.to_string(),
+            stable_node_id: "node-fixture".to_string(),
+            fqdn: fqdn.to_string(),
+            https_port: crate::tailscale_serve::HTTPS_PORT,
+            mount_path: format!("/_ferric/{token}"),
+            proxy_target: format!("http://127.0.0.1:{}", tailscale.port),
+            remote_base_url: format!("https://{fqdn}/_ferric/{token}/v1"),
+            before_status_sha256: "a".repeat(64),
+            tcp_map_preexisting: false,
+            tcp_https_preexisting: false,
+            web_map_preexisting: false,
+            web_host_preexisting: false,
+            apply_confirmed: true,
+        });
+        assert!(matches!(
+            resolve(&[verified(
+                RegistrationScope::Global,
+                "owned-tailscale",
+                tailscale
+            )]),
+            Resolution::Ready { .. }
         ));
 
         for reason in [
@@ -827,7 +862,7 @@ mod tests {
         // their shared rows here keeps the frozen exact-name command honest:
         // it must prove both present/absent Tailscale PIDs make zero process
         // calls and missing/changed origins block before acquisition.
-        crate::server::tests::tailscale_registration_blocks_before_process_inspection();
+        crate::server::tests::legacy_tailscale_registration_remains_unowned();
         crate::server::tests::promised_origin_static_matrix_precedes_process_inspection();
     }
 

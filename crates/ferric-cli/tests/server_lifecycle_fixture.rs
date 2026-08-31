@@ -25,15 +25,21 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::{
-    Mutex, MutexGuard, OnceLock,
-    mpsc::{self, Sender},
+    Arc, Mutex, MutexGuard, OnceLock,
+    mpsc::{self, Receiver, Sender},
 };
 use std::thread;
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
+
 const SENTINEL_NAME: &str = "unrelated-sentinel.txt";
 const BIND_DIAGNOSTIC_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_BIND_DIAGNOSTIC";
 const READY_MARKER_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_READY_MARKER";
+const TAILSCALE_LOCALAPI_TEST_TCP_ENV: &str = "FERRIC_TAILSCALE_LOCALAPI_TEST_TCP";
+const TAILSCALE_FQDN: &str = "example-host.tailnet-example.ts.net";
+const TAILSCALE_STABLE_NODE_ID: &str = "node-fixture";
+const UNRELATED_SERVE_PATH: &str = "/unrelated-kept";
 const ADDRESS_IN_USE_DIAGNOSTIC: &[u8] = b"ferric-lifecycle-fixture:address-in-use:v1\n";
 const READY_MARKER: &[u8] = b"ferric-lifecycle-fixture:ready:v1\n";
 const CLI_TIMEOUT: Duration = Duration::from_secs(30);
@@ -71,6 +77,10 @@ fn canonical_test_start_token(coordinate: u64) -> String {
 }
 
 fn ferric_executable() -> &'static str {
+    env!("CARGO_BIN_EXE_ferric-lifecycle-test")
+}
+
+fn production_ferric_executable() -> &'static str {
     env!("CARGO_BIN_EXE_ferric")
 }
 
@@ -83,14 +93,6 @@ fn engine_filename() -> &'static str {
         "llama-server.exe"
     } else {
         "llama-server"
-    }
-}
-
-fn tailscale_filename() -> &'static str {
-    if cfg!(windows) {
-        "tailscale.exe"
-    } else {
-        "tailscale"
     }
 }
 
@@ -124,6 +126,31 @@ fn isolated_ferric(workspace: &Path, appdata: &Path, bin_dir: &Path) -> Command 
         .env("XDG_CONFIG_HOME", appdata.join("unused-xdg"))
         .env("HOME", appdata.join("unused-home"))
         // Ferric can resolve only the copied closed-engine fixture.
+        .env("PATH", bin_dir);
+    command
+}
+
+fn isolated_localapi_ferric(
+    workspace: &Path,
+    appdata: &Path,
+    bin_dir: &Path,
+    localapi_address: std::net::SocketAddr,
+) -> Command {
+    let mut command = isolated_ferric(workspace, appdata, bin_dir);
+    command.env(
+        TAILSCALE_LOCALAPI_TEST_TCP_ENV,
+        localapi_address.to_string(),
+    );
+    command
+}
+
+fn isolated_production_ferric(workspace: &Path, appdata: &Path, bin_dir: &Path) -> Command {
+    let mut command = Command::new(production_ferric_executable());
+    command
+        .current_dir(workspace)
+        .env("APPDATA", appdata)
+        .env("XDG_CONFIG_HOME", appdata.join("unused-xdg"))
+        .env("HOME", appdata.join("unused-home"))
         .env("PATH", bin_dir);
     command
 }
@@ -409,6 +436,405 @@ fn assert_registration_and_sentinel(directory: &Path, label: &str, expected_raw:
 fn write_bytes(path: &Path, bytes: &[u8]) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
+}
+
+fn initial_tailscale_state() -> serde_json::Value {
+    serde_json::json!({
+        "TCP": {"443": {"HTTPS": true}},
+        "Web": {
+            (format!("{TAILSCALE_FQDN}:443")): {
+                "Handlers": {
+                    (UNRELATED_SERVE_PATH): {
+                        "Text": "unrelated handler must survive"
+                    }
+                }
+            }
+        },
+        "Services": {
+            "svc:demo": {
+                "TCP": {"9000": {"TCPForward": "127.0.0.1:9"}},
+                "Tun": false
+            }
+        }
+    })
+}
+
+fn tailscale_status() -> serde_json::Value {
+    serde_json::json!({
+        "BackendState": "Running",
+        "CertDomains": [TAILSCALE_FQDN],
+        "Self": {
+            "DNSName": format!("{TAILSCALE_FQDN}."),
+            "ID": TAILSCALE_STABLE_NODE_ID,
+            "NodeID": "node-id-fixture",
+            "CapMap": {"https": null}
+        }
+    })
+}
+
+#[derive(Debug, Clone)]
+struct LocalApiRequestLog {
+    connection: u64,
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    if_match: Option<String>,
+    body: Vec<u8>,
+    journal_on_post: Option<JournalPostLog>,
+}
+
+#[derive(Debug, Clone)]
+struct JournalPostLog {
+    mirrors_equal: bool,
+    schema_version: Option<u64>,
+    tailscale: Option<bool>,
+    ownership_version: Option<u64>,
+    stable_node_id: Option<String>,
+    fqdn: Option<String>,
+    https_port: Option<u64>,
+    mount_path: Option<String>,
+    proxy_target: Option<String>,
+    remote_base_url: Option<String>,
+    before_status_sha256: Option<String>,
+    tcp_map_preexisting: Option<bool>,
+    tcp_https_preexisting: Option<bool>,
+    web_map_preexisting: Option<bool>,
+    web_host_preexisting: Option<bool>,
+    apply_confirmed: Option<bool>,
+    target_healthy: bool,
+}
+
+struct FakeLocalApiState {
+    serve_config: serde_json::Value,
+    requests: Vec<LocalApiRequestLog>,
+    local_journal: PathBuf,
+    global_journal: PathBuf,
+}
+
+struct FakeLocalApi {
+    address: std::net::SocketAddr,
+    state: Arc<Mutex<FakeLocalApiState>>,
+    shutdown: Sender<()>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl FakeLocalApi {
+    fn start(
+        serve_config: serde_json::Value,
+        local_journal: PathBuf,
+        global_journal: PathBuf,
+    ) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind fake LocalAPI");
+        let address = listener.local_addr().expect("fake LocalAPI address");
+        let state = Arc::new(Mutex::new(FakeLocalApiState {
+            serve_config,
+            requests: Vec::new(),
+            local_journal,
+            global_journal,
+        }));
+        let worker_state = Arc::clone(&state);
+        let (shutdown, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            run_fake_localapi(listener, worker_state, receiver);
+        });
+        Self {
+            address,
+            state,
+            shutdown,
+            worker: Some(worker),
+        }
+    }
+
+    fn address(&self) -> std::net::SocketAddr {
+        self.address
+    }
+
+    fn serve_config(&self) -> serde_json::Value {
+        self.state.lock().unwrap().serve_config.clone()
+    }
+
+    fn requests(&self) -> Vec<LocalApiRequestLog> {
+        self.state.lock().unwrap().requests.clone()
+    }
+
+    fn stop(mut self) {
+        self.stop_inner();
+    }
+
+    fn stop_inner(&mut self) {
+        let _ = self.shutdown.send(());
+        let _ = TcpStream::connect(self.address);
+        if let Some(worker) = self.worker.take() {
+            worker.join().expect("fake LocalAPI worker joined");
+        }
+    }
+}
+
+impl Drop for FakeLocalApi {
+    fn drop(&mut self) {
+        self.stop_inner();
+    }
+}
+
+fn run_fake_localapi(
+    listener: TcpListener,
+    state: Arc<Mutex<FakeLocalApiState>>,
+    shutdown: Receiver<()>,
+) {
+    let mut connection = 0_u64;
+    loop {
+        let (mut stream, _) = listener.accept().expect("accept fake LocalAPI connection");
+        if shutdown.try_recv().is_ok() {
+            break;
+        }
+        connection += 1;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("set fake LocalAPI read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(10)))
+            .expect("set fake LocalAPI write timeout");
+        while let Some(request) = read_localapi_request(&mut stream)
+            .unwrap_or_else(|error| panic!("read fake LocalAPI request: {error}"))
+        {
+            serve_localapi_request(&mut stream, connection, request, &state);
+        }
+    }
+}
+
+struct LocalApiRequest {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    if_match: Option<String>,
+    body: Vec<u8>,
+}
+
+fn read_localapi_request(stream: &mut TcpStream) -> std::io::Result<Option<LocalApiRequest>> {
+    const HEADER_LIMIT: usize = 64 * 1024;
+    const BODY_LIMIT: usize = 1024 * 1024;
+    let mut head = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match stream.read(&mut byte) {
+            Ok(0) if head.is_empty() => return Ok(None),
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "request headers ended early",
+                ));
+            }
+            Ok(_) => {
+                head.push(byte[0]);
+                if head.len() > HEADER_LIMIT {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "request headers exceed fixture limit",
+                    ));
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) && head.is_empty() =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let text = std::str::from_utf8(&head)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "non-UTF-8 headers"))?;
+    let mut lines = text[..text.len() - 4].split("\r\n");
+    let mut request_line = lines.next().unwrap_or_default().split_whitespace();
+    let method = request_line.next().unwrap_or_default().to_string();
+    let path = request_line.next().unwrap_or_default().to_string();
+    if request_line.next() != Some("HTTP/1.1") || request_line.next().is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid HTTP/1.1 request line",
+        ));
+    }
+    let mut content_length = None;
+    let mut if_match = None;
+    let mut headers = Vec::new();
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "malformed request header")
+        })?;
+        let value = value.trim();
+        headers.push((name.to_string(), value.to_string()));
+        if name.eq_ignore_ascii_case("content-length") {
+            if content_length.is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "duplicate Content-Length",
+                ));
+            }
+            content_length = Some(value.parse::<usize>().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Content-Length")
+            })?);
+        } else if name.eq_ignore_ascii_case("if-match")
+            && if_match.replace(value.to_string()).is_some()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "duplicate If-Match",
+            ));
+        }
+    }
+    let content_length = content_length.unwrap_or(0);
+    if content_length > BODY_LIMIT {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "request body exceeds fixture limit",
+        ));
+    }
+    let mut body = vec![0_u8; content_length];
+    stream.read_exact(&mut body)?;
+    Ok(Some(LocalApiRequest {
+        method,
+        path,
+        headers,
+        if_match,
+        body,
+    }))
+}
+
+fn journal_post_log(local_journal: &Path, global_journal: &Path) -> JournalPostLog {
+    let local = fs::read(local_journal);
+    let global = fs::read(global_journal);
+    let mirrors_equal = matches!((&local, &global), (Ok(local), Ok(global)) if local == global);
+    let parsed = local
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok());
+    let ownership = parsed
+        .as_ref()
+        .and_then(|runfile| runfile.get("tailscale_serve"));
+    let string = |field: &str| {
+        ownership
+            .and_then(|ownership| ownership.get(field))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let proxy_target = string("proxy_target");
+    let target_healthy = proxy_target
+        .as_deref()
+        .and_then(|target| target.strip_prefix("http://127.0.0.1:"))
+        .and_then(|port| port.parse::<u16>().ok())
+        .is_some_and(endpoint_is_healthy);
+    JournalPostLog {
+        mirrors_equal,
+        schema_version: parsed
+            .as_ref()
+            .and_then(|runfile| runfile.get("schema_version"))
+            .and_then(serde_json::Value::as_u64),
+        tailscale: parsed
+            .as_ref()
+            .and_then(|runfile| runfile.get("tailscale"))
+            .and_then(serde_json::Value::as_bool),
+        ownership_version: ownership
+            .and_then(|ownership| ownership.get("version"))
+            .and_then(serde_json::Value::as_u64),
+        stable_node_id: string("stable_node_id"),
+        fqdn: string("fqdn"),
+        https_port: ownership
+            .and_then(|ownership| ownership.get("https_port"))
+            .and_then(serde_json::Value::as_u64),
+        mount_path: string("mount_path"),
+        proxy_target,
+        remote_base_url: string("remote_base_url"),
+        before_status_sha256: string("before_status_sha256"),
+        tcp_map_preexisting: ownership
+            .and_then(|ownership| ownership.get("tcp_map_preexisting"))
+            .and_then(serde_json::Value::as_bool),
+        tcp_https_preexisting: ownership
+            .and_then(|ownership| ownership.get("tcp_https_preexisting"))
+            .and_then(serde_json::Value::as_bool),
+        web_map_preexisting: ownership
+            .and_then(|ownership| ownership.get("web_map_preexisting"))
+            .and_then(serde_json::Value::as_bool),
+        web_host_preexisting: ownership
+            .and_then(|ownership| ownership.get("web_host_preexisting"))
+            .and_then(serde_json::Value::as_bool),
+        apply_confirmed: ownership
+            .and_then(|ownership| ownership.get("apply_confirmed"))
+            .and_then(serde_json::Value::as_bool),
+        target_healthy,
+    }
+}
+
+fn serve_localapi_request(
+    stream: &mut TcpStream,
+    connection: u64,
+    request: LocalApiRequest,
+    state: &Arc<Mutex<FakeLocalApiState>>,
+) {
+    let journal_on_post = (request.method == "POST").then(|| {
+        let state = state.lock().unwrap();
+        journal_post_log(&state.local_journal, &state.global_journal)
+    });
+    state.lock().unwrap().requests.push(LocalApiRequestLog {
+        connection,
+        method: request.method.clone(),
+        path: request.path.clone(),
+        headers: request.headers.clone(),
+        if_match: request.if_match.clone(),
+        body: request.body.clone(),
+        journal_on_post,
+    });
+
+    match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/localapi/v0/status?peers=false") => write_localapi_response(
+            stream,
+            200,
+            &serde_json::to_vec(&tailscale_status()).unwrap(),
+            None,
+        ),
+        ("GET", "/localapi/v0/serve-config") => {
+            let raw = serde_json::to_vec(&state.lock().unwrap().serve_config).unwrap();
+            let etag = hex::encode(Sha256::digest(&raw));
+            write_localapi_response(stream, 200, &raw, Some(&etag));
+        }
+        ("POST", "/localapi/v0/serve-config") => {
+            let mut state = state.lock().unwrap();
+            let current_raw = serde_json::to_vec(&state.serve_config).unwrap();
+            let current_etag = hex::encode(Sha256::digest(&current_raw));
+            if request.if_match.as_deref() != Some(current_etag.as_str()) {
+                drop(state);
+                write_localapi_response(stream, 412, br#"{"error":"precondition failed"}"#, None);
+                return;
+            }
+            let replacement: serde_json::Value = serde_json::from_slice(&request.body)
+                .expect("fake LocalAPI received valid JSON CAS body");
+            state.serve_config = replacement;
+            drop(state);
+            write_localapi_response(stream, 200, b"{}", None);
+        }
+        _ => write_localapi_response(stream, 404, br#"{"error":"not found"}"#, None),
+    }
+}
+
+fn write_localapi_response(stream: &mut TcpStream, status: u16, body: &[u8], etag: Option<&str>) {
+    let reason = match status {
+        200 => "OK",
+        404 => "Not Found",
+        412 => "Precondition Failed",
+        _ => "Fixture Error",
+    };
+    let etag_header = etag.map_or_else(String::new, |etag| format!("ETag: {etag}\r\n"));
+    write!(
+        stream,
+        "HTTP/1.1 {status} {reason}\r\nTailscale-Cap: 142\r\nTailscale-Version: 1.102.2\r\nContent-Type: application/json\r\n{etag_header}Content-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+        body.len()
+    )
+    .expect("write fake LocalAPI response headers");
+    stream
+        .write_all(body)
+        .expect("write fake LocalAPI response body");
+    stream.flush().expect("flush fake LocalAPI response");
 }
 
 #[cfg(windows)]
@@ -873,6 +1299,67 @@ fn launch_managed_fixture_with_retry(
     unreachable!("the diagnosed bind retry loop always returns or panics")
 }
 
+fn launch_tailscale_managed_fixture_with_retry(
+    root: &Path,
+    workspace: &Path,
+    appdata: &Path,
+    bin_dir: &Path,
+    model: &Path,
+    localapi_address: std::net::SocketAddr,
+) -> (u16, FixtureLifetimeGuard, Output) {
+    for attempt in 1..=PORT_ATTEMPTS {
+        let port = unused_port();
+        let token = root.join(format!("tailscale-managed-fixture-{attempt}.lifetime"));
+        let bind_diagnostic = root.join(format!("tailscale-managed-fixture-{attempt}.bind"));
+        let mut lifetime = FixtureLifetimeGuard::create(token, port);
+        let mut command = isolated_localapi_ferric(workspace, appdata, bin_dir, localapi_address);
+        command
+            .env("FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN", lifetime.token())
+            .env(BIND_DIAGNOSTIC_ENV, &bind_diagnostic)
+            .args([
+                "server",
+                "up",
+                "--tailscale",
+                "--model",
+                model.to_str().unwrap(),
+                "--ctx",
+                "4096",
+                "--port",
+                &port.to_string(),
+            ]);
+        let output = run_cli_output_bounded("real `ferric server up --tailscale`", &mut command);
+        let address_in_use = marker_matches(&bind_diagnostic, ADDRESS_IN_USE_DIAGNOSTIC);
+        if output.status.success() {
+            assert!(
+                !bind_diagnostic.exists(),
+                "Tailscale managed fixture reported a bind failure despite successful launch"
+            );
+            return (port, lifetime, output);
+        }
+
+        lifetime.finish();
+        remove_marker(&bind_diagnostic);
+        if address_in_use && attempt < PORT_ATTEMPTS {
+            continue;
+        }
+        if address_in_use {
+            panic!(
+                "real `ferric server up --tailscale` exhausted {PORT_ATTEMPTS} diagnosed address-in-use attempts ({}):\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        panic!(
+            "real `ferric server up --tailscale` failed without the fixture's exact address-in-use diagnostic ({}):\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    unreachable!("the diagnosed Tailscale bind retry loop always returns or panics")
+}
+
 fn launch_direct_fixture_with_retry(
     root: &Path,
     workspace: &Path,
@@ -951,6 +1438,208 @@ fn launch_direct_fixture_with_retry(
         }
     }
     unreachable!("the diagnosed bind retry loop always returns or panics")
+}
+
+struct TailscaleLifecycleEvidence {
+    requests: Vec<LocalApiRequestLog>,
+    initial_state: serde_json::Value,
+    final_state: serde_json::Value,
+    token: String,
+    mount_path: String,
+    proxy_target: String,
+    remote_base_url: String,
+    up_stdout: String,
+    status_stdout: String,
+    down_stdout: String,
+}
+
+fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
+    let _lifecycle_lock = lifecycle_test_lock();
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let appdata = root.path().join("isolated-config");
+    let local_dir = workspace.join(".ferric");
+    let global_dir = appdata.join("ferric");
+    write_sentinel(&local_dir, "workspace");
+    write_sentinel(&global_dir, "global");
+    fs::write(root.path().join(SENTINEL_NAME), "root").unwrap();
+
+    let (bin_dir, engine) = install_fixture(root.path());
+    assert!(engine.is_file());
+    let model = root.path().join("dummy-model.gguf");
+    fs::write(&model, b"model-free fixture").unwrap();
+    let initial_state = initial_tailscale_state();
+    let local = local_dir.join("server.json");
+    let global = global_dir.join("server.json");
+    let localapi = FakeLocalApi::start(initial_state.clone(), local.clone(), global.clone());
+
+    let doctor_port = unused_port();
+    let doctor = run_cli_output_bounded(
+        "real `ferric server doctor --tailscale`",
+        isolated_localapi_ferric(&workspace, &appdata, &bin_dir, localapi.address()).args([
+            "server",
+            "doctor",
+            "--tailscale",
+            "--model",
+            model.to_str().unwrap(),
+            "--ctx",
+            "4096",
+            "--port",
+            &doctor_port.to_string(),
+        ]),
+    );
+    assert_success("real `ferric server doctor --tailscale`", doctor);
+    assert_eq!(localapi.serve_config(), initial_state);
+
+    let (port, mut process_lifetime, up) = launch_tailscale_managed_fixture_with_retry(
+        root.path(),
+        &workspace,
+        &appdata,
+        &bin_dir,
+        &model,
+        localapi.address(),
+    );
+    let lifetime_token = process_lifetime.token().to_path_buf();
+    let up_stdout = String::from_utf8(up.stdout.clone()).unwrap();
+    assert_success("real `ferric server up --tailscale`", up);
+
+    let raw = fs::read(&local).unwrap();
+    assert_eq!(fs::read(&global).unwrap(), raw);
+    let runfile: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let pid = runfile["pid"].as_u64().unwrap() as u32;
+    let start_token = runfile["process_identity"]["start_token"].as_str().unwrap();
+    let token = runfile["tailscale_serve"]["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mount_path = runfile["tailscale_serve"]["mount_path"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let proxy_target = runfile["tailscale_serve"]["proxy_target"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let remote_base_url = runfile["tailscale_serve"]["remote_base_url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let local_base_url = format!("http://127.0.0.1:{port}/v1");
+    assert_eq!(runfile["schema_version"], 2);
+    assert_eq!(runfile["tailscale"], true);
+    assert_eq!(runfile["tailscale_serve"]["apply_confirmed"], true);
+    assert_eq!(runfile["base_url"], local_base_url);
+    assert_eq!(runfile["port"], port);
+    assert_eq!(token.len(), 32);
+    assert!(
+        token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+    assert_eq!(mount_path, format!("/_ferric/{token}"));
+    assert_eq!(proxy_target, format!("http://127.0.0.1:{port}"));
+    assert_eq!(
+        remote_base_url,
+        format!("https://{TAILSCALE_FQDN}{mount_path}/v1")
+    );
+    assert!(up_stdout.contains(&format!("server ready: {local_base_url} (pid {pid})")));
+    assert!(up_stdout.contains(&format!(
+        "Tailscale Serve endpoint ready: {remote_base_url}"
+    )));
+    assert!(up_stdout.contains(&format!("registered locally at {}", local.display())));
+    assert!(up_stdout.contains(&format!("registered globally at {}", global.display())));
+
+    let active_state = localapi.serve_config();
+    assert_eq!(
+        active_state["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"][UNRELATED_SERVE_PATH],
+        initial_state["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"][UNRELATED_SERVE_PATH]
+    );
+    assert_eq!(
+        active_state["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"][&mount_path]["Proxy"],
+        proxy_target
+    );
+
+    let mut fixture_guard = ExternalProcessGuard::acquire(pid, start_token)
+        .expect("retain exact Tailscale up-launched fixture process object");
+    assert!(endpoint_is_healthy(port));
+
+    let status = run_cli_output_bounded(
+        "real `ferric server status` for Tailscale",
+        isolated_localapi_ferric(&workspace, &appdata, &bin_dir, localapi.address())
+            .args(["server", "status"]),
+    );
+    let status_stdout = String::from_utf8(status.stdout.clone()).unwrap();
+    assert_success("real `ferric server status` for Tailscale", status);
+    assert!(status_stdout.contains(&local_base_url));
+    assert!(status_stdout.contains(&remote_base_url));
+    assert!(status_stdout.contains("[tailscale] active"));
+
+    let down = run_cli_output_bounded(
+        "real `ferric server down` for Tailscale",
+        isolated_localapi_ferric(&workspace, &appdata, &bin_dir, localapi.address())
+            .args(["server", "down"]),
+    );
+    let down_stdout = String::from_utf8(down.stdout.clone()).unwrap();
+    assert_success("real `ferric server down` for Tailscale", down);
+    assert!(down_stdout.contains("[removed] local registration"));
+    assert!(down_stdout.contains("[removed] global registration"));
+    assert!(down_stdout.contains("[state] stopped managed server"));
+
+    assert!(
+        wait_until(|| !fixture_guard.running()),
+        "Tailscale up-launched fixture PID {pid} remained alive after down"
+    );
+    fixture_guard.disarm();
+    process_lifetime.finish();
+    assert!(wait_until(|| endpoint_is_closed(port)));
+    assert!(!lifetime_token.exists());
+    assert_only_sentinel(&local_dir, "workspace");
+    assert_only_sentinel(&global_dir, "global");
+    assert_eq!(
+        fs::read_to_string(root.path().join(SENTINEL_NAME)).unwrap(),
+        "root"
+    );
+
+    let state_after_first_down = localapi.serve_config();
+    assert_eq!(state_after_first_down, initial_state);
+    let requests_after_first_down = localapi.requests();
+
+    let repeated_down = run_cli_output_bounded(
+        "repeated real `ferric server down` for Tailscale",
+        isolated_localapi_ferric(&workspace, &appdata, &bin_dir, localapi.address())
+            .args(["server", "down"]),
+    );
+    let repeated_down_stdout = String::from_utf8(repeated_down.stdout.clone()).unwrap();
+    assert_success(
+        "repeated real `ferric server down` for Tailscale",
+        repeated_down,
+    );
+    assert!(repeated_down_stdout.contains("[state] no server registered"));
+    assert!(endpoint_is_closed(port));
+    assert_only_sentinel(&local_dir, "workspace");
+    assert_only_sentinel(&global_dir, "global");
+    let final_state = localapi.serve_config();
+    assert_eq!(final_state, initial_state);
+    let requests = localapi.requests();
+    assert_eq!(
+        requests.len(),
+        requests_after_first_down.len(),
+        "repeated down after successful cleanup must not invoke Tailscale"
+    );
+    localapi.stop();
+
+    TailscaleLifecycleEvidence {
+        requests,
+        initial_state,
+        final_state,
+        token,
+        mount_path,
+        proxy_target,
+        remote_base_url,
+        up_stdout,
+        status_stdout,
+        down_stdout,
+    }
 }
 
 #[test]
@@ -1086,269 +1775,267 @@ fn model_free_server_lifecycle_fixture_e2e() {
 }
 
 #[test]
-fn tailscale_mode_refuses_before_side_effects() {
+fn tailscale_localapi_lifecycle_preserves_unrelated_state() {
+    let evidence = run_tailscale_lifecycle_fixture();
+    assert_closed_localapi_log(&evidence);
+    assert_eq!(evidence.final_state, evidence.initial_state);
+    assert_eq!(
+        evidence.final_state["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"]
+            [UNRELATED_SERVE_PATH],
+        serde_json::json!({"Text": "unrelated handler must survive"})
+    );
+    assert_eq!(
+        evidence.final_state["Services"]["svc:demo"]["TCP"]["9000"]["TCPForward"],
+        "127.0.0.1:9"
+    );
+    assert_eq!(evidence.token.len(), 32);
+    assert!(
+        evidence
+            .token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+    assert_eq!(evidence.mount_path, format!("/_ferric/{}", evidence.token));
+    assert_eq!(
+        evidence.remote_base_url,
+        format!("https://{TAILSCALE_FQDN}{}/v1", evidence.mount_path)
+    );
+    assert!(evidence.up_stdout.contains(&evidence.proxy_target));
+    assert!(evidence.up_stdout.contains(&evidence.remote_base_url));
+    assert!(evidence.status_stdout.contains(&evidence.remote_base_url));
+    assert!(evidence.status_stdout.contains("[tailscale] active"));
+    assert!(
+        evidence
+            .down_stdout
+            .contains("[state] stopped managed server")
+    );
+}
+
+fn assert_closed_localapi_log(evidence: &TailscaleLifecycleEvidence) {
+    const STATUS_PATH: &str = "/localapi/v0/status?peers=false";
+    const CONFIG_PATH: &str = "/localapi/v0/serve-config";
+    assert!(!evidence.requests.is_empty());
+    for (index, request) in evidence.requests.iter().enumerate() {
+        let mut expected_headers = vec![
+            ("Host".to_string(), "local-tailscaled.sock".to_string()),
+            ("Tailscale-Cap".to_string(), "142".to_string()),
+            ("Accept".to_string(), "application/json".to_string()),
+            ("Connection".to_string(), "keep-alive".to_string()),
+        ];
+        if request.method == "POST" {
+            expected_headers.extend([
+                (
+                    "If-Match".to_string(),
+                    request
+                        .if_match
+                        .clone()
+                        .expect("POST request must carry If-Match"),
+                ),
+                ("Content-Type".to_string(), "application/json".to_string()),
+                ("Content-Length".to_string(), request.body.len().to_string()),
+            ]);
+        }
+        assert_eq!(
+            request.headers, expected_headers,
+            "LocalAPI request headers changed for {} {}",
+            request.method, request.path
+        );
+        match (request.method.as_str(), request.path.as_str()) {
+            ("GET", STATUS_PATH) => {
+                assert!(request.if_match.is_none());
+                assert!(request.body.is_empty());
+            }
+            ("GET", CONFIG_PATH) => {
+                assert!(request.if_match.is_none());
+                assert!(request.body.is_empty());
+                let before = index
+                    .checked_sub(1)
+                    .and_then(|index| evidence.requests.get(index));
+                let after = evidence.requests.get(index + 1);
+                assert!(
+                    before.is_some_and(|neighbor| {
+                        neighbor.connection == request.connection
+                            && neighbor.method == "GET"
+                            && neighbor.path == STATUS_PATH
+                    }),
+                    "Serve-config GET was not preceded by same-session status: {request:?}"
+                );
+                assert!(
+                    after.is_some_and(|neighbor| {
+                        neighbor.connection == request.connection
+                            && neighbor.method == "GET"
+                            && neighbor.path == STATUS_PATH
+                    }),
+                    "Serve-config GET was not followed by same-session status: {request:?}"
+                );
+            }
+            ("POST", CONFIG_PATH) => {
+                let window = evidence
+                    .requests
+                    .get(index.saturating_sub(3)..index + 4)
+                    .expect("POST must have a complete seven-request transaction window");
+                assert!(
+                    window
+                        .iter()
+                        .all(|neighbor| neighbor.connection == request.connection),
+                    "POST transaction crossed LocalAPI connections: {window:?}"
+                );
+                assert_eq!(
+                    window
+                        .iter()
+                        .map(|neighbor| (neighbor.method.as_str(), neighbor.path.as_str()))
+                        .collect::<Vec<_>>(),
+                    vec![
+                        ("GET", STATUS_PATH),
+                        ("GET", CONFIG_PATH),
+                        ("GET", STATUS_PATH),
+                        ("POST", CONFIG_PATH),
+                        ("GET", STATUS_PATH),
+                        ("GET", CONFIG_PATH),
+                        ("GET", STATUS_PATH),
+                    ],
+                    "POST was not enclosed by exact same-session identity/config sandwiches"
+                );
+            }
+            _ => panic!(
+                "fixture recorded forbidden or broad LocalAPI request: {} {}",
+                request.method, request.path
+            ),
+        }
+    }
+
+    let posts = evidence
+        .requests
+        .iter()
+        .filter(|request| request.method == "POST")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        posts.len(),
+        2,
+        "lifecycle must perform exactly one apply CAS and one cleanup CAS"
+    );
+    assert!(
+        posts.iter().all(|request| request
+            .journal_on_post
+            .as_ref()
+            .is_some_and(|journal| journal.mirrors_equal)),
+        "both ownership journals must exist and match before every CAS"
+    );
+
+    for (post_index, post) in posts.iter().enumerate() {
+        let journal = post
+            .journal_on_post
+            .as_ref()
+            .expect("POST must capture typed journal state");
+        assert_eq!(journal.schema_version, Some(2));
+        assert_eq!(journal.tailscale, Some(true));
+        assert_eq!(journal.ownership_version, Some(2));
+        assert_eq!(
+            journal.stable_node_id.as_deref(),
+            Some(TAILSCALE_STABLE_NODE_ID)
+        );
+        assert_eq!(journal.fqdn.as_deref(), Some(TAILSCALE_FQDN));
+        assert_eq!(journal.https_port, Some(443));
+        assert_eq!(
+            journal.mount_path.as_deref(),
+            Some(evidence.mount_path.as_str())
+        );
+        assert_eq!(
+            journal.proxy_target.as_deref(),
+            Some(evidence.proxy_target.as_str())
+        );
+        assert_eq!(
+            journal.remote_base_url.as_deref(),
+            Some(evidence.remote_base_url.as_str())
+        );
+        let before_hash = journal
+            .before_status_sha256
+            .as_deref()
+            .expect("typed ownership must include the pre-state digest");
+        assert_eq!(before_hash.len(), 64);
+        assert!(
+            before_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        );
+        assert_eq!(journal.tcp_map_preexisting, Some(true));
+        assert_eq!(journal.tcp_https_preexisting, Some(true));
+        assert_eq!(journal.web_map_preexisting, Some(true));
+        assert_eq!(journal.web_host_preexisting, Some(true));
+        assert_eq!(journal.apply_confirmed, Some(post_index == 1));
+        assert!(
+            journal.target_healthy,
+            "proxy target was not HTTP-healthy at {} CAS",
+            if post_index == 0 { "apply" } else { "cleanup" }
+        );
+    }
+
+    let initial_raw = serde_json::to_vec(&evidence.initial_state).unwrap();
+    let initial_etag = hex::encode(Sha256::digest(&initial_raw));
+    assert_eq!(posts[0].if_match.as_deref(), Some(initial_etag.as_str()));
+    let applied: serde_json::Value = serde_json::from_slice(&posts[0].body).unwrap();
+    let applied_raw = serde_json::to_vec(&applied).unwrap();
+    let applied_etag = hex::encode(Sha256::digest(&applied_raw));
+    assert_eq!(posts[1].if_match.as_deref(), Some(applied_etag.as_str()));
+
+    assert_eq!(
+        applied["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"][UNRELATED_SERVE_PATH],
+        evidence.initial_state["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"]
+            [UNRELATED_SERVE_PATH]
+    );
+    assert_eq!(
+        applied["Web"][format!("{TAILSCALE_FQDN}:443")]["Handlers"][&evidence.mount_path]["Proxy"],
+        evidence.proxy_target
+    );
+    let cleaned: serde_json::Value = serde_json::from_slice(&posts[1].body).unwrap();
+    assert_eq!(cleaned, evidence.initial_state);
+}
+
+#[test]
+fn tailscale_localapi_log_contains_no_broad_mutation_or_retry() {
+    let evidence = run_tailscale_lifecycle_fixture();
+    assert_closed_localapi_log(&evidence);
+}
+
+#[test]
+fn ordinary_ferric_ignores_lifecycle_localapi_override() {
     let _lifecycle_lock = lifecycle_test_lock();
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
     let appdata = root.path().join("isolated-config");
-    let local_dir = workspace.join(".ferric");
-    let global_dir = appdata.join("ferric");
-    write_sentinel(&local_dir, "workspace");
-    write_sentinel(&global_dir, "global");
-    fs::write(root.path().join(SENTINEL_NAME), "root").unwrap();
-
-    let (bin_dir, engine) = install_fixture(root.path());
-    let tailscale = copy_fixture_as(&bin_dir, tailscale_filename());
-    assert!(engine.is_file(), "fake closed engine must exist");
-    assert!(tailscale.is_file(), "fake tailscale executable must exist");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&appdata).unwrap();
+    let (bin_dir, _engine) = install_fixture(root.path());
     let model = root.path().join("dummy-model.gguf");
     fs::write(&model, b"model-free fixture").unwrap();
-    let refused_port = unused_port();
-    assert!(endpoint_is_closed(refused_port));
-
-    let invocation_marker = root.path().join("unexpected-invocation.json");
-    let refused_lifetime_token = root.path().join("refused-fixture-must-not-live.token");
-    let mut refused_lifetime =
-        FixtureLifetimeGuard::create(refused_lifetime_token.clone(), refused_port);
-
-    // Even a regression that spawns before refusing is bounded: the live
-    // token guard and its watchdog precede the blocking CLI call.
-    let up = run_cli_output_bounded(
-        "server up --tailscale",
-        isolated_ferric(&workspace, &appdata, &bin_dir)
-            .env(
-                "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
-                &invocation_marker,
-            )
-            .env(
-                "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
-                refused_lifetime.token(),
-            )
-            .args([
-                "server",
-                "up",
-                "--tailscale",
-                "--model",
-                model.to_str().unwrap(),
-                "--port",
-                &refused_port.to_string(),
-            ]),
+    let localapi = FakeLocalApi::start(
+        initial_tailscale_state(),
+        workspace.join(".ferric/server.json"),
+        appdata.join("ferric/server.json"),
     );
-    assert_failed_output(
-        "server up --tailscale",
-        &up,
-        &[],
-        &["server launch preflight failed: --tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable".to_string()],
-    );
+    let mut command = isolated_production_ferric(&workspace, &appdata, &bin_dir);
+    command
+        .env(
+            TAILSCALE_LOCALAPI_TEST_TCP_ENV,
+            localapi.address().to_string(),
+        )
+        .args([
+            "server",
+            "doctor",
+            "--tailscale",
+            "--model",
+            model.to_str().unwrap(),
+            "--ctx",
+            "4096",
+            "--port",
+            &unused_port().to_string(),
+        ]);
+    let _ = run_cli_output_bounded("ordinary ferric override isolation", &mut command);
     assert!(
-        !invocation_marker.exists(),
-        "engine or tailscale subprocess was invoked before refusal: {}",
-        invocation_marker.display()
+        localapi.requests().is_empty(),
+        "ordinary ferric binary honored the lifecycle-only LocalAPI TCP override"
     );
-    assert!(
-        endpoint_is_closed(refused_port),
-        "refused tailscale launch created a listener on 127.0.0.1:{refused_port}"
-    );
-    assert_only_sentinel(&local_dir, "workspace");
-    assert_only_sentinel(&global_dir, "global");
-    assert_eq!(
-        fs::read_to_string(root.path().join(SENTINEL_NAME)).unwrap(),
-        "root"
-    );
-
-    let doctor = run_cli_output_bounded(
-        "server doctor --tailscale",
-        isolated_ferric(&workspace, &appdata, &bin_dir)
-            .env(
-                "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
-                &invocation_marker,
-            )
-            .env(
-                "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
-                refused_lifetime.token(),
-            )
-            .args([
-                "server",
-                "doctor",
-                "--tailscale",
-                "--model",
-                model.to_str().unwrap(),
-                "--port",
-                &refused_port.to_string(),
-            ]),
-    );
-    assert_failed_output(
-        "server doctor --tailscale",
-        &doctor,
-        &[
-            "[BLOCKED] --tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable".to_string(),
-            "[next] leave every registration untouched; Ferric will not inspect or signal a PID, delete registration bytes, invoke Tailscale, or run a blind node-wide reset".to_string(),
-        ],
-        &[],
-    );
-    assert!(
-        !invocation_marker.exists(),
-        "doctor invoked the fake engine or Tailscale executable before reporting BLOCKED"
-    );
-    assert!(endpoint_is_closed(refused_port));
-    assert_only_sentinel(&local_dir, "workspace");
-    assert_only_sentinel(&global_dir, "global");
-    refused_lifetime.finish();
-    assert!(!refused_lifetime_token.exists());
-
-    let RunningFixture {
-        port,
-        lifetime: mut process_lifetime,
-        child: mut fixture,
-    } = launch_direct_fixture_with_retry(
-        root.path(),
-        &workspace,
-        &engine,
-        &model,
-        "tailscale-live-fixture",
-    );
-    let process_lifetime_token = process_lifetime.token().to_path_buf();
-    let pid = fixture.child_mut().id();
-
-    let local = local_dir.join("server.json");
-    let global = global_dir.join("server.json");
-    let base_url = "https://example-host.tailnet-example.ts.net/v1";
-    let registration = serde_json::json!({
-        "schema_version": 1,
-        "engine": "llama-server",
-        "pid": pid,
-        "port": port,
-        "base_url": base_url,
-        "tailscale": true,
-        "model": model.to_string_lossy().into_owned(),
-        "context_size": 4096
-    });
-    let mut local_raw = serde_json::to_vec_pretty(&registration).unwrap();
-    local_raw.push(b'\n');
-    let mut global_raw = serde_json::to_vec(&registration).unwrap();
-    global_raw.push(b'\n');
-    write_bytes(&local, &local_raw);
-    write_bytes(&global, &global_raw);
-
-    let status_stdout = vec![
-        format!(
-            "[captured] local registration {}: schema=1 engine=LlamaServer pid={pid} base-url={base_url} recorded-identity=legacy-none observed-identity=not-inspected listener=not-inspected health=not-probed",
-            local.display()
-        ),
-        format!(
-            "[captured] global registration {}: schema=1 engine=LlamaServer pid={pid} base-url={base_url} recorded-identity=legacy-none observed-identity=not-inspected listener=not-inspected health=not-probed",
-            global.display()
-        ),
-        "[state] unverifiable".to_string(),
-        format!(
-            "[next] registration port {port} claims durable Tailscale Serve state; scoped proxy cleanup is unavailable, so Ferric will not inspect or signal its PID, delete its registration, invoke Tailscale, or run a blind node-wide reset; inspect and remove only that exact Serve endpoint with Tailscale tooling"
-        ),
-    ];
-    let blocked_diagnostics = vec![
-        "[diagnostic] registration owns durable Tailscale Serve state".to_string(),
-        "[diagnostic] registration owns durable Tailscale Serve state".to_string(),
-    ];
-    let down_stdout = vec![
-        format!(
-            "[held] local registration {} detail=typed discovery blocked teardown mutation",
-            local.display()
-        ),
-        format!(
-            "[held] global registration {} detail=typed discovery blocked teardown mutation",
-            global.display()
-        ),
-        "[state] teardown blocked; registrations kept".to_string(),
-        format!(
-            "[next] registration port {port} claims durable Tailscale Serve state; scoped proxy cleanup is unavailable, so Ferric will not inspect or signal its PID, delete its registration, invoke Tailscale, or run a blind node-wide reset; inspect and remove only that exact Serve endpoint with Tailscale tooling"
-        ),
-    ];
-
-    for phase in ["live", "absent"] {
-        let status = run_cli_output_bounded(
-            &format!("server status with {phase} Tailscale PID"),
-            isolated_ferric(&workspace, &appdata, &bin_dir)
-                .env(
-                    "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
-                    &invocation_marker,
-                )
-                .env(
-                    "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
-                    &process_lifetime_token,
-                )
-                .args(["server", "status"]),
-        );
-        assert_failed_output(
-            &format!("server status with {phase} Tailscale PID"),
-            &status,
-            &status_stdout,
-            &blocked_diagnostics,
-        );
-        assert!(
-            !invocation_marker.exists(),
-            "status invoked the fake engine or Tailscale executable for the {phase} PID case"
-        );
-        assert_registration_and_sentinel(&local_dir, "workspace", &local_raw);
-        assert_registration_and_sentinel(&global_dir, "global", &global_raw);
-
-        let down = run_cli_output_bounded(
-            &format!("server down with {phase} Tailscale PID"),
-            isolated_ferric(&workspace, &appdata, &bin_dir)
-                .env(
-                    "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER",
-                    &invocation_marker,
-                )
-                .env(
-                    "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN",
-                    &process_lifetime_token,
-                )
-                .args(["server", "down"]),
-        );
-        assert_failed_output(
-            &format!("server down with {phase} Tailscale PID"),
-            &down,
-            &down_stdout,
-            &blocked_diagnostics,
-        );
-        assert!(
-            !invocation_marker.exists(),
-            "down invoked the fake engine or Tailscale executable for the {phase} PID case"
-        );
-        assert_registration_and_sentinel(&local_dir, "workspace", &local_raw);
-        assert_registration_and_sentinel(&global_dir, "global", &global_raw);
-        assert_eq!(
-            fs::read_to_string(root.path().join(SENTINEL_NAME)).unwrap(),
-            "root"
-        );
-
-        if phase == "live" {
-            assert!(
-                fixture.child_mut().try_wait().unwrap().is_none(),
-                "status or down signalled the live process named by a Tailscale registration"
-            );
-            assert!(
-                endpoint_is_healthy(port),
-                "status or down changed the live Tailscale registration listener"
-            );
-            process_lifetime.finish();
-            assert!(
-                wait_until(|| fixture.child_mut().try_wait().unwrap().is_some()),
-                "test-owned lifecycle fixture did not exit after its lifetime token was removed"
-            );
-            fixture.disarm();
-            assert!(
-                wait_until(|| endpoint_is_closed(port)),
-                "test-owned lifecycle fixture listener remained after explicit test cleanup"
-            );
-        } else {
-            assert!(
-                endpoint_is_closed(port),
-                "absent-PID Tailscale case unexpectedly created a listener"
-            );
-        }
-    }
-
-    assert!(!process_lifetime_token.exists());
-    assert!(!refused_lifetime_token.exists());
+    localapi.stop();
 }
 
 #[test]

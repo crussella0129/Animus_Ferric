@@ -34,6 +34,8 @@ mod server_process;
 mod server_registration;
 mod server_resolution;
 mod skills_cmd;
+mod tailscale_localapi;
+mod tailscale_serve;
 mod toolbench_cmd;
 mod trace_cmd;
 mod trace_verify;

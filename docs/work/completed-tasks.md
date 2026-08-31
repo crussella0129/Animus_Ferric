@@ -1689,3 +1689,193 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   the exact nineteen-row ledger and records complete immutable-head
   requalification before merge approval.
 - **Commit:** `b679a25ba83069ab849b0f7f2eb8a3269eba10c5`
+
+## T-11801 (sprint 118)
+
+- **Description:** Added a closed, bounded Tailscale Serve adapter with exact
+  read/apply/off argv, duplicate-safe status projection, canonical provenance,
+  strict self-FQDN and 128-bit ownership-token preparation, plus an additive
+  schema-v2 ownership object. Typed records retain a loopback local base and
+  can enter native lifecycle resolution; legacy boolean-only records remain
+  readable but non-authorizing before process or Tailscale effects.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T01:08:51-04:00
+- **Files modified:** `Cargo.toml`, `Cargo.lock`,
+  `crates/ferric-cli/Cargo.toml`, `crates/ferric-cli/src/main.rs`,
+  `crates/ferric-cli/src/tailscale_serve.rs`,
+  `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/src/server_resolution.rs`,
+  `crates/ferric-cli/src/autonomy_cmd.rs`, Sprint 118 research/plan/meta
+  records, INT-0008, the Book summary, and the Book work ledgers.
+- **Verification:** all adapter and Tailscale legacy-safety tests passed (10
+  passed, one intentional subprocess-helper ignore); additive schema and
+  cross-workspace typed-resolution matrices passed; Ferric CLI all-target,
+  all-feature Clippy passed with warnings denied; formatting passed.
+- **Commit:** `929266bc218b46a51e217b0107e74dd9a6e9df75`
+
+## T-11802 (sprint 118)
+
+- **Description:** Restored positive `server up --tailscale` through an
+  entropy-first coordinate, read-only self/status preparation, exact absent-path
+  collision check, ownership-bearing mirrored write-ahead journal, immediate
+  journal readback, endpoint-scoped apply, exact target verification, and final
+  child/listener/journal revalidation. Every ambiguous post-apply failure now
+  compares and removes only the unchanged token path first, independently
+  stops/reaps the exact retained child, and removes journals only when both
+  resources are proved resolved.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T01:19:38-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs` and the Book work
+  ledgers.
+- **Verification:** the four named launch ordering/drift/pre-mutation/failure
+  matrices passed, including apply-failed-but-landed, replacement-held, and
+  off-failed-but-absence-proved cases; all 67 server tests passed; Ferric CLI
+  all-target, all-feature Clippy passed with warnings denied; formatting
+  passed.
+- **Commit:** `001170bdf665167b75a7f519b1625fedec275bcc`
+
+## T-11803 (sprint 118)
+
+- **Description:** Made status combine the existing native lifecycle state with
+  exact observation of the recorded Tailscale Serve coordinate, reporting
+  active, pending, replaced, or uninspectable state and succeeding only when
+  both the native process and proxy are ready. Down now revalidates journals,
+  reconciles the exact proxy before independently stopping the retained process,
+  proves listener release, revalidates again, and conditionally removes
+  registrations only when both resources resolve. Ambiguous, replaced,
+  unreadable, post-off, and reported-off-failure rows retain coordinate-specific
+  journals so a later absent-state retry can converge safely.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T01:39:12-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/tailscale_serve.rs`, and the Book work ledgers.
+- **Verification:** all four named status/down proxy-state, cleanup-order,
+  failure-retention, and idempotent-retry tests passed; all 71 server tests
+  passed; Ferric CLI all-target, all-feature Clippy passed with warnings
+  denied; formatting passed.
+- **Commit:** `465df4e8630410f8879ed6244518239162c90320`
+
+## T-11804 (sprint 118)
+
+- **Description:** Restored positive Tailscale doctor mode after static and
+  registration blockers by adding bounded, duplicate-safe, read-only canonical
+  identity and Serve-status probes through the closed adapter. Doctor reports
+  missing/old CLI, daemon, timeout, output-limit, identity, and malformed-status
+  failures without exposing a mutation route. Launch, status, and down now have
+  pure operator render seams covering the loopback base, tokenized remote base,
+  exact target/path, retained journals, and one scoped retry command. README and
+  operator docs describe current behavior and explicitly prohibit broad reset.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T01:47:50-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/tailscale_serve.rs`, `README.md`, `docs/commands.md`,
+  `docs/server-configuration.md`, and the Book work ledgers.
+- **Verification:** both named doctor probe-order/read-only tests, the closed
+  adapter read-only argv test, and the copy-paste-complete operator rendering
+  test passed; all 72 server tests passed; Ferric CLI all-target, all-feature
+  Clippy passed with warnings denied; formatting passed.
+- **Commit:** `032e441b77cfb3026ecf3a15b0556630081ed054`
+
+## T-11805 (sprint 118)
+
+- **Description:** Added deterministic composition seams for the complete
+  Tailscale launch, status, down, retry, revision, and legacy-safety fault
+  matrix, plus a stateful model-free fake Tailscale executable. The real Ferric
+  CLI fixture now proves mirrored ownership journals exist before exact scoped
+  apply, preserves unrelated Serve state, reports the tokenized remote base,
+  removes the exact proxy while its target remains live, then stops the process
+  and removes both journals. A direct negative fixture test proves apply fails
+  without journals, and the complete command ledger rejects broad or unscoped
+  mutation argv.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T02:13:01-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/bin/ferric_lifecycle_fixture.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, and the Book work
+  ledgers.
+- **Verification:** the named aggregate fault-seam matrix passed; the Tailscale
+  filter passed 17 tests with one intentional subprocess-helper ignore and all
+  three Tailscale fixture tests passed; all 73 server tests and all five
+  lifecycle fixture tests passed; Ferric CLI all-target, all-feature Clippy
+  passed with warnings denied; formatting and diff checks passed.
+- **Commit:** `e04f39fc90035d3e1ad0c312e01dfadb306a5835`
+
+## Sprint 118 post-Loop correction
+
+- **Scope:** The required extra adversarial pass reopened Loop after T-11801
+  through T-11805 and found that the fixed Tailscale CLI mutation path could
+  not supply the ownership-safe compare-and-swap contract the sprint intended.
+  The task entries above remain the historical records of their original
+  commits; they are not the final accepted implementation.
+- **Final implementation:** Replaced Serve CLI mutation and its fake executable
+  with a bounded direct Tailscale LocalAPI transport and a model-free fake
+  LocalAPI fixture. Normal operation pins the supported API capability and
+  Tailscale version, hashes the unmodified Serve response body for its SHA-256
+  ETag, and issues exactly one scoped update with the matching `If-Match`
+  header. There is no mutation retry: a precondition failure proves no
+  mutation, while a transport failure after send remains indeterminate.
+- **Ownership and cleanup:** Schema-v2 mirrored write-ahead journals retain
+  typed stable-node identity, FQDN, exact target and handler path, scaffold
+  provenance, and the apply-confirmed phase. Identity is sandwiched around
+  each read/mutation decision. Cleanup may remove only the exact owned handler;
+  unrelated handlers, foreground Serve state, Funnel state, and scaffolds not
+  created by Ferric are preserved. A future or otherwise unsupported version
+  retains the journal whenever safe interpretation cannot be proved.
+- **Evidence:** The corrected model-free fixture proves same-connection
+  status/config/status sandwiches, journal presence before each mutation, raw
+  ETag and one-CAS behavior, exact endpoint scope, preservation of unrelated
+  Serve state, full owned-state restoration, idempotent repeated `down`, and
+  that the ordinary production binary cannot activate the test transport. See
+  the [post-Loop adversarial review](../sprints/s118/post-loop-adversarial-review.md)
+  and corrected Sprint 118 Test evidence for the complete Research, Plan,
+  Build, Test, and Loop audit.
+- **Substantive LocalAPI correction:** `625fbba116cb5eb04030dd52d07f3ac64d90a84d`
+- **Final adversarial correction:** `9ff40c02c0df38e3d08e04c7f030f676bffcd970`
+- **PR-CI third Loop re-entry:** PR run `33385435515` at evidence head
+  `85f5e5b` rejected three Clippy feature matrices and a Linux lifecycle
+  topology that passed only 3/5 after namespace PID 1 failed to reap an
+  adopted fixture child. Commit `2f976dcbd4279af3ed3f65588f2d7bde6be2c0b2`
+  narrowed the lifecycle-only cfg boundary and installed an unprivileged PID-1
+  reaper; push/PR runs `33387648205` and `33387653011` passed.
+- **Hard-cleanup and quoting corrections:** Follow-up review superseded that
+  green head because the credential transition could clear `PDEATHSIG`.
+  Commit `a4bf920a57ca6fc38c50a390ef4722f85b8e286e` restored it with
+  `setpriv --pdeathsig keep`; runs `33388127765` and `33388132395` then exposed
+  an apostrophe that terminated the wrapper's outer single-quoted shell
+  program. Commit `7633f8c0675664e51c8a4e88e4aaafe0d20880e9` repaired that
+  quoting and passed the exact isolated wrapper locally 5/5. Final push/PR
+  runs `33388704624` and `33388709925` both passed at that exact head.
+- **Accepted tested code head:** `7633f8c0675664e51c8a4e88e4aaafe0d20880e9`
+
+## T-11510 (sprint 118)
+
+- **Description:** Completed the ordered positive Tailscale lifecycle umbrella.
+  [T-11801](#t-11801-sprint-118) through
+  [T-11805](#t-11805-sprint-118) record the initial adapter, launch, status,
+  teardown, doctor, operator, and model-free lifecycle increments. The
+  [post-Loop correction](#sprint-118-post-loop-correction) rejected their
+  fixed-CLI mutation boundary, replaced it with direct LocalAPI
+  ETag/`If-Match` CAS, and substantive adversarial correction
+  `9ff40c02c0df38e3d08e04c7f030f676bffcd970` added effective ancestor-route
+  retention and truthful LocalAPI diagnostics. A final comment-only
+  terminology alignment produced intermediate head `d5e61b7`. PR CI and
+  follow-up review then required the cfg-matrix, PID-1 reaper, preserved
+  parent-death signal, and shell-quoting corrections recorded above. Those
+  retained records are the implementation history;
+  `7633f8c0675664e51c8a4e88e4aaafe0d20880e9` is the accepted code outcome for
+  this umbrella task.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T08:09:32-04:00
+- **Scope closed:** `server up --tailscale` now uses durable phased ownership,
+  one exact LocalAPI CAS per mutation attempt, same-session identity binding,
+  proxy-first compensation and teardown, truthful status/doctor output, and
+  model-free request-ledger proof without a node-wide reset. Live-tailnet
+  acceptance, unconfirmed absent-only convergence, native transport parity,
+  macOS discovery, and the wider compact model workflow remain separately
+  tracked work.
+- **Verification:** See the corrected
+  [Sprint 118 Test report](../sprints/s118/sprint-tests/test-report.md),
+  [Test critique](../sprints/s118/sprint-tests/critique.md), and
+  [post-Loop adversarial review](../sprints/s118/post-loop-adversarial-review.md).
+- **Accepted code head:** `7633f8c0675664e51c8a4e88e4aaafe0d20880e9`
