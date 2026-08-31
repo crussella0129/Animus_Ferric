@@ -97,7 +97,10 @@ writes a mirrored schema-v2 registration locally at `.ferric/server.json` and
 in the user config directory so other commands can auto-discover it. `up`
 rejects an existing registration or occupied port and registers only after the
 spawned process owns the expected listener and returns HTTP 200 from its
-engine-specific health endpoint.
+engine-specific health endpoint. It serializes once, uses an exclusive
+same-directory stage for each scope, completes write/flush/file-sync, and
+atomically commits without replacing an existing final. Unix also syncs parent
+metadata; Windows currently claims the file-level durability boundary only.
 
 `server up` options:
 
@@ -109,26 +112,63 @@ engine-specific health endpoint.
 | `--ctx <N>` | context window (default 4096) |
 | `--port <N>` | port on 127.0.0.1 (default 8080) |
 | `--threads <N>` · `--gpu-layers <N>` · `--batch-size <N>` | edge/latency tuning (llama-server) |
-| `--tailscale` | reserved; currently refused before spawn because durable Serve state cannot yet be rolled back safely |
+| `--tailscale` | reserved; refused before spawn, registration/PID inspection, engine/model/network probes, Tailscale invocation, or registration/stage creation |
 
 - `status` — inventory local/global registrations, bind schema-v2 records to
   their process creation identity and listener owner, then report HTTP health
-- `adopt --pid <PID>` — non-destructively verify one live schema-v1 process and
-  conditionally upgrade its unchanged local/global registrations to schema v2
+- `adopt --pid <pid>` — non-destructively verify one live schema-v1 process and
+  conditionally upgrade its unchanged local/global registrations to schema v2;
+  status/down print this complete command with the recorded numeric PID
 - `doctor` — engine binary + launch inputs + registered PID/HTTP health
 - `down` — stop only the uniquely verified process through its retained handle,
+  prove that exact process exited and its registered listeners were released,
   then remove only unchanged registration bytes; stale-only records are cleaned
-  without signalling a process
+  without signalling a process when all of their listeners are proven absent
 
 Lifecycle commands fail closed when a registration is malformed, unreadable,
 conflicting, legacy schema v1 with a live PID, or otherwise unverifiable. HTTP
 health alone never authorizes teardown. A wildcard/public listener makes
-`status` fail, while `down` can still stop that exact verified process through
-its retained handle. Native destructive lifecycle support is available on
-Windows and on little-endian 64-bit x86_64/AArch64 Linux; other targets fail
-closed. See [The Inference
-Server](server-configuration.md#registration-and-teardown-safety) for recovery
-guidance.
+`status` fail; `down` refuses to signal, preserves every registration, and never
+reports `stopped` because ownership is non-exclusive. Signal failure, exit
+timeout/error, or a remaining, foreign, wildcard, or uninspectable listener
+likewise preserves registrations and produces a non-success result.
+
+Publication is atomic per path, not across scopes. If a partial commit,
+durability failure, or child exit requires compensation, Ferric uses the
+retained child object and begins rollback only after exact exit, reap, and
+listener release are proven. Otherwise published finals remain recovery clues.
+Authorized compensation compare-removes only unchanged attempt-owned finals,
+preserves concurrent replacements, explicitly cleans attempt stages, reports
+every failure and preserved path, and still returns a failed launch. A signal
+error alone never authorizes cleanup; Ferric deliberately waits the retained
+object so a successful wait may independently prove exit.
+
+Tailscale mode is fail-closed because scoped proxy cleanup is unavailable.
+`up` and `doctor` stop before every probe and side effect listed above. A
+captured `tailscale: true` record blocks process inspection for present and
+absent PIDs; `status` and `down` preserve its exact bytes and perform no signal,
+deletion, Tailscale command, or blind node-wide reset.
+
+Successful `down` reports `stopped`, `stale-cleaned`, or that the retained
+process was already exited. Each registration is also reported independently
+as `removed`, `already-absent`, `replacement-preserved`, `restore-failed`,
+`removal-failed`, `held`, or another cleanup failure; any incomplete per-path
+cleanup is an explicit partial, non-success result and includes every preserved
+location (including same-parent holding paths).
+
+Adoption never signals the legacy process. It verifies a retained process
+handle, the closed engine executable, every available recorded argv coordinate,
+and exact loopback listener ownership before conditionally replacing unchanged
+aliases. The originating local schema-v1 registration must be present; a
+global-only record is reported for repair instead of receiving an unusable
+adoption command. Adoption rechecks the same generation afterward. On a failed
+transition it rolls back only its own still-unchanged replacements and reports
+any alias or preserved location it could not restore.
+
+Native destructive lifecycle support is available on Windows and on
+little-endian 64-bit x86_64/AArch64 Linux; other targets fail closed. See [The
+Inference Server](server-configuration.md#registration-and-teardown-safety) for
+recovery guidance.
 
 ---
 

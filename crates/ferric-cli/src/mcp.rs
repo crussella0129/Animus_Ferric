@@ -811,7 +811,7 @@ impl McpServer {
         let (provider, executor) = if args.mock {
             (ProviderSource::FreshMock, Executor::Blocking)
         } else {
-            let (provider, executor) = build_real_provider(&backend_opts)?;
+            let (provider, executor) = build_real_provider(&backend_opts, workspace.root())?;
             (ProviderSource::Shared(provider), executor)
         };
 
@@ -854,14 +854,17 @@ impl McpServer {
 #[cfg(feature = "backend-openai")]
 fn build_real_provider(
     backend_opts: &BackendOpts,
+    workspace: &std::path::Path,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
-    let (provider, runtime) = crate::backend::create_provider_with_runtime(backend_opts)?;
+    let (provider, runtime) =
+        crate::backend::create_provider_with_runtime_in(backend_opts, workspace)?;
     Ok((provider, Executor::Real(runtime)))
 }
 
 #[cfg(not(feature = "backend-openai"))]
 fn build_real_provider(
     _backend_opts: &BackendOpts,
+    _workspace: &std::path::Path,
 ) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
     Err(crate::backend::BACKEND_FEATURE_MISSING.to_string())
 }

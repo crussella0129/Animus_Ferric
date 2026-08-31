@@ -3,11 +3,11 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0008
 - **State:** active
-- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [T-11606 failed-close acceptance remediation](../work/tasks.md#sprint-116-failed-close-remediation)
+- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [Sprint 117 T-11606 recovery plan](../sprints/s117/sprint-plans/build-plan.md#execution-sequence); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [post-Sprint 117 lifecycle carry-forward](../work/tasks.md#post-sprint-117-lifecycle-carry-forward)
 - **Completion evidence:** none
-- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116)
-- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md)
-- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md)
+- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116); [T-11606 accepted lifecycle remediation](../work/completed-tasks.md#t-11606-sprint-117)
+- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md); [Sprint 117 accepted lifecycle test report](../sprints/s117/sprint-tests/test-report.md); [Sprint 117 clean test critique](../sprints/s117/sprint-tests/critique.md)
+- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Sprint 117 acceptance-recovery research](../sprints/s117/sprint-research/research-report.md)
 
 ## Intent
 
@@ -51,11 +51,13 @@ The current native identity-safe teardown boundary is intentionally narrower
 than the eventual cross-platform goal in AC-8: Windows, plus little-endian
 64-bit x86_64 and aarch64 Linux. Other targets retain a compiling fail-closed
 adapter but have no destructive lifecycle authority. On the supported targets,
-a wildcard/public listener is never healthy managed state: `status` fails
-explicitly, `up` rejects it and rolls back only after proving the exact spawned
-child exited, and `down` may stop it only when the retained process generation
-exactly matches the verified managed identity, after which listener release is
-still required. This records present support; it does not claim AC-8 complete.
+a wildcard/public listener is neither healthy managed state nor destructive
+lifecycle authority: `status` and `down` fail closed before signalling and
+preserve the registration, while `up` rejects it and may roll back only the
+exact child it spawned after proving that retained generation exited. Exact
+process-generation identity alone does not convert a public bind into teardown
+authority. This records the required support boundary; it does not claim AC-8
+complete.
 
 ## Acceptance criteria
 
@@ -205,3 +207,19 @@ users through an opaque wizard.
   identity, deterministic lifecycle fault seams, real concurrency, asserted
   operator output, hardened cross-platform fixtures, and clause-level
   provenance.
+- 2026-08-30: clarified the active ownership boundary during Sprint 117
+  planning: wildcard/public listener state is non-authorizing for `down`, even
+  when process-generation identity is exact. This resolves the conflict between
+  the earlier narrative and finalized E02-B, keeps public/shared exposure
+  fail-closed, and requires status/down to preserve registrations without
+  signalling until exclusive loopback ownership or absence is proved.
+- 2026-08-31: Sprint 117 passed the recovered clause-level lifecycle contract
+  at corrected immutable head `b679a25` with all nineteen exact EARS commands,
+  336/336 package tests, 1,089 workspace passes with four intentional ignores,
+  a clean adversarial critique, and six-job CI run `33351978700`. Pre-merge
+  review caught and closed a missing post-publication retained-process/listener
+  authority check and restored the frozen nineteen-row result ledger before
+  acceptance. This accepts the affected server-lifecycle portions of AC-3,
+  AC-4, AC-6, and AC-7 and adds enabling evidence toward AC-9. The broader
+  compact workflow, macOS/platform parity, calibration, model aliases, and
+  model-backed application trial remain active work.

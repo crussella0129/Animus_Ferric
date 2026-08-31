@@ -1454,7 +1454,238 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   the failed close route and this task's durable disposition is **closed
   partial**. The green suites remain regression evidence, while AC-3, AC-4,
   AC-6, and AC-7 do not advance from this task.
-- **Remediation:** [T-11606 in the failed-close backlog](tasks.md#sprint-116-failed-close-remediation)
-  must close the missing fault, concurrency, output-contract, CI, and
-  provenance matrices before report-driven calibration or compact-command work
-  resumes.
+- **Remediation:** [T-11606 (Sprint 117)](#t-11606-sprint-117) closed the
+  missing fault, concurrency, output-contract, CI, and provenance matrices;
+  remaining local-model work continues in the
+  [ordered backlog](tasks.md#post-sprint-115--ordered-local-model-work).
+
+## T-11701 (sprint 117)
+
+- **Description:** Enforced canonical current-OS schema-v2 process-start
+  tokens and replaced fallback-shaped registration discovery with independent,
+  lossless local, global, and promised-origin snapshots. Promised origins now
+  retain their source coordinate, expected record, typed state, and exact raw
+  bytes even when they alias a configured path or contain a changed valid
+  record. Conditional cleanup now exposes deterministic moved-read and
+  moved-remove failure seams while preserving the same-parent atomic move,
+  no-clobber restore, and recovery-path contract. Lifecycle expansion consumes
+  the captured origin snapshot without a second filesystem read, and synthetic
+  Windows/Linux identities use canonical same-OS tokens.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T14:57:55-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_process.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/src/server_resolution.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, INT-0008,
+  Sprint 117 research and finalized plans, `docs/SUMMARY.md`, and the Book work
+  ledgers.
+- **Verification:** all four frozen E01 acceptance tests and the focused strict
+  token rejection regression passed; the integrated Ferric CLI all-feature
+  package gate passed 225 unit tests, 6 benchmark integrations, 69 CLI
+  integrations, 3 model-free lifecycle fixtures, and 3 template-hygiene tests.
+  All-target/all-feature Clippy passed with warnings denied, formatting and
+  diff checks passed, Windows and native WSL Linux token validation passed, and
+  the Sprint 114 protected artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** `4ddd0aa310827dd19a942b9929599ce41c47895e`
+
+## T-11702 (sprint 117)
+
+- **Description:** Bound lifecycle authority to retained Windows process
+  HANDLEs and Linux pidfds before exact identity validation, signaling, or
+  waiting. Listener inspection now distinguishes exclusive IPv4 loopback,
+  absent, wildcard/dual-stack, foreign/shared/multiple, and uninspectable
+  states; only exact target ownership or absence authorizes teardown. Linux
+  argv decoding and shared-owner enumeration fail closed, Windows records
+  exact IPv6 loopback as unsupported for this IPv4 endpoint, and server launch
+  now binds its child before readiness, compensates every failed publication
+  gate through the retained generation, and always reaps a proven exit.
+  Registered-server validation retains and rechecks the same process across
+  the HTTP probe so a replacement endpoint cannot inherit stale authority.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T15:34:58-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_process.rs`, and the Book work ledgers.
+- **Verification:** all frozen E02 acceptance tests and supplemental PID-reuse,
+  wildcard, cleanup, non-UTF-8, and incomplete-owner regressions passed. The
+  complete Ferric CLI all-feature gate passed 232 unit tests, 6 benchmark
+  integrations, 69 CLI integrations, 3 model-free lifecycle fixtures, and 3
+  template-hygiene tests. The focused 41-test server lifecycle suite passed on
+  both Windows and native WSL Linux; the 15-test Linux process/listener suite
+  passed, including strict argv and IPv6 wildcard coverage. All-target,
+  all-feature Clippy passed with warnings denied; formatting and diff checks
+  passed. Restricted Linux `/proc` owner visibility is explicitly retained as
+  non-authorizing `Uninspectable` state. The protected Sprint 114 artifact
+  retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** `78e1ce978874507be79bcb6ee7776f6d8e7bd772`
+
+## T-11703 (sprint 117)
+
+- **Description:** Added one lossless typed managed-server discovery contract
+  for Empty, Ready, Degraded, StaleOnly, Conflict, and Unverifiable state.
+  Resolution now validates every local, global, and promised-origin candidate,
+  groups only exact process-and-metadata aliases, reconciles stale listeners,
+  and retains observed identity/listener/health facts for truthful status.
+  Status, backend selection, strict autonomy, doctor, and down's pre-mutation
+  decision consume the shared types without blocked-state fallback. Strict
+  autonomy rejects changed revisions or peers before HTTP, brackets `/models`
+  with one retained process generation, checks cheap task infrastructure before
+  model hashing, and query/API/MCP discovery follows the selected workspace.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T16:51:50-04:00
+- **Files modified:** `crates/ferric-cli/src/server_resolution.rs`,
+  `crates/ferric-cli/src/server.rs`, `crates/ferric-cli/src/backend.rs`,
+  `crates/ferric-cli/src/autonomy_cmd.rs`, `crates/ferric-cli/src/query.rs`,
+  `crates/ferric-cli/src/api.rs`, `crates/ferric-cli/src/mcp.rs`,
+  `docs/server-configuration.md`, and the Book work ledgers.
+- **Verification:** all five frozen E03 acceptance tests and supplemental
+  retained-effect, Tailscale, promised-origin, legacy-alias, and typed-state
+  regressions passed. The complete Ferric CLI all-feature gate passed 234 unit
+  tests, 6 benchmark integrations, 69 CLI integrations, 3 model-free lifecycle
+  fixtures, and 3 template-hygiene tests. All-target/all-feature Clippy passed
+  with warnings denied; formatting and diff checks passed. The protected Sprint
+  114 artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** `066b4920620fe5e12e4932baf09e419a553c678a`
+
+## T-11704 (sprint 117)
+
+- **Description:** Routed teardown through one retained process authority and
+  a pre-signal registration-revision check, then required exact exit and
+  listener-release proof before conditional cleanup. Down now returns typed,
+  ordered per-registration outcomes, groups exact duplicate paths once, and
+  blocks distinct aliases or conflicting raw tokens without mutation. Explicit
+  legacy adoption validates the closed engine executable, every recorded argv
+  coordinate, exact listener ownership, and the retained generation before and
+  after exact-byte replacement. Its reverse rollback preserves concurrent
+  state and distinguishes failed-before-commit, fully restored rollback, and
+  partial aggregate recovery truthfully.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T18:05:15-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_registration.rs`, `docs/commands.md`,
+  `docs/server-configuration.md`, and the Book work ledgers.
+- **Verification:** all five frozen E04 acceptance tests and the malformed-token
+  and adoption rollback supplements passed, including separate malformed and
+  unreadable peers, the inspect-to-terminate exit race, exact CAS byte ledgers,
+  rollback-absent rendering, and fail-closed physical-alias handling. The
+  complete serial Ferric CLI all-feature gate passed 241 unit tests, 6
+  benchmark integrations, 69 CLI integrations, 3 model-free lifecycle
+  fixtures, and 3 template-hygiene tests; the previously stalled parallel
+  resume test also passed alone. All-target/all-feature Clippy passed with
+  warnings denied; formatting and diff checks passed. Three independent
+  adversarial audits returned clean. The protected Sprint 114 artifact retained
+  SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** `9a0f290cbc9dd5d7cfdf403f3cfeb5b293de1bcf`
+
+## T-11705 (sprint 117)
+
+- **Description:** Made schema-v2 launch publication a single serialized,
+  independently durable transaction across configured local and global paths.
+  Each scope now creates an exclusive same-parent stage, writes and flushes the
+  complete bytes, syncs the file, atomically persists without replacement, and
+  syncs parent metadata where supported before publication is reported. One
+  compensation coordinator now stops, waits, and reaps the exact retained child,
+  proves listener release before rollback, conditionally removes only unchanged
+  attempt-owned finals and stages using captured bytes and file identity, and
+  preserves every replacement or recovery clue with a typed partial outcome.
+  Tailscale launch, doctor, status, and down paths fail closed before external,
+  process, model, network, registration, or stage effects while explaining that
+  scoped proxy cleanup is unavailable.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T18:48:33-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, `docs/commands.md`,
+  `docs/server-configuration.md`, and the Book work ledgers.
+- **Verification:** all three frozen E05 acceptance tests and the doctor,
+  Tailscale-registration, blocked-command, and exact-stage-cleanup supplements
+  passed, covering one-time serialization, durability/no-clobber ordering,
+  precommit and committed failures, retained-child stop/wait/reap and listener
+  gates, exact final/stage compensation, concurrent replacement preservation,
+  and real CLI zero-side-effect Tailscale refusal. The complete serial Ferric
+  CLI all-feature gate passed 246 unit tests, 6 benchmark integrations, 69 CLI
+  integrations, 3 model-free lifecycle fixtures, and 3 template-hygiene tests.
+  All-target/all-feature Clippy passed with warnings denied; formatting and diff
+  checks passed. Adversarial review's stage-path authority finding was closed by
+  retaining and revalidating opened-file identity before cleanup. The protected
+  Sprint 114 artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** `7b8ad48ade13265a5ed582adae0193d8c29bb26d`
+
+## T-11706 (sprint 117)
+
+- **Description:** Added real multi-process registration races and production-
+  path lifecycle composition proofs for launch, discovery, retained-handle
+  teardown, legacy adoption, and publication compensation. Hardened the
+  model-free CLI fixture with process-wide serialization, pre-call lifetime
+  guards, bounded child and CLI watchdogs, diagnosed-only bind retries,
+  independent HTTP connection handling, and exact cleanup assertions. Added
+  native Windows retained-HANDLE and Linux pidfd/listener smokes plus a bounded
+  Ubuntu/Windows CI fixture matrix, `dev` immutable-head runs, and AArch64
+  feature-surface compile coverage.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T19:28:44-04:00
+- **Files modified:** `.github/workflows/ci.yml`,
+  `crates/ferric-cli/src/bin/ferric_lifecycle_fixture.rs`,
+  `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_process.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, and the Book work
+  ledgers.
+- **Verification:** the six exact supplemental composition tests, all three
+  serialized model-free lifecycle fixtures, and the native Windows and WSL
+  Linux process-handle smokes passed. The complete Ferric CLI all-feature gate
+  passed 255 unit tests, 6 benchmark integrations, 69 CLI integrations, 3
+  lifecycle fixtures, and 3 template-hygiene tests; the full workspace
+  all-feature suite also passed. Package and workspace all-target Clippy passed
+  with warnings denied, formatting and diff checks passed, and the AArch64
+  lifecycle feature surface compile-checked. Independent adversarial reviews
+  returned clean. Immutable-head, two-OS CI, nineteen-row command evidence,
+  and Test critique remain the locked Test-phase acceptance boundary. The
+  protected Sprint 114 artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Commit:** `7bdd09c082d76ca3a1f187902adaf41912e5f80f`
+
+## T-11606 (sprint 117)
+
+- **Description:** Recovered Sprint 116's failed-close lifecycle acceptance at
+  the clause level. Canonical tagged process-generation identity, lossless
+  local/global/promised-origin inventory, retained Windows HANDLE/Linux pidfd
+  authority, exact listener ownership, typed six-state discovery, conditional
+  teardown/adoption, durable no-clobber publication, and exact compensation
+  now have executable in-body matrices. Real concurrent clients and real CLI
+  fixtures cover publication, adoption, stale recovery, down, and Tailscale
+  refusal without replacing safety authority with fixture shortcuts.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-30T21:27:24-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/server_process.rs`,
+  `crates/ferric-cli/src/server_registration.rs`,
+  `crates/ferric-cli/src/server_resolution.rs`,
+  `crates/ferric-cli/tests/server_lifecycle_fixture.rs`, Sprint 117 Test
+  evidence, INT-0008, and the Book work ledgers.
+- **Verification:** all nineteen literal frozen EARS commands passed at
+  immutable head `b679a25ba83069ab849b0f7f2eb8a3269eba10c5`; supplemental,
+  integration, native Windows/Linux, and real CLI rows passed; the Ferric CLI
+  package passed 336/336; the workspace passed 1,089 with four intentional
+  ignores; strict formatting, Clippy, AArch64 compile, and Book checks passed;
+  GitHub CI run
+  [33351978700](https://github.com/crussella0129/Animus_Ferric/actions/runs/33351978700)
+  passed all six jobs. The final
+  [test critique](../sprints/s117/sprint-tests/critique.md) is `clean`, and the
+  scoped [test report](../sprints/s117/sprint-tests/test-report.md) accepts the
+  affected lifecycle portions of INT-0008 AC-3/4/6/7 without claiming the
+  wider workflow realized. The Sprint 114 protected artifact retained SHA-256
+  `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
+- **Pre-merge correction:** Adversarial review found that successful launch
+  publication had no retained-generation/listener reinspection after durable
+  persistence and that the Test report compressed the frozen nineteen-row API
+  into six aggregate rows. Commit `b679a25` added the final authority gate and
+  transition/compensation regressions; the corrected Test evidence restores
+  the exact nineteen-row ledger and records complete immutable-head
+  requalification before merge approval.
+- **Commit:** `b679a25ba83069ab849b0f7f2eb8a3269eba10c5`

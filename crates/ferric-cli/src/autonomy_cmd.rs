@@ -199,7 +199,8 @@ struct ManagedServerBinding {
 }
 
 struct StrictManagedServerBinding {
-    runfile: crate::server::ServerRunfile,
+    scope: crate::server::ManagedDiscoveryScope,
+    initial_fingerprint: crate::server::DiscoveryFingerprint,
     initial_snapshot: crate::server::RegisteredServerSnapshot,
     query_model: String,
     query_context: u32,
@@ -277,27 +278,41 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
         eprintln!("autonomy binary mode: {error}");
         return ExitCode::FAILURE;
     }
-    if let Err(error) = preflight_autonomy_checks(&tasks, &args.python_bin) {
-        eprintln!("autonomy check infrastructure: {error}");
-        return ExitCode::FAILURE;
-    }
-    let resolved_api_base = match crate::backend::resolved_base_url(args.api_base.as_deref()) {
-        Ok(base) => base,
+    let strict_mode = strict_managed_mode(&args);
+    let endpoint = if strict_mode {
+        let workspace = match std::env::current_dir() {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                eprintln!("autonomy server discovery: resolve current directory: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let scope = match crate::server::ManagedDiscoveryScope::for_workspace(&workspace) {
+            Ok(scope) => scope,
+            Err(error) => {
+                eprintln!("autonomy server discovery: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let discovery = crate::server::discover_managed_server_in(&scope);
+        crate::backend::require_managed_endpoint(scope, discovery, args.api_base.as_deref())
+    } else {
+        crate::backend::resolved_endpoint(args.api_base.as_deref())
+    };
+    let endpoint = match endpoint {
+        Ok(endpoint) => endpoint,
         Err(error) => {
             eprintln!("autonomy server discovery: {error}");
             return ExitCode::FAILURE;
         }
     };
-    if let Err(error) = preflight_openai_server(
-        &resolved_api_base,
-        args.model.as_deref().expect("validated model"),
-    ) {
-        eprintln!("autonomy server preflight: {error}");
+    let resolved_api_base = endpoint.base_url().to_string();
+    if let Err(error) = preflight_autonomy_checks(&tasks, &args.python_bin) {
+        eprintln!("autonomy check infrastructure: {error}");
         return ExitCode::FAILURE;
     }
-    let strict_mode = strict_managed_mode(&args);
     let managed_server = match managed_server_binding(
-        &resolved_api_base,
+        &endpoint,
         args.model.as_deref().expect("validated model"),
         args.model_sha256.as_deref(),
         args.ctx,
@@ -309,6 +324,33 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let server_preflight = managed_server
+        .as_ref()
+        .and_then(|binding| binding.strict.as_ref())
+        .map_or_else(
+            || {
+                preflight_openai_server(
+                    &resolved_api_base,
+                    args.model.as_deref().expect("validated model"),
+                )
+            },
+            |strict| {
+                crate::server::with_registered_server_effect(
+                    &strict.initial_fingerprint.runfile,
+                    || {
+                        preflight_openai_server(
+                            &resolved_api_base,
+                            args.model.as_deref().expect("validated model"),
+                        )
+                    },
+                )
+                .map(|_| ())
+            },
+        );
+    if let Err(error) = server_preflight {
+        eprintln!("autonomy server preflight: {error}");
+        return ExitCode::FAILURE;
+    }
 
     let protocol: ActionProtocol = args.protocol.into();
     let openai = Some(OpenAiArgs {
@@ -1135,43 +1177,20 @@ fn run_episode(
 }
 
 fn managed_server_binding(
-    resolved_api_base: &str,
+    endpoint: &crate::backend::EndpointSelection,
     query_model: &str,
     expected_model_sha256: Option<&str>,
     query_context: u32,
     strict: bool,
 ) -> Result<Option<ManagedServerBinding>, String> {
-    let workspace = std::env::current_dir()
-        .map_err(|error| format!("resolve current directory for server runfile: {error}"))?;
-    let runfile = match crate::server::read_runfile_result(&workspace) {
-        Ok(Some(runfile)) => runfile,
-        Ok(None) => {
-            return if strict {
-                Err("paired/evidence mode requires a managed `ferric server` runfile".to_string())
-            } else {
-                Ok(None)
-            };
-        }
-        Err(error) => {
-            return Err(if strict {
-                format!(
-                    "paired/evidence mode found blocked managed-server registration state: {error}"
-                )
-            } else {
-                format!("managed-server registration state is blocked: {error}")
-            });
-        }
-    };
-    if normalized_endpoint(&runfile.base_url) != normalized_endpoint(resolved_api_base) {
+    let Some((scope, server)) = endpoint.managed() else {
         return if strict {
-            Err(format!(
-                "managed runfile endpoint {} does not match resolved endpoint {}",
-                runfile.base_url, resolved_api_base
-            ))
+            Err("paired/evidence mode requires one ready managed `ferric server`".to_string())
         } else {
             Ok(None)
         };
-    }
+    };
+    let runfile = &server.runfile;
     let mut provenance = ManagedServerProvenance {
         engine: runfile.engine.program().to_string(),
         listener_base_url: runfile.base_url.clone(),
@@ -1206,8 +1225,15 @@ fn managed_server_binding(
         )?);
         provenance.model = Some(canonical_model);
         provenance.model_launch_argument = Some(model_launch_argument);
-        let snapshot = crate::server::inspect_registered_server(&runfile)?;
-        validate_live_server_snapshot(&runfile, &snapshot, query_model, query_context)?;
+        let discovery_snapshot = server.ready_snapshot()?;
+        let snapshot = crate::server::inspect_registered_server(runfile)?;
+        if snapshot != discovery_snapshot {
+            return Err(
+                "managed process identity changed after ready discovery and before provenance collection"
+                    .to_string(),
+            );
+        }
+        validate_live_server_snapshot(runfile, &snapshot, query_model, query_context)?;
         provenance.pid = Some(snapshot.pid);
         provenance.listener_owner_pid = Some(snapshot.listener_owner_pid);
         provenance.listener_port = Some(runfile.port);
@@ -1223,17 +1249,9 @@ fn managed_server_binding(
         provenance.engine_version = Some(engine_version(&snapshot.executable)?);
         provenance.engine_argv = Some(snapshot.argv.clone());
         provenance.gpu_layers = Some(0);
-        let confirmed_snapshot = crate::server::inspect_registered_server(&runfile)?;
-        validate_live_server_snapshot(&runfile, &confirmed_snapshot, query_model, query_context)?;
-        if confirmed_snapshot != snapshot {
-            return Err(
-                "managed process executable/argv/listener identity changed during preflight"
-                    .to_string(),
-            );
-        }
-        preflight_openai_server(resolved_api_base, query_model)?;
         Some(StrictManagedServerBinding {
-            runfile: runfile.clone(),
+            scope: scope.clone(),
+            initial_fingerprint: server.fingerprint.clone(),
             initial_snapshot: snapshot,
             query_model: query_model.to_string(),
             query_context,
@@ -1438,9 +1456,19 @@ fn revalidate_managed_server(
     binding: &ManagedServerBinding,
     strict: &StrictManagedServerBinding,
 ) -> Result<(), String> {
-    let snapshot = crate::server::inspect_registered_server(&strict.runfile)?;
+    let pending = crate::server::begin_managed_server_discovery_in(&strict.scope);
+    require_matching_pre_health_discovery(pending.discovery(), &strict.initial_fingerprint)?;
+    let discovery = pending.finish();
+    let fresh = require_fresh_managed_discovery(&discovery, &strict.initial_fingerprint)?;
+    let discovery_snapshot = fresh.ready_snapshot()?;
+    let (snapshot, ()) = crate::server::with_registered_server_effect(&fresh.runfile, || {
+        preflight_openai_server(&fresh.runfile.base_url, &strict.query_model)
+    })?;
+    if snapshot != discovery_snapshot {
+        return Err("managed process identity changed after final ready discovery".to_string());
+    }
     validate_live_server_snapshot(
-        &strict.runfile,
+        &fresh.runfile,
         &snapshot,
         &strict.query_model,
         strict.query_context,
@@ -1451,7 +1479,6 @@ fn revalidate_managed_server(
                 .to_string(),
         );
     }
-    preflight_openai_server(&strict.runfile.base_url, &strict.query_model)?;
     let executable_sha256 = ferric_bench::sha256_file(&snapshot.executable)
         .map_err(|error| format!("rehash live managed engine: {error}"))?;
     if binding.provenance.engine_executable_sha256.as_deref() != Some(executable_sha256.as_str()) {
@@ -1462,7 +1489,7 @@ fn revalidate_managed_server(
     {
         return Err("managed engine version changed during the matrix".to_string());
     }
-    let managed_model = strict
+    let managed_model = fresh
         .runfile
         .model
         .as_deref()
@@ -1471,8 +1498,76 @@ fn revalidate_managed_server(
     Ok(())
 }
 
-fn normalized_endpoint(value: &str) -> &str {
-    value.trim_end_matches('/')
+pub(crate) fn require_matching_pre_health_discovery<'a>(
+    discovery: &'a crate::server::ManagedServerDiscovery,
+    expected: &crate::server::DiscoveryFingerprint,
+) -> Result<&'a crate::server::ManagedServer, String> {
+    let server = match &discovery.state {
+        crate::server::ManagedServerState::Degraded { server, .. }
+            if server.listener == crate::server_process::ListenerState::OwnedByTarget
+                && server.health == crate::server_resolution::HealthState::NotProbed =>
+        {
+            server
+        }
+        crate::server::ManagedServerState::Ready(server) => server,
+        crate::server::ManagedServerState::Empty => {
+            return Err("managed registration disappeared before final HTTP health".to_string());
+        }
+        crate::server::ManagedServerState::Degraded { issues, .. }
+        | crate::server::ManagedServerState::Conflict { issues }
+        | crate::server::ManagedServerState::Unverifiable { issues } => {
+            return Err(format!(
+                "fresh managed discovery is blocked before final HTTP health: {}",
+                issues
+                    .iter()
+                    .map(|issue| issue.detail.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+        crate::server::ManagedServerState::StaleOnly { .. } => {
+            return Err("managed registration became stale before final HTTP health".to_string());
+        }
+    };
+    if &server.fingerprint != expected {
+        return Err(
+            "managed registration/process fingerprint changed before final HTTP health".to_string(),
+        );
+    }
+    Ok(server)
+}
+
+pub(crate) fn require_fresh_managed_discovery<'a>(
+    discovery: &'a crate::server::ManagedServerDiscovery,
+    expected: &crate::server::DiscoveryFingerprint,
+) -> Result<&'a crate::server::ManagedServer, String> {
+    let fresh = match &discovery.state {
+        crate::server::ManagedServerState::Ready(server) => server,
+        crate::server::ManagedServerState::Empty => {
+            return Err("managed registration disappeared during the matrix".to_string());
+        }
+        crate::server::ManagedServerState::Degraded { issues, .. }
+        | crate::server::ManagedServerState::Conflict { issues }
+        | crate::server::ManagedServerState::Unverifiable { issues } => {
+            return Err(format!(
+                "fresh managed discovery is blocked: {}",
+                issues
+                    .iter()
+                    .map(|issue| issue.detail.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+        crate::server::ManagedServerState::StaleOnly { .. } => {
+            return Err("managed registration became stale during the matrix".to_string());
+        }
+    };
+    if &fresh.fingerprint != expected {
+        return Err(
+            "managed registration/process fingerprint changed during the matrix".to_string(),
+        );
+    }
+    Ok(fresh)
 }
 
 #[cfg(test)]

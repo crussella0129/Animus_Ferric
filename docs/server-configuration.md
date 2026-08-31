@@ -14,7 +14,7 @@ The default engine is llama.cpp's `llama-server`; Ollama is pluggable via
 ```sh
 ferric server up      # launch + publish local/global registrations
 ferric server status  # resolve identity/listener ownership + report HTTP health
-ferric server adopt --pid <PID> # verify and upgrade a live schema-v1 record
+ferric server adopt --pid 6501  # example: run the exact command status/down prints
 ferric server doctor  # check engine-binary + model presence (and reachability)
 ferric server down    # stop only a verified instance, then clean registrations
 ```
@@ -23,13 +23,28 @@ ferric server down    # stop only a verified instance, then clean registrations
 target port is occupied. For llama.cpp it also requires a regular model file,
 a regular projector when supplied, and nonzero context/port values. Ferric
 retains the spawned child until its engine-specific HTTP endpoint returns 200;
-it then binds the child to its process creation identity and verifies that child
-owns the expected listener. Only after those checks does it publish the same
-**runfile** bytes locally at `.ferric/server.json` and in the user config
-directory. This is what lets `ferric query` and `ferric bench`
-**auto-discover** the server—no `--api-base` needed.
+it first binds that child to a retained process object, then polls readiness,
+revalidates the same process generation, and verifies that child owns the
+expected listener. Only after those checks does it serialize the **runfile**
+once. Each configured scope gets an exclusive same-directory stage; Ferric
+writes, flushes, and file-syncs the complete bytes, atomically commits the stage
+without replacing an existing final name, and syncs parent-directory metadata
+where the platform supports it. Success is reported only after every configured
+final contains parseable, byte-identical bytes. This is what lets `ferric
+query` and `ferric bench` **auto-discover** the server—no `--api-base` needed.
 
-`doctor` is the pre-flight check; it validates presence *without* launching:
+Publication has a deliberately bounded durability claim. File contents are
+synced before commit. Unix also syncs the containing directory after the final
+name appears. Rust's portable file API cannot flush Windows directory metadata,
+so Windows currently claims the file-level boundary only, not unqualified
+power-loss durability for the directory entry.
+
+`doctor` is the pre-flight check; it validates presence *without* launching.
+Tailscale mode returns before registration or PID inspection and before engine,
+model, or network probes. Other pure argument blockers also precede external
+probes. Otherwise doctor resolves the complete registration inventory first.
+Degraded, stale-only, conflicting, or unverifiable state returns before
+engine-version and model-file probes:
 
 ```console
 $ ferric server doctor --engine llama-server --model ./model.gguf
@@ -42,23 +57,38 @@ $ ferric server doctor --engine llama-server --model ./model.gguf
 
 ```console
 $ ferric server status
-[verified] local registration ...: engine=LlamaServer pid=36792 base_url=http://127.0.0.1:8080/v1 listener=owned-loopback http=healthy
-resolved one managed server: pid=36792 base_url=http://127.0.0.1:8080/v1 aliases=2 stale=0
+[captured] local registration C:\Users\<you>\server-project\.ferric\server.json: schema=2 engine=LlamaServer pid=36792 base-url=http://127.0.0.1:8080/v1 recorded-identity=... observed-identity=... listener=owned-loopback health=healthy
+[captured] global registration %APPDATA%\ferric\server.json: schema=2 engine=LlamaServer pid=36792 base-url=http://127.0.0.1:8080/v1 recorded-identity=... observed-identity=... listener=owned-loopback health=healthy
+[captured] origin registration C:\Users\<you>\server-project\.ferric\server.json promised-by=global registration %APPDATA%\ferric\server.json: schema=2 engine=LlamaServer pid=36792 base-url=http://127.0.0.1:8080/v1 recorded-identity=... observed-identity=... listener=owned-loopback health=healthy
+[state] ready pid=36792 aliases=2 stale=0 listener=owned-loopback health=healthy
+[next] managed server is ready at http://127.0.0.1:8080/v1; continue with the intended Ferric command and omit `--api-base` to use it
 ```
 
-`status` succeeds only when schema-v2 process identity and listener ownership
-are exact and the engine-specific local HTTP endpoint returns 200. A bare TCP
-listener is not healthy, and a healthy HTTP response is never teardown
-authority. `down` independently revalidates the retained process handle and
-listener facts, waits for that exact process instance to exit, and only then
-cleans its unchanged registrations.
+`status` prints one row for every configured local and global scope and every
+origin promised by a captured global record, including absent or blocked rows.
+Persisted identity and observed identity remain separate, and every report ends
+with exactly one next safe action. It succeeds only when schema-v2 process
+identity and listener ownership are exact and the engine-specific local HTTP
+endpoint returns 200. HTTP is attempted only after ownership resolves to one
+exclusive loopback target; Ferric keeps the retained process object across that
+request and reinspects it afterward. A bare TCP listener is not healthy, and a
+healthy HTTP response is never teardown authority. This engine-specific request
+is the discovery health probe; a backend consumer subsequently makes its own
+operation-specific HTTP request after endpoint selection. That later consumer
+probe does not change lifecycle state or add teardown authority. `down`
+independently revalidates the retained process handle and listener facts. It may
+signal only the exact schema-v2 process generation when the expected listener
+is either exclusively owned by that process or proven absent, regardless of
+whether discovery health is healthy, unhealthy, or not probed. It then waits for
+that exact process instance to exit and only afterward cleans its unchanged
+registrations.
 
 A wildcard/public bind is reported explicitly and makes `status` fail. Because
-the process generation is still exact, `down` may stop that same retained
-process and verify listener release; it never treats public exposure as healthy
-managed state. Native destructive lifecycle control is supported on Windows
-and on little-endian 64-bit x86_64/AArch64 Linux. Other platforms fail closed
-until they have an equivalent retained-process adapter.
+listener ownership is non-exclusive, `down` also refuses to signal it and keeps
+the registration for recovery even when the process generation is exact. Native
+destructive lifecycle control is supported on Windows and on little-endian
+64-bit x86_64/AArch64 Linux. Other platforms fail closed until they have an
+equivalent retained-process adapter.
 
 ## Registration and teardown safety
 
@@ -78,45 +108,102 @@ workspace does not silently replace that origin with the current directory.
 Equivalent records are aliases of one managed instance; stale records are kept
 separate. A malformed, unreadable, symlinked, conflicting, or otherwise
 unverifiable entry makes resolution fail closed—no process is signalled.
+Aliases require both the same verified process key and structural equality of
+all canonical runfile metadata. Matching PIDs or start tokens alone are not
+enough. A stale peer may coexist with one selected live process only when its
+remaining listener is absent or is fully accounted for by that selected
+process.
+
+Read-only backend selection consumes this same typed result. An explicit
+`--api-base` remains an explicit endpoint and does not inspect registrations.
+Commands with an explicit workspace resolve the local registration from that
+selected workspace rather than from the launcher process's current directory.
+Without an explicit endpoint, only an empty inventory selects the built-in
+default and only a Ready inventory selects the managed endpoint. Degraded,
+stale-only, conflicting, malformed, missing-origin, or ownership-uninspectable
+state never falls through to the built-in endpoint. Strict autonomy always
+requires Ready managed discovery even when `--api-base` is supplied, and final
+validation repeats static and process discovery and requires the same process,
+metadata, aliases, origins, and exact registration revisions before its final
+discovery health probe. Only after that check may the consumer issue its own
+HTTP request.
 
 Registration publication is no-clobber and atomic per path, not one
-cross-filesystem transaction. If the second mirror cannot be published, Ferric
-stops the child it still owns before conditionally rolling back the first.
-Cleanup likewise removes only the exact bytes captured during resolution. If a
-file changes or is replaced concurrently, the replacement is preserved and the
-command reports partial cleanup.
+cross-filesystem transaction and not simultaneous visibility across scopes. A
+partial commit, committed-but-durability failure, or child exit during
+publication enters compensation through the retained child object. Ferric must
+prove that exact generation exited, reap it, and prove the listener absent
+before removing a final or attempt stage. If signal or wait cannot prove exit,
+all published finals remain as recovery clues. Once cleanup is authorized,
+Ferric compare-removes only unchanged attempt-owned finals, preserves any
+concurrent replacement, and explicitly cleans attempt stages. Every final and
+stage receives a result; cleanup errors identify all preserved paths. Partial
+compensation remains a failed launch rather than a partially registered live
+server. A signal error never authorizes cleanup by itself; Ferric still waits
+on the exact retained object, and only a successful retained wait can
+independently prove that generation exited.
+
+Later teardown cleanup likewise removes only the exact bytes captured during
+resolution. If a file changes or is replaced concurrently, the replacement is
+preserved and the command reports partial cleanup.
 
 `server down` has three practical outcomes:
 
 - No registration: it is an idempotent success.
 - Stale records only: when every registered endpoint is absent, it conditionally
-  removes unchanged records and explicitly reports that no process was stopped;
-  a live, foreign, shared, or uninspectable listener keeps the recovery record.
+  removes unchanged records and reports `stale-cleaned` without signalling a
+  process; a live, foreign, shared, wildcard, or uninspectable listener keeps
+  every recovery record.
 - One verified schema-v2 instance: it terminates only through the retained exact
-  process handle, proves exit, and then conditionally cleans all matching aliases
-  and stale records.
+  process handle. It reports `stopped` only after proving that handle exited and
+  all registered listeners were released; only then does it conditionally clean
+  the target, matching aliases, and reconciled stale records. A target already
+  proven exited is reported separately and is never described as signalled.
+
+Every cleanup candidate gets a per-path result: `removed`, `already-absent`,
+`replacement-preserved`, `restore-failed`, `removal-failed`, or another explicit
+cleanup failure; a precondition failure reports the candidate as `held`.
+Replacement and failure rows identify every preserved location, including any
+same-parent holding path. If one alias fails while another succeeds, the
+terminal result is `cleanup partial`, not `stopped` or `stale-cleaned`, and the
+command fails even though exit and listener release may already be proven. A
+signal failure, wait timeout/error, or remaining
+target/wildcard/foreign/uninspectable listener is a teardown failure: no
+registration is removed and `stopped` is never printed.
 
 Multiple live identities, disagreement between process and listener ownership,
-uninspectable state, or any blocked registration refuses teardown. Fix the
-reported state; do not work around it with a broad process-name kill.
+uninspectable state, malformed or unreadable peer state, a live unadopted
+schema-v1 record, or any other blocked registration refuses teardown. All
+aliases are retained, no process is signalled, and no potentially owning
+registration is deleted. Fix the reported state; do not work around it with a
+broad process-name kill.
 
 ### Recovering a live schema-v1 registration
 
 Historical schema-v1 runfiles remain readable, but a numeric PID alone cannot
-authorize teardown. If that PID is live, both `status` and `down` retain the
-record and print a copy/paste recovery command. From the workspace containing
-the local record, run:
+authorize teardown. If that PID is live, both `status` and `down` retain every
+alias and print a copy/paste-complete recovery command with that numeric PID
+only when the originating local record is present. A global-only legacy record
+is reported for repair because Ferric cannot safely invent its local origin.
+The adoption command has the form `ferric server adopt --pid <pid>`. For
+example, if status/down reports PID 6501, run:
 
 ```sh
-ferric server adopt --pid <PID>
+ferric server adopt --pid 6501
 ```
 
 Adoption is non-destructive. It acquires an exact retained process handle,
 checks the closed engine executable and every available recorded argv
 coordinate, requires exclusive IPv4-loopback listener ownership, and
 conditionally replaces only unchanged local/global aliases with schema v2.
-Any disagreement leaves the live process unsignalled and preserves recovery
-bytes. A later `server down` re-acquires and revalidates the adopted generation.
+It never signals the process. After replacement, Ferric rechecks that same
+retained generation. If the generation changed, an alias was concurrently
+replaced, or the transition otherwise fails, Ferric rolls back only the v2 bytes
+it wrote that are still unchanged. External replacements remain untouched, and
+any failed rollback reports the exact alias and preserved location so no
+recovery state is hidden. Any pre-replacement disagreement leaves all original
+bytes intact. A later `server down` re-acquires and revalidates the successfully
+adopted generation.
 
 If the legacy PID is already absent, run:
 
@@ -145,7 +232,9 @@ inspected and remove only those exact unchanged files manually.
 | `--threads <N>` | engine default | CPU threads (llama-server only) |
 | `--gpu-layers <N>` | engine default | layers to offload to GPU (llama-server only) |
 | `--batch-size <N>` | engine default | batch size (llama-server only) |
-| `--tailscale` | off | reserved; currently refused before any process or registration side effect |
+| `--seed <N>` | engine default | llama.cpp sampling seed; use a non-negative value for reproducibility (`-1` requests a random seed) |
+| `--parallel <N>` | engine default | nonzero number of concurrent llama-server request slots |
+| `--tailscale` | off | reserved; refused before spawn, registration/PID inspection, engine/model/network probes, Tailscale invocation, or registration/stage creation |
 
 ### How the flags map to `llama-server`
 
@@ -160,11 +249,15 @@ binary (the engine is a fixed enum). The mapping is:
 | `--threads` | `-t <n>` |
 | `--gpu-layers` | `-ngl <n>` |
 | `--batch-size` | `-b <n>` |
+| `--seed` | `--seed <n>` |
+| `--parallel` | `--parallel <n>` |
 | `--port` | `--port <n>` |
 | (fixed) | `--host 127.0.0.1` |
 
 For Ollama, `--engine ollama` runs `ollama serve` with `OLLAMA_HOST` set to the
-chosen host:port; the llama-server-only tuning flags are ignored.
+chosen host:port. The edge-resource flags are ignored by that engine, while
+`--seed` and `--parallel` are rejected because they describe llama-server
+sampling and slot behavior.
 
 ## Loopback-only, by design
 
@@ -175,19 +268,22 @@ the machine. This is also why, in the containerized topology, `ferric` and
 `llama-server` are co-located in one container rather than split across a network
 boundary (see [Container Topology & Roadmap](swarming-k8s.md)).
 
-`server up --tailscale` is temporarily fail-closed. Ferric refuses it during
-preflight, before spawning an engine or writing a registration, because it
-cannot yet compare-and-remove only the durable Tailscale Serve state it created.
+`server up --tailscale` and Tailscale doctor mode are temporarily fail-closed
+because scoped proxy cleanup is unavailable. Ferric refuses them before spawn,
+registration or PID inspection, engine/model/network probes, Tailscale
+invocation, and registration or stage creation.
 
-An existing registration with `tailscale: true` is also blocked from automatic
-teardown, even when it appears stale. Inspect the exact Serve configuration with
-`tailscale serve status` and independently verify the registered process
-creation instance, executable, arguments, and listener owner. Stop that exact
-process, then use the targeted removal syntax shown by `tailscale serve --help`
-to remove only the endpoint for the recorded port. Never use a node-wide Serve
-reset as lifecycle cleanup. Finally compare and remove only its unchanged
-local/global registration files. A future release can restore `--tailscale`
-after it can capture, own, and conditionally restore that external state.
+An existing registration with `tailscale: true` also blocks lifecycle process
+inspection and mutation before Ferric checks whether its recorded PID is
+present. `status` and `down` preserve its exact bytes, do not signal a process,
+do not delete a registration, do not invoke Tailscale, and never issue or
+recommend a blind node-wide reset. They report targeted manual inspection as an
+operator-owned recovery step. If you choose that step, independently verify the
+exact Serve endpoint and process creation instance before using current
+Tailscale tooling to remove only the recorded endpoint; then compare and remove
+only unchanged local/global registration files. A future release can restore
+`--tailscale` after it can capture, own, and conditionally restore that external
+state.
 
 ## Edge tuning
 

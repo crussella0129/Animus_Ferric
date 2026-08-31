@@ -26,6 +26,141 @@ pub struct ProcessIdentity {
     pub argv: Vec<String>,
 }
 
+/// Validate the canonical process-start token for the current supported OS.
+///
+/// The persisted representation remains an opaque string, but schema-v2
+/// authority is accepted only when the string has the exact form emitted by
+/// this target's native process adapter. Unsupported targets cannot authorize
+/// a schema-v2 process identity.
+pub(crate) fn validate_start_token(start_token: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let value = start_token
+            .strip_prefix("windows-filetime:")
+            .ok_or_else(|| {
+                "expected canonical Windows start token `windows-filetime:<positive-u64>`"
+                    .to_string()
+            })?;
+        parse_canonical_positive_u64(value).ok_or_else(|| {
+            "Windows FILETIME must be a canonical positive decimal u64".to_string()
+        })?;
+        Ok(())
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        let value = start_token.strip_prefix("linux-boot-id:").ok_or_else(|| {
+            "expected canonical Linux start token `linux-boot-id:<uuid>;start-ticks:<positive-u64>`"
+                .to_string()
+        })?;
+        let (boot_id, start_ticks) = value.split_once(";start-ticks:").ok_or_else(|| {
+            "Linux start token must contain one `;start-ticks:` field".to_string()
+        })?;
+        if !is_canonical_lowercase_uuid(boot_id) {
+            return Err("Linux boot ID must be a canonical lowercase UUID".to_string());
+        }
+        parse_canonical_positive_u64(start_ticks).ok_or_else(|| {
+            "Linux process start ticks must be a canonical positive decimal u64".to_string()
+        })?;
+        Ok(())
+    }
+
+    #[cfg(not(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    {
+        let _ = start_token;
+        Err(format!(
+            "schema-v2 process start-token authority is unsupported on {}",
+            std::env::consts::OS
+        ))
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn canonical_test_start_token(coordinate: u64) -> String {
+    assert!(
+        coordinate > 0,
+        "test start-token coordinate must be positive"
+    );
+
+    #[cfg(windows)]
+    {
+        format!("windows-filetime:{coordinate}")
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        format!("linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:{coordinate}")
+    }
+
+    #[cfg(not(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    {
+        panic!("no canonical schema-v2 test start token exists on an unsupported target")
+    }
+}
+
+#[cfg(any(
+    windows,
+    all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )
+))]
+fn parse_canonical_positive_u64(value: &str) -> Option<u64> {
+    if value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return None;
+    }
+    value.parse::<u64>().ok().filter(|parsed| *parsed > 0)
+}
+
+#[cfg(all(
+    target_os = "linux",
+    target_endian = "little",
+    target_pointer_width = "64",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn is_canonical_lowercase_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)
+            }
+        })
+}
+
 /// Ownership of sockets able to accept the expected loopback endpoint.
 ///
 /// Platform adapters conservatively include wildcard binds on the registered
@@ -35,15 +170,23 @@ pub struct ProcessIdentity {
 pub enum ListenerState {
     /// The target owns only loopback-bound listeners on the registered port.
     OwnedByTarget,
-    /// The target owns a wildcard listener on the registered port. Teardown
-    /// may still stop the exact retained process, but launch/status must not
-    /// mistake this public exposure for the required loopback-only binding.
+    /// The target owns a wildcard or potentially dual-stack listener on the
+    /// registered port. This is non-exclusive, non-authorizing state even
+    /// when the exact retained process owns the socket.
     OwnedByTargetWildcard,
     Absent,
     /// The relevant owner set is not exclusively the target. The vector is
     /// complete and includes the target PID too when ownership is shared.
     OwnedByOther(Vec<u32>),
     Uninspectable(String),
+}
+
+impl ListenerState {
+    /// Only an exclusive IPv4-loopback owner or a proven-absent listener can
+    /// authorize destructive lifecycle work.
+    pub fn permits_teardown(&self) -> bool {
+        matches!(self, Self::OwnedByTarget | Self::Absent)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +219,58 @@ impl fmt::Display for ProcessError {
 }
 
 impl std::error::Error for ProcessError {}
+
+/// Operations available only after an exact OS process object has been
+/// retained. Implementations must never reopen the numeric PID for signal or
+/// wait authority.
+pub trait RetainedProcess {
+    fn pid(&self) -> u32;
+    fn inspect(&self, port: u16) -> Result<ProcessFacts, ProcessError>;
+    fn terminate(&self) -> Result<bool, ProcessError>;
+    fn wait(&self, timeout: Duration) -> Result<bool, ProcessError>;
+}
+
+/// Acquisition boundary used by lifecycle orchestration and deterministic
+/// generation-reuse tests.
+pub trait ProcessRuntime {
+    type Process: RetainedProcess;
+
+    fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError>;
+}
+
+/// Facts inspected from the same retained process object that later receives
+/// any signal/wait operation.
+pub struct RetainedProcessInspection<P> {
+    pub process: P,
+    pub facts: ProcessFacts,
+}
+
+/// Acquire first, then validate all persisted v2 identity coordinates against
+/// that retained object. A mismatch returns without signaling it.
+pub fn acquire_matching_process<R: ProcessRuntime>(
+    runtime: &R,
+    pid: u32,
+    port: u16,
+    expected: &ProcessIdentity,
+) -> Result<RetainedProcessInspection<R::Process>, ProcessError> {
+    let process = runtime.acquire(pid)?;
+    let facts = process.inspect(port)?;
+    let mismatch = if facts.identity.start_token != expected.start_token {
+        Some("start token")
+    } else if facts.identity.executable != expected.executable {
+        Some("executable")
+    } else if facts.identity.argv != expected.argv {
+        Some("argv")
+    } else {
+        None
+    };
+    if let Some(coordinate) = mismatch {
+        return Err(ProcessError::Operation(format!(
+            "retained process {pid} {coordinate} does not match the registered identity"
+        )));
+    }
+    Ok(RetainedProcessInspection { process, facts })
+}
 
 /// Inspect loopback-relevant listener ownership independently of process
 /// liveness.
@@ -160,14 +355,25 @@ mod platform {
     struct RelevantListenerOwners {
         loopback: Vec<u32>,
         wildcard: Vec<u32>,
+        unsupported_ipv6_loopback: Vec<u32>,
     }
 
     impl RelevantListenerOwners {
+        fn extend(&mut self, other: Self) {
+            self.loopback.extend(other.loopback);
+            self.wildcard.extend(other.wildcard);
+            self.unsupported_ipv6_loopback
+                .extend(other.unsupported_ipv6_loopback);
+            self.normalize();
+        }
+
         fn normalize(&mut self) {
             self.loopback.sort_unstable();
             self.loopback.dedup();
             self.wildcard.sort_unstable();
             self.wildcard.dedup();
+            self.unsupported_ipv6_loopback.sort_unstable();
+            self.unsupported_ipv6_loopback.dedup();
         }
 
         fn all(&self) -> Vec<u32> {
@@ -193,6 +399,8 @@ mod platform {
             options: u32,
         ) -> i32;
         fn CloseHandle(object: Handle) -> i32;
+        #[cfg(test)]
+        fn GetHandleInformation(object: Handle, flags: *mut u32) -> i32;
         fn GetProcessTimes(
             process: Handle,
             creation_time: *mut FileTime,
@@ -434,11 +642,33 @@ mod platform {
                 ))
             })
         }
+
+        fn close_handle(&mut self) -> Result<(), ProcessError> {
+            if self.handle.is_null() {
+                return Ok(());
+            }
+
+            if unsafe { CloseHandle(self.handle) } == 0 {
+                return Err(ProcessError::Operation(format!(
+                    "release retained process HANDLE for PID {}: {}",
+                    self.pid,
+                    std::io::Error::last_os_error()
+                )));
+            }
+
+            self.handle = ptr::null_mut();
+            Ok(())
+        }
+
+        #[cfg(test)]
+        fn release_for_test(mut self) -> Result<(), ProcessError> {
+            self.close_handle()
+        }
     }
 
     impl Drop for LiveProcess {
         fn drop(&mut self) {
-            let _ = unsafe { CloseHandle(self.handle) };
+            let _ = self.close_handle();
         }
     }
 
@@ -577,14 +807,32 @@ mod platform {
     }
 
     pub(super) fn loopback_listener_state(pid: u32, port: u16) -> ListenerState {
-        // The managed endpoint is exactly IPv4 127.0.0.1. A foreign IPv6
-        // wildcard can coexist on the same numeric port without owning that
-        // endpoint, so it must not strand teardown of the exact IPv4 target.
-        // The closed launcher itself always requests IPv4 loopback.
-        let owners = query_listener_owners(AF_INET, port);
-        match owners {
-            Ok(owners) => listener_state_from_owners(pid, owners),
-            Err(error) => ListenerState::Uninspectable(error),
+        // The managed endpoint is exactly IPv4 127.0.0.1. Exact IPv6 ::1 is
+        // deliberately not claimed as ownership coverage for that endpoint,
+        // but an IPv6 wildcard may accept IPv4-mapped traffic when dual-stack
+        // and therefore remains non-exclusive, non-authorizing state.
+        listener_state_from_owner_queries(
+            pid,
+            query_listener_owners(AF_INET, port),
+            query_listener_owners(AF_INET6, port),
+        )
+    }
+
+    fn listener_state_from_owner_queries(
+        pid: u32,
+        ipv4: Result<RelevantListenerOwners, String>,
+        ipv6: Result<RelevantListenerOwners, String>,
+    ) -> ListenerState {
+        match (ipv4, ipv6) {
+            (Ok(mut ipv4), Ok(ipv6)) => {
+                ipv4.extend(ipv6);
+                listener_state_from_owners(pid, ipv4)
+            }
+            (Err(ipv4), Ok(_)) => ListenerState::Uninspectable(ipv4),
+            (Ok(_), Err(ipv6)) => ListenerState::Uninspectable(ipv6),
+            (Err(ipv4), Err(ipv6)) => ListenerState::Uninspectable(format!(
+                "IPv4 listener inspection failed: {ipv4}; IPv6 listener inspection failed: {ipv6}"
+            )),
         }
     }
 
@@ -738,6 +986,8 @@ mod platform {
         }
 
         let wildcard = [0_u8; 16];
+        let mut loopback = [0_u8; 16];
+        loopback[15] = 1;
         let mut owners = RelevantListenerOwners::default();
         for index in 0..count {
             let offset = size_of::<u32>() + index * size_of::<MibTcp6RowOwnerPid>();
@@ -753,6 +1003,8 @@ mod platform {
             // socket's v6-only setting and must therefore remain relevant.
             if row.local_address == wildcard {
                 owners.wildcard.push(row.owning_pid);
+            } else if row.local_address == loopback {
+                owners.unsupported_ipv6_loopback.push(row.owning_pid);
             }
         }
         owners.normalize();
@@ -760,6 +1012,12 @@ mod platform {
     }
 
     fn listener_state_from_owners(pid: u32, owners: RelevantListenerOwners) -> ListenerState {
+        if !owners.unsupported_ipv6_loopback.is_empty() {
+            return ListenerState::Uninspectable(format!(
+                "exact IPv6 loopback (::1) listener ownership is unsupported for the IPv4-only managed endpoint; observed owner PIDs {:?}",
+                owners.unsupported_ipv6_loopback
+            ));
+        }
         let owners_all = owners.all();
         if owners_all.is_empty() {
             return ListenerState::Absent;
@@ -836,9 +1094,208 @@ mod platform {
 
     #[cfg(test)]
     mod tests {
-        use std::net::{Ipv4Addr, TcpListener};
+        use std::fs;
+        use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
+        use std::path::{Path, PathBuf};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::thread;
+        use std::time::Instant;
 
         use super::*;
+
+        const NATIVE_SMOKE_HELPER_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_HELPER";
+        const NATIVE_SMOKE_MODE_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_MODE";
+        const NATIVE_SMOKE_READY_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_READY";
+        const NATIVE_SMOKE_TIMEOUT: Duration = Duration::from_secs(15);
+        static NEXT_READY_MARKER: AtomicU64 = AtomicU64::new(0);
+
+        struct ReadyMarker(PathBuf);
+
+        impl ReadyMarker {
+            fn new(mode: &str) -> Self {
+                let sequence = NEXT_READY_MARKER.fetch_add(1, Ordering::Relaxed);
+                Self(std::env::temp_dir().join(format!(
+                    "ferric-process-smoke-{}-{sequence}-{mode}.ready",
+                    std::process::id()
+                )))
+            }
+        }
+
+        impl Drop for ReadyMarker {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+
+        struct ChildGuard(Option<Child>);
+
+        impl ChildGuard {
+            fn child_mut(&mut self) -> &mut Child {
+                self.0.as_mut().expect("smoke child remains retained")
+            }
+
+            fn take(&mut self) -> Child {
+                self.0.take().expect("smoke child remains retained")
+            }
+        }
+
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                if let Some(mut child) = self.0.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+
+        struct RetainedSmokeGuard {
+            process: Option<LiveProcess>,
+            _ready: ReadyMarker,
+        }
+
+        impl RetainedSmokeGuard {
+            fn process(&self) -> &LiveProcess {
+                self.process
+                    .as_ref()
+                    .expect("smoke process remains retained")
+            }
+        }
+
+        impl Drop for RetainedSmokeGuard {
+            fn drop(&mut self) {
+                if let Some(process) = self.process.take() {
+                    let _ = process.terminate();
+                    let _ = process.wait(Duration::from_secs(5));
+                }
+            }
+        }
+
+        fn wait_for_ready(child: &mut Child, path: &Path) -> u16 {
+            let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
+            loop {
+                if let Ok(value) = fs::read_to_string(path)
+                    && let Ok(port) = value.trim().parse::<u16>()
+                    && port != 0
+                {
+                    return port;
+                }
+                if let Some(status) = child.try_wait().expect("inspect smoke helper status") {
+                    panic!("native smoke helper exited before readiness: {status}");
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "native smoke helper did not publish readiness within {NATIVE_SMOKE_TIMEOUT:?}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn spawn_retained_smoke_child(mode: &str) -> (RetainedSmokeGuard, u16) {
+            let ready = ReadyMarker::new(mode);
+            let child = Command::new(std::env::current_exe().expect("current test executable"))
+                .args([
+                    "--exact",
+                    "server_process::platform::tests::native_process_smoke_helper",
+                    "--nocapture",
+                ])
+                .env(NATIVE_SMOKE_HELPER_ENV, "1")
+                .env(NATIVE_SMOKE_MODE_ENV, mode)
+                .env(NATIVE_SMOKE_READY_ENV, &ready.0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn native process smoke helper");
+            let mut child = ChildGuard(Some(child));
+            let port = wait_for_ready(child.child_mut(), &ready.0);
+            let source_handle = child.child_mut().as_raw_handle() as Handle;
+            let process = LiveProcess::acquire_child(child.child_mut())
+                .expect("duplicate the spawned child's exact process HANDLE");
+            assert_ne!(
+                process.handle, source_handle,
+                "acquire_child must retain a distinct duplicated HANDLE"
+            );
+
+            // Close the `Child` source HANDLE. Every later inspection, signal,
+            // and wait in this smoke now has only the retained duplicate.
+            drop(child.take());
+            (
+                RetainedSmokeGuard {
+                    process: Some(process),
+                    _ready: ready,
+                },
+                port,
+            )
+        }
+
+        fn wait_for_listener_state(
+            process: &LiveProcess,
+            port: u16,
+            expected: &ListenerState,
+        ) -> ListenerState {
+            let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
+            loop {
+                let state = loopback_listener_state(process.pid(), port);
+                if &state == expected {
+                    return state;
+                }
+                assert!(
+                    !process.wait(Duration::ZERO).expect("poll retained HANDLE"),
+                    "smoke helper exited while waiting for listener state {expected:?}; last state: {state:?}"
+                );
+                assert!(
+                    Instant::now() < deadline,
+                    "listener state did not become {expected:?}; last state: {state:?}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn filetime_for_handle(handle: Handle) -> u64 {
+            let mut creation = MaybeUninit::<FileTime>::uninit();
+            let mut exit = MaybeUninit::<FileTime>::uninit();
+            let mut kernel = MaybeUninit::<FileTime>::uninit();
+            let mut user = MaybeUninit::<FileTime>::uninit();
+            assert_ne!(
+                unsafe {
+                    GetProcessTimes(
+                        handle,
+                        creation.as_mut_ptr(),
+                        exit.as_mut_ptr(),
+                        kernel.as_mut_ptr(),
+                        user.as_mut_ptr(),
+                    )
+                },
+                0,
+                "read FILETIME from duplicated process HANDLE"
+            );
+            let creation = unsafe { creation.assume_init() };
+            (u64::from(creation.high_date_time) << 32) | u64::from(creation.low_date_time)
+        }
+
+        /// A normal harness invocation returns immediately. The parent smoke
+        /// explicitly re-runs only this test with one harmless socket mode.
+        #[test]
+        fn native_process_smoke_helper() {
+            if std::env::var(NATIVE_SMOKE_HELPER_ENV).ok().as_deref() != Some("1") {
+                return;
+            }
+            let mode = std::env::var(NATIVE_SMOKE_MODE_ENV).expect("native smoke mode");
+            let ready = PathBuf::from(
+                std::env::var_os(NATIVE_SMOKE_READY_ENV).expect("native smoke ready path"),
+            );
+            let listener = match mode.as_str() {
+                "ipv4-loopback" => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)),
+                "ipv4-wildcard" => TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)),
+                "ipv6-loopback" => TcpListener::bind((Ipv6Addr::LOCALHOST, 0)),
+                other => panic!("unknown native smoke mode {other:?}"),
+            }
+            .expect("bind native smoke listener");
+            fs::write(&ready, listener.local_addr().unwrap().port().to_string())
+                .expect("publish native smoke readiness");
+            thread::sleep(Duration::from_secs(60));
+        }
 
         fn process_command_line_buffer(command_line: &str) -> (Vec<usize>, usize) {
             let wide = command_line.encode_utf16().collect::<Vec<_>>();
@@ -955,13 +1412,14 @@ mod platform {
                 RelevantListenerOwners {
                     loopback: vec![10, 20],
                     wildcard: vec![30],
+                    unsupported_ipv6_loopback: vec![],
                 }
             );
             assert!(parse_ipv4_relevant_listener_owners(&table[..8], 8080).is_err());
         }
 
         #[test]
-        fn ipv6_tcp_owner_parser_ignores_loopback_but_keeps_wildcard() {
+        fn ipv6_tcp_owner_parser_records_unsupported_loopback_and_wildcard() {
             let mut loopback = [0_u8; 16];
             loopback[15] = 1;
             let wildcard = [0_u8; 16];
@@ -989,47 +1447,123 @@ mod platform {
                 RelevantListenerOwners {
                     loopback: vec![],
                     wildcard: vec![20],
+                    unsupported_ipv6_loopback: vec![10],
                 }
             );
             assert!(parse_ipv6_relevant_listener_owners(&table[..8], 8080).is_err());
         }
 
         #[test]
-        fn listener_owner_classification_is_fail_closed_for_shared_ports() {
-            assert_eq!(
-                listener_state_from_owners(
-                    10,
-                    RelevantListenerOwners {
+        fn loopback_listener_ownership_matrix() {
+            let rows = [
+                (
+                    "exclusive IPv4 loopback",
+                    Ok(RelevantListenerOwners {
                         loopback: vec![10],
                         wildcard: vec![],
-                    },
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByTarget,
+                    true,
                 ),
-                ListenerState::OwnedByTarget
-            );
-            assert_eq!(
-                listener_state_from_owners(10, RelevantListenerOwners::default()),
-                ListenerState::Absent
-            );
-            assert_eq!(
-                listener_state_from_owners(
-                    10,
-                    RelevantListenerOwners {
+                (
+                    "absent",
+                    Ok(RelevantListenerOwners::default()),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::Absent,
+                    true,
+                ),
+                (
+                    "foreign IPv4 loopback",
+                    Ok(RelevantListenerOwners {
+                        loopback: vec![20],
+                        wildcard: vec![],
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByOther(vec![20]),
+                    false,
+                ),
+                (
+                    "multiple foreign IPv4 loopback owners",
+                    Ok(RelevantListenerOwners {
+                        loopback: vec![30, 20, 30],
+                        wildcard: vec![],
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByOther(vec![20, 30]),
+                    false,
+                ),
+                (
+                    "target and foreign shared IPv4 loopback",
+                    Ok(RelevantListenerOwners {
                         loopback: vec![20, 10, 20],
                         wildcard: vec![],
-                    },
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByOther(vec![10, 20]),
+                    false,
                 ),
-                ListenerState::OwnedByOther(vec![10, 20])
-            );
-            assert_eq!(
-                listener_state_from_owners(
-                    10,
-                    RelevantListenerOwners {
+                (
+                    "IPv4 wildcard",
+                    Ok(RelevantListenerOwners {
                         loopback: vec![],
                         wildcard: vec![10],
-                    },
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::OwnedByTargetWildcard,
+                    false,
                 ),
-                ListenerState::OwnedByTargetWildcard
-            );
+                (
+                    "IPv6 wildcard or dual-stack",
+                    Ok(RelevantListenerOwners::default()),
+                    Ok(RelevantListenerOwners {
+                        loopback: vec![],
+                        wildcard: vec![10],
+                        unsupported_ipv6_loopback: vec![],
+                    }),
+                    ListenerState::OwnedByTargetWildcard,
+                    false,
+                ),
+                (
+                    "exact IPv6 loopback is explicitly unsupported",
+                    Ok(RelevantListenerOwners::default()),
+                    Ok(RelevantListenerOwners {
+                        loopback: vec![],
+                        wildcard: vec![],
+                        unsupported_ipv6_loopback: vec![10],
+                    }),
+                    ListenerState::Uninspectable(
+                        "exact IPv6 loopback (::1) listener ownership is unsupported for the IPv4-only managed endpoint; observed owner PIDs [10]"
+                            .to_string(),
+                    ),
+                    false,
+                ),
+                (
+                    "uninspectable IPv4 table",
+                    Err("IPv4 owner query denied".to_string()),
+                    Ok(RelevantListenerOwners::default()),
+                    ListenerState::Uninspectable("IPv4 owner query denied".to_string()),
+                    false,
+                ),
+                (
+                    "uninspectable IPv6 table",
+                    Ok(RelevantListenerOwners::default()),
+                    Err("IPv6 owner query denied".to_string()),
+                    ListenerState::Uninspectable("IPv6 owner query denied".to_string()),
+                    false,
+                ),
+            ];
+
+            for (name, ipv4, ipv6, expected, authorizing) in rows {
+                let state = listener_state_from_owner_queries(10, ipv4, ipv6);
+                assert_eq!(state, expected, "row {name}");
+                assert_eq!(state.permits_teardown(), authorizing, "row {name}");
+            }
         }
 
         #[test]
@@ -1056,6 +1590,84 @@ mod platform {
         }
 
         #[test]
+        fn windows_retained_process_handle_smoke() {
+            let (mut loopback, loopback_port) = spawn_retained_smoke_child("ipv4-loopback");
+            let process = loopback.process();
+            assert_eq!(
+                wait_for_listener_state(process, loopback_port, &ListenerState::OwnedByTarget),
+                ListenerState::OwnedByTarget
+            );
+            let filetime = filetime_for_handle(process.handle);
+            assert!(filetime > 0, "process creation FILETIME must be positive");
+            let facts = process
+                .inspect(loopback_port)
+                .expect("inspect exact retained process HANDLE");
+            assert_eq!(
+                facts.identity.start_token,
+                format_windows_start_token(filetime)
+            );
+            validate_start_token(&facts.identity.start_token)
+                .expect("native FILETIME token must be canonical");
+            assert!(!facts.identity.executable.as_os_str().is_empty());
+            assert!(!facts.identity.argv.is_empty());
+            assert_eq!(facts.listener, ListenerState::OwnedByTarget);
+
+            // Take the retained duplicate out of its cleanup guard. The
+            // original `Child` HANDLE was already closed by the spawn helper,
+            // so termination and waiting below can target only this HANDLE.
+            let retained = loopback
+                .process
+                .take()
+                .expect("retained loopback process HANDLE");
+            assert!(
+                retained
+                    .terminate()
+                    .expect("terminate through retained HANDLE")
+            );
+            assert!(
+                retained
+                    .wait(Duration::from_secs(5))
+                    .expect("wait through retained HANDLE")
+            );
+            let duplicated_handle = retained.handle;
+            let mut handle_flags = 0_u32;
+            assert_ne!(
+                unsafe { GetHandleInformation(duplicated_handle, &mut handle_flags) },
+                0,
+                "duplicated process HANDLE must remain valid while retained"
+            );
+            retained
+                .release_for_test()
+                .expect("the LiveProcess drop path must release its duplicated HANDLE");
+
+            let (wildcard, wildcard_port) = spawn_retained_smoke_child("ipv4-wildcard");
+            let wildcard_state = wait_for_listener_state(
+                wildcard.process(),
+                wildcard_port,
+                &ListenerState::OwnedByTargetWildcard,
+            );
+            assert_eq!(wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!wildcard_state.permits_teardown());
+            drop(wildcard);
+
+            let (ipv6_loopback, ipv6_loopback_port) = spawn_retained_smoke_child("ipv6-loopback");
+            let expected_ipv6 = ListenerState::Uninspectable(format!(
+                "exact IPv6 loopback (::1) listener ownership is unsupported for the IPv4-only managed endpoint; observed owner PIDs [{}]",
+                ipv6_loopback.process().pid()
+            ));
+            let ipv6_state = wait_for_listener_state(
+                ipv6_loopback.process(),
+                ipv6_loopback_port,
+                &expected_ipv6,
+            );
+            assert_eq!(ipv6_state, expected_ipv6);
+            assert!(
+                !ipv6_state.permits_teardown(),
+                "an exact ::1 observation must never authorize the IPv4-only endpoint"
+            );
+        }
+
+        #[test]
         fn finite_wait_rounds_up_without_using_infinite_sentinel() {
             assert_eq!(duration_to_windows_millis(Duration::from_nanos(1)), 1);
             assert_eq!(duration_to_windows_millis(Duration::ZERO), 0);
@@ -1075,10 +1687,9 @@ mod platform {
 ))]
 mod platform {
     use std::collections::{BTreeSet, HashSet};
-    use std::ffi::{OsString, c_int, c_long, c_void};
+    use std::ffi::{c_int, c_long, c_void};
     use std::fs;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    use std::os::unix::ffi::OsStringExt;
     use std::path::Path;
     use std::time::Instant;
 
@@ -1176,21 +1787,7 @@ mod platform {
                         &error,
                     )
                 })?;
-            let argv = command_line
-                .split(|byte| *byte == 0)
-                .filter(|argument| !argument.is_empty())
-                .map(|argument| {
-                    OsString::from_vec(argument.to_vec())
-                        .to_string_lossy()
-                        .into_owned()
-                })
-                .collect::<Vec<_>>();
-            if argv.is_empty() {
-                return Err(ProcessError::Operation(format!(
-                    "/proc/{}/cmdline contains no argv",
-                    self.pid
-                )));
-            }
+            let argv = parse_linux_argv(self.pid, &command_line)?;
             let listener = loopback_listener_state(self.pid, port);
 
             // All /proc and socket tables above are PID-indexed.  The pidfd
@@ -1293,6 +1890,34 @@ mod platform {
         }
     }
 
+    fn parse_linux_argv(pid: u32, command_line: &[u8]) -> Result<Vec<String>, ProcessError> {
+        let command_line = command_line.strip_suffix(&[0]).unwrap_or(command_line);
+        if command_line.is_empty() {
+            return Err(ProcessError::Operation(format!(
+                "/proc/{pid}/cmdline contains no argv"
+            )));
+        }
+
+        command_line
+            .split(|byte| *byte == 0)
+            .enumerate()
+            .map(|(index, argument)| {
+                if argument.is_empty() {
+                    return Err(ProcessError::Operation(format!(
+                        "/proc/{pid}/cmdline argv element {index} is empty"
+                    )));
+                }
+                std::str::from_utf8(argument)
+                    .map(str::to_owned)
+                    .map_err(|error| {
+                        ProcessError::Operation(format!(
+                            "/proc/{pid}/cmdline argv element {index} is not UTF-8: {error}"
+                        ))
+                    })
+            })
+            .collect()
+    }
+
     pub(super) fn loopback_listener_state(pid: u32, port: u16) -> ListenerState {
         match inspect_loopback_listener_state(pid, port) {
             Ok(state) => state,
@@ -1328,21 +1953,13 @@ mod platform {
             return Ok(ListenerState::Absent);
         }
 
-        let target_inodes = match socket_inodes_for_process(pid) {
-            Ok(inodes) => inodes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => HashSet::new(),
-            Err(error) => return Err(format!("inspect /proc/{pid}/fd: {error}")),
-        };
-        let target_owned_inodes = target_inodes
-            .intersection(&listening_inodes)
-            .cloned()
-            .collect::<HashSet<_>>();
-        let target_owns = !target_owned_inodes.is_empty();
-        let mut accounted_inodes = target_owned_inodes.clone();
-
-        let mut other_owners = BTreeSet::new();
+        let target_inventory = socket_inodes_for_process(pid);
+        let mut peer_inventories = Vec::new();
         let proc_entries = fs::read_dir("/proc").map_err(|error| format!("read /proc: {error}"))?;
-        for entry in proc_entries.flatten() {
+        for entry in proc_entries {
+            let entry = entry.map_err(|error| {
+                format!("enumerate /proc while inspecting listener owners: {error}")
+            })?;
             let Some(owner_pid) = entry
                 .file_name()
                 .to_str()
@@ -1353,8 +1970,105 @@ mod platform {
             if owner_pid == pid {
                 continue;
             }
-            let Ok(inodes) = socket_inodes_for_process(owner_pid) else {
-                continue;
+            peer_inventories.push((owner_pid, socket_inodes_for_process(owner_pid)));
+        }
+
+        listener_state_from_socket_inventories(
+            pid,
+            port,
+            &relevant_inodes,
+            target_inventory,
+            peer_inventories,
+        )
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum ProcessSocketInventory {
+        Complete(HashSet<String>),
+        Vanished,
+        Uninspectable(String),
+    }
+
+    fn socket_inodes_for_process(pid: u32) -> ProcessSocketInventory {
+        let entries = match fs::read_dir(format!("/proc/{pid}/fd")) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return ProcessSocketInventory::Vanished;
+            }
+            Err(error) => {
+                return ProcessSocketInventory::Uninspectable(format!(
+                    "read /proc/{pid}/fd: {error}"
+                ));
+            }
+        };
+        let mut inodes = HashSet::new();
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return ProcessSocketInventory::Uninspectable(format!(
+                        "enumerate /proc/{pid}/fd: {error}"
+                    ));
+                }
+            };
+            let target = match fs::read_link(entry.path()) {
+                Ok(target) => target,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return ProcessSocketInventory::Uninspectable(format!(
+                        "read link {}: {error}",
+                        entry.path().display()
+                    ));
+                }
+            };
+            if let Some(inode) = socket_inode(&target) {
+                inodes.insert(inode.to_string());
+            }
+        }
+        ProcessSocketInventory::Complete(inodes)
+    }
+
+    fn listener_state_from_socket_inventories(
+        pid: u32,
+        port: u16,
+        relevant_inodes: &RelevantListenerInodes,
+        target_inventory: ProcessSocketInventory,
+        peer_inventories: Vec<(u32, ProcessSocketInventory)>,
+    ) -> Result<ListenerState, String> {
+        let listening_inodes = relevant_inodes.all();
+        if listening_inodes.is_empty() {
+            return Ok(ListenerState::Absent);
+        }
+        let target_inodes = match target_inventory {
+            ProcessSocketInventory::Complete(inodes) => inodes,
+            ProcessSocketInventory::Vanished => HashSet::new(),
+            ProcessSocketInventory::Uninspectable(error) => return Err(error),
+        };
+        let target_loopback = target_inodes
+            .intersection(&relevant_inodes.loopback)
+            .cloned()
+            .collect::<HashSet<_>>();
+        let target_wildcard = target_inodes
+            .intersection(&relevant_inodes.wildcard)
+            .cloned()
+            .collect::<HashSet<_>>();
+        let target_owns = !target_loopback.is_empty() || !target_wildcard.is_empty();
+        let mut accounted_inodes = target_loopback
+            .union(&target_wildcard)
+            .cloned()
+            .collect::<HashSet<_>>();
+        let mut other_owners = BTreeSet::new();
+
+        for (owner_pid, inventory) in peer_inventories {
+            let inodes = match inventory {
+                ProcessSocketInventory::Complete(inodes) => inodes,
+                ProcessSocketInventory::Vanished => continue,
+                ProcessSocketInventory::Uninspectable(error) => {
+                    return Err(format!(
+                        "listener owner enumeration is incomplete because PID {owner_pid} is uninspectable: {error}"
+                    ));
+                }
             };
             let owned_listeners = inodes
                 .intersection(&listening_inodes)
@@ -1379,33 +2093,15 @@ mod platform {
                 other_owners.into_iter().collect(),
             ));
         }
-        if target_owns {
-            if !target_owned_inodes.is_disjoint(&relevant_inodes.wildcard) {
-                Ok(ListenerState::OwnedByTargetWildcard)
-            } else {
-                Ok(ListenerState::OwnedByTarget)
-            }
+        if !target_wildcard.is_empty() {
+            Ok(ListenerState::OwnedByTargetWildcard)
+        } else if !target_loopback.is_empty() {
+            Ok(ListenerState::OwnedByTarget)
         } else {
             Err(format!(
                 "loopback port {port} has listening socket inodes but their owning process is not inspectable"
             ))
         }
-    }
-
-    fn socket_inodes_for_process(pid: u32) -> std::io::Result<HashSet<String>> {
-        let mut inodes = HashSet::new();
-        for entry in fs::read_dir(format!("/proc/{pid}/fd"))? {
-            let Ok(entry) = entry else {
-                continue;
-            };
-            let Ok(target) = fs::read_link(entry.path()) else {
-                continue;
-            };
-            if let Some(inode) = socket_inode(&target) {
-                inodes.insert(inode.to_string());
-            }
-        }
-        Ok(inodes)
     }
 
     fn socket_inode(target: &Path) -> Option<&str> {
@@ -1568,7 +2264,333 @@ mod platform {
 
     #[cfg(test)]
     mod tests {
+        use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
+        use std::os::unix::process::CommandExt;
+        use std::path::{Path, PathBuf};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::thread;
+
         use super::*;
+
+        const NATIVE_SMOKE_HELPER_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_HELPER";
+        const NATIVE_SMOKE_MODE_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_MODE";
+        const NATIVE_SMOKE_READY_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_READY";
+        const NATIVE_SMOKE_INHERITED_FD_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_INHERITED_FD";
+        const NATIVE_SMOKE_INHERITED_PORT_ENV: &str = "FERRIC_TEST_PROCESS_SMOKE_INHERITED_PORT";
+        const NATIVE_SMOKE_TIMEOUT: Duration = Duration::from_secs(15);
+        const F_GETFD: c_int = 1;
+        const F_SETFD: c_int = 2;
+        const FD_CLOEXEC: c_int = 1;
+        const EBADF: i32 = 9;
+        static NEXT_READY_MARKER: AtomicU64 = AtomicU64::new(0);
+
+        unsafe extern "C" {
+            fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
+        }
+
+        struct ReadyMarker(PathBuf);
+
+        impl ReadyMarker {
+            fn new(mode: &str) -> Self {
+                let sequence = NEXT_READY_MARKER.fetch_add(1, Ordering::Relaxed);
+                Self(std::env::temp_dir().join(format!(
+                    "ferric-process-smoke-{}-{sequence}-{mode}.ready",
+                    std::process::id()
+                )))
+            }
+        }
+
+        impl Drop for ReadyMarker {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+
+        struct ChildGuard(Option<Child>);
+
+        impl ChildGuard {
+            fn child_mut(&mut self) -> &mut Child {
+                self.0.as_mut().expect("smoke child remains retained")
+            }
+
+            fn take(&mut self) -> Child {
+                self.0.take().expect("smoke child remains retained")
+            }
+        }
+
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                if let Some(mut child) = self.0.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+
+        struct RetainedSmokeGuard {
+            process: Option<LiveProcess>,
+            child: Option<Child>,
+            _ready: ReadyMarker,
+        }
+
+        impl RetainedSmokeGuard {
+            fn process(&self) -> &LiveProcess {
+                self.process
+                    .as_ref()
+                    .expect("smoke process remains retained")
+            }
+
+            fn child_pid(&self) -> u32 {
+                self.child
+                    .as_ref()
+                    .expect("smoke child remains retained")
+                    .id()
+            }
+        }
+
+        impl Drop for RetainedSmokeGuard {
+            fn drop(&mut self) {
+                if let Some(process) = self.process.take() {
+                    let _ = process.terminate();
+                    let _ = process.wait(Duration::from_secs(5));
+                }
+                if let Some(mut child) = self.child.take() {
+                    match child.try_wait() {
+                        Ok(Some(_)) => {}
+                        Ok(None) | Err(_) => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
+                    }
+                }
+            }
+        }
+
+        fn wait_for_ready(child: &mut Child, path: &Path) -> u16 {
+            let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
+            loop {
+                if let Ok(value) = fs::read_to_string(path)
+                    && let Ok(port) = value.trim().parse::<u16>()
+                    && port != 0
+                {
+                    return port;
+                }
+                if let Some(status) = child.try_wait().expect("inspect smoke helper status") {
+                    panic!("native smoke helper exited before readiness: {status}");
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "native smoke helper did not publish readiness within {NATIVE_SMOKE_TIMEOUT:?}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn spawn_retained_smoke_child(
+            mode: &str,
+            inherited_listener: Option<(&TcpListener, u16)>,
+        ) -> (RetainedSmokeGuard, u16) {
+            let ready = ReadyMarker::new(mode);
+            let mut command =
+                Command::new(std::env::current_exe().expect("current test executable"));
+            command
+                .args([
+                    "--exact",
+                    "server_process::platform::tests::native_process_smoke_helper",
+                    "--nocapture",
+                ])
+                .env(NATIVE_SMOKE_HELPER_ENV, "1")
+                .env(NATIVE_SMOKE_MODE_ENV, mode)
+                .env(NATIVE_SMOKE_READY_ENV, &ready.0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+
+            if let Some((listener, port)) = inherited_listener {
+                let inherited_fd = listener.as_raw_fd();
+                let flags = unsafe { fcntl(inherited_fd, F_GETFD) };
+                assert!(flags >= 0, "inspect inherited listener descriptor flags");
+                command
+                    .env(NATIVE_SMOKE_INHERITED_FD_ENV, inherited_fd.to_string())
+                    .env(NATIVE_SMOKE_INHERITED_PORT_ENV, port.to_string());
+                // Only the post-fork child clears CLOEXEC. This avoids a
+                // process-wide inheritance race in the multithreaded harness.
+                unsafe {
+                    command.pre_exec(move || {
+                        if fcntl(inherited_fd, F_SETFD, flags & !FD_CLOEXEC) < 0 {
+                            Err(std::io::Error::last_os_error())
+                        } else {
+                            Ok(())
+                        }
+                    });
+                }
+            }
+
+            let child = command.spawn().expect("spawn native process smoke helper");
+            let mut child = ChildGuard(Some(child));
+            let port = wait_for_ready(child.child_mut(), &ready.0);
+            let process = LiveProcess::acquire_child(child.child_mut())
+                .expect("retain the spawned child's exact pidfd");
+            assert_eq!(process.pid(), child.child_mut().id());
+            (
+                RetainedSmokeGuard {
+                    process: Some(process),
+                    child: Some(child.take()),
+                    _ready: ready,
+                },
+                port,
+            )
+        }
+
+        fn fixture_listener_state(pid: u32, port: u16, known_peer_pids: &[u32]) -> ListenerState {
+            let mut relevant = RelevantListenerInodes::default();
+            relevant.extend(
+                listening_loopback_relevant_inodes(
+                    &fs::read_to_string("/proc/net/tcp").expect("read native IPv4 table"),
+                    port,
+                    AddressFamily::V4,
+                )
+                .expect("parse native IPv4 table"),
+            );
+            if let Ok(table) = fs::read_to_string("/proc/net/tcp6") {
+                relevant.extend(
+                    listening_loopback_relevant_inodes(&table, port, AddressFamily::V6)
+                        .expect("parse native IPv6 table"),
+                );
+            }
+            listener_state_from_socket_inventories(
+                pid,
+                port,
+                &relevant,
+                socket_inodes_for_process(pid),
+                known_peer_pids
+                    .iter()
+                    .copied()
+                    .map(|peer_pid| (peer_pid, socket_inodes_for_process(peer_pid)))
+                    .collect(),
+            )
+            .unwrap_or_else(ListenerState::Uninspectable)
+        }
+
+        fn wait_for_fixture_listener_state(
+            process: &LiveProcess,
+            port: u16,
+            known_peer_pids: &[u32],
+            expected: &ListenerState,
+        ) -> ListenerState {
+            let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
+            loop {
+                // These native sockets are created inside this test. Feeding
+                // the production classifier the actual target inventory plus
+                // the only fixture peers avoids making the smoke depend on
+                // permission to enumerate unrelated root-owned `/proc/*/fd`
+                // directories. An unaccounted socket inode still fails closed.
+                let state = fixture_listener_state(process.pid(), port, known_peer_pids);
+                if &state == expected {
+                    return state;
+                }
+                assert!(
+                    !process.wait(Duration::ZERO).expect("poll retained pidfd"),
+                    "smoke helper exited while waiting for listener state {expected:?}; last state: {state:?}"
+                );
+                assert!(
+                    Instant::now() < deadline,
+                    "listener state did not become {expected:?}; last state: {state:?}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        /// A normal harness invocation returns immediately. The parent smoke
+        /// explicitly re-runs only this test with one harmless socket mode.
+        #[test]
+        fn native_process_smoke_helper() {
+            if std::env::var(NATIVE_SMOKE_HELPER_ENV).ok().as_deref() != Some("1") {
+                return;
+            }
+            let mode = std::env::var(NATIVE_SMOKE_MODE_ENV).expect("native smoke mode");
+            let ready = PathBuf::from(
+                std::env::var_os(NATIVE_SMOKE_READY_ENV).expect("native smoke ready path"),
+            );
+            let port = if mode == "inherited" {
+                let inherited_fd = std::env::var(NATIVE_SMOKE_INHERITED_FD_ENV)
+                    .expect("inherited listener fd")
+                    .parse::<c_int>()
+                    .expect("numeric inherited listener fd");
+                assert!(
+                    unsafe { fcntl(inherited_fd, F_GETFD) } >= 0,
+                    "listener descriptor must survive exec"
+                );
+                std::env::var(NATIVE_SMOKE_INHERITED_PORT_ENV)
+                    .expect("inherited listener port")
+                    .parse::<u16>()
+                    .expect("numeric inherited listener port")
+            } else {
+                let listener = match mode.as_str() {
+                    "ipv4-loopback" => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)),
+                    "ipv4-wildcard" => TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)),
+                    "ipv6-loopback" => TcpListener::bind((Ipv6Addr::LOCALHOST, 0)),
+                    "ipv6-wildcard" => TcpListener::bind((Ipv6Addr::UNSPECIFIED, 0)),
+                    other => panic!("unknown native smoke mode {other:?}"),
+                }
+                .expect("bind native smoke listener");
+                let port = listener.local_addr().unwrap().port();
+                fs::write(&ready, port.to_string()).expect("publish native smoke readiness");
+                thread::sleep(Duration::from_secs(60));
+                return;
+            };
+            fs::write(&ready, port.to_string()).expect("publish native smoke readiness");
+            thread::sleep(Duration::from_secs(60));
+        }
+
+        fn complete_socket_inventory(inodes: &[&str]) -> ProcessSocketInventory {
+            ProcessSocketInventory::Complete(
+                inodes.iter().map(|inode| (*inode).to_string()).collect(),
+            )
+        }
+
+        fn classified_listener_state(
+            pid: u32,
+            port: u16,
+            relevant: &RelevantListenerInodes,
+            target: ProcessSocketInventory,
+            peers: Vec<(u32, ProcessSocketInventory)>,
+        ) -> ListenerState {
+            listener_state_from_socket_inventories(pid, port, relevant, target, peers)
+                .unwrap_or_else(ListenerState::Uninspectable)
+        }
+
+        fn ipv6_wildcard_listener_fixture() -> RelevantListenerInodes {
+            let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
+                0: 00000000000000000000000001000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 55555 1 0000000000000000\n\
+                1: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 66666 1 0000000000000000\n";
+            listening_loopback_relevant_inodes(table, 8080, AddressFamily::V6).unwrap()
+        }
+
+        fn assert_uninspectable_shared_listener_owner_is_not_exclusive() {
+            let relevant = RelevantListenerInodes {
+                loopback: HashSet::from(["shared".to_string()]),
+                wildcard: HashSet::new(),
+            };
+            let state = classified_listener_state(
+                10,
+                8080,
+                &relevant,
+                complete_socket_inventory(&["shared"]),
+                vec![(
+                    20,
+                    ProcessSocketInventory::Uninspectable(
+                        "permission denied while reading inherited socket descriptors".to_string(),
+                    ),
+                )],
+            );
+            let ListenerState::Uninspectable(detail) = state else {
+                panic!("uninspectable shared owner was misclassified as exclusive")
+            };
+            assert!(detail.contains("PID 20 is uninspectable"));
+            assert!(!ListenerState::Uninspectable(detail).permits_teardown());
+        }
 
         #[test]
         fn proc_stat_parser_handles_spaces_and_closing_parentheses_in_comm() {
@@ -1583,6 +2605,132 @@ mod platform {
                 format_linux_start_token("00000000-1111-2222-3333-444444444444", 987_654),
                 "linux-boot-id:00000000-1111-2222-3333-444444444444;start-ticks:987654"
             );
+        }
+
+        #[test]
+        fn linux_non_utf8_argv_is_uninspectable_not_lossy() {
+            let error = parse_linux_argv(42, b"llama-server\0--model\0\xff\0").unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains("argv element 2 is not UTF-8"));
+            assert!(!message.contains('\u{fffd}'));
+
+            let empty = parse_linux_argv(42, b"llama-server\0\0--port\08080\0").unwrap_err();
+            assert!(empty.to_string().contains("argv element 1 is empty"));
+        }
+
+        #[test]
+        fn loopback_listener_ownership_matrix() {
+            let empty = RelevantListenerInodes::default();
+            let state =
+                classified_listener_state(10, 8080, &empty, complete_socket_inventory(&[]), vec![]);
+            assert_eq!(state, ListenerState::Absent);
+            assert!(state.permits_teardown());
+
+            let loopback = RelevantListenerInodes {
+                loopback: HashSet::from(["loopback".to_string()]),
+                wildcard: HashSet::new(),
+            };
+            let state = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                complete_socket_inventory(&["loopback"]),
+                vec![],
+            );
+            assert_eq!(state, ListenerState::OwnedByTarget);
+            assert!(state.permits_teardown());
+
+            let foreign = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                complete_socket_inventory(&[]),
+                vec![(20, complete_socket_inventory(&["loopback"]))],
+            );
+            assert_eq!(foreign, ListenerState::OwnedByOther(vec![20]));
+            assert!(!foreign.permits_teardown());
+
+            let multiple_foreign = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                complete_socket_inventory(&[]),
+                vec![
+                    (20, complete_socket_inventory(&["loopback"])),
+                    (30, complete_socket_inventory(&["loopback"])),
+                ],
+            );
+            assert_eq!(multiple_foreign, ListenerState::OwnedByOther(vec![20, 30]));
+            assert!(!multiple_foreign.permits_teardown());
+
+            let shared = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                complete_socket_inventory(&["loopback"]),
+                vec![(20, complete_socket_inventory(&["loopback"]))],
+            );
+            assert_eq!(shared, ListenerState::OwnedByOther(vec![10, 20]));
+            assert!(!shared.permits_teardown());
+
+            let wildcard = RelevantListenerInodes {
+                loopback: HashSet::new(),
+                wildcard: HashSet::from(["wildcard".to_string()]),
+            };
+            let wildcard_state = classified_listener_state(
+                10,
+                8080,
+                &wildcard,
+                complete_socket_inventory(&["wildcard"]),
+                vec![],
+            );
+            assert_eq!(wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!wildcard_state.permits_teardown());
+
+            let ipv6_wildcard = ipv6_wildcard_listener_fixture();
+            assert_eq!(
+                ipv6_wildcard,
+                RelevantListenerInodes {
+                    loopback: HashSet::new(),
+                    wildcard: HashSet::from(["66666".to_string()]),
+                }
+            );
+            let ipv6_wildcard_state = classified_listener_state(
+                10,
+                8080,
+                &ipv6_wildcard,
+                complete_socket_inventory(&["66666"]),
+                vec![],
+            );
+            assert_eq!(ipv6_wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!ipv6_wildcard_state.permits_teardown());
+
+            let dual_stack = classified_listener_state(
+                10,
+                8080,
+                &ipv6_wildcard,
+                complete_socket_inventory(&["66666"]),
+                vec![(20, complete_socket_inventory(&["66666"]))],
+            );
+            assert_eq!(dual_stack, ListenerState::OwnedByOther(vec![10, 20]));
+            assert!(!dual_stack.permits_teardown());
+
+            let uninspectable = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                ProcessSocketInventory::Uninspectable("permission denied".to_string()),
+                vec![],
+            );
+            assert!(matches!(uninspectable, ListenerState::Uninspectable(_)));
+            assert!(!uninspectable.permits_teardown());
+
+            assert_uninspectable_shared_listener_owner_is_not_exclusive();
+        }
+
+        #[test]
+        fn linux_uninspectable_shared_listener_owner_is_not_exclusive() {
+            assert_uninspectable_shared_listener_owner_is_not_exclusive();
         }
 
         #[test]
@@ -1603,11 +2751,8 @@ mod platform {
 
         #[test]
         fn tcp6_parser_ignores_ipv6_loopback_but_keeps_wildcard() {
-            let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
-                0: 00000000000000000000000001000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 55555 1 0000000000000000\n\
-                1: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 66666 1 0000000000000000\n";
             assert_eq!(
-                listening_loopback_relevant_inodes(table, 8080, AddressFamily::V6).unwrap(),
+                ipv6_wildcard_listener_fixture(),
                 RelevantListenerInodes {
                     loopback: HashSet::new(),
                     wildcard: HashSet::from(["66666".to_string()]),
@@ -1630,18 +2775,195 @@ mod platform {
         fn native_listener_inventory_distinguishes_loopback_from_wildcard() {
             let loopback = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
             let loopback_port = loopback.local_addr().unwrap().port();
-            assert_eq!(
-                loopback_listener_state(std::process::id(), loopback_port),
-                ListenerState::OwnedByTarget
-            );
+            let loopback_state = loopback_listener_state(std::process::id(), loopback_port);
+            match &loopback_state {
+                ListenerState::OwnedByTarget => assert!(loopback_state.permits_teardown()),
+                ListenerState::Uninspectable(detail) => {
+                    assert!(detail.contains("listener owner enumeration is incomplete"));
+                    assert!(!loopback_state.permits_teardown());
+                }
+                other => panic!("unexpected native loopback state: {other:?}"),
+            }
 
             let wildcard =
                 std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 0)).unwrap();
             let wildcard_port = wildcard.local_addr().unwrap().port();
+            let wildcard_state = loopback_listener_state(std::process::id(), wildcard_port);
+            match &wildcard_state {
+                ListenerState::OwnedByTargetWildcard => {
+                    assert!(!wildcard_state.permits_teardown())
+                }
+                ListenerState::Uninspectable(detail) => {
+                    assert!(detail.contains("listener owner enumeration is incomplete"));
+                    assert!(!wildcard_state.permits_teardown());
+                }
+                other => panic!("unexpected native wildcard state: {other:?}"),
+            }
+        }
+
+        #[test]
+        fn linux_pidfd_process_handle_smoke() {
+            let (mut loopback, loopback_port) = spawn_retained_smoke_child("ipv4-loopback", None);
+            let process = loopback.process();
             assert_eq!(
-                loopback_listener_state(std::process::id(), wildcard_port),
-                ListenerState::OwnedByTargetWildcard
+                wait_for_fixture_listener_state(
+                    process,
+                    loopback_port,
+                    &[],
+                    &ListenerState::OwnedByTarget,
+                ),
+                ListenerState::OwnedByTarget
             );
+            let facts = process
+                .inspect(loopback_port)
+                .expect("inspect exact retained pidfd process");
+            let pid = process.pid();
+            let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id")
+                .expect("read native Linux boot ID")
+                .trim()
+                .to_string();
+            let stat =
+                fs::read_to_string(format!("/proc/{pid}/stat")).expect("read child process stat");
+            let start_ticks =
+                parse_proc_start_ticks(&stat).expect("parse child process start ticks");
+            assert!(start_ticks > 0);
+            assert_eq!(
+                facts.identity.start_token,
+                format_linux_start_token(&boot_id, start_ticks)
+            );
+            validate_start_token(&facts.identity.start_token)
+                .expect("native boot-ID/start-ticks token must be canonical");
+            assert_eq!(
+                facts.identity.executable,
+                fs::read_link(format!("/proc/{pid}/exe")).expect("read child executable identity")
+            );
+            let command_line =
+                fs::read(format!("/proc/{pid}/cmdline")).expect("read child argv identity");
+            assert_eq!(
+                facts.identity.argv,
+                parse_linux_argv(pid, &command_line).expect("parse child argv identity")
+            );
+            match facts.listener {
+                ListenerState::OwnedByTarget => {}
+                ListenerState::Uninspectable(ref detail) => {
+                    assert!(detail.contains("listener owner enumeration is incomplete"));
+                    assert!(!facts.listener.permits_teardown());
+                }
+                ref other => panic!("unexpected full-/proc listener state: {other:?}"),
+            }
+            assert!(
+                !process
+                    .wait(Duration::ZERO)
+                    .expect("live pidfd must not poll as exited")
+            );
+
+            // Signal and poll only through the pidfd. Child::wait below is
+            // used solely after pidfd-observed exit to reap our child zombie.
+            let retained = loopback.process.take().expect("retained loopback pidfd");
+            let pidfd = retained.pidfd.as_raw_fd();
+            assert!(
+                unsafe { fcntl(pidfd, F_GETFD) } >= 0,
+                "retained pidfd must be open before teardown"
+            );
+            assert!(
+                retained
+                    .terminate()
+                    .expect("signal only through retained pidfd")
+            );
+            assert!(
+                retained
+                    .wait(Duration::from_secs(5))
+                    .expect("poll only through retained pidfd")
+            );
+            let mut child = loopback.child.take().expect("reap smoke helper child");
+            let status = child.wait().expect("reap pidfd-terminated child");
+            assert!(
+                !status.success(),
+                "SIGKILLed helper must not report success"
+            );
+            drop(child);
+            drop(retained);
+            assert_eq!(
+                unsafe { fcntl(pidfd, F_GETFD) },
+                -1,
+                "dropping LiveProcess must close its pidfd"
+            );
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(EBADF),
+                "released pidfd must be rejected as bad"
+            );
+
+            let (wildcard, wildcard_port) = spawn_retained_smoke_child("ipv4-wildcard", None);
+            let wildcard_state = wait_for_fixture_listener_state(
+                wildcard.process(),
+                wildcard_port,
+                &[],
+                &ListenerState::OwnedByTargetWildcard,
+            );
+            assert_eq!(wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!wildcard_state.permits_teardown());
+            drop(wildcard);
+
+            let (ipv6_wildcard, ipv6_wildcard_port) =
+                spawn_retained_smoke_child("ipv6-wildcard", None);
+            let ipv6_wildcard_state = wait_for_fixture_listener_state(
+                ipv6_wildcard.process(),
+                ipv6_wildcard_port,
+                &[],
+                &ListenerState::OwnedByTargetWildcard,
+            );
+            assert_eq!(ipv6_wildcard_state, ListenerState::OwnedByTargetWildcard);
+            assert!(!ipv6_wildcard_state.permits_teardown());
+            drop(ipv6_wildcard);
+
+            let (ipv6_loopback, ipv6_loopback_port) =
+                spawn_retained_smoke_child("ipv6-loopback", None);
+            let ipv6_loopback_state = wait_for_fixture_listener_state(
+                ipv6_loopback.process(),
+                ipv6_loopback_port,
+                &[],
+                &ListenerState::Absent,
+            );
+            assert_eq!(
+                ipv6_loopback_state,
+                ListenerState::Absent,
+                "exact ::1 cannot accept the managed IPv4 loopback endpoint"
+            );
+            drop(ipv6_loopback);
+
+            // Clear CLOEXEC only in the forked child so one real loopback
+            // socket inode is visibly owned by both this parent and the child.
+            let inherited_listener =
+                TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind inherited listener");
+            let inherited_port = inherited_listener.local_addr().unwrap().port();
+            let inherited_fd = inherited_listener.as_raw_fd();
+            let (shared, ready_port) = spawn_retained_smoke_child(
+                "inherited",
+                Some((&inherited_listener, inherited_port)),
+            );
+            assert_eq!(ready_port, inherited_port);
+            let parent_link = fs::read_link(format!("/proc/self/fd/{inherited_fd}"))
+                .expect("read parent inherited socket link");
+            let child_link =
+                fs::read_link(format!("/proc/{}/fd/{inherited_fd}", shared.child_pid()))
+                    .expect("read child inherited socket link");
+            assert_eq!(child_link, parent_link);
+            assert!(
+                parent_link.to_string_lossy().starts_with("socket:["),
+                "shared descriptor must visibly reference a socket inode"
+            );
+            let mut expected_owners = vec![std::process::id(), shared.child_pid()];
+            expected_owners.sort_unstable();
+            let expected_shared = ListenerState::OwnedByOther(expected_owners);
+            let shared_state = wait_for_fixture_listener_state(
+                shared.process(),
+                inherited_port,
+                &[std::process::id()],
+                &expected_shared,
+            );
+            assert_eq!(shared_state, expected_shared);
+            assert!(!shared_state.permits_teardown());
         }
 
         #[test]
@@ -1705,3 +3027,415 @@ mod platform {
 }
 
 pub use platform::LiveProcess;
+
+impl RetainedProcess for LiveProcess {
+    fn pid(&self) -> u32 {
+        LiveProcess::pid(self)
+    }
+
+    fn inspect(&self, port: u16) -> Result<ProcessFacts, ProcessError> {
+        LiveProcess::inspect(self, port)
+    }
+
+    fn terminate(&self) -> Result<bool, ProcessError> {
+        LiveProcess::terminate(self)
+    }
+
+    fn wait(&self, timeout: Duration) -> Result<bool, ProcessError> {
+        LiveProcess::wait(self, timeout)
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NativeProcessRuntime;
+
+impl ProcessRuntime for NativeProcessRuntime {
+    type Process = LiveProcess;
+
+    fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
+        LiveProcess::acquire(pid)
+    }
+}
+
+#[cfg(all(
+    test,
+    any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )
+))]
+mod retained_process_contract_tests {
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    use super::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Event {
+        Acquire(u64),
+        Inspect(u64),
+        Terminate(u64),
+        Wait(u64),
+    }
+
+    struct FakeRuntime {
+        pid: u32,
+        current_generation: Rc<Cell<u64>>,
+        remap_on_inspect: Rc<Cell<Option<u64>>>,
+        generations: Rc<HashMap<u64, ProcessFacts>>,
+        events: Rc<RefCell<Vec<Event>>>,
+    }
+
+    struct FakeRetainedProcess {
+        pid: u32,
+        generation: u64,
+        current_generation: Rc<Cell<u64>>,
+        remap_on_inspect: Rc<Cell<Option<u64>>>,
+        generations: Rc<HashMap<u64, ProcessFacts>>,
+        events: Rc<RefCell<Vec<Event>>>,
+    }
+
+    impl ProcessRuntime for FakeRuntime {
+        type Process = FakeRetainedProcess;
+
+        fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
+            if pid != self.pid {
+                return Err(ProcessError::NotFound(pid));
+            }
+            let generation = self.current_generation.get();
+            self.events.borrow_mut().push(Event::Acquire(generation));
+            Ok(FakeRetainedProcess {
+                pid,
+                generation,
+                current_generation: Rc::clone(&self.current_generation),
+                remap_on_inspect: Rc::clone(&self.remap_on_inspect),
+                generations: Rc::clone(&self.generations),
+                events: Rc::clone(&self.events),
+            })
+        }
+    }
+
+    impl RetainedProcess for FakeRetainedProcess {
+        fn pid(&self) -> u32 {
+            self.pid
+        }
+
+        fn inspect(&self, _port: u16) -> Result<ProcessFacts, ProcessError> {
+            self.events
+                .borrow_mut()
+                .push(Event::Inspect(self.generation));
+            if let Some(replacement) = self.remap_on_inspect.take() {
+                self.current_generation.set(replacement);
+            }
+            self.generations
+                .get(&self.generation)
+                .cloned()
+                .ok_or(ProcessError::NotFound(self.pid))
+        }
+
+        fn terminate(&self) -> Result<bool, ProcessError> {
+            self.events
+                .borrow_mut()
+                .push(Event::Terminate(self.generation));
+            Ok(true)
+        }
+
+        fn wait(&self, _timeout: Duration) -> Result<bool, ProcessError> {
+            self.events.borrow_mut().push(Event::Wait(self.generation));
+            Ok(true)
+        }
+    }
+
+    fn facts(coordinate: u64) -> ProcessFacts {
+        ProcessFacts {
+            identity: ProcessIdentity {
+                start_token: canonical_test_start_token(coordinate),
+                executable: PathBuf::from(format!("/fixture/engine-{coordinate}")),
+                argv: vec![
+                    format!("engine-{coordinate}"),
+                    "--port".to_string(),
+                    "8080".to_string(),
+                ],
+            },
+            listener: ListenerState::OwnedByTarget,
+        }
+    }
+
+    #[test]
+    fn retained_process_handle_identity_matrix() {
+        let generation_one = facts(1);
+        let generation_two = facts(2);
+        let current_generation = Rc::new(Cell::new(1));
+        let remap_on_inspect = Rc::new(Cell::new(Some(2)));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let runtime = FakeRuntime {
+            pid: 77,
+            current_generation: Rc::clone(&current_generation),
+            remap_on_inspect: Rc::clone(&remap_on_inspect),
+            generations: Rc::new(HashMap::from([
+                (1, generation_one.clone()),
+                (2, generation_two.clone()),
+            ])),
+            events: Rc::clone(&events),
+        };
+
+        // The numeric PID is remapped during inspection, after acquisition.
+        // All later authority remains bound to generation one.
+        let retained =
+            acquire_matching_process(&runtime, 77, 8080, &generation_one.identity).unwrap();
+        assert_eq!(current_generation.get(), 2);
+        assert_eq!(retained.facts, generation_one);
+        assert_eq!(retained.process.pid(), 77);
+        retained.process.terminate().unwrap();
+        retained.process.wait(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            events.borrow().as_slice(),
+            [
+                Event::Acquire(1),
+                Event::Inspect(1),
+                Event::Terminate(1),
+                Event::Wait(1),
+            ]
+        );
+
+        // PID reuse before acquisition observes the replacement generation
+        // and fails without signaling or waiting on either generation.
+        events.borrow_mut().clear();
+        remap_on_inspect.set(None);
+        let error = acquire_matching_process(&runtime, 77, 8080, &generation_one.identity)
+            .err()
+            .expect("replacement generation must not match");
+        assert!(error.to_string().contains("start token"));
+        assert_eq!(
+            events.borrow().as_slice(),
+            [Event::Acquire(2), Event::Inspect(2)]
+        );
+
+        // Each persisted identity coordinate independently fails closed.
+        current_generation.set(1);
+        for (coordinate, expected) in [
+            ("start token", generation_two.identity.clone()),
+            (
+                "executable",
+                ProcessIdentity {
+                    start_token: generation_one.identity.start_token.clone(),
+                    executable: PathBuf::from("/fixture/different-engine"),
+                    argv: generation_one.identity.argv.clone(),
+                },
+            ),
+            (
+                "argv",
+                ProcessIdentity {
+                    start_token: generation_one.identity.start_token.clone(),
+                    executable: generation_one.identity.executable.clone(),
+                    argv: vec!["different-argv".to_string()],
+                },
+            ),
+        ] {
+            events.borrow_mut().clear();
+            let error = acquire_matching_process(&runtime, 77, 8080, &expected)
+                .err()
+                .expect("identity mismatch must fail closed");
+            assert!(error.to_string().contains(coordinate));
+            assert_eq!(
+                events.borrow().as_slice(),
+                [Event::Acquire(1), Event::Inspect(1)]
+            );
+        }
+    }
+
+    #[test]
+    fn pid_reuse_before_handle_acquisition_signals_nothing() {
+        let generation_one = facts(1);
+        let generation_two = facts(2);
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let runtime = FakeRuntime {
+            pid: 77,
+            current_generation: Rc::new(Cell::new(2)),
+            remap_on_inspect: Rc::new(Cell::new(None)),
+            generations: Rc::new(HashMap::from([
+                (1, generation_one.clone()),
+                (2, generation_two),
+            ])),
+            events: Rc::clone(&events),
+        };
+
+        let error = acquire_matching_process(&runtime, 77, 8080, &generation_one.identity)
+            .err()
+            .expect("replacement generation must not match");
+
+        assert!(error.to_string().contains("start token"));
+        assert_eq!(
+            events.borrow().as_slice(),
+            [Event::Acquire(2), Event::Inspect(2)]
+        );
+    }
+
+    #[test]
+    fn pid_reuse_after_handle_acquisition_targets_original_handle() {
+        let generation_one = facts(1);
+        let generation_two = facts(2);
+        let current_generation = Rc::new(Cell::new(1));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let runtime = FakeRuntime {
+            pid: 77,
+            current_generation: Rc::clone(&current_generation),
+            remap_on_inspect: Rc::new(Cell::new(Some(2))),
+            generations: Rc::new(HashMap::from([
+                (1, generation_one.clone()),
+                (2, generation_two),
+            ])),
+            events: Rc::clone(&events),
+        };
+
+        let retained =
+            acquire_matching_process(&runtime, 77, 8080, &generation_one.identity).unwrap();
+        assert_eq!(current_generation.get(), 2);
+        retained.process.terminate().unwrap();
+        retained.process.wait(Duration::from_secs(1)).unwrap();
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            [
+                Event::Acquire(1),
+                Event::Inspect(1),
+                Event::Terminate(1),
+                Event::Wait(1),
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod start_token_validation_tests {
+    use super::*;
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
+    fn canonical_positive_u64_parser_rejects_noncanonical_values() {
+        validate_start_token(&canonical_test_start_token(42)).unwrap();
+        assert_eq!(parse_canonical_positive_u64("1"), Some(1));
+        assert_eq!(
+            parse_canonical_positive_u64("18446744073709551615"),
+            Some(u64::MAX)
+        );
+        for invalid in [
+            "",
+            "0",
+            "00",
+            "01",
+            "+1",
+            "-1",
+            " 1",
+            "1 ",
+            "1x",
+            "18446744073709551616",
+        ] {
+            assert_eq!(
+                parse_canonical_positive_u64(invalid),
+                None,
+                "accepted noncanonical integer {invalid:?}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_start_token_validation_is_exact() {
+        validate_start_token("windows-filetime:1").unwrap();
+        validate_start_token("windows-filetime:18446744073709551615").unwrap();
+
+        for invalid in [
+            "",
+            "token",
+            " windows-filetime:1",
+            "windows-filetime:",
+            "windows-filetime:0",
+            "windows-filetime:01",
+            "windows-filetime:+1",
+            "windows-filetime:1 ",
+            "windows-filetime:1;trailing",
+            "windows-filetime:18446744073709551616",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
+        ] {
+            assert!(
+                validate_start_token(invalid).is_err(),
+                "accepted invalid Windows start token {invalid:?}"
+            );
+        }
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn linux_start_token_validation_is_exact() {
+        const BOOT_ID: &str = "00000000-1111-4222-8333-444444444444";
+        validate_start_token(&format!("linux-boot-id:{BOOT_ID};start-ticks:1")).unwrap();
+        validate_start_token(&format!(
+            "linux-boot-id:{BOOT_ID};start-ticks:18446744073709551615"
+        ))
+        .unwrap();
+
+        for invalid in [
+            "",
+            "token",
+            " linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1",
+            "windows-filetime:1",
+            "linux-boot-id:00000000111142228333444444444444;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-44444444444;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-44444444444g;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-44444444444A;start-ticks:1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:0",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:01",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:+1",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1 ",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1;trailing",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:18446744073709551616",
+            "linux-boot-id:00000000-1111-4222-8333-444444444444;other:1;start-ticks:1",
+        ] {
+            assert!(
+                validate_start_token(invalid).is_err(),
+                "accepted invalid Linux start token {invalid:?}"
+            );
+        }
+    }
+
+    #[cfg(not(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    #[test]
+    fn unsupported_target_rejects_v2_start_token_authority() {
+        assert!(validate_start_token("windows-filetime:1").is_err());
+        assert!(
+            validate_start_token(
+                "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:1"
+            )
+            .is_err()
+        );
+    }
+}
