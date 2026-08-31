@@ -112,14 +112,16 @@ metadata; Windows currently claims the file-level durability boundary only.
 | `--ctx <N>` | context window (default 4096) |
 | `--port <N>` | port on 127.0.0.1 (default 8080) |
 | `--threads <N>` · `--gpu-layers <N>` · `--batch-size <N>` | edge/latency tuning (llama-server) |
-| `--tailscale` | reserved; refused before spawn, registration/PID inspection, engine/model/network probes, Tailscale invocation, or registration/stage creation |
+| `--tailscale` | expose the loopback engine through an exactly owned Tailscale Serve path on HTTPS 443; the installed Tailscale CLI must support `whoami --json` (1.102.1+) |
 
 - `status` — inventory local/global registrations, bind schema-v2 records to
   their process creation identity and listener owner, then report HTTP health
 - `adopt --pid <pid>` — non-destructively verify one live schema-v1 process and
   conditionally upgrade its unchanged local/global registrations to schema v2;
   status/down print this complete command with the recorded numeric PID
-- `doctor` — engine binary + launch inputs + registered PID/HTTP health
+- `doctor` — engine binary + launch inputs + registered PID/HTTP health; with
+  `--tailscale`, also bounded read-only `whoami --json` and `serve status
+  --json` checks
 - `down` — stop only the uniquely verified process through its retained handle,
   prove that exact process exited and its registered listeners were released,
   then remove only unchanged registration bytes; stale-only records are cleaned
@@ -143,11 +145,23 @@ every failure and preserved path, and still returns a failed launch. A signal
 error alone never authorizes cleanup; Ferric deliberately waits the retained
 object so a successful wait may independently prove exit.
 
-Tailscale mode is fail-closed because scoped proxy cleanup is unavailable.
-`up` and `doctor` stop before every probe and side effect listed above. A
-captured `tailscale: true` record blocks process inspection for present and
-absent PIDs; `status` and `down` preserve its exact bytes and perform no signal,
-deletion, Tailscale command, or blind node-wide reset.
+With `--tailscale`, the ordinary registration base remains
+`http://127.0.0.1:<port>/v1`; successful launch additionally reports an owned
+remote base of the form
+`https://example-host.tailnet-example.ts.net/_ferric/<32-hex-token>/v1`.
+Ferric publishes the ownership-bearing registration before applying that exact
+Serve path. `status` distinguishes an exact active proxy from pending/absent,
+replaced, and uninspectable state. `down` compares and removes the exact proxy
+first, independently tears down only the verified native process, and removes
+registrations only after both resources are resolved. Ambiguous or failed
+proxy cleanup retains every registration as a retry journal and prints the
+coordinate-specific next action. Ferric never invokes `serve reset`, replaces
+the whole Serve configuration, or recommends a blind reset; unrelated handlers
+are preserved.
+
+Historical `tailscale: true` records without the typed ownership object remain
+fail-closed before process or Tailscale effects. Their exact bytes are retained
+for manual, coordinate-specific recovery.
 
 Successful `down` reports `stopped`, `stale-cleaned`, or that the retained
 process was already exited. Each registration is also reported independently
@@ -321,7 +335,7 @@ overrides with a per-crate filter, e.g. `FERRIC_LOG=ferric_loop=debug`. Quiet
 
 | Path | What |
 |---|---|
-| `.ferric/server.json` | local managed-server registration; schema v2 is mirrored in the user config directory for auto-discovery |
+| `.ferric/server.json` | local managed-server registration; schema v2 is mirrored in the user config directory for auto-discovery and is also the write-ahead ownership journal for a Ferric Tailscale Serve path |
 | `.ferric/trace/*.jsonl` | default per-session traces; `query --trace-dir` can place only query traces in a validated external directory |
 | `.ferric/config.toml` | project config (backend, model, hooks, …) |
 | `.ferric/cron/*.toml` | cron job definitions |

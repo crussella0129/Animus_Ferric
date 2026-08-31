@@ -1755,3 +1755,24 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   passed; Ferric CLI all-target, all-feature Clippy passed with warnings
   denied; formatting passed.
 - **Commit:** `465df4e8630410f8879ed6244518239162c90320`
+
+## T-11804 (sprint 118)
+
+- **Description:** Restored positive Tailscale doctor mode after static and
+  registration blockers by adding bounded, duplicate-safe, read-only canonical
+  identity and Serve-status probes through the closed adapter. Doctor reports
+  missing/old CLI, daemon, timeout, output-limit, identity, and malformed-status
+  failures without exposing a mutation route. Launch, status, and down now have
+  pure operator render seams covering the loopback base, tokenized remote base,
+  exact target/path, retained journals, and one scoped retry command. README and
+  operator docs describe current behavior and explicitly prohibit broad reset.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T01:47:50-04:00
+- **Files modified:** `crates/ferric-cli/src/server.rs`,
+  `crates/ferric-cli/src/tailscale_serve.rs`, `README.md`, `docs/commands.md`,
+  `docs/server-configuration.md`, and the Book work ledgers.
+- **Verification:** both named doctor probe-order/read-only tests, the closed
+  adapter read-only argv test, and the copy-paste-complete operator rendering
+  test passed; all 72 server tests passed; Ferric CLI all-target, all-feature
+  Clippy passed with warnings denied; formatting passed.
+- **Commit:** PENDING

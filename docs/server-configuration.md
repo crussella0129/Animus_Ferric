@@ -40,11 +40,12 @@ so Windows currently claims the file-level boundary only, not unqualified
 power-loss durability for the directory entry.
 
 `doctor` is the pre-flight check; it validates presence *without* launching.
-Tailscale mode returns before registration or PID inspection and before engine,
-model, or network probes. Other pure argument blockers also precede external
+Pure argument blockers and blocked registration state precede all external
 probes. Otherwise doctor resolves the complete registration inventory first.
 Degraded, stale-only, conflicting, or unverifiable state returns before
-engine-version and model-file probes:
+engine-version and model-file probes. With `--tailscale`, a valid preflight
+runs the usual engine/model checks and bounded read-only `tailscale whoami
+--json` and `tailscale serve status --json`; it does not mutate Serve state:
 
 ```console
 $ ferric server doctor --engine llama-server --model ./model.gguf
@@ -100,6 +101,12 @@ records:
 - the resolved executable and complete argument vector;
 - the absolute path of the originating local `.ferric/server.json` mirror; and
 - the existing launch provenance, including model and context when known.
+
+A Tailscale launch additionally records a validated ownership object: its
+128-bit path token, exact mount and loopback proxy target, canonical self FQDN,
+remote `/v1` base, HTTPS port, and capture provenance. The mirrored record is
+published before the Serve mutation, making it a write-ahead recovery journal.
+The ordinary `base_url` stays loopback-local for normal Ferric discovery.
 
 Ferric inventories the current workspace's local registration and the user-level
 global registration independently. A global schema-v2 record also identifies
@@ -234,7 +241,7 @@ inspected and remove only those exact unchanged files manually.
 | `--batch-size <N>` | engine default | batch size (llama-server only) |
 | `--seed <N>` | engine default | llama.cpp sampling seed; use a non-negative value for reproducibility (`-1` requests a random seed) |
 | `--parallel <N>` | engine default | nonzero number of concurrent llama-server request slots |
-| `--tailscale` | off | reserved; refused before spawn, registration/PID inspection, engine/model/network probes, Tailscale invocation, or registration/stage creation |
+| `--tailscale` | off | expose the loopback engine at one exactly owned Tailscale Serve path on HTTPS 443; requires a current Tailscale CLI with `whoami --json` |
 
 ### How the flags map to `llama-server`
 
@@ -268,22 +275,65 @@ the machine. This is also why, in the containerized topology, `ferric` and
 `llama-server` are co-located in one container rather than split across a network
 boundary (see [Container Topology & Roadmap](swarming-k8s.md)).
 
-`server up --tailscale` and Tailscale doctor mode are temporarily fail-closed
-because scoped proxy cleanup is unavailable. Ferric refuses them before spawn,
-registration or PID inspection, engine/model/network probes, Tailscale
-invocation, and registration or stage creation.
+### Tailscale Serve exposure
 
-An existing registration with `tailscale: true` also blocks lifecycle process
-inspection and mutation before Ferric checks whether its recorded PID is
-present. `status` and `down` preserve its exact bytes, do not signal a process,
-do not delete a registration, do not invoke Tailscale, and never issue or
-recommend a blind node-wide reset. They report targeted manual inspection as an
-operator-owned recovery step. If you choose that step, independently verify the
-exact Serve endpoint and process creation instance before using current
-Tailscale tooling to remove only the recorded endpoint; then compare and remove
-only unchanged local/global registration files. A future release can restore
-`--tailscale` after it can capture, own, and conditionally restore that external
-state.
+`server up --tailscale` leaves the engine bound exclusively to `127.0.0.1` and
+adds one path handler to the node's existing Serve configuration. Ferric asks
+the operating system for a 128-bit random token and owns only this coordinate:
+
+```text
+https://example-host.tailnet-example.ts.net/_ferric/<32-hex-token>/v1
+```
+
+Tailscale strips the mount prefix before proxying, so the local backend still
+receives `/v1/...`. The token makes the ownership coordinate unique; it is not
+a credential. Tailnet identity, HTTPS, MagicDNS, and ACL policy determine who
+can reach the endpoint. Ferric neither owns HTTPS 443 nor the node certificate
+nor unrelated Serve handlers.
+
+Launch first proves the path absent on a compatible HTTPS 443 Serve entry,
+starts and verifies the exact loopback process, and publishes byte-identical
+local/global ownership journals. It then rechecks the path, applies only that
+path to `http://127.0.0.1:<port>`, verifies the exact handler, and revalidates
+the native process/listener and registration revisions before reporting ready.
+The local base remains `http://127.0.0.1:<port>/v1`; the tokenized HTTPS base is
+reported separately for remote callers.
+
+`status` reports the external coordinate as active only when the token path
+still has the recorded proxy target. An absent path is pending, a different
+handler is replaced, and unreadable or ambiguous status is uninspectable. Only
+an active proxy together with the existing Ready native state is success. Each
+non-ready state prints one safe next action and the retained journal location.
+
+`down` revalidates the unchanged journal, compares the exact path, and invokes
+only an endpoint-scoped `off` when that handler still matches. It verifies the
+path is absent, then independently stops/reaps only the exact retained process
+and proves its listener released. Registration bytes are compare-removed only
+after both resources resolve. An already absent proxy or exited process is an
+idempotent recovery case. A replaced, duplicated, malformed, or uninspectable
+handler—and an `off` or verification failure—does not authorize proxy mutation;
+Ferric can still stop an independently authorized exact child, but retains all
+ownership journals for inspection and retry.
+
+Never use `tailscale serve reset` as Ferric recovery: it would clear unrelated
+node-wide state. Ferric does not call or recommend reset, whole-configuration
+replacement, a root-path `off`, or an unscoped `off`. For retained evidence,
+inspect the reported token path and target, resolve only that coordinate with
+current Tailscale tooling if you can independently verify it, then rerun
+`ferric server down` so Ferric can converge and conditionally remove unchanged
+journals. Boolean-only historical `tailscale: true` records have no such typed
+authority and remain wholly fail-closed before process or Tailscale effects.
+
+The automated lifecycle acceptance uses model-free fake executables; it does
+not prove a real tailnet, certificate issuance, MagicDNS, ACL reachability, or
+macOS lifecycle parity. Use `server doctor --tailscale` on the target host and
+perform an explicitly authorized live-tailnet check for those properties.
+Tailscale older than 1.102.1 lacks the selected self-identity command and must
+be upgraded before Ferric can derive the canonical remote host. The native CLI
+also cannot atomically bind Ferric's prior target comparison to its scoped
+`off`; the high-entropy coordinate and the CLI's own config update protect
+ordinary non-hostile concurrency, while hostile takeover of the exact token in
+that narrow window remains outside this guarantee.
 
 ## Edge tuning
 

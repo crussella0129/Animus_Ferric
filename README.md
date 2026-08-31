@@ -70,7 +70,7 @@ cargo install --path crates/ferric-cli --features backend-openai --force
 
 | Command | What it does |
 |---|---|
-| `ferric server up\|status\|adopt\|doctor\|down` | Launch and identity-safely manage the local OpenAI-compatible inference server, bound to `127.0.0.1` only. |
+| `ferric server up\|status\|adopt\|doctor\|down` | Launch and identity-safely manage the loopback OpenAI-compatible inference server, with optional scoped Tailscale Serve exposure. |
 | `ferric query "<prompt>"` | Run one workspace-scoped agent turn against a local model. |
 | `ferric mcp` | Run an MCP-stdio server exposing one tool, `ferric_query`, to MCP clients (Claude Code, Cursor, an IDE). Workspace/backend/model are launch-time-fixed flags; each call runs the full constrained agent loop. *ADR-046.* |
 | `ferric bench ltd` | Measure & diagnose tool-calling fire rate for a model (or a fleet — see below). |
@@ -87,10 +87,21 @@ ferric query "list the Rust files and summarize lib.rs"     # auto-discovers the
 ferric server down
 ```
 
-> [!NOTE]
-> `ferric server up --tailscale` is temporarily refused before side effects.
-> Ferric will restore it only after it can compare-and-remove exactly the
-> durable Tailscale Serve state it owns.
+Add `--tailscale` to `server doctor` and `server up` to preflight and publish a
+private tailnet endpoint. Ferric keeps normal auto-discovery on the local
+`http://127.0.0.1:<port>/v1` base and prints the owned remote base after launch:
+
+```text
+https://example-host.tailnet-example.ts.net/_ferric/<32-hex-token>/v1
+```
+
+The random path is an ownership coordinate, not authentication; Tailscale
+identity and ACLs remain the access boundary. Ferric records that exact path
+before applying it, removes only that path on `down`, and retains the record
+with retry guidance when the proxy is missing, replaced, or uninspectable. It
+never resets the node-wide Serve configuration. See
+[server configuration](docs/server-configuration.md#tailscale-serve-exposure)
+for requirements and limitations.
 
 `query` and `bench` **auto-discover** the running server from `.ferric/server.json` (or your global `APPDATA` directory) — no `--api-base` needed. To target a server you didn't launch (e.g. an already-running Ollama), pass `--api-base http://localhost:11434/v1`. By default `query` runs the **constrained** path, which is the reliable one for small models.
 

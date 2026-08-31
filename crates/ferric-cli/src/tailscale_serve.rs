@@ -394,6 +394,7 @@ impl<R> TailscaleServeAdapter<R> {
 
 pub(crate) trait TailscaleServeEffects {
     fn self_fqdn(&self) -> Result<String, TailscaleServeError>;
+    fn probe_status(&self, fqdn: &str) -> Result<String, TailscaleServeError>;
     fn observe_coordinate(
         &self,
         fqdn: &str,
@@ -408,6 +409,15 @@ impl<R: CommandRunner> TailscaleServeEffects for TailscaleServeAdapter<R> {
         let args = strings(&["whoami", "--json"]);
         let output = self.runner.run(&self.program, &args, "identity probe")?;
         parse_self_fqdn(&output.stdout)
+    }
+
+    fn probe_status(&self, fqdn: &str) -> Result<String, TailscaleServeError> {
+        validate_fqdn(fqdn)?;
+        let args = strings(&["serve", "status", "--json"]);
+        let output = self
+            .runner
+            .run(&self.program, &args, "Serve status probe")?;
+        validate_status_snapshot(&output.stdout, fqdn)
     }
 
     fn observe_coordinate(
@@ -566,6 +576,46 @@ pub(crate) fn project_status(
         status_sha256: canonical_status_sha256(&value),
         path_state,
     })
+}
+
+pub(crate) fn validate_status_snapshot(
+    raw: &[u8],
+    fqdn: &str,
+) -> Result<String, TailscaleServeError> {
+    validate_fqdn(fqdn)?;
+    let value = parse_duplicate_safe_json(raw).map_err(TailscaleServeError::InvalidStatus)?;
+    let root = value.as_object().ok_or_else(|| {
+        TailscaleServeError::InvalidStatus("status root must be an object".to_string())
+    })?;
+    let expected_host = format!("{fqdn}:{HTTPS_PORT}");
+    let https_mode_present = ensure_compatible_https_port(root, &expected_host)?;
+    let mut expected_web_host_present = false;
+    if let Some(web_value) = root.get("Web") {
+        let web = web_value.as_object().ok_or_else(|| {
+            TailscaleServeError::InvalidStatus("Web must be an object".to_string())
+        })?;
+        if let Some(web_server_value) = web.get(&expected_host) {
+            expected_web_host_present = true;
+            let web_server = web_server_value.as_object().ok_or_else(|| {
+                TailscaleServeError::InvalidStatus(format!(
+                    "owned Web entry {expected_host} must be an object"
+                ))
+            })?;
+            if let Some(handlers) = web_server.get("Handlers")
+                && !handlers.is_object()
+            {
+                return Err(TailscaleServeError::InvalidStatus(format!(
+                    "Handlers for {expected_host} must be an object"
+                )));
+            }
+        }
+    }
+    if expected_web_host_present && !https_mode_present {
+        return Err(TailscaleServeError::InvalidStatus(format!(
+            "Web host {expected_host} exists without compatible TCP HTTPS mode"
+        )));
+    }
+    Ok(canonical_status_sha256(&value))
 }
 
 fn ensure_compatible_https_port(
@@ -1195,6 +1245,40 @@ mod tests {
             .into_iter()
             .map(|args| args.into_iter().map(str::to_string).collect())
             .collect::<Vec<Vec<String>>>()
+        );
+    }
+
+    #[test]
+    fn serve_read_only_probes_are_closed() {
+        let runner = FakeRunner::with_replies(vec![
+            Ok(br#"{"Node":{"Name":"example-host.tailnet-example.ts.net."}}"#),
+            Ok(br#"{"Web":{},"TCP":{}}"#),
+        ]);
+        let adapter = TailscaleServeAdapter::with_runner("tailscale", runner);
+        let fqdn = adapter.self_fqdn().unwrap();
+        let digest = adapter.probe_status(&fqdn).unwrap();
+        assert_eq!(fqdn, FQDN);
+        assert_eq!(digest.len(), STATUS_SHA256_HEX_LEN);
+        assert_eq!(
+            *adapter.runner.calls.lock().unwrap(),
+            vec![
+                vec!["whoami".to_string(), "--json".to_string()],
+                vec![
+                    "serve".to_string(),
+                    "status".to_string(),
+                    "--json".to_string(),
+                ],
+            ]
+        );
+
+        assert!(validate_status_snapshot(b"[]", FQDN).is_err());
+        assert!(validate_status_snapshot(br#"{"Web":7}"#, FQDN).is_err());
+        assert!(
+            validate_status_snapshot(
+                br#"{"Web":{"example-host.tailnet-example.ts.net:443":{"Handlers":7}}}"#,
+                FQDN,
+            )
+            .is_err()
         );
     }
 

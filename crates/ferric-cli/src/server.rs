@@ -2077,9 +2077,13 @@ pub(crate) fn discover_managed_server_in(scope: &ManagedDiscoveryScope) -> Manag
 trait DoctorProbeEffects {
     fn binary_present(&mut self, engine: Engine) -> bool;
     fn regular_file(&mut self, path: &Path) -> bool;
+    fn tailscale_identity(&mut self) -> Result<String, String>;
+    fn tailscale_status(&mut self, fqdn: &str) -> Result<(), String>;
 }
 
-struct NativeDoctorProbeEffects;
+struct NativeDoctorProbeEffects {
+    serve: TailscaleServeAdapter,
+}
 
 impl DoctorProbeEffects for NativeDoctorProbeEffects {
     fn binary_present(&mut self, engine: Engine) -> bool {
@@ -2095,6 +2099,17 @@ impl DoctorProbeEffects for NativeDoctorProbeEffects {
 
     fn regular_file(&mut self, path: &Path) -> bool {
         path.is_file()
+    }
+
+    fn tailscale_identity(&mut self) -> Result<String, String> {
+        self.serve.self_fqdn().map_err(|error| error.to_string())
+    }
+
+    fn tailscale_status(&mut self, fqdn: &str) -> Result<(), String> {
+        self.serve
+            .probe_status(fqdn)
+            .map(drop)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -3069,6 +3084,24 @@ struct LaunchOrchestrationSuccess {
     published: PublishedRegistrations,
 }
 
+fn render_launch_success(launched: &LaunchOrchestrationSuccess) -> Vec<String> {
+    let mut lines = vec![format!(
+        "server ready: {} (pid {})",
+        launched.base_url, launched.pid
+    )];
+    if let Some(remote_base_url) = &launched.remote_base_url {
+        lines.push(format!("Tailscale Serve endpoint ready: {remote_base_url}"));
+    }
+    lines.push(format!(
+        "registered locally at {}",
+        launched.published.local.path.display()
+    ));
+    if let Some(global) = &launched.published.global {
+        lines.push(format!("registered globally at {}", global.path.display()));
+    }
+    lines
+}
+
 /// One authority-preserving launch sequence shared by production `up` and
 /// deterministic composition tests. The spawned child is bound to its exact
 /// retained process object before any readiness probe, and publication is
@@ -3318,16 +3351,8 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         }
     };
 
-    println!("server ready: {} (pid {})", launched.base_url, launched.pid);
-    if let Some(remote_base_url) = &launched.remote_base_url {
-        println!("Tailscale Serve endpoint ready: {remote_base_url}");
-    }
-    println!(
-        "registered locally at {}",
-        launched.published.local.path.display()
-    );
-    if let Some(global) = launched.published.global {
-        println!("registered globally at {}", global.path.display());
+    for line in render_launch_success(&launched) {
+        println!("{line}");
     }
     ExitCode::SUCCESS
 }
@@ -5697,18 +5722,6 @@ struct DoctorReport {
 }
 
 fn static_doctor_blocker(args: &ServerUpArgs) -> Option<DoctorReport> {
-    if args.tailscale {
-        return Some(DoctorReport {
-            lines: vec![
-                "[BLOCKED] --tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable"
-                    .to_string(),
-                "[next] leave every registration untouched; Ferric will not inspect or signal a PID, delete registration bytes, invoke Tailscale, or run a blind node-wide reset"
-                    .to_string(),
-            ],
-            success: false,
-        });
-    }
-
     let mut lines = Vec::new();
     if args.port == 0 {
         lines.push("[INVALID] --port must be greater than zero".to_string());
@@ -5800,6 +5813,36 @@ fn execute_doctor_probes<E: DoctorProbeEffects>(
         }
     }
 
+    if args.tailscale {
+        match effects.tailscale_identity() {
+            Ok(fqdn) => {
+                lines.push(format!("[ok] Tailscale canonical self identity `{fqdn}`"));
+                match effects.tailscale_status(&fqdn) {
+                    Ok(()) => lines.push(
+                        "[ok] Tailscale Serve status is readable through a bounded read-only probe"
+                            .to_string(),
+                    ),
+                    Err(error) => {
+                        lines.push(format!(
+                            "[BLOCKED] Tailscale Serve status is not authorizing: {error}"
+                        ));
+                        ok = false;
+                    }
+                }
+            }
+            Err(error) => {
+                lines.push(format!(
+                    "[BLOCKED] Tailscale canonical self identity is unavailable: {error}"
+                ));
+                lines.push(
+                    "[next] verify Tailscale is installed, current (1.102.1 or newer), logged in, and its daemon is reachable; retry `ferric server doctor --tailscale`"
+                        .to_string(),
+                );
+                ok = false;
+            }
+        }
+    }
+
     match &discovery.state {
         ManagedServerState::Ready(server) => {
             lines.push(format!(
@@ -5876,7 +5919,9 @@ fn emit_doctor_report(report: DoctorReport) -> ExitCode {
 }
 
 fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
-    let mut effects = NativeDoctorProbeEffects;
+    let mut effects = NativeDoctorProbeEffects {
+        serve: TailscaleServeAdapter::native(),
+    };
     emit_doctor_report(doctor_report_with(
         args,
         || {
@@ -6500,22 +6545,49 @@ pub(crate) mod tests {
     enum DoctorEvent {
         Binary,
         File,
+        TailscaleIdentity,
+        TailscaleStatus,
     }
 
-    #[derive(Default)]
     struct RecordingDoctorEffects {
         events: Vec<DoctorEvent>,
+        binary_present: bool,
+        regular_file: bool,
+        tailscale_identity: Result<String, String>,
+        tailscale_status: Result<(), String>,
+    }
+
+    impl Default for RecordingDoctorEffects {
+        fn default() -> Self {
+            Self {
+                events: Vec::new(),
+                binary_present: true,
+                regular_file: true,
+                tailscale_identity: Ok("example-host.tailnet-example.ts.net".to_string()),
+                tailscale_status: Ok(()),
+            }
+        }
     }
 
     impl DoctorProbeEffects for RecordingDoctorEffects {
         fn binary_present(&mut self, _engine: Engine) -> bool {
             self.events.push(DoctorEvent::Binary);
-            true
+            self.binary_present
         }
 
         fn regular_file(&mut self, _path: &Path) -> bool {
             self.events.push(DoctorEvent::File);
-            true
+            self.regular_file
+        }
+
+        fn tailscale_identity(&mut self) -> Result<String, String> {
+            self.events.push(DoctorEvent::TailscaleIdentity);
+            self.tailscale_identity.clone()
+        }
+
+        fn tailscale_status(&mut self, _fqdn: &str) -> Result<(), String> {
+            self.events.push(DoctorEvent::TailscaleStatus);
+            self.tailscale_status.clone()
         }
     }
 
@@ -7143,18 +7215,157 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn doctor_tailscale_block_precedes_binary_model_and_network_probes() {
+    fn doctor_tailscale_is_bounded_and_read_only() {
         let mut tailscale_args = doctor_fixture_args();
         tailscale_args.tailscale = true;
-        tailscale_args.port = 0;
-        tailscale_args.ctx = 0;
-        tailscale_args.model = None;
-        tailscale_args.parallel = Some(0);
         let mut effects = RecordingDoctorEffects::default();
+        let report = doctor_report_with(
+            &tailscale_args,
+            || Ok(discovery_fixture_empty()),
+            &mut effects,
+        );
+        assert!(report.success);
+        assert_eq!(
+            effects.events,
+            vec![
+                DoctorEvent::Binary,
+                DoctorEvent::File,
+                DoctorEvent::TailscaleIdentity,
+                DoctorEvent::TailscaleStatus,
+            ]
+        );
+        assert!(report.lines.iter().any(|line| {
+            line == "[ok] Tailscale canonical self identity `example-host.tailnet-example.ts.net`"
+        }));
+        assert!(report.lines.iter().any(|line| {
+            line == "[ok] Tailscale Serve status is readable through a bounded read-only probe"
+        }));
+        assert!(report.lines.iter().all(|line| {
+            !line.contains("reset") && !line.contains("set-config") && !line.contains("--bg")
+        }));
+
+        for (case, identity, status, expected_events, expected_detail) in [
+            (
+                "missing-cli",
+                Err("could not launch the Tailscale CLI for identity probe".to_string()),
+                Ok(()),
+                vec![
+                    DoctorEvent::Binary,
+                    DoctorEvent::File,
+                    DoctorEvent::TailscaleIdentity,
+                ],
+                "could not launch the Tailscale CLI",
+            ),
+            (
+                "missing-or-old-cli",
+                Err(
+                    "missing canonical Node.Name; upgrade to Tailscale 1.102.1 or newer"
+                        .to_string(),
+                ),
+                Ok(()),
+                vec![
+                    DoctorEvent::Binary,
+                    DoctorEvent::File,
+                    DoctorEvent::TailscaleIdentity,
+                ],
+                "upgrade to Tailscale 1.102.1 or newer",
+            ),
+            (
+                "identity-failure",
+                Err("Tailscale identity probe failed".to_string()),
+                Ok(()),
+                vec![
+                    DoctorEvent::Binary,
+                    DoctorEvent::File,
+                    DoctorEvent::TailscaleIdentity,
+                ],
+                "identity probe failed",
+            ),
+            (
+                "daemon-status-failure",
+                Ok("example-host.tailnet-example.ts.net".to_string()),
+                Err("Tailscale daemon is unavailable".to_string()),
+                vec![
+                    DoctorEvent::Binary,
+                    DoctorEvent::File,
+                    DoctorEvent::TailscaleIdentity,
+                    DoctorEvent::TailscaleStatus,
+                ],
+                "daemon is unavailable",
+            ),
+            (
+                "malformed-status",
+                Ok("example-host.tailnet-example.ts.net".to_string()),
+                Err("invalid Tailscale Serve status: Web must be an object".to_string()),
+                vec![
+                    DoctorEvent::Binary,
+                    DoctorEvent::File,
+                    DoctorEvent::TailscaleIdentity,
+                    DoctorEvent::TailscaleStatus,
+                ],
+                "Web must be an object",
+            ),
+            (
+                "bounded-timeout",
+                Ok("example-host.tailnet-example.ts.net".to_string()),
+                Err("Tailscale CLI exceeded its bounded execution time".to_string()),
+                vec![
+                    DoctorEvent::Binary,
+                    DoctorEvent::File,
+                    DoctorEvent::TailscaleIdentity,
+                    DoctorEvent::TailscaleStatus,
+                ],
+                "bounded execution time",
+            ),
+            (
+                "bounded-output",
+                Ok("example-host.tailnet-example.ts.net".to_string()),
+                Err("Tailscale CLI exceeded its bounded output allowance".to_string()),
+                vec![
+                    DoctorEvent::Binary,
+                    DoctorEvent::File,
+                    DoctorEvent::TailscaleIdentity,
+                    DoctorEvent::TailscaleStatus,
+                ],
+                "bounded output allowance",
+            ),
+        ] {
+            let mut effects = RecordingDoctorEffects {
+                tailscale_identity: identity,
+                tailscale_status: status,
+                ..RecordingDoctorEffects::default()
+            };
+            let report = doctor_report_with(
+                &tailscale_args,
+                || Ok(discovery_fixture_empty()),
+                &mut effects,
+            );
+            assert!(!report.success, "{case}");
+            assert_eq!(effects.events, expected_events, "{case}");
+            assert!(
+                report
+                    .lines
+                    .iter()
+                    .any(|line| line.contains(expected_detail)),
+                "{case}: {:?}",
+                report.lines
+            );
+        }
+    }
+
+    #[test]
+    fn doctor_blockers_precede_all_probes() {
+        let mut effects = RecordingDoctorEffects::default();
+        let mut invalid = doctor_fixture_args();
+        invalid.tailscale = true;
+        invalid.port = 0;
+        invalid.ctx = 0;
+        invalid.model = None;
+        invalid.parallel = Some(0);
         let discovery_calls = Rc::new(RefCell::new(0_usize));
         let calls = Rc::clone(&discovery_calls);
         let report = doctor_report_with(
-            &tailscale_args,
+            &invalid,
             move || {
                 *calls.borrow_mut() += 1;
                 Ok(discovery_fixture_ready())
@@ -7162,20 +7373,11 @@ pub(crate) mod tests {
             &mut effects,
         );
         assert!(!report.success);
-        assert_eq!(
-            report.lines,
-            vec![
-                "[BLOCKED] --tailscale is fail-closed before registration, PID, engine, model, or network probes because scoped proxy cleanup is unavailable",
-                "[next] leave every registration untouched; Ferric will not inspect or signal a PID, delete registration bytes, invoke Tailscale, or run a blind node-wide reset",
-            ]
-        );
         assert_eq!(*discovery_calls.borrow(), 0);
         assert!(effects.events.is_empty());
-    }
 
-    #[test]
-    fn doctor_blocks_before_external_probes() {
-        let mut effects = RecordingDoctorEffects::default();
+        let mut blocked_args = doctor_fixture_args();
+        blocked_args.tailscale = true;
         for discovery in [
             discovery_fixture_degraded(ListenerState::OwnedByTarget, HealthState::Unhealthy),
             discovery_fixture_stale_only(),
@@ -7183,8 +7385,7 @@ pub(crate) mod tests {
             discovery_fixture_blocked(false),
         ] {
             effects.events.clear();
-            let report =
-                doctor_report_after_discovery(&doctor_fixture_args(), &discovery, &mut effects);
+            let report = doctor_report_after_discovery(&blocked_args, &discovery, &mut effects);
             assert!(!report.success);
             assert!(report.lines[0].starts_with("[BLOCKED]"));
             assert!(effects.events.is_empty());
@@ -7198,6 +7399,69 @@ pub(crate) mod tests {
         );
         assert!(ready.success);
         assert_eq!(effects.events, vec![DoctorEvent::Binary, DoctorEvent::File]);
+    }
+
+    #[test]
+    fn tailscale_operator_rendering_is_copy_paste_complete() {
+        let pid = 6381;
+        let (local, ownership) =
+            discovery_fixture_tailscale_capture(RegistrationScope::Local, pid, "operator-local");
+        let mut global = local.clone();
+        global.scope = RegistrationScope::Global;
+        global.path = discovery_fixture_path("operator-global");
+        let launched = LaunchOrchestrationSuccess {
+            pid,
+            base_url: local.runfile.base_url.clone(),
+            remote_base_url: Some(ownership.remote_base_url.clone()),
+            published: PublishedRegistrations {
+                local: local.clone(),
+                global: Some(global),
+            },
+        };
+        let launch_lines = render_launch_success(&launched);
+
+        let (discovery, status_ownership) = discovery_fixture_ready_tailscale();
+        let ledger = Rc::new(RefCell::new(Vec::new()));
+        let serve = ScriptedTailscaleServe::new(
+            [Ok(tailscale_observation(
+                &status_ownership,
+                ServePathState::Absent,
+                'b',
+            ))],
+            ledger,
+        );
+        let status = render_status(&status_report_with_tailscale(&discovery, &serve));
+
+        let down = render_down_report(&held_down_report(
+            Some(pid),
+            std::slice::from_ref(&local),
+            true,
+            true,
+            true,
+            vec![retain_owned_proxy_diagnostic(&ownership)],
+        ));
+
+        let all = launch_lines
+            .iter()
+            .chain(status.stdout.iter())
+            .chain(status.stderr.iter())
+            .chain(down.stdout.iter())
+            .chain(down.stderr.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all.contains(&local.runfile.base_url));
+        assert!(all.contains(&ownership.remote_base_url));
+        assert!(all.contains(&ownership.fqdn));
+        assert!(all.contains(&ownership.mount_path));
+        assert!(all.contains(&status_ownership.proxy_target));
+        assert!(all.contains(&local.path.display().to_string()));
+        assert!(all.contains("`ferric server down`"));
+        assert!(all.contains("exact-coordinate"));
+        assert!(!all.contains("serve reset"));
+        assert!(!all.contains("set-config"));
+        assert!(!all.contains("C:\\Users\\charl"));
+        assert!(!all.contains("tailnet.ts.net"));
     }
 
     fn assert_blocked_down_consumer(discovery: &ManagedServerDiscovery, resolution: Resolution) {
@@ -7546,7 +7810,7 @@ pub(crate) mod tests {
         // pass on policy-return values alone.
         strict_autonomy_requires_fresh_managed_discovery_before_http();
         registered_consumer_effect_revalidates_retained_generation_on_every_outcome();
-        doctor_blocks_before_external_probes();
+        doctor_blockers_precede_all_probes();
         ambiguous_or_unverifiable_down_is_non_mutating();
     }
 
@@ -7775,6 +8039,20 @@ pub(crate) mod tests {
                 .borrow_mut()
                 .pop_front()
                 .expect("scripted Tailscale identity")
+        }
+
+        fn probe_status(
+            &self,
+            _fqdn: &str,
+        ) -> Result<String, crate::tailscale_serve::TailscaleServeError> {
+            self.ledger
+                .borrow_mut()
+                .push(LifecycleEvent::TailscaleObserve);
+            self.observations
+                .borrow_mut()
+                .pop_front()
+                .expect("scripted Tailscale status probe")
+                .map(|observation| observation.status_sha256)
         }
 
         fn observe_coordinate(
