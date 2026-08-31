@@ -3,11 +3,11 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0008
 - **State:** active
-- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [Sprint 117 T-11606 recovery plan](../sprints/s117/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 ownership-safe Tailscale Serve plan](../sprints/s118/sprint-plans/build-plan.md#execution-sequence); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [post-Sprint 117 lifecycle carry-forward](../work/tasks.md#post-sprint-117-lifecycle-carry-forward); [post-Sprint 118 Tailscale proof carry-forward](../work/tasks.md#post-sprint-118-tailscale-proof-carry-forward)
+- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [Sprint 117 T-11606 recovery plan](../sprints/s117/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 ownership-safe Tailscale Serve plan](../sprints/s118/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [post-Sprint 117 lifecycle carry-forward](../work/tasks.md#post-sprint-117-lifecycle-carry-forward); [post-Sprint 118 Tailscale proof carry-forward](../work/tasks.md#post-sprint-118-tailscale-proof-carry-forward)
 - **Completion evidence:** none
-- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116); [T-11606 accepted lifecycle remediation](../work/completed-tasks.md#t-11606-sprint-117); [T-11801 closed adapter and typed ownership](../work/completed-tasks.md#t-11801-sprint-118); [T-11802 crash-safe launch](../work/completed-tasks.md#t-11802-sprint-118); [T-11803 status and teardown](../work/completed-tasks.md#t-11803-sprint-118); [T-11804 doctor and operator surface](../work/completed-tasks.md#t-11804-sprint-118); [T-11805 stateful lifecycle evidence](../work/completed-tasks.md#t-11805-sprint-118)
-- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md); [Sprint 117 accepted lifecycle test report](../sprints/s117/sprint-tests/test-report.md); [Sprint 117 clean test critique](../sprints/s117/sprint-tests/critique.md); [Sprint 118 ownership-safe Tailscale lifecycle test report](../sprints/s118/sprint-tests/test-report.md); [Sprint 118 caveated Test critique](../sprints/s118/sprint-tests/critique.md)
-- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Sprint 117 acceptance-recovery research](../sprints/s117/sprint-research/research-report.md); [Sprint 118 ownership-safe Serve research](../sprints/s118/sprint-research/research-report.md); [current server lifecycle and Tailscale contract](../server-configuration.md#tailscale-serve-exposure)
+- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116); [T-11606 accepted lifecycle remediation](../work/completed-tasks.md#t-11606-sprint-117); [T-11801 initial adapter and typed ownership record](../work/completed-tasks.md#t-11801-sprint-118); [T-11802 crash-safe launch](../work/completed-tasks.md#t-11802-sprint-118); [T-11803 status and teardown](../work/completed-tasks.md#t-11803-sprint-118); [T-11804 doctor and operator surface](../work/completed-tasks.md#t-11804-sprint-118); [T-11805 initial lifecycle evidence](../work/completed-tasks.md#t-11805-sprint-118); [Sprint 118 direct-LocalAPI correction](../work/completed-tasks.md#sprint-118-post-loop-correction); [T-11510 Sprint 118 umbrella completion](../work/completed-tasks.md#t-11510-sprint-118)
+- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md); [Sprint 117 accepted lifecycle test report](../sprints/s117/sprint-tests/test-report.md); [Sprint 117 clean test critique](../sprints/s117/sprint-tests/critique.md); [Sprint 118 ownership-safe Tailscale lifecycle test report](../sprints/s118/sprint-tests/test-report.md); [Sprint 118 Test critique](../sprints/s118/sprint-tests/critique.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md)
+- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Sprint 117 acceptance-recovery research](../sprints/s117/sprint-research/research-report.md); [Sprint 118 ownership-safe Serve research](../sprints/s118/sprint-research/research-report.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [current server lifecycle and Tailscale contract](../server-configuration.md#tailscale-serve-exposure)
 
 ## Intent
 
@@ -224,12 +224,20 @@ users through an opaque wizard.
   compact workflow, macOS/platform parity, calibration, model aliases, and
   model-backed application trial remain active work.
 - 2026-08-31: Sprint 118 restored positive `server up --tailscale` through a
-  closed exact-command adapter, write-ahead mirrored ownership journals,
-  proxy-first compensation and teardown, truthful status/doctor output, and a
-  stateful model-free lifecycle fixture. Clause-level Test evidence accepts the
-  affected Tailscale portions of AC-3, AC-4, AC-6, and AC-7 and adds enabling
-  evidence toward AC-9. One non-portable local-path-absolutization failure row
-  remains explicitly unproved and is carried forward as T-11806. Live-tailnet
-  behavior, hostile external compare-and-swap races, macOS/platform parity,
-  AC-8, AC-9, and the broader compact model-backed workflow remain active; the
-  intent is not realized.
+  bounded direct Tailscale LocalAPI adapter, mirrored write-ahead ownership
+  journals with typed stable-node identity, and proxy-first compensation and
+  teardown. Apply hashes the unmodified Serve response body for its SHA-256
+  ETag, submits one exact `If-Match` compare-and-swap, and never retries an
+  ambiguous mutation. Cleanup removes only the owned handler and retains the
+  journal when a future LocalAPI or Tailscale version cannot be interpreted
+  safely. A model-free fake LocalAPI fixture proves same-connection identity
+  sandwiches, journal-before-mutation ordering, exact request scope, unrelated
+  state preservation, and idempotent cleanup. The extra post-Loop adversarial
+  pass superseded the earlier fixed-CLI implementation without rewriting its
+  commit provenance. Clause-level Test evidence accepts the affected Tailscale
+  portions of AC-3, AC-4, AC-6, and AC-7 and adds enabling evidence toward
+  AC-9. This closes the ordered T-11510 umbrella while retaining its individual
+  T-11801 through T-11805 implementation history. Live-tailnet behavior,
+  identity/ETag atomicity, T-11806's local-path-resolution fault seam, native
+  transport and macOS/platform parity, AC-8, AC-9, and the broader compact
+  model-backed workflow remain active; the intent is not realized.

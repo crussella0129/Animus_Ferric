@@ -2,102 +2,115 @@
 
 ## Verdict
 
-**Pass with two accepted Test-provenance caveats for Sprint 118's
-ownership-safe Tailscale Serve scope.** At corrected implementation head
-`0145e45cb3ab8ab74ae71981d0851525eef2eb1c`, every governing EARS outcome has
-named executed evidence, the independent final [Test critique](critique.md)
-returns `proceed-with-caveats`, the scoped Tailscale/server/E2E suites pass, and
-the all-target/all-feature workspace passes 1,108 tests with five intentional
-helper ignores.
+**Pass at corrected implementation head
+`d5e61b7f951ca838ea2aed7cefaa2468282bb164`.** The post-Loop adversarial
+review rejected the first CLI-backed implementation, replaced that mutation
+boundary with a direct Tailscale LocalAPI ETag/`If-Match` CAS, and reran the
+applicable frozen and supplemental gates. The corrected LocalAPI suite passed
+19/19, the Serve projection/mutation suite passed 17/17, all 84 server-filter
+tests passed, and all five serialized lifecycle fixtures passed.
 
-The two caveats are not product failures and are not represented as passes:
-the finalized test-plan description named a local-path-absolutization fault row
-that cannot be injected portably through `std::path::absolute`, and frozen
-command 7 selects package doc tests for a binary-only package with doctests
-disabled. The applicable workspace doc-test surface passes.
+The requested post-evidence five-phase audit initially found additional P2s,
+reopened Loop, and required ancestor-route, future-version status, pinned
+fresh-CAS validation, operator wording, and Book provenance corrections. Final
+independent re-review found no remaining P0, P1, or P2 issue. P3 limitations
+remain explicit: no successful native Linux UDS or Windows pipe exchange, a
+narrow Unix two-step `CLOEXEC` fork-inheritance window, no live-tailnet run,
+the upstream status-identity/Serve-ETag atomicity gap, and imprecise precedence
+when several effective ancestor diagnostics coexist. None is represented as
+tested away.
 
-This advances the affected server-lifecycle portions of INT-0008 AC-3, AC-4,
-AC-6, and AC-7 and supplies model-free enabling evidence toward AC-9. It does
-not complete the wider compact workflow, live-tailnet acceptance, hostile
-compare/off CAS, AC-8 platform parity, macOS support, or a model-backed
-medium-horizon application run. INT-0008 remains `active`, not `realized`.
+This advances the affected parts of INT-0008 AC-3, AC-4, AC-6, and AC-7 and
+provides model-free enabling evidence toward AC-9. It does not realize the
+wider compact workflow, live-tailnet acceptance, AC-8 platform parity, macOS
+LocalAPI support, or a model-backed medium-horizon application run. INT-0008
+therefore remains `active`.
 
 ## Acceptance result
 
-| Task / EARS clause | Result | Named evidence |
-|---|---|---|
-| T-11801-E01 | pass | `serve_status_projects_only_exact_token_path` |
-| T-11801-E02 | pass | `serve_status_rejects_non_authorizing_shapes` |
-| T-11801-E03 | pass | `serve_commands_are_closed_and_endpoint_scoped` |
-| T-11801-E04 | pass | `ownership_token_and_remote_base_are_valid`; `ownership_entropy_failure_precedes_side_effects`; production launch-closure assertions in `tailscale_pre_mutation_failures_never_apply` |
-| T-11801-E05 | pass | `runfile_schema_is_additive_and_validated`; `legacy_tailscale_registration_remains_unowned` |
-| T-11802-E01 | pass | `tailscale_launch_orders_journal_before_apply`; `tailscale_launch_tolerates_unrelated_prestate_drift` |
-| T-11802-E02 | pass with descriptive-row caveat | `tailscale_pre_mutation_failures_never_apply` proves every governing EARS outcome; the separately described local-path standard-library fault row is the accepted deviation |
-| T-11802-E03/E04 | pass | `tailscale_launch_failure_matrix_holds_or_compensates_exactly` |
-| T-11803-E01 | pass | `status_reports_each_proxy_state` |
-| T-11803-E02 | pass | `down_cleans_proxy_before_process` |
-| T-11803-E03 | pass | `down_proxy_failure_matrix_preserves_journal` |
-| T-11803-E04 | pass | `down_retries_absent_proxy_and_stale_process`; second real-CLI down in `tailscale_cli_lifecycle_preserves_unrelated_state` |
-| T-11803-E05 | pass | `legacy_tailscale_registration_remains_unowned` |
-| T-11804-E01 | pass | `doctor_tailscale_is_bounded_and_read_only` |
-| T-11804-E02 | pass | `doctor_blockers_precede_all_probes` |
-| T-11804-E03 | pass | `tailscale_operator_rendering_is_copy_paste_complete` |
-| T-11805-E01 | pass, model-free | `tailscale_cli_lifecycle_preserves_unrelated_state` |
-| T-11805-E02 | pass | `tailscale_fault_seam_clause_matrix` |
-| T-11805-E03 | pass | `tailscale_command_log_contains_no_broad_mutation`; `tailscale_fixture_rejects_apply_without_journals` |
+The finalized plans remain immutable provenance. CLI-specific mechanism text
+discovered to be unsafe during Loop is marked **superseded**, not retroactively
+reported as passing unchanged.
 
-Detailed arrangement, assertion, and evidence-boundary records are retained in
+| Task / EARS clause | Corrected result | Named evidence |
+|---|---|---|
+| T-11801-E01/E02 | semantic outcome passed through direct LocalAPI projection; the planned CLI status transport was superseded | `localapi_apply_rejects_activation_and_schema_hazards`; `localapi_descendant_blocks_publication_but_cleanup_preserves_it`; `localapi_cleanup_preserves_alias_and_unrelated_host_token`; `duplicate_json_keys_are_rejected_recursively`; `response_header_and_body_caps_are_enforced` |
+| T-11801-E03 | **locked CLI argv clause superseded** by a narrower request API and exact CAS; the old CLI test name was not executed | `exact_request_headers_and_cas_etag`; `serve_cas_412_is_typed_no_mutation`; `post_send_timeout_is_indeterminate`; `tailscale_localapi_log_contains_no_broad_mutation_or_retry` |
+| T-11801-E04/E05 | passed | `ownership_token_and_remote_base_are_valid`; `ownership_entropy_failure_precedes_side_effects`; `runfile_schema_is_additive_and_validated`; `mirrored_tailscale_provenance_conflicts_block_before_effects` |
+| T-11802-E01 | passed | `tailscale_launch_orders_journal_before_apply`; `tailscale_launch_tolerates_unrelated_prestate_drift` |
+| T-11802-E02 | **passed for the injectable rows, with the frozen local-path-resolution row still descriptive** | `tailscale_pre_mutation_failures_never_apply`; T-11806 owns the missing deterministic local registration-path resolution seam before exhaustive fault coverage is claimed |
+| T-11802-E03/E04 | passed | `tailscale_launch_failure_matrix_holds_or_compensates_exactly`; `tailscale_identity_races_never_publish_or_cross_profile_cleanup`; `tailscale_cleanup_allows_same_node_rename_without_https_authority` |
+| T-11803-E01 | passed | `status_reports_each_proxy_state`; `status_exact_proxy_is_not_ready_after_tailscale_identity_drift`; `localapi_descendant_blocks_publication_but_cleanup_preserves_it`; `localapi_cleanup_preserves_alias_and_unrelated_host_token` |
+| T-11803-E02/E03/E04/E05 | passed | `down_cleans_proxy_before_process`; `down_proxy_failure_matrix_preserves_journal`; `down_retries_absent_proxy_and_stale_process`; `legacy_tailscale_registration_remains_unowned` |
+| T-11804-E01 | **locked CLI probe clause superseded** by bounded, read-only LocalAPI status/config/status sessions; the old CLI transport was not executed | `doctor_tailscale_is_bounded_and_read_only`; `status_binding_uses_stable_id_and_https_capability`; `session_reuses_one_connection_for_status_serve_status` |
+| T-11804-E02/E03 | passed | `doctor_blockers_precede_all_probes`; `tailscale_operator_rendering_is_copy_paste_complete` |
+| T-11805-E01 | **locked fake-CLI fixture clause superseded** by a real Ferric process against a stateful fake LocalAPI | `tailscale_localapi_lifecycle_preserves_unrelated_state` |
+| T-11805-E02 | passed | `tailscale_fault_seam_clause_matrix` and the final 84-test server substring filter, including six `api::server::tests` |
+| T-11805-E03 | **locked argv-ledger clause superseded** by an exact HTTP request/CAS ledger; the old CLI log test was not executed | `tailscale_localapi_log_contains_no_broad_mutation_or_retry`; `ordinary_ferric_ignores_lifecycle_localapi_override` |
+
+Detailed arrangements and evidence boundaries are retained in the
 [unit/composition](unit-tests.md), [integration](integration-tests.md), and
-[end-to-end](e2e-tests.md) results.
+[end-to-end](e2e-tests.md) records.
 
 ## Canonical confirmations
 
-- Formatting passed.
-- Ferric CLI all-target/all-feature Clippy passed with warnings denied.
-- The `tailscale_` filter passed 17 tests with one intentional subprocess
-  helper ignore; its three matching lifecycle-fixture tests also passed.
-- All 73 `server::tests` passed.
-- All five serialized lifecycle E2Es passed, including three new Tailscale
-  rows and the real repeated-down path.
-- `cargo test --workspace --all-targets --all-features` passed with ordinary
-  nested-process permission: 1,108 passed, 0 failed, five intentional helper
-  ignores across 57 suite summaries.
-- Frozen package doc command 7 exited 1 with `no library targets found`; the
-  supplemental applicable `cargo test --workspace --doc` passed all 14 library
-  targets, which contain zero doctests.
-- `git diff --check` and both exact `cargo run -p ferric-cli -- server ...
-  --help` smokes passed after restoring `ferric` as the package default run
-  target.
+- `cargo fmt --all -- --check` passed.
+- Workspace all-target/all-feature Clippy passed with warnings denied.
+- LocalAPI tests passed 19/19; Serve tests passed 17/17; the server substring
+  filter passed 84/84 (including six `api::server::tests`); lifecycle fixtures
+  passed 5/5.
+- The exact frozen `cargo test -p ferric-cli --all-features tailscale_`
+  command passed 55 unit tests plus 2 lifecycle tests; all other selected
+  targets ran 0 tests.
+- `cargo test --workspace --all-targets --all-features` passed outside the
+  restricted sandbox. The restricted attempt was unable to qualify the nested
+  Python benchmark child; the identical command with ordinary child-process
+  permission is the authoritative result.
+- Applicable workspace doc tests and both operator help smokes passed.
+- The default-feature `ferric` aarch64 Linux check passed. The all-feature
+  aarch64 attempt reached `ring` and was blocked only because the host lacks
+  `aarch64-linux-gnu-gcc`; it produced no Ferric diagnostic.
+- `git diff --check` passed before evidence reconciliation.
 - The protected Sprint 114 acquisition artifact remained unstaged with
   SHA-256
   `8ECF94878E7AD745AEA28A9365AF58EE111C80B26D21A15A0F434EDB2BEB75DB`.
 
-## Adversarial correction record
+The frozen package-specific command `cargo test -p ferric-cli --doc` exited 1
+with `error: no library targets found in package ferric-cli` because
+`ferric-cli` contains binaries and integration tests with doctests disabled.
+The applicable supplemental command `cargo test --workspace --doc` passed.
+This preserves the immutable command result; it does not relabel that command
+green.
 
-The initial mandatory Test critique returned `block`. It correctly found that
-entropy/identity tests could not observe a production engine-spawn ordering
-regression and that the purported repeated-down row supplied a synthetic empty
-plan instead of consuming real post-cleanup state. Commit `0145e45` made the
-production prepare-before-launch boundary own an observable launch closure and
-added a second real CLI down with unchanged external command ledger, absent
-journals, closed listener, and unchanged unrelated state. All executable gates
-were rerun at that head. The second independent critique accepted those fixes
-and retained only the two provenance caveats above.
+## Post-Loop correction and review
 
-Test execution also caught and corrected two pre-critic regressions: the
-feature-gated fixture binary initially made `cargo run -p ferric-cli`
-ambiguous (`35f16d5` restores the default target), and one fixture assertion
-used a concrete home-directory form (`411d437` restores template hygiene).
-Failed attempts remain in [unit test evidence](unit-tests.md#corrected-attempts)
-rather than being hidden by the final pass.
+The mandatory extra adversarial pass found that the first implementation's
+native CLI compare/modify boundary could not supply the hostile concurrency or
+completion semantics required by the ownership claim. It also exposed
+identity-switch, route-shadow, shared-scaffold, version-drift, transport, and
+fixture-isolation cases that the earlier argv ledger could not prove. The Loop
+was reopened rather than PRing that implementation.
+
+Final tested head `d5e61b7` includes the LocalAPI correction begun at
+`625fbba`, plus the mandatory final-audit fixes. It uses a bounded client over the
+Linux Unix-domain socket or Windows protected named pipe, pins the normal
+capability/version contract, validates duplicate-safe status and Serve JSON,
+binds configuration reads to same-session identity sandwiches, verifies the
+raw-body SHA-256 ETag, sends at most one exact `If-Match` POST, treats HTTP 412
+as definite no-mutation, and treats post-send failures as indeterminate. It
+also adds handler-only compatible-version cleanup, descendant/alias/ancestor
+route-shadow retention, strict pinned cleanup snapshots, future-semantics
+status refusal, stable-node/FQDN lifecycle rules, scaffold provenance, and an
+isolated test-only TCP endpoint available only to `ferric-lifecycle-test`.
+
+The complete correction and five-phase audit are recorded in the
+[post-Loop adversarial review](../post-loop-adversarial-review.md). The final
+independent re-reviews found no remaining P0-P2 issue and retained only the P3
+limitations named above.
 
 ## Environment and CI conclusion
 
-Local execution used Rust/Cargo 1.96.0 on x86_64 Windows. The first restricted
-workspace attempt blocked a nested benchmark Python child; the identical
-canonical command passed with ordinary subprocess permission, matching the
-already accepted harness qualification boundary from Sprint 117.
-
-No Sprint 118 GitHub CI run exists before the sprint PR is opened. Therefore
-the authoritative Test-phase conclusion is local at the recorded code head;
-remote CI is pending and is not inferred or claimed here.
+Local execution used Rust/Cargo 1.96.0 on x86_64 Windows. There is no Sprint
+118 GitHub CI conclusion before its PR is opened, so the authoritative Test
+conclusion is local at the exact corrected head. Remote checks are pending and
+are neither inferred nor claimed here.

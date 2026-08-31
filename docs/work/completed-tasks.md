@@ -1800,3 +1800,66 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   lifecycle fixture tests passed; Ferric CLI all-target, all-feature Clippy
   passed with warnings denied; formatting and diff checks passed.
 - **Commit:** `e04f39fc90035d3e1ad0c312e01dfadb306a5835`
+
+## Sprint 118 post-Loop correction
+
+- **Scope:** The required extra adversarial pass reopened Loop after T-11801
+  through T-11805 and found that the fixed Tailscale CLI mutation path could
+  not supply the ownership-safe compare-and-swap contract the sprint intended.
+  The task entries above remain the historical records of their original
+  commits; they are not the final accepted implementation.
+- **Final implementation:** Replaced Serve CLI mutation and its fake executable
+  with a bounded direct Tailscale LocalAPI transport and a model-free fake
+  LocalAPI fixture. Normal operation pins the supported API capability and
+  Tailscale version, hashes the unmodified Serve response body for its SHA-256
+  ETag, and issues exactly one scoped update with the matching `If-Match`
+  header. There is no mutation retry: a precondition failure proves no
+  mutation, while a transport failure after send remains indeterminate.
+- **Ownership and cleanup:** Schema-v2 mirrored write-ahead journals retain
+  typed stable-node identity, FQDN, exact target and handler path, scaffold
+  provenance, and the apply-confirmed phase. Identity is sandwiched around
+  each read/mutation decision. Cleanup may remove only the exact owned handler;
+  unrelated handlers, foreground Serve state, Funnel state, and scaffolds not
+  created by Ferric are preserved. A future or otherwise unsupported version
+  retains the journal whenever safe interpretation cannot be proved.
+- **Evidence:** The corrected model-free fixture proves same-connection
+  status/config/status sandwiches, journal presence before each mutation, raw
+  ETag and one-CAS behavior, exact endpoint scope, preservation of unrelated
+  Serve state, full owned-state restoration, idempotent repeated `down`, and
+  that the ordinary production binary cannot activate the test transport. See
+  the [post-Loop adversarial review](../sprints/s118/post-loop-adversarial-review.md)
+  and corrected Sprint 118 Test evidence for the complete Research, Plan,
+  Build, Test, and Loop audit.
+- **Substantive LocalAPI correction:** `625fbba116cb5eb04030dd52d07f3ac64d90a84d`
+- **Final adversarial correction:** `9ff40c02c0df38e3d08e04c7f030f676bffcd970`
+- **Accepted tested code head:** `d5e61b7f951ca838ea2aed7cefaa2468282bb164`
+
+## T-11510 (sprint 118)
+
+- **Description:** Completed the ordered positive Tailscale lifecycle umbrella.
+  [T-11801](#t-11801-sprint-118) through
+  [T-11805](#t-11805-sprint-118) record the initial adapter, launch, status,
+  teardown, doctor, operator, and model-free lifecycle increments. The
+  [post-Loop correction](#sprint-118-post-loop-correction) rejected their
+  fixed-CLI mutation boundary, replaced it with direct LocalAPI
+  ETag/`If-Match` CAS, and substantive adversarial correction
+  `9ff40c02c0df38e3d08e04c7f030f676bffcd970` added effective ancestor-route
+  retention and truthful LocalAPI diagnostics. A final comment-only
+  terminology alignment produced tested head
+  `d5e61b7f951ca838ea2aed7cefaa2468282bb164`. Those retained records are the
+  implementation history; `d5e61b7` is the accepted code outcome for this
+  umbrella task.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md)
+- **Completed:** 2026-08-31T06:49:11-04:00
+- **Scope closed:** `server up --tailscale` now uses durable phased ownership,
+  one exact LocalAPI CAS per mutation attempt, same-session identity binding,
+  proxy-first compensation and teardown, truthful status/doctor output, and
+  model-free request-ledger proof without a node-wide reset. Live-tailnet
+  acceptance, unconfirmed absent-only convergence, native transport parity,
+  macOS discovery, and the wider compact model workflow remain separately
+  tracked work.
+- **Verification:** See the corrected
+  [Sprint 118 Test report](../sprints/s118/sprint-tests/test-report.md),
+  [Test critique](../sprints/s118/sprint-tests/critique.md), and
+  [post-Loop adversarial review](../sprints/s118/post-loop-adversarial-review.md).
+- **Accepted code head:** `d5e61b7f951ca838ea2aed7cefaa2468282bb164`
