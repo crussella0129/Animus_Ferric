@@ -2253,6 +2253,43 @@ fn published_finals(published: &PublishedRegistrations) -> Vec<CapturedRegistrat
     finals
 }
 
+fn require_post_publication_authority<P: RetainedProcessHandle>(
+    process: &P,
+    port: u16,
+    published: &PublishedRegistrations,
+) -> Result<(), String> {
+    let runfile = &published.local.runfile;
+    if runfile.pid != process.pid() || runfile.port != port {
+        return Err(format!(
+            "published registration coordinates PID {} port {}, but the retained child is PID {} port {port}",
+            runfile.pid,
+            runfile.port,
+            process.pid()
+        ));
+    }
+    let expected = runfile.process_identity.as_ref().ok_or_else(|| {
+        "published schema-v2 registration has no process identity for final authority validation"
+            .to_string()
+    })?;
+    let current = process.inspect(port).map_err(|error| {
+        format!(
+            "could not revalidate retained process/listener authority after registration publication: {error}"
+        )
+    })?;
+    if &current.identity != expected {
+        return Err(
+            "retained process identity changed during registration publication".to_string(),
+        );
+    }
+    if current.listener != ListenerState::OwnedByTarget {
+        return Err(format!(
+            "retained process no longer exclusively owns the expected loopback listener after registration publication: {:?}",
+            current.listener
+        ));
+    }
+    Ok(())
+}
+
 fn publication_removal_outcome(
     result: Result<RemovalOutcome, RemovalError>,
 ) -> DownRegistrationOutcome {
@@ -2359,17 +2396,20 @@ where
 {
     let (failure, finals, stages) = match publication {
         Ok(published) => match child.try_wait() {
-            Ok(None) => {
-                return PublicationCompletionReport {
-                    disposition: PublicationDisposition::Ready,
-                    published: Some(published),
-                    shutdown: None,
-                    finals: Vec::new(),
-                    stages: Vec::new(),
-                    diagnostics: Vec::new(),
-                    success: true,
-                };
-            }
+            Ok(None) => match require_post_publication_authority(process, port, &published) {
+                Ok(()) => {
+                    return PublicationCompletionReport {
+                        disposition: PublicationDisposition::Ready,
+                        published: Some(published),
+                        shutdown: None,
+                        finals: Vec::new(),
+                        stages: Vec::new(),
+                        diagnostics: Vec::new(),
+                        success: true,
+                    };
+                }
+                Err(error) => (error, published_finals(&published), Vec::new()),
+            },
             Ok(Some(status)) => (
                 format!("engine process exited during registration publication ({status})"),
                 published_finals(&published),
@@ -10469,6 +10509,10 @@ pub(crate) mod tests {
             .with_inspection(Ok(ProcessFacts {
                 identity: discovery_fixture_identity(u64::from(pid)),
                 listener: ListenerState::OwnedByTarget,
+            }))
+            .with_inspection(Ok(ProcessFacts {
+                identity: discovery_fixture_identity(u64::from(pid)),
+                listener: ListenerState::OwnedByTarget,
             }));
         let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
@@ -10531,12 +10575,144 @@ pub(crate) mod tests {
                 )
             })
             .unwrap();
-        let final_inspection = events
+        let pre_publication_inspection = events
             .iter()
             .position(|event| *event == LifecycleEvent::Inspect("up-bound-generation", port))
             .unwrap();
-        assert!(bind < readiness && readiness < final_inspection && final_inspection < publication);
+        let post_publication_child_check = events
+            .iter()
+            .enumerate()
+            .find_map(|(index, event)| {
+                (publication < index && *event == LifecycleEvent::ChildTryWait(pid))
+                    .then_some(index)
+            })
+            .unwrap();
+        let post_publication_inspection = events
+            .iter()
+            .rposition(|event| *event == LifecycleEvent::Inspect("up-bound-generation", port))
+            .unwrap();
+        assert!(
+            bind < readiness
+                && readiness < pre_publication_inspection
+                && pre_publication_inspection < publication
+                && publication < post_publication_child_check
+                && post_publication_child_check < post_publication_inspection
+        );
         drop(events);
+
+        // A live child may change identity or listener ownership while the
+        // registration files are being persisted. Neither transition may
+        // cross the final Ready boundary: stop the retained generation and
+        // compensate the exact attempt-owned publication instead.
+        for (case, changed_identity, post_listener) in [
+            ("identity-transition", true, ListenerState::OwnedByTarget),
+            (
+                "listener-transition",
+                false,
+                ListenerState::OwnedByTargetWildcard,
+            ),
+        ] {
+            let case_pid = pid + if changed_identity { 10 } else { 20 };
+            let case_port = port + if changed_identity { 10 } else { 20 };
+            let case_workspace = root.path().join(case);
+            let expected_identity = discovery_fixture_identity(u64::from(case_pid));
+            let post_identity = if changed_identity {
+                discovery_fixture_identity(u64::from(case_pid + 1))
+            } else {
+                expected_identity.clone()
+            };
+            let case_ledger = Rc::new(RefCell::new(Vec::new()));
+            let process = ScriptedProcess::new(
+                case_pid,
+                "post-publication-transition",
+                Rc::clone(&case_ledger),
+            )
+            .with_inspection(Ok(ProcessFacts {
+                identity: expected_identity,
+                listener: ListenerState::OwnedByTarget,
+            }))
+            .with_inspection(Ok(ProcessFacts {
+                identity: post_identity,
+                listener: post_listener,
+            }));
+            let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&case_ledger));
+            let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&case_ledger));
+            let mut health = ScriptedHealth {
+                results: VecDeque::from([true]),
+                ledger: Rc::clone(&case_ledger),
+            };
+            let mut clock = ScriptedClock {
+                now: Instant::now(),
+                ledger: Rc::clone(&case_ledger),
+            };
+            let mut persistence =
+                CompositionPersistenceEffects::default_with(Rc::clone(&case_ledger));
+            let mut compensation = FilesystemPublicationEffects {
+                ledger: Rc::clone(&case_ledger),
+            };
+            let mut case_cfg = cfg(Engine::LlamaServer);
+            case_cfg.port = case_port;
+            let spawn_ledger = Rc::clone(&case_ledger);
+            let result = orchestrate_launch_with(
+                &case_workspace,
+                None,
+                &case_cfg,
+                move || {
+                    spawn_ledger
+                        .borrow_mut()
+                        .push(LifecycleEvent::Spawn(case_pid));
+                    Ok(ScriptedChild::new(
+                        case_pid,
+                        [Ok(None), Ok(None), Ok(None), Ok(None)],
+                        Rc::clone(&spawn_ledger),
+                    ))
+                },
+                &runtime,
+                &listener,
+                &mut health,
+                &mut clock,
+                |workspace, global, runfile| {
+                    publish_mirrored_with(workspace, global, runfile, &mut persistence)
+                },
+                &mut compensation,
+            );
+            let Err(LaunchOrchestrationError::Publication(report)) = result else {
+                panic!("{case} must fail through publication compensation");
+            };
+            assert_eq!(
+                report.disposition,
+                PublicationDisposition::RolledBack,
+                "{case}"
+            );
+            assert!(!report.success, "{case}");
+            assert!(!runfile_path(&case_workspace).exists(), "{case}");
+            let events = case_ledger.borrow();
+            let inspections = events
+                .iter()
+                .enumerate()
+                .filter_map(|(index, event)| {
+                    (*event == LifecycleEvent::Inspect("post-publication-transition", case_port))
+                        .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(inspections.len(), 2, "{case}");
+            let publication = events
+                .iter()
+                .rposition(|event| matches!(event, LifecycleEvent::Persistence(_, _)))
+                .unwrap();
+            let terminate = events
+                .iter()
+                .position(|event| {
+                    *event == LifecycleEvent::Terminate("post-publication-transition")
+                })
+                .unwrap();
+            let remove = events
+                .iter()
+                .position(|event| matches!(event, LifecycleEvent::Remove(_, _)))
+                .unwrap();
+            assert!(inspections[0] < publication && publication < inspections[1]);
+            assert!(inspections[1] < terminate && terminate < remove);
+        }
 
         let blocked_ledger = Rc::new(RefCell::new(Vec::new()));
         let runtime = ScriptedRuntime::new(
@@ -10781,7 +10957,14 @@ pub(crate) mod tests {
                 &mut persistence,
             );
             assert_eq!(persistence.serializations, 1);
-            let process = ScriptedProcess::new(pid, "publication-success", Rc::clone(&ledger));
+            let process = ScriptedProcess::new(pid, "publication-success", Rc::clone(&ledger))
+                .with_inspection(Ok(ProcessFacts {
+                    identity: runfile
+                        .process_identity
+                        .clone()
+                        .expect("successful schema-v2 publication has process identity"),
+                    listener: ListenerState::OwnedByTarget,
+                }));
             let mut child = ScriptedChild::new(pid, [Ok(None)], Rc::clone(&ledger));
             let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
             let mut cleanup = ScriptedPublicationEffects::new(
@@ -10810,7 +10993,10 @@ pub(crate) mod tests {
             }
             assert_eq!(
                 ledger.borrow().last(),
-                Some(&LifecycleEvent::ChildTryWait(pid))
+                Some(&LifecycleEvent::Inspect(
+                    "publication-success",
+                    runfile.port
+                ))
             );
             assert!(ledger.borrow().iter().all(|event| !matches!(
                 event,
