@@ -109,7 +109,7 @@ jobs:
               # the Rust harness as PID 1: exited managed children would remain
               # zombies and poison later /proc listener-owner queries.
               # Credential changes clear PDEATHSIG unless setpriv restores it;
-              # retain unshare's --kill-child hard-cleanup contract.
+              # retain the unshare --kill-child hard-cleanup contract.
               exec setpriv --pdeathsig keep \
                 --reuid="$1" --regid="$2" --clear-groups \
                 --no-new-privs --inh-caps=-all --ambient-caps=-all \
