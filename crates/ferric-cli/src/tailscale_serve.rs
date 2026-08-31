@@ -304,9 +304,9 @@ pub(crate) fn prepare_coordinate_with_entropy<E: EntropySource>(
     coordinate_from_token(port, identity, token)
 }
 
-/// Draw the ownership coordinate before identity or command probes. This
+/// Draw the ownership coordinate before identity or LocalAPI probes. This
 /// split lets launch preflight prove that entropy failure advances neither an
-/// engine counter nor a Tailscale command counter.
+/// engine counter nor a Tailscale LocalAPI operation counter.
 pub(crate) fn generate_token() -> Result<String, TailscaleServeError> {
     generate_token_with_entropy(&OsEntropy)
 }
