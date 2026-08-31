@@ -259,3 +259,7 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 ## Post-Sprint 117 lifecycle carry-forward
 
 - [ ] T-11707 (backlog, before AC-8 platform parity is claimed) [intent: INT-0008]: Design and prove ordinary-host Linux lifecycle authority that does not require complete enumeration of every unrelated `/proc/<pid>/fd` peer. Preserve the current fail-closed result for unreadable or shared owners; do not infer exclusivity from incomplete visibility. Prefer a durable launch-owned authority coordinate or equivalent kernel-backed proof, and add shared-host positive and negative CI coverage before changing teardown authorization. — touches: `crates/ferric-cli/src/server_process.rs`, lifecycle registration/ownership schema, Linux integration fixtures, CI, server/operator docs
+
+## Post-Sprint 118 Tailscale proof carry-forward
+
+- [ ] T-11806 (backlog, before claiming exhaustive Tailscale pre-mutation fault coverage) [intent: INT-0008]: Factor local registration-path resolution behind a deterministic injected effect or equivalent seam, then prove resolution failure stops and reaps only the retained child, performs zero Serve mutation or journal publication, and preserves unrelated state without global current-directory manipulation. — touches: `crates/ferric-cli/src/server.rs`, lifecycle fault matrices, Sprint test planning
