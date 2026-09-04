@@ -98,6 +98,11 @@ complete.
    independent verification, and truthful terminal results remain testable.
    Concise operator output links to the full retained evidence instead of
    discarding it.
+   Development and acceptance runs use source-aware Cargo commands, not direct
+   invocation of build artifacts or ad-hoc background executable proofs.
+   Source-defined process tests own bounded cancellation-safe cleanup and prove
+   their children are reaped before reporting success; manual termination of
+   leftovers never converts a failed run into successful evidence.
 7. Cleanup is scoped, previewable, idempotent, and ownership-aware. Its default
    mode stops only owned live resources and removes disposable staging data;
    retained run evidence and acquired models require separate explicit intent
@@ -175,6 +180,12 @@ users through an opaque wizard.
 
 ## Transition history
 
+- 2026-09-04: clarified AC-6 at the owner's direction with the source-driven
+  execution and source-owned reaping contract. Sprint 119 reviews and
+  consolidates the uncommitted cleanup carryover after Sprint 118's actual
+  merge. Work evidence: [Sprint 119 research](../sprints/s119/sprint-research/research-report.md).
+  This is an acceptance-boundary revision, not a lifecycle state transition
+  or a claim of broader workflow/platform completion.
 - 2026-08-27: created as `proposed` from operator feedback that Sprint 114's
   safe local-model test required an unreasonable number of manual PowerShell
   commands.
