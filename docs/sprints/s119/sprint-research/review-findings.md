@@ -3,6 +3,11 @@
 Reviewers: `process_review_research` and `lifecycle_review_research`.
 Both inspected source only; neither launched executables or changed files.
 
+Review dimensions (engineering code-review checklist): security needs changes
+at the exact ownership/signal boundary; correctness needs changes for rollback
+and reaping; performance needs changes for bounded pipe collection;
+maintainability needs changes because duplicated implementations diverged.
+
 1. P1: CLI containment's command-group Windows spawn can abandon a suspended
    child after a failed assignment/resume. Guard ownership immediately.
 2. P1: command-group wait is not zero-active-process Job evidence. Query actual
