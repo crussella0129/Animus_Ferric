@@ -178,6 +178,20 @@ profiles, and verified checkpoints are reused idempotently. Preserving the
 advanced surface increases compatibility work, but avoids forcing CI and power
 users through an opaque wizard.
 
+The Sprint 119 process refactor is a partial safety increment, not full AC-6
+or platform-parity acceptance. Windows Jobs can own nested descendant Jobs;
+the proposed Unix implementation owns a cooperative process group, not a
+security boundary against group escape. Linux tests involving orphaned
+descendants require an actual scoped reaper, and controlled cancellation
+requires a surviving source supervisor or namespace lifetime boundary.
+Immediate SIGKILL of a process that owns separate nested groups cannot be
+repaired by that same process's parent-watcher thread. Broader abrupt-owner
+death/group-escape containment needs a separately designed durable supervisor
+or kernel-backed scope before it can contribute to the eventual AC-6/AC-8
+guarantee. Until then, tests must state their boundary and fail if their own
+children cannot be proved reaped; this limitation does not waive that test
+success condition.
+
 ## Transition history
 
 - 2026-09-04: clarified AC-6 at the owner's direction with the source-driven

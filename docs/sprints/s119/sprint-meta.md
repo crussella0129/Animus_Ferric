@@ -24,6 +24,10 @@ and then restored exactly. It has not been staged, altered, or stashed.
 Research exit is not claimed; Plan proposal review is preliminary. No plans
 have been locked and no new Sprint 119 implementation or test execution is
 claimed. Existing dirty source remains carryover, not acceptance evidence.
+The independent proposal critic initially blocked on three scope/test mapping
+gaps. All were corrected in the unlocked proposal and durable intent; the
+repeat [critique](sprint-plans/critique.md) is clean. The Research clean-state
+gate remains pending, so this does not authorize skipping to Build.
 
 The installed 0.22.0 skill is a Claude adapter; this Codex host exposes no
 `EnterPlanMode`/`ExitPlanMode` tools. Implementation remains untouched during

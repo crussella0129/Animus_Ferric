@@ -21,7 +21,9 @@
 - `scope_cleanup_success_timeout_unwind`: source-defined child modes exercise
   success, timeout, and unwind; cleanup outcome is asserted, not inferred.
 - `leader_exit_reaps_descendants`: leader exits with a remaining controlled
-  descendant; exact process observation and group/Job accounting prove cleanup.
+  descendant holding both inherited stdout/stderr capture handles; exact process
+  observation and group/Job accounting prove cleanup, and collection completes
+  within the execution plus cleanup bounds (E01 and E03).
 - `windows_spawn_failure_rolls_back`: deterministic post-create failure seam
   exercises assignment/resume rollback with an exact retained handle.
 - `bounded_capture_head_tail_and_noisy_child`: oversized output, chosen prefix
@@ -36,7 +38,10 @@
 - `invalid_pidfd_events_fail_closed`: native event decoder rejects invalid/error
   descriptors and distinguishes exit from reaping; Linux-only where applicable.
 - `shutdown_registry_rejects_late_spawn`: deterministic serialized registry
-  transition refuses registrations after shutdown; no stale signal snapshot.
+  transition refuses registrations after shutdown. A second interleaving races
+  normal final absence/removal against shutdown signalling; an injected signal
+  recorder proves removed registrations are never signalled from a stale
+  snapshot, independently of the late-registration assertion.
 
 ## Integration Tests
 
