@@ -3,14 +3,14 @@
 - **Sprint number:** 120
 - **Book schema version:** 2
 - **Start timestamp:** 2026-09-05T02:20:09Z
-- **End timestamp:** (filled at Loop Phase)
+- **End timestamp:** 2026-09-05T05:47:27Z
 - **Model:** gpt-6-astra, ultra (user-selected; runtime identity not independently exposed)
 - **Bundle version:** 0.22.0
-- **Exit status:** in-progress
+- **Exit status:** success
 - **Token count:** (filled at Loop Phase if observable)
 - **Summary:** Human-first local sessions with safe automatic preparation and compact expert access
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
-- **Completion evidence:** (filled at Loop Phase)
+- **Completion evidence:** Accepted Test at 0ec5a0e: all eight CI jobs, named clauses, fresh Cargo live/TTY and checked cleanup; Loop reconciled, extra post-Loop audit required before the sole PR.
 
 ## Approved resume
 
