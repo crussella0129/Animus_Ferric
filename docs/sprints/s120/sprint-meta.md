@@ -8,11 +8,21 @@
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** Human-first prepared-host startup and repository review; approved canonical plans locked, Build in progress.
+- **Summary:** Human-first local sessions with safe automatic preparation and compact expert access
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
 - **Completion evidence:** (filled at Loop Phase)
 
 ## Approved resume
+
+### Build exit
+
+All six approved tasks now have implementation and focused/native verification
+evidence. The final coherent Windows workspace passed 1,245 tests with seven
+intentional ignores; the separately required lifecycle suite passed 5/5.
+Formatting and warnings-denied workspace/lifecycle clippy passed. Failed fixture
+attempts and their bounded-reader/writer corrections remain in unit evidence.
+The implementation-head CI push and exact-head live/terminal runs are next;
+Test acceptance, Loop, extra post-Loop audit and the sole PR are still pending.
 
 ### Build implementation dependencies
 

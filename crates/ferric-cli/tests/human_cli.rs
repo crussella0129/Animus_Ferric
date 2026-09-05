@@ -94,13 +94,61 @@ fn primary_help_is_compact() {
     assert!(!help.contains("--gpu-layers"));
 }
 
+#[cfg(feature = "backend-openai")]
+#[test]
+fn human_invalid_config_blocks_before_preparation() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".ferric")).unwrap();
+    let config = "api_key = 'never-print-this-credential'\ntemperature = 'invalid'\n";
+    std::fs::write(root.path().join(".ferric/config.toml"), config).unwrap();
+    for arguments in [
+        vec!["run", "hello"],
+        vec!["status"],
+        vec!["explain", "--json"],
+    ] {
+        let result = output(command(root.path()).args(arguments));
+        assert_eq!(result.status.code(), Some(1));
+        let diagnostic = format!(
+            "{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(!diagnostic.contains("never-print-this-credential"));
+        assert!(diagnostic.contains("config"), "{diagnostic}");
+        assert!(!root.path().join(".ferric-startup.lock").exists());
+        assert_eq!(
+            std::fs::read_dir(root.path().join(".ferric"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(".ferric/config.toml")).unwrap(),
+            config
+        );
+    }
+}
+
 #[test]
 fn advanced_original_commands_compatible() {
     let root = tempfile::tempdir().unwrap();
-    for name in [
-        "query", "bench", "mcp", "chat", "launch", "icm", "cron", "revert", "dream", "server",
-        "skills", "trace",
-    ] {
+    let names = [
+        "query",
+        "bench",
+        "mcp",
+        "chat",
+        "launch",
+        "icm",
+        "cron",
+        "revert",
+        "dream",
+        "server",
+        "skills",
+        "trace",
+        #[cfg(feature = "backend-openai")]
+        "api",
+    ];
+    for name in names {
         let direct = output(command(root.path()).args([name, "--help"]));
         let advanced = output(command(root.path()).args(["advanced", name, "--help"]));
         assert!(direct.status.success(), "direct {name}");
@@ -123,6 +171,53 @@ fn advanced_original_commands_compatible() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert!(root.path().join(".ferric/trace").is_dir());
+}
+
+#[cfg(feature = "backend-openai")]
+#[test]
+fn human_explain_does_not_contact_endpoint_or_prepare() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    std::fs::create_dir(root.path().join(".ferric")).unwrap();
+    std::fs::write(
+        root.path().join(".ferric/config.toml"),
+        format!(
+            "api_base = 'http://{}/v1'\napi_key = 'private-credential'\n",
+            listener.local_addr().unwrap()
+        ),
+    )
+    .unwrap();
+    for name in ["status", "explain"] {
+        let result = output(command(root.path()).args([name, "--json"]));
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let summary: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(summary["context"], 4096);
+        assert!(summary["ownership"].as_str().unwrap().contains("borrowed"));
+        assert!(summary["effects"].as_str().unwrap().contains("no network"));
+        assert!(
+            summary["qualification"]
+                .as_str()
+                .unwrap()
+                .starts_with("unqualified")
+        );
+        assert!(!String::from_utf8_lossy(&result.stdout).contains("private-credential"));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        assert!(!root.path().join(".ferric-startup.lock").exists());
+        assert_eq!(
+            std::fs::read_dir(root.path().join(".ferric"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
 }
 
 #[test]

@@ -146,3 +146,61 @@ No process failure was repaired manually.
 
 The separate successful real-model and terminal Build trials are recorded in
 E2E evidence. Exact-head aggregate native/CI qualification remains pending Test.
+
+## T-12006 — Strengthened journey and quality evidence
+
+The clause audit added actual simultaneous startup competition, full preparation
+cancellation with automatic cleanup, typed saved-state refusal, directory/model
+cap boundaries, expired overall-deadline rejection, explicit HTTP limit/redirect
+assertions, human invalid-config admission and a read-only endpoint contact trap.
+These augment rather than replace the originally named assertions. E06-A is a
+composition of the human journey and E02–E05 startup/provider suites as specified
+by the locked test plan. The current-thread signal test proves receiver-task
+nonpolling and owned abort/join; synchronous native handler registration also
+rests on source inspection of the fallible constructor, not a fabricated signal
+delivery measurement.
+
+Retained intermediate failures during the full parallel Windows gate:
+
+- Human request cancellation once returned an unexpected error without the
+  assertion retaining its payload. A later full run failed repeat startup with
+  `The server probe failed or exceeded five seconds.` Neither failed run is
+  accepted or claimed conclusively diagnosed from missing evidence.
+- Review identified a real fixture defect: 300ms (human) / 200ms (startup) read
+  polling intervals were treated as permanent failures instead of preserving
+  partial HTTP input until the request's absolute deadline. Both readers now
+  retain transient read results within the unchanged three-second cap. The
+  human regression deliberately pauses 450ms between fragments, then verifies
+  the complete request; a stalled peer separately proves the absolute bound.
+  That test passed, followed by two full parallel CLI passes (374/0/1 each at
+  that intermediate source state). Successful retries alone are not the fix.
+- The strengthened streamed-body assertion exposed that the original oversized
+  response fixture could fail as incomplete/timed-out rather than proving the
+  specific one-MiB admission limit. The precise assertion is retained; the
+  response delivery correction coalesces the bounded wire, disables Nagle in
+  this test server, and retains partial write progress through transient errors
+  until its unchanged finite deadline. Deterministic injected partial-write,
+  timeout/WouldBlock, perpetual-backpressure and late-final-write assertions
+  prove exact byte preservation and deadline refusal. The historical failing
+  attempt did not retain transport-stage detail, so delayed ACK/backpressure is
+  a plausible trigger, not a proved historical cause. New diagnostics retain
+  sent/total bytes and failure stage. Corrected startup suite: 37/37 passed;
+  final probe suite: 5/5 passed; CLI warnings-denied clippy and formatting pass.
+
+No failed test was repaired with manual process termination. Fixture ownership
+and cleanup remain in source; production five-second probes and provider
+cancellation budgets were not loosened. Final exact-head results and CI are
+recorded in the integration map after the coherent task commit.
+
+Final coherent Build gate: `cargo fmt --all --check`, explicit included-fixture
+`rustfmt --edition 2024 --check`, and warnings-denied workspace clippy passed.
+`cargo test --workspace --locked --quiet` on native Windows passed 1,245 tests
+with seven intentional ignores (three benchmark source modes, one opt-in live
+journey, one source process mode, two external research integrations). The CLI
+unit target was 380 passed / one opt-in live ignored; command integration 72/72,
+new human integration 7/7, docs 1/1, source contract 2/2, template hygiene 3/3,
+provider 47/47 and controlled mutations 15/15. The separate lifecycle-feature
+clippy passed and its serial Cargo integration suite passed 5/5 in 19.82 seconds.
+All shell wrapper static syntax checks passed. No direct artifact command or
+manual process repair was used. Final immutable-head formal results follow in
+the integration record; Build evidence is not the CI conclusion.

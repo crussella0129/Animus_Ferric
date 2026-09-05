@@ -291,5 +291,3 @@ front-door work remains subject to plan approval and lock.
 - [ ] T-11812 (backlog, before broad Linux appliance/distribution parity is claimed) [intent: INT-0008]: Implement a closed, platform-recognized LocalAPI socket-path selection matrix for supported Linux package layouts without adding a generic production endpoint override. Preserve the current explicit support boundary at `/var/run/tailscale/tailscaled.sock` until each added path has positive, permission-denied, timeout, and seam-containment coverage. — touches: `crates/ferric-cli/src/tailscale_localapi.rs`, Linux fixtures/CI, operator docs
 
 ## Sprint 120 — approved human-first implementation
-
-- [ ] T-12006 (sprint 120) [intent: INT-0005, INT-0006, INT-0008]: Qualify the complete prepared-host journey and publish concise truthful docs. — touches: journey/lifetime tests, CI, operator docs and Sprint 120 evidence

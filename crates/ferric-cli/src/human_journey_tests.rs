@@ -72,6 +72,118 @@ fn fixture_models(root: &Path, count: usize) {
     }
 }
 
+fn fixture_read_request(
+    socket: &mut std::net::TcpStream,
+    limit: Duration,
+) -> Option<(Vec<u8>, usize)> {
+    use std::io::Read;
+    let deadline = std::time::Instant::now() + limit;
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+            eprintln!(
+                "fixture request deadline expired: retained_bytes={}, limit_ms={}",
+                bytes.len(),
+                limit.as_millis()
+            );
+            return None;
+        };
+        if bytes.len() > 256 * 1024 {
+            return None;
+        }
+        socket
+            .set_read_timeout(Some(remaining.min(Duration::from_millis(300))))
+            .ok()?;
+        let count = match socket.read(&mut buffer) {
+            Ok(0) => return None,
+            Ok(count) => count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => {
+                eprintln!(
+                    "fixture request read failed: kind={:?}, retained_bytes={}",
+                    error.kind(),
+                    bytes.len()
+                );
+                return None;
+            }
+        };
+        if std::time::Instant::now() >= deadline
+            || count > (256 * 1024usize).saturating_sub(bytes.len())
+        {
+            return None;
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        if let Some(end) = bytes.windows(4).position(|slice| slice == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&bytes[..end]);
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if length > 256 * 1024 {
+                return None;
+            }
+            if bytes.len() >= end + 4 + length {
+                return Some((bytes, end + 4));
+            }
+        }
+    }
+}
+
+#[test]
+fn fixture_request_poll_timeout_preserves_fragments_and_absolute_bound() {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let mut client = std::net::TcpStream::connect_timeout(
+        &listener.local_addr().unwrap(),
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    let (mut server, _) = listener.accept().unwrap();
+    client
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    client
+        .write_all(b"POST /v1/chat/completions HTTP/1.1\r\nContent-Length: 2\r\n\r\n{")
+        .unwrap();
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(450));
+        client.write_all(b"}").unwrap();
+    });
+    let request = fixture_read_request(&mut server, Duration::from_secs(3));
+    writer.join().unwrap();
+    let (bytes, body_start) =
+        request.expect("a polling timeout must not discard a partial request");
+    assert_eq!(&bytes[body_start..], b"{}");
+    let mut stalled = std::net::TcpStream::connect_timeout(
+        &listener.local_addr().unwrap(),
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    let (mut server, _) = listener.accept().unwrap();
+    stalled
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    stalled.write_all(b"GET /health ").unwrap();
+    let started = std::time::Instant::now();
+    assert!(fixture_read_request(&mut server, Duration::from_millis(600)).is_none());
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
 #[test]
 fn fixture_human_engine() {
     use std::io::{Read, Write};
@@ -101,35 +213,9 @@ fn fixture_human_engine() {
         socket
             .set_write_timeout(Some(Duration::from_millis(300)))
             .unwrap();
-        let mut bytes = Vec::new();
         let mut buffer = [0_u8; 4096];
-        let request_deadline = std::time::Instant::now() + Duration::from_secs(3);
-        let body_start = loop {
-            if bytes.len() > 256 * 1024 || std::time::Instant::now() >= request_deadline {
-                break None;
-            }
-            let count = match socket.read(&mut buffer) {
-                Ok(0) | Err(_) => break None,
-                Ok(count) => count,
-            };
-            bytes.extend_from_slice(&buffer[..count]);
-            if let Some(end) = bytes.windows(4).position(|slice| slice == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&bytes[..end]);
-                let length = headers
-                    .lines()
-                    .find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse::<usize>().ok())
-                            .flatten()
-                    })
-                    .unwrap_or(0);
-                if bytes.len() >= end + 4 + length {
-                    break Some(end + 4);
-                }
-            }
-        };
-        let Some(body_start) = body_start else {
+        let Some((bytes, body_start)) = fixture_read_request(&mut socket, Duration::from_secs(3))
+        else {
             continue;
         };
         let is_completion = bytes.starts_with(b"POST /v1/chat/completions ");
@@ -406,7 +492,8 @@ fn human_cancel_during_request_reaps_owned_engine() {
         cancel,
         &preparation,
     );
-    assert!(result.unwrap_err().contains("Interrupted"));
+    let error = result.unwrap_err();
+    assert!(error.contains("Interrupted"), "{error}");
     preparation.assert_closed();
     let _again = crate::startup::test_support::begin(
         root.path(),

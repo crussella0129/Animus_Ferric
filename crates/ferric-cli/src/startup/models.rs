@@ -486,4 +486,37 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn local_directory_entry_and_model_count_limits_are_exact() {
+        let workspace = tempfile::tempdir().unwrap();
+        let directory = workspace.path().join("models");
+        std::fs::create_dir(&directory).unwrap();
+        for index in 0..ENTRY_LIMIT {
+            std::fs::write(directory.join(format!("entry-{index}.txt")), b"").unwrap();
+        }
+        assert!(scan(workspace.path(), None).unwrap().is_empty());
+        std::fs::write(directory.join("one-too-many.txt"), b"").unwrap();
+        let error = match scan(workspace.path(), None) {
+            Err(error) => error,
+            Ok(_) => panic!("directory entry cap was not enforced"),
+        };
+        assert!(error.to_string().contains("exceeds 256 entries"));
+
+        let workspace = tempfile::tempdir().unwrap();
+        let directory = workspace.path().join("models");
+        let model = gguf(&directory, 0);
+        for index in 1..MODEL_LIMIT {
+            std::fs::copy(&model, directory.join(format!("choice-{index}.gguf"))).unwrap();
+        }
+        let admitted = scan(workspace.path(), None).unwrap();
+        assert_eq!(admitted.len(), MODEL_LIMIT);
+        drop(admitted);
+        std::fs::copy(&model, directory.join("one-too-many.gguf")).unwrap();
+        let error = match scan(workspace.path(), None) {
+            Err(error) => error,
+            Ok(_) => panic!("model count cap was not enforced"),
+        };
+        assert!(error.to_string().contains("exceeds 128 GGUF files"));
+    }
 }

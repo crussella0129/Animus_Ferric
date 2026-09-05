@@ -1,0 +1,80 @@
+# Sprint 120 E2E evidence
+
+## Build acceptance trials
+
+Source later committed in T-12004 at `b4475d1` (subsequent synchronous signal
+admission and literal recovery quoting are included in that commit). These
+Build trials preceded those last two corrections; an exact-head live rerun
+and CI remain formal Test gates. No application or medium-horizon claim.
+
+The opt-in Cargo test was invoked with the existing Qwen2.5-Coder-7B-Instruct
+Q4_K_M GGUF in the repository's `models` directory:
+
+```powershell
+$env:FERRIC_LIVE_MODEL = '<repository>\models\qwen2.5-coder-7b-instruct-q4_k_m.gguf'
+cargo test --locked -p ferric-cli --bin ferric real_model_prepared_host_journey -- --ignored --exact human::enabled::tests::real_model_prepared_host_journey --nocapture --test-threads=1
+```
+
+Result: 1 passed / 0 failed; test lifetime 8.63 seconds. Observed elapsed session
+8.6087786 seconds; Ready 6.5709607 seconds; first response 7.2599263 seconds.
+Actual runtime reported `llama-server` version `10034 (505b1ed15)`.
+Actual settings: CPU-only, context 4096, temperature 0, unqualified.
+Provider model ID was the actual canonical GGUF path, not a fabricated default.
+
+Every input, in order:
+
+| Prompt | Input |
+|---|---|
+| Ask only, or allow file work here? | `ask` |
+| Start the local model? | `y` |
+| You | `Reply with exactly: Ferric is ready.` |
+| You | `/quit` |
+
+Two setup decisions. Output stated CPU memory cost/unmeasured fit, bounded
+engine checking/loading, owned foreground closed on exit, and Ask-only no file
+changes. Actual answer: `Ferric is ready.` The trace contained SessionStart,
+actual model/runtime/settings/user provenance, the answer, and SessionEnd with
+`answered`. `session` returned Ok only after checked ProcessTree cleanup;
+subsequent workspace-lock reacquisition passed. The fixture's `checked_cleanup`
+field is conservative: it is true only on whole-session success, not an
+independent classification of cleanup when a request fails. No failed request
+or cleanup is claimed in this successful run.
+
+## Actual terminal interaction
+
+A second, real PTY invocation used `cargo r -- run --workspace <fresh-temporary-folder>
+--model <repository-model>` on Windows. It was not a non-TTY welcome or merely
+a scripted IO reducer. The live terminal received `ask`, `y`, the same question,
+and `/quit` through actual terminal input. Observed transcript (folder/model
+paths replaced with documentation placeholders):
+
+```text
+Folder: <fresh-temporary-folder>
+Ask only, or allow file work here? [Enter = ask / work / quit] ask
+This starts a local CPU model and may use substantial memory. Resource fit is not measured.
+Start the local model? [y/N] y
+Checking the installed engine…
+Loading the model with conservative CPU settings (not hardware-qualified)…
+Ready: <actual-model-path> (owned foreground (closed on exit))
+Ask only — no file changes. Type a question; /quit ends the session.
+You › Reply with exactly: Ferric is ready.
+Ferric is ready.
+You › /quit
+Closing session…
+```
+
+Cargo process exit: 0. Product source owns the engine and explicitly awaits
+checked cleanup before returning success. No target artifact was tool-invoked,
+no extra executable was created as an ad-hoc proof, and no manual process
+termination repaired either run. PTY elapsed time includes operator/tool
+interaction delays, so the automated live trial supplies measured latencies.
+
+## Scope
+
+The mock E06-A composition is the human source journey suite plus the startup
+fault/borrow/concurrency suites, not a claim that one function independently
+retests every boundary. Unit/integration evidence will map each assertion.
+Full acquisition/calibration/resume, ordinary-host Linux positive authority,
+whole-Work Git cancellation and model-built application qualification remain
+the named INT-0007/INT-0008 follow-ups in the locked plan. Native Linux source
+acceptance must pass the explicitly isolated CI environment.

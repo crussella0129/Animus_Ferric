@@ -8,6 +8,10 @@ through Cargo inside its required non-root PID/network namespace. It uses
 executable. See [source-driven verification](../docs/process-execution.md) for
 the Windows Cargo command and exact cleanup/support boundaries.
 
+`bash tools/test-lifecycle-linux.sh workspace` runs the entire backend-enabled
+workspace suite in that same environment. Both modes warm their source targets
+before offline execution. Neither grants ordinary-host Linux lifecycle authority.
+
 ## Other runners
 
 Test and benchmark runners. `demo-smoke.ps1` is the deterministic, offline

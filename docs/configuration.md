@@ -4,6 +4,44 @@ Ferric reads a small, **named** set of config inputs — never a generic key-val
 map, and none of them can touch security policy (that stays hardcoded, ADR-005).
 Everything is per-workspace and optional.
 
+## Ordinary sessions
+
+Start with `cargo r` in the repository, or installed `ferric` in a work folder.
+Existing expert configuration supplies model/endpoint choices and applicable
+defaults; setup does not rewrite `.ferric/config.toml`. A missing configuration
+does not require a settings questionnaire.
+
+With an installed `llama-server`, setup can select a regular GGUF already in
+the workspace's `models` directory. Local launch defaults to CPU, zero GPU
+layers, and a 4096-token context unless context is explicitly configured.
+These settings are unqualified: model metadata does not establish memory fit,
+speed, grammar support, or coding capability. No model/engine downloads or
+capability benchmarks run implicitly.
+
+After successful preparation, `.ferric/startup-preference.json` remembers the
+selected model coordinate. It contains no API key or permission to edit files,
+does not replace `model_profiles.json`, and is revalidated before reuse.
+Malformed or stale preferences require a fresh selection or an explicit error.
+The human session uses conservative tool limits even when expert tier/ring
+overrides exist; expert commands retain their configured controls.
+Trace provenance labels these limits `conservative`, not measured capability
+or an expert override.
+
+Ask-only gives the model no file tools. Folder work requires consent on each
+session or `--allow-edits`, and grants no shell, hooks, or delegation. Ferric
+still writes its own preferences and traces in both modes. Session traces use
+the shared `.ferric/trace` directory.
+
+`.ferric-startup.lock` serializes startup within one workspace and remains on
+disk after the session; do not infer a running process from its presence or
+remove it while a session may be active. Status and explain read configuration
+and local resources without health probes, lock creation, or writes. They do
+not represent completed or resumable application checkpoints.
+
+Cancellation is bounded during startup and provider requests. In folder-work
+mode, an existing Git snapshot may delay cancellation until Git returns;
+T-12024 tracks that remaining boundary.
+
 ---
 
 ## Precedence
@@ -185,14 +223,16 @@ retain their separate skill-authorization rules.
 
 ## Data & runtime files
 
-Written under `.ferric/` in the workspace (all git-ignorable), except that an
-individual `ferric query --trace-dir <DIR>` writes that query's trace to the
-validated external directory instead:
+Written under `.ferric/` in the workspace (all git-ignorable), apart from the
+workspace-root startup lock and an individual `ferric query --trace-dir <DIR>`
+writing that query's trace to its validated external directory:
 
 | Path | What |
 |---|---|
 | `.ferric/server.json` | running server runfile (auto-discovery) |
 | `.ferric/trace/*.jsonl` | default per-session traces (the source of truth); query traces may use explicit `--trace-dir` |
+| `.ferric/startup-preference.json` | atomically saved model choice; separate from expert configuration and capability profiles |
+| `.ferric-startup.lock` | persistent, ignored workspace coordination file; the operating-system lock is released after owned cleanup |
 | `.ferric/cron/*.toml` + `.state.json` | cron jobs + last-run state |
 | `.ferric/MEMORY.md` | dream-mode consolidated memory |
 | `.ferric/tasks/` | background-task stdout/stderr redirects |
