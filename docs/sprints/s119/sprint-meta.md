@@ -34,3 +34,15 @@ The installed 0.22.0 skill is a Claude adapter; this Codex host exposes no
 proposal review, preserving the substantive source-freeze boundary. The user's
 request authorizes the whole bounded sprint, but does not override Book gates
 or authorize silently absorbing unrelated evidence.
+
+## Resume authorization
+
+The owner authorized continuing and temporarily preserving the one unrelated
+evidence edit. Stash `b985c494827c1ee861e21358c0c8641112b0aef1` contains only
+that path and must be restored and hash-verified before handoff. The substrate
+gate now reports complete, the Research clean-state gate passes, and the router
+reports Plan. The clean independent proposal is accepted for execution by the
+owner's continue instruction. Source remained untouched during Plan review.
+The requested repository-wide review/refactor is a distinct next sprint, not
+fulfilled by this bounded process-cleanup plan. It must retain its own PR and
+wait for the owner to merge this sprint before new sprint commits land on dev.
