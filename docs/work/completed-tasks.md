@@ -1951,4 +1951,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-09-05T04:08:14Z
 - **Files modified:** `crates/ferric-cli/src/startup.rs`, `startup/{models,probe,probe_tests,runtime,storage,tests}.rs`, CLI Cargo dependencies/main module declaration, `Cargo.lock`, `.gitignore`, `crates/ferric-guard/src/{denylist,checker}.rs`, Sprint 120 unit evidence/metadata and work ledgers.
 - **Verification:** Native Windows startup suite 30 passed, 0 failed; three corrected model-binding tests reran successfully after a lint-only fixture cleanup. CLI scoped backend clippy with warnings denied passed; guard lock regression and guard clippy passed; workspace formatting passed. Separate review found and closed directory-binding, stale-choice and version-deadline issues. Generation transport preservation is implemented and tested in T-12004 but is not part of this startup commit. Linux native execution, integrated human acceptance and live-model evidence remain Test gates.
-- **Commit:** PENDING
+- **Commit:** `998367cf9c19dca90d795e91672a4d3e851eabd0`
