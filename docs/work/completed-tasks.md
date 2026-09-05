@@ -1942,4 +1942,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-09-05T03:40:04Z
 - **Files modified:** `crates/ferric-provider/src/openai.rs`, `crates/ferric-provider/src/openai_io_tests.rs`, Sprint 120 unit evidence and work ledgers.
 - **Verification:** Source-aware provider suite 45 passed, 0 failed, 0 ignored; all-target backend provider clippy with warnings denied and scoped fmt check passed. Root and independent read-only boundary review found no blocker. Whole-request fixtures prove cancellation and connection closure within two seconds across stalled headers, error bodies, nonstream JSON and SSE. Human owned-engine integration remains a later T-12004/06 gate, not claimed by this provider commit.
-- **Commit:** PENDING
+- **Commit:** `742d442e56ea3cc121c3a6765c94c504922a6012`
