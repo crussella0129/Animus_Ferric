@@ -34,3 +34,33 @@ Research ended at 13:27:17 UTC after 19 minutes 27 seconds. The installed
 budget helper reported `files=31 sources=3` and its expected cap-exceeded exit;
 the report contains the required cross-cutting Budget Override. Source,
 dependency, tooling and CI paths remain unchanged against the merged baseline.
+
+## Research exit and Plan checkpoint
+
+Research was committed at `13c7ccb`; the clean-Book helper passed and the router
+reported `plan`. The skill's Claude-specific Plan Mode tools are unavailable
+on this host (tool discovery returned no matching APIs). No invocation or
+approval is fabricated: implementation remains unchanged while the owner
+reviews [scratch Build/Test plans](sprint-plans/plan-proposal.md).
+
+Canonical build/test plans remain empty and unlocked. Explicit owner approval
+must precede canonical plan writing, the required Plan critic and atomic
+finalization. A preliminary proposal critique, if obtained, does not replace
+those gates. Build, Test, Loop, the extra post-Loop audit and the sprint PR have
+not occurred. No new sprint or remote checkpoint is authorized by this pause.
+
+The independent [initial preliminary critique](sprint-plans/proposal-critique-initial.md)
+returned `block` for trace/sidecar collision preservation, live-fixture
+deadline composition and generated-resume context. The scratch proposal was
+revised to name no-clobber pair tests, a source-supervised fixture with reserved
+cleanup budgets, and cap/context round-trip plus changed-policy refusal.
+Re-review is required; the initial verdict is retained, not overwritten.
+
+The subsequent [independent preliminary re-review](sprint-plans/proposal-critique.md)
+returned `clean` after inspecting those actual revisions. This accepts the
+scratch proposal for owner review only. Canonical plans remain empty and
+unlocked, confidence remains 0.2, and no Build/Test/Loop completion is implied.
+The installed skill's explicit plan-approval gate pauses this turn. After
+approval, use these reviewed scratch boundaries to write canonical plans,
+attach Work evidence to active intents without no-op transitions, obtain the
+canonical critic verdict, commit the Book and run the finalization helper.
