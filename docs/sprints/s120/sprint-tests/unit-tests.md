@@ -332,3 +332,31 @@ Warnings-denied backend/default and backend-free CLI clippy, workspace formattin
 and explicit included-fixture formatting also passed. Independent read-only
 source/assertion re-review closed C-001 with no further blocker; the critic still
 withholds final Test acceptance until corrected immutable-head evidence and CI.
+
+## Final corrected implementation-head Windows gate
+
+Exact head `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d` was committed, pushed and
+remotely confirmed before these checks. Implementation remained unchanged.
+
+| Source invocation | Actual result |
+|---|---|
+| `cargo test --workspace --locked --quiet` | 1,247 passed / 0 failed / 7 intentional ignores |
+| `cargo test -p ferric-cli --no-default-features --locked --quiet` | 407 passed / 0 failed / 0 ignored |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
+| `cargo clippy -p ferric-cli --no-default-features --all-targets --locked -- -D warnings` | Passed |
+| `cargo fmt --all --check` | Passed |
+| `rustfmt --edition 2024 --check crates/ferric-cli/src/human_journey_tests.rs` | Passed |
+| Exact L command from integration map | 1 passed, 5.96 seconds; checked cleanup and lock reacquisition |
+| `cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1` | 5 passed / 0 failed / 0 ignored, 18.67 seconds |
+
+Workspace CLI units: 381 passed / one opt-in live ignore; CLI integrations 72,
+human integrations 8, docs 1, source 2, hygiene 3, provider 47, controlled
+mutations 15. Ignore reasons remain unchanged; L executes its ignore explicitly.
+Actual terminal evidence is retained separately in E2E. No run needed manual
+process repair. The final CI record retains native named per-suite confirmations.
+
+Separate exact-key runs also passed at this corrected head: H 14 (8+1+2+3),
+HU 17 / one separately executed live ignore in 2.66 seconds, S 38 in 13.54
+seconds, P 47 in 0.71 seconds, PY 16, M 15, CLI 72 in 17.53 seconds. All used
+the integration table's exact source-aware commands; no source edits occurred
+between them or the live/terminal checks.

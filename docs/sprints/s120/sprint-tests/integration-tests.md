@@ -2,19 +2,18 @@
 
 ## Status and evidence boundary
 
-**Candidate HEAD: `d3173ca40c2e3236080b0d7b1076728e0d5c682b`.
-Local/CI execution passed; Test remains blocked on E04-D's error-guidance correction.** This is an assertion inventory and invocation map,
+**Final implementation HEAD: `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`.
+Local native and all eight CI jobs passed; [formal critique](critique.md): clean.** This is an assertion inventory and invocation map,
 not a replacement for the locked [test plan](../sprint-plans/test-plan.md) or
 [build clauses](../sprint-plans/build-plan.md). Aggregate pass counts do not
 prove every clause.
 
-[Unit/affected-package evidence](unit-tests.md) records earlier Build checks.
-[E2E evidence](e2e-tests.md) retains the earlier opt-in live trial and actual
-Cargo terminal interaction, including their pre-final-head boundary. Neither
-is silently promoted to final-head acceptance by this map. Every final result
-must identify its command key, exact immutable source head, native host, outcome
-and retained cleanup evidence. Failure remains failure; no manual process
-termination can repair a run into success.
+[Unit/affected-package evidence](unit-tests.md) records earlier Build checks and
+final corrected-head results. [E2E evidence](e2e-tests.md) separately binds each
+live/terminal attempt, including fresh final-head L/TTY. [CI evidence](ci-results.md)
+retains every canonical suite confirmation and each failed predecessor. No old
+candidate result is promoted to a later head. Failure remains failure; manual
+process termination cannot repair a run into success.
 
 Source references below are repository-relative `path::function` coordinates.
 They avoid volatile line numbers; subsequent unqualified function names in a
@@ -30,24 +29,30 @@ workspace mode; do not infer ordinary-host listener authority from that mode.
 
 | Key | Source-aware invocation | Final result |
 |---|---|---|
-| W-WIN | `cargo test --workspace --locked` on native Windows | Passed locally: 1,245 / 7 intentional ignores; native CI pending |
-| W-LINUX | `bash tools/test-lifecycle-linux.sh workspace` in Linux CI | Pending final HEAD/native CI result |
-| N | `cargo test -p ferric-cli --no-default-features --locked` | Native Windows passed 407 / 0 ignored; both CI hosts pending final record |
-| H | `cargo test --locked -p ferric-cli --test human_cli --test human_docs --test source_execution --test template_hygiene` | Passed 13: human 7, docs 1, source 2, hygiene 3 |
-| HU | `cargo test --locked -p ferric-cli --bin ferric human:: -- --test-threads=1` on native Windows | Passed 17 / 1 opt-in live ignore, 2.72 seconds; L executed separately |
-| S | `cargo test --locked -p ferric-cli --features backend-openai --bin ferric startup:: -- --test-threads=1` on native Windows | Passed 37 / 0 ignored, 13.22 seconds |
-| P | `cargo test --locked -p ferric-provider --features backend-openai --lib` | Passed 47 / 0 ignored, 0.75 seconds |
+| W-WIN | `cargo test --workspace --locked` on native Windows | Local and native CI passed: 1,247 / 7 intentional ignores |
+| W-LINUX | `bash tools/test-lifecycle-linux.sh workspace` in Linux CI | Native isolated Linux passed: 1,253 / 5 intentional ignores |
+| N | `cargo test -p ferric-cli --no-default-features --locked` | Native Windows local and both CI hosts passed: 407 / 0 ignored each |
+| H | `cargo test --locked -p ferric-cli --test human_cli --test human_docs --test source_execution --test template_hygiene` | Passed 14: human 8, docs 1, source 2, hygiene 3 |
+| HU | `cargo test --locked -p ferric-cli --bin ferric human:: -- --test-threads=1` on native Windows | Passed 17 / 1 opt-in live ignore, 2.66 seconds; L executed separately |
+| S | `cargo test --locked -p ferric-cli --features backend-openai --bin ferric startup:: -- --test-threads=1` on native Windows | Passed 38 / 0 ignored, 13.54 seconds |
+| P | `cargo test --locked -p ferric-provider --features backend-openai --lib` | Passed 47 / 0 ignored, 0.71 seconds |
 | PY | `cargo test --locked -p ferric-tools --lib check_syntax` | Passed 16 / 0 ignored |
 | M | `cargo test --locked -p ferric-tools --test controlled_mutations` | Passed 15 / 0 ignored |
-| CLI | `cargo test --locked -p ferric-cli --test cli` | Passed separate rerun: 72 / 0 ignored, 17.17 seconds |
-| L | `cargo test --locked -p ferric-cli --bin ferric real_model_prepared_host_journey -- --ignored --exact human::enabled::tests::real_model_prepared_host_journey --nocapture --test-threads=1` | Passed 1 / 0 ignored, 5.84 seconds; see final-head E2E timings/cleanup |
+| CLI | `cargo test --locked -p ferric-cli --test cli` | Passed separate rerun: 72 / 0 ignored, 17.53 seconds |
+| L | `cargo test --locked -p ferric-cli --bin ferric real_model_prepared_host_journey -- --ignored --exact human::enabled::tests::real_model_prepared_host_journey --nocapture --test-threads=1` | Passed 1 / 0 ignored, 5.96 seconds; see final-head E2E timings/cleanup |
 | TTY | Actual terminal `cargo r -- run --workspace "<fresh-temporary-workspace>" --model "<existing-local-model.gguf>"`, then the bounded Ask transcript | Passed actual native terminal: expected answer, /quit, checked source cleanup, exit 0; see E2E |
 | F | `cargo fmt --all --check` | Passed |
 | FI | `rustfmt --edition 2024 --check crates/ferric-cli/src/human_journey_tests.rs` | Passed; included fixture checked explicitly |
 | C | `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
 | CN | `cargo clippy -p ferric-cli --no-default-features --all-targets --locked -- -D warnings` | Passed |
-| LF-WIN | `cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1` | Passed 5 / 0 ignored, 19.81 seconds; CI pending final record |
-| LF-LINUX | `bash tools/test-lifecycle-linux.sh` | Pending final HEAD/native CI result |
+| LF-WIN | `cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1` | Local passed 5 / 0 ignored, 18.67 seconds; native CI passed 5 / 0 ignored |
+| LF-LINUX | `bash tools/test-lifecycle-linux.sh` | Native isolated Linux passed 6 / 0 ignored |
+
+Authoritative [CI run 33947290181](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181)
+passed all eight jobs at the exact final implementation head above, including
+backend clippy and both backend-enabled ARM64 compile checks. Local W-WIN/N
+used the output-only `--quiet` option; CI ran the listed non-quiet commands.
+All focused H/HU/S/P/PY/M/CLI invocations were also executed separately locally.
 
 W-LINUX first warms source with `cargo test --workspace --locked --no-run`,
 then runs `cargo test --workspace --locked --offline -- --test-threads=1`
@@ -163,7 +168,7 @@ and `human_real_metadata_failure_has_one_safe_action`, plus
 `crates/ferric-cli/tests/human_cli.rs::human_read_only_admission_failure_has_one_safe_action`.
 They retain real timeout/metadata/GGUF causes, exactly one safe action, bounded
 diagnostic suppression, endpoint/cancellation compatibility and selected-B
-read-only nonmutation. S/H precommit passed; corrected exact-head results follow.
+read-only nonmutation. S/H passed at the corrected exact head; see the invocation table.
 
 ## E05: Provider cancellation and byte-correct streaming
 
@@ -193,7 +198,7 @@ AC-9/11/12 and the explicitly affected INT-0005/INT-0006 criteria above.
 | E06-B; affected INT-0005/6/8 | `crates/ferric-cli/tests/source_execution.rs::source_quality_and_feature_matrix`, `source_driven_ci_contract`; `crates/ferric-cli/tests/human_docs.rs::first_run_docs_match_cli`; `crates/ferric-cli/tests/template_hygiene.rs::tracked_sources_carry_no_machine_identity`, `canonical_book_layout_replaces_legacy_live_ledgers`, `each_rule_rejects_identity_and_accepts_the_documentation_value`; existing CLI regressions | First command is `cargo r`; no README sprint heading; actual help/options/manifests match; workspace/no-default/platform CI and source-ownership ratchets remain. The README-heading addition passed under H and W-WIN. Deferred findings remain visible in `docs/work/tasks.md`. H, CLI, F, C, CN, N, W-WIN, W-LINUX, LF-WIN, LF-LINUX and remaining required CI. Static workflow assertions cannot prove CI passed. |
 | E06-C; INT-0008 AC-6/9/12 partial | `crates/ferric-cli/src/human_journey_tests.rs::real_model_prepared_host_journey`; actual Cargo PTY transcript | L is ignored in ordinary suites and must run explicitly. It records actual model/runtime/settings, decisions, timings, transcript/trace/result; asserts answered trace, owned cleanup outcome and workspace reacquisition. Final-head L and TTY passed with retained E2E evidence. Earlier Build trials remain separately bound. No acquisition, hardware qualification, full workflow resume, application build or medium-horizon success is inferred. |
 
-## Pending closure checklist
+## Closure requirements
 
 - Bind the final implementation commit and exact commands/results to every
   clause, including the new human-invalid/explain, API help, README-heading,

@@ -6,7 +6,7 @@
 - **Work evidence:** [T-11405 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-12001 Python 0.5 maintenance](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** [Sprint 120 accepted prepared-host/configuration/Python Test increment](../sprints/s120/sprint-tests/test-report.md)
 - **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md)
 
 ## Intent

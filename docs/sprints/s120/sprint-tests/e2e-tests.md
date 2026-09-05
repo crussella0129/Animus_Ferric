@@ -168,3 +168,37 @@ input delays and is not presented as measured inference performance. This
 terminal run uses the production front door with an explicit isolated workspace
 and model; plain zero-argument routing is separately proved by the manifest,
 shared orchestration and non-TTY process assertions, not misreported as this argv.
+
+## Final corrected implementation-head live acceptance
+
+Exact head: `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`, after the independently
+reviewed E04-D error-guidance correction. Exact L passed 1/1 in 5.96 seconds.
+Actual runtime remained llama-server `10034 (505b1ed15)`, using the existing
+repository `models/qwen2.5-coder-7b-instruct-q4_k_m.gguf`, CPU-only, context 4096,
+temperature 0 and explicitly unmeasured capability. No downloads occurred.
+
+Session elapsed 5.9389204 seconds; Ready 3.999448 seconds; first response
+4.6735217 seconds. Actual input remained `ask`, `y`,
+`Reply with exactly: Ferric is ready.`, `/quit`; actual answer `Ferric is ready.`.
+Transcript retained the memory/CPU/unmeasured-fit warning, engine check, loading,
+owned Ready, Ask/no-file-change scope and Closing. Trace
+`human-03319677fdee0a4e1d6b081976b55002` recorded actual model/runtime/settings,
+answer and terminal reason `answered`. Source result was `Ok` with
+`checked_cleanup: true`, followed by successful workspace lock reacquisition.
+No manual termination repaired the run. Prior candidate runs above remain
+separately bound and are not substituted for this result.
+
+### Final corrected native terminal
+
+Actual Windows PTY at the same `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d` ran
+`cargo r -- run --workspace <new-isolated-folder> --model <existing-repository-model>`.
+Observed terminal input/output was again `ask`, the CPU/unmeasured-memory
+warning, `y`, Checking/Loading/owned Ready, then the objective
+`Reply with exactly: Ferric is ready.`, streamed answer `Ferric is ready.`,
+`/quit`, and `Closing session…`. The process exited 0 after source-owned checked
+cleanup. Trace `human-822f8845f86e959640e74cd21f7371dd` independently retained
+actual model/runtime/settings, the same answer and terminal reason `answered`.
+No manual termination, target-artifact command or ad-hoc executable proof was
+used. The explicit temporary folder/model isolate this terminal test; zero-arg
+routing remains the separately named manifest/shared-orchestration evidence.
+These are fresh observed results, not transferred candidate transcripts.

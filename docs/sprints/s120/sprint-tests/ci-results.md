@@ -256,3 +256,105 @@ the fixture roots while retaining the selected-workspace positive/negative
 checks. Its green results close those observed CI failures only; they do not
 close the subsequent E04-D copy finding.
 
+## Final implementation-head CI: 0ec5a0e
+
+The corrected implementation head
+`0ec5a0eb0f465e8220b7f2010428aed3d6f2975d` completed
+[CI run 33947290181](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181)
+on 2026-09-05 with **all eight jobs successful**. This is a separate new
+execution after the E04-D guidance correction, not a promotion of the earlier
+candidate results. It establishes the recorded CI outcomes for this immutable
+head; the independent Test report owns the acceptance verdict.
+
+### Exact-head job conclusions
+
+| Job | Conclusion |
+|---|---|
+| [CLI without backend (windows-latest)](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181/job/101255593151) | Success |
+| [fmt + clippy + test (ubuntu-latest)](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181/job/101255593189) | Success |
+| [CLI without backend (ubuntu-latest)](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181/job/101255593218) | Success |
+| [fmt + clippy + test (windows-latest)](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181/job/101255593220) | Success |
+| [backend-openai clippy (ubuntu)](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181/job/101255593242) | Success |
+| [aarch64-unknown-linux-gnu check](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181/job/101255593267) | Success |
+| [lifecycle fixture (ubuntu-latest)](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181/job/101255593277) | Success |
+| [lifecycle fixture (windows-latest)](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181/job/101255593284) | Success |
+
+### All 75 workspace confirmations reverified
+
+Both new workspace logs were read in full for their Cargo suite/result
+records. Each of the 75 source-suite/doc-target rows was compared with its
+corresponding platform row in the shared workspace table above. The source
+suite names and order match exactly. **All 73 rows other than the two below
+were independently reconfirmed with the same passed/failed/ignored values
+at this new head.** This explicitly includes all zero-test targets and all
+15 doc-test targets; no earlier execution result was silently transferred.
+
+The following two rows replace the candidate values for the new head:
+
+| Source suite | Windows passed / failed / ignored | Linux passed / failed / ignored |
+|---|---:|---:|
+| `crates/ferric-cli/src/main.rs` | 381 / 0 / 1 | 382 / 0 / 1 |
+| `crates/ferric-cli/tests/human_cli.rs` | 8 / 0 / 0 | 8 / 0 / 0 |
+
+Together with the 73 explicitly reverified shared rows, the new totals are:
+
+| Invocation | Suite summaries | Passed | Failed | Ignored |
+|---|---:|---:|---:|---:|
+| W-WIN: `cargo test --workspace --locked` | 75 | 1247 | 0 | 7 |
+| W-LINUX: `bash tools/test-lifecycle-linux.sh workspace` | 75 | 1253 | 0 | 5 |
+
+Both jobs again passed the exact workspace formatting, included-fixture
+formatting and workspace all-target Clippy commands recorded above. Linux
+again used the source-defined warmup/non-root namespace/reaper route; Windows
+again used ordinary Cargo. The same seven Windows/five Linux ignored-test
+identities were read from the new logs; the live local-model test remains
+ignored, not accepted by CI.
+
+The corrected E04-D cases are explicitly `ok` in **both** new workspace logs:
+
+| Source coordinate | Cargo test name | Windows | Linux |
+|---|---|---|---|
+| `crates/ferric-cli/src/startup/probe_tests.rs` | `startup::probe::tests::human_real_metadata_failure_has_one_safe_action` | Passed | Passed |
+| `crates/ferric-cli/tests/human_cli.rs` | `human_read_only_admission_failure_has_one_safe_action` | Passed | Passed |
+| `crates/ferric-cli/tests/cli.rs` | `selected_workspace_drives_real_provider_chat_icm` | Passed | Passed |
+
+H's four integration targets now contribute 14 passing tests per platform
+(8 human CLI, 1 documentation, 2 source-execution and 3 template-hygiene).
+HU/S/P/PY/M/CLI membership follows the same source-suite mapping above.
+These are results within W, **not claims of separate focused reruns**.
+
+### Backend-free, lifecycle and compile gates reverified
+
+Both new backend-free logs were independently read and compared across all
+eight suite summaries. Every suite and count exactly matches the shared
+backend-free table above: **407 passed / 0 failed / 0 ignored per platform**.
+Both exact backend-free Clippy and test commands succeeded. The newly added
+backend-dependent guidance tests do not change this feature-disabled count.
+
+The new native lifecycle logs explicitly report:
+
+| Source suite | Windows passed / failed / ignored | Linux passed / failed / ignored |
+|---|---:|---:|
+| `crates/ferric-cli/tests/server_lifecycle_fixture.rs` | 5 / 0 / 0 | 6 / 0 / 0 |
+
+Every lifecycle case name was read from these new logs; the Linux-only extra
+remains `lifecycle_fixture_exits_when_exact_owner_pidfd_signals`.
+Both lifecycle Clippy checks and the unchanged platform-specific source
+fixture invocations succeeded.
+
+The new explicit backend Clippy job succeeded. The aarch64 log separately
+confirms both actual backend-enabled checks reached successful Cargo
+`Finished` records:
+
+- `cargo check --workspace --target aarch64-unknown-linux-gnu --locked`
+  (7.11 seconds).
+- `cargo check -p ferric-cli --features lifecycle-fixture --all-targets --target aarch64-unknown-linux-gnu --locked`
+  (6.17 seconds).
+
+The explicit compiler/header prerequisites remain in place. These are still
+compile-only observations, not aarch64 native runtime evidence. L/TTY,
+hardware-fit and medium-horizon success remain outside CI's claims.
+
+This section was produced from read-only GitHub metadata/log inspection.
+No local Cargo execution or GitHub mutation was performed to create it.
+
