@@ -171,3 +171,4 @@
 - [Sprint 118](sprints/s118/sprint-meta.md)
   - [Post-Loop adversarial review](sprints/s118/post-loop-adversarial-review.md)
 - [Sprint 119](sprints/s119/sprint-meta.md)
+- [Sprint 120](sprints/s120/sprint-meta.md)

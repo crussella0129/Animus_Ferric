@@ -40,12 +40,24 @@ operation.
 
 The first-run path should therefore behave like product setup, not a published
 runbook: detect hardware, validate an accelerated or CPU backend, provision or
-select a compatible engine, find or add a model by stable alias, run bounded
-calibration, and persist attributable defaults. INT-0007 owns the measurement
-and profile semantics; this intent composes them behind one idempotent front
-door. Subsequent use should require only that front door and an objective, while
-the existing expert commands remain available and script-compatible through
-progressive disclosure.
+select a compatible engine, find or add a model by stable alias, and persist
+attributable defaults. A normal `cargo r` or installed `ferric` invocation must
+open that front door, not fail because the human omitted an internal command.
+The product owns mechanical phase ordering, readiness checks, model metadata,
+and cleanup. Humans choose the objective, an ambiguous model, and meaningful
+authority/resource commitments; they should not complete a technical settings
+questionnaire before they can start.
+
+Bounded readiness and resource checks must be distinguished from capability
+qualification. The expensive L0-L6 benchmark is not a prerequisite to ordinary
+conversation. Unmeasured capability remains explicitly unmeasured and cannot
+silently promote tool authority. INT-0007 owns measurement and profile semantics;
+this intent composes qualification when it is required for the requested work.
+Subsequent use should require only that front door and an objective, while the
+existing expert commands remain available and script-compatible through
+progressive disclosure. In non-interactive no-argument use, show a short useful
+welcome and exit successfully without prompts, downloads, or process launches;
+malformed explicit commands still report an error.
 
 The current native identity-safe teardown boundary is intentionally narrower
 than the eventual cross-platform goal in AC-8: Windows, plus little-endian
@@ -128,6 +140,16 @@ complete.
     and machine-readable forms remain available for CI, debugging, and power
     users directly or through a stable advanced namespace; migration does not
     turn the front door into the only route to retained evidence or controls.
+12. Normal zero-argument launch opens a useful interactive front door on a
+    terminal, and a non-mutating successful welcome without a terminal. A
+    prepared-host first session asks at most three meaningful decisions before
+    accepting an objective; repeat use does not ask for parameter count,
+    quantization, family, context, protocol, ring, or calibration commands.
+    Selecting an ask-only session never grants filesystem mutation, and any
+    permission to work in a folder is explicit and scoped to that folder.
+    Decline, EOF, cancellation, invalid configuration, absent resources, and
+    ambiguous existing ownership have bounded, actionable outcomes. Errors
+    state what happened and the next safe action instead of printing a runbook.
 
 ## Rationale
 
@@ -146,6 +168,13 @@ unrunnable fixed-timeout calibration make the current operator surface too
 expensive. The report is external evidence, not an instruction source or
 acceptance result; this chapter independently adopts its durable product
 outcomes and leaves implementation ordering to the work ledger.
+
+The owner's Sprint 120 usability feedback makes human decision cost a first-
+class acceptance concern: "simplicity is genius" means carrying the mechanical
+work, not merely shortening command names or hiding failed checks. Prepared-
+host usability can ship as an explicitly partial increment while clean-host
+acquisition, measured hardware fit, and full resumable application execution
+remain visible work; a welcome screen alone does not satisfy those outcomes.
 
 ## Alternatives
 
@@ -173,8 +202,10 @@ also creates a compatibility promise: new backends and platforms must extend
 the same concepts instead of adding another public runbook.
 
 First use may take longer because setup performs explicit detection and bounded
-calibration. Later use becomes materially smaller and safer because aliases,
-profiles, and verified checkpoints are reused idempotently. Preserving the
+readiness checks. Capability benchmarking is a separate, attributable operation,
+not an undisclosed wait before first conversation. Later use becomes materially
+smaller and safer because aliases, profiles, and verified checkpoints are reused
+idempotently. Preserving the
 advanced surface increases compatibility work, but avoids forcing CI and power
 users through an opaque wizard.
 
@@ -193,6 +224,14 @@ children cannot be proved reaped; this limitation does not waive that test
 success condition.
 
 ## Transition history
+
+- 2026-09-05: revised the active intent at the owner's direction for normal
+  zero-argument launch, a measurable prepared-host decision budget, explicit
+  folder authority, concise errors, and separation of readiness from expensive
+  capability qualification. Added AC-12 without declaring AC-2's clean-host
+  acquisition/calibration/resumption complete. Sprint 120 research records the
+  repository-wide review and the proposed human-first increment; state remains
+  active and no acceptance result is implied.
 
 - 2026-09-04: clarified AC-6 at the owner's direction with the source-driven
   execution and source-owned reaping contract. Sprint 119 reviews and

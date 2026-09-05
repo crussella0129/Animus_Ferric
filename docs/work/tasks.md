@@ -253,6 +253,22 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 
 ## Book v2 carry-forward from Sprint 113
 
+## Sprint 120 review — prioritized findings retained for follow-up
+
+Research provenance and exact baseline locations are in
+[the repository-wide review](../sprints/s120/sprint-research/repository-review.md).
+These are not claims of completed remediation. Sprint 120's proposed human
+front-door work remains subject to plan approval and lock.
+
+- [ ] T-12020 (backlog, high priority) [intent: INT-0006, INT-0008]: Reject ICM child symlink escapes before reading prompt material; test a directory entry pointing outside the selected workspace, including native platform capability differences. R03. — touches: `crates/ferric-icm/src/lib.rs`, containment tests
+- [ ] T-12021 (backlog, high priority) [intent: INT-0008]: Complete provider cancellation/deadline coverage for header, error-body and nonstream JSON awaits; repair incremental UTF-8 SSE framing with all-byte-split fixtures and source-owned bounded TCP tests. R04/R16. May be selected into Sprint 120 only by its approved plan. — touches: `crates/ferric-provider/src/openai.rs`, provider tests
+- [ ] T-12022 (backlog) [intent: INT-0006]: Specify and enforce API configuration lifetime (snapshot or explicit reload), reject invalid direct core policy inputs, and make zero compaction retention safe. R08/R09 public API/R11; preserve T-11406's separate inert-field migration. — touches: `crates/ferric-cli/src/api.rs`, `crates/ferric-core/src/scale.rs`, `crates/ferric-loop/src/compact.rs`
+- [ ] T-12023 (backlog) [intent: INT-0007, INT-0008]: Coordinate and atomically publish profiles without losing unrelated/corrupt evidence, freeze each benchmark's effective endpoint, and bind qualification to model/runtime/hardware/context coordinates. R12/R13/R15; integrate with T-11505/T-11507 rather than duplicate their authority. — touches: `crates/ferric-bench/src/calibrate.rs`, `crates/ferric-cli/src/bench_cmd.rs`, profile/provenance tests
+- [ ] T-12024 (backlog) [intent: INT-0008]: Migrate doctor, Git snapshots/bootstrap and human shell capture to bounded, fully drained, checked source-owned processes. Preserve private-index isolation and explicit human-only shell authority; prove cleanup for overflow, cancellation and timeout. R14/R17/R18. — touches: CLI doctor, `crates/ferric-vcs`, `crates/animus-launch`, `crates/ferric-tools/src/builtin/shell_exec.rs`
+- [ ] T-12025 (backlog) [intent: INT-0006, INT-0008]: Surface non-absence skill discovery errors, serialize cron prompts through TOML round trips, and remove stale in-process inference advice. R19/R20/R21. Do not label Sprint Loops compatible merely because a skill directory can be listed. — touches: `crates/ferric-skills`, `crates/ferric-cron`, bench/operator docs
+
+## Book v2 carry-forward from Sprint 113 (continued)
+
 - [ ] T-11401 (backlog) [intent: INT-0002]: Design and implement a deterministic operator-authored project check profile that Launch can scaffold and supported surfaces can load without a repeated `--checks-file`, while preserving the no-implicit-execution boundary. — touches: `crates/animus-launch`, `crates/ferric-cli/src/query.rs`, `crates/ferric-tools/src/builtin/run_check.rs`, `docs/commands.md`, `docs/configuration.md`
 - [ ] T-11402 (backlog) [intent: INT-0003]: Specify and experimentally evaluate a typed requirement ledger with causal evidence transitions and completion gating, without reviving the rejected planner label. — touches: `crates/ferric-trace`, `crates/ferric-loop`, `crates/ferric-bench`, `crates/ferric-cli`
 - [ ] T-11403 (backlog) [intent: INT-0004]: Bind effective prompt layers, Evidence guidance, tool descriptions, action schema, backend capabilities, and sampling configuration into portable trace genealogy. — touches: `crates/ferric-prompt`, `crates/ferric-loop`, `crates/ferric-trace`, `crates/ferric-provider`
