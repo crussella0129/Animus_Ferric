@@ -6,20 +6,19 @@
 //! `completed` verdict. Metrics Ferric cannot yet source (plan_steps — no
 //! planner) are left `None`, flagged not faked.
 
-use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use ferric_trace::{Event, ParsedEvent, TraceReader};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use crate::process::{CapturePlan, run_bounded};
 use crate::spec::{BenchSpec, CommandCheck, ExpectKind};
 
 const CHECK_OUTPUT_LIMIT: usize = 16 * 1024;
-const CHECK_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const PYTHON_PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(10);
 const PYTHON_PLACEHOLDER: &str = "{python}";
 
 /// Metrics read out of one trace.
@@ -248,17 +247,26 @@ pub fn preflight_command_checks(specs: &[BenchSpec], python_bin: &Path) -> Resul
     }
 
     if needs_python {
-        let status = Command::new(python_bin)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|e| format!("cannot launch Python `{}`: {e}", python_bin.display()))?;
-        if !status.success() {
+        let mut command = Command::new(python_bin);
+        command.arg("--version").stdin(Stdio::null());
+        let outcome = run_bounded(
+            &mut command,
+            PYTHON_PREFLIGHT_TIMEOUT,
+            CapturePlan::discard(),
+        )
+        .map_err(|e| format!("cannot launch Python `{}`: {e}", python_bin.display()))?;
+        if outcome.timed_out {
             return Err(format!(
-                "Python `{}` failed its --version preflight with {status}",
-                python_bin.display()
+                "Python `{}` timed out during its --version preflight after {}s",
+                python_bin.display(),
+                PYTHON_PREFLIGHT_TIMEOUT.as_secs()
+            ));
+        }
+        if outcome.exit_code != Some(0) {
+            return Err(format!(
+                "Python `{}` failed its --version preflight with exit code {:?}",
+                python_bin.display(),
+                outcome.exit_code
             ));
         }
     }
@@ -351,65 +359,29 @@ fn run_command_check(
     command
         .args(&check.argv[1..])
         .current_dir(workspace)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stdin(Stdio::null());
     ferric_core::configure_check_environment(&mut command);
-    let mut child = match command.spawn() {
-        Ok(child) => child,
+    let outcome = match run_bounded(
+        &mut command,
+        timeout,
+        CapturePlan::head(CHECK_OUTPUT_LIMIT, CHECK_OUTPUT_LIMIT),
+    ) {
+        Ok(outcome) => outcome,
         Err(e) => {
             return check_infrastructure_error(
                 check,
-                format!("cannot launch `{}`: {e}", program.to_string_lossy()),
+                format!(
+                    "cannot launch or supervise `{}`: {e}",
+                    program.to_string_lossy()
+                ),
             );
         }
     };
 
-    let Some(stdout) = child.stdout.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return check_infrastructure_error(check, "child stdout was not piped".to_string());
-    };
-    let Some(stderr) = child.stderr.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return check_infrastructure_error(check, "child stderr was not piped".to_string());
-    };
-    let stdout_reader = std::thread::spawn(move || read_bounded(stdout, CHECK_OUTPUT_LIMIT));
-    let stderr_reader = std::thread::spawn(move || read_bounded(stderr, CHECK_OUTPUT_LIMIT));
-
-    let started = Instant::now();
-    let mut timed_out = false;
-    let exit_code = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status.code(),
-            Ok(None) if started.elapsed() >= timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                timed_out = true;
-                break None;
-            }
-            Ok(None) => std::thread::sleep(CHECK_POLL_INTERVAL),
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = join_reader(stdout_reader, "stdout");
-                let _ = join_reader(stderr_reader, "stderr");
-                return check_infrastructure_error(check, format!("cannot poll child: {e}"));
-            }
-        }
-    };
-
-    let stdout = match join_reader(stdout_reader, "stdout") {
-        Ok(output) => output,
-        Err(e) => return check_infrastructure_error(check, e.to_string()),
-    };
-    let stderr = match join_reader(stderr_reader, "stderr") {
-        Ok(output) => output,
-        Err(e) => return check_infrastructure_error(check, e.to_string()),
-    };
-    let stdout_excerpt = String::from_utf8_lossy(&stdout).into_owned();
-    let stderr_excerpt = String::from_utf8_lossy(&stderr).into_owned();
+    let exit_code = outcome.exit_code;
+    let timed_out = outcome.timed_out;
+    let stdout_excerpt = String::from_utf8_lossy(&outcome.stdout).into_owned();
+    let stderr_excerpt = String::from_utf8_lossy(&outcome.stderr).into_owned();
 
     if timed_out && deadline_limited {
         return CommandCheckResult {
@@ -495,25 +467,6 @@ fn check_infrastructure_error(check: &CommandCheck, reason: String) -> CommandCh
         stderr_excerpt: String::new(),
         reason: Some(reason),
     }
-}
-
-fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
-    let mut output = Vec::with_capacity(limit);
-    let mut buffer = [0_u8; 8192];
-    loop {
-        let read = reader.read(&mut buffer)?;
-        if read == 0 {
-            return Ok(output);
-        }
-        let remaining = limit.saturating_sub(output.len());
-        output.extend_from_slice(&buffer[..read.min(remaining)]);
-    }
-}
-
-fn join_reader(handle: JoinHandle<io::Result<Vec<u8>>>, stream: &str) -> io::Result<Vec<u8>> {
-    handle
-        .join()
-        .map_err(|_| io::Error::other(format!("{stream} reader thread panicked")))?
 }
 
 pub fn verify_tools(metrics: &TraceMetrics, spec: &BenchSpec) -> ToolVerdict {
@@ -839,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn command_check_output_is_bounded_while_pipes_are_drained() {
+    fn command_check_output_is_bounded_in_capture_files() {
         let workspace = tempfile::tempdir().unwrap();
         let current_exe = std::env::current_exe().unwrap();
         let check = command_check(vec![
@@ -1017,15 +970,16 @@ else:
         let python = std::env::var_os("FERRIC_TEST_PYTHON")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::PathBuf::from("python"));
-        Command::new(&python)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .ok()
-            .filter(|status| status.success())
-            .map(|_| python)
+        let mut command = Command::new(&python);
+        command.arg("--version").stdin(Stdio::null());
+        run_bounded(
+            &mut command,
+            PYTHON_PREFLIGHT_TIMEOUT,
+            CapturePlan::discard(),
+        )
+        .ok()
+        .filter(|outcome| !outcome.timed_out && outcome.exit_code == Some(0))
+        .map(|_| python)
     }
 
     fn assert_checks_pass(workspace: &Path, spec: &BenchSpec, python: &Path) {

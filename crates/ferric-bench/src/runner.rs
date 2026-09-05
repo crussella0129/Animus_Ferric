@@ -8,15 +8,15 @@
 //! candle is ~1 tok/s — s1 lesson); the CLI warns under debug_assertions.
 
 use std::collections::BTreeSet;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use ferric_core::{ActionProtocol, HarnessPolicy};
 use tempfile::TempDir;
 
+use crate::process::{CapturePlan, run_bounded};
 use crate::spec::BenchSpec;
 
 /// How to invoke the agent for a benchmark run.
@@ -120,15 +120,7 @@ impl WorkspaceHandle {
     }
 }
 
-const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const STDERR_TAIL_BYTES: usize = 1000;
-
-struct ChildOutcome {
-    exit_code: Option<i32>,
-    timed_out: bool,
-    wall: Duration,
-    stderr_tail: String,
-}
 
 /// Materialize the spec's workspace, run the agent, and return the raw record.
 pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord> {
@@ -152,15 +144,16 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
         dir.path(),
         profile_dir.path(),
     ));
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    cmd.stdin(std::process::Stdio::null());
     if inv.prompts_dir.is_none() {
         cmd.env_remove("FERRIC_PROMPTS_DIR");
     }
 
-    let started = Instant::now();
-    let child = cmd.spawn()?;
-    let outcome = wait_for_child(child, started, Duration::from_secs(spec.timeout_s))?;
+    let outcome = run_bounded(
+        &mut cmd,
+        Duration::from_secs(spec.timeout_s),
+        CapturePlan::stderr_tail(STDERR_TAIL_BYTES),
+    )?;
 
     let trace_path = find_trace(dir.path());
 
@@ -177,7 +170,7 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
         wall: outcome.wall,
         trace_path,
         workspace,
-        stderr_tail: outcome.stderr_tail,
+        stderr_tail: String::from_utf8_lossy(&outcome.stderr).into_owned(),
     })
 }
 
@@ -192,15 +185,16 @@ pub fn run_query_segment(
     let before = trace_files(request.workspace)?;
     let mut cmd = Command::new(&inv.ferric_bin);
     cmd.args(query_segment_args(inv, request));
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    cmd.stdin(std::process::Stdio::null());
     if inv.prompts_dir.is_none() {
         cmd.env_remove("FERRIC_PROMPTS_DIR");
     }
 
-    let started = Instant::now();
-    let child = cmd.spawn()?;
-    let outcome = wait_for_child(child, started, request.timeout)?;
+    let outcome = run_bounded(
+        &mut cmd,
+        request.timeout,
+        CapturePlan::stderr_tail(STDERR_TAIL_BYTES),
+    )?;
     let after = trace_files(request.workspace)?;
     let created: Vec<PathBuf> = after.difference(&before).cloned().collect();
     let (trace_path, trace_discovery_error) = match created.as_slice() {
@@ -221,7 +215,7 @@ pub fn run_query_segment(
         wall: outcome.wall,
         trace_path,
         trace_discovery_error,
-        stderr_tail: outcome.stderr_tail,
+        stderr_tail: String::from_utf8_lossy(&outcome.stderr).into_owned(),
     })
 }
 
@@ -249,87 +243,6 @@ fn validate_segment_request(request: &QuerySegmentRequest<'_>) -> io::Result<()>
         ));
     }
     Ok(())
-}
-
-/// Drain both child pipes while polling. Waiting to read until after exit can
-/// deadlock when a verbose child fills an OS pipe and blocks before exiting.
-fn wait_for_child(
-    mut child: Child,
-    started: Instant,
-    timeout: Duration,
-) -> io::Result<ChildOutcome> {
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| io::Error::other("child stdout was not piped"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| io::Error::other("child stderr was not piped"))?;
-
-    let stdout_drain = std::thread::spawn(move || {
-        let mut stdout = stdout;
-        let mut sink = io::sink();
-        io::copy(&mut stdout, &mut sink).map(|_| ())
-    });
-    let stderr_drain = std::thread::spawn(move || read_tail(stderr, STDERR_TAIL_BYTES));
-
-    let mut timed_out = false;
-    let exit_code = loop {
-        match child.try_wait()? {
-            Some(status) => break status.code(),
-            None => {
-                if started.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    timed_out = true;
-                    break None;
-                }
-                std::thread::sleep(POLL_INTERVAL);
-            }
-        }
-    };
-    let wall = started.elapsed();
-
-    join_drain(stdout_drain, "stdout")?;
-    let stderr = join_drain(stderr_drain, "stderr")?;
-
-    Ok(ChildOutcome {
-        exit_code,
-        timed_out,
-        wall,
-        stderr_tail: String::from_utf8_lossy(&stderr).into_owned(),
-    })
-}
-
-fn join_drain<T>(handle: JoinHandle<io::Result<T>>, pipe: &str) -> io::Result<T> {
-    handle
-        .join()
-        .map_err(|_| io::Error::other(format!("{pipe} drain thread panicked")))?
-}
-
-fn read_tail(mut reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
-    let mut tail = Vec::with_capacity(limit);
-    let mut buf = [0_u8; 8192];
-    loop {
-        let read = reader.read(&mut buf)?;
-        if read == 0 {
-            return Ok(tail);
-        }
-        if limit == 0 {
-            continue;
-        }
-        if read >= limit {
-            tail.clear();
-            tail.extend_from_slice(&buf[read - limit..read]);
-            continue;
-        }
-        let overflow = tail.len().saturating_add(read).saturating_sub(limit);
-        if overflow > 0 {
-            tail.drain(..overflow);
-        }
-        tail.extend_from_slice(&buf[..read]);
-    }
 }
 
 fn protocol_flag(p: ActionProtocol) -> &'static str {
@@ -611,46 +524,35 @@ mod tests {
     }
 
     #[test]
-    fn read_tail_is_bounded_and_keeps_the_end() {
-        let input = format!("{}THE-END", "x".repeat(128 * 1024));
-        let tail = read_tail(std::io::Cursor::new(input), 1000).unwrap();
-        assert_eq!(tail.len(), 1000);
-        assert!(tail.ends_with(b"THE-END"));
+    fn verbose_source_child_cannot_deadlock_file_capture() {
+        let mut cmd = noisy_child_command();
+        let outcome = run_bounded(
+            &mut cmd,
+            Duration::from_secs(15),
+            CapturePlan::stderr_tail(STDERR_TAIL_BYTES),
+        )
+        .unwrap();
+        assert_eq!(outcome.exit_code, Some(0));
+        assert!(!outcome.timed_out);
+        assert!(outcome.stderr.ends_with(b"THE-END"));
+        assert!(outcome.stderr.len() <= STDERR_TAIL_BYTES);
+    }
+
+    fn noisy_child_command() -> Command {
+        let mut cmd = Command::new(std::env::current_exe().expect("current test executable"));
+        cmd.args([
+            "--ignored",
+            "--exact",
+            "runner::tests::noisy_child_fixture",
+            "--nocapture",
+        ]);
+        cmd
     }
 
     #[test]
-    fn verbose_child_cannot_fill_pipes_and_deadlock() {
-        let mut cmd = noisy_child_command();
-        cmd.stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        let started = Instant::now();
-        let child = cmd.spawn().expect("spawn noisy child");
-        let outcome = wait_for_child(child, started, Duration::from_secs(15)).unwrap();
-        assert_eq!(outcome.exit_code, Some(0));
-        assert!(!outcome.timed_out);
-        assert!(outcome.stderr_tail.ends_with("THE-END"));
-        assert!(outcome.stderr_tail.len() <= STDERR_TAIL_BYTES);
-    }
-
-    #[cfg(windows)]
-    fn noisy_child_command() -> Command {
-        let mut cmd = Command::new("powershell.exe");
-        cmd.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "$s = ('x' * 131072) -join ''; [Console]::Out.Write($s); [Console]::Error.Write($s + 'THE-END')",
-        ]);
-        cmd
-    }
-
-    #[cfg(not(windows))]
-    fn noisy_child_command() -> Command {
-        let mut cmd = Command::new("sh");
-        cmd.args([
-            "-c",
-            "head -c 131072 /dev/zero; head -c 131072 /dev/zero >&2; printf THE-END >&2",
-        ]);
-        cmd
+    #[ignore = "test-only source child fixture"]
+    fn noisy_child_fixture() {
+        print!("{}", "x".repeat(128 * 1024));
+        eprint!("{}THE-END", "x".repeat(128 * 1024));
     }
 }

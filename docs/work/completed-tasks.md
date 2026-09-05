@@ -1879,3 +1879,12 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   [Test critique](../sprints/s118/sprint-tests/critique.md), and
   [post-Loop adversarial review](../sprints/s118/post-loop-adversarial-review.md).
 - **Accepted code head:** `7633f8c0675664e51c8a4e88e4aaafe0d20880e9`
+
+## T-11901 (sprint 119)
+
+- **Description:** Consolidated bounded native process scopes and head/tail file capture in ferric-process, removed command-group, and migrated benchmark execution/verification consumers.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), partial AC-6.
+- **Completed:** 2026-09-05T00:57:00Z
+- **Files modified:** `Cargo.toml`, `Cargo.lock`, `crates/ferric-process/{Cargo.toml,src/lib.rs,src/windows.rs,src/unix.rs,src/supervision.rs,src/registry.rs,src/tests.rs}`, `crates/ferric-bench/{Cargo.toml,src/process.rs,src/runner.rs,src/verify.rs,src/autonomy.rs,src/lib.rs}`, `crates/ferric-cli/Cargo.toml`, and INT-0008 Work evidence.
+- **Verification:** Windows shared crate 6 passed / 1 source fixture ignored; benchmark 78 passed / 3 source fixtures ignored with an explicit real Python test interpreter. Workspace fmt and warnings-denied clippy pass. E01/E02/E03 cover timeout/success/unwind, inherited writers, exact member termination, rollback and output bounds. Linux runtime remains a formal Test CI gate, not implied by the passing aarch64 compile/clippy check. Independent final source review found no remaining blocker in generation-tagged registry, leader signal locking, or retained Windows thread identity. Retained Build failures are in the Sprint 119 unit record.
+- **Commit:** PENDING

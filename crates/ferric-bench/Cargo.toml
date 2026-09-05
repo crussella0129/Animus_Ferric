@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 ferric-core = { workspace = true }
+ferric-process = { workspace = true }
 ferric-trace = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
