@@ -10,7 +10,7 @@
 - **Token count:** (filled at Loop Phase if observable)
 - **Summary:** Human-first local sessions with safe automatic preparation and compact expert access
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
-- **Completion evidence:** Accepted Test at 0ec5a0e: all eight CI jobs, named clauses, fresh Cargo live/TTY and checked cleanup; Loop reconciled, extra post-Loop audit required before the sole PR.
+- **Completion evidence:** Accepted Test at 0ec5a0e: all eight CI jobs, named clauses, fresh Cargo live/TTY and checked cleanup; Loop reconciled and closed at 6d9e0d4; separate post-loop-adversarial-review.md returned clean before the sole PR.
 
 ## Approved resume
 
@@ -22,8 +22,10 @@ in run `33947290181`, native Windows gates, fresh live-model acceptance and
 actual Cargo terminal interaction passed with source-owned cleanup. Accepted
 Test evidence was committed at `dc9c900`; the clean-Book router reported Loop.
 [Loop reconciliation](loop-review.md) retains partial active intents and open
-work. Closure, the extra post-Loop audit and actual PR checkpoint are recorded
-separately; the older phase paragraphs below preserve their historical boundary.
+work. Closure succeeded at `6d9e0d4`, followed by a separate clean
+[extra post-Loop audit](post-loop-adversarial-review.md). The actual PR checkpoint
+is recorded separately; the older phase paragraphs below preserve their
+historical boundary.
 
 ### Build exit
 

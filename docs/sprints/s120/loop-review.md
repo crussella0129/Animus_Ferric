@@ -47,6 +47,12 @@ once. Commit reconciliation, validate the Book, close through the installed
 helper, then perform the owner's additional independent **post-Loop** audit.
 The audit must occur after closure and cannot be inferred from the Test critic.
 
+Actual closure succeeded at `6d9e0d4`; the router reported
+`ready-for-next-sprint`. The separate independent
+[post-Loop adversarial audit](post-loop-adversarial-review.md) then returned
+clean for the PR checkpoint with no blocking finding. It preserves the
+remaining push, checkpoint, final CI and protected-edit restoration obligations.
+
 Actual confidence update: `patched`, 0.3 to 0.2. The first restricted helper
 invocation could not resolve Git Bash's `dirname` and changed nothing (0.3 was
 read back). The approved tooling-context invocation then succeeded once; no
