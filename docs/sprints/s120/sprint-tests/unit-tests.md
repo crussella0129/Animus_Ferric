@@ -107,3 +107,42 @@ The independent review also caught generation proxy/redirect authority drift;
 the front door's pinned transport constructor and its regression tests belong
 to T-12004. This startup task remains staged behind a temporary dead-code module
 annotation until that frontend consumes the API; T-12004 removes it.
+
+## T-12004 — Human surface and generation transport
+
+- `cargo test --locked -p ferric-cli --bin ferric human:: -- --test-threads=1`:
+  16 passed, 0 failed, 1 explicitly opt-in live test ignored, 2.01 seconds.
+- `cargo test --locked -p ferric-cli --test human_cli --test human_docs`:
+  5 command integrations and 1 documentation integration passed.
+- `cargo test --locked -p ferric-cli --bin ferric routing_tests`: 2 passed.
+- `cargo test --locked -p ferric-cli --no-default-features`: 407 passed,
+  no failures or ignores (318 units; 7 bench, 70 CLI, 6 human CLI, 1 docs,
+  2 source-quality, 3 template-hygiene integrations).
+- Backend and no-default CLI `cargo clippy --locked -p ferric-cli
+  [--no-default-features] --all-targets -- -D warnings`: pass.
+- Provider backend library suite: 47 passed; warnings-denied clippy passed.
+  New prepared transport tests retain the exact endpoint/key, bypass loopback
+  proxies and reject redirects without contacting either forbidden destination.
+- Core tier-label roundtrip: 1 passed; retained-file trace constructor: 2 passed;
+  core/trace warnings-denied clippy and workspace fmt passed.
+
+The source journey uses production startup/lifetime and Evidence code with a
+test-only engine command substitution. Assertions cover actual output/file
+effects, decision counts, stale preference, fresh consent, cancellation and
+exclusive listener rebinding after checked cleanup. Ask has no dispatcher;
+Work does not inherit expert authority or claim measured capability.
+
+Retained failed attempts: the first main integration needed six old parser-test
+patterns adapted to optional commands. Windows help initially differed only in
+the derived `ferric.exe` binary name; a stable logical bin name fixes forwarding.
+The old no-argument usage-error regression intentionally conflicted with approved
+E04-B and was changed to assert a successful welcome; the separate nonmutation
+test verifies no side effects. Each corrected suite passed. Independent review
+also caught ignored forwarded verbosity, flags-only advanced launch, deferred
+OS interrupt registration, and interpolating trace recovery commands. These are
+fixed with parser resolution before logging, synchronous fallible signal
+registration before preparation, and the existing platform literal-quoting helper.
+No process failure was repaired manually.
+
+The separate successful real-model and terminal Build trials are recorded in
+E2E evidence. Exact-head aggregate native/CI qualification remains pending Test.

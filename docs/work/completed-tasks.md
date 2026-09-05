@@ -1952,3 +1952,12 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** `crates/ferric-cli/src/startup.rs`, `startup/{models,probe,probe_tests,runtime,storage,tests}.rs`, CLI Cargo dependencies/main module declaration, `Cargo.lock`, `.gitignore`, `crates/ferric-guard/src/{denylist,checker}.rs`, Sprint 120 unit evidence/metadata and work ledgers.
 - **Verification:** Native Windows startup suite 30 passed, 0 failed; three corrected model-binding tests reran successfully after a lint-only fixture cleanup. CLI scoped backend clippy with warnings denied passed; guard lock regression and guard clippy passed; workspace formatting passed. Separate review found and closed directory-binding, stale-choice and version-deadline issues. Generation transport preservation is implemented and tested in T-12004 but is not part of this startup commit. Linux native execution, integrated human acceptance and live-model evidence remain Test gates.
 - **Commit:** `998367cf9c19dca90d795e91672a4d3e851eabd0`
+
+## T-12004 (sprint 120)
+
+- **Description:** Made default Cargo launch the human session, with four primary actions, remembered model, structural Ask isolation, consented conservative Evidence work, pinned generation transport, retained-file tracing and synchronous cancellation admission.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), prepared-host portions of AC-1/6/9/10/11/12.
+- **Completed:** 2026-09-05T04:25:48Z
+- **Files modified:** root/CLI Cargo manifests, CLI `main.rs`, `human.rs`, `human_journey_tests.rs`, `query.rs`, parser assertions in `autonomy_cmd.rs`, `tests/{cli,human_cli}.rs`, core scale provenance, provider prepared transport/tests, trace retained-file constructor/tests, Sprint 120 unit evidence and work ledgers.
+- **Verification:** Human source journeys 16 passed / 1 opt-in live test ignored; that live test was separately executed successfully with checked engine cleanup. Primary/expert CLI integration 5 passed, routing 2 passed; no-default CLI suite 407 passed with no ignored tests; backend and no-default all-target clippy with warnings denied passed. Provider 47 passed; additive provenance and retained-file tests passed. Actual Cargo terminal conversation exited zero. Independent review closed routing, Ctrl-C registration and recovery-command literal-quoting defects. Final exact-head native/CI acceptance remains T-12006/Test, not implied by this task boundary.
+- **Commit:** PENDING

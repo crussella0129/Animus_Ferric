@@ -71,6 +71,17 @@ impl OpenAiProvider {
         }
     }
 
+    /// Preserve a prepared endpoint's authority: generation must not redirect
+    /// its prompt or credential to a different server, and a verified loopback
+    /// listener must never be reached through an ambient HTTP proxy.
+    /// Legacy expert constructors retain their existing transport behavior.
+    pub fn for_prepared_endpoint(config: OpenAiConfig) -> Result<Self, ProviderError> {
+        let client = prepared_client_builder(&config.base_url, Client::builder())?
+            .build()
+            .map_err(|_| ProviderError::Backend("Cannot prepare endpoint transport".into()))?;
+        Ok(Self { config, client })
+    }
+
     fn map_message(msg: &Message) -> serde_json::Value {
         let role_str = match msg.role {
             Role::System => "system",
@@ -185,6 +196,34 @@ impl OpenAiProvider {
 
         body
     }
+}
+
+fn prepared_client_builder(
+    base: &str,
+    builder: reqwest::ClientBuilder,
+) -> Result<reqwest::ClientBuilder, ProviderError> {
+    let url = reqwest::Url::parse(base)
+        .map_err(|_| ProviderError::InvalidRequest("Invalid prepared endpoint".into()))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(ProviderError::InvalidRequest(
+            "Prepared endpoint requires HTTP(S) without embedded credentials or query parameters"
+                .into(),
+        ));
+    }
+    let builder = builder.redirect(reqwest::redirect::Policy::none());
+    Ok(
+        if matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")) {
+            builder.no_proxy()
+        } else {
+            builder
+        },
+    )
 }
 
 #[async_trait]

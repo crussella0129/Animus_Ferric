@@ -287,6 +287,89 @@ async fn cancelled_provider_does_not_poll_request() {
 }
 
 #[tokio::test]
+async fn prepared_endpoint_keeps_loopback_direct_and_refuses_redirects() {
+    for redirect in [false, true] {
+        let destination = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let forbidden = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", destination.local_addr().unwrap());
+        let forbidden_url = format!("http://{}", forbidden.local_addr().unwrap());
+        // Inject a proxy deterministically instead of racing global env vars.
+        // The same builder used by the prepared constructor removes it.
+        let client = prepared_client_builder(
+            &base,
+            Client::builder().proxy(reqwest::Proxy::all(&forbidden_url).unwrap()),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        let provider = OpenAiProvider {
+            config: OpenAiConfig {
+                base_url: base,
+                api_key: "endpoint-bound-key".into(),
+                model: "prepared-model".into(),
+            },
+            client,
+        };
+        let server = async {
+            let (mut socket, _) = destination.accept().await?;
+            let request = read_request(&mut socket).await?;
+            let response = if redirect {
+                format!(
+                    "HTTP/1.1 307 Temporary Redirect\r\nLocation: {forbidden_url}/chat/completions\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+            } else {
+                let body =
+                    r#"{"choices":[{"message":{"content":"direct"},"finish_reason":"stop"}]}"#;
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            };
+            socket.write_all(response.as_bytes()).await?;
+            socket.shutdown().await?;
+            Ok::<_, io::Error>(request)
+        };
+        let (served, result) = tokio::join!(
+            tokio::time::timeout(FIXTURE_DEADLINE, server),
+            tokio::time::timeout(FIXTURE_DEADLINE, provider.complete(request(), None))
+        );
+        let request = String::from_utf8(served.unwrap().unwrap()).unwrap();
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer endpoint-bound-key")
+        );
+        let result = result.unwrap();
+        if redirect {
+            assert!(
+                matches!(result, Err(ProviderError::Backend(ref error)) if error.contains("307"))
+            );
+        } else {
+            assert_eq!(result.unwrap().message.text.as_deref(), Some("direct"));
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), forbidden.accept())
+                .await
+                .is_err(),
+            "neither proxy nor redirect destination may receive the prepared prompt/credential"
+        );
+    }
+}
+
+#[test]
+fn prepared_endpoint_rejects_embedded_credentials() {
+    for base in [
+        "file:///tmp/model",
+        "http://user:secret@localhost/v1",
+        "http://localhost/v1?key=secret",
+    ] {
+        let result = prepared_client_builder(base, Client::builder());
+        assert!(result.is_err());
+        assert!(!result.err().unwrap().to_string().contains("secret"));
+    }
+}
+
+#[tokio::test]
 async fn sse_unicode_and_invalid_bytes_over_tcp() {
     let prose = "café 🦀 日本語";
     let valid = format!(

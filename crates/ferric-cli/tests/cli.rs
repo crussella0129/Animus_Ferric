@@ -180,11 +180,12 @@ fn trace_verify_finds_no_drift_in_a_real_trace() {
 }
 
 #[test]
-fn no_args_fails_with_usage() {
+fn no_args_is_a_human_welcome() {
     let out = ferric().output_bounded().unwrap();
-    assert!(!out.status.success());
-    let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stderr.to_lowercase().contains("usage:"));
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Ferric"));
+    assert!(stdout.contains("Ask mode"));
 }
 
 #[test]

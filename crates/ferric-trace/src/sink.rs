@@ -17,6 +17,24 @@ pub struct JsonlSink {
 }
 
 impl JsonlSink {
+    /// Wrap a newly created, empty append-capable file without resolving its
+    /// path again. Capability-based callers own exclusive creation and path
+    /// admission; preserving their handle avoids a directory-swap race.
+    pub fn from_file(file: File, session: impl Into<String>) -> Result<Self, FerricError> {
+        if !file.metadata()?.is_file() || file.metadata()?.len() != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "a new trace requires an empty regular file",
+            )
+            .into());
+        }
+        Ok(Self {
+            file,
+            session: session.into(),
+            next_seq: 0,
+        })
+    }
+
     /// Open (creating or appending to) the trace file at `path`.
     pub fn open(path: impl AsRef<Path>, session: impl Into<String>) -> Result<Self, FerricError> {
         let file = OpenOptions::new()
@@ -81,4 +99,41 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn retained_file_trace_does_not_reopen_replaced_path() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("trace.jsonl");
+        let file = OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        let retained = root.path().join("retained.jsonl");
+        std::fs::rename(&path, &retained).unwrap();
+        std::fs::write(&path, "do not touch").unwrap();
+        let mut sink = JsonlSink::from_file(file, "session").unwrap();
+        sink.write_event(Event::Note {
+            text: "original handle".into(),
+        })
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "do not touch");
+        assert!(
+            std::fs::read_to_string(&retained)
+                .unwrap()
+                .contains("original handle")
+        );
+    }
+
+    #[test]
+    fn retained_file_trace_rejects_existing_content() {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(b"existing trace").unwrap();
+        assert!(JsonlSink::from_file(file, "session").is_err());
+    }
 }

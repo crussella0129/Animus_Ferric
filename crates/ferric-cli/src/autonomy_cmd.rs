@@ -2991,9 +2991,9 @@ mod tests {
             "H01",
         ])
         .unwrap();
-        let crate::Command::Bench {
+        let Some(crate::Command::Bench {
             command: crate::BenchCommand::Autonomy(mut args),
-        } = cli.command
+        }) = cli.command
         else {
             panic!("expected autonomy command");
         };
@@ -3039,9 +3039,9 @@ mod tests {
             crate::Cli::try_parse_from(argv)
         };
 
-        let crate::Command::Bench {
+        let Some(crate::Command::Bench {
             command: crate::BenchCommand::Autonomy(default),
-        } = parse(None).unwrap().command
+        }) = parse(None).unwrap().command
         else {
             panic!("expected autonomy command");
         };
@@ -3051,9 +3051,9 @@ mod tests {
         );
         assert!(!strict_managed_mode(&default));
 
-        let crate::Command::Bench {
+        let Some(crate::Command::Bench {
             command: crate::BenchCommand::Autonomy(legacy),
-        } = parse(Some("legacy")).unwrap().command
+        }) = parse(Some("legacy")).unwrap().command
         else {
             panic!("expected autonomy command");
         };
@@ -3065,9 +3065,9 @@ mod tests {
             )
         );
 
-        let crate::Command::Bench {
+        let Some(crate::Command::Bench {
             command: crate::BenchCommand::Autonomy(mut evidence),
-        } = parse(Some("evidence")).unwrap().command
+        }) = parse(Some("evidence")).unwrap().command
         else {
             panic!("expected autonomy command");
         };
@@ -3101,9 +3101,9 @@ mod tests {
     #[test]
     fn external_child_does_not_inherit_runner_build_metadata() {
         let cli = crate::Cli::try_parse_from(["ferric", "bench", "autonomy"]).unwrap();
-        let crate::Command::Bench {
+        let Some(crate::Command::Bench {
             command: crate::BenchCommand::Autonomy(args),
-        } = cli.command
+        }) = cli.command
         else {
             panic!("expected autonomy command");
         };
@@ -3318,9 +3318,9 @@ mod tests {
             "evidence",
         ])
         .unwrap();
-        let crate::Command::Bench {
+        let Some(crate::Command::Bench {
             command: crate::BenchCommand::Autonomy(args),
-        } = cli.command
+        }) = cli.command
         else {
             panic!("expected autonomy command");
         };

@@ -234,6 +234,9 @@ pub enum TierSource {
     Params,
     /// Asked for outright by the operator (`--tier` / config `tier`).
     Override,
+    /// Restricted automatically by a surface's unqualified safety default,
+    /// not earned by measurement or selected explicitly by the operator.
+    Conservative,
 }
 
 impl TierSource {
@@ -243,6 +246,7 @@ impl TierSource {
             TierSource::Measured => "measured",
             TierSource::Params => "params",
             TierSource::Override => "override",
+            TierSource::Conservative => "conservative",
         }
     }
 
@@ -252,6 +256,7 @@ impl TierSource {
         match s {
             "measured" => TierSource::Measured,
             "override" => TierSource::Override,
+            "conservative" => TierSource::Conservative,
             _ => TierSource::Params,
         }
     }
@@ -406,6 +411,7 @@ mod tests {
             TierSource::Measured,
             TierSource::Params,
             TierSource::Override,
+            TierSource::Conservative,
         ] {
             assert_eq!(TierSource::from_label(s.label()), s);
         }

@@ -24,7 +24,7 @@ test = false
 bench = false
 
 [features]
-default = []
+default = ["backend-openai"]
 
 # Test-only model-free stand-in for llama-server. The required-feature binary
 # target keeps it out of normal/release Ferric builds.

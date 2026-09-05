@@ -1252,14 +1252,14 @@ fn validate_resume_trace_root(
 }
 
 #[cfg(windows)]
-fn documented_shell_quote(value: &str) -> String {
+pub(crate) fn documented_shell_quote(value: &str) -> String {
     // PowerShell single-quoted strings are literal; a single quote is escaped
     // by doubling it. `$`, backticks, separators, and double quotes stay inert.
     format!("'{}'", value.replace('\'', "''"))
 }
 
 #[cfg(not(windows))]
-fn documented_shell_quote(value: &str) -> String {
+pub(crate) fn documented_shell_quote(value: &str) -> String {
     // POSIX sh single-quoted strings are literal. Close the string, emit one
     // quoted single quote, then reopen it.
     format!("'{}'", value.replace('\'', "'\"'\"'"))
