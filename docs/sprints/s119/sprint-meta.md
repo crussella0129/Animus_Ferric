@@ -3,14 +3,14 @@
 - **Sprint number:** 119
 - **Book schema version:** 2
 - **Start timestamp:** 2026-09-04T23:34:16Z
-- **End timestamp:** 2026-09-05T01:35:24Z
+- **End timestamp:** pending
 - **Model:** gpt-6-astra, ultra (user-selected; runtime model identity is not independently exposed)
 - **Bundle version:** 0.22.0
-- **Exit status:** success
+- **Exit status:** in-progress
 - **Token count:** unavailable from the active harness; not estimated
 - **Summary:** Review and refactor source-owned subprocess cleanup and Cargo-driven verification after Sprint 118's actual merge.
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), AC-6 and model-free enabling AC-9 evidence only.
-- **Completion evidence:** Partial INT-0008 AC-6 source-process increment verified at 81c9aea; Test critique clean; six-job CI 33935893263 passed; Loop reconciliation in docs/sprints/s119/loop-review.md; extra audit and owner-only PR checkpoint follow.
+- **Completion evidence:** Pending correction and re-verification after the extra post-Loop audit rejected deadline ordering; the original close is retained below and in Git.
 
 ## Initial phase status (superseded by the resume and closeout records below)
 
@@ -81,3 +81,18 @@ The next sprint waits for the owner to merge this sprint's sole dev-to-main PR.
 Loop validation/closure and the extra independent post-Loop adversarial audit
 are separate recorded actions. The authorized unrelated evidence stash must
 be restored and hash-verified after the clean Book/remote gates, before handoff.
+
+## Extra-audit rejection and same-sprint repair
+
+The first close at `f3cb48b`, timestamp `2026-09-05T01:35:24Z`, was a real
+local close based on source `81c9aea`, clean Test critique and six-job CI
+`33935893263`. It was not a PR or merge. The required fresh post-Loop audit
+then found that Unix cleanup could return success before checking its elapsed
+deadline. Windows suspended-child rollback had the analogous ordering.
+Those findings invalidate final E01/E02 acceptance despite green prior tests.
+
+The terminal fields are explicitly superseded to resume Test in this same
+sprint; no new sprint, changed locked promise, or remote checkpoint is created.
+The original close and accepted reports remain available in Git and the
+retained audit record. A corrected source head, new CI, independent Test
+critique, repeated Loop closure and post-Loop audit are required before PR.

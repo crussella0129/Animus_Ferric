@@ -1,6 +1,9 @@
 # Sprint 119 Test Report
 
-**Result: pass for the locked source-process increment.**
+**Historical result, superseded by the extra post-Loop audit.** The following
+report records the real earlier pass at `81c9aea`; it is not current acceptance.
+The blocking [critique](critique.md) returns this sprint to Test until the
+deadline correction receives its own source-head verification and critique.
 
 - **Tested implementation head:** `81c9aeaf0a9c08f8909395d77a6c7bd53204ee94`.
 - **Authoritative CI:** [run 33935893263](https://github.com/crussella0129/Animus_Ferric/actions/runs/33935893263), completed success, all six jobs.

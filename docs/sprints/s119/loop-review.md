@@ -1,5 +1,10 @@
 # Sprint 119 Loop reconciliation
 
+The first closure at `f3cb48b` was superseded when the required extra audit
+found a remaining deadline-ordering bug. The receipts below are retained
+historical evidence; corrected-head Test, Loop and audit must complete before
+the PR can be offered.
+
 ## Scope and intent
 
 INT-0008 remains active. The accepted source-process safety increment does not
