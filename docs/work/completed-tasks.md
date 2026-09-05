@@ -1897,3 +1897,12 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** `crates/ferric-cli/src/{test_process_containment.rs,test_process_containment_tests.rs,main.rs,query.rs,server.rs,server_process.rs,server_registration.rs,bin/ferric_lifecycle_fixture.rs}`, `crates/ferric-cli/tests/{cli.rs,bench_mock.rs,server_lifecycle_fixture.rs}`. The proposed cron parent-death change was removed before acceptance; cron has no net change.
 - **Verification:** Windows Cargo workspace pass, including CLI units 310/310, CLI integration 68/68, benchmark command integration 7/7, source ratchet 1/1 and template hygiene 3/3. Separate native lifecycle Cargo suite 5/5 in 19.72s; workspace and lifecycle-feature clippy with warnings denied pass. An initial lifecycle-feature lint failed on a Linux-only File import; cfg correction passed. E04 retains previous assertions, including spec-v2 L3/L4 failure classification; E05/E06 source owner-death and parent-identity regressions pass on Windows. Linux exact pidfd event/reaping assertions remain required CI evidence.
 - **Commit:** `4e9aed97ce77058343539f7f11d57b3cf44862af`
+
+## T-11903 (sprint 119)
+
+- **Description:** Replaced direct Linux lifecycle artifact extraction/execution with a Cargo-driven namespace wrapper and unprivileged source reaper; documented source-owned cleanup and recorded actual Build provenance and next-sprint read-only preparation.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), partial AC-6.
+- **Completed:** 2026-09-05T01:04:00Z (implementation boundary; offer-for-merge gates below remain mandatory)
+- **Files modified:** `.github/workflows/ci.yml`, `AGENTS.md`, `tools/{test-lifecycle-linux.sh,lifecycle-linux-reaper.sh,README.md}`, `crates/ferric-cli/tests/source_execution.rs`, `docs/process-execution.md`, Sprint 119 metadata, unit evidence, and `next-sprint-review-preparation.md`.
+- **Verification:** `source_driven_ci_contract` passes in Windows Cargo workspace test; both shell scripts pass `bash -n`; fmt, workspace/backend/lifecycle clippy and native Windows lifecycle tests pass. E07's actual Linux namespace run is the required CI Test gate. E08 is conditional on offering a PR: formal Test critique, Loop reconciliation/validation, the extra independent post-Loop audit, confirmed push, and exact one-sprint dev-to-main PR must all be proved before that offer. This implementation completion is not a claim those later actions occurred.
+- **Commit:** PENDING

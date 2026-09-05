@@ -63,59 +63,10 @@ jobs:
       - name: test lifecycle fixture serially (Windows)
         if: runner.os == 'Windows'
         run: cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1
-      - name: build lifecycle fixture test (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          test_bin="$(
-            cargo test -p ferric-cli --features lifecycle-fixture \
-              --test server_lifecycle_fixture --locked --no-run \
-              --message-format=json |
-            jq -sr '
-              [
-                .[] |
-                select(.reason == "compiler-artifact" and
-                       .target.name == "server_lifecycle_fixture" and
-                       .profile.test == true) |
-                .executable // empty
-              ] as $executables |
-              if ($executables | length) == 1 then
-                $executables[0]
-              else
-                error("expected exactly one lifecycle fixture executable")
-              end
-            '
-          )"
-          test -n "$test_bin"
-          test_bin="$(realpath "$test_bin")"
-          test -x "$test_bin"
-          printf '%s\n' "$test_bin" > "$RUNNER_TEMP/ferric-lifecycle-test-bin"
       - name: test lifecycle fixture serially (isolated non-root Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: |
-          set -euo pipefail
-          test_bin="$(cat "$RUNNER_TEMP/ferric-lifecycle-test-bin")"
-          test -x "$test_bin"
-          runner_uid="$(id -u)"
-          runner_gid="$(id -g)"
-          sudo -n unshare --pid --net --fork --mount-proc \
-            --kill-child=SIGKILL \
-            /bin/sh -ceu '
-              ip link set lo up
-              # Keep an unprivileged shell as namespace PID 1 so it reaps
-              # adopted fixture children between serialized tests. Never exec
-              # the Rust harness as PID 1: exited managed children would remain
-              # zombies and poison later /proc listener-owner queries.
-              # Credential changes clear PDEATHSIG unless setpriv restores it;
-              # retain the unshare --kill-child hard-cleanup contract.
-              exec setpriv --pdeathsig keep \
-                --reuid="$1" --regid="$2" --clear-groups \
-                --no-new-privs --inh-caps=-all --ambient-caps=-all \
-                --bounding-set=-all /bin/sh -ceu \
-                "test \"\$\$\" -eq 1; status=0; \"\$1\" --test-threads=1 || status=\$?; exit \"\$status\"" _ "$3"
-            ' _ "$runner_uid" "$runner_gid" "$test_bin"
+        run: bash tools/test-lifecycle-linux.sh
 
   # Portability gate: Ferric must keep type-checking for Raspberry Pi /
   # Orange Pi / Jetson class aarch64 Linux targets (ADR-004).

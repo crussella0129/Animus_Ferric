@@ -1,9 +1,5 @@
 # Refactoring Tasks (From Architecture Report)
 
-## Current Sprint 119
-
-- [ ] T-11903 (sprint 119) [intent: INT-0008]: Replace direct lifecycle test-artifact execution with Cargo-driven CI; document scope and close all phase/review/remote gates. — touches: CI, process contract, AGENTS.md, Book evidence
-
 ## animus-launch
 - [ ] Migrate `std::fs` to `tokio::fs` for async filesystem operations in project scaffolding.
 

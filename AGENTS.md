@@ -44,6 +44,17 @@ work state, and `docs/sprints/` owns sprint provenance. `docs/SUMMARY.md` is a
 navigation view only; `docs/history/` preserves migrated legacy records and is
 not authoritative. Do not recreate the retired root-level sprint ledgers.
 
+## Source-driven execution
+
+- Run Rust code through source-aware Cargo commands such as `cargo test` and
+  `cargo run`. Never invoke compiled artifacts from `target/` directly.
+- Do not create ad-hoc background executable or process proofs. Tests that
+  need child processes must define them in source, enforce a bounded lifetime,
+  and own them with cancellation-safe cleanup.
+- A test command is not complete until its source-level cleanup contract has
+  proved that every child it created was reaped. Do not repair a test run by
+  manually terminating leftover processes and then call the run successful.
+
 ## Template hygiene
 
 This repo is meant to be usable as a template (ADR-096). Machine identity —

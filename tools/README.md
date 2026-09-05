@@ -1,5 +1,15 @@
 # tools/
 
+## Source-driven lifecycle gate
+
+`bash tools/test-lifecycle-linux.sh` runs the model-free Linux lifecycle suite
+through Cargo inside its required non-root PID/network namespace. It uses
+`lifecycle-linux-reaper.sh` as an internal source supervisor, not a target
+executable. See [source-driven verification](../docs/process-execution.md) for
+the Windows Cargo command and exact cleanup/support boundaries.
+
+## Other runners
+
 Test and benchmark runners. `demo-smoke.ps1` is the deterministic, offline
 pre-demo gate; the other runners drive Ferric against a real model or Docker
 daemon and cover behavior `cargo test` deliberately does not. Run them from the

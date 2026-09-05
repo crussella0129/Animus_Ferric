@@ -46,3 +46,18 @@ owner's continue instruction. Source remained untouched during Plan review.
 The requested repository-wide review/refactor is a distinct next sprint, not
 fulfilled by this bounded process-cleanup plan. It must retain its own PR and
 wait for the owner to merge this sprint before new sprint commits land on dev.
+
+## Build reconciliation
+
+The locked plans and queued tasks are committed at `b46fba8`; subsequent
+implementation follows T-11901 through T-11903. T-11901 implementation is
+`a18d1a3` and T-11902 is `4e9aed9`, each followed by resolvable ledger evidence.
+Independent source review caught and closed the Windows accounting/handle
+termination race, Unix leader-signal lock gap, registration-ID reuse gap, and
+Windows resumed-thread ownership check. The failed Windows test and lint
+attempts remain in the unit record. Workspace and native lifecycle source
+tests pass locally; formal Test must bind final-head CI and clause evidence.
+No direct target executable or manual leftover-process cleanup was used.
+T-11903's PR/phase promise is an offer-for-merge gate: closing its implementation
+does not claim the later Test, Loop, or remote actions have already occurred.
+The unrelated file remains in the exact authorized stash until final handoff.
