@@ -216,11 +216,19 @@ pub(crate) fn resolved_endpoint_in(
     explicit: Option<&str>,
     workspace: &Path,
 ) -> Result<EndpointSelection, EndpointSelectionError> {
-    select_endpoint_with(explicit, || {
+    resolved_endpoint_in_with(explicit, workspace, |workspace| {
         let scope = ManagedDiscoveryScope::for_workspace(workspace)?;
         let discovery = crate::server::discover_managed_server_in(&scope);
         Ok((scope, discovery))
     })
+}
+
+fn resolved_endpoint_in_with(
+    explicit: Option<&str>,
+    workspace: &Path,
+    discover: impl FnOnce(&Path) -> Result<(ManagedDiscoveryScope, ManagedServerDiscovery), String>,
+) -> Result<EndpointSelection, EndpointSelectionError> {
+    select_endpoint_with(explicit, || discover(workspace))
 }
 
 #[cfg(feature = "backend-openai")]
@@ -277,17 +285,7 @@ pub(crate) async fn create_provider_in(
 pub(crate) const BACKEND_FEATURE_MISSING: &str = "this binary was built without backend features; \
      rebuild with `cargo build --features backend-openai`, or use --mock";
 
-/// A provider plus the runtime that drives it — the pair every real-backend
-/// caller needs, and the two lines each of them used to write.
-#[cfg(feature = "backend-openai")]
-pub(crate) fn create_provider_with_runtime(
-    opts: &BackendOpts,
-) -> Result<(Box<dyn Provider + Send + Sync>, tokio::runtime::Runtime), String> {
-    let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    let provider = runtime.block_on(create_provider(opts))?;
-    Ok((provider, runtime))
-}
-
+/// A provider and its runtime bound to the same selected workspace as config.
 #[cfg(feature = "backend-openai")]
 pub(crate) fn create_provider_with_runtime_in(
     opts: &BackendOpts,
@@ -316,13 +314,13 @@ pub(crate) enum ResolvedBackend {
 impl ResolvedBackend {
     /// Resolve a real backend, or explain why this binary cannot.
     #[cfg(feature = "backend-openai")]
-    pub(crate) fn real(opts: &BackendOpts) -> Result<Self, String> {
-        let (provider, runtime) = create_provider_with_runtime(opts)?;
+    pub(crate) fn real_in(opts: &BackendOpts, workspace: &Path) -> Result<Self, String> {
+        let (provider, runtime) = create_provider_with_runtime_in(opts, workspace)?;
         Ok(ResolvedBackend::Real { provider, runtime })
     }
 
     #[cfg(not(feature = "backend-openai"))]
-    pub(crate) fn real(_opts: &BackendOpts) -> Result<Self, String> {
+    pub(crate) fn real_in(_opts: &BackendOpts, _workspace: &Path) -> Result<Self, String> {
         Err(BACKEND_FEATURE_MISSING.to_string())
     }
 }
@@ -350,5 +348,61 @@ mod tests {
         .unwrap();
         assert!(matches!(explicit, EndpointSelection::Explicit { .. }));
         assert_eq!(explicit.base_url(), "http://explicit/v1");
+    }
+
+    #[test]
+    fn selected_workspace_drives_real_provider() {
+        let invocation = tempfile::tempdir().unwrap();
+        let selected = tempfile::tempdir().unwrap();
+        std::fs::create_dir(selected.path().join(".ferric")).unwrap();
+        std::fs::write(
+            selected.path().join(".ferric/server.json"),
+            "invalid registration",
+        )
+        .unwrap();
+        // Exercise the real registration reader with explicit isolated roots;
+        // no global chdir, environment changes, or live network probes.
+        let discover = |workspace: &Path| {
+            let scope = ManagedDiscoveryScope {
+                workspace: workspace.to_path_buf(),
+                global: None,
+            };
+            let discovery = crate::server::discover_managed_server_in(&scope);
+            Ok((scope, discovery))
+        };
+        assert!(matches!(
+            resolved_endpoint_in_with(None, invocation.path(), discover),
+            Ok(EndpointSelection::Default { .. })
+        ));
+        assert!(
+            resolved_endpoint_in_with(None, selected.path(), discover).is_err(),
+            "the selected blocked registration must not become the invocation default"
+        );
+        assert!(selected.path().join(".ferric/server.json").exists());
+    }
+
+    #[test]
+    fn explicit_endpoint_and_ambiguous_discovery_matrix() {
+        let dir = tempfile::tempdir().unwrap();
+        let explicit = resolved_endpoint_in_with(Some("http://explicit/v1"), dir.path(), |_| {
+            panic!("explicit endpoint must not discover another workspace or server")
+        })
+        .unwrap();
+        assert_eq!(explicit.base_url(), "http://explicit/v1");
+        for state in [
+            ManagedServerState::Conflict { issues: Vec::new() },
+            ManagedServerState::Unverifiable { issues: Vec::new() },
+            ManagedServerState::StaleOnly { stale: Vec::new() },
+        ] {
+            let scope = ManagedDiscoveryScope {
+                workspace: dir.path().to_path_buf(),
+                global: None,
+            };
+            let mut discovery = crate::server::discover_managed_server_in(&scope);
+            discovery.state = state;
+            assert!(
+                resolved_endpoint_in_with(None, dir.path(), |_| Ok((scope, discovery))).is_err()
+            );
+        }
     }
 }

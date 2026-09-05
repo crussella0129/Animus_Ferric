@@ -315,7 +315,8 @@ pub mod server {
     ) -> Result<QueryResponse, ApiQueryError> {
         let mode = request_mode(request)?;
         let args = &state.args;
-        let (backend_opts, config) = api_run_config(&state.workspace, args);
+        let (backend_opts, config) = api_run_config(&state.workspace, args)
+            .map_err(|error| ApiQueryError::Internal(error.to_string()))?;
 
         let trace_dir = ferric_trace::trace_dir(state.workspace.root());
         let (effective_prompt, media, resume, answer) = match mode {
@@ -412,8 +413,8 @@ pub mod server {
     fn api_run_config(
         workspace: &Workspace,
         args: &ApiArgs,
-    ) -> (BackendOpts, crate::query::RunConfig) {
-        let loaded_config = crate::config::load_layered(workspace.root());
+    ) -> Result<(BackendOpts, crate::query::RunConfig), crate::config::ConfigError> {
+        let loaded_config = crate::config::load_layered(workspace.root())?;
         let cfg = loaded_config.config;
         let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
 
@@ -451,8 +452,8 @@ pub mod server {
                 .unwrap_or_else(|| PathBuf::from("benchmarks")),
             model_key: backend_opts.model.clone(),
             hooks: None,
-        });
-        (backend_opts, config)
+        })?;
+        Ok((backend_opts, config))
     }
 
     /// Entry point for `ferric api`.
@@ -478,10 +479,26 @@ pub mod server {
             }
         };
 
-        // API policy is launch-time fixed. Refuse unsupported CLI or layered
-        // config selections before binding a socket; the request-boundary
-        // check remains as defense in depth if config changes while running.
-        let launch_config = crate::config::load_layered(&workspace_root).config;
+        // Validate launch inputs before binding. The existing per-request
+        // configuration reload remains in api_run_config.
+        let launch_config = match crate::config::load_layered(&workspace_root) {
+            Ok(loaded) => loaded.config,
+            Err(error) => {
+                eprintln!("api: {error}");
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+        if let Err(error) = crate::config::validate_effective_numbers(
+            args.params_b.or(launch_config.params_b).unwrap_or(1.2),
+            args.ctx.or(launch_config.ctx).unwrap_or(4096),
+            args.temperature
+                .or(launch_config.temperature)
+                .unwrap_or(0.0),
+            args.max_ring.or(launch_config.max_ring),
+        ) {
+            eprintln!("api: {error}");
+            return std::process::ExitCode::FAILURE;
+        }
         let launch_harness_policy = args
             .harness_policy
             .map(Into::into)
@@ -607,7 +624,7 @@ pub mod server {
             let workspace = Workspace::new(cli_workspace.path()).unwrap();
             let mut explicit = api_args(cli_workspace.path());
             explicit.harness_policy = Some(HarnessPolicyArg::Evidence);
-            let (_, config) = api_run_config(&workspace, &explicit);
+            let (_, config) = api_run_config(&workspace, &explicit).unwrap();
             assert_eq!(
                 config.harness_policy,
                 Some(ferric_core::HarnessPolicy::Evidence)
@@ -622,12 +639,43 @@ pub mod server {
             )
             .unwrap();
             let workspace = Workspace::new(config_workspace.path()).unwrap();
-            let (_, config) = api_run_config(&workspace, &api_args(config_workspace.path()));
+            let (_, config) =
+                api_run_config(&workspace, &api_args(config_workspace.path())).unwrap();
             assert_eq!(
                 config.harness_policy,
                 Some(ferric_core::HarnessPolicy::Evidence)
             );
             assert!(!config_workspace.path().join(".ferric/trace").exists());
+        }
+
+        #[test]
+        fn present_invalid_config_blocks_all_consumers_api_reload() {
+            let dir = tempfile::tempdir().unwrap();
+            let state = AppState {
+                workspace: Workspace::new(dir.path()).unwrap(),
+                args: api_args(dir.path()),
+            };
+            std::fs::create_dir(dir.path().join(".ferric")).unwrap();
+            std::fs::write(
+                dir.path().join(".ferric/config.toml"),
+                "api_key = 'private-fixture-token' malformed",
+            )
+            .unwrap();
+            let request = QueryRequest {
+                prompt: Some("task".to_string()),
+                files: Vec::new(),
+                continuation_id: None,
+                answer: None,
+            };
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let error = runtime
+                .block_on(run_query(&state, &request, false, None))
+                .unwrap_err();
+            let (status, message) = error.into_http();
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert!(message.contains("configuration"));
+            assert!(!message.contains("private-fixture-token"));
+            assert!(!dir.path().join(".ferric/trace").exists());
         }
 
         #[test]

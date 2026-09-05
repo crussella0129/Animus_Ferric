@@ -462,6 +462,12 @@ async fn bench_model(
 
 #[cfg(feature = "backend-openai")]
 pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
+    if let Err(error) =
+        crate::config::validate_effective_numbers(args.params_b, 4096, 0.0, args.max_ring)
+    {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(r) => r,
         Err(e) => {

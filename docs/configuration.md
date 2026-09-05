@@ -14,6 +14,27 @@ For the tunables below, Ferric resolves each value as:
 
 So config sets your defaults and flags override them per run.
 
+Only an absent file uses defaults. An unreadable, malformed, oversized, or
+invalid present configuration stops the command before provider requests,
+hooks, or agent work. This applies even when a CLI flag would override the
+invalid setting: a broken project layer must never reveal user-level hooks or
+skills beneath it. Errors name the file or setting and a corrective action;
+they do not print configuration contents, credentials, or parser excerpts.
+Configuration files must be regular UTF-8 files of at most 1 MiB. Previously
+tolerated unknown fields, including the retired `backend` key, remain tolerated.
+
+Parameter count must be finite and greater than zero, context must be greater
+than zero, temperature must be finite and between 0 and 2 inclusive, and a
+configured tool ring must be between 0 and 3 inclusive. The same checks apply
+to effective CLI settings. These limits validate inputs; they do not prove
+that a model fits the host or has earned a capability tier.
+
+Query, chat, MCP and API select configuration and managed backends from the
+same `--workspace`; ICM uses its pipeline root. An explicit API endpoint still
+wins over discovery. Conflicting or unverifiable managed registrations require
+operator resolution. Relative expert paths such as `profile_dir` retain their
+existing invocation-directory interpretation.
+
 ---
 
 ## `.ferric/config.toml` — project defaults
@@ -36,7 +57,7 @@ temperature = 0.0              # 0.0 = deterministic sampler
 
 # Behavior
 max_ring    = 1                # cap the active tool ring (restrict-only)
-harness_policy = "legacy"      # legacy | evidence | evidence_planner
+harness_policy = "legacy"      # legacy | evidence (evidence_planner is unavailable)
 profile_dir = "benchmarks"     # where model_profiles.json lives (ADR-029)
 stream      = true             # stream output by default
 
@@ -45,6 +66,17 @@ pre_turn  = "scripts/pre.sh"
 post_turn = "scripts/post.sh"
 on_error  = "scripts/err.sh"
 ```
+
+`stream = false` disables streaming in both query and chat, including chat's
+`/do` turns. `--no-stream` also disables it. MCP and API retain their own
+transport behavior. An omitted harness policy remains omitted until execution:
+fresh runs use Legacy and resumed runs inherit their trace's policy.
+
+The expert API continues to reload valid configuration for each request;
+MCP and chat hold their admitted settings for the session. An invalid API
+configuration is rejected at startup or, if changed later, at the next request.
+`quant` and `family` remain accepted compatibility labels; ordinary query/chat
+policy selection does not use them to infer model capability.
 
 The field list is fixed and bounded on purpose — config can configure behavior,
 but it can never reach the guard, denylists, or workspace boundary.
@@ -134,6 +166,10 @@ on_error  = "notify-send 'ferric run failed'"
 Hooks run via the host shell (`sh -c` / `cmd /C`) in the workspace root. They are a
 per-workspace escape hatch you author — distinct from cron jobs, whose command is a
 bounded enum, not arbitrary shell.
+
+Query and ICM use configured hooks. Chat, MCP, and API do not implicitly run
+them. Query and chat honor the standing `allowed_skills` list; MCP, API, and ICM
+retain their separate skill-authorization rules.
 
 ---
 

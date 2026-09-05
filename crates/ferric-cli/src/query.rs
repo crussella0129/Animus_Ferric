@@ -403,7 +403,8 @@ fn load_named_checks(path: &Path) -> Result<Vec<NamedCheck>, String> {
     Ok(parsed.checks)
 }
 
-pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
+pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::config::ConfigError> {
+    crate::config::validate_effective_numbers(a.params_b, a.ctx, a.temperature, a.max_ring)?;
     let mut registry = Registry::new();
     register_builtin_tools(&mut registry);
 
@@ -562,7 +563,7 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
         }
     };
 
-    RunConfig {
+    Ok(RunConfig {
         registry,
         caps,
         protocol,
@@ -573,7 +574,7 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> RunConfig {
         lineage,
         prompt_composition_error,
         hooks: a.hooks.clone(),
-    }
+    })
 }
 
 /// Fail closed before a product allocates a trace for policies whose complete
@@ -1324,9 +1325,16 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     // IN PLACE on `args` so the same merged values reach `create_provider` in
     // `drive_real` below, not just this function's own `RunConfigArgs` build.
     let loaded_config = if args.no_config {
-        crate::config::LoadedConfig::default()
+        Ok(crate::config::LoadedConfig::default())
     } else {
         crate::config::load_layered(&workspace_root)
+    };
+    let loaded_config = match loaded_config {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
     };
     // Hooks are the one config field that becomes arbitrary command execution
     // (`run_hook` -> `sh -c` with the full inherited environment), and the user
@@ -1360,9 +1368,9 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         .clone()
         .or(cfg.profile_dir)
         .unwrap_or_else(|| PathBuf::from("benchmarks"));
-    let resolved_stream = !args.no_stream && cfg.stream.unwrap_or(true);
+    let resolved_stream = crate::config::effective_stream(args.no_stream, cfg.stream);
 
-    let mut config = build_run_config(&RunConfigArgs {
+    let config = build_run_config(&RunConfigArgs {
         mock: args.mock,
         params_b: resolved_params_b,
         quant: resolved_quant,
@@ -1385,6 +1393,13 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         requested_skills: args.skills.clone(),
         allowed_skills: cfg.allowed_skills.clone().unwrap_or_default(),
     });
+    let mut config = match config {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     if let Some(max_turns) = args.max_turns {
         config.policy.max_turns = max_turns;
     }
@@ -1513,12 +1528,6 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     // exists; the config itself already fell back to DEFAULT_SYSTEM_PROMPT.
     if let Some(err) = &config.prompt_composition_error {
         let _ = sink.write_event(Event::Note { text: err.clone() });
-    }
-    // A malformed config layer (if any) is both reported to stderr and traced
-    // as a Note (C-004: testable data, not a bare eprintln) — never silent.
-    for diag in &loaded_config.diagnostics {
-        eprintln!("{diag}");
-        let _ = sink.write_event(Event::Note { text: diag.clone() });
     }
     // T-3806 (C-005, narrowed): `Animus.md`'s PRESENCE is traced as a Note —
     // its absence stays silent, matching the existing precedent that the
@@ -2918,7 +2927,7 @@ mod tests {
     #[test]
     fn run_config_matches_inline_computation() {
         let a = base_run_config_args();
-        let config = build_run_config(&a);
+        let config = build_run_config(&a).unwrap();
 
         let caps = Capabilities {
             supports_native_tool_calls: true,
@@ -2965,7 +2974,7 @@ mod tests {
     /// across many `tools/call`s.
     #[test]
     fn run_config_reused_across_calls() {
-        let config = build_run_config(&base_run_config_args());
+        let config = build_run_config(&base_run_config_args()).unwrap();
         let (protocol_1, max_ring_1) = (config.protocol, config.policy.max_ring);
         let (protocol_2, max_ring_2) = (config.protocol, config.policy.max_ring);
         assert_eq!(protocol_1, protocol_2);

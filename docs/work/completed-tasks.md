@@ -1925,3 +1925,12 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** `crates/ferric-tools/src/builtin/check_syntax.rs`, `crates/ferric-tools/tests/controlled_mutations.rs`, INT-0005, Sprint 120 unit record and work ledgers.
 - **Verification:** Source-aware Cargo: 16 syntax units, 15 controlled-mutation integrations, all-target ferric-tools clippy with warnings denied, and workspace fmt check passed. Independent read-only review found no blocker; additional try/handler/finally/match generic-guard cases were added and the same checks rerun successfully. See [unit evidence](../sprints/s120/sprint-tests/unit-tests.md).
 - **Commit:** `5d783cd59ecff6f27dbcc2e91b89d42a0e60056a`
+
+## T-12002 (sprint 120)
+
+- **Description:** Made present invalid configuration fail closed with bounded, sanitized admission, validated effective numeric inputs, selected-workspace provider discovery and shared chat streaming resolution.
+- **Intent:** [INT-0006](../intents/INT-0006-truthful-policy-contract.md) AC-5/6 increment; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) partial AC-12.
+- **Completed:** 2026-09-05T03:40:04Z
+- **Files modified:** `crates/ferric-cli/src/{config,backend,query,mcp,api,chat,icm,skills_cmd,bench_cmd,autonomy_cmd,toolbench_cmd}.rs`, `crates/ferric-cli/tests/cli.rs`, `docs/configuration.md`, INT-0006, Sprint 120 unit evidence and work ledgers.
+- **Verification:** Backend and no-default configuration suites each 24 passed; backend units 4 passed; named API reload, chat streaming, multi-consumer invalid config, selected-workspace, effective-number and resume-inheritance assertions passed. Existing CLI config regression filter 8 passed. All-target backend CLI clippy with warnings denied and scoped formatting passed. Root reviewed the changed boundaries; API reload timing and legacy tolerated unknown fields remain unchanged. See unit evidence for retained initial fixture failures.
+- **Commit:** PENDING

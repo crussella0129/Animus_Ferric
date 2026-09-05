@@ -292,7 +292,6 @@ front-door work remains subject to plan approval and lock.
 
 ## Sprint 120 — approved human-first implementation
 
-- [ ] T-12002 (sprint 120) [intent: INT-0006, INT-0008]: Make configuration fallible, validated and workspace-bound; honor effective streaming. — touches: CLI config/backend/consumers and tests
 - [ ] T-12005 (sprint 120) [intent: INT-0008]: Make provider cancellation and incremental Unicode streaming reliable. — touches: crates/ferric-provider/src/openai.rs and provider tests
 - [ ] T-12003 (sprint 120) [intent: INT-0008]: Prepare a borrowed or checked-owned foreground runtime and coordinated model preferences. — touches: CLI startup modules, native lifecycle primitives and tests
 - [ ] T-12004 (sprint 120) [intent: INT-0008]: Make normal launch the compact human interface while preserving expert commands. — touches: Cargo defaults, CLI main/chat/startup, tests

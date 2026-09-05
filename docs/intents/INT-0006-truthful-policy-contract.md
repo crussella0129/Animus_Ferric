@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0006
-- **State:** planned
+- **State:** active
 - **Work evidence:** [T-11406 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-11905 next repository-wide review/refactor](../work/tasks.md#next-sprint--repository-wide-review-and-bounded-refactor); [T-12002 configuration increment](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -64,6 +64,10 @@ The policy surface becomes smaller and more honest, and later orchestration
 must earn a new explicit protocol.
 
 ## Transition history
+
+- 2026-09-05: moved from `planned` to `active` as T-12002 Build began after the
+  Python prerequisite's focused tests and linter passed. Broader policy-field
+  and direct-library validation work remains outside this increment.
 
 - 2026-09-05: moved from `proposed` to `planned` after owner approval of Sprint 120 T-12002. This selects AC-5/6 configuration admission and workspace/streaming consistency; the inert-field migration and direct-library policy validation remain open.
 

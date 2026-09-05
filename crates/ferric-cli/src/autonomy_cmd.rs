@@ -229,6 +229,12 @@ struct RetainedTrace {
 }
 
 pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
+    if let Err(error) =
+        crate::config::validate_effective_numbers(args.params_b, args.ctx, 0.0, None)
+    {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
     let suite = match embedded_autonomy_suite() {
         Ok(suite) => suite,
         Err(error) => {

@@ -1532,47 +1532,166 @@ fn config_only_stream_disables_live_output() {
     );
 }
 
-/// C-004 (plan-critic): a malformed `.ferric/config.toml` degrades to absent
-/// AND is traced as a `Note` — testable data, not just an unasserted
-/// `eprintln!`.
 #[test]
-fn malformed_config_traced_as_note() {
-    let ws = tempfile::tempdir().unwrap();
-    write_project_config(ws.path(), "this is not [valid toml");
-
+fn present_invalid_config_blocks_all_consumers() {
+    let mut surfaces: Vec<Vec<&str>> = vec![
+        vec!["query", "--mock", "--params-b", "7", "do a task"],
+        vec!["chat", "--mock"],
+        vec!["mcp", "--mock"],
+        vec!["skills", "list"],
+    ];
+    if cfg!(feature = "backend-openai") {
+        surfaces.push(vec!["api", "--mock", "--port", "0"]);
+    }
+    for invalid in [
+        Some("api_key = 'private-fixture-token' malformed"),
+        Some("harness_policy = 'private-fixture-token'"),
+        Some("tier = 'private-fixture-token'"),
+        Some("params_b = nan"),
+        Some("ctx = 0"),
+        Some("temperature = inf"),
+        Some("max_ring = 4"),
+        None, // A directory occupying the config path is deterministically unreadable.
+    ] {
+        for surface in &surfaces {
+            let ws = tempfile::tempdir().unwrap();
+            let user = tempfile::tempdir().unwrap();
+            match invalid {
+                Some(text) => write_project_config(ws.path(), text),
+                None => std::fs::create_dir_all(ws.path().join(".ferric/config.toml")).unwrap(),
+            }
+            let out = ferric()
+                .args(surface)
+                .arg("--workspace")
+                .arg(ws.path())
+                .env("APPDATA", user.path())
+                .env("XDG_CONFIG_HOME", user.path())
+                .env("HOME", user.path())
+                .output_bounded()
+                .unwrap();
+            assert!(
+                !out.status.success(),
+                "{surface:?} accepted invalid configuration"
+            );
+            let stderr = String::from_utf8(out.stderr).unwrap();
+            assert!(stderr.contains("configuration"), "{surface:?}: {stderr}");
+            assert!(!stderr.contains("private-fixture-token"));
+            assert!(
+                !ws.path().join(".ferric/trace").exists(),
+                "{surface:?} allocated a trace"
+            );
+            assert!(
+                !ws.path().join("mock.txt").exists(),
+                "{surface:?} performed work"
+            );
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("icm");
+    ferric_icm::scaffold_workspace(&ws).unwrap();
+    write_project_config(&ws, "params_b = nan");
     let out = ferric()
-        .args(["query", "--mock", "do a task"])
-        .arg("--workspace")
-        .arg(ws.path())
+        .args(["icm", "run"])
+        .arg(&ws)
+        .args(["--mock", "--auto"])
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("invalid params_b"));
+    assert!(!ws.join(".ferric/trace").exists());
+}
 
-    let trace_dir = ws.path().join(".ferric").join("trace");
-    let trace = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .expect("a q-*.jsonl trace");
-    let content = std::fs::read_to_string(trace.path()).unwrap();
-    let has_note = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .any(|v| {
-            v["event"]["type"] == "note"
-                && v["event"]["text"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains("malformed config")
-        });
-    assert!(
-        has_note,
-        "expected a Note event carrying the malformed-config diagnostic"
-    );
+#[cfg(feature = "backend-openai")]
+#[test]
+fn selected_workspace_drives_real_provider_chat_icm() {
+    let invocation = tempfile::tempdir().unwrap();
+    let selected_parent = tempfile::tempdir().unwrap();
+    let selected = selected_parent.path().join("selected-workspace");
+    let user = tempfile::tempdir().unwrap();
+    ferric_icm::scaffold_workspace(&selected).unwrap();
+    for workspace in [invocation.path(), selected.as_path()] {
+        std::fs::create_dir_all(workspace.join(".ferric")).unwrap();
+        std::fs::write(
+            workspace.join(".ferric/server.json"),
+            "invalid source-defined registration",
+        )
+        .unwrap();
+    }
+    for surface in ["chat", "icm"] {
+        let mut command = ferric();
+        command
+            .current_dir(invocation.path())
+            .env("APPDATA", user.path())
+            .env("XDG_CONFIG_HOME", user.path())
+            .env("HOME", user.path());
+        if surface == "chat" {
+            command.args(["chat", "--workspace"]).arg(&selected);
+        } else {
+            command.args(["icm", "run"]).arg(&selected).arg("--auto");
+        }
+        // Both candidate roots have invalid registrations, so even a regression
+        // cannot contact a default endpoint. The error must name selected B.
+        let output = command.output_bounded().unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains(
+                &selected
+                    .join(".ferric")
+                    .join("server.json")
+                    .display()
+                    .to_string()
+            ),
+            "{surface}: {stderr}"
+        );
+        assert!(
+            !stderr.contains(
+                &invocation
+                    .path()
+                    .join(".ferric")
+                    .join("server.json")
+                    .display()
+                    .to_string()
+            ),
+            "{surface} discovered the invocation workspace"
+        );
+        assert!(!selected.join(".ferric/trace").exists());
+    }
+}
+
+#[test]
+fn invalid_effective_numbers_rejected_by_cli_surfaces() {
+    let root = tempfile::tempdir().unwrap();
+    let mut surfaces = vec![
+        vec!["query", "--mock", "do a task"],
+        vec!["chat", "--mock"],
+        vec!["mcp", "--mock"],
+        vec!["bench", "full", "--mock"],
+        vec!["bench", "autonomy"],
+    ];
+    if cfg!(feature = "backend-openai") {
+        surfaces.push(vec!["bench", "ltd"]);
+        surfaces.push(vec!["api", "--mock", "--port", "0"]);
+    }
+    for surface in surfaces {
+        let mut command = ferric();
+        command
+            .current_dir(root.path())
+            .args(&surface)
+            .args(["--params-b", "NaN"])
+            .env("APPDATA", root.path())
+            .env("XDG_CONFIG_HOME", root.path())
+            .env("HOME", root.path());
+        let output = command.output_bounded().unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("invalid params_b"),
+            "{surface:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!root.path().join(".ferric").exists());
+        assert!(!root.path().join("benchmarks").exists());
+    }
 }
 
 /// T-3806: an `Animus.md` at the workspace root folds into the assembled
@@ -1717,6 +1836,13 @@ fn write_interrupted_trace_fixture_in(
 }
 
 fn write_clarification_trace_fixture(ws: &std::path::Path) -> std::path::PathBuf {
+    write_clarification_trace_fixture_with_policy(ws, None)
+}
+
+fn write_clarification_trace_fixture_with_policy(
+    ws: &std::path::Path,
+    harness_policy: Option<ferric_core::HarnessPolicy>,
+) -> std::path::PathBuf {
     // Generate a REAL needs_input trace by driving the loop with a mock that
     // asks a clarification question. A hand-built checkpoint cannot be used:
     // the durable-recovery invariant (sprint 113) requires a stored
@@ -1765,7 +1891,7 @@ fn write_clarification_trace_fixture(ws: &std::path::Path) -> std::path::PathBuf
             workspace: &workspace,
             policy: &policy,
             protocol: ferric_core::ActionProtocol::NativeTools,
-            harness_policy: None,
+            harness_policy,
             sampling: ferric_provider::SamplingParams::default(),
             sleeper: &ferric_loop::ThreadSleeper,
             system_prompt: None,
@@ -1996,6 +2122,33 @@ fn clarification_resume_requires_and_traces_an_explicit_answer() {
             && window[1]["event"]["type"] == "resume_prompt"
             && window[2]["event"]["type"] == "recovery_checkpoint"
     }));
+}
+
+#[test]
+fn omitted_resume_harness_inherits() {
+    for policy in [
+        ferric_core::HarnessPolicy::Legacy,
+        ferric_core::HarnessPolicy::Evidence,
+    ] {
+        let ws = tempfile::tempdir().unwrap();
+        let fixture = write_clarification_trace_fixture_with_policy(ws.path(), Some(policy));
+        let out = ferric()
+            .args(["query", "--mock", "--no-config", "--resume"])
+            .arg(&fixture)
+            .args(["--answer", "SQLite", "--workspace"])
+            .arg(ws.path())
+            .output_bounded()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            policy_event(ws.path())["event"]["harness_policy"],
+            policy.label()
+        );
+    }
 }
 
 #[test]

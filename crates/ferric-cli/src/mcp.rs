@@ -696,7 +696,8 @@ impl McpServer {
         // that clone is what both `RunConfigArgs` and `build_real_provider`
         // use below, so the config-resolved model/backend actually reaches
         // the real provider, not just protocol/tier selection.
-        let loaded_config = crate::config::load_layered(&workspace_root);
+        let loaded_config =
+            crate::config::load_layered(&workspace_root).map_err(|error| error.to_string())?;
         let cfg = loaded_config.config;
         let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
         let resolved_params_b = args.params_b.or(cfg.params_b).unwrap_or(1.2);
@@ -747,7 +748,8 @@ impl McpServer {
             // `backend_opts`).
             model_key: backend_opts.model.clone(),
             hooks: None,
-        });
+        })
+        .map_err(|error| error.to_string())?;
         // T-3905 (sprint 39 / 55): `--resume <path>` replays an interrupted, still-
         // incomplete session. Resolved here and passed to the first `ferric_query` call.
         let resume_state = match &args.resume {
@@ -769,20 +771,16 @@ impl McpServer {
         ensure_supported_harness_policy(config.harness_policy)?;
 
         // No trace sink exists yet at launch (each tools/call opens its own),
-        // so a composition failure — and any malformed-config diagnostic
-        // (C-004) — is surfaced once here rather than dropped, or (unlike
+        // so a composition failure is surfaced once here rather than dropped, or (unlike
         // `Note`-tracing) repeated on every subsequent call.
         if let Some(err) = &config.prompt_composition_error {
             eprintln!("{err}");
-        }
-        for diag in &loaded_config.diagnostics {
-            eprintln!("{diag}");
         }
 
         // T-3806: `Animus.md` — same fold as `run_query`. No sink exists yet
         // at launch (each `tools/call` opens its own), so its presence is
         // surfaced via `eprintln!` here rather than a per-call `Note` (same
-        // treatment as the malformed-config diagnostics above).
+        // treatment as the prompt-composition diagnostics above).
         let animus_md = std::fs::read_to_string(workspace_root.join("Animus.md")).ok();
         if let Some(content) = &animus_md {
             config.system_prompt = Some(crate::query::fold_animus_md(
@@ -1135,7 +1133,8 @@ mod tests {
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
             hooks: None,
-        });
+        })
+        .unwrap();
         let trace_dir = dir.join(".ferric").join("trace");
         std::fs::create_dir_all(&trace_dir).unwrap();
         McpServer {

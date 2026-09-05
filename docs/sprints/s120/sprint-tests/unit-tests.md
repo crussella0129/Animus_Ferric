@@ -25,3 +25,30 @@ The affected source is bound to the reachable task commit in completed-tasks.md.
 The preexisting compile failures are retained in Research; Build did not roll
 back the owner-merged dependency. Cargo's duplicate-bin manifest warning is
 preexisting and separate from the warnings-denied Rust clippy result.
+
+## T-12002 — Configuration boundary
+
+Source-aware Windows checks reported by the implementation agent and source
+reviewed by the primary agent on 2026-09-05:
+
+- `cargo check -p ferric-cli --all-targets --features backend-openai`: pass.
+- CLI unit `config::tests`: 24 passed with backend and 24 with
+  `--no-default-features`; `backend::tests`: 4 passed.
+- Named `chat_effective_stream_matrix`,
+  `present_invalid_config_blocks_all_consumers_api_reload`, CLI
+  `present_invalid_config_blocks_all_consumers` (backend and no-default),
+  `selected_workspace_drives_real_provider` (unit and actual chat/ICM admission),
+  `invalid_effective_numbers_rejected` (unit and seven-surface CLI), and
+  `omitted_resume_harness_inherits` passed. The resume test covers both Legacy
+  and Evidence source traces; no eager default replaces inheritance.
+- `cargo test -p ferric-cli --features backend-openai --test cli config`:
+  8 passed; all-target CLI backend clippy with `-D warnings`, scoped rustfmt
+  check and diff check passed.
+
+Initial new fixture attempts failed on Windows slash normalization, incorrect
+benchmark command spelling and one needless borrow lint. Those defects were
+corrected and the affected checks rerun; they are not product success evidence.
+Present invalid configuration is rejected before trace allocation/provider use;
+credential source bytes never enter diagnostics. Unknown legacy fields remain
+tolerated. API configuration still reloads per request as before; its broader
+snapshot contract and direct-library numeric admission remain T-12022.

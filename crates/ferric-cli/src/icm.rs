@@ -243,13 +243,16 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
     // Build the run config + provider ONCE, reused for every stage (the model is
     // fixed across the pipeline; only the workspace changes per stage). Config is
     // resolved from the ICM root, exactly like `ferric query`/`ferric mcp`.
-    let loaded = crate::config::load_layered(&ws.root);
+    let loaded = match crate::config::load_layered(&ws.root) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let cfg = loaded.config;
     let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
-    for diag in &loaded.diagnostics {
-        eprintln!("{diag}");
-    }
-    let mut config = build_run_config(&RunConfigArgs {
+    let config = build_run_config(&RunConfigArgs {
         // ICM composes each stage's context from its OWN declared layers
         // (L0-L4, ADR-064) and reports that composition as provenance. Folding
         // skills in here would inject text no layer accounts for, so ICM opts
@@ -275,6 +278,13 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         model_key: backend_opts.model.clone(),
         hooks: cfg.hooks.clone(),
     });
+    let mut config = match config {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     if let Err(error) = ensure_supported_harness_policy(config.harness_policy) {
         eprintln!("icm run: {error}");
         return ExitCode::FAILURE;
@@ -292,7 +302,7 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
     let backend = if args.mock {
         Backend::Mock
     } else {
-        match Backend::real(&backend_opts) {
+        match Backend::real_in(&backend_opts, &ws.root) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("icm run failed: {e}");

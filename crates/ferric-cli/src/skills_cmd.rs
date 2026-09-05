@@ -33,7 +33,13 @@ fn list(args: SkillsListArgs) -> ExitCode {
     let root = args.workspace.unwrap_or_else(|| PathBuf::from("."));
 
     let (skills, errors) = ferric_skills::discover(&root);
-    let loaded = crate::config::load_layered(&root);
+    let loaded = match crate::config::load_layered(&root) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let allowed = loaded.config.allowed_skills.unwrap_or_default();
 
     let dir = ferric_skills::skills_dir(&root);

@@ -4,6 +4,7 @@
 //! generic key-value map — so "config never touches security/guard/denylist
 //! policy" (ADR-005) is a structural fact, not a review-time hope.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -99,14 +100,11 @@ impl Config {
     }
 }
 
-/// The result of a layered load: the merged config plus any diagnostics from
-/// malformed layers — testable data (C-004), not a bare `eprintln!`. Mirrors
-/// `RunConfig::prompt_composition_error`'s existing pattern of surfacing a
-/// degrade-gracefully failure as data the caller traces once a sink exists.
-#[derive(Default)]
+/// Successfully admitted layers. A present invalid layer never becomes an
+/// empty layer: doing so could expose lower-precedence hooks or skills.
+#[derive(Debug, Default)]
 pub struct LoadedConfig {
     pub config: Config,
-    pub diagnostics: Vec<String>,
     /// Which config file supplied `hooks`, if any (ADR-097).
     ///
     /// Hooks are the one config field that becomes **arbitrary command
@@ -121,6 +119,136 @@ pub struct LoadedConfig {
     /// unexpected config file looked exactly like one the user wrote. This
     /// makes the source nameable so a caller can disclose it.
     pub hooks_source: Option<PathBuf>,
+}
+
+/// Keep configuration admission bounded even when a file grows during reading.
+pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
+
+/// Errors contain only trusted descriptions and coordinates, never source text,
+/// parser messages, values, or an arbitrary underlying I/O error payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigError {
+    path: Option<PathBuf>,
+    kind: ConfigErrorKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConfigErrorKind {
+    Read(std::io::ErrorKind),
+    NotRegular,
+    TooLarge,
+    InvalidToml {
+        line: usize,
+        column: usize,
+    },
+    InvalidUtf8,
+    InvalidSetting {
+        field: &'static str,
+        requirement: &'static str,
+    },
+}
+
+impl ConfigError {
+    fn at(path: &Path, kind: ConfigErrorKind) -> Self {
+        Self {
+            path: Some(path.to_path_buf()),
+            kind,
+        }
+    }
+
+    fn setting(field: &'static str, requirement: &'static str) -> Self {
+        Self {
+            path: None,
+            kind: ConfigErrorKind::InvalidSetting { field, requirement },
+        }
+    }
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(path) = &self.path {
+            write!(f, "configuration {}: ", path.display())?;
+        } else {
+            write!(f, "configuration: ")?;
+        }
+        match self.kind {
+            ConfigErrorKind::Read(kind) => write!(
+                f,
+                "cannot read file ({kind:?}); make it readable or remove the unwanted file"
+            ),
+            ConfigErrorKind::NotRegular => write!(
+                f,
+                "expected a regular file; replace this entry with a readable TOML file"
+            ),
+            ConfigErrorKind::TooLarge => write!(
+                f,
+                "file exceeds the 1 MiB limit; reduce the configuration file"
+            ),
+            ConfigErrorKind::InvalidToml { line, column } => write!(
+                f,
+                "invalid TOML or setting type at line {line}, column {column}; correct the configuration before retrying"
+            ),
+            ConfigErrorKind::InvalidUtf8 => write!(
+                f,
+                "file is not UTF-8; save the configuration as UTF-8 before retrying"
+            ),
+            ConfigErrorKind::InvalidSetting { field, requirement } => write!(
+                f,
+                "invalid {field}; {requirement}; correct the setting before retrying"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+impl Config {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        validate_numbers(self.params_b, self.ctx, self.temperature, self.max_ring)
+    }
+}
+
+fn validate_numbers(
+    params_b: Option<f32>,
+    ctx: Option<u32>,
+    temperature: Option<f32>,
+    max_ring: Option<u8>,
+) -> Result<(), ConfigError> {
+    if params_b.is_some_and(|value| !value.is_finite() || value <= 0.0) {
+        return Err(ConfigError::setting(
+            "params_b",
+            "use a finite positive parameter count",
+        ));
+    }
+    if ctx == Some(0) {
+        return Err(ConfigError::setting("ctx", "use a positive context size"));
+    }
+    if temperature.is_some_and(|value| !value.is_finite() || !(0.0..=2.0).contains(&value)) {
+        return Err(ConfigError::setting(
+            "temperature",
+            "use a finite temperature from 0 through 2",
+        ));
+    }
+    if max_ring.is_some_and(|value| value > 3) {
+        return Err(ConfigError::setting(
+            "max_ring",
+            "use a supported ring from 0 through 3",
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_effective_numbers(
+    params_b: f32,
+    ctx: u32,
+    temperature: f32,
+    max_ring: Option<u8>,
+) -> Result<(), ConfigError> {
+    validate_numbers(Some(params_b), Some(ctx), Some(temperature), max_ring)
+}
+
+pub fn effective_stream(no_stream: bool, configured: Option<bool>) -> bool {
+    !no_stream && configured.unwrap_or(true)
 }
 
 /// `<workspace>/.ferric/config.toml` — mirrors `server.rs`'s `runfile_path`
@@ -158,31 +286,86 @@ pub fn user_config_path() -> Option<PathBuf> {
     user_config_path_from(&|k| std::env::var(k).ok())
 }
 
-/// Read + parse one layer. Absence is silent (`Config::default()`, no
-/// diagnostic) — only a present-but-malformed file pushes one.
-fn read_layer(path: &Path, diagnostics: &mut Vec<String>) -> Config {
-    match std::fs::read_to_string(path) {
-        Ok(text) => match toml::from_str::<Config>(&text) {
-            Ok(config) => config,
-            Err(e) => {
-                diagnostics.push(format!(
-                    "{}: malformed config, ignoring this layer: {e}",
-                    path.display()
-                ));
-                Config::default()
-            }
-        },
-        Err(_) => Config::default(),
+fn read_config_bytes(path: &Path) -> Result<Vec<u8>, ConfigError> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| ConfigError::at(path, ConfigErrorKind::Read(error.kind())))?;
+    if !metadata.is_file() {
+        return Err(ConfigError::at(path, ConfigErrorKind::NotRegular));
     }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    // A raced replacement with a FIFO must not block open on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(path)
+        .map_err(|error| ConfigError::at(path, ConfigErrorKind::Read(error.kind())))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| ConfigError::at(path, ConfigErrorKind::Read(error.kind())))?;
+    if !metadata.is_file() {
+        return Err(ConfigError::at(path, ConfigErrorKind::NotRegular));
+    }
+    if metadata.len() > MAX_CONFIG_BYTES as u64 {
+        return Err(ConfigError::at(path, ConfigErrorKind::TooLarge));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_CONFIG_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ConfigError::at(path, ConfigErrorKind::Read(error.kind())))?;
+    Ok(bytes)
+}
+
+fn read_layer_with(
+    path: &Path,
+    read: &impl Fn(&Path) -> Result<Vec<u8>, ConfigError>,
+) -> Result<Config, ConfigError> {
+    let bytes = match read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind == ConfigErrorKind::Read(std::io::ErrorKind::NotFound) => {
+            // A dangling symlink is present invalid configuration, not absence.
+            return match std::fs::symlink_metadata(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
+                _ => Err(error),
+            };
+        }
+        Err(error) => return Err(error),
+    };
+    if bytes.len() > MAX_CONFIG_BYTES {
+        return Err(ConfigError::at(path, ConfigErrorKind::TooLarge));
+    }
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| ConfigError::at(path, ConfigErrorKind::InvalidUtf8))?;
+    let config: Config = toml::from_str(text).map_err(|error: toml::de::Error| {
+        let offset = error.span().map_or(0, |span| span.start).min(text.len());
+        let prefix = &text.as_bytes()[..offset];
+        let line = prefix.iter().filter(|&&byte| byte == b'\n').count() + 1;
+        let column = prefix
+            .iter()
+            .rposition(|&byte| byte == b'\n')
+            .map_or(offset + 1, |index| offset - index);
+        ConfigError::at(path, ConfigErrorKind::InvalidToml { line, column })
+    })?;
+    config.validate().map_err(|mut error| {
+        error.path = Some(path.to_path_buf());
+        error
+    })?;
+    Ok(config)
 }
 
 /// The test-injectable merge core: reads + parses each path if present,
 /// merging project over user over `None`.
-pub fn load_layered_from(project_path: &Path, user_path: Option<&Path>) -> LoadedConfig {
-    let mut diagnostics = Vec::new();
-    let project = read_layer(project_path, &mut diagnostics);
+pub fn load_layered_from(
+    project_path: &Path,
+    user_path: Option<&Path>,
+) -> Result<LoadedConfig, ConfigError> {
+    let project = read_layer_with(project_path, &read_config_bytes)?;
     let user = user_path
-        .map(|p| read_layer(p, &mut diagnostics))
+        .map(|p| read_layer_with(p, &read_config_bytes))
+        .transpose()?
         .unwrap_or_default();
     // Resolved with the same project-wins rule the merge uses, so the reported
     // source is the file whose hooks actually take effect — not merely a file
@@ -194,15 +377,14 @@ pub fn load_layered_from(project_path: &Path, user_path: Option<&Path>) -> Loade
     } else {
         None
     };
-    LoadedConfig {
+    Ok(LoadedConfig {
         config: project.merged_over(user),
-        diagnostics,
         hooks_source,
-    }
+    })
 }
 
 /// The real entry point: resolves both real paths and loads them.
-pub fn load_layered(workspace: &Path) -> LoadedConfig {
+pub fn load_layered(workspace: &Path) -> Result<LoadedConfig, ConfigError> {
     load_layered_from(
         &project_config_path(workspace),
         user_config_path().as_deref(),
@@ -241,8 +423,7 @@ mod tests {
             "project.toml",
             "params_b = 8.0\nquant = \"Q8_0\"\n",
         );
-        let loaded = load_layered_from(&project, None);
-        assert!(loaded.diagnostics.is_empty());
+        let loaded = load_layered_from(&project, None).unwrap();
         assert_eq!(loaded.config.params_b, Some(8.0));
         assert_eq!(loaded.config.quant, Some("Q8_0".to_string()));
         assert_eq!(loaded.config.family, None);
@@ -253,8 +434,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let user = write(dir.path(), "user.toml", "temperature = 0.5\n");
         // A project path that doesn't exist — only the user layer applies.
-        let loaded = load_layered_from(&dir.path().join("absent.toml"), Some(&user));
-        assert!(loaded.diagnostics.is_empty());
+        let loaded = load_layered_from(&dir.path().join("absent.toml"), Some(&user)).unwrap();
         assert_eq!(loaded.config.temperature, Some(0.5));
     }
 
@@ -263,7 +443,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let project = write(dir.path(), "project.toml", "quant = \"Q4_K_M\"\n");
         let user = write(dir.path(), "user.toml", "quant = \"Q8_0\"\n");
-        let loaded = load_layered_from(&project, Some(&user));
+        let loaded = load_layered_from(&project, Some(&user)).unwrap();
         assert_eq!(loaded.config.quant, Some("Q4_K_M".to_string()));
     }
 
@@ -273,22 +453,123 @@ mod tests {
         let loaded = load_layered_from(
             &dir.path().join("no-project.toml"),
             Some(&dir.path().join("no-user.toml")),
-        );
-        assert!(loaded.diagnostics.is_empty());
+        )
+        .unwrap();
         assert_eq!(loaded.config, Config::default());
     }
 
     #[test]
-    fn load_layered_malformed_toml_pushes_diagnostic() {
+    fn malformed_layer_never_exposes_user_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let project = write(dir.path(), "project.toml", "this is not [valid toml");
-        let user = write(dir.path(), "user.toml", "quant = \"Q8_0\"\n");
-        let loaded = load_layered_from(&project, Some(&user));
-        assert_eq!(loaded.diagnostics.len(), 1);
-        assert!(loaded.diagnostics[0].contains("project.toml"));
-        // The malformed layer degrades to None, but a valid layer beneath it
-        // still applies.
-        assert_eq!(loaded.config.quant, Some("Q8_0".to_string()));
+        let user = write(
+            dir.path(),
+            "user.toml",
+            "allowed_skills = ['global']\n[hooks]\npre_turn = 'echo global-hook'\n",
+        );
+        let error = load_layered_from(&project, Some(&user)).unwrap_err();
+        assert_eq!(error.path.as_deref(), Some(project.as_path()));
+        assert!(error.to_string().contains("correct the configuration"));
+    }
+
+    #[test]
+    fn config_absence_and_precedence() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project.toml");
+        let user = write(
+            dir.path(),
+            "user.toml",
+            "model = 'user'\nparams_b = 7.0\nallowed_skills = ['global']\n",
+        );
+        let loaded = load_layered_from(&project, Some(&user)).unwrap();
+        assert_eq!(loaded.config.model.as_deref(), Some("user"));
+        std::fs::write(&project, "backend = 'openai'\nfuture_legacy_option = true\nmodel = 'project'\nallowed_skills = []\n").unwrap();
+        let loaded = load_layered_from(&project, Some(&user)).unwrap();
+        assert_eq!(loaded.config.params_b, Some(7.0));
+        assert_eq!(loaded.config.allowed_skills, Some(Vec::new()));
+        let mut cli = no_backend_opts();
+        cli.model = Some("cli".to_string());
+        assert_eq!(
+            merge_backend_opts(cli, &loaded.config).model.as_deref(),
+            Some("cli")
+        );
+        assert!(
+            loaded.config.harness_policy.is_none(),
+            "omission must survive until resume admission"
+        );
+    }
+
+    #[test]
+    fn config_errors_redact_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        for text in [
+            "api_key = 'private-fixture-token' broken",
+            "harness_policy = 'private-fixture-token'",
+            "tier = 'private-fixture-token'",
+            "api_key = 'private-fixture-token'\nparams_b = nan",
+        ] {
+            let path = write(dir.path(), "invalid.toml", text);
+            let error = load_layered_from(&path, None).unwrap_err();
+            for rendered in [error.to_string(), format!("{error:?}")] {
+                assert!(!rendered.contains("private-fixture-token"));
+                assert!(rendered.contains("invalid.toml"));
+            }
+            assert!(error.to_string().contains("before retrying"));
+        }
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::Interrupted,
+            std::io::ErrorKind::Other,
+        ] {
+            let error = read_layer_with(&dir.path().join("unreadable.toml"), &|path| {
+                let raw = std::io::Error::new(kind, "private-fixture-token");
+                Err(ConfigError::at(path, ConfigErrorKind::Read(raw.kind())))
+            })
+            .unwrap_err();
+            assert!(!format!("{error} {error:?}").contains("private-fixture-token"));
+            assert!(matches!(error.kind, ConfigErrorKind::Read(actual) if actual == kind));
+        }
+    }
+
+    #[test]
+    fn present_invalid_layer_is_bounded_and_never_overridden() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = write(dir.path(), "project.toml", "params_b = 7.0\n");
+        let user = write(dir.path(), "user.toml", "params_b = nan\n");
+        assert!(load_layered_from(&project, Some(&user)).is_err());
+        let directory = dir.path().join("directory.toml");
+        std::fs::create_dir(&directory).unwrap();
+        assert_eq!(
+            load_layered_from(&directory, None).unwrap_err().kind,
+            ConfigErrorKind::NotRegular
+        );
+        std::fs::write(&user, vec![b' '; MAX_CONFIG_BYTES + 1]).unwrap();
+        assert_eq!(
+            load_layered_from(&user, None).unwrap_err().kind,
+            ConfigErrorKind::TooLarge
+        );
+        std::fs::write(&user, [0xff]).unwrap();
+        assert_eq!(
+            load_layered_from(&user, None).unwrap_err().kind,
+            ConfigErrorKind::InvalidUtf8
+        );
+    }
+
+    #[test]
+    fn invalid_effective_numbers_rejected() {
+        for params_b in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1.0] {
+            assert!(validate_effective_numbers(params_b, 4096, 0.0, None).is_err());
+        }
+        for temperature in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 2.1] {
+            assert!(validate_effective_numbers(1.2, 4096, temperature, None).is_err());
+        }
+        assert!(validate_effective_numbers(1.2, 0, 0.0, None).is_err());
+        assert!(validate_effective_numbers(1.2, 4096, 0.0, Some(4)).is_err());
+        for temperature in [0.0, 0.6, 2.0] {
+            for ring in [None, Some(0), Some(1), Some(2), Some(3)] {
+                validate_effective_numbers(1.2, 4096, temperature, ring).unwrap();
+            }
+        }
     }
 
     #[test]
@@ -405,7 +686,7 @@ mod tests {
         );
         let project = dir.path().join("absent.toml");
 
-        let loaded = load_layered_from(&project, Some(&user));
+        let loaded = load_layered_from(&project, Some(&user)).unwrap();
         assert!(loaded.config.hooks.is_some());
         assert_eq!(
             loaded.hooks_source.as_deref(),
@@ -432,7 +713,7 @@ mod tests {
             "[hooks]\npre_turn = \"echo from-project\"\n",
         );
 
-        let loaded = load_layered_from(&project, Some(&user));
+        let loaded = load_layered_from(&project, Some(&user)).unwrap();
         assert_eq!(loaded.hooks_source.as_deref(), Some(project.as_path()));
         assert_eq!(
             loaded.config.hooks.unwrap().pre_turn.as_deref(),
@@ -445,7 +726,7 @@ mod tests {
     fn no_hooks_means_no_source_to_disclose() {
         let dir = tempfile::tempdir().unwrap();
         let project = write(dir.path(), "project.toml", "model = \"m\"\n");
-        let loaded = load_layered_from(&project, None);
+        let loaded = load_layered_from(&project, None).unwrap();
         assert!(loaded.hooks_source.is_none());
     }
 
