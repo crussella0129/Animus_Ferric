@@ -3,14 +3,14 @@
 - **Sprint number:** 120
 - **Book schema version:** 2
 - **Start timestamp:** 2026-09-05T02:20:09Z
-- **End timestamp:** (pending renewed Loop closure)
+- **End timestamp:** 2026-09-05T06:51:02Z
 - **Model:** gpt-6-astra, ultra (user-selected; runtime identity not independently exposed)
 - **Bundle version:** 0.22.0
-- **Exit status:** in-progress
+- **Exit status:** success
 - **Token count:** (filled at Loop Phase if observable)
 - **Summary:** Human-first local sessions with safe automatic preparation and compact expert access
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
-- **Completion evidence:** Renewed Test accepted 4f4e4f0 with controlled-schedule caveat at ae18535; full exact-head CI/native/live/TTY passed; renewed Loop closure and separate post-Loop audit follow within PR 108.
+- **Completion evidence:** Requalified 4f4e4f0 with controlled-schedule caveat: both eight-job CI runs, fresh native/live/TTY and checked cleanup passed; renewed Loop reconciled, separate post-Loop audit before PR 108 handoff.
 - **Checkpoint:** https://github.com/crussella0129/Animus_Ferric/pull/108
 
 ## Approved resume
