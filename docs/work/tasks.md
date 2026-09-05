@@ -271,6 +271,7 @@ below remain executable follow-up work; the review did not silently fix them.
 
 ## Sprint 121 research follow-up
 
+
 - [ ] T-12110 (backlog, usage provenance) [intent: INT-0007]: Replace unchecked OpenAI usage-count `u64 as u32` narrowing with an explicit checked outcome in streaming and non-streaming decoding, and test oversized/invalid counts without wrapping reported usage. Source-identified during Sprint 121 Research; not a successful runtime reproduction or part of the T-11505 explicit CLI budget increment. — touches: `crates/ferric-provider/src/openai.rs`, provider response fixtures
 
 ## Book v2 carry-forward from Sprint 113
@@ -299,3 +300,10 @@ below remain executable follow-up work; the review did not silently fix them.
 - [ ] T-11812 (backlog, before broad Linux appliance/distribution parity is claimed) [intent: INT-0008]: Implement a closed, platform-recognized LocalAPI socket-path selection matrix for supported Linux package layouts without adding a generic production endpoint override. Preserve the current explicit support boundary at `/var/run/tailscale/tailscaled.sock` until each added path has positive, permission-denied, timeout, and seam-containment coverage. — touches: `crates/ferric-cli/src/tailscale_localapi.rs`, Linux fixtures/CI, operator docs
 
 ## Sprint 120 — approved human-first implementation
+
+## Sprint 121 — approved explicit budgets
+
+- [ ] T-12101 (sprint 121) [intent: INT-0007, INT-0008]: Resolve one explicit main-action output cap — touches: core scale, query, loop run, trace events and focused tests.
+- [ ] T-12102 (sprint 121) [intent: INT-0007, INT-0008]: Apply checked benchmark budgets and retain trace-bound attribution — touches: bench runner/budget/results/summary, CLI bench and default-preserving autonomy constructors.
+- [ ] T-12103 (sprint 121) [intent: INT-0007, INT-0008]: Prevent diagnostic budgets from promoting durable capability — touches: bench summary/calibration, CLI publication and tests.
+- [ ] T-12104 (sprint 121) [intent: INT-0007, INT-0008]: Qualify and document the composed budget increment — touches: source-owned live/composed fixtures, expert docs and sprint evidence.
