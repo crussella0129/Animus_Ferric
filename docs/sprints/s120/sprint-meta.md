@@ -10,7 +10,7 @@
 - **Token count:** (filled at Loop Phase if observable)
 - **Summary:** Human-first local sessions with safe automatic preparation and compact expert access
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
-- **Completion evidence:** Requalified 4f4e4f0 with controlled-schedule caveat: both eight-job CI runs, fresh native/live/TTY and checked cleanup passed; renewed Loop reconciled, separate post-Loop audit before PR 108 handoff.
+- **Completion evidence:** Requalified 4f4e4f0 with controlled-schedule caveat: both eight-job CI runs and fresh native/live/TTY/cleanup passed; renewed Loop closed at 2f033a4 and separate post-loop-requalification-review.md returned clean for the qualified PR 108 checkpoint.
 - **Checkpoint:** https://github.com/crussella0129/Animus_Ferric/pull/108
 
 ## Approved resume
@@ -26,6 +26,12 @@ was committed at `ae18535`; the committed-Book router reports Loop. The critic's
 post-evidence recheck preserved that verdict. Only Book files changed afterward.
 Renewed Loop reconciliation retains active intents and T-12026/27 follow-ups.
 PR 108 remains the sole checkpoint and must not be merged by the agent.
+
+Renewed closure succeeded at `2f033a4`, followed by the independent
+[extra post-Loop requalification audit](post-loop-requalification-review.md).
+It found no blocker to the qualified checkpoint and retained the controlled-
+schedule caveat. Final push/head/count/CI and protected-edit restoration are
+verified at handoff; they are not inferred from this local closure.
 
 ### Checkpoint reopening history
 

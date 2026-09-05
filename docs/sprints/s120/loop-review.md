@@ -33,6 +33,12 @@ restore/hash-check the latest protected stash
 `58a0dff8d57a91aea48d234394db3ebebd94563c`, and leave the sole unrelated edit
 unstaged with its recovery stash retained. Stop for the owner's merge.
 
+Actual renewed closure succeeded at `2f033a4`; the separate
+[renewed extra post-Loop audit](post-loop-requalification-review.md) then
+returned clean for the qualified checkpoint, with the C-002 caveat preserved.
+The final remote push, PR update/checks and protected-edit restoration remain
+explicit handoff obligations, not new sprint work.
+
 ## Initial Loop and closure history
 
 Test entered Loop from committed accepted evidence at `dc9c900`;
