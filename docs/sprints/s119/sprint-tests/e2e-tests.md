@@ -31,4 +31,39 @@ ownership refusal was correct and remains unchanged.
   must then confirm that actual PR before handoff. A Test report does not
   pretend those future Loop/remote actions have already occurred.
 
-Final corrected-head results and phase/remote receipts remain pending.
+Final corrected-head results are recorded below. Only E08's subsequent Loop
+and actual remote receipts remain pending at this Test-phase boundary.
+
+## Corrected intermediate native result
+
+At `0776b6d986ba3852aba14b1742926a9a90343f9d`,
+[CI run 33935599036](https://github.com/crussella0129/Animus_Ferric/actions/runs/33935599036)
+passed all six jobs. Linux's source-wrapper suite passed these six tests:
+`legacy_adoption_then_down_cli_e2e`,
+`lifecycle_fixture_exits_when_exact_owner_pidfd_signals`,
+`model_free_server_lifecycle_fixture_e2e`,
+`ordinary_ferric_ignores_lifecycle_localapi_override`,
+`tailscale_localapi_lifecycle_preserves_unrelated_state`, and
+`tailscale_localapi_log_contains_no_broad_mutation_or_retry`.
+Windows passed the five applicable tests (the pidfd test is Linux-only).
+These assertions include CLI outputs, original ownership refusals, exact
+teardown, registration restoration, unrelated-state preservation, and absence
+of broad mutation/retry. The real launcher is now reaped before status is
+published, while its source supervisor remains the live owned group anchor.
+
+## Final source-head result
+
+Head **`81c9aeaf0a9c08f8909395d77a6c7bd53204ee94`** passed all six jobs in
+[CI run 33935893263](https://github.com/crussella0129/Animus_Ferric/actions/runs/33935893263).
+The same six named Linux lifecycle tests passed **6/6 in 5.32s** and the five
+Windows tests passed **5/5 in 19.10s**. Command integration (`cli` 68 tests,
+`bench_mock` 7) and source-CI ratchet also passed in both workspace jobs.
+Thus E04/E05/E07 have final-head native evidence, including the repaired live
+supervisor and preserved exact-reaping/ownership assertions. The Windows-only
+deadline correction also passed the full native fixture suite.
+
+E08's remaining Loop and actual remote receipts must be checked after the
+independent Test critique and before handoff; the closing audit will link back
+to these results. There is no claim of a live model app, real tailnet exercise,
+macOS parity, ordinary-host Linux listener-owner exclusivity, general group
+escape containment, or completion of the entire INT-0008 workflow.

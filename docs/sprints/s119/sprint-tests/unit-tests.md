@@ -73,3 +73,26 @@ AC-9 evidence only. This is an assertion map, not a final pass verdict.
 E07 and E08 combine integration/E2E execution and the closing audit, documented
 in the adjacent result files. Fixture ignores are deliberate recursive source
 entry points; the two Windows research ignores are pre-existing platform gates.
+
+## Frozen source head
+
+`81c9aeaf0a9c08f8909395d77a6c7bd53204ee94` is the final implementation head.
+Local Windows source verification at that head:
+
+- `cargo fmt --check`: pass.
+- `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`:
+  pass (4.58s final repeat).
+- `cargo clippy -p ferric-cli --features lifecycle-fixture --all-targets
+  --locked --offline -- -D warnings`: pass (4.73s).
+- `cargo clippy -p ferric-cli --features backend-openai --all-targets
+  --locked --offline -- -D warnings`: pass (7.29s).
+- `cargo test --workspace --locked --offline --quiet`: **1,128 passed,
+  6 intentional ignores**, across 73 Cargo suite/doc-suite confirmations.
+  `FERRIC_TEST_PYTHON` selected a real available interpreter for grading.
+  Shared process tests are now 8 passed / 1 source fixture ignored; CLI units
+  310, `cli` 68, `bench_mock` 7, bench 78/3 ignored, source ratchet 1, and
+  template hygiene 3 all pass.
+
+The independent final source-review verdict is clean after the deadline
+correction. Final Test critique remains separate and must consider the complete
+CI result and all three evidence artifacts before the report is written.
