@@ -2241,15 +2241,19 @@ mod tests {
 
     #[cfg(windows)]
     fn create_test_junction(link: &Path, target: &Path) {
-        let output = std::process::Command::new("cmd.exe")
+        let mut command = std::process::Command::new("cmd.exe");
+        command
             .arg("/D")
             .arg("/C")
             .arg("mklink")
             .arg("/J")
             .arg(link)
-            .arg(target)
-            .output()
-            .unwrap();
+            .arg(target);
+        let output = crate::test_process_containment::output_bounded(
+            &mut command,
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap();
         assert!(
             output.status.success(),
             "junction creation failed: stdout={} stderr={}",
@@ -2582,11 +2586,15 @@ mod tests {
         let script = format!(
             "function ferric {{ foreach ($value in $args) {{ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value)) }} }}; {command}"
         );
-        let output = std::process::Command::new("powershell.exe")
+        let mut command = std::process::Command::new("powershell.exe");
+        command
             .args(["-NoProfile", "-NonInteractive", "-Command"])
-            .arg(script)
-            .output()
-            .unwrap();
+            .arg(script);
+        let output = crate::test_process_containment::output_bounded(
+            &mut command,
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap();
         assert!(
             output.status.success(),
             "PowerShell failed: {}",
@@ -2621,11 +2629,13 @@ mod tests {
         let command = format_resume_command(&trace, &workspace, Some(&root), true);
         let script =
             format!("ferric() {{ for value do printf '%s\\0' \"$value\"; done; }}; {command}");
-        let output = std::process::Command::new("/bin/sh")
-            .arg("-c")
-            .arg(script)
-            .output()
-            .unwrap();
+        let mut command = std::process::Command::new("/bin/sh");
+        command.arg("-c").arg(script);
+        let output = crate::test_process_containment::output_bounded(
+            &mut command,
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap();
         assert!(
             output.status.success(),
             "sh failed: {}",

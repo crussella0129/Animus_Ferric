@@ -2532,7 +2532,9 @@ mod tests {
 
     struct ProcessClientGuard {
         label: String,
-        child: Option<std::process::Child>,
+        child: crate::test_process_containment::ContainedChild,
+        stdout: std::fs::File,
+        stderr: std::fs::File,
     }
 
     impl ProcessClientGuard {
@@ -2544,6 +2546,8 @@ mod tests {
             environment: &[(&str, String)],
         ) -> Self {
             let label = label.into();
+            let stdout = tempfile::tempfile().expect("create process-client stdout capture");
+            let stderr = tempfile::tempfile().expect("create process-client stderr capture");
             let mut command = std::process::Command::new(std::env::current_exe().unwrap());
             command
                 .args([
@@ -2555,61 +2559,41 @@ mod tests {
                 .env(PROCESS_CLIENT_MODE, mode)
                 .env(PROCESS_CLIENT_ROOT, root)
                 .env(PROCESS_CLIENT_ID, id)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::from(stdout.try_clone().unwrap()))
+                .stderr(std::process::Stdio::from(stderr.try_clone().unwrap()));
             for (name, value) in environment {
                 command.env(name, value);
             }
-            let child = command
-                .spawn()
+            let child = crate::test_process_containment::ContainedChild::spawn(&mut command)
                 .unwrap_or_else(|error| panic!("spawn {label}: {error}"));
             Self {
                 label,
-                child: Some(child),
+                child,
+                stdout,
+                stderr,
             }
         }
 
         fn finish(mut self) {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            loop {
-                let status = self
-                    .child
-                    .as_mut()
-                    .unwrap()
-                    .try_wait()
-                    .unwrap_or_else(|error| panic!("poll {} process client: {error}", self.label));
-                if status.is_some() {
-                    break;
-                }
-                if std::time::Instant::now() >= deadline {
-                    let child = self.child.as_mut().unwrap();
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    panic!(
-                        "{} process client exceeded its 20 second watchdog",
-                        self.label
-                    );
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            let output = self.child.take().unwrap().wait_with_output().unwrap();
+            let status = self
+                .child
+                .wait_for_exit_and_disarm(std::time::Duration::from_secs(20))
+                .unwrap_or_else(|error| panic!("finish {} process client: {error}", self.label));
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            self.stdout.rewind().unwrap();
+            self.stdout.read_to_end(&mut stdout).unwrap();
+            self.stderr.rewind().unwrap();
+            self.stderr.read_to_end(&mut stderr).unwrap();
             assert!(
-                output.status.success(),
+                status.success(),
                 "{} process client failed ({}):\nstdout:\n{}\nstderr:\n{}",
                 self.label,
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+                status,
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
             );
-        }
-    }
-
-    impl Drop for ProcessClientGuard {
-        fn drop(&mut self) {
-            if let Some(child) = &mut self.child {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
         }
     }
 

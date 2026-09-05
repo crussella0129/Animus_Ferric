@@ -1,5 +1,9 @@
 # Refactoring Tasks (From Architecture Report)
 
+## Next sprint — repository-wide review and bounded refactor
+
+- [ ] T-11905 (backlog, next after the owner merges Sprint 119) [intent: INT-0006, INT-0008]: Conduct the requested repository-wide code/architecture review with an explicit coverage ledger, validate the configuration/policy, UTF-8 streaming, cancellation and persistence candidates in `docs/sprints/s119/next-sprint-review-preparation.md`, and select a coherent tested refactor. Coordinate the truthful configuration/policy candidate with T-11406; retain every unselected confirmed defect as prioritized intent-linked work. Do not mistake Sprint 119's process-only increment or its read-only preparation for the full requested review/refactor. — touches: workspace review evidence, public configuration/policy boundaries, affected tests/docs selected by the next locked plan
+
 ## animus-launch
 - [ ] Migrate `std::fs` to `tokio::fs` for async filesystem operations in project scaffolding.
 
@@ -261,6 +265,8 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 - [ ] T-11707 (backlog, before AC-8 platform parity is claimed) [intent: INT-0008]: Design and prove ordinary-host Linux lifecycle authority that does not require complete enumeration of every unrelated `/proc/<pid>/fd` peer. Preserve the current fail-closed result for unreadable or shared owners; do not infer exclusivity from incomplete visibility. Prefer a durable launch-owned authority coordinate or equivalent kernel-backed proof, and add shared-host positive and negative CI coverage before changing teardown authorization. — touches: `crates/ferric-cli/src/server_process.rs`, lifecycle registration/ownership schema, Linux integration fixtures, CI, server/operator docs
 
 ## Post-Sprint 118 Tailscale proof carry-forward
+
+- [ ] T-11904 (backlog, future cancellation-hardening sprint) [intent: INT-0008]: Design and prove durable Linux ownership for nested process groups when their immediate owner is abruptly killed or a descendant leaves its group. Select a source supervisor or kernel-backed scope, retain exact identity and scoped reaping, and do not claim the cooperative-group Sprint 119 increment satisfies this broader AC-6/AC-8 boundary. — touches: process ownership architecture, Linux supervisors/CI, platform capability docs
 
 - [ ] T-11806 (backlog, before claiming exhaustive Tailscale pre-mutation fault coverage) [intent: INT-0008]: Factor local registration-path resolution behind a deterministic injected effect or equivalent seam, then prove resolution failure stops and reaps only the retained child, performs zero Serve mutation or journal publication, and preserves unrelated state without global current-directory manipulation. — touches: `crates/ferric-cli/src/server.rs`, lifecycle fault matrices, Sprint test planning
 - [x] T-11807 [intent: INT-0008]: Bind hostile concurrent Serve mutation to the exact observed revision. *(Completed in the Sprint 118 post-Loop correction: direct LocalAPI snapshots validate the raw-body SHA-256 ETag, apply/off send one exact `If-Match` CAS with no retry, HTTP 412 proves no mutation, and deterministic tests preserve unrelated handlers across stale-revision refusal.)*

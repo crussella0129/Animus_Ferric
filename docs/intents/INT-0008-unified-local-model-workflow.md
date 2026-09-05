@@ -3,11 +3,11 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0008
 - **State:** active
-- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [Sprint 117 T-11606 recovery plan](../sprints/s117/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 ownership-safe Tailscale Serve plan](../sprints/s118/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [post-Sprint 117 lifecycle carry-forward](../work/tasks.md#post-sprint-117-lifecycle-carry-forward); [post-Sprint 118 Tailscale proof carry-forward](../work/tasks.md#post-sprint-118-tailscale-proof-carry-forward)
+- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [Sprint 117 T-11606 recovery plan](../sprints/s117/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 ownership-safe Tailscale Serve plan](../sprints/s118/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [post-Sprint 117 lifecycle carry-forward](../work/tasks.md#post-sprint-117-lifecycle-carry-forward); [post-Sprint 118 Tailscale proof carry-forward](../work/tasks.md#post-sprint-118-tailscale-proof-carry-forward); [Sprint 119 source-owned process refactor plan](../sprints/s119/sprint-plans/build-plan.md)
 - **Completion evidence:** none
-- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116); [T-11606 accepted lifecycle remediation](../work/completed-tasks.md#t-11606-sprint-117); [T-11801 initial adapter and typed ownership record](../work/completed-tasks.md#t-11801-sprint-118); [T-11802 crash-safe launch](../work/completed-tasks.md#t-11802-sprint-118); [T-11803 status and teardown](../work/completed-tasks.md#t-11803-sprint-118); [T-11804 doctor and operator surface](../work/completed-tasks.md#t-11804-sprint-118); [T-11805 initial lifecycle evidence](../work/completed-tasks.md#t-11805-sprint-118); [Sprint 118 direct-LocalAPI correction](../work/completed-tasks.md#sprint-118-post-loop-correction); [T-11510 Sprint 118 umbrella completion](../work/completed-tasks.md#t-11510-sprint-118)
-- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md); [Sprint 117 accepted lifecycle test report](../sprints/s117/sprint-tests/test-report.md); [Sprint 117 clean test critique](../sprints/s117/sprint-tests/critique.md); [Sprint 118 ownership-safe Tailscale lifecycle test report](../sprints/s118/sprint-tests/test-report.md); [Sprint 118 Test critique](../sprints/s118/sprint-tests/critique.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md)
-- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Sprint 117 acceptance-recovery research](../sprints/s117/sprint-research/research-report.md); [Sprint 118 ownership-safe Serve research](../sprints/s118/sprint-research/research-report.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [current server lifecycle and Tailscale contract](../server-configuration.md#tailscale-serve-exposure)
+- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116); [T-11606 accepted lifecycle remediation](../work/completed-tasks.md#t-11606-sprint-117); [T-11801 initial adapter and typed ownership record](../work/completed-tasks.md#t-11801-sprint-118); [T-11802 crash-safe launch](../work/completed-tasks.md#t-11802-sprint-118); [T-11803 status and teardown](../work/completed-tasks.md#t-11803-sprint-118); [T-11804 doctor and operator surface](../work/completed-tasks.md#t-11804-sprint-118); [T-11805 initial lifecycle evidence](../work/completed-tasks.md#t-11805-sprint-118); [Sprint 118 direct-LocalAPI correction](../work/completed-tasks.md#sprint-118-post-loop-correction); [T-11510 Sprint 118 umbrella completion](../work/completed-tasks.md#t-11510-sprint-118); [Sprint 119 shared source-process increment](../work/completed-tasks.md#t-11901-sprint-119); [Sprint 119 source test lifetimes](../work/completed-tasks.md#t-11902-sprint-119)
+- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md); [Sprint 117 accepted lifecycle test report](../sprints/s117/sprint-tests/test-report.md); [Sprint 117 clean test critique](../sprints/s117/sprint-tests/critique.md); [Sprint 118 ownership-safe Tailscale lifecycle test report](../sprints/s118/sprint-tests/test-report.md); [Sprint 118 Test critique](../sprints/s118/sprint-tests/critique.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [Sprint 119 source-owned process Test report](../sprints/s119/sprint-tests/test-report.md)
+- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Sprint 117 acceptance-recovery research](../sprints/s117/sprint-research/research-report.md); [Sprint 118 ownership-safe Serve research](../sprints/s118/sprint-research/research-report.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [current server lifecycle and Tailscale contract](../server-configuration.md#tailscale-serve-exposure); [Source-driven process contract](../process-execution.md); [Sprint 119 Loop reconciliation](../sprints/s119/loop-review.md)
 
 ## Intent
 
@@ -98,6 +98,11 @@ complete.
    independent verification, and truthful terminal results remain testable.
    Concise operator output links to the full retained evidence instead of
    discarding it.
+   Development and acceptance runs use source-aware Cargo commands, not direct
+   invocation of build artifacts or ad-hoc background executable proofs.
+   Source-defined process tests own bounded cancellation-safe cleanup and prove
+   their children are reaped before reporting success; manual termination of
+   leftovers never converts a failed run into successful evidence.
 7. Cleanup is scoped, previewable, idempotent, and ownership-aware. Its default
    mode stops only owned live resources and removes disposable staging data;
    retained run evidence and acquired models require separate explicit intent
@@ -173,8 +178,28 @@ profiles, and verified checkpoints are reused idempotently. Preserving the
 advanced surface increases compatibility work, but avoids forcing CI and power
 users through an opaque wizard.
 
+The Sprint 119 process refactor is a partial safety increment, not full AC-6
+or platform-parity acceptance. Windows Jobs can own nested descendant Jobs;
+the Unix implementation owns a cooperative process group, not a
+security boundary against group escape. Linux tests involving orphaned
+descendants require an actual scoped reaper, and controlled cancellation
+requires a surviving source supervisor or namespace lifetime boundary.
+Immediate SIGKILL of a process that owns separate nested groups cannot be
+repaired by that same process's parent-watcher thread. Broader abrupt-owner
+death/group-escape containment needs a separately designed durable supervisor
+or kernel-backed scope before it can contribute to the eventual AC-6/AC-8
+guarantee. Until then, tests must state their boundary and fail if their own
+children cannot be proved reaped; this limitation does not waive that test
+success condition.
+
 ## Transition history
 
+- 2026-09-04: clarified AC-6 at the owner's direction with the source-driven
+  execution and source-owned reaping contract. Sprint 119 reviews and
+  consolidates the uncommitted cleanup carryover after Sprint 118's actual
+  merge. Work evidence: [Sprint 119 research](../sprints/s119/sprint-research/research-report.md).
+  This is an acceptance-boundary revision, not a lifecycle state transition
+  or a claim of broader workflow/platform completion.
 - 2026-08-27: created as `proposed` from operator feedback that Sprint 114's
   safe local-model test required an unreasonable number of manual PowerShell
   commands.

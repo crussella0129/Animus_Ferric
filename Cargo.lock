@@ -546,6 +546,7 @@ name = "ferric-bench"
 version = "0.1.0"
 dependencies = [
  "ferric-core",
+ "ferric-process",
  "ferric-trace",
  "hex",
  "regex",
@@ -570,6 +571,7 @@ dependencies = [
  "ferric-guard",
  "ferric-icm",
  "ferric-loop",
+ "ferric-process",
  "ferric-prompt",
  "ferric-provider",
  "ferric-research",
@@ -592,6 +594,7 @@ dependencies = [
  "toml 1.1.4+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -653,6 +656,15 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "ferric-process"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -861,10 +861,14 @@ mod tests {
         let python = std::env::var_os("FERRIC_TEST_PYTHON")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::PathBuf::from("python"));
-        let available = std::process::Command::new(&python)
-            .arg("--version")
-            .status()
-            .is_ok_and(|status| status.success());
+        let mut command = std::process::Command::new(&python);
+        command.arg("--version").stdin(std::process::Stdio::null());
+        let available = crate::process::run_bounded(
+            &mut command,
+            std::time::Duration::from_secs(10),
+            crate::process::CapturePlan::discard(),
+        )
+        .is_ok_and(|outcome| !outcome.timed_out && outcome.exit_code == Some(0));
         if !available {
             eprintln!("python is unavailable; autonomy discrimination test skipped");
             return;

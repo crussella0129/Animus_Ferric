@@ -553,6 +553,28 @@ impl SpawnedChild for Child {
     }
 }
 
+#[cfg(test)]
+impl SpawnedChild for crate::test_process_containment::ContainedChild {
+    type ExitStatus = std::process::ExitStatus;
+
+    fn pid(&self) -> u32 {
+        self.child().id()
+    }
+
+    fn try_wait(&mut self) -> Result<Option<Self::ExitStatus>, String> {
+        self.try_wait_leader().map_err(|error| error.to_string())
+    }
+
+    fn wait(&mut self) -> Result<Self::ExitStatus, String> {
+        self.wait_for_exit_and_disarm(Duration::from_secs(5))
+            .map_err(|error| error.to_string())
+    }
+
+    fn kill(&mut self) -> Result<(), String> {
+        self.terminate_leader().map_err(|error| error.to_string())
+    }
+}
+
 trait SpawnedProcessRuntime<C: SpawnedChild> {
     type Process: RetainedProcessHandle;
 
@@ -655,8 +677,8 @@ fn wait_healthy_with<C: SpawnedChild, H: HealthProbe, K: LifecycleClock>(
 }
 
 #[cfg(test)]
-fn wait_healthy(
-    child: &mut Child,
+fn wait_healthy<C: SpawnedChild>(
+    child: &mut C,
     engine: Engine,
     host: &str,
     port: u16,
@@ -6551,6 +6573,14 @@ pub(crate) mod tests {
     use std::rc::Rc;
     use std::thread;
     use tempfile::NamedTempFile;
+
+    fn spawn_contained_test_child(
+        command: &mut Command,
+        label: &str,
+    ) -> crate::test_process_containment::ContainedChild {
+        crate::test_process_containment::ContainedChild::spawn(command)
+            .unwrap_or_else(|error| panic!("spawn {label}: {error}"))
+    }
 
     fn cfg(engine: Engine) -> ServerConfig {
         ServerConfig {
@@ -16791,6 +16821,75 @@ pub(crate) mod tests {
     ))]
     const LIFECYCLE_HELPER_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    const LIFECYCLE_HELPER_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    struct LifecycleHelperGuard {
+        child: crate::test_process_containment::ContainedChild,
+    }
+
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            target_endian = "little",
+            target_pointer_width = "64",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    impl LifecycleHelperGuard {
+        fn new(child: crate::test_process_containment::ContainedChild) -> Self {
+            Self { child }
+        }
+
+        fn child(&self) -> &Child {
+            self.child.child()
+        }
+
+        fn child_mut(&mut self) -> &mut crate::test_process_containment::ContainedChild {
+            &mut self.child
+        }
+
+        fn id(&self) -> u32 {
+            self.child().id()
+        }
+
+        fn wait_for_exit_and_disarm(&mut self, context: &str) -> Result<(), String> {
+            self.child
+                .wait_for_exit_and_disarm(LIFECYCLE_HELPER_EXIT_TIMEOUT)
+                .map(|_| ())
+                .map_err(|error| format!("{context}: {error}"))
+        }
+
+        fn reap_and_disarm(&mut self, context: &str) {
+            self.wait_for_exit_and_disarm(context)
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+
+        fn terminate_reap_and_disarm(&mut self, context: &str) {
+            self.child
+                .terminate_and_reap()
+                .unwrap_or_else(|error| panic!("{context}: {error}"));
+        }
+    }
+
     /// Child-scoped test process used by the cross-workspace lifecycle
     /// regression below. A normal test-harness invocation returns immediately;
     /// only the explicitly spawned child enters the serving loop.
@@ -16808,6 +16907,8 @@ pub(crate) mod tests {
         if std::env::var(LIFECYCLE_HELPER_ENV).ok().as_deref() != Some("1") {
             return;
         }
+        crate::test_process_containment::arm_current_process_parent_death_signal()
+            .expect("arm lifecycle-helper parent-death containment");
         let port = std::env::var("FERRIC_TEST_LIFECYCLE_PORT")
             .expect("helper port")
             .parse::<u16>()
@@ -16838,7 +16939,7 @@ pub(crate) mod tests {
             any(target_arch = "x86_64", target_arch = "aarch64")
         )
     ))]
-    fn spawn_lifecycle_helper(port: u16) -> Child {
+    fn spawn_lifecycle_helper(port: u16) -> LifecycleHelperGuard {
         spawn_lifecycle_helper_with_binding(port, false)
     }
 
@@ -16851,8 +16952,9 @@ pub(crate) mod tests {
             any(target_arch = "x86_64", target_arch = "aarch64")
         )
     ))]
-    fn spawn_lifecycle_helper_with_binding(port: u16, wildcard: bool) -> Child {
-        Command::new(std::env::current_exe().expect("current test executable"))
+    fn spawn_lifecycle_helper_with_binding(port: u16, wildcard: bool) -> LifecycleHelperGuard {
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
             .args([
                 "--exact",
                 "server::tests::lifecycle_helper_process",
@@ -16865,9 +16967,10 @@ pub(crate) mod tests {
             )
             .env("FERRIC_TEST_LIFECYCLE_PORT", port.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn lifecycle helper")
+            .stderr(Stdio::null());
+        let child = crate::test_process_containment::ContainedChild::spawn(&mut command)
+            .expect("spawn contained lifecycle helper");
+        LifecycleHelperGuard::new(child)
     }
 
     #[cfg(any(
@@ -16880,6 +16983,8 @@ pub(crate) mod tests {
         )
     ))]
     fn lifecycle_parent_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        crate::test_process_containment::ensure_current_process_tree_is_contained()
+            .expect("install lifecycle-test process containment");
         LIFECYCLE_PARENT_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -16894,7 +16999,10 @@ pub(crate) mod tests {
             any(target_arch = "x86_64", target_arch = "aarch64")
         )
     ))]
-    fn wait_for_lifecycle_helper(child: &mut Child, port: u16) {
+    fn wait_for_lifecycle_helper(
+        child: &mut crate::test_process_containment::ContainedChild,
+        port: u16,
+    ) {
         if let Err(error) = wait_healthy(
             child,
             Engine::LlamaServer,
@@ -16975,10 +17083,10 @@ pub(crate) mod tests {
         let global = root.path().join("config").join("server.json");
         let port = unused_port();
         let mut helper = spawn_lifecycle_helper(port);
-        wait_for_lifecycle_helper(&mut helper, port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
 
         let helper_pid = helper.id();
-        let helper_facts = LiveProcess::acquire_child(&helper)
+        let helper_facts = LiveProcess::acquire_child(helper.child())
             .unwrap()
             .inspect(port)
             .unwrap();
@@ -16986,7 +17094,7 @@ pub(crate) mod tests {
             &helper_facts.listener,
             ListenerState::OwnedByTarget,
         ) {
-            stop_child(&mut helper).expect("clean up visibility-limited helper");
+            helper.terminate_reap_and_disarm("clean up visibility-limited lifecycle helper");
             return;
         }
         let live = ServerRunfile {
@@ -17040,7 +17148,7 @@ pub(crate) mod tests {
             down_impl(&workspace_a, Some(global.clone())),
             ExitCode::SUCCESS
         );
-        let _ = helper.wait().expect("reap terminated helper");
+        helper.reap_and_disarm("reap terminated helper");
         assert!(!local_a.exists(), "stale current-workspace alias cleaned");
         assert!(!local_b.exists(), "selected global origin alias cleaned");
         assert!(!global.exists(), "selected global alias cleaned");
@@ -17064,10 +17172,10 @@ pub(crate) mod tests {
         let local = std::path::absolute(runfile_path(&workspace)).unwrap();
         let port = unused_port();
         let mut helper = spawn_lifecycle_helper_with_binding(port, true);
-        wait_for_lifecycle_helper(&mut helper, port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
 
         let helper_pid = helper.id();
-        let helper_facts = LiveProcess::acquire_child(&helper)
+        let helper_facts = LiveProcess::acquire_child(helper.child())
             .unwrap()
             .inspect(port)
             .unwrap();
@@ -17096,9 +17204,8 @@ pub(crate) mod tests {
         assert_eq!(status_impl(&workspace, None), ExitCode::FAILURE);
         let result = down_impl(&workspace, None);
         let registration_after_down = std::fs::read(&local).unwrap();
-        let helper_remained_live = helper.try_wait().unwrap().is_none();
-        let _ = helper.kill();
-        let _ = helper.wait();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up wildcard lifecycle helper");
 
         assert_eq!(result, ExitCode::FAILURE);
         assert_eq!(
@@ -17129,9 +17236,9 @@ pub(crate) mod tests {
         let local = std::path::absolute(runfile_path(&workspace)).unwrap();
         let port = unused_port();
         let mut helper = spawn_lifecycle_helper(port);
-        wait_for_lifecycle_helper(&mut helper, port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
 
-        let helper_facts = LiveProcess::acquire_child(&helper)
+        let helper_facts = LiveProcess::acquire_child(helper.child())
             .unwrap()
             .inspect(port)
             .unwrap();
@@ -17158,9 +17265,8 @@ pub(crate) mod tests {
 
         let result = down_impl(&workspace, None);
         let registration_remained = local.exists();
-        let helper_remained_live = helper.try_wait().unwrap().is_none();
-        let _ = helper.kill();
-        let _ = helper.wait();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up foreign-listener lifecycle helper");
 
         assert_eq!(result, ExitCode::FAILURE);
         assert!(
@@ -17191,7 +17297,7 @@ pub(crate) mod tests {
         let local = std::path::absolute(runfile_path(&workspace)).unwrap();
         let port = unused_port();
         let mut helper = spawn_lifecycle_helper(port);
-        wait_for_lifecycle_helper(&mut helper, port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
 
         let legacy = ServerRunfile {
             schema_version: 1,
@@ -17212,9 +17318,8 @@ pub(crate) mod tests {
 
         let result = down_impl(&workspace, None);
         let registration_remained = local.exists();
-        let helper_remained_live = helper.try_wait().unwrap().is_none();
-        let _ = helper.kill();
-        let _ = helper.wait();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up legacy lifecycle helper");
 
         assert_eq!(result, ExitCode::FAILURE);
         assert!(
@@ -17245,9 +17350,9 @@ pub(crate) mod tests {
         let local = std::path::absolute(runfile_path(&workspace)).unwrap();
         let port = unused_port();
         let mut helper = spawn_lifecycle_helper(port);
-        wait_for_lifecycle_helper(&mut helper, port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
 
-        let mut identity = LiveProcess::acquire_child(&helper)
+        let mut identity = LiveProcess::acquire_child(helper.child())
             .unwrap()
             .inspect(port)
             .unwrap()
@@ -17273,9 +17378,8 @@ pub(crate) mod tests {
 
         let result = down_impl(&workspace, None);
         let registration_after_down = std::fs::read(&local).unwrap();
-        let helper_remained_live = helper.try_wait().unwrap().is_none();
-        let _ = helper.kill();
-        let _ = helper.wait();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up malformed-token lifecycle helper");
 
         assert_eq!(result, ExitCode::FAILURE);
         assert_eq!(registration_after_down, original_registration);
@@ -17303,9 +17407,9 @@ pub(crate) mod tests {
         let local = std::path::absolute(runfile_path(&workspace)).unwrap();
         let port = unused_port();
         let mut helper = spawn_lifecycle_helper(port);
-        wait_for_lifecycle_helper(&mut helper, port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
 
-        let mut identity = LiveProcess::acquire_child(&helper)
+        let mut identity = LiveProcess::acquire_child(helper.child())
             .unwrap()
             .inspect(port)
             .unwrap()
@@ -17330,9 +17434,8 @@ pub(crate) mod tests {
 
         let result = down_impl(&workspace, None);
         let registration_remained = local.exists();
-        let helper_remained_live = helper.try_wait().unwrap().is_none();
-        let _ = helper.kill();
-        let _ = helper.wait();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up metadata-mismatch lifecycle helper");
 
         assert_eq!(result, ExitCode::FAILURE);
         assert!(
@@ -17926,19 +18029,24 @@ pub(crate) mod tests {
     #[test]
     fn readiness_fails_when_child_exits_before_http_health() {
         #[cfg(windows)]
-        let mut child = Command::new("cmd")
-            .args(["/C", "exit 7"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let mut command = {
+            let mut command = Command::new("cmd");
+            command
+                .args(["/C", "exit 7"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command
+        };
         #[cfg(not(windows))]
-        let mut child = Command::new("sh")
-            .args(["-c", "exit 7"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let mut command = {
+            let mut command = Command::new("sh");
+            command
+                .args(["-c", "exit 7"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command
+        };
+        let mut child = spawn_contained_test_child(&mut command, "exited readiness probe");
 
         let error = wait_healthy(
             &mut child,
@@ -17949,31 +18057,36 @@ pub(crate) mod tests {
         )
         .expect_err("an exited child cannot become ready");
         assert!(error.contains("exited before readiness"));
-        stop_child(&mut child).unwrap();
+        child.terminate_and_reap().unwrap();
     }
 
     #[test]
     fn readiness_succeeds_only_while_child_is_alive_and_http_is_200() {
         let (port, server) = serve_one_status("/health", "200 OK");
         #[cfg(windows)]
-        let mut child = Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Start-Sleep -Seconds 30",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let mut command = {
+            let mut command = Command::new("powershell.exe");
+            command
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Start-Sleep -Seconds 30",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command
+        };
         #[cfg(not(windows))]
-        let mut child = Command::new("sleep")
-            .arg("30")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let mut command = {
+            let mut command = Command::new("sleep");
+            command
+                .arg("30")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command
+        };
+        let mut child = spawn_contained_test_child(&mut command, "live readiness probe");
 
         wait_healthy(
             &mut child,
@@ -17983,8 +18096,8 @@ pub(crate) mod tests {
             Duration::from_secs(2),
         )
         .expect("a live child plus HTTP 200 is ready");
-        assert!(matches!(child.try_wait(), Ok(None)));
-        stop_child(&mut child).unwrap();
+        assert!(matches!(child.try_wait_leader(), Ok(None)));
+        child.terminate_and_reap().unwrap();
         server.join().unwrap();
     }
 

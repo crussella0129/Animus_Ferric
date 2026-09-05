@@ -7,6 +7,7 @@
 pub mod autonomy;
 pub mod autonomy_results;
 pub mod calibrate;
+mod process;
 pub mod provenance;
 pub mod repository_brief;
 pub mod results;

@@ -1879,3 +1879,39 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
   [Test critique](../sprints/s118/sprint-tests/critique.md), and
   [post-Loop adversarial review](../sprints/s118/post-loop-adversarial-review.md).
 - **Accepted code head:** `7633f8c0675664e51c8a4e88e4aaafe0d20880e9`
+
+## T-11901 (sprint 119)
+
+- **Description:** Consolidated bounded native process scopes and head/tail file capture in ferric-process, removed command-group, and migrated benchmark execution/verification consumers.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), partial AC-6.
+- **Completed:** 2026-09-05T00:57:00Z
+- **Files modified:** `Cargo.toml`, `Cargo.lock`, `crates/ferric-process/{Cargo.toml,src/lib.rs,src/windows.rs,src/unix.rs,src/supervision.rs,src/registry.rs,src/tests.rs}`, `crates/ferric-bench/{Cargo.toml,src/process.rs,src/runner.rs,src/verify.rs,src/autonomy.rs,src/lib.rs}`, `crates/ferric-cli/Cargo.toml`, and INT-0008 Work evidence.
+- **Verification:** Windows shared crate 6 passed / 1 source fixture ignored; benchmark 78 passed / 3 source fixtures ignored with an explicit real Python test interpreter. Workspace fmt and warnings-denied clippy pass. E01/E02/E03 cover timeout/success/unwind, inherited writers, exact member termination, rollback and output bounds. Linux runtime remains a formal Test CI gate, not implied by the passing aarch64 compile/clippy check. Independent final source review found no remaining blocker in generation-tagged registry, leader signal locking, or retained Windows thread identity. Retained Build failures are in the Sprint 119 unit record.
+- **Commit:** `a18d1a3f63ed47072b984a2327dfdb2070a7e5bd`
+
+## T-11902 (sprint 119)
+
+- **Description:** Replaced duplicated source-test process ownership with the shared scope, bounded registration capture and MCP readers, retained exact parent identity, and transferred managed-launcher lifetime into the fixture guard before publication.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), partial AC-6 and enabling AC-9.
+- **Completed:** 2026-09-05T01:01:00Z
+- **Files modified:** `crates/ferric-cli/src/{test_process_containment.rs,test_process_containment_tests.rs,main.rs,query.rs,server.rs,server_process.rs,server_registration.rs,bin/ferric_lifecycle_fixture.rs}`, `crates/ferric-cli/tests/{cli.rs,bench_mock.rs,server_lifecycle_fixture.rs}`. The proposed cron parent-death change was removed before acceptance; cron has no net change.
+- **Verification:** Windows Cargo workspace pass, including CLI units 310/310, CLI integration 68/68, benchmark command integration 7/7, source ratchet 1/1 and template hygiene 3/3. Separate native lifecycle Cargo suite 5/5 in 19.72s; workspace and lifecycle-feature clippy with warnings denied pass. An initial lifecycle-feature lint failed on a Linux-only File import; cfg correction passed. E04 retains previous assertions, including spec-v2 L3/L4 failure classification; E05/E06 source owner-death and parent-identity regressions pass on Windows. Linux exact pidfd event/reaping assertions remain required CI evidence.
+- **Commit:** `4e9aed97ce77058343539f7f11d57b3cf44862af`
+
+## T-11903 (sprint 119)
+
+- **Description:** Replaced direct Linux lifecycle artifact extraction/execution with a Cargo-driven namespace wrapper and unprivileged source reaper; documented source-owned cleanup and recorded actual Build provenance and next-sprint read-only preparation.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), partial AC-6.
+- **Completed:** 2026-09-05T01:04:00Z (implementation boundary; offer-for-merge gates below remain mandatory)
+- **Timestamp correction:** The implementation commit's authoritative timestamp is 2026-09-04T21:01:41-04:00; the initially entered approximate timestamp above was ahead of the clock. T-11901 and T-11902 implementation commit timestamps are respectively 2026-09-04T20:58:04-04:00 and 2026-09-04T21:00:16-04:00.
+- **Files modified:** `.github/workflows/ci.yml`, `AGENTS.md`, `tools/{test-lifecycle-linux.sh,lifecycle-linux-reaper.sh,README.md}`, `crates/ferric-cli/tests/source_execution.rs`, `docs/process-execution.md`, Sprint 119 metadata, unit evidence, and `next-sprint-review-preparation.md`.
+- **Verification:** `source_driven_ci_contract` passes in Windows Cargo workspace test; both shell scripts pass `bash -n`; fmt, workspace/backend/lifecycle clippy and native Windows lifecycle tests pass. E07's actual Linux namespace run is the required CI Test gate. E08 is conditional on offering a PR: formal Test critique, Loop reconciliation/validation, the extra independent post-Loop audit, confirmed push, and exact one-sprint dev-to-main PR must all be proved before that offer. This implementation completion is not a claim those later actions occurred.
+- **Commit:** `92e8f29a9ab9cc938b93d64f5e713a97662f13eb`
+
+## Sprint 119 post-Loop deadline correction
+
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), partial AC-6; correction within T-11901/E01/E02, not a new task or weakened plan.
+- **Commit:** `1d877c1858f1eae73716132cf2ae1a5d1a587eb9`.
+- **Cause:** The extra independent audit rejected Unix cleanup's success-before-deadline paths; adjacent Windows suspended-child rollback had the same ordering. The first close at `f3cb48b` was explicitly superseded at `291f4d9`.
+- **Outcome:** Shared deadline-first classification now covers both Unix successful observations, Windows Job drain and suspended-child rollback. Registry locks are released before fail-closed shutdown.
+- **Verification:** Local source-driven Windows workspace 1,129 passes / 6 intentional ignores, fmt and warnings-denied clippy; all six native/compile CI jobs at exact corrected head in run `33937071734` passed. Retained audit, source-review closure and current clause mapping are in the [Test correction record](../sprints/s119/test-phase-corrections.md) and [integration evidence](../sprints/s119/sprint-tests/integration-tests.md#final-post-audit-source-head-evidence). Formal Test critique, repeated Loop close, extra audit and actual PR checkpoint still gate the offer for merge.

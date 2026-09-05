@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/ferric-core",
+    "crates/ferric-process",
     "crates/ferric-trace",
     "crates/ferric-provider",
     "crates/ferric-guard",
@@ -77,6 +78,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # deadline over the daemon's Unix-domain socket.
 libc = "0.2"
 
+# Native Windows process ownership and explicit test-harness containment.
+windows-sys = "0.61"
+
 # Calendar cron expressions (sprint 76, ADR-067): epoch→UTC civil-time
 # decomposition for evaluating 5-field cron schedules. Already in the tree via
 # oovra (and CI-gated on aarch64 through ferric-cli), so this is a zero-new-cost
@@ -84,6 +88,7 @@ libc = "0.2"
 chrono = "0.4"
 
 ferric-core = { path = "crates/ferric-core" }
+ferric-process = { path = "crates/ferric-process" }
 ferric-trace = { path = "crates/ferric-trace" }
 ferric-provider = { path = "crates/ferric-provider" }
 ferric-guard = { path = "crates/ferric-guard" }

@@ -2,13 +2,88 @@
 
 use std::process::Command;
 
+#[path = "../src/test_process_containment.rs"]
+mod test_process_containment;
+
+trait BoundedOutput {
+    fn output_bounded(&mut self) -> std::io::Result<std::process::Output>;
+}
+
+impl BoundedOutput for Command {
+    fn output_bounded(&mut self) -> std::io::Result<std::process::Output> {
+        test_process_containment::output_bounded(self, std::time::Duration::from_secs(60))
+    }
+}
+
 fn ferric() -> Command {
+    test_process_containment::ensure_current_process_tree_is_contained()
+        .expect("install CLI integration-test process containment");
     Command::new(env!("CARGO_BIN_EXE_ferric"))
+}
+
+fn bounded_test_output(command: &mut Command) -> std::process::Output {
+    test_process_containment::output_bounded(command, std::time::Duration::from_secs(30))
+        .expect("run bounded integration-test child")
+}
+
+fn bounded_test_output_with_input(command: &mut Command, input: &[u8]) -> std::process::Output {
+    test_process_containment::output_bounded_with_input(
+        command,
+        input,
+        std::time::Duration::from_secs(30),
+    )
+    .expect("run bounded integration-test child with source-defined input")
+}
+
+fn spawn_contained_test_child(command: &mut Command) -> test_process_containment::ContainedChild {
+    test_process_containment::ContainedChild::spawn(command)
+        .expect("spawn contained integration-test child")
+}
+
+/// Own pipe readers alongside the MCP child, including when an assertion or
+/// the second reader's spawn unwinds. Killing the owned scope closes inherited
+/// writers before the bounded reader join; no detached reader can outlive this
+/// test's cleanup boundary.
+struct McpSession {
+    child: test_process_containment::ContainedChild,
+    readers: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl McpSession {
+    fn join_readers(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        for reader in self.readers.drain(..) {
+            while !reader.is_finished() {
+                if std::time::Instant::now() >= deadline {
+                    test_process_containment::abort_on_cleanup_failure(
+                        "MCP pipe reader did not finish after child-tree cleanup",
+                        "reader join deadline exceeded",
+                    );
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if reader.join().is_err() {
+                test_process_containment::abort_on_cleanup_failure(
+                    "MCP pipe reader panicked during teardown",
+                    "reader join failed",
+                );
+            }
+        }
+    }
+}
+
+impl Drop for McpSession {
+    fn drop(&mut self) {
+        if let Err(error) = self.child.terminate_and_reap() {
+            test_process_containment::abort_on_cleanup_failure("MCP child cleanup failed", error);
+        }
+        self.join_readers();
+    }
 }
 
 #[test]
 fn version_flag() {
-    let out = ferric().arg("--version").output().unwrap();
+    let out = ferric().arg("--version").output_bounded().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.starts_with("ferric "));
@@ -26,7 +101,11 @@ fn trace_cat_renders_unknown() {
     ];
     std::fs::write(&path, lines.join("\n")).unwrap();
 
-    let out = ferric().args(["trace", "cat"]).arg(&path).output().unwrap();
+    let out = ferric()
+        .args(["trace", "cat"])
+        .arg(&path)
+        .output_bounded()
+        .unwrap();
     assert!(out.status.success(), "exit code must be 0");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("note: hello"));
@@ -44,7 +123,11 @@ fn trace_cat_renders_history_compacted() {
     ];
     std::fs::write(&path, lines.join("\n")).unwrap();
 
-    let out = ferric().args(["trace", "cat"]).arg(&path).output().unwrap();
+    let out = ferric()
+        .args(["trace", "cat"])
+        .arg(&path)
+        .output_bounded()
+        .unwrap();
     assert!(out.status.success(), "exit code must be 0");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("history compacted"));
@@ -62,7 +145,7 @@ fn trace_verify_finds_no_drift_in_a_real_trace() {
         .args(["query", "--mock", "do a mock task"])
         .arg("--workspace")
         .arg(dir.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(out.status.success());
 
@@ -83,7 +166,7 @@ fn trace_verify_finds_no_drift_in_a_real_trace() {
         .args(["trace", "verify"])
         .arg(&trace)
         .current_dir(dir.path())
-        .output()
+        .output_bounded()
         .unwrap();
     let combined = format!(
         "{}{}",
@@ -98,7 +181,7 @@ fn trace_verify_finds_no_drift_in_a_real_trace() {
 
 #[test]
 fn no_args_fails_with_usage() {
-    let out = ferric().output().unwrap();
+    let out = ferric().output_bounded().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.to_lowercase().contains("usage:"));
@@ -111,7 +194,7 @@ fn mock_query_end_to_end() {
         .args(["query", "--mock", "do a mock task"])
         .arg("--workspace")
         .arg(dir.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -172,7 +255,7 @@ fn query_default_trace_root_is_compatible() {
         .args(["query", "--mock", "--no-config", "do a mock task"])
         .arg("--workspace")
         .arg(fresh.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -192,7 +275,7 @@ fn query_default_trace_root_is_compatible() {
         .arg(&source)
         .arg("--workspace")
         .arg(resumed.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -227,7 +310,7 @@ fn query_external_trace_root_leaves_workspace_clean() {
         .arg("--trace-dir")
         .arg(&relative_trace_root)
         .current_dir(root.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -252,7 +335,7 @@ fn assert_precreate_trace_root_rejected(workspace: &std::path::Path, trace_root:
         .arg(workspace)
         .arg("--trace-dir")
         .arg(trace_root)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         !out.status.success(),
@@ -345,7 +428,7 @@ fn external_trace_root_precreate_rejection_matrix() {
 
 #[test]
 fn query_help_documents_trace_dir() {
-    let out = ferric().args(["query", "--help"]).output().unwrap();
+    let out = ferric().args(["query", "--help"]).output_bounded().unwrap();
     assert!(out.status.success());
     let help = String::from_utf8(out.stdout).unwrap().to_ascii_lowercase();
     assert!(
@@ -465,12 +548,12 @@ fn execute_resume_hint(command: &str, root: &std::path::Path) -> Vec<String> {
     let path =
         std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&original_path)))
             .unwrap();
-    let out = Command::new("/bin/sh")
+    let mut shell = Command::new("/bin/sh");
+    shell
         .args(["-c", command])
         .env("PATH", path)
-        .env("FERRIC_ARGV_CAPTURE", &capture)
-        .output()
-        .unwrap();
+        .env("FERRIC_ARGV_CAPTURE", &capture);
+    let out = bounded_test_output(&mut shell);
     assert!(
         out.status.success(),
         "emitted POSIX-sh command failed: {}",
@@ -499,7 +582,7 @@ fn execute_resume_hint(command: &str, root: &std::path::Path) -> Vec<String> {
         .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
         .arg(script)
         .env("FERRIC_ARGV_CAPTURE", &capture)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -538,7 +621,7 @@ fn incomplete_mock_resume_hint_round_trips_in_documented_shell() {
         .arg(&workspace)
         .arg("--trace-dir")
         .arg(&trace_root)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!out.status.success(), "max_turns is an incomplete stop");
     assert!(
@@ -612,7 +695,7 @@ fn resume_hint_round_trips_in_documented_shell() {
         .arg("--trace-dir")
         .arg(&trace_root)
         .arg("ask for a database choice")
-        .output()
+        .output_bounded()
         .unwrap();
     server.join().unwrap();
     assert!(!out.status.success(), "needs_input is a non-success stop");
@@ -662,7 +745,7 @@ fn assert_platform_reparse_trace_root_is_rejected() {
         .args(["/D", "/C", "mklink", "/J"])
         .arg(&alias)
         .arg(&real)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         junction.status.success(),
@@ -684,7 +767,7 @@ fn stream_flag_mock_no_duplication() {
         .args(["query", "--mock", "do a mock task"])
         .arg("--workspace")
         .arg(dir.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -710,7 +793,7 @@ fn query_without_backend_errors() {
             .args(["query", "real task"])
             .arg("--workspace")
             .arg(dir.path())
-            .output()
+            .output_bounded()
             .unwrap();
         assert!(!out.status.success());
         let stderr = String::from_utf8(out.stderr).unwrap();
@@ -733,7 +816,7 @@ fn query_file_text_folds_into_prompt() {
         .arg(dir.path())
         .arg("--file")
         .arg(&notes)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -774,7 +857,7 @@ fn query_file_media_skipped_with_reason() {
         .arg(dir.path())
         .arg("--file")
         .arg(&photo)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -802,7 +885,7 @@ fn query_file_outside_selected_workspace_is_rejected() {
         .arg(&workspace)
         .arg("--file")
         .arg(&outside)
-        .output()
+        .output_bounded()
         .unwrap();
 
     assert!(!out.status.success());
@@ -824,7 +907,7 @@ fn query_file_sensitive_path_is_rejected_by_read_guard() {
         .arg("--workspace")
         .arg(dir.path())
         .args(["--file", ".env"])
-        .output()
+        .output_bounded()
         .unwrap();
 
     assert!(!out.status.success());
@@ -846,7 +929,7 @@ fn max_ring_caps_the_offered_tools() {
             .args(extra)
             .arg("--workspace")
             .arg(dir)
-            .output()
+            .output_bounded()
             .unwrap();
         assert!(
             out.status.success(),
@@ -917,7 +1000,7 @@ fn persisted_calibrated_ring_caps_the_offered_tools() {
             .arg(profile_dir)
             .arg("--workspace")
             .arg(ws)
-            .output()
+            .output_bounded()
             .unwrap();
         assert!(
             out.status.success(),
@@ -986,7 +1069,7 @@ fn query_defaults_unchanged_after_clap_type_change() {
         .args(["query", "--mock", "do a task"])
         .arg("--workspace")
         .arg(dir.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1024,7 +1107,7 @@ fn evidence_runs_and_planner_fails_before_trace_or_workspace_mutation() {
         ])
         .arg("--workspace")
         .arg(evidence.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1049,7 +1132,7 @@ fn evidence_runs_and_planner_fails_before_trace_or_workspace_mutation() {
         ])
         .arg("--workspace")
         .arg(planner.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!out.status.success(), "evidence-planner unexpectedly ran");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1069,7 +1152,7 @@ fn harness_policy_config_obeys_cli_over_project_precedence() {
         .args(["query", "--mock", "do a task"])
         .arg("--workspace")
         .arg(configured.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1087,7 +1170,7 @@ fn harness_policy_config_obeys_cli_over_project_precedence() {
         .args(["query", "--mock", "--harness-policy", "legacy", "do a task"])
         .arg("--workspace")
         .arg(overridden.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1141,7 +1224,7 @@ fn config_file_sets_default_without_flag() {
         .args(["query", "--mock", "do a task"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1160,7 +1243,7 @@ fn no_config_ignores_project_config() {
         .args(["query", "--mock", "--no-config", "do a task"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1181,7 +1264,7 @@ fn max_turns_flag_overrides_the_selected_policy_budget() {
         .args(["query", "--mock", "--max-turns", "7", "do a task"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1195,7 +1278,7 @@ fn max_turns_flag_overrides_the_selected_policy_budget() {
 fn max_turns_rejects_zero() {
     let out = ferric()
         .args(["query", "--mock", "--max-turns", "0", "do a task"])
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!out.status.success());
 }
@@ -1220,7 +1303,7 @@ fn explicit_checks_file_offers_named_tool_and_blocks_unverified_completion() {
         .arg("do a task")
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!out.status.success(), "the fixed mock never runs the check");
     assert!(String::from_utf8_lossy(&out.stderr).contains("verification checks authorized: unit"));
@@ -1266,7 +1349,7 @@ fn checks_file_failure_is_fatal_before_a_model_run() {
         .arg("do a task")
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read checks file"));
@@ -1286,7 +1369,7 @@ fn cli_flag_overrides_config_file() {
         .args(["query", "--mock", "do a task", "--params-b", "1.2"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1333,7 +1416,7 @@ fn config_only_model_still_resolves_profile() {
         ])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1380,7 +1463,7 @@ fn config_only_max_ring_caps_the_offered_tools() {
         .args(["query", "--mock", "do a task", "--params-b", "8"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1432,7 +1515,7 @@ fn config_only_stream_disables_live_output() {
         .args(["query", "--mock", "--protocol", "grammar", "do a task"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1461,7 +1544,7 @@ fn malformed_config_traced_as_note() {
         .args(["query", "--mock", "do a task"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1505,7 +1588,7 @@ fn animus_md_folds_into_prompt() {
         .args(["query", "--mock", "do a task"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1546,7 +1629,7 @@ fn animus_md_present_traces_note() {
         .args(["query", "--mock", "do a task"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1726,7 +1809,7 @@ fn resume_continues_an_interrupted_session() {
         .arg(&fixture)
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -1764,7 +1847,7 @@ fn external_trace_resume_requires_and_reuses_explicit_root() {
         .arg(&source)
         .arg("--workspace")
         .arg(&workspace)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!omitted.status.success());
     let omitted_stderr = String::from_utf8_lossy(&omitted.stderr).to_ascii_lowercase();
@@ -1789,7 +1872,7 @@ fn external_trace_resume_requires_and_reuses_explicit_root() {
         .arg(&workspace)
         .arg("--trace-dir")
         .arg(&trace_root)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         resumed.status.success(),
@@ -1824,7 +1907,7 @@ fn first_resumed_turn_chars(
         cmd.arg(p);
     }
     cmd.arg("--workspace").arg(ws);
-    let out = cmd.output().unwrap();
+    let out = cmd.output_bounded().unwrap();
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -1869,7 +1952,7 @@ fn clarification_resume_requires_and_traces_an_explicit_answer() {
         .arg(&fixture)
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("waiting for user input"));
@@ -1879,7 +1962,7 @@ fn clarification_resume_requires_and_traces_an_explicit_answer() {
         .arg(&fixture)
         .args(["--answer", "SQLite", "--workspace"])
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         answered.status.success(),
@@ -1922,7 +2005,7 @@ fn no_resume_and_no_prompt_is_a_usage_error() {
         .args(["query", "--mock"])
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
@@ -1943,7 +2026,7 @@ fn resume_protocol_mismatch_is_a_clear_error() {
         .arg("grammar")
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
@@ -1961,7 +2044,7 @@ fn resume_harness_policy_mismatch_is_clear_and_allocates_no_new_trace() {
         .arg(&fixture)
         .args(["--harness-policy", "evidence", "--workspace"])
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
 
     assert!(!out.status.success());
@@ -1998,7 +2081,7 @@ fn resume_already_stopped_is_a_clear_error() {
         .arg(&path)
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
@@ -2018,7 +2101,7 @@ fn resume_with_animus_md_prints_ignored_note() {
         .arg(&fixture)
         .arg("--workspace")
         .arg(ws.path())
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -2031,7 +2114,7 @@ fn resume_with_animus_md_prints_ignored_note() {
 
 #[test]
 fn unknown_args_fail_with_usage() {
-    let out = ferric().arg("frobnicate").output().unwrap();
+    let out = ferric().arg("frobnicate").output_bounded().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.to_lowercase().contains("usage") || stderr.contains("unrecognized"));
@@ -2054,31 +2137,34 @@ fn mcp_stdio_e2e() {
     use std::time::Duration;
 
     let dir = tempfile::tempdir().unwrap();
-    let mut child = ferric()
+    let mut command = ferric();
+    command
         .args(["mcp", "--mock"])
         .arg("--workspace")
         .arg(dir.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::piped());
+    let mut session = McpSession {
+        child: spawn_contained_test_child(&mut command),
+        readers: Vec::new(),
+    };
 
-    let mut stdin = child.stdin.take().unwrap();
-    let stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
+    let mut stdin = session.child.take_stdin().unwrap();
+    let stdout = session.child.take_stdout().unwrap();
+    let mut stderr = session.child.take_stderr().unwrap();
 
     // Drain stderr on its own thread for the process's lifetime — an
     // unread pipe can fill its OS buffer and deadlock the child.
-    std::thread::spawn(move || {
+    session.readers.push(std::thread::spawn(move || {
         let mut sink = String::new();
         let _ = stderr.read_to_string(&mut sink);
-    });
+    }));
 
     // Stream stdout lines to the test thread over a channel so reads are
     // timeout-bounded instead of an unbounded blocking `read_line`.
     let (tx, rx) = mpsc::channel::<String>();
-    std::thread::spawn(move || {
+    session.readers.push(std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
         loop {
@@ -2092,7 +2178,7 @@ fn mcp_stdio_e2e() {
                 }
             }
         }
-    });
+    }));
     let recv_line = |rx: &mpsc::Receiver<String>| -> String {
         rx.recv_timeout(Duration::from_secs(10))
             .expect("ferric mcp did not respond within 10s")
@@ -2149,44 +2235,26 @@ fn mcp_stdio_e2e() {
     assert_eq!(resp["result"]["isError"], false);
 
     drop(stdin); // EOF: the server should exit cleanly on its own.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "ferric mcp did not exit within 10s of stdin EOF"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    let status = session
+        .child
+        .wait_for_exit_and_disarm(Duration::from_secs(10))
+        .expect("ferric mcp did not exit within 10s of stdin EOF");
     assert!(status.success(), "ferric mcp did not exit cleanly on EOF");
+    session.join_readers();
 }
 
 // ---- T-4203 (sprint 42): `ferric chat` subprocess tests -----------------------
-// A NEW stdin-piping harness: batch-write the whole conversation, close stdin,
-// and `wait_with_output`. `ferric chat` reads lines sequentially and exits on
+// The batch harness supplies a source-defined input file and bounded file-backed
+// output. `ferric chat` reads lines sequentially and exits on
 // `/exit` (handled purely at the parse layer — no `complete()` call) or EOF, and
 // the `--mock` provider is fresh-per-turn, so an off-by-one in piped lines can't
 // hang the child (plan-critic C-001/C-005).
 
 /// Run `ferric chat --mock` with `input` piped to stdin; return (stdout, stderr).
 fn run_chat_mock(ws: &std::path::Path, input: &str) -> (String, String) {
-    use std::io::Write;
-    use std::process::Stdio;
-    let mut child = ferric()
-        .args(["chat", "--mock", "--workspace"])
-        .arg(ws)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    {
-        let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(input.as_bytes()).unwrap();
-    } // stdin dropped → EOF
-    let out = child.wait_with_output().unwrap();
+    let mut command = ferric();
+    command.args(["chat", "--mock", "--workspace"]).arg(ws);
+    let out = bounded_test_output_with_input(&mut command, input.as_bytes());
     assert!(
         out.status.success(),
         "ferric chat exited non-zero; stderr: {}",
@@ -2322,22 +2390,10 @@ fn chat_talk_turn_is_not_dispatched() {
 // A new stdin-piping helper modeled on `run_chat_mock`'s SHAPE (not the literal
 // fn — it hardcodes `chat --mock`; plan-critic C-005). Returns (stdout, status).
 fn run_launch(args: &[&std::ffi::OsStr], stdin_input: &str) -> (String, std::process::ExitStatus) {
-    use std::io::Write;
-    use std::process::Stdio;
     let mut cmd = ferric();
     cmd.arg("launch");
     cmd.args(args);
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    {
-        let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(stdin_input.as_bytes()).unwrap();
-    }
-    let out = child.wait_with_output().unwrap();
+    let out = bounded_test_output_with_input(&mut cmd, stdin_input.as_bytes());
     (String::from_utf8_lossy(&out.stdout).to_string(), out.status)
 }
 
@@ -2381,11 +2437,10 @@ fn launch_noninteractive_scaffolds() {
     assert!(!target.join("agent-tasks").exists());
     assert!(!target.join("decisions.md").exists());
     // main + dev exist.
-    let branches = std::process::Command::new("git")
-        .args(["branch", "--format=%(refname:short)"])
-        .current_dir(&target)
-        .output()
-        .unwrap();
+    let mut git = std::process::Command::new("git");
+    git.args(["branch", "--format=%(refname:short)"])
+        .current_dir(&target);
+    let branches = bounded_test_output(&mut git);
     let branches = String::from_utf8_lossy(&branches.stdout);
     assert!(
         branches.contains("main") && branches.contains("dev"),
@@ -2447,22 +2502,12 @@ fn run_mcp_mock(
     extra_args: &[&str],
     input: &str,
 ) -> (String, String, std::process::ExitStatus) {
-    use std::io::Write;
-    use std::process::Stdio;
-    let mut child = ferric()
+    let mut command = ferric();
+    command
         .args(["mcp", "--mock", "--workspace"])
         .arg(ws)
-        .args(extra_args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    {
-        let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(input.as_bytes()).unwrap();
-    }
-    let out = child.wait_with_output().unwrap();
+        .args(extra_args);
+    let out = bounded_test_output_with_input(&mut command, input.as_bytes());
     (
         String::from_utf8_lossy(&out.stdout).to_string(),
         String::from_utf8_lossy(&out.stderr).to_string(),
@@ -2536,7 +2581,11 @@ fn icm_init_scaffolds_and_plan_shows_the_pipeline() {
     let ws = tmp.path().join("deck");
 
     // init scaffolds a three-stage workspace.
-    let out = ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    let out = ferric()
+        .args(["icm", "init"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
     assert!(out.status.success(), "icm init must succeed");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Scaffolded ICM workspace"));
@@ -2544,7 +2593,11 @@ fn icm_init_scaffolds_and_plan_shows_the_pipeline() {
     assert!(ws.join("Animus.md").exists());
 
     // plan discovers the stages in numeric order and reports layers.
-    let out = ferric().args(["icm", "plan"]).arg(&ws).output().unwrap();
+    let out = ferric()
+        .args(["icm", "plan"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
     assert!(out.status.success(), "icm plan must succeed");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("01_research"));
@@ -2559,7 +2612,11 @@ fn icm_init_scaffolds_and_plan_shows_the_pipeline() {
 fn icm_plan_wires_prior_stage_output_as_layer4() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = tmp.path().join("deck");
-    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    ferric()
+        .args(["icm", "init"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
 
     // Simulate stage 1 having produced output and a shared voice file.
     std::fs::write(
@@ -2569,7 +2626,11 @@ fn icm_plan_wires_prior_stage_output_as_layer4() {
     .unwrap();
     std::fs::write(ws.join("_config/voice.md"), "terse.").unwrap();
 
-    let out = ferric().args(["icm", "plan"]).arg(&ws).output().unwrap();
+    let out = ferric()
+        .args(["icm", "plan"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     // Stage 2 pulls stage 1's output as a present Layer 4 input.
     assert!(
@@ -2586,7 +2647,11 @@ fn icm_init_refuses_to_clobber() {
     std::fs::create_dir_all(&ws).unwrap();
     std::fs::write(ws.join("keep.txt"), "mine").unwrap();
 
-    let out = ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    let out = ferric()
+        .args(["icm", "init"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
     assert!(!out.status.success(), "init must refuse a non-empty dir");
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("refuse to clobber"), "stderr: {stderr}");
@@ -2603,12 +2668,16 @@ fn icm_init_refuses_to_clobber() {
 fn icm_run_executes_every_stage_in_order() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = tmp.path().join("deck");
-    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    ferric()
+        .args(["icm", "init"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
 
     let out = ferric()
         .args(["icm", "run", "--auto", "--mock"])
         .arg(&ws)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(out.status.success(), "pipeline must succeed");
     let stderr = String::from_utf8(out.stderr).unwrap();
@@ -2639,24 +2708,18 @@ fn icm_run_executes_every_stage_in_order() {
 
 #[test]
 fn icm_run_stops_at_review_gate_on_q() {
-    use std::io::Write;
-    use std::process::Stdio;
-
     let tmp = tempfile::tempdir().unwrap();
     let ws = tmp.path().join("deck");
-    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    ferric()
+        .args(["icm", "init"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
 
     // No --auto: a review gate follows stage 1. Feeding 'q' stops the pipeline.
-    let mut child = ferric()
-        .args(["icm", "run", "--mock"])
-        .arg(&ws)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child.stdin.take().unwrap().write_all(b"q\n").unwrap();
-    let out = child.wait_with_output().unwrap();
+    let mut command = ferric();
+    command.args(["icm", "run", "--mock"]).arg(&ws);
+    let out = bounded_test_output_with_input(&mut command, b"q\n");
     assert!(out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("stopped at stage 01"), "stderr: {stderr}");
@@ -2671,12 +2734,16 @@ fn icm_run_stops_at_review_gate_on_q() {
 fn icm_run_honors_a_stage_range() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = tmp.path().join("deck");
-    ferric().args(["icm", "init"]).arg(&ws).output().unwrap();
+    ferric()
+        .args(["icm", "init"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
 
     let out = ferric()
         .args(["icm", "run", "--auto", "--mock", "--from", "2", "--to", "2"])
         .arg(&ws)
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(out.status.success());
     // Only stage 2 ran.
@@ -2694,7 +2761,7 @@ fn cron_add_then_list_shows_the_job() {
         .args(["cron", "--workspace"])
         .arg(ws.path())
         .args(["add", "nightly", "--schedule", "12h", "--command", "dream"])
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(out.status.success(), "cron add must succeed");
     assert!(ws.path().join(".ferric/cron/nightly.toml").exists());
@@ -2703,7 +2770,7 @@ fn cron_add_then_list_shows_the_job() {
         .args(["cron", "--workspace"])
         .arg(ws.path())
         .arg("list")
-        .output()
+        .output_bounded()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("nightly"), "list: {stdout}");
@@ -2732,7 +2799,7 @@ fn cron_run_executes_a_due_mock_job_and_advances_state() {
             "do a task",
             "--mock",
         ])
-        .output()
+        .output_bounded()
         .unwrap();
 
     // First run: the job is due (never run) → it executes.
@@ -2740,7 +2807,7 @@ fn cron_run_executes_a_due_mock_job_and_advances_state() {
         .args(["cron", "--workspace"])
         .arg(ws.path())
         .arg("run")
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(out.status.success());
     assert!(
@@ -2753,7 +2820,7 @@ fn cron_run_executes_a_due_mock_job_and_advances_state() {
         .args(["cron", "--workspace"])
         .arg(ws.path())
         .arg("run")
-        .output()
+        .output_bounded()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
@@ -2779,14 +2846,14 @@ fn cron_dry_run_reports_without_executing() {
             "x",
             "--mock",
         ])
-        .output()
+        .output_bounded()
         .unwrap();
 
     let out = ferric()
         .args(["cron", "--workspace"])
         .arg(ws.path())
         .args(["run", "--dry-run"])
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -2800,7 +2867,7 @@ fn cron_dry_run_reports_without_executing() {
         .args(["cron", "--workspace"])
         .arg(ws.path())
         .args(["run", "--dry-run"])
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         String::from_utf8(out.stdout)
@@ -2821,7 +2888,7 @@ fn cron_add_rejects_bad_input() {
     assert!(
         !base()
             .args(["add", "q", "--schedule", "1h", "--command", "query"])
-            .output()
+            .output_bounded()
             .unwrap()
             .status
             .success()
@@ -2830,7 +2897,7 @@ fn cron_add_rejects_bad_input() {
     assert!(
         !base()
             .args(["add", "q", "--schedule", "1h", "--command", "rm -rf /"])
-            .output()
+            .output_bounded()
             .unwrap()
             .status
             .success()
@@ -2839,7 +2906,7 @@ fn cron_add_rejects_bad_input() {
     assert!(
         !base()
             .args(["add", "q", "--schedule", "soon", "--command", "dream"])
-            .output()
+            .output_bounded()
             .unwrap()
             .status
             .success()
@@ -2860,7 +2927,7 @@ fn cron_add_accepts_a_cron_expression() {
             "--command",
             "dream",
         ])
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         out.status.success(),
@@ -2876,7 +2943,7 @@ fn cron_add_accepts_a_cron_expression() {
         .args(["cron", "--workspace"])
         .arg(ws.path())
         .arg("list")
-        .output()
+        .output_bounded()
         .unwrap();
     assert!(
         String::from_utf8(out.stdout)

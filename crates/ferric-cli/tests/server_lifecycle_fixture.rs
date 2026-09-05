@@ -17,9 +17,15 @@
     )
 ))]
 
+#[cfg(any(windows, target_os = "linux"))]
+#[path = "../src/test_process_containment.rs"]
+mod test_process_containment;
+
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{self, File};
+use std::fs;
+#[cfg(target_os = "linux")]
+use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -36,6 +42,24 @@ use sha2::{Digest, Sha256};
 const SENTINEL_NAME: &str = "unrelated-sentinel.txt";
 const BIND_DIAGNOSTIC_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_BIND_DIAGNOSTIC";
 const READY_MARKER_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_READY_MARKER";
+#[cfg(target_os = "linux")]
+const OWNER_PID_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_OWNER_PID";
+#[cfg(target_os = "linux")]
+const OWNER_START_TICKS_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_OWNER_START_TICKS";
+#[cfg(target_os = "linux")]
+const OWNER_DEATH_PROBE_MODE_ENV: &str = "FERRIC_LIFECYCLE_OWNER_DEATH_PROBE_MODE";
+#[cfg(target_os = "linux")]
+const OWNER_DEATH_PROBE_FIXTURE_ENV: &str = "FERRIC_LIFECYCLE_OWNER_DEATH_PROBE_FIXTURE";
+#[cfg(target_os = "linux")]
+const OWNER_DEATH_PROBE_MODEL_ENV: &str = "FERRIC_LIFECYCLE_OWNER_DEATH_PROBE_MODEL";
+#[cfg(target_os = "linux")]
+const OWNER_DEATH_PROBE_TOKEN_ENV: &str = "FERRIC_LIFECYCLE_OWNER_DEATH_PROBE_TOKEN";
+#[cfg(target_os = "linux")]
+const OWNER_DEATH_PROBE_READY_ENV: &str = "FERRIC_LIFECYCLE_OWNER_DEATH_PROBE_READY";
+#[cfg(target_os = "linux")]
+const OWNER_DEATH_PROBE_PORT_ENV: &str = "FERRIC_LIFECYCLE_OWNER_DEATH_PROBE_PORT";
+#[cfg(target_os = "linux")]
+const OWNER_DEATH_PROBE_TEST_NAME: &str = "lifecycle_fixture_exits_when_exact_owner_pidfd_signals";
 const TAILSCALE_LOCALAPI_TEST_TCP_ENV: &str = "FERRIC_TAILSCALE_LOCALAPI_TEST_TCP";
 const TAILSCALE_FQDN: &str = "example-host.tailnet-example.ts.net";
 const TAILSCALE_STABLE_NODE_ID: &str = "node-fixture";
@@ -48,6 +72,8 @@ const FIXTURE_LIFETIME_LIMIT: Duration = Duration::from_secs(90);
 const PORT_ATTEMPTS: usize = 3;
 
 fn lifecycle_test_lock() -> MutexGuard<'static, ()> {
+    test_process_containment::ensure_current_process_tree_is_contained()
+        .expect("install lifecycle-test process containment");
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
@@ -96,6 +122,57 @@ fn engine_filename() -> &'static str {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn linux_self_start_ticks() -> String {
+    linux_process_start_ticks(std::process::id())
+        .expect("read lifecycle harness stat")
+        .to_string()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_start_ticks(pid: u32) -> std::io::Result<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let close = stat.rfind(')').ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "lifecycle process stat lacked a command delimiter",
+        )
+    })?;
+    stat.get(close + 1..)
+        .and_then(|suffix| suffix.split_whitespace().nth(19))
+        .and_then(|field| field.parse::<u64>().ok())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "lifecycle process stat lacked numeric start ticks",
+            )
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_start_token(pid: u32) -> std::io::Result<String> {
+    let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
+    let boot_id = boot_id.trim();
+    if boot_id.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Linux boot ID was empty",
+        ));
+    }
+    let start_ticks = linux_process_start_ticks(pid)?;
+    Ok(format!("linux-boot-id:{boot_id};start-ticks:{start_ticks}"))
+}
+
+fn configure_fixture_owner_environment(command: &mut Command) {
+    #[cfg(target_os = "linux")]
+    command
+        .env(OWNER_PID_ENV, std::process::id().to_string())
+        .env(OWNER_START_TICKS_ENV, linux_self_start_ticks());
+
+    #[cfg(windows)]
+    let _ = command;
+}
+
 fn copy_fixture_as(bin_dir: &Path, filename: &str) -> PathBuf {
     let executable = bin_dir.join(filename);
     fs::copy(fixture_executable(), &executable).unwrap();
@@ -127,6 +204,9 @@ fn isolated_ferric(workspace: &Path, appdata: &Path, bin_dir: &Path) -> Command 
         .env("HOME", appdata.join("unused-home"))
         // Ferric can resolve only the copied closed-engine fixture.
         .env("PATH", bin_dir);
+    test_process_containment::configure_command_parent_death_signal(&mut command)
+        .expect("configure Ferric test-child parent-death containment");
+    configure_fixture_owner_environment(&mut command);
     command
 }
 
@@ -152,6 +232,9 @@ fn isolated_production_ferric(workspace: &Path, appdata: &Path, bin_dir: &Path) 
         .env("XDG_CONFIG_HOME", appdata.join("unused-xdg"))
         .env("HOME", appdata.join("unused-home"))
         .env("PATH", bin_dir);
+    test_process_containment::configure_command_parent_death_signal(&mut command)
+        .expect("configure production Ferric test-child parent-death containment");
+    configure_fixture_owner_environment(&mut command);
     command
 }
 
@@ -171,41 +254,125 @@ fn wait_for_child_exit(
     }
 }
 
-fn run_cli_output_bounded(label: &str, command: &mut Command) -> Output {
-    // Files, rather than pipes, prevent an incorrectly spawned daemon from
-    // keeping `wait_with_output` blocked by inherited writer handles.
-    let capture = tempfile::tempdir().expect("create bounded CLI capture directory");
-    let stdout_path = capture.path().join("stdout");
-    let stderr_path = capture.path().join("stderr");
-    let stdout = File::create(&stdout_path).expect("create CLI stdout capture");
-    let stderr = File::create(&stderr_path).expect("create CLI stderr capture");
-    let mut child = command
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
-        .spawn()
-        .unwrap_or_else(|error| panic!("could not spawn {label}: {error}"));
+fn report_drop_cleanup_failure(context: &str, error: std::io::Error) {
+    test_process_containment::abort_on_cleanup_failure(context, error);
+}
 
-    let status = match wait_for_child_exit(&mut child, CLI_TIMEOUT)
-        .unwrap_or_else(|error| panic!("could not observe {label}: {error}"))
-    {
-        Some(status) => status,
-        None => {
-            let kill = child.kill();
-            let reaped = wait_for_child_exit(&mut child, CHILD_EXIT_GRACE)
-                .unwrap_or_else(|error| panic!("could not reap timed-out {label}: {error}"));
-            let stdout = fs::read(&stdout_path).unwrap_or_default();
-            let stderr = fs::read(&stderr_path).unwrap_or_default();
-            panic!(
-                "{label} exceeded the {CLI_TIMEOUT:?} CLI watchdog; kill={kill:?} reaped={reaped:?}\nstdout:\n{}\nstderr:\n{}",
-                String::from_utf8_lossy(&stdout),
-                String::from_utf8_lossy(&stderr)
-            );
+fn run_cli_output_bounded(label: &str, command: &mut Command) -> Output {
+    test_process_containment::output_bounded(command, CLI_TIMEOUT)
+        .unwrap_or_else(|error| panic!("run {label} within owned CLI scope: {error}"))
+}
+
+fn run_managed_cli_output_bounded(
+    label: &str,
+    command: &mut Command,
+    lifetime: &mut FixtureLifetimeGuard,
+) -> Output {
+    use std::io::{Seek, SeekFrom};
+
+    #[cfg(target_os = "linux")]
+    let status_directory = tempfile::tempdir().expect("create source CLI handoff coordinate");
+    #[cfg(target_os = "linux")]
+    let status_path = status_directory.path().join("launcher-status.json");
+    #[cfg(target_os = "linux")]
+    let mut supervisor = {
+        let mut supervisor = Command::new(fixture_executable());
+        supervisor
+            .arg("--supervise-cli")
+            .arg(&status_path)
+            .arg(command.get_program())
+            .args(command.get_args());
+        if let Some(directory) = command.get_current_dir() {
+            supervisor.current_dir(directory);
+        }
+        for (name, value) in command.get_envs() {
+            if let Some(value) = value {
+                supervisor.env(name, value);
+            } else {
+                supervisor.env_remove(name);
+            }
+        }
+        supervisor
+    };
+    #[cfg(target_os = "linux")]
+    let command = &mut supervisor;
+
+    let mut stdout = tempfile::tempfile().expect("create managed CLI stdout capture");
+    let mut stderr = tempfile::tempfile().expect("create managed CLI stderr capture");
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout.try_clone().unwrap()))
+        .stderr(Stdio::from(stderr.try_clone().unwrap()));
+    let child = test_process_containment::ContainedChild::spawn(command)
+        .unwrap_or_else(|error| panic!("spawn {label} in retained lifecycle scope: {error}"));
+    // `server up` deliberately hands its server to the test's lifecycle owner.
+    // On Linux a live source supervisor anchors this scope and reaps the real
+    // launcher before publishing its status. Retaining the exited launcher as
+    // the anchor would make production /proc inspection see an unreadable
+    // zombie peer. Windows retains the launcher's native Job directly.
+    lifetime.scopes.push(child);
+    let child = lifetime.scopes.last_mut().unwrap();
+    let deadline = Instant::now() + CLI_TIMEOUT;
+    #[cfg(windows)]
+    let status = loop {
+        match child.try_wait_leader() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            result => panic!("{label} did not complete its bounded launcher handoff: {result:?}"),
         }
     };
+    #[cfg(target_os = "linux")]
+    let status = loop {
+        assert!(
+            child
+                .try_wait_leader()
+                .expect("observe live CLI supervisor")
+                .is_none(),
+            "{label} source supervisor exited before its managed-server handoff"
+        );
+        match fs::read(&status_path) {
+            Ok(bytes) => {
+                use std::os::unix::process::ExitStatusExt;
+                let record: serde_json::Value = serde_json::from_slice(&bytes)
+                    .expect("decode atomically published launcher status");
+                assert_eq!(record["schema_version"], 1);
+                assert_eq!(record["supervisor_pid"], child.child().id());
+                assert_eq!(record["launcher_reaped"], true);
+                let launcher_pid = record["launcher_pid"]
+                    .as_u64()
+                    .and_then(|pid| u32::try_from(pid).ok())
+                    .expect("bounded source launcher PID");
+                assert!(launcher_pid > 1 && launcher_pid != child.child().id());
+                let raw_status = record["raw_exit_status"]
+                    .as_i64()
+                    .and_then(|status| i32::try_from(status).ok())
+                    .expect("native source launcher exit status");
+                assert!(
+                    child.try_wait_leader().unwrap().is_none(),
+                    "source supervisor lost its live scope anchor"
+                );
+                break ExitStatus::from_raw(raw_status);
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            result => {
+                panic!("{label} did not publish a bounded reaped-launcher handoff: {result:?}")
+            }
+        }
+    };
+    stdout.seek(SeekFrom::Start(0)).unwrap();
+    stderr.seek(SeekFrom::Start(0)).unwrap();
+    let mut stdout_bytes = Vec::new();
+    let mut stderr_bytes = Vec::new();
+    stdout.read_to_end(&mut stdout_bytes).unwrap();
+    stderr.read_to_end(&mut stderr_bytes).unwrap();
     Output {
         status,
-        stdout: fs::read(stdout_path).expect("read bounded CLI stdout"),
-        stderr: fs::read(stderr_path).expect("read bounded CLI stderr"),
+        stdout: stdout_bytes,
+        stderr: stderr_bytes,
     }
 }
 
@@ -955,10 +1122,39 @@ mod native_process {
             self.active().unwrap_or(true)
         }
 
-        pub fn terminate_for_cleanup(&self) {
-            unsafe {
-                TerminateProcess(self.handle, 1);
-                WaitForSingleObject(self.handle, 5_000);
+        pub fn exited(&self) -> io::Result<bool> {
+            self.active().map(|active| !active)
+        }
+
+        pub fn reap_after_exit(&self) -> io::Result<()> {
+            if self.exited()? {
+                Ok(())
+            } else {
+                Err(io::Error::other("retained Windows fixture has not exited"))
+            }
+        }
+
+        pub fn terminate_for_cleanup(&self) -> io::Result<()> {
+            if !self.active()? {
+                return Ok(());
+            }
+            if unsafe { TerminateProcess(self.handle, 1) } == 0 {
+                let terminate_error = io::Error::last_os_error();
+                if self.active()? {
+                    return Err(terminate_error);
+                }
+                return Ok(());
+            }
+            match unsafe { WaitForSingleObject(self.handle, 5_000) } {
+                WAIT_OBJECT_0 => Ok(()),
+                WAIT_TIMEOUT => Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "timed out waiting for retained process termination",
+                )),
+                WAIT_FAILED => Err(io::Error::last_os_error()),
+                state => Err(io::Error::other(format!(
+                    "unexpected retained process cleanup wait state {state}"
+                ))),
             }
         }
     }
@@ -982,6 +1178,7 @@ mod native_process {
     const SYS_PIDFD_SEND_SIGNAL: c_long = 424;
     const SYS_PIDFD_OPEN: c_long = 434;
     const POLLIN: i16 = 0x0001;
+    const POLLHUP: i16 = 0x0010;
     const SIGKILL: c_int = 9;
 
     #[repr(C)]
@@ -1082,7 +1279,12 @@ mod native_process {
             if result < 0 {
                 return Err(io::Error::last_os_error());
             }
-            if descriptor.revents & POLLIN != 0 {
+            if descriptor.revents & !(POLLIN | POLLHUP) != 0 {
+                Err(io::Error::other(format!(
+                    "retained pidfd returned invalid poll events {:#x}",
+                    descriptor.revents
+                )))
+            } else if descriptor.revents & (POLLIN | POLLHUP) != 0 {
                 Ok(true)
             } else {
                 Err(io::Error::other(format!(
@@ -1102,17 +1304,96 @@ mod native_process {
             self.active().unwrap_or(true)
         }
 
-        pub fn terminate_for_cleanup(&self) {
-            unsafe {
+        pub fn exited(&self) -> io::Result<bool> {
+            self.active().map(|active| !active)
+        }
+
+        /// Reap only this retained process. A fixture still owned by its
+        /// source supervisor may be reaped there; POLLHUP proves that case.
+        /// Unlike numeric waitpid, P_PIDFD cannot target a reused process ID.
+        pub fn reap_after_exit(&self) -> io::Result<()> {
+            let deadline = std::time::Instant::now() + super::CHILD_EXIT_GRACE;
+            loop {
+                let mut descriptor = PollFd {
+                    fd: self.pidfd.as_raw_fd(),
+                    events: POLLIN,
+                    revents: 0,
+                };
+                let polled = unsafe { poll(&mut descriptor, 1, 0) };
+                if polled < 0 {
+                    let error = io::Error::last_os_error();
+                    if error.kind() == io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return Err(error);
+                }
+                if descriptor.revents & !(POLLIN | POLLHUP) != 0 {
+                    return Err(io::Error::other(format!(
+                        "retained pidfd returned invalid reap events {:#x}",
+                        descriptor.revents
+                    )));
+                }
+                if descriptor.revents & POLLHUP != 0 {
+                    return Ok(());
+                }
+                let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                let waited = unsafe {
+                    libc::waitid(
+                        libc::P_PIDFD,
+                        self.pidfd.as_raw_fd() as libc::id_t,
+                        &mut status,
+                        libc::WEXITED | libc::WNOHANG,
+                    )
+                };
+                if waited == 0 && unsafe { status.si_pid() } != 0 {
+                    return Ok(());
+                }
+                if waited != 0 {
+                    let error = io::Error::last_os_error();
+                    if error.raw_os_error() != Some(libc::ECHILD)
+                        && error.kind() != io::ErrorKind::Interrupted
+                    {
+                        return Err(error);
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "exact fixture exited but neither source reaping nor external reaping was proved",
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+
+        pub fn terminate_for_cleanup(&self) -> io::Result<()> {
+            if !self.active()? {
+                return Ok(());
+            }
+            let signal_result = unsafe {
                 syscall(
                     SYS_PIDFD_SEND_SIGNAL,
                     self.pidfd.as_raw_fd(),
                     SIGKILL,
                     std::ptr::null::<c_void>(),
                     0_u32,
-                );
+                )
+            };
+            if signal_result < 0 {
+                let signal_error = io::Error::last_os_error();
+                if self.active()? {
+                    return Err(signal_error);
+                }
+                return Ok(());
             }
-            let _ = self.poll_exit(5_000);
+            if self.poll_exit(5_000)? {
+                Ok(())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "timed out waiting for retained process termination",
+                ))
+            }
         }
     }
 }
@@ -1123,6 +1404,7 @@ mod native_process {
 struct ExternalProcessGuard {
     process: native_process::ExactProcess,
     armed: bool,
+    reap: bool,
 }
 
 impl ExternalProcessGuard {
@@ -1130,22 +1412,54 @@ impl ExternalProcessGuard {
         Ok(Self {
             process: native_process::ExactProcess::acquire(pid, expected_start_token)?,
             armed: true,
+            reap: true,
         })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn observe_child(pid: u32, expected_start_token: &str) -> std::io::Result<Self> {
+        let mut guard = Self::acquire(pid, expected_start_token)?;
+        // Its ContainedChild scope owns the direct leader's reap obligation.
+        guard.reap = false;
+        Ok(guard)
     }
 
     fn running(&self) -> bool {
         self.process.running()
     }
 
-    fn disarm(&mut self) {
+    fn disarm_after_exit(&mut self) -> std::io::Result<()> {
+        if !self.process.exited()? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "cannot disarm cleanup for a retained process that is still running",
+            ));
+        }
+        if self.reap {
+            self.process.reap_after_exit()?;
+        }
         self.armed = false;
+        Ok(())
+    }
+
+    fn terminate_and_disarm(&mut self) -> std::io::Result<()> {
+        self.process.terminate_for_cleanup()?;
+        self.disarm_after_exit()
     }
 }
 
 impl Drop for ExternalProcessGuard {
     fn drop(&mut self) {
-        if self.armed && self.process.running() {
-            self.process.terminate_for_cleanup();
+        if self.armed
+            && let Err(first_error) = self.terminate_and_disarm()
+            && let Err(retry_error) = self.terminate_and_disarm()
+        {
+            report_drop_cleanup_failure(
+                "could not terminate retained fixture process in cleanup guard",
+                std::io::Error::other(format!(
+                    "first attempt: {first_error}; retry: {retry_error}"
+                )),
+            );
         }
     }
 }
@@ -1159,6 +1473,7 @@ struct FixtureLifetimeGuard {
     watchdog_cancel: Option<Sender<()>>,
     watchdog: Option<thread::JoinHandle<()>>,
     armed: bool,
+    scopes: Vec<test_process_containment::ContainedChild>,
 }
 
 impl FixtureLifetimeGuard {
@@ -1177,6 +1492,7 @@ impl FixtureLifetimeGuard {
             watchdog_cancel: Some(watchdog_cancel),
             watchdog: Some(watchdog),
             armed: true,
+            scopes: Vec::new(),
         }
     }
 
@@ -1184,27 +1500,68 @@ impl FixtureLifetimeGuard {
         &self.token
     }
 
-    fn cleanup(&mut self) {
-        let _ = fs::remove_file(&self.token);
+    fn cleanup(&mut self) -> std::io::Result<()> {
+        let mut first_error = match fs::remove_file(&self.token) {
+            Ok(()) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => Some(std::io::Error::new(
+                error.kind(),
+                format!(
+                    "could not remove fixture lifetime token {}: {error}",
+                    self.token.display()
+                ),
+            )),
+        };
         if let Some(cancel) = self.watchdog_cancel.take() {
             let _ = cancel.send(());
         }
-        if let Some(watchdog) = self.watchdog.take() {
-            let _ = watchdog.join();
+        if let Some(watchdog) = self.watchdog.take()
+            && watchdog.join().is_err()
+            && first_error.is_none()
+        {
+            first_error = Some(std::io::Error::other(
+                "fixture lifetime watchdog panicked during cleanup",
+            ));
         }
-        let _ = wait_until(|| !endpoint_is_healthy(self.port));
+        for scope in &mut self.scopes {
+            if let Err(error) = scope.terminate_and_reap()
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        self.scopes.clear();
+        if !wait_until(|| endpoint_is_closed(self.port)) && first_error.is_none() {
+            first_error = Some(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "fixture listener 127.0.0.1:{} remained open after token removal",
+                    self.port
+                ),
+            ));
+        }
+        first_error.map_or(Ok(()), Err)
     }
 
-    fn finish(&mut self) {
-        self.cleanup();
+    fn finish(&mut self) -> std::io::Result<()> {
+        self.cleanup()?;
         self.armed = false;
+        Ok(())
     }
 }
 
 impl Drop for FixtureLifetimeGuard {
     fn drop(&mut self) {
-        if self.armed {
-            self.cleanup();
+        if self.armed
+            && let Err(first_error) = self.cleanup()
+            && let Err(retry_error) = self.cleanup()
+        {
+            report_drop_cleanup_failure(
+                "could not clean fixture lifetime guard",
+                std::io::Error::other(format!(
+                    "first attempt: {first_error}; retry: {retry_error}"
+                )),
+            );
         }
     }
 }
@@ -1220,17 +1577,368 @@ impl ChildGuard {
         self.0.as_mut().unwrap()
     }
 
-    fn disarm(&mut self) {
-        self.0.take();
+    fn disarm_reaped(&mut self) -> std::io::Result<()> {
+        let Some(child) = self.0.as_mut() else {
+            return Ok(());
+        };
+        if child.try_wait()?.is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "cannot disarm cleanup for a child that has not exited",
+            ));
+        }
+        let _ = self.0.take();
+        Ok(())
+    }
+
+    fn terminate_and_reap(&mut self) -> std::io::Result<()> {
+        let Some(child) = self.0.as_mut() else {
+            return Ok(());
+        };
+        let mut cleanup_diagnostics = Vec::new();
+        let exited = match child.try_wait() {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(error) => {
+                cleanup_diagnostics.push(format!("initial exit observation failed: {error}"));
+                false
+            }
+        };
+        if !exited && let Err(error) = child.kill() {
+            cleanup_diagnostics.push(format!("termination failed: {error}"));
+        }
+        match wait_for_child_exit(child, CHILD_EXIT_GRACE) {
+            Ok(Some(_)) => {
+                let _ = self.0.take();
+                Ok(())
+            }
+            Ok(None) => {
+                cleanup_diagnostics.push("timed out reaping child after termination".to_string());
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    cleanup_diagnostics.join("; "),
+                ))
+            }
+            Err(error) => {
+                cleanup_diagnostics.push(format!("exit wait failed: {error}"));
+                Err(std::io::Error::other(cleanup_diagnostics.join("; ")))
+            }
+        }
     }
 }
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        if let Some(child) = &mut self.0 {
-            let _ = child.kill();
-            let _ = wait_for_child_exit(child, CHILD_EXIT_GRACE);
+        if let Err(first_error) = self.terminate_and_reap()
+            && let Err(retry_error) = self.terminate_and_reap()
+        {
+            report_drop_cleanup_failure(
+                "could not terminate and reap child in cleanup guard",
+                std::io::Error::other(format!(
+                    "first attempt: {first_error}; retry: {retry_error}"
+                )),
+            );
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct OwnerDeathCoordinate {
+    owner_pid: u32,
+    owner_start_token: String,
+    fixture_pid: u32,
+    fixture_start_token: String,
+    port: u16,
+}
+
+#[cfg(target_os = "linux")]
+fn owner_death_probe_path(environment: &str) -> std::io::Result<PathBuf> {
+    std::env::var_os(environment)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("owner-death probe requires {environment}"),
+            )
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn atomic_publish_owner_death_coordinate(
+    path: &Path,
+    coordinate: &OwnerDeathCoordinate,
+) -> std::io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "owner-death coordinate path has no parent directory",
+        )
+    })?;
+    fs::create_dir_all(parent)?;
+    let filename = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "owner-death coordinate path has no filename",
+        )
+    })?;
+    let staged = parent.join(format!(
+        ".{}.{}.staged",
+        filename.to_string_lossy(),
+        std::process::id()
+    ));
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "schema_version": 1,
+        "owner_pid": coordinate.owner_pid,
+        "owner_start_token": coordinate.owner_start_token,
+        "fixture_pid": coordinate.fixture_pid,
+        "fixture_start_token": coordinate.fixture_start_token,
+        "port": coordinate.port,
+    }))
+    .map_err(std::io::Error::other)?;
+    let publish = (|| -> std::io::Result<()> {
+        let mut file = File::create(&staged)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&staged, path)
+    })();
+    if publish.is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+    publish
+}
+
+#[cfg(target_os = "linux")]
+fn read_owner_death_coordinate(path: &Path) -> std::io::Result<OwnerDeathCoordinate> {
+    let raw = fs::read(path)?;
+    let value: serde_json::Value = serde_json::from_slice(&raw).map_err(std::io::Error::other)?;
+    if value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "owner-death coordinate has an unsupported schema version",
+        ));
+    }
+    let numeric = |name: &str| -> std::io::Result<u64> {
+        value
+            .get(name)
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("owner-death coordinate lacks numeric {name}"),
+                )
+            })
+    };
+    let text = |name: &str| -> std::io::Result<String> {
+        value
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("owner-death coordinate lacks nonempty {name}"),
+                )
+            })
+    };
+    let owner_pid = u32::try_from(numeric("owner_pid")?).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "owner-death coordinate owner PID is out of range",
+        )
+    })?;
+    let fixture_pid = u32::try_from(numeric("fixture_pid")?).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "owner-death coordinate fixture PID is out of range",
+        )
+    })?;
+    let port = u16::try_from(numeric("port")?).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "owner-death coordinate port is out of range",
+        )
+    })?;
+    if owner_pid <= 1 || fixture_pid <= 1 || port == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "owner-death coordinate contains an invalid process or listener coordinate",
+        ));
+    }
+    Ok(OwnerDeathCoordinate {
+        owner_pid,
+        owner_start_token: text("owner_start_token")?,
+        fixture_pid,
+        fixture_start_token: text("fixture_start_token")?,
+        port,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn run_owner_death_probe() -> std::io::Result<()> {
+    let fixture = owner_death_probe_path(OWNER_DEATH_PROBE_FIXTURE_ENV)?;
+    let model = owner_death_probe_path(OWNER_DEATH_PROBE_MODEL_ENV)?;
+    let lifetime_token = owner_death_probe_path(OWNER_DEATH_PROBE_TOKEN_ENV)?;
+    let ready = owner_death_probe_path(OWNER_DEATH_PROBE_READY_ENV)?;
+    let port = std::env::var(OWNER_DEATH_PROBE_PORT_ENV)
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("owner-death probe requires {OWNER_DEATH_PROBE_PORT_ENV}"),
+            )
+        })?
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port != 0)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "owner-death probe port must be nonzero and numeric",
+            )
+        })?;
+    if !fixture.is_file() || !model.is_file() || !lifetime_token.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "owner-death probe inputs must be regular files",
+        ));
+    }
+
+    let mut command = Command::new(fixture);
+    command
+        .args([
+            "-m",
+            model.to_str().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "owner-death probe model path is not UTF-8",
+                )
+            })?,
+            "-c",
+            "4096",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+        ])
+        .env("FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN", &lifetime_token)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    // This omission is deliberate: the fixture's retained exact-owner pidfd,
+    // not PR_SET_PDEATHSIG or a process-group kill, is the mechanism under test.
+    configure_fixture_owner_environment(&mut command);
+    let mut fixture = command.spawn().map(ChildGuard::new)?;
+    let fixture_pid = fixture.child_mut().id();
+    let readiness_deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match fixture.child_mut().try_wait() {
+            Ok(Some(status)) => {
+                fixture.disarm_reaped()?;
+                return Err(std::io::Error::other(format!(
+                    "lifecycle fixture exited before owner-death readiness: {status}"
+                )));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let cleanup = fixture.terminate_and_reap();
+                return Err(std::io::Error::other(format!(
+                    "could not observe lifecycle fixture before readiness: {error}; checked cleanup={cleanup:?}"
+                )));
+            }
+        }
+        if endpoint_is_healthy(port) {
+            break;
+        }
+        if Instant::now() >= readiness_deadline {
+            let cleanup = fixture.terminate_and_reap();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "lifecycle fixture exceeded the owner-death readiness deadline; checked cleanup={cleanup:?}"
+                ),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    let owner_pid = std::process::id();
+    let coordinate = OwnerDeathCoordinate {
+        owner_pid,
+        owner_start_token: linux_process_start_token(owner_pid)?,
+        fixture_pid,
+        fixture_start_token: linux_process_start_token(fixture_pid)?,
+        port,
+    };
+    atomic_publish_owner_death_coordinate(&ready, &coordinate)?;
+
+    // The root test normally terminates this exact owner. This fallback is
+    // intentionally longer than every assertion window and still guarantees
+    // source-owned cleanup if the root test stops making progress.
+    let fallback_deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        match fixture.child_mut().try_wait() {
+            Ok(Some(status)) => {
+                fixture.disarm_reaped()?;
+                return Err(std::io::Error::other(format!(
+                    "lifecycle fixture exited while its exact owner remained alive: {status}"
+                )));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let cleanup = fixture.terminate_and_reap();
+                return Err(std::io::Error::other(format!(
+                    "could not observe lifecycle fixture during owner-death probe: {error}; checked cleanup={cleanup:?}"
+                )));
+            }
+        }
+        if Instant::now() >= fallback_deadline {
+            let cleanup = fixture.terminate_and_reap();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "owner-death probe reached its 180-second fallback; checked fixture cleanup={cleanup:?}"
+                ),
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_owner_death_coordinate(
+    owner: &mut test_process_containment::ContainedChild,
+    ready: &Path,
+) -> Result<OwnerDeathCoordinate, String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if ready.exists() {
+            return read_owner_death_coordinate(ready)
+                .map_err(|error| format!("could not read atomic owner-death readiness: {error}"));
+        }
+        match owner.try_wait_leader() {
+            Ok(Some(status)) => {
+                owner.terminate_and_reap().map_err(|error| {
+                    format!("could not confirm failed owner was reaped: {error}")
+                })?;
+                return Err(format!(
+                    "sacrificial owner exited before publishing readiness: {status}"
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return Err(format!(
+                    "could not observe sacrificial owner before readiness: {error}"
+                ));
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err("sacrificial owner exceeded the readiness deadline".to_string());
+        }
+        thread::sleep(Duration::from_millis(25));
     }
 }
 
@@ -1266,7 +1974,8 @@ fn launch_managed_fixture_with_retry(
                 "--port",
                 &port.to_string(),
             ]);
-        let output = run_cli_output_bounded("real `ferric server up`", &mut command);
+        let output =
+            run_managed_cli_output_bounded("real `ferric server up`", &mut command, &mut lifetime);
         let address_in_use = marker_matches(&bind_diagnostic, ADDRESS_IN_USE_DIAGNOSTIC);
         if output.status.success() {
             assert!(
@@ -1276,7 +1985,9 @@ fn launch_managed_fixture_with_retry(
             return (port, lifetime);
         }
 
-        lifetime.finish();
+        lifetime
+            .finish()
+            .unwrap_or_else(|error| panic!("could not clean failed managed fixture: {error}"));
         remove_marker(&bind_diagnostic);
         if address_in_use && attempt < PORT_ATTEMPTS {
             continue;
@@ -1327,7 +2038,11 @@ fn launch_tailscale_managed_fixture_with_retry(
                 "--port",
                 &port.to_string(),
             ]);
-        let output = run_cli_output_bounded("real `ferric server up --tailscale`", &mut command);
+        let output = run_managed_cli_output_bounded(
+            "real `ferric server up --tailscale`",
+            &mut command,
+            &mut lifetime,
+        );
         let address_in_use = marker_matches(&bind_diagnostic, ADDRESS_IN_USE_DIAGNOSTIC);
         if output.status.success() {
             assert!(
@@ -1337,7 +2052,9 @@ fn launch_tailscale_managed_fixture_with_retry(
             return (port, lifetime, output);
         }
 
-        lifetime.finish();
+        lifetime.finish().unwrap_or_else(|error| {
+            panic!("could not clean failed Tailscale managed fixture: {error}")
+        });
         remove_marker(&bind_diagnostic);
         if address_in_use && attempt < PORT_ATTEMPTS {
             continue;
@@ -1373,7 +2090,8 @@ fn launch_direct_fixture_with_retry(
         let bind_diagnostic = root.join(format!("{label}-{attempt}.bind"));
         let ready_marker = root.join(format!("{label}-{attempt}.ready"));
         let mut lifetime = FixtureLifetimeGuard::create(token, port);
-        let child = Command::new(engine)
+        let mut child = Command::new(engine);
+        child
             .args([
                 "-m",
                 model.to_str().unwrap(),
@@ -1389,19 +2107,34 @@ fn launch_direct_fixture_with_retry(
             .env(READY_MARKER_ENV, &ready_marker)
             .current_dir(workspace)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        test_process_containment::configure_command_parent_death_signal(&mut child)
+            .expect("configure direct fixture parent-death containment");
+        configure_fixture_owner_environment(&mut child);
+        let mut child = child
             .spawn()
+            .map(ChildGuard::new)
             .unwrap_or_else(|error| panic!("could not spawn {label}: {error}"));
-        let mut child = ChildGuard::new(child);
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let exit = child
-                .child_mut()
-                .try_wait()
-                .unwrap_or_else(|error| panic!("could not observe {label}: {error}"));
+            let exit = match child.child_mut().try_wait() {
+                Ok(exit) => exit,
+                Err(observe_error) => {
+                    let lifetime_cleanup = lifetime.finish();
+                    let child_cleanup = child.terminate_and_reap();
+                    panic!(
+                        "could not observe {label}: {observe_error}; lifetime cleanup={lifetime_cleanup:?}; child cleanup={child_cleanup:?}"
+                    );
+                }
+            };
             if let Some(status) = exit {
                 let address_in_use = marker_matches(&bind_diagnostic, ADDRESS_IN_USE_DIAGNOSTIC);
-                lifetime.finish();
+                child.disarm_reaped().unwrap_or_else(|error| {
+                    panic!("could not confirm exited {label} was reaped: {error}")
+                });
+                lifetime.finish().unwrap_or_else(|error| {
+                    panic!("could not clean exited {label} lifetime state: {error}")
+                });
                 remove_marker(&bind_diagnostic);
                 remove_marker(&ready_marker);
                 if address_in_use && attempt < PORT_ATTEMPTS {
@@ -1429,10 +2162,13 @@ fn launch_direct_fixture_with_retry(
             }
 
             if Instant::now() >= deadline {
-                lifetime.finish();
+                let lifetime_cleanup = lifetime.finish();
+                let child_cleanup = child.terminate_and_reap();
                 remove_marker(&bind_diagnostic);
                 remove_marker(&ready_marker);
-                panic!("{label} exceeded the bounded readiness watchdog");
+                panic!(
+                    "{label} exceeded the bounded readiness watchdog; lifetime cleanup={lifetime_cleanup:?}; child cleanup={child_cleanup:?}"
+                );
             }
             thread::sleep(Duration::from_millis(25));
         }
@@ -1451,6 +2187,183 @@ struct TailscaleLifecycleEvidence {
     up_stdout: String,
     status_stdout: String,
     down_stdout: String,
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn lifecycle_fixture_exits_when_exact_owner_pidfd_signals() {
+    if std::env::var_os(OWNER_DEATH_PROBE_MODE_ENV).is_some() {
+        run_owner_death_probe().expect("run sacrificial lifecycle-fixture owner probe");
+        return;
+    }
+
+    let _lifecycle_lock = lifecycle_test_lock();
+    let root = tempfile::tempdir().expect("create owner-death regression directory");
+    let model = root.path().join("owner-death-model.gguf");
+    let lifetime_token = root.path().join("owner-death.lifetime");
+    fs::write(&model, b"model-free owner-death fixture").expect("write owner-death fixture model");
+    fs::write(
+        &lifetime_token,
+        b"owner death, not token removal, must stop this fixture",
+    )
+    .expect("write owner-death lifetime token");
+
+    let mut launched = None;
+    for attempt in 1..=PORT_ATTEMPTS {
+        let port = unused_port();
+        let ready = root.path().join(format!("owner-death-{attempt}.ready"));
+        let bind_diagnostic = root.path().join(format!("owner-death-{attempt}.bind"));
+        let stdout_path = root.path().join(format!("owner-death-{attempt}.stdout"));
+        let stderr_path = root.path().join(format!("owner-death-{attempt}.stderr"));
+        let stdout = File::create(&stdout_path).expect("create sacrificial-owner stdout capture");
+        let stderr = File::create(&stderr_path).expect("create sacrificial-owner stderr capture");
+        let mut command = Command::new(
+            std::env::current_exe().expect("resolve Cargo-provided lifecycle test harness"),
+        );
+        command
+            .args([
+                "--exact",
+                OWNER_DEATH_PROBE_TEST_NAME,
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(OWNER_DEATH_PROBE_MODE_ENV, "owner")
+            .env(OWNER_DEATH_PROBE_FIXTURE_ENV, fixture_executable())
+            .env(OWNER_DEATH_PROBE_MODEL_ENV, &model)
+            .env(OWNER_DEATH_PROBE_TOKEN_ENV, &lifetime_token)
+            .env(OWNER_DEATH_PROBE_READY_ENV, &ready)
+            .env(OWNER_DEATH_PROBE_PORT_ENV, port.to_string())
+            .env(BIND_DIAGNOSTIC_ENV, &bind_diagnostic)
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        let mut owner = test_process_containment::ContainedChild::spawn(&mut command)
+            .expect("spawn source-defined sacrificial owner");
+        let spawned_owner_pid = owner.child().id();
+        match wait_for_owner_death_coordinate(&mut owner, &ready) {
+            Ok(coordinate) => {
+                if coordinate.owner_pid != spawned_owner_pid || coordinate.port != port {
+                    let owner_cleanup = owner.terminate_and_reap();
+                    let listener_closed = wait_until(|| endpoint_is_closed(port));
+                    panic!(
+                        "atomic owner-death coordinate did not identify the spawned owner and requested listener: spawned_owner={spawned_owner_pid}, published_owner={}, requested_port={port}, published_port={}; owner cleanup={owner_cleanup:?}; listener closed={listener_closed}",
+                        coordinate.owner_pid, coordinate.port
+                    );
+                }
+                if bind_diagnostic.exists() {
+                    let owner_cleanup = owner.terminate_and_reap();
+                    let listener_closed = wait_until(|| endpoint_is_closed(port));
+                    panic!(
+                        "owner-death fixture published both readiness and a bind failure; owner cleanup={owner_cleanup:?}; listener closed={listener_closed}"
+                    );
+                }
+                launched = Some((owner, coordinate, ready, stdout_path, stderr_path));
+                break;
+            }
+            Err(error) => {
+                let address_in_use = marker_matches(&bind_diagnostic, ADDRESS_IN_USE_DIAGNOSTIC);
+                let owner_cleanup = owner.terminate_and_reap();
+                let stdout = fs::read(&stdout_path).unwrap_or_default();
+                let stderr = fs::read(&stderr_path).unwrap_or_default();
+                remove_marker(&bind_diagnostic);
+                remove_marker(&ready);
+                if address_in_use && attempt < PORT_ATTEMPTS {
+                    continue;
+                }
+                let listener_closed = wait_until(|| endpoint_is_closed(port));
+                panic!(
+                    "source-defined sacrificial owner did not become ready: {error}; owner cleanup={owner_cleanup:?}; listener closed={listener_closed}\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&stdout),
+                    String::from_utf8_lossy(&stderr)
+                );
+            }
+        }
+    }
+
+    let (mut owner, coordinate, ready, stdout_path, stderr_path) =
+        launched.expect("diagnosed owner-death bind retry loop must launch or panic");
+    let mut exact_owner = match ExternalProcessGuard::observe_child(
+        coordinate.owner_pid,
+        &coordinate.owner_start_token,
+    ) {
+        Ok(process) => process,
+        Err(error) => {
+            let owner_cleanup = owner.terminate_and_reap();
+            let listener_closed = wait_until(|| endpoint_is_closed(coordinate.port));
+            panic!(
+                "could not retain the exact sacrificial owner pidfd: {error}; owner cleanup={owner_cleanup:?}; listener closed={listener_closed}"
+            );
+        }
+    };
+    let mut exact_fixture = match ExternalProcessGuard::acquire(
+        coordinate.fixture_pid,
+        &coordinate.fixture_start_token,
+    ) {
+        Ok(process) => process,
+        Err(error) => {
+            let owner_cleanup = exact_owner.terminate_and_disarm();
+            let owner_reap = owner.terminate_and_reap();
+            let listener_closed = wait_until(|| endpoint_is_closed(coordinate.port));
+            panic!(
+                "could not retain the exact lifecycle-fixture pidfd: {error}; exact owner cleanup={owner_cleanup:?}; owner reap={owner_reap:?}; listener closed={listener_closed}"
+            );
+        }
+    };
+
+    assert!(
+        exact_owner.running(),
+        "sacrificial owner exited before the exact-owner-death assertion"
+    );
+    assert!(
+        exact_fixture.running(),
+        "lifecycle fixture exited before its exact owner was terminated"
+    );
+    assert!(
+        endpoint_is_healthy(coordinate.port),
+        "lifecycle fixture was not healthy at its atomically published coordinate"
+    );
+    assert!(
+        lifetime_token.is_file(),
+        "fixture lifetime token disappeared before owner termination"
+    );
+
+    exact_owner
+        .terminate_and_disarm()
+        .expect("terminate only the retained exact sacrificial-owner pidfd");
+    if !wait_until(|| !exact_fixture.running()) {
+        let fixture_cleanup = exact_fixture.terminate_and_disarm();
+        panic!(
+            "lifecycle fixture did not exit when its retained exact-owner pidfd signalled owner death; fixture cleanup={fixture_cleanup:?}"
+        );
+    }
+    exact_fixture
+        .disarm_after_exit()
+        .expect("confirm exact lifecycle-fixture exit and adopted reaping after owner death");
+    owner
+        .wait_for_exit_and_disarm(CHILD_EXIT_GRACE)
+        .expect("reap sacrificial owner and drain its source-owned scope");
+    assert!(
+        wait_until(|| endpoint_is_closed(coordinate.port)),
+        "lifecycle fixture listener remained open after exact owner death"
+    );
+    assert!(
+        lifetime_token.is_file(),
+        "lifetime-token removal, rather than exact owner death, could have caused fixture exit"
+    );
+
+    fs::remove_file(&lifetime_token).expect("remove completed owner-death lifetime token");
+    remove_marker(&ready);
+    let stdout = fs::read(stdout_path).expect("read sacrificial-owner stdout capture");
+    let stderr = fs::read(stderr_path).expect("read sacrificial-owner stderr capture");
+    assert!(
+        stdout.is_empty() || String::from_utf8_lossy(&stdout).contains("running 1 test"),
+        "sacrificial owner emitted unexpected stdout: {}",
+        String::from_utf8_lossy(&stdout)
+    );
+    assert!(
+        stderr.is_empty(),
+        "sacrificial owner emitted unexpected stderr: {}",
+        String::from_utf8_lossy(&stderr)
+    );
 }
 
 fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
@@ -1585,12 +2498,19 @@ fn run_tailscale_lifecycle_fixture() -> TailscaleLifecycleEvidence {
     assert!(down_stdout.contains("[removed] global registration"));
     assert!(down_stdout.contains("[state] stopped managed server"));
 
-    assert!(
-        wait_until(|| !fixture_guard.running()),
-        "Tailscale up-launched fixture PID {pid} remained alive after down"
-    );
-    fixture_guard.disarm();
-    process_lifetime.finish();
+    if !wait_until(|| !fixture_guard.running()) {
+        let process_cleanup = fixture_guard.terminate_and_disarm();
+        let lifetime_cleanup = process_lifetime.finish();
+        panic!(
+            "Tailscale up-launched fixture PID {pid} remained alive after down; process cleanup={process_cleanup:?}; lifetime cleanup={lifetime_cleanup:?}"
+        );
+    }
+    fixture_guard
+        .disarm_after_exit()
+        .expect("confirm exact Tailscale fixture process exit before disarming cleanup");
+    process_lifetime
+        .finish()
+        .expect("clean Tailscale fixture lifetime state");
     assert!(wait_until(|| endpoint_is_closed(port)));
     assert!(!lifetime_token.exists());
     assert_only_sentinel(&local_dir, "workspace");
@@ -1742,16 +2662,25 @@ fn model_free_server_lifecycle_fixture_e2e() {
         ),
     );
 
-    assert!(
-        wait_until(|| !fixture_guard.running()),
-        "up-launched fixture PID {pid} remained alive after down"
-    );
-    assert!(
-        wait_until(|| !endpoint_is_healthy(port)),
-        "fixture listener 127.0.0.1:{port} remained healthy after down"
-    );
-    fixture_guard.disarm();
-    process_lifetime.finish();
+    if !wait_until(|| !fixture_guard.running()) {
+        let process_cleanup = fixture_guard.terminate_and_disarm();
+        let lifetime_cleanup = process_lifetime.finish();
+        panic!(
+            "up-launched fixture PID {pid} remained alive after down; process cleanup={process_cleanup:?}; lifetime cleanup={lifetime_cleanup:?}"
+        );
+    }
+    fixture_guard
+        .disarm_after_exit()
+        .expect("confirm exact managed fixture process exit before disarming cleanup");
+    if !wait_until(|| !endpoint_is_healthy(port)) {
+        let lifetime_cleanup = process_lifetime.finish();
+        panic!(
+            "fixture listener 127.0.0.1:{port} remained healthy after down; lifetime cleanup={lifetime_cleanup:?}"
+        );
+    }
+    process_lifetime
+        .finish()
+        .expect("clean managed fixture lifetime state");
     assert!(
         wait_until(|| endpoint_is_closed(port)),
         "fixture listener 127.0.0.1:{port} remained open after exact process exit"
@@ -2242,16 +3171,33 @@ fn legacy_adoption_then_down_cli_e2e() {
         ),
     );
 
-    let fixture_exited = wait_until(|| fixture.child_mut().try_wait().unwrap().is_some());
-    assert!(fixture_exited, "adopted fixture remained alive after down");
+    match wait_for_child_exit(fixture.child_mut(), Duration::from_secs(10)) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            let cleanup = fixture.terminate_and_reap();
+            panic!("adopted fixture remained alive after down; checked cleanup={cleanup:?}");
+        }
+        Err(wait_error) => {
+            let cleanup = fixture.terminate_and_reap();
+            panic!(
+                "could not wait for adopted fixture after down: {wait_error}; checked cleanup={cleanup:?}"
+            );
+        }
+    }
     // `try_wait` has reaped the exact child. Disarm immediately, before any
     // later assertion can panic and make Drop call Child::kill on a reused PID.
-    fixture.disarm();
-    assert!(
-        wait_until(|| endpoint_is_closed(port)),
-        "adopted fixture listener remained open after down"
-    );
-    process_lifetime.finish();
+    fixture
+        .disarm_reaped()
+        .expect("confirm adopted fixture child was reaped before disarming cleanup");
+    if !wait_until(|| endpoint_is_closed(port)) {
+        let lifetime_cleanup = process_lifetime.finish();
+        panic!(
+            "adopted fixture listener remained open after down; lifetime cleanup={lifetime_cleanup:?}"
+        );
+    }
+    process_lifetime
+        .finish()
+        .expect("clean adopted fixture lifetime state");
     assert!(!process_lifetime_token.exists());
     assert_only_sentinel(&local_dir, "workspace");
     assert_only_sentinel(&global_dir, "global");
