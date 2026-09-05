@@ -2014,4 +2014,4 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-05T23:56:36Z.
 - **Files modified:** `crates/ferric-core/src/{scale,lib}.rs`, `crates/ferric-cli/src/{query,trace_cmd,trace_verify}.rs`, `crates/ferric-cli/tests/{cli,query_output_budget}.rs`, `crates/ferric-trace/src/{event,lib}.rs`, `crates/ferric-loop/src/run.rs`, `crates/ferric-loop/tests/{common/mod,loop_core,output_budget}.rs`, Sprint 121 metadata/Build verification and work ledgers.
 - **Verification:** Core/trace/loop 311 passed; CLI 75 and HTTP fixture three passed; workspace formatting and affected all-target warnings-denied Clippy passed. Named E01-A through E01-E coverage, source-owned cleanup, initial failures and the Windows fragmented-request negative control are retained in [Build verification](../sprints/s121/sprint-tests/build-verification.md). Formal Test/Loop and model acceptance remain outstanding.
-- **Commit:** PENDING
+- **Commit:** `8be0e9ffe980bf5b3efde3ce004d77dd3870ca10`
