@@ -1915,3 +1915,13 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Cause:** The extra independent audit rejected Unix cleanup's success-before-deadline paths; adjacent Windows suspended-child rollback had the same ordering. The first close at `f3cb48b` was explicitly superseded at `291f4d9`.
 - **Outcome:** Shared deadline-first classification now covers both Unix successful observations, Windows Job drain and suspended-child rollback. Registry locks are released before fail-closed shutdown.
 - **Verification:** Local source-driven Windows workspace 1,129 passes / 6 intentional ignores, fmt and warnings-denied clippy; all six native/compile CI jobs at exact corrected head in run `33937071734` passed. Retained audit, source-review closure and current clause mapping are in the [Test correction record](../sprints/s119/test-phase-corrections.md) and [integration evidence](../sprints/s119/sprint-tests/integration-tests.md#final-post-audit-source-head-evidence). Formal Test critique, repeated Loop close, extra audit and actual PR checkpoint still gate the offer for merge.
+
+
+## T-12001 (sprint 120)
+
+- **Description:** Restored RustPython 0.5 compilation and maintained Python candidate admission with strict invalid/unchecked distinctions, recursive generic guard, actual adapter diagnostics and positive except-star coverage.
+- **Intent:** [INT-0005](../intents/INT-0005-safe-multilanguage-syntax-admission.md), Python maintenance portion of AC-1–5 only.
+- **Completed:** 2026-09-05T03:18:59Z
+- **Files modified:** `crates/ferric-tools/src/builtin/check_syntax.rs`, `crates/ferric-tools/tests/controlled_mutations.rs`, INT-0005, Sprint 120 unit record and work ledgers.
+- **Verification:** Source-aware Cargo: 16 syntax units, 15 controlled-mutation integrations, all-target ferric-tools clippy with warnings denied, and workspace fmt check passed. Independent read-only review found no blocker; additional try/handler/finally/match generic-guard cases were added and the same checks rerun successfully. See [unit evidence](../sprints/s120/sprint-tests/unit-tests.md).
+- **Commit:** PENDING

@@ -737,10 +737,10 @@ fn python_syntax_matrix_blocks_regressions_and_warns_on_invalid_repairs() {
 }
 
 #[test]
-fn compiler_failure_baseline_blocks_invalid_but_not_unchecked_candidates() {
+fn controlled_mutation_python_05_transition_matrix() {
     let (directory, workspace, registry) = setup();
     let path = directory.path().join("compiler-limited.py");
-    let compiler_unsupported = b"try:\n    pass\nexcept* Exception:\n    pass\n";
+    let compiler_unsupported = b"type Alias[T] = list[T]\n";
     std::fs::write(&path, compiler_unsupported).unwrap();
 
     let error = rejected(
@@ -766,7 +766,7 @@ fn compiler_failure_baseline_blocks_invalid_but_not_unchecked_candidates() {
         "write_file",
         &json!({
             "path": "compiler-limited.py",
-            "content": "try:\n    pass\nexcept* RuntimeError:\n    pass\n"
+            "content": "type Alias[T] = tuple[T]\n"
         }),
     );
     assert!(matches!(

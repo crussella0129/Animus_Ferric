@@ -2,11 +2,11 @@ use std::{panic::AssertUnwindSafe, path::Path};
 
 use crate::control::{SyntaxState, SyntaxTransition, SyntaxUncheckedReason, sha256_bytes};
 use rustpython_compiler::{
-    CompileError, CompileErrorType, CompileOpts, Mode, Parse, codegen::error::CodegenErrorType,
-    parser::ast,
+    CompileError, CompileOpts, Mode, ast, codegen::error::CodegenErrorType, parser,
 };
 
 const CANDIDATE_SOURCE_PATH: &str = "<ferric-candidate>";
+const PYTHON_ADMISSION_COMPILER: &str = "rustpython-compiler/0.5";
 
 /// Return the legacy warning for recognized candidate bytes without reading a
 /// file, starting an interpreter, consulting `PATH`, or importing workspace
@@ -104,7 +104,7 @@ fn compile_python_bytes(bytes: &[u8]) -> SyntaxCompileResult {
         rustpython_compiler::compile(
             source,
             Mode::Exec,
-            CANDIDATE_SOURCE_PATH.to_owned(),
+            CANDIDATE_SOURCE_PATH,
             CompileOpts::default(),
         )
         .map(drop)
@@ -116,10 +116,9 @@ fn compile_python_source(
     compile: impl FnOnce() -> Result<(), CompileError>,
 ) -> SyntaxCompileResult {
     let compilation = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        // rustpython-compiler 0.4 contains several source-reachable `todo!`
-        // paths for PEP 695 type-parameter scopes. Parse the same in-memory
-        // source first and decline code generation for that known surface, so
-        // neither unwind hooks nor panic=abort are involved for those inputs.
+        // 0.5 implements PEP 695. Retain Ferric's conservative unqualified-
+        // surface guard during this compatibility migration; removing it is
+        // a separate admission requalification, not an incidental API repair.
         (!source_contains_type_parameters(source)).then(compile)
     }));
     match compilation {
@@ -127,11 +126,8 @@ fn compile_python_source(
             state: SyntaxState::Valid,
             diagnostic: None,
         },
-        Ok(Some(Err(error)))
-            if matches!(
-                &error.error,
-                CompileErrorType::Codegen(CodegenErrorType::NotImplementedYet)
-            ) =>
+        Ok(Some(Err(CompileError::Codegen(error))))
+            if matches!(&error.error, CodegenErrorType::NotImplementedYet) =>
         {
             SyntaxCompileResult {
                 state: SyntaxState::Unchecked(SyntaxUncheckedReason::CompilerFailure),
@@ -139,7 +135,10 @@ fn compile_python_source(
             }
         }
         Ok(Some(Err(error))) => {
-            let diagnostic: String = error.to_string().chars().take(512).collect();
+            let diagnostic: String = format!("{PYTHON_ADMISSION_COMPILER}: {error}")
+                .chars()
+                .take(512)
+                .collect();
             SyntaxCompileResult {
                 state: SyntaxState::Invalid,
                 diagnostic: Some(diagnostic),
@@ -152,68 +151,32 @@ fn compile_python_source(
     }
 }
 
-fn source_contains_type_parameters(source: &str) -> bool {
-    ast::Suite::parse(source, CANDIDATE_SOURCE_PATH)
-        .is_ok_and(|suite| suite_contains_type_parameters(&suite))
-}
+#[derive(Default)]
+struct TypeParameterScan(bool);
 
-fn suite_contains_type_parameters(suite: &[ast::Stmt]) -> bool {
-    suite.iter().any(statement_contains_type_parameters)
-}
-
-fn statement_contains_type_parameters(statement: &ast::Stmt) -> bool {
-    match statement {
-        ast::Stmt::FunctionDef(node) => {
-            !node.type_params.is_empty() || suite_contains_type_parameters(&node.body)
+impl<'a> ast::statement_visitor::StatementVisitor<'a> for TypeParameterScan {
+    fn visit_stmt(&mut self, statement: &'a ast::Stmt) {
+        if self.0 {
+            return;
         }
-        ast::Stmt::AsyncFunctionDef(node) => {
-            !node.type_params.is_empty() || suite_contains_type_parameters(&node.body)
+        self.0 = match statement {
+            ast::Stmt::FunctionDef(node) => node.type_params.is_some(),
+            ast::Stmt::ClassDef(node) => node.type_params.is_some(),
+            ast::Stmt::TypeAlias(node) => node.type_params.is_some(),
+            _ => false,
+        };
+        if !self.0 {
+            ast::statement_visitor::walk_stmt(self, statement);
         }
-        ast::Stmt::ClassDef(node) => {
-            !node.type_params.is_empty() || suite_contains_type_parameters(&node.body)
-        }
-        ast::Stmt::TypeAlias(node) => !node.type_params.is_empty(),
-        ast::Stmt::For(node) => {
-            suite_contains_type_parameters(&node.body)
-                || suite_contains_type_parameters(&node.orelse)
-        }
-        ast::Stmt::AsyncFor(node) => {
-            suite_contains_type_parameters(&node.body)
-                || suite_contains_type_parameters(&node.orelse)
-        }
-        ast::Stmt::While(node) => {
-            suite_contains_type_parameters(&node.body)
-                || suite_contains_type_parameters(&node.orelse)
-        }
-        ast::Stmt::If(node) => {
-            suite_contains_type_parameters(&node.body)
-                || suite_contains_type_parameters(&node.orelse)
-        }
-        ast::Stmt::With(node) => suite_contains_type_parameters(&node.body),
-        ast::Stmt::AsyncWith(node) => suite_contains_type_parameters(&node.body),
-        ast::Stmt::Match(node) => node
-            .cases
-            .iter()
-            .any(|case| suite_contains_type_parameters(&case.body)),
-        ast::Stmt::Try(node) => {
-            suite_contains_type_parameters(&node.body)
-                || handlers_contain_type_parameters(&node.handlers)
-                || suite_contains_type_parameters(&node.orelse)
-                || suite_contains_type_parameters(&node.finalbody)
-        }
-        ast::Stmt::TryStar(node) => {
-            suite_contains_type_parameters(&node.body)
-                || handlers_contain_type_parameters(&node.handlers)
-                || suite_contains_type_parameters(&node.orelse)
-                || suite_contains_type_parameters(&node.finalbody)
-        }
-        _ => false,
     }
 }
 
-fn handlers_contain_type_parameters(handlers: &[ast::ExceptHandler]) -> bool {
-    handlers.iter().any(|handler| match handler {
-        ast::ExceptHandler::ExceptHandler(node) => suite_contains_type_parameters(&node.body),
+fn source_contains_type_parameters(source: &str) -> bool {
+    use ast::statement_visitor::StatementVisitor;
+    parser::parse_module(source).is_ok_and(|module| {
+        let mut scan = TypeParameterScan::default();
+        scan.visit_body(module.suite());
+        scan.0
     })
 }
 
@@ -317,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn candidate_compiler_creates_no_temp_or_pycache_files() {
+    fn syntax_check_has_no_external_side_effects() {
         let directory = tempfile::tempdir().unwrap();
         let logical_path = directory.path().join("candidate.py");
         let _ = candidate_syntax_transition(&logical_path, None, b"value = 1\n");
@@ -343,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn top_level_control_flow_is_invalid_and_blocks_absent_or_valid_transitions() {
+    fn python_05_admission_matrix() {
         for candidate in [
             b"return\n".as_slice(),
             b"break\n".as_slice(),
@@ -383,13 +346,10 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_codegen_is_unchecked_and_nonblocking() {
+    fn except_star_is_valid() {
         let source = b"try:\n    pass\nexcept* Exception:\n    pass\n";
         let transition = candidate_syntax_transition(Path::new("candidate.py"), None, source);
-        assert_eq!(
-            transition.candidate,
-            SyntaxState::Unchecked(SyntaxUncheckedReason::CompilerFailure)
-        );
+        assert_eq!(transition.candidate, SyntaxState::Valid);
         assert!(!transition.blocks_mutation());
         assert!(transition.diagnostic_sha256.is_none());
         assert!(legacy_syntax_warning(Path::new("candidate.py"), source).is_none());
@@ -397,7 +357,7 @@ mod tests {
 
     #[test]
     fn compiler_failure_baseline_blocks_a_proven_invalid_candidate() {
-        let compiler_unsupported = b"try:\n    pass\nexcept* Exception:\n    pass\n";
+        let compiler_unsupported = b"type Alias[T] = list[T]\n";
         let transition = candidate_syntax_transition(
             Path::new("candidate.py"),
             Some(compiler_unsupported),
@@ -413,6 +373,33 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_codegen_remains_unchecked() {
+        let result = compile_python_source("value = 1\n", || {
+            Err(CompileError::Codegen(
+                rustpython_compiler::codegen::error::CodegenError {
+                    location: None,
+                    error: CodegenErrorType::NotImplementedYet,
+                    source_path: CANDIDATE_SOURCE_PATH.to_owned(),
+                },
+            ))
+        });
+        assert_eq!(
+            result.state,
+            SyntaxState::Unchecked(SyntaxUncheckedReason::CompilerFailure)
+        );
+        assert!(result.diagnostic.is_none());
+        let invalid = compile_python_bytes(b"return\n");
+        assert_eq!(invalid.state, SyntaxState::Invalid);
+        assert!(
+            invalid
+                .diagnostic
+                .unwrap()
+                .starts_with(PYTHON_ADMISSION_COMPILER)
+        );
+        assert_eq!(PYTHON_ADMISSION_COMPILER, "rustpython-compiler/0.5");
+    }
+
+    #[test]
     fn pep_695_type_parameters_are_preflighted_without_invoking_the_compiler() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -421,6 +408,9 @@ mod tests {
             "def identity[T](value: T):\n    return value\n",
             "class Box[T]:\n    pass\n",
             "if True:\n    async def identity[T](value: T):\n        return value\n",
+            "try:\n    pass\nexcept Exception:\n    type Alias[T] = list[T]\n",
+            "try:\n    pass\nfinally:\n    class Box[T]:\n        pass\n",
+            "match value:\n    case 1:\n        type Alias[T] = list[T]\n",
         ] {
             let compiler_called = AtomicBool::new(false);
             let result = compile_python_source(source, || {
