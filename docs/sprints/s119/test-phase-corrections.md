@@ -49,3 +49,14 @@ ferric-cli --locked --offline --quiet` passed **474 tests / 4 intentional source
 fixture ignores** with explicit real Python grading. The separate native
 Windows lifecycle suite passed **5/5 in 20.28s**. These are working-tree
 correction checks; the next committed head must pass native Linux CI too.
+
+## Deadline ordering correction
+
+The independent E01 review found that an already-drained final observation
+could be accepted before checking whether member retention consumed the cleanup
+deadline. `cleanup_complete` now rejects an observation at or after the
+deadline before it can certify success; native termination is still attempted
+first. `windows_cleanup_deadline_precedes_success` deterministically checks
+drained and non-drained states before, exactly at, and after the deadline.
+Windows shared fmt/clippy and tests passed **8/8, one source fixture ignored**.
+This final Windows-only correction must receive its own confirmed CI head.

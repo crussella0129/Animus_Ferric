@@ -8,6 +8,16 @@ fn with_cleanup_error(context: &str, error: io::Error, cleanup: io::Result<()>) 
     io::Error::other(format!("{context}: {error}; cleanup={cleanup:?}"))
 }
 
+fn cleanup_complete(drained: bool, observed_at: Instant, deadline: Instant) -> io::Result<bool> {
+    if observed_at >= deadline {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Job cleanup deadline exceeded",
+        ));
+    }
+    Ok(drained)
+}
+
 pub(crate) struct ChildScope {
     child: Option<std::process::Child>,
     job: WindowsJob,
@@ -150,6 +160,7 @@ impl ChildScope {
             };
             membership_changed |= accounting.TotalProcesses != total_before_snapshot;
             let members_done = retained.iter().all(|process| process.exited());
+            let mut drained = false;
             if leader_done && accounting.ActiveProcesses == 0 && members_done {
                 // Reconcile after observing every retained exit event too, so
                 // admission between the preceding counter read and those waits
@@ -166,11 +177,19 @@ impl ChildScope {
                         );
                         std::process::exit(125);
                     }
-                    break;
+                    drained = true;
                 }
             }
-            if Instant::now() >= deadline {
-                std::process::exit(125);
+            // Retention, the checkpoint and native observations consume the
+            // same cleanup budget. Even a fully drained first observation
+            // must not turn an expired deadline into successful acceptance.
+            match cleanup_complete(drained, Instant::now(), deadline) {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(125);
+                }
             }
             std::thread::sleep(POLL_INTERVAL);
         }
@@ -697,6 +716,25 @@ mod parent {
 
 pub(crate) fn watch_current_parent() -> Result<(), String> {
     parent::watch_current_parent()
+}
+
+#[test]
+fn windows_cleanup_deadline_precedes_success() {
+    let observed_at = Instant::now();
+    let deadline = observed_at + std::time::Duration::from_millis(1);
+    assert!(cleanup_complete(true, observed_at, deadline).unwrap());
+    assert!(!cleanup_complete(false, observed_at, deadline).unwrap());
+    for drained in [false, true] {
+        for expired_at in [deadline, deadline + std::time::Duration::from_millis(1)] {
+            assert_eq!(
+                cleanup_complete(drained, expired_at, deadline)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::TimedOut,
+                "the deadline wins even when every retained member is drained"
+            );
+        }
+    }
 }
 
 #[test]

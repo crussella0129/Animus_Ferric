@@ -55,3 +55,21 @@ member-handle snapshot could escape that snapshot's termination proof.
 Thus even its passing Windows tests are **not final acceptance**. A counted
 membership fence and deterministic late-birth regression are required before
 accepting E01; the first stable-descendant regression alone was insufficient.
+
+## Locked clause assertion map
+
+All rows link to INT-0008 AC-6; E04/E05 additionally provide model-free enabling
+AC-9 evidence only. This is an assertion map, not a final pass verdict.
+
+| EARS | Named source assertions | What a pass proves |
+|------|-------------------------|--------------------|
+| E01 | `scope_cleanup_success_timeout_unwind`, `leader_exit_reaps_descendants`, `windows_cleanup_rejects_post_snapshot_admission`, `windows_cleanup_deadline_precedes_success` | Success/timeout/unwind return is followed by immediate exact native termination/reaping checks; inherited writers do not keep capture alive; late admission refuses the incomplete inner proof and independently drains the outer source scope; expired final observations cannot be accepted as cleanup success. |
+| E02 | `platform::windows_spawn_failure_rolls_back` | Real suspended children fail at both BeforeAssign and BeforeResume; retained native handles are signalled on return inside the cleanup bound. |
+| E03 | `bounded_capture_head_tail_and_noisy_child`, `verbose_source_child_cannot_deadlock_file_capture`, `command_check_output_is_bounded_in_capture_files`, `command_check_timeout_is_a_model_failure`, `fixed_argv_check_classifies_pass_model_failure_and_infrastructure` | Exact head/tail bytes and sizes, no inherited-writer pipe wait, distinct timeout/exit and model/infrastructure outcomes. |
+| E04 | CLI units, `cli` including `mcp_stdio_e2e`, `bench_mock_v2_checks_record_model_failure_with_cargo_fixture`, `two_process_lifecycle_interleaving_is_per_path_safe`, native lifecycle suite | Original command/registration/protocol assertions remain; source scope/file capture owns cleanup, MCP readers join after child cleanup, and intentional managed-server detachment remains usable. |
+| E05 | `source_driven_process_tree_regressions`, `parent_watch_retains_identity`, `lifecycle_fixture_exits_when_exact_owner_pidfd_signals`, positive native lifecycle suite | Controlled source owner death stops helpers with exact Windows handles/Linux pidfds; Linux exit-only readiness is insufficient and exact reaping is required; a live supervisor preserves launcher-to-server handoff. |
+| E06 | `parent_watch_retains_identity` in CLI/shared modules, `exact_process::invalid_pidfd_events_fail_closed`, shared `supervision::pidfd_event_decoder_distinguishes_exit_reaping_and_invalid`, `shutdown_registry_rejects_late_spawn`, `recycled_id_cannot_redirect_stale_scope_operations` | Parent descriptors stay owned, invalid events fail, shutdown refuses late registrations, final removal is serialized with signal recording, and stale tokens cannot signal/reap/remove replacements. |
+
+E07 and E08 combine integration/E2E execution and the closing audit, documented
+in the adjacent result files. Fixture ignores are deliberate recursive source
+entry points; the two Windows research ignores are pre-existing platform gates.
