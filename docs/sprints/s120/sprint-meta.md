@@ -8,9 +8,22 @@
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** Human-first prepared-host startup and repository review; Research complete, reviewed Plan proposal awaits owner approval.
+- **Summary:** Human-first prepared-host startup and repository review; canonical plans owner-approved, under independent review before lock.
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
 - **Completion evidence:** (filled at Loop Phase)
+
+## Approved resume
+
+The owner reviewed the proposal and explicitly approved proceeding. The canonical
+Build/Test plans are promoted from that reviewed proposal, with only schema
+headings, intent links and dependency ordering normalized. The source-freeze
+boundary remains in force until independent canonical critique and atomic lock.
+The previously unavailable Claude Plan Mode tools are not claimed to have run.
+
+For this approved Build continuation, the same sole unrelated Sprint 114 edit
+was hash-verified and preserved in file-specific stash
+`47361e44d78506f1975a8bcca89746eb597f765c`. Restore this latest stash and verify
+the original SHA-256 at handoff; older stash entries remain recovery copies.
 
 ## Intake and preservation
 

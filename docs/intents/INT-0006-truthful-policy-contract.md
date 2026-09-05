@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0006
-- **State:** proposed
-- **Work evidence:** [T-11406 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-11905 next repository-wide review/refactor](../work/tasks.md#next-sprint--repository-wide-review-and-bounded-refactor)
+- **State:** planned
+- **Work evidence:** [T-11406 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-11905 next repository-wide review/refactor](../work/tasks.md#next-sprint--repository-wide-review-and-bounded-refactor); [T-12002 configuration increment](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -64,6 +64,8 @@ The policy surface becomes smaller and more honest, and later orchestration
 must earn a new explicit protocol.
 
 ## Transition history
+
+- 2026-09-05: moved from `proposed` to `planned` after owner approval of Sprint 120 T-12002. This selects AC-5/6 configuration admission and workspace/streaming consistency; the inert-field migration and direct-library policy validation remain open.
 
 - 2026-09-05: expanded the proposed intent's configuration boundary and added
   AC-6 after the Sprint 120 review reproduced silent layered-config fallback
