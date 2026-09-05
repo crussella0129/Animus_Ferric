@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0007
 - **State:** active
-- **Work evidence:** [Sprint 114 T-11407 through T-11413](../sprints/s114/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 continuation plan](../sprints/s115/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 partial closeout](../sprints/s115/sprint-tests/test-report.md); [stable ordered calibration and workflow backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work)
+- **Work evidence:** [Sprint 114 T-11407 through T-11413](../sprints/s114/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 continuation plan](../sprints/s115/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 partial closeout](../sprints/s115/sprint-tests/test-report.md); [stable ordered calibration and workflow backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [Sprint 121 approved explicit-budget plan](../sprints/s121/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** [Sprint 115 release, harness, and managed-runtime evidence](../sprints/s115/sprint-tests/test-report.md)

@@ -8,8 +8,8 @@
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** (one-line description of sprint goal, filled after Plan Phase)
-- **Intents:** (filled after Plan Phase)
+- **Summary:** Add explicit attributable expert output/benchmark budgets without changing normal launch or promoting diagnostic calibration.
+- **Intents:** INT-0007 AC-11/12 partial; INT-0008 AC-6/11/12 preservation.
 - **Completion evidence:** (filled at Loop Phase)
 
 ## Intake and protected state
@@ -79,3 +79,21 @@ again the sole unrelated unstaged modification; recovery stashes remain.
 Do not apply this stash again. Before a future clean-Book gate, preserve that
 current edit explicitly rather than staging it into Sprint 121. The source-
 unchanged proposal is awaiting owner approval; the sprint remains in-progress.
+
+## Owner approval and canonical Plan
+
+The owner explicitly approved the revised proposal with “Approved, continue”.
+The canonical Build and Test plans now carry that approved scope unchanged;
+the required independent canonical critique and helper lock precede all source
+work. The unavailable Claude-specific Plan Mode APIs remain unavailable; no
+invocation is fabricated and source remained unchanged through approval.
+
+The restored unrelated Sprint 114 JSON was hash-checked again and preserved
+in new path-specific stash `32e0fdfcb7c9e9fff78d5cd0b70e649e758e56d6`.
+Restore this exact stash at handoff, verify the original SHA-256 above, leave
+the edit unstaged, and retain the recovery stash. Do not reapply the older
+already-restored stash. No source acceptance or remote checkpoint is implied.
+
+The independent canonical Plan critic reviewed the actual canonical plans and
+returned `clean`. Its exact verdict is retained in `sprint-plans/critique.md`;
+the preliminary proposal review was not substituted for this gate.
