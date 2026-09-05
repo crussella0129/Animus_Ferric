@@ -96,3 +96,17 @@ This is a passing live result, not a passing overall Test verdict: that head's
 required ARM64 CI gate failed for a missing cross C compiler. The CI correction
 and final acceptance must remain explicit; this earlier live result is not
 silently rebound to a later commit.
+
+## Formal Test live run at second CI head
+
+Exact head: `6635164fdcc1205f7afc2d64babe90fb98261b16`. L passed 1/1 in 6.05
+seconds using the same existing Qwen2.5-Coder-7B-Instruct Q4_K_M GGUF and actual
+llama-server `10034 (505b1ed15)`, CPU-only/context 4096/temperature 0/unqualified.
+Session elapsed 6.0246996 seconds; Ready 4.0623322 seconds; first response
+4.7641066 seconds. Actual inputs: `ask`, `y`,
+`Reply with exactly: Ferric is ready.`, `/quit`; actual answer `Ferric is ready.`.
+Trace `human-be894675330a544dd6d30e341fc229ce` recorded SessionStart, actual
+model/runtime/settings and answer, then SessionEnd `answered`. Source result
+was Ok after checked owned cleanup; workspace lock reacquisition passed.
+No manual termination or acquisition occurred. This live success does not
+accept the two failing CI jobs at this head, nor bind evidence to a later head.

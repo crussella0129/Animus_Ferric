@@ -77,6 +77,13 @@ Python maintenance only; other language admission is not newly qualified here.
 | E01-A supplementary cases | `crates/ferric-tools/src/builtin/check_syntax.rs::contextually_valid_control_flow_compiles`, `pep_695_alias_without_type_parameters_compiles`, `pep_695_type_parameters_are_preflighted_without_invoking_the_compiler`, `controlled_compiler_treats_invalid_utf8_as_invalid_source`, `controlled_compiler_bounds_source_size_without_starting_a_process` | Valid forms, nested generic guard, invalid UTF-8 and bounded unchecked input complement the narrower named matrix. The guard asserts its compiler closure was not invoked. In-process source ownership complements the no-file assertion; there is no separate process-spawn spy. PY, W-WIN, W-LINUX. |
 | E01-B; AC-2 | `crates/ferric-tools/src/builtin/check_syntax.rs::except_star_is_valid`; `crates/ferric-tools/tests/controlled_mutations.rs::controlled_mutation_python_05_transition_matrix`, `python_syntax_matrix_blocks_regressions_and_warns_on_invalid_repairs` | Except-star is valid with no warning. Controlled rejection preserves prior bytes and absent paths; unchecked-to-invalid rejects, while repair and valid-to-valid distinctions remain. The two mutation tests compose the transition coverage. PY, M, W-WIN, W-LINUX. |
 
+E01-A also executes
+`crates/ferric-tools/tests/builtin_file_tools.rs::legacy_python_warning_is_in_process_and_does_not_execute_sitecustomize`
+under W-WIN/W-LINUX: the customization marker remains absent and malformed
+Legacy publication stays warning-only (INT-0005 AC-4/5). This specific
+adversarial regression complements the in-memory RustPython call path; it is
+not a universal process census.
+
 ## E02: Configuration and selected workspace
 
 Affected intent: [INT-0006](../../../intents/INT-0006-truthful-policy-contract.md)

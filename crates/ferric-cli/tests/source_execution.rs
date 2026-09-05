@@ -57,12 +57,13 @@ fn source_quality_and_feature_matrix() {
     }
 
     // The default HTTP backend includes ring's C build. Cross checks need the
-    // target C compiler even though cargo check does not link Ferric itself.
+    // target C compiler and libc headers even though cargo check does not link
+    // Ferric itself. Install headers explicitly, not through apt recommendations.
     let cross_gate = workflow
         .split_once("\n  aarch64-check:\n")
         .expect("aarch64 portability job")
         .1;
-    let install = "sudo apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu";
+    let install = "sudo apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross";
     for required in [
         "runs-on: ubuntu-latest",
         "CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc",

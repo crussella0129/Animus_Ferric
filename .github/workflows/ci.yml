@@ -110,7 +110,7 @@ jobs:
       - name: install aarch64 C toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu
+          sudo apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
       - name: check
         run: cargo check --workspace --target aarch64-unknown-linux-gnu --locked
       - name: check lifecycle fixture (compile only)

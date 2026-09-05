@@ -1610,7 +1610,11 @@ fn selected_workspace_drives_real_provider_chat_icm() {
     let selected = selected_parent.path().join("selected-workspace");
     let user = tempfile::tempdir().unwrap();
     ferric_icm::scaffold_workspace(&selected).unwrap();
-    for workspace in [invocation.path(), selected.as_path()] {
+    // Match the provider's canonical path spelling, including Windows runner
+    // temp aliases. The positive B / negative A assertions remain independent.
+    let selected = selected.canonicalize().unwrap();
+    let invocation_root = invocation.path().canonicalize().unwrap();
+    for workspace in [invocation_root.as_path(), selected.as_path()] {
         std::fs::create_dir_all(workspace.join(".ferric")).unwrap();
         std::fs::write(
             workspace.join(".ferric/server.json"),
@@ -1621,7 +1625,7 @@ fn selected_workspace_drives_real_provider_chat_icm() {
     for surface in ["chat", "icm"] {
         let mut command = ferric();
         command
-            .current_dir(invocation.path())
+            .current_dir(&invocation_root)
             .env("APPDATA", user.path())
             .env("XDG_CONFIG_HOME", user.path())
             .env("HOME", user.path());
@@ -1635,26 +1639,23 @@ fn selected_workspace_drives_real_provider_chat_icm() {
         let output = command.output_bounded().unwrap();
         assert!(!output.status.success());
         let stderr = String::from_utf8(output.stderr).unwrap();
+        let expected = selected
+            .join(".ferric")
+            .join("server.json")
+            .display()
+            .to_string();
+        let forbidden = invocation_root
+            .join(".ferric")
+            .join("server.json")
+            .display()
+            .to_string();
         assert!(
-            stderr.contains(
-                &selected
-                    .join(".ferric")
-                    .join("server.json")
-                    .display()
-                    .to_string()
-            ),
-            "{surface}: {stderr}"
+            stderr.contains(&expected),
+            "{surface}: expected selected registration {expected}; got: {stderr}"
         );
         assert!(
-            !stderr.contains(
-                &invocation
-                    .path()
-                    .join(".ferric")
-                    .join("server.json")
-                    .display()
-                    .to_string()
-            ),
-            "{surface} discovered the invocation workspace"
+            !stderr.contains(&forbidden),
+            "{surface}: found invocation registration {forbidden}; got: {stderr}"
         );
         assert!(!selected.join(".ferric/trace").exists());
     }

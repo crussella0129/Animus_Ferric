@@ -230,3 +230,32 @@ JSON assertion covers that distinction, and configuration docs explicitly retain
 shared-host Linux refusal and unsupported automatic macOS startup. This changes
 no authority or resource defaults. Affected source-quality/human/docs tests and
 warnings-denied CLI clippy pass before the correction commit.
+
+## Formal Test: retained second CI correction
+
+Run 33945666076 finished with six successful jobs and two failures. Besides
+the missing cross compiler, Windows failed
+`selected_workspace_drives_real_provider_chat_icm` (71 CLI integrations passed,
+one failed). The diagnostic named selected workspace B, but the fixture compared
+raw tempfile spelling to the provider's canonical path. The assertion did not
+print the expected raw spelling, so a short-name alias as the historical trigger
+is an inference, not established fact. The correction canonicalizes both fixture
+roots and retains positive B / negative A assertions with expected/actual detail.
+
+Run [33945937741](https://github.com/crussella0129/Animus_Ferric/actions/runs/33945937741)
+at `6635164fdcc1205f7afc2d64babe90fb98261b16` also finished six successful / two
+failed jobs. Windows reproduced the same path assertion. ARM64 now found GCC
+but failed `bits/libc-header-start.h`: the explicit no-recommends install omitted
+target libc development headers. The bounded correction adds
+`libc6-dev-arm64-cross` explicitly and strengthens the source ratchet; both
+backend-enabled cross checks remain unchanged. Neither failed CI head is accepted.
+Both runs passed Ubuntu workspace (1,251 / five intentional ignores), both
+backend-free suites (407 each), both lifecycle suites (Windows five / Linux six)
+and backend clippy.
+
+At exact head `6635164fdcc1205f7afc2d64babe90fb98261b16`, native Windows workspace
+passed 1,245 / seven intentional ignores; backend-free passed 407 / zero ignores.
+Workspace/backend-free warnings-denied clippy, workspace formatting and explicit
+included-fixture formatting passed. Opt-in L passed 1/1 with checked cleanup
+(see E2E). These are local successes, not a substitute for failed CI. The next
+immutable head must receive its own retained results.
