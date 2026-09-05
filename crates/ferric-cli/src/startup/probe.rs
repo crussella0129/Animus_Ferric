@@ -15,7 +15,7 @@ pub(super) const MODEL_LIMIT: usize = 128;
 
 pub(super) fn endpoint(value: &str) -> Result<String, StartupError> {
     let url = reqwest::Url::parse(value)
-        .map_err(|_| StartupError::resource("The configured endpoint is invalid."))?;
+        .map_err(|_| StartupError::cause("The configured endpoint is invalid."))?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -23,7 +23,7 @@ pub(super) fn endpoint(value: &str) -> Result<String, StartupError> {
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err(StartupError::resource(
+        return Err(StartupError::actionable(
             "Use an HTTP(S) endpoint without embedded credentials or query parameters.",
         ));
     }
@@ -37,7 +37,7 @@ pub(super) fn models(
     deadline: Instant,
 ) -> Result<Vec<String>, StartupError> {
     let body = get(&format!("{base}/models"), key, cancel, deadline, true)?
-        .ok_or_else(|| StartupError::resource("The server did not return model metadata."))?;
+        .ok_or_else(|| StartupError::cause("The server did not return model metadata."))?;
     parse_models(&body)
 }
 
@@ -67,7 +67,7 @@ fn get(
     check_cancelled(cancel)?;
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.is_zero() {
-        return Err(StartupError::resource(
+        return Err(StartupError::cause(
             "Startup reached its 180-second deadline.",
         ));
     }
@@ -75,7 +75,7 @@ fn get(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|_| StartupError::resource("The network runtime could not start."))?;
+        .map_err(|_| StartupError::cause("The network runtime could not start."))?;
     runtime.block_on(cancellable(cancel, async {
         let builder = reqwest::Client::builder()
             .timeout(timeout)
@@ -93,15 +93,15 @@ fn get(
         };
         let client = builder
             .build()
-            .map_err(|_| StartupError::resource("The model probe could not be prepared."))?;
+            .map_err(|_| StartupError::cause("The model probe could not be prepared."))?;
         let mut response = client.get(url).bearer_auth(key).send().await.map_err(|_| {
-            StartupError::resource("The server probe failed or exceeded five seconds.")
+            StartupError::cause("The server probe failed or exceeded five seconds.")
         })?;
         if !response.status().is_success() {
             if !metadata && response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
                 return Ok(None);
             }
-            return Err(StartupError::resource(
+            return Err(StartupError::cause(
                 "The server rejected the probe or redirected it.",
             ));
         }
@@ -112,16 +112,16 @@ fn get(
             .content_length()
             .is_some_and(|size| size > BODY_LIMIT as u64)
         {
-            return Err(StartupError::resource(
+            return Err(StartupError::cause(
                 "Server model metadata exceeds one MiB.",
             ));
         }
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|_| {
-            StartupError::resource("Server model metadata was incomplete or timed out.")
+            StartupError::cause("Server model metadata was incomplete or timed out.")
         })? {
             if chunk.len() > BODY_LIMIT.saturating_sub(bytes.len()) {
-                return Err(StartupError::resource(
+                return Err(StartupError::cause(
                     "Server model metadata exceeds one MiB.",
                 ));
             }
@@ -151,19 +151,19 @@ async fn cancellable<T>(
 
 pub(super) fn parse_models(bytes: &[u8]) -> Result<Vec<String>, StartupError> {
     if bytes.len() > BODY_LIMIT {
-        return Err(StartupError::resource(
+        return Err(StartupError::cause(
             "Server model metadata exceeds one MiB.",
         ));
     }
     let value: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|_| StartupError::resource("Server model metadata is not valid JSON."))?;
+        .map_err(|_| StartupError::cause("Server model metadata is not valid JSON."))?;
     let records = value
         .get("data")
         .or_else(|| value.get("models"))
         .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| StartupError::resource("The server did not provide a model list."))?;
+        .ok_or_else(|| StartupError::cause("The server did not provide a model list."))?;
     if records.is_empty() || records.len() > MODEL_LIMIT {
-        return Err(StartupError::resource(
+        return Err(StartupError::cause(
             "The server model list is empty or exceeds 128 entries.",
         ));
     }
@@ -174,9 +174,9 @@ pub(super) fn parse_models(bytes: &[u8]) -> Result<Vec<String>, StartupError> {
             .or_else(|| record.get("model"))
             .or_else(|| record.get("name"))
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| StartupError::resource("A server model identifier is missing."))?;
+            .ok_or_else(|| StartupError::cause("A server model identifier is missing."))?;
         if id.is_empty() || id.len() > 512 || id.chars().any(char::is_control) {
-            return Err(StartupError::resource(
+            return Err(StartupError::cause(
                 "A server model identifier is invalid or too long.",
             ));
         }

@@ -26,6 +26,45 @@ fn output(command: &mut Command) -> Output {
         .expect("bounded command finished and all owned children were reaped")
 }
 
+#[cfg(feature = "backend-openai")]
+#[test]
+fn human_read_only_admission_failure_has_one_safe_action() {
+    let ambient = tempfile::tempdir().unwrap();
+    let selected = tempfile::tempdir().unwrap();
+    let models = selected.path().join("models");
+    std::fs::create_dir(&models).unwrap();
+    let model = models.join("invalid.gguf");
+    let bytes = [b'!'; 24];
+    std::fs::write(&model, bytes).unwrap();
+
+    for action in ["status", "explain"] {
+        let result = output(
+            command(ambient.path())
+                .args([action, "--workspace"])
+                .arg(selected.path())
+                .arg("--json"),
+        );
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+        let diagnostic = String::from_utf8(result.stderr).unwrap();
+        assert_eq!(
+            diagnostic.trim(),
+            "The selected file is not a supported GGUF version 2 or 3 model. Inspect the model and server configuration for the selected folder."
+        );
+        assert_eq!(diagnostic.matches("Inspect ").count(), 1);
+        assert_eq!(diagnostic.lines().count(), 1);
+        assert!(!diagnostic.contains("ferric explain"));
+        assert!(!diagnostic.contains("Engine diagnostics"));
+        assert!(!diagnostic.contains('\u{1b}'));
+        assert_eq!(std::fs::read(&model).unwrap(), bytes);
+        assert_eq!(std::fs::read_dir(selected.path()).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(&models).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(ambient.path()).unwrap().count(), 0);
+        assert!(!selected.path().join(".ferric").exists());
+        assert!(!selected.path().join(".ferric-startup.lock").exists());
+    }
+}
+
 #[test]
 fn no_args_non_tty_welcome_is_nonmutating() {
     let root = tempfile::tempdir().unwrap();

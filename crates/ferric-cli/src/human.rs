@@ -29,6 +29,21 @@ pub(crate) struct DescribeArgs {
     pub json: bool,
 }
 
+#[cfg(feature = "backend-openai")]
+fn safe_text(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect()
+}
+
+/// Shared by interactive setup and the read-only description path. Diagnostic
+/// tails are structured, so neither their text nor an action heuristic is needed.
+#[cfg(feature = "backend-openai")]
+pub(crate) fn render_startup_error(error: &crate::startup::StartupError) -> String {
+    tracing::debug!(error = %error, "human startup stopped");
+    safe_text(&error.human_message())
+}
+
 pub(crate) fn welcome() {
     println!("Ferric — a local model, ready to help.");
     #[cfg(feature = "backend-openai")]
@@ -76,14 +91,15 @@ pub(crate) fn describe(args: DescribeArgs) -> ExitCode {
             let cfg = crate::config::load_layered(&root)
                 .map_err(|e| e.to_string())?
                 .config;
-            let summary = crate::startup::describe(&root, &cfg, None).map_err(|e| e.to_string())?;
+            let summary = crate::startup::describe(&root, &cfg, None)
+                .map_err(|error| render_startup_error(&error))?;
             // The description is read-only; status does not invent completed
             // workflow checkpoints or probe a potentially remote endpoint.
             if args.json {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&summary)
-                        .map_err(|_| "Cannot format setup summary.".to_string())?
+                        .map_err(|_| "Cannot format setup summary. Request the text summary without --json for the same selected folder.".to_string())?
                 );
             } else {
                 println!("{}", summary);
@@ -93,7 +109,7 @@ pub(crate) fn describe(args: DescribeArgs) -> ExitCode {
         match result {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
-                eprintln!("{error}");
+                eprintln!("{}", safe_text(&error));
                 ExitCode::FAILURE
             }
         }
@@ -102,7 +118,7 @@ pub(crate) fn describe(args: DescribeArgs) -> ExitCode {
 
 #[cfg(feature = "backend-openai")]
 mod enabled {
-    use super::RunArgs;
+    use super::{RunArgs, render_startup_error, safe_text};
     use std::io::Write;
     use std::path::Path;
     use std::process::ExitCode;
@@ -227,13 +243,6 @@ mod enabled {
                 .map(|n| Some(n - 1))
                 .ok_or("No model selected. Start again and choose a listed number.".to_string()),
         }
-    }
-
-    // Model-controlled terminal escape sequences must not become UI commands.
-    fn safe_text(text: &str) -> String {
-        text.chars()
-            .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-            .collect()
     }
 
     pub(super) fn run(args: RunArgs, interactive: bool) -> ExitCode {
@@ -410,7 +419,7 @@ mod enabled {
                 io.say("Cancelled. No session started.");
                 return Ok(());
             }
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(render_startup_error(&error)),
         };
         let Some(index) = choose_model(&start, interactive, io)? else {
             io.say("Cancelled. No session started.");
@@ -444,10 +453,12 @@ mod enabled {
                     io.say("Cancelled. Owned startup resources were cleaned up.");
                     return Ok(());
                 }
-                Err(error) => return Err(error.to_string()),
+                Err(error) => return Err(render_startup_error(&error)),
             };
         let result = (|| {
-            prepared.validate().map_err(|e| e.to_string())?;
+            prepared
+                .validate()
+                .map_err(|error| render_startup_error(&error))?;
             let provider = runtime.block_on(async {
                 ferric_provider::OpenAiProvider::for_prepared_endpoint(
                     ferric_provider::OpenAiConfig {
@@ -455,15 +466,15 @@ mod enabled {
                             .backend_opts
                             .api_base
                             .clone()
-                            .ok_or("Prepared endpoint is missing.".to_string())?,
+                            .ok_or("Prepared endpoint is missing. Inspect the server configuration for the selected folder.".to_string())?,
                         api_key: prepared.backend_opts.api_key.clone().ok_or(
-                            "Prepared endpoint credential binding is missing.".to_string(),
+                            "Prepared endpoint credential binding is missing. Inspect the server configuration for the selected folder.".to_string(),
                         )?,
                         model: prepared.model.clone(),
                     },
                 )
                 .map_err(|_| {
-                    "Cannot connect to the prepared model. Run ferric explain to inspect setup."
+                    "Cannot connect to the prepared model. Inspect the server configuration for the selected folder."
                         .to_string()
                 })
             })?;
@@ -486,7 +497,9 @@ mod enabled {
         io.say("Closing session…");
         // Cleanup errors take precedence: never report a successful command
         // when an owned child could not be proved reaped.
-        prepared.cleanup().map_err(|e| e.to_string())?;
+        prepared
+            .cleanup()
+            .map_err(|error| render_startup_error(&error))?;
         result
     }
 
@@ -538,10 +551,7 @@ mod enabled {
             Ok(Err(_)) if cancel.load(Ordering::Acquire) => {
                 Err("Interrupted. The request was cancelled.".to_string())
             }
-            Ok(Err(_)) => Err(
-                "The model could not answer. Try a shorter question, or inspect ferric explain."
-                    .to_string(),
-            ),
+            Ok(Err(_)) => Err("The model could not answer. Try a shorter question.".to_string()),
             Err(_) => {
                 cancel.store(true, Ordering::Release);
                 Err(
@@ -628,16 +638,18 @@ mod enabled {
             if prompt.len() > 32 * 1024 {
                 return Err("This input is too long. Try a smaller question or task.".to_string());
             }
-            prepared.validate().map_err(|e| e.to_string())?;
+            prepared
+                .validate()
+                .map_err(|error| render_startup_error(&error))?;
             let mut random = [0_u8; 16];
             getrandom::fill(&mut random)
                 .map_err(|_| "Cannot allocate a session ID. Try again.".to_string())?;
             let session = format!("human-{}", hex::encode(random));
             let (trace_path, file) = prepared
                 .create_trace_file(&format!("{session}.jsonl"))
-                .map_err(|e| e.to_string())?;
+                .map_err(|error| render_startup_error(&error))?;
             let mut trace = JsonlSink::from_file(file, &session)
-                .map_err(|_| "Cannot initialize the session trace.".to_string())?;
+                .map_err(|_| "Cannot initialize the session trace. Inspect trace permissions in the selected folder.".to_string())?;
             if mode == Mode::Ask {
                 trace_event(
                     &mut trace,
@@ -743,7 +755,8 @@ mod enabled {
                 if let Some(input) = outcome.needs_input {
                     show_question(io, &input.request);
                     return Err(format!(
-                        "Task paused for your answer. Start a new task including that answer, or inspect: {recovery}"
+                        "Task paused for your answer. Start a new task including your answer. Retained trace: {}",
+                        safe_text(&trace_path.display().to_string())
                     ));
                 }
                 if !outcome.stop.is_success() {

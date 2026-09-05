@@ -41,19 +41,45 @@ pub(crate) struct ModelChoice {
 #[derive(Debug)]
 pub(crate) struct StartupError {
     message: String,
+    next_action: Option<&'static str>,
+    diagnostics: Option<String>,
     cancelled: bool,
 }
 
 impl StartupError {
-    fn resource(message: impl Into<String>) -> Self {
+    /// The caller supplies an already actionable message; do not add another action.
+    fn actionable(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            next_action: None,
+            diagnostics: None,
             cancelled: false,
+        }
+    }
+    /// Cause-only failures always have one selected-folder inspection action.
+    fn cause(message: impl Into<String>) -> Self {
+        Self {
+            next_action: Some(
+                "Inspect the model and server configuration for the selected folder.",
+            ),
+            ..Self::actionable(message)
+        }
+    }
+    fn with_diagnostics(mut self, diagnostics: String) -> Self {
+        self.diagnostics = Some(diagnostics);
+        self
+    }
+    pub(crate) fn human_message(&self) -> String {
+        match self.next_action {
+            Some(action) => format!("{} {action}", self.message),
+            None => self.message.clone(),
         }
     }
     fn cancelled() -> Self {
         Self {
             message: "Setup cancelled; owned resources have been closed.".into(),
+            next_action: None,
+            diagnostics: None,
             cancelled: true,
         }
     }
@@ -64,7 +90,11 @@ impl StartupError {
 
 impl fmt::Display for StartupError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
+        formatter.write_str(&self.human_message())?;
+        if let Some(diagnostics) = &self.diagnostics {
+            write!(formatter, "\nEngine diagnostics (bounded):\n{diagnostics}")?;
+        }
+        Ok(())
     }
 }
 impl std::error::Error for StartupError {}
@@ -86,7 +116,7 @@ struct BorrowedManaged {
 impl BorrowedManaged {
     fn acquire(scope: ManagedDiscoveryScope, server: ManagedServer) -> Result<Self, StartupError> {
         let process = LiveProcess::acquire(server.runfile.pid)
-            .map_err(|_| StartupError::resource("The registered server exited or cannot be retained. Resolve its status before restarting setup."))?;
+            .map_err(|_| StartupError::actionable("The registered server exited or cannot be retained. Resolve its status before restarting setup."))?;
         let borrowed = Self {
             process,
             scope,
@@ -98,10 +128,10 @@ impl BorrowedManaged {
 
     fn validate(&self) -> Result<(), StartupError> {
         let facts = self.process.inspect(self.server.runfile.port)
-            .map_err(|_| StartupError::resource("The borrowed server exited or cannot be verified. No borrowed process was stopped."))?;
+            .map_err(|_| StartupError::cause("The borrowed server exited or cannot be verified. No borrowed process was stopped."))?;
         if facts.identity != self.server.identity || facts.listener != ListenerState::OwnedByTarget
         {
-            return Err(StartupError::resource(
+            return Err(StartupError::cause(
                 "The borrowed server no longer owns its exact loopback listener. No borrowed process was stopped.",
             ));
         }
@@ -111,7 +141,7 @@ impl BorrowedManaged {
             {
                 Ok(())
             }
-            _ => Err(StartupError::resource(
+            _ => Err(StartupError::actionable(
                 "Managed registrations changed. Resolve server status and restart setup; no registration was modified.",
             )),
         }
@@ -146,7 +176,7 @@ impl Startup {
         cancel: &Arc<AtomicBool>,
     ) -> Result<Self, StartupError> {
         let scope = ManagedDiscoveryScope::for_workspace(workspace)
-            .map_err(|_| StartupError::resource("The workspace cannot be resolved."))?;
+            .map_err(|_| StartupError::cause("The workspace cannot be resolved."))?;
         Self::begin_in(workspace, config, explicit_model, cancel, scope)
     }
 
@@ -159,7 +189,7 @@ impl Startup {
     ) -> Result<Self, StartupError> {
         config
             .validate()
-            .map_err(|error| StartupError::resource(error.to_string()))?;
+            .map_err(|error| StartupError::actionable(error.to_string()))?;
         check_cancelled(cancel)?;
         // Validate explicit endpoint syntax before any storage effect. Its
         // configured key is never applied to an implicitly discovered server.
@@ -169,12 +199,12 @@ impl Startup {
             .map(probe::endpoint)
             .transpose()?;
         if explicit_endpoint.is_some() && explicit_model.is_some() {
-            return Err(StartupError::resource(
+            return Err(StartupError::actionable(
                 "Choose either an explicit endpoint or a local model path, not both.",
             ));
         }
-        let state = WorkspaceState::acquire(workspace).map_err(StartupError::resource)?;
-        let preference = state.read_preference().map_err(StartupError::resource)?;
+        let state = WorkspaceState::acquire(workspace).map_err(StartupError::actionable)?;
+        let preference = state.read_preference().map_err(StartupError::actionable)?;
         let context = config.clone();
         if let Some(endpoint) = explicit_endpoint {
             let key = config
@@ -195,7 +225,7 @@ impl Startup {
         check_cancelled(cancel)?;
         let discovery = server::discover_managed_server_in(&scope);
         check_cancelled(cancel)?;
-        state.validate().map_err(StartupError::resource)?;
+        state.validate().map_err(StartupError::actionable)?;
         match discovery.state {
             ManagedServerState::Ready(server) => {
                 let endpoint = probe::endpoint(&server.runfile.base_url)?;
@@ -230,12 +260,12 @@ impl Startup {
                         .and_then(|saved| local.iter().position(|model| model.matches(saved)))
                 };
                 if config.model.is_some() && explicit_model.is_none() && preferred.is_none() {
-                    return Err(StartupError::resource(
-                        "The configured model is not available. Update the model setting or select an existing GGUF explicitly.",
+                    return Err(StartupError::actionable(
+                        "The configured model is not available. Update the model setting for the selected folder.",
                     ));
                 }
                 let requires_model_choice = preference.is_some() && preferred.is_none();
-                state.validate().map_err(StartupError::resource)?;
+                state.validate().map_err(StartupError::actionable)?;
                 Ok(Self {
                     models: choices,
                     preferred_index: preferred,
@@ -246,8 +276,8 @@ impl Startup {
                     config: context,
                 })
             }
-            _ => Err(StartupError::resource(
-                "Managed server state is stale, degraded, conflicting, or unverifiable. Resolve `ferric server status` before setup, or configure an explicit endpoint. No server was started or stopped.",
+            _ => Err(StartupError::actionable(
+                "Managed server state is stale, degraded, conflicting, or unverifiable. Inspect the selected folder's managed server status (the ferric server status view). No server was started or stopped.",
             )),
         }
     }
@@ -273,7 +303,7 @@ impl Startup {
         if let Some(server) = &managed {
             server.validate()?;
         }
-        state.validate().map_err(StartupError::resource)?;
+        state.validate().map_err(StartupError::actionable)?;
         let preferred = if let Some(model) = &config.model {
             ids.iter().position(|id| id == model)
         } else {
@@ -283,7 +313,7 @@ impl Startup {
                 .and_then(|id| ids.iter().position(|candidate| candidate == id))
         };
         if config.model.is_some() && preferred.is_none() {
-            return Err(StartupError::resource(
+            return Err(StartupError::actionable(
                 "The configured model is not advertised by this server. Update the model setting before trying again.",
             ));
         }
@@ -337,8 +367,8 @@ impl Startup {
             .models
             .get(index)
             .cloned()
-            .ok_or_else(|| StartupError::resource("Select one of the available models."))?;
-        self.state.validate().map_err(StartupError::resource)?;
+            .ok_or_else(|| StartupError::actionable("Select one of the available models."))?;
+        self.state.validate().map_err(StartupError::actionable)?;
         let context = self.config.ctx.unwrap_or(DEFAULT_CONTEXT);
         let deadline = Instant::now() + STARTUP_LIMIT;
         match self.source {
@@ -353,14 +383,14 @@ impl Startup {
                 progress("Checking the selected server model…");
                 let ids = probe::models(&endpoint, &key, cancel, deadline)?;
                 if !ids.contains(&selected.label) {
-                    return Err(StartupError::resource(
+                    return Err(StartupError::actionable(
                         "The selected server model changed. Select a model again.",
                     ));
                 }
                 if let Some(server) = &managed {
                     server.validate()?;
                 }
-                self.state.validate().map_err(StartupError::resource)?;
+                self.state.validate().map_err(StartupError::actionable)?;
                 check_cancelled(cancel)?;
                 self.state
                     .write_preference(&Preference {
@@ -371,7 +401,7 @@ impl Startup {
                         endpoint: Some(endpoint.clone()),
                         model_id: Some(selected.label.clone()),
                     })
-                    .map_err(StartupError::resource)?;
+                    .map_err(StartupError::actionable)?;
                 Ok(PreparedSession {
                     backend_opts: BackendOpts {
                         api_base: Some(endpoint),
@@ -397,15 +427,15 @@ impl Startup {
                 model.validate()?;
                 progress("Checking the installed engine…");
                 let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-                    .map_err(|_| StartupError::resource("No local listener port is available."))?;
+                    .map_err(|_| StartupError::cause("No local listener port is available."))?;
                 let port = listener
                     .local_addr()
                     .map_err(|_| {
-                        StartupError::resource("The local listener port could not be inspected.")
+                        StartupError::cause("The local listener port could not be inspected.")
                     })?
                     .port();
                 let (command, engine_identity) = launch(&model, context, port, cancel, deadline)?;
-                self.state.validate().map_err(StartupError::resource)?;
+                self.state.validate().map_err(StartupError::actionable)?;
                 model.validate()?;
                 check_cancelled(cancel)?;
                 drop(listener); // The child must bind it; exact owner checks close the race.
@@ -423,27 +453,25 @@ impl Startup {
                         return Err(if error.is_cancelled() || diagnostics.trim().is_empty() {
                             error
                         } else {
-                            StartupError::resource(format!(
-                                "{error}\nEngine diagnostics (bounded):\n{diagnostics}"
-                            ))
+                            error.with_diagnostics(diagnostics)
                         });
                     }
                 };
                 // Closed llama-server launches select exactly one GGUF. Do not
                 // invent `default` or infer a model identity from a filename.
                 if ids.len() != 1 {
-                    return Err(StartupError::resource(
+                    return Err(StartupError::actionable(
                         "The owned engine advertised more than one model. Restart setup with a single-model engine.",
                     ));
                 }
                 let id = ids.into_iter().next().expect("one model");
                 model.validate()?;
                 owned.validate()?;
-                self.state.validate().map_err(StartupError::resource)?;
+                self.state.validate().map_err(StartupError::actionable)?;
                 check_cancelled(cancel)?;
                 self.state
                     .write_preference(&model.preference())
-                    .map_err(StartupError::resource)?;
+                    .map_err(StartupError::actionable)?;
                 Ok(PreparedSession {
                     backend_opts: BackendOpts {
                         api_base: Some(endpoint),
@@ -472,19 +500,19 @@ fn wait_ready(
     loop {
         check_cancelled(cancel)?;
         if Instant::now() >= deadline {
-            return Err(StartupError::resource(
-                "Model startup exceeded 180 seconds. Select a smaller model or configure an existing server.",
+            return Err(StartupError::actionable(
+                "Model startup exceeded 180 seconds. Select a smaller model.",
             ));
         }
         if owned
             .child
             .tree
             .try_wait_leader()
-            .map_err(|_| StartupError::resource("The owned engine could not be inspected."))?
+            .map_err(|_| StartupError::cause("The owned engine could not be inspected."))?
             .is_some()
         {
-            return Err(StartupError::resource(
-                "The engine exited while loading the model. Check its diagnostics or choose a compatible model.",
+            return Err(StartupError::actionable(
+                "The engine exited while loading the model. Choose a compatible model.",
             ));
         }
         match owned.listener()? {
@@ -499,7 +527,7 @@ fn wait_ready(
                 }
             }
             _ => {
-                return Err(StartupError::resource(
+                return Err(StartupError::cause(
                     "The selected port is not exclusively owned by the new engine. The owned engine was closed; unrelated listeners were not touched.",
                 ));
             }
@@ -516,7 +544,7 @@ fn native_launch(
     deadline: Instant,
 ) -> Result<(Command, String), StartupError> {
     if !cfg!(any(windows, target_os = "linux")) {
-        return Err(StartupError::resource(
+        return Err(StartupError::actionable(
             "Owned startup requires native process/listener verification on Windows or Linux. Configure an existing endpoint on this host.",
         ));
     }
@@ -533,9 +561,7 @@ fn native_launch(
                 .as_ref()
                 .expect("local model")
                 .to_str()
-                .ok_or_else(|| {
-                    StartupError::resource("The selected model path must be valid text.")
-                })?
+                .ok_or_else(|| StartupError::cause("The selected model path must be valid text."))?
                 .into(),
         ),
         mmproj: None,
@@ -556,7 +582,7 @@ fn native_launch(
 }
 
 fn engine_on_path() -> Result<PathBuf, StartupError> {
-    let paths = std::env::var_os("PATH").ok_or_else(|| StartupError::resource("Install llama-server and add its directory to PATH, or configure an existing endpoint."))?;
+    let paths = std::env::var_os("PATH").ok_or_else(|| StartupError::actionable("The engine search path is unavailable. Configure an existing endpoint for the selected folder."))?;
     let name = if cfg!(windows) {
         "llama-server.exe"
     } else {
@@ -573,13 +599,13 @@ fn engine_on_path() -> Result<PathBuf, StartupError> {
         }
         let candidate = directory.join(name);
         if candidate.is_file() {
-            return candidate.canonicalize().map_err(|_| {
-                StartupError::resource("The installed engine path cannot be resolved.")
-            });
+            return candidate
+                .canonicalize()
+                .map_err(|_| StartupError::cause("The installed engine path cannot be resolved."));
         }
     }
-    Err(StartupError::resource(
-        "llama-server is not installed on PATH. Install llama-server or configure an existing endpoint; setup will not download or execute an unselected installer.",
+    Err(StartupError::actionable(
+        "llama-server is not installed on PATH. Configure an existing endpoint for the selected folder; setup will not download or execute an unselected installer.",
     ))
 }
 
@@ -610,9 +636,9 @@ impl PreparedSession {
     }
     pub(crate) fn validate(&self) -> Result<(), StartupError> {
         if self.closed {
-            return Err(StartupError::resource("This session has already closed."));
+            return Err(StartupError::cause("This session has already closed."));
         }
-        self.state.validate().map_err(StartupError::resource)?;
+        self.state.validate().map_err(StartupError::actionable)?;
         if let Some(model) = &self.local_model {
             model.validate()?;
         }
@@ -629,7 +655,7 @@ impl PreparedSession {
         self.validate()?;
         self.state
             .create_trace(name)
-            .map_err(StartupError::resource)
+            .map_err(StartupError::actionable)
     }
     pub(crate) fn cleanup(&mut self) -> Result<(), StartupError> {
         if let Ownership::Owned(engine) = &mut self.ownership {
@@ -679,7 +705,7 @@ pub(crate) fn describe(
 ) -> Result<StartupDescription, StartupError> {
     config
         .validate()
-        .map_err(|error| StartupError::resource(error.to_string()))?;
+        .map_err(|error| StartupError::actionable(error.to_string()))?;
     let endpoint = config
         .api_base
         .as_deref()

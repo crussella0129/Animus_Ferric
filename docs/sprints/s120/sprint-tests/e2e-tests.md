@@ -110,3 +110,61 @@ model/runtime/settings and answer, then SessionEnd `answered`. Source result
 was Ok after checked owned cleanup; workspace lock reacquisition passed.
 No manual termination or acquisition occurred. This live success does not
 accept the two failing CI jobs at this head, nor bind evidence to a later head.
+
+## Corrected CI candidate live run (before final copy review)
+
+Exact head: `d3173ca40c2e3236080b0d7b1076728e0d5c682b`. The exact L command in
+the integration map passed 1/1 in 5.84 seconds, with the existing repository
+`models/qwen2.5-coder-7b-instruct-q4_k_m.gguf` and actual llama-server
+`10034 (505b1ed15)`. CPU-only, context 4096, temperature 0; qualification remains
+unmeasured prepared-host conversation only. No model was downloaded or replaced.
+
+- Session elapsed: 5.8209369 seconds.
+- Time to Ready: 3.9615075 seconds.
+- Time to first response: 4.5857036 seconds.
+- Decisions: Ask/work (`ask`) and local resource commitment (`y`). Explicit
+  existing model selection avoids ambiguity; no technical settings were asked.
+- Objective: `Reply with exactly: Ferric is ready.`
+- Actual response: `Ferric is ready.`; then `/quit`.
+- Trace: `human-79195ad14123f8f9abf2fcbd4394335c`, SessionStart followed by actual
+  model/runtime/settings/user provenance and answer, SessionEnd `answered`.
+- Result: `Ok`, `checked_cleanup: true`; source checked owned reaping and then
+  workspace lock reacquisition passed. No manual process repair occurred.
+
+The observed transcript included the substantial-memory/unmeasured-fit warning,
+installed-engine check, conservative CPU loading progress, Ready with owned
+foreground/closed-on-exit scope, Ask-only/no-file-changes mode, actual answer
+and Closing session. This is short-response usability evidence, not model-built
+application, Qwen3.8 qualification, hardware fit, or autonomous Sprint Loops
+compatibility. Final native-terminal evidence follows separately.
+
+## Corrected CI candidate native terminal (before final copy review)
+
+At the same `d3173ca40c2e3236080b0d7b1076728e0d5c682b`, actual Windows PTY ran
+`cargo r -- run --workspace <fresh-temporary-workspace> --model <existing-repository-model>`.
+Only evidence prose changed since that commit; implementation, dependencies and
+CI source were unchanged. Cargo compiled/ran the source; no artifact was invoked
+directly by the agent. The terminal received real input, not the scripted IO seam:
+
+```text
+Folder: <fresh-temporary-workspace>
+Ask only, or allow file work here? [Enter = ask / work / quit] ask
+This starts a local CPU model and may use substantial memory. Resource fit is not measured.
+Start the local model? [y/N] y
+Checking the installed engine…
+Loading the model with conservative CPU settings (not hardware-qualified)…
+Ready: <existing-repository-model> (owned foreground (closed on exit))
+Ask only — no file changes. Type a question; /quit ends the session.
+You › Reply with exactly: Ferric is ready.
+Ferric is ready.
+You › /quit
+Closing session…
+```
+
+Cargo/terminal exited 0 after source-level `prepared.cleanup()` returned success.
+No manual termination was performed. The separate L fixture above additionally
+asserts lock reacquisition after cleanup. PTY latency includes tool/operator
+input delays and is not presented as measured inference performance. This
+terminal run uses the production front door with an explicit isolated workspace
+and model; plain zero-argument routing is separately proved by the manifest,
+shared orchestration and non-TTY process assertions, not misreported as this argv.

@@ -18,6 +18,12 @@ use cap_std::ambient_authority;
 use cap_std::fs::{Dir, Metadata, OpenOptions};
 use serde::{Deserialize, Serialize};
 
+// Storage errors are actionable at their source; callers must not guess whether
+// a string already contains guidance or append a second recovery instruction.
+fn failure(cause: &str) -> String {
+    format!("{cause}; inspect Ferric state and permissions in the selected folder")
+}
+
 pub(super) const LOCK_FILE: &str = ".ferric-startup.lock";
 const STATE_DIR: &str = ".ferric";
 const PREFERENCE_FILE: &str = "startup-preference.json";
@@ -108,7 +114,7 @@ impl WorkspaceState {
     pub(super) fn acquire(workspace: &Path) -> Result<Self, String> {
         let root_path = workspace
             .canonicalize()
-            .map_err(|_| "cannot identify the selected workspace")?;
+            .map_err(|_| failure("cannot identify the selected workspace"))?;
         let root = open_root(&root_path)?;
         let root_identity = identity(&directory_metadata(&root)?);
 
@@ -117,13 +123,17 @@ impl WorkspaceState {
         #[cfg(unix)]
         let directory_lock = {
             let file = readable_directory(&root)?;
-            if identity(&Metadata::from_file(&file).map_err(|_| "cannot identify workspace lock")?)
-                != root_identity
+            if identity(
+                &Metadata::from_file(&file)
+                    .map_err(|_| failure("cannot identify workspace lock"))?,
+            ) != root_identity
             {
-                return Err("selected workspace changed while acquiring its lock".into());
+                return Err(failure(
+                    "selected workspace changed while acquiring its lock",
+                ));
             }
             file.try_lock()
-                .map_err(|_| "another startup owns this workspace, or its lock is unavailable")?;
+                .map_err(|_| "another startup owns this workspace, or its lock is unavailable; wait for the other session in the selected folder to close".to_string())?;
             file
         };
 
@@ -131,12 +141,12 @@ impl WorkspaceState {
         let lock = open_lock(&root)?.into_std();
         let lock_identity = identity(
             &Metadata::from_file(&lock)
-                .map_err(|_| "cannot identify the workspace startup lock")?,
+                .map_err(|_| failure("cannot identify the workspace startup lock"))?,
         );
         validate_root(&root_path, &root, root_identity)?;
         validate_file(&root, LOCK_FILE, &lock, lock_identity)?;
         lock.try_lock()
-            .map_err(|_| "another startup owns this workspace, or its lock is unavailable")?;
+            .map_err(|_| "another startup owns this workspace, or its lock is unavailable; wait for the other session in the selected folder to close".to_string())?;
         validate_root(&root_path, &root, root_identity)?;
         validate_file(&root, LOCK_FILE, &lock, lock_identity)?;
 
@@ -150,10 +160,10 @@ impl WorkspaceState {
                 match root.create_dir(STATE_DIR) {
                     Ok(()) => {}
                     Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
-                    Err(_) => return Err("cannot create workspace startup state".into()),
+                    Err(_) => return Err(failure("cannot create workspace startup state")),
                 }
             }
-            Err(_) => return Err("cannot inspect workspace startup state".into()),
+            Err(_) => return Err(failure("cannot inspect workspace startup state")),
         }
         let directory = open_plain_dir(&root, STATE_DIR)?;
         let directory_identity = identity(&directory_metadata(&directory)?);
@@ -181,7 +191,7 @@ impl WorkspaceState {
         let expected = self
             .preference
             .lock()
-            .map_err(|_| "workspace preference coordination is unavailable")?;
+            .map_err(|_| failure("workspace preference coordination is unavailable"))?;
         self.validate_snapshot(&expected)
     }
 
@@ -189,7 +199,7 @@ impl WorkspaceState {
         let expected = self
             .preference
             .lock()
-            .map_err(|_| "workspace preference coordination is unavailable")?;
+            .map_err(|_| failure("workspace preference coordination is unavailable"))?;
         self.validate_snapshot(&expected)?;
         match &*expected {
             Snapshot::Absent => Ok(None),
@@ -217,13 +227,15 @@ impl WorkspaceState {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
         {
-            return Err("session trace requires a bounded human or query basename".into());
+            return Err(failure(
+                "session trace requires a bounded human or query basename",
+            ));
         }
         self.validate()?;
         let mut pinned = self
             .trace_directory
             .lock()
-            .map_err(|_| "session trace coordination is unavailable")?;
+            .map_err(|_| failure("session trace coordination is unavailable"))?;
         if pinned.is_none() {
             self.validate_base_bindings()?;
             match self.directory.symlink_metadata("trace") {
@@ -233,10 +245,10 @@ impl WorkspaceState {
                     match self.directory.create_dir("trace") {
                         Ok(()) => {}
                         Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
-                        Err(_) => return Err("cannot create the session trace directory".into()),
+                        Err(_) => return Err(failure("cannot create the session trace directory")),
                     }
                 }
-                Err(_) => return Err("cannot inspect the session trace directory".into()),
+                Err(_) => return Err(failure("cannot inspect the session trace directory")),
             }
             let directory = open_plain_dir(&self.directory, "trace")?;
             let expected = identity(&directory_metadata(&directory)?);
@@ -244,17 +256,18 @@ impl WorkspaceState {
         }
         let (directory, expected) = pinned
             .as_ref()
-            .ok_or("session trace directory is unavailable")?;
+            .ok_or_else(|| failure("session trace directory is unavailable"))?;
         self.validate_base_bindings()?;
         self.validate_trace_directory(directory, *expected)?;
         let mut options = file_options();
         options.write(true).create_new(true);
         let file = directory
             .open_with(name, &options)
-            .map_err(|_| "cannot exclusively create the session trace")?
+            .map_err(|_| failure("cannot exclusively create the session trace"))?
             .into_std();
         let file_identity = identity(
-            &Metadata::from_file(&file).map_err(|_| "cannot identify the new session trace")?,
+            &Metadata::from_file(&file)
+                .map_err(|_| failure("cannot identify the new session trace"))?,
         );
         validate_file(directory, name, &file, file_identity)?;
         self.validate_trace_directory(directory, *expected)?;
@@ -274,17 +287,18 @@ impl WorkspaceState {
     ) -> Result<(), String> {
         preference.validate()?;
         let bytes = serde_json::to_vec(preference)
-            .map_err(|_| "cannot encode the selected model choice")?;
+            .map_err(|_| failure("cannot encode the selected model choice"))?;
         if bytes.len() > MAX_PREFERENCE_BYTES {
-            return Err("selected model choice exceeds the storage limit".into());
+            return Err(failure("selected model choice exceeds the storage limit"));
         }
         let mut expected = self
             .preference
             .lock()
-            .map_err(|_| "workspace preference coordination is unavailable")?;
+            .map_err(|_| failure("workspace preference coordination is unavailable"))?;
         self.validate_snapshot(&expected)?;
         let mut random = [0_u8; 16];
-        getrandom::fill(&mut random).map_err(|_| "cannot allocate model preference staging")?;
+        getrandom::fill(&mut random)
+            .map_err(|_| failure("cannot allocate model preference staging"))?;
         let stage_name = format!(".startup-preference-{}.tmp", hex::encode(random));
         let mut options = file_options();
         options.write(true).create_new(true);
@@ -292,21 +306,22 @@ impl WorkspaceState {
         let mut stage = self
             .directory
             .open_with(&stage_name, &options)
-            .map_err(|_| "cannot stage the selected model choice")?
+            .map_err(|_| failure("cannot stage the selected model choice"))?
             .into_std();
         let stage_identity = identity(
-            &Metadata::from_file(&stage).map_err(|_| "cannot inspect model preference staging")?,
+            &Metadata::from_file(&stage)
+                .map_err(|_| failure("cannot inspect model preference staging"))?,
         );
         self.validate_snapshot(&expected)?;
         validate_file(&self.directory, &stage_name, &stage, stage_identity)?;
         stage
             .write_all(&bytes)
-            .map_err(|_| "cannot write model preference staging")?;
+            .map_err(|_| failure("cannot write model preference staging"))?;
         self.validate_bindings()?;
         validate_file(&self.directory, &stage_name, &stage, stage_identity)?;
         stage
             .sync_all()
-            .map_err(|_| "cannot synchronize model preference staging")?;
+            .map_err(|_| failure("cannot synchronize model preference staging"))?;
         checkpoint(WritePhase::Staged)?;
         checkpoint(WritePhase::BeforePublish)?;
         self.validate_snapshot(&expected)?;
@@ -315,7 +330,9 @@ impl WorkspaceState {
         if !matches!(&staged, Snapshot::Present { identity, bytes: current, .. }
             if *identity == stage_identity && current == &bytes)
         {
-            return Err("model preference staging changed before publication".into());
+            return Err(failure(
+                "model preference staging changed before publication",
+            ));
         }
 
         // Both names are single components under the pinned directory. Native
@@ -325,7 +342,7 @@ impl WorkspaceState {
         // not unlink a name whose identity another writer could replace.
         self.directory
             .rename(&stage_name, &self.directory, PREFERENCE_FILE)
-            .map_err(|_| "cannot publish the selected model choice")?;
+            .map_err(|_| failure("cannot publish the selected model choice"))?;
         checkpoint(WritePhase::Published)?;
         self.validate_bindings()?;
         validate_file(&self.directory, PREFERENCE_FILE, &stage, stage_identity)?;
@@ -333,7 +350,7 @@ impl WorkspaceState {
         if !matches!(&published, Snapshot::Present { identity, bytes: current, .. }
             if *identity == stage_identity && current == &bytes)
         {
-            return Err("model preference changed during publication".into());
+            return Err(failure("model preference changed during publication"));
         }
         #[cfg(unix)]
         {
@@ -343,7 +360,7 @@ impl WorkspaceState {
             self.validate_bindings()?;
             sync_dir
                 .sync_all()
-                .map_err(|_| "cannot synchronize the published model choice")?;
+                .map_err(|_| failure("cannot synchronize the published model choice"))?;
         }
         self.validate_snapshot(&published)?;
         validate_file(&self.directory, PREFERENCE_FILE, &stage, stage_identity)?;
@@ -356,7 +373,7 @@ impl WorkspaceState {
         let pinned = self
             .trace_directory
             .lock()
-            .map_err(|_| "session trace coordination is unavailable")?;
+            .map_err(|_| failure("session trace coordination is unavailable"))?;
         if let Some((directory, expected)) = &*pinned {
             self.validate_trace_directory(directory, *expected)?;
         }
@@ -404,7 +421,7 @@ impl WorkspaceState {
             ) => {
                 let retained = file
                     .metadata()
-                    .map_err(|_| "cannot inspect saved model choice")?;
+                    .map_err(|_| failure("cannot inspect saved model choice"))?;
                 regular_single_link(&retained)
                     && identity(&retained) == *prior
                     && prior == current
@@ -439,9 +456,11 @@ fn regular_single_link(metadata: &Metadata) -> bool {
 fn directory_metadata(directory: &Dir) -> Result<Metadata, String> {
     let metadata = directory
         .dir_metadata()
-        .map_err(|_| "cannot identify workspace startup directory")?;
+        .map_err(|_| failure("cannot identify workspace startup directory"))?;
     if !metadata.is_dir() || is_link(&metadata) {
-        return Err("workspace startup state requires a plain directory".into());
+        return Err(failure(
+            "workspace startup state requires a plain directory",
+        ));
     }
     Ok(metadata)
 }
@@ -462,14 +481,16 @@ fn readable_directory(directory: &Dir) -> Result<File, String> {
         )
     };
     if descriptor < 0 {
-        return Err("cannot open the retained startup directory for coordination".into());
+        return Err(failure(
+            "cannot open the retained startup directory for coordination",
+        ));
     }
     // SAFETY: a successful openat returned a uniquely owned descriptor.
     let file = unsafe { File::from_raw_fd(descriptor) };
-    let metadata =
-        Metadata::from_file(&file).map_err(|_| "cannot identify the reopened startup directory")?;
+    let metadata = Metadata::from_file(&file)
+        .map_err(|_| failure("cannot identify the reopened startup directory"))?;
     if !metadata.is_dir() || identity(&metadata) != identity(&directory_metadata(directory)?) {
-        return Err("reopened startup directory has changed identity".into());
+        return Err(failure("reopened startup directory has changed identity"));
     }
     Ok(file)
 }
@@ -477,19 +498,19 @@ fn readable_directory(directory: &Dir) -> Result<File, String> {
 fn open_root(path: &Path) -> Result<Dir, String> {
     if path
         .canonicalize()
-        .map_err(|_| "selected workspace is unavailable")?
+        .map_err(|_| failure("selected workspace is unavailable"))?
         != path
     {
-        return Err("selected workspace binding changed".into());
+        return Err(failure("selected workspace binding changed"));
     }
     match (path.parent(), path.file_name()) {
         (Some(parent), Some(leaf)) => {
             let parent = Dir::open_ambient_dir(parent, ambient_authority())
-                .map_err(|_| "cannot open selected workspace parent")?;
+                .map_err(|_| failure("cannot open selected workspace parent"))?;
             open_plain_dir(&parent, leaf)
         }
         _ => Dir::open_ambient_dir(path, ambient_authority())
-            .map_err(|_| "cannot open selected workspace".into()),
+            .map_err(|_| failure("cannot open selected workspace")),
     }
 }
 
@@ -506,22 +527,24 @@ fn open_plain_dir(parent: &Dir, leaf: impl AsRef<Path>) -> Result<Dir, String> {
     let leaf = leaf.as_ref();
     let before = parent
         .symlink_metadata(leaf)
-        .map_err(|_| "workspace startup directory is unavailable")?;
+        .map_err(|_| failure("workspace startup directory is unavailable"))?;
     if !before.is_dir() || is_link(&before) {
-        return Err("workspace startup state requires a plain directory".into());
+        return Err(failure(
+            "workspace startup state requires a plain directory",
+        ));
     }
     let opened = parent
         .open_dir_nofollow(leaf)
-        .map_err(|_| "cannot safely open workspace startup directory")?;
+        .map_err(|_| failure("cannot safely open workspace startup directory"))?;
     let after = parent
         .symlink_metadata(leaf)
-        .map_err(|_| "workspace startup directory changed while opening")?;
+        .map_err(|_| failure("workspace startup directory changed while opening"))?;
     if !after.is_dir()
         || is_link(&after)
         || identity(&before) != identity(&after)
         || identity(&before) != identity(&directory_metadata(&opened)?)
     {
-        return Err("workspace startup directory changed while opening".into());
+        return Err(failure("workspace startup directory changed while opening"));
     }
     Ok(opened)
 }
@@ -545,33 +568,40 @@ fn open_lock(root: &Dir) -> Result<cap_std::fs::File, String> {
     options.share_mode(0x1 | 0x2); // FILE_SHARE_READ | FILE_SHARE_WRITE
     match root.symlink_metadata(LOCK_FILE) {
         Ok(metadata) if regular_single_link(&metadata) => {}
-        Ok(_) => return Err("workspace startup lock must be a regular file with one link".into()),
+        Ok(_) => {
+            return Err(failure(
+                "workspace startup lock must be a regular file with one link",
+            ));
+        }
         Err(error) if error.kind() == ErrorKind::NotFound => {
             let mut create = options.clone();
             create.create_new(true);
             match root.open_with(LOCK_FILE, &create) {
                 Ok(file) => return Ok(file),
                 Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
-                Err(_) => return Err("cannot create workspace startup lock".into()),
+                Err(_) => return Err(failure("cannot create workspace startup lock")),
             }
         }
-        Err(_) => return Err("cannot inspect workspace startup lock".into()),
+        Err(_) => return Err(failure("cannot inspect workspace startup lock")),
     }
     root.open_with(LOCK_FILE, &options)
-        .map_err(|_| "cannot safely open workspace startup lock".into())
+        .map_err(|_| failure("cannot safely open workspace startup lock"))
 }
 
 fn validate_file(dir: &Dir, name: &str, file: &File, expected: Identity) -> Result<(), String> {
-    let opened = Metadata::from_file(file).map_err(|_| "cannot inspect retained startup file")?;
+    let opened =
+        Metadata::from_file(file).map_err(|_| failure("cannot inspect retained startup file"))?;
     let current = dir
         .symlink_metadata(name)
-        .map_err(|_| "startup file binding changed")?;
+        .map_err(|_| failure("startup file binding changed"))?;
     if !regular_single_link(&opened)
         || !regular_single_link(&current)
         || identity(&opened) != expected
         || identity(&current) != expected
     {
-        return Err("startup file must retain its regular, single-link identity".into());
+        return Err(failure(
+            "startup file must retain its regular, single-link identity",
+        ));
     }
     Ok(())
 }
@@ -584,14 +614,16 @@ fn observe_file(directory: &Dir, name: &str) -> Result<Snapshot, String> {
     let before = match directory.symlink_metadata(name) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Snapshot::Absent),
-        Err(_) => return Err("cannot inspect saved model choice".into()),
+        Err(_) => return Err(failure("cannot inspect saved model choice")),
     };
     if !regular_single_link(&before) || before.len() > MAX_PREFERENCE_BYTES as u64 {
-        return Err("saved model choice must be a bounded regular file with one link".into());
+        return Err(failure(
+            "saved model choice must be a bounded regular file with one link",
+        ));
     }
     let mut file = directory
         .open_with(name, &file_options())
-        .map_err(|_| "cannot safely open saved model choice")?
+        .map_err(|_| failure("cannot safely open saved model choice"))?
         .into_std();
     let expected = identity(&before);
     validate_file(directory, name, &file, expected)?;
@@ -599,17 +631,18 @@ fn observe_file(directory: &Dir, name: &str) -> Result<Snapshot, String> {
     (&mut file)
         .take((MAX_PREFERENCE_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|_| "cannot read saved model choice")?;
+        .map_err(|_| failure("cannot read saved model choice"))?;
     if bytes.len() > MAX_PREFERENCE_BYTES {
-        return Err("saved model choice exceeds the storage limit".into());
+        return Err(failure("saved model choice exceeds the storage limit"));
     }
     validate_file(directory, name, &file, expected)?;
-    let after = Metadata::from_file(&file).map_err(|_| "cannot revalidate saved model choice")?;
+    let after =
+        Metadata::from_file(&file).map_err(|_| failure("cannot revalidate saved model choice"))?;
     if before.len() != bytes.len() as u64
         || after.len() != before.len()
         || after.modified().ok() != before.modified().ok()
     {
-        return Err("saved model choice changed while reading".into());
+        return Err(failure("saved model choice changed while reading"));
     }
     Ok(Snapshot::Present {
         file: cap_std::fs::File::from_std(file),

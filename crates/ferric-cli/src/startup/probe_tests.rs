@@ -8,6 +8,7 @@ use super::*;
 #[derive(Clone, Copy, Debug)]
 enum Response {
     Ready,
+    Malformed,
     Redirect,
     DeclaredLarge,
     ChunkedLarge,
@@ -83,6 +84,10 @@ impl HttpFixture {
             let request = String::from_utf8(bytes).unwrap();
             let headers = match response {
                 Response::Ready => "HTTP/1.1 200 OK\r\nContent-Length: 36\r\nConnection: close\r\n\r\n{\"data\":[{\"id\":\"fixture-model-id\"}]}".to_string(),
+                Response::Malformed => {
+                    let body = "not-json-credential\u{1b}[2J";
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                }
                 Response::Redirect => format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
                 Response::DeclaredLarge => format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", BODY_LIMIT + 1),
                 Response::ChunkedLarge => "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".into(),
@@ -146,7 +151,7 @@ impl HttpFixture {
                 }
                 return (request, true);
             }
-            if matches!(response, Response::Ready) {
+            if matches!(response, Response::Ready | Response::Malformed) {
                 let _ = stream.shutdown(Shutdown::Both);
                 return (request, true);
             }
@@ -317,6 +322,10 @@ fn startup_probe_cancellation_closes_headers_and_body() {
         trigger.join().unwrap();
         let (_, closed) = fixture.finish();
         assert!(error.is_cancelled());
+        assert_eq!(
+            crate::human::render_startup_error(&error),
+            "Setup cancelled; owned resources have been closed."
+        );
         assert!(closed);
         assert!(start.elapsed() < Duration::from_secs(2));
     }
@@ -333,7 +342,11 @@ fn startup_probe_deadlines_are_finite() {
         Instant::now() + Duration::from_millis(150),
     );
     let (_, closed) = fixture.finish();
-    assert!(result.is_err());
+    let error = result.unwrap_err();
+    assert!(
+        crate::human::render_startup_error(&error)
+            .ends_with("Inspect the model and server configuration for the selected folder.")
+    );
     assert!(closed);
     assert!(start.elapsed() < Duration::from_secs(2));
     let fixture = HttpFixture::start(Response::HeadersStall);
@@ -345,9 +358,47 @@ fn startup_probe_deadlines_are_finite() {
         Instant::now() + Duration::from_secs(180),
     );
     let (_, closed) = fixture.finish();
-    assert!(result.is_err());
+    let error = result.unwrap_err().with_diagnostics(format!(
+        "private-engine-detail\u{1b}[2J\n{}",
+        "bounded diagnostic tail\n".repeat(100)
+    ));
+    assert!(error.to_string().contains("Engine diagnostics (bounded):"));
+    assert_eq!(
+        crate::human::render_startup_error(&error),
+        "The server probe failed or exceeded five seconds. Inspect the model and server configuration for the selected folder."
+    );
     assert!(closed);
     assert!(start.elapsed() < Duration::from_secs(6));
+}
+
+#[test]
+fn human_real_metadata_failure_has_one_safe_action() {
+    let fixture = HttpFixture::start(Response::Malformed);
+    let error = models(
+        &fixture.base,
+        "ferric-local",
+        &AtomicBool::new(false),
+        Instant::now() + PROBE_TIMEOUT,
+    )
+    .unwrap_err();
+    let (_, closed) = fixture.finish();
+    assert!(closed);
+    let rendered = crate::human::render_startup_error(&error);
+    assert_eq!(
+        rendered,
+        "Server model metadata is not valid JSON. Inspect the model and server configuration for the selected folder."
+    );
+    assert_eq!(rendered.matches("Inspect ").count(), 1);
+    assert!(!rendered.contains("credential"));
+    assert!(!rendered.contains('\u{1b}'));
+    assert_eq!(rendered.lines().count(), 1);
+
+    // Existing cause-specific guidance is preserved, not double-appended.
+    let endpoint_error = endpoint("https://user:credential@example.test/v1").unwrap_err();
+    assert_eq!(
+        crate::human::render_startup_error(&endpoint_error),
+        "Use an HTTP(S) endpoint without embedded credentials or query parameters."
+    );
 }
 
 #[test]

@@ -40,7 +40,7 @@ impl Tail {
                     }
                 }
             })
-            .map_err(|_| StartupError::resource("Engine diagnostics could not start."))?;
+            .map_err(|_| StartupError::cause("Engine diagnostics could not start."))?;
         Ok(Self {
             bytes,
             reader: Some(reader),
@@ -102,7 +102,9 @@ impl ChildOwner {
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
         let tree = ProcessTree::spawn(&mut command).map_err(|_| {
-            StartupError::resource("The engine could not start. Check the installed llama-server.")
+            StartupError::actionable(
+                "The engine could not start. Check the installed llama-server.",
+            )
         })?;
         let mut owner = Self {
             tree,
@@ -123,7 +125,7 @@ impl ChildOwner {
     pub(super) fn cleanup(&mut self) -> Result<(), StartupError> {
         self.tree
             .terminate_and_reap()
-            .map_err(|_| StartupError::resource("Owned engine cleanup could not be proved."))?;
+            .map_err(|_| StartupError::cause("Owned engine cleanup could not be proved."))?;
         if let Some(tail) = &mut self.stdout {
             tail.finish();
         }
@@ -153,20 +155,20 @@ impl OwnedEngine {
     pub(super) fn spawn(command: Command, port: u16) -> Result<Self, StartupError> {
         let mut child = ChildOwner::spawn(command)?;
         let process = LiveProcess::acquire_child(child.tree.child()).map_err(|_| {
-            StartupError::resource("Exact ownership of the engine is unavailable on this host.")
+            StartupError::cause("Exact ownership of the engine is unavailable on this host.")
         })?;
         if child
             .tree
             .try_wait_leader()
-            .map_err(|_| StartupError::resource("The engine process could not be inspected."))?
+            .map_err(|_| StartupError::cause("The engine process could not be inspected."))?
             .is_some()
         {
-            return Err(StartupError::resource("The engine exited before startup."));
+            return Err(StartupError::cause("The engine exited before startup."));
         }
         let identity = process
             .inspect(port)
             .map_err(|_| {
-                StartupError::resource("The retained engine identity could not be verified.")
+                StartupError::cause("The retained engine identity could not be verified.")
             })?
             .identity;
         Ok(Self {
@@ -178,11 +180,12 @@ impl OwnedEngine {
     }
 
     pub(super) fn listener(&self) -> Result<ListenerState, StartupError> {
-        let facts = self.process.inspect(self.port).map_err(|_| {
-            StartupError::resource("The owned engine exited or cannot be verified.")
-        })?;
+        let facts = self
+            .process
+            .inspect(self.port)
+            .map_err(|_| StartupError::cause("The owned engine exited or cannot be verified."))?;
         if facts.identity != self.identity {
-            return Err(StartupError::resource(
+            return Err(StartupError::cause(
                 "The engine identity changed during the session.",
             ));
         }
@@ -191,7 +194,7 @@ impl OwnedEngine {
 
     pub(super) fn validate(&self) -> Result<(), StartupError> {
         if self.listener()? != ListenerState::OwnedByTarget {
-            return Err(StartupError::resource(
+            return Err(StartupError::cause(
                 "The engine no longer exclusively owns its loopback listener.",
             ));
         }
@@ -224,12 +227,12 @@ pub(super) fn version(
         match status {
             Ok(Some(status)) if status.success() => break Ok(()),
             Ok(Some(_)) => {
-                break Err(StartupError::resource(
+                break Err(StartupError::cause(
                     "The installed engine failed its version probe.",
                 ));
             }
             Err(_) => {
-                break Err(StartupError::resource(
+                break Err(StartupError::cause(
                     "The engine version probe could not be inspected.",
                 ));
             }
@@ -253,7 +256,7 @@ pub(super) fn version(
 
 fn version_deadline(deadline: Instant) -> Result<(), StartupError> {
     if Instant::now() >= deadline {
-        Err(StartupError::resource(
+        Err(StartupError::cause(
             "The engine version probe exceeded its deadline (at most five seconds).",
         ))
     } else {

@@ -26,12 +26,12 @@ pub(super) struct LocalModel {
 impl LocalModel {
     pub(super) fn open(path: &Path) -> Result<Self, StartupError> {
         let original = std::fs::symlink_metadata(path).map_err(|_| {
-            StartupError::resource(
+            StartupError::actionable(
                 "The selected model cannot be read. Select an existing GGUF file.",
             )
         })?;
         if !original.is_file() || original.file_type().is_symlink() {
-            return Err(StartupError::resource(
+            return Err(StartupError::cause(
                 "The selected model must be a regular, non-symlink GGUF file.",
             ));
         }
@@ -48,16 +48,16 @@ impl LocalModel {
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf"))
         {
-            return Err(StartupError::resource(
+            return Err(StartupError::actionable(
                 "Select a model with the .gguf extension.",
             ));
         }
         let directory = Dir::open_ambient_dir(
             path.parent()
-                .ok_or_else(|| StartupError::resource("The model has no parent directory."))?,
+                .ok_or_else(|| StartupError::cause("The model has no parent directory."))?,
             cap_std::ambient_authority(),
         )
-        .map_err(|_| StartupError::resource("The model directory cannot be opened."))?;
+        .map_err(|_| StartupError::cause("The model directory cannot be opened."))?;
         Self::open_in(&directory, path, None)
     }
 
@@ -71,7 +71,7 @@ impl LocalModel {
         }
         let name = path
             .file_name()
-            .ok_or_else(|| StartupError::resource("The model filename is invalid."))?;
+            .ok_or_else(|| StartupError::cause("The model filename is invalid."))?;
         let before = directory.symlink_metadata(name).map_err(|_| changed())?;
         let mut options = OpenOptions::new();
         options.read(true).follow(FollowSymlinks::No);
@@ -95,10 +95,10 @@ impl LocalModel {
         }
         let mut header = [0_u8; 24];
         file.read_exact(&mut header)
-            .map_err(|_| StartupError::resource("The selected GGUF header is incomplete."))?;
+            .map_err(|_| StartupError::cause("The selected GGUF header is incomplete."))?;
         let version = u32::from_le_bytes(header[4..8].try_into().expect("four bytes"));
         if &header[..4] != b"GGUF" || !matches!(version, 2 | 3) {
-            return Err(StartupError::resource(
+            return Err(StartupError::cause(
                 "The selected file is not a supported GGUF version 2 or 3 model.",
             ));
         }
@@ -106,7 +106,7 @@ impl LocalModel {
             .to_str()
             .filter(|name| !name.chars().any(char::is_control))
             .ok_or_else(|| {
-                StartupError::resource(
+                StartupError::cause(
                     "The model filename must be valid text without control characters.",
                 )
             })?
@@ -209,7 +209,7 @@ fn scan_binding(
         .enumerate()
     {
         if index >= ENTRY_LIMIT {
-            return Err(StartupError::resource(
+            return Err(StartupError::actionable(
                 "The models directory exceeds 256 entries. Select one model explicitly.",
             ));
         }
@@ -226,13 +226,13 @@ fn scan_binding(
             .symlink_metadata(&name)
             .map_err(|_| changed())?;
         if !metadata.is_file() || is_link(&metadata) {
-            return Err(StartupError::resource(
+            return Err(StartupError::actionable(
                 "A discovered GGUF is not a regular, non-symlink file. Select a safe model explicitly.",
             ));
         }
         names.push(name);
         if names.len() > MODEL_LIMIT {
-            return Err(StartupError::resource(
+            return Err(StartupError::actionable(
                 "The models directory exceeds 128 GGUF files. Select one model explicitly.",
             ));
         }
@@ -378,7 +378,7 @@ fn same(left: &Metadata, right: &Metadata) -> bool {
         && modified(left) == modified(right)
 }
 fn changed() -> StartupError {
-    StartupError::resource("The selected model changed or cannot be inspected. Select it again.")
+    StartupError::actionable("The selected model changed or cannot be inspected. Select it again.")
 }
 
 #[cfg(test)]

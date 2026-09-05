@@ -259,3 +259,76 @@ Workspace/backend-free warnings-denied clippy, workspace formatting and explicit
 included-fixture formatting passed. Opt-in L passed 1/1 with checked cleanup
 (see E2E). These are local successes, not a substitute for failed CI. The next
 immutable head must receive its own retained results.
+
+## Corrected CI candidate native Windows gate (before final copy review)
+
+At `d3173ca40c2e3236080b0d7b1076728e0d5c682b`, source was unchanged throughout:
+
+| Source command | Result |
+|---|---|
+| `cargo test --workspace --locked --quiet` | 1,245 passed / 0 failed / 7 intentional ignores |
+| `cargo test -p ferric-cli --no-default-features --locked --quiet` | 407 passed / 0 failed / 0 ignored |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
+| `cargo clippy -p ferric-cli --no-default-features --all-targets --locked -- -D warnings` | Passed |
+| `cargo fmt --all --check` | Passed |
+| `rustfmt --edition 2024 --check crates/ferric-cli/src/human_journey_tests.rs` | Passed |
+| Exact opt-in L command from integration map | 1 passed, 5.84 seconds; source checked cleanup |
+| `cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1` | 5 passed / 0 failed / 0 ignored, 19.81 seconds |
+
+The workspace's seven ignores retain their previously documented reasons;
+the live ignore was explicitly executed by L. No manual process repair was
+used. W includes CLI units 380/1 live ignore, command integration 72/72, human
+integration 7/7, docs 1/1, source contract 2/2, hygiene 3/3, provider 47/47 and
+controlled mutations 15/15. The native CI record supplies named canonical
+per-suite confirmations rather than relying only on these totals.
+
+Separate exact-key focused runs at this candidate also passed: H 13 (7 human,
+1 docs, 2 source, 3 hygiene); HU 17 / one separately executed live ignore in
+2.72 seconds; S 37 in 13.22 seconds; P 47 in 0.75 seconds; PY 16; M 15; CLI 72
+in 17.17 seconds. All used the integration map's exact Cargo invocations.
+Authoritative CI run 33946376186 finished eight successful jobs at this exact
+candidate; [named suite confirmations](ci-results.md) retain its native and
+compile evidence. This does not override the independent concern below.
+
+## Independent Test concern: actionable startup failures
+
+The read-only critic rejected E04-D acceptance at candidate `d3173ca`: actual
+probe failures and malformed model JSON reported a cause but no next safe
+action. `human_failure_is_concise` used an already-actionable invented error,
+so it did not catch that production negative path. Read-only status/explain
+could likewise expose bare admission errors. A green CI candidate does not
+override this contract gap. The bounded correction must retain the cause and
+one concrete safe inspection action without English-text heuristics, repeated
+explain failures, automatic repair, or new authority. Real producer-to-renderer
+negative tests are required before the independent critic can accept Test.
+
+The bounded correction separates cause, explicit next action and retained
+diagnostics in `StartupError`, with a common safe renderer for run and describe.
+Bare storage causes receive one source-authored state/permission inspection hint;
+already-actionable configuration/reselection/cancellation copy is not doubled.
+Adjacent human invariant/trace failures are actionable, and paused work points to
+a new task with the answer rather than claiming automatic session resume.
+No process, deadline, authorization or automatic-repair behavior changed.
+
+Actual negative assertions added/strengthened:
+
+- `startup::probe::tests::startup_probe_deadlines_are_finite`: the existing
+  bounded stalled TCP fixture produces the actual timeout; exact rendered cause
+  plus one action excludes an attached private/control-bearing diagnostic tail.
+- `startup::probe::tests::human_real_metadata_failure_has_one_safe_action`: real
+  HTTP invalid metadata retains cause and exactly one action without echoing
+  response credentials/control bytes; existing endpoint guidance stays exact.
+- `human_read_only_admission_failure_has_one_safe_action`: actual status and
+  explain invocations select workspace B from ambient A, reject an invalid GGUF,
+  retain its bytes, create no state/lock, and emit exactly one concise hint.
+  No-network behavior also rests on the unchanged describe call path and the
+  existing endpoint-trap test, not a universal network census in this new test.
+
+Focused precommit verification passed H 14 (8+1+2+3), S 38 in 14.49 seconds and
+HU 17 / one explicitly separate live ignore in 2.72 seconds. Final exact-head
+aggregate/CI/live evidence and the independent critique remain mandatory.
+
+Warnings-denied backend/default and backend-free CLI clippy, workspace formatting
+and explicit included-fixture formatting also passed. Independent read-only
+source/assertion re-review closed C-001 with no further blocker; the critic still
+withholds final Test acceptance until corrected immutable-head evidence and CI.
