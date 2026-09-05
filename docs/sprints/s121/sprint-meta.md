@@ -97,3 +97,26 @@ already-restored stash. No source acceptance or remote checkpoint is implied.
 The independent canonical Plan critic reviewed the actual canonical plans and
 returned `clean`. Its exact verdict is retained in `sprint-plans/critique.md`;
 the preliminary proposal review was not substituted for this gate.
+
+## Build progress and verification interruptions
+
+The helper finalized both plans and the router reported `build`; ordered
+T-12101 through T-12104 were queued at `b72ae0f`. Both linked intents remain
+active without a no-op transition. T-12101 source and finite fixtures are in
+progress; no task is yet accepted or committed as complete.
+
+The first all-target compile exposed an exhaustive trace-verifier match that
+needed the additive main-request event; the mechanical handling was added.
+The subsequent core/trace/loop test build failed before execution because the
+drive had zero free bytes (`rustc-LLVM: no space on device`, Windows linker
+PDB write errors). The separately started CLI fixture build also failed while
+writing its incremental query cache. Neither command is a test pass.
+
+After both Cargo commands exited, the exact ordinary, untracked
+`target/debug/incremental` cache was checked for reparse points and removed.
+Its measured size was 22,046,318,514 bytes; free space afterward was
+19,474,415,616 bytes. This is regenerable compiler cache, not model, source,
+retained trace or experiment evidence. Further local gates disable Cargo
+incremental caching only; production policy, test assertions and CI schedule
+are unchanged. A source compiler-cache failure is not a lifecycle cleanup
+failure or an accepted run.

@@ -44,6 +44,15 @@ mod tests {
 
     fn all_event_types() -> Vec<Event> {
         vec![
+            Event::MainActionBudget {
+                turn: 4,
+                budget: ferric_core::OutputBudget {
+                    requested: Some(4096),
+                    effective: 4096,
+                    declared_ctx: Some(32768),
+                    source: ferric_core::OutputBudgetSource::Explicit,
+                },
+            },
             Event::SessionStart {
                 workspace: "/tmp/ws".to_string(),
                 resumed_from: None,

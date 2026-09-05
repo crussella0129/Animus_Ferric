@@ -150,6 +150,10 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             fresh_checks.len(),
             required_checks.len()
         ),
+        ParsedEvent::Known(Event::MainActionBudget { turn, budget }) => format!(
+            "main action {turn}: output cap {}, requested {:?}, declared context {:?}, source {:?}",
+            budget.effective, budget.requested, budget.declared_ctx, budget.source
+        ),
         ParsedEvent::Known(Event::PolicySelected {
             tier,
             protocol,

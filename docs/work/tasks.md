@@ -303,7 +303,6 @@ below remain executable follow-up work; the review did not silently fix them.
 
 ## Sprint 121 — approved explicit budgets
 
-- [ ] T-12101 (sprint 121) [intent: INT-0007, INT-0008]: Resolve one explicit main-action output cap — touches: core scale, query, loop run, trace events and focused tests.
 - [ ] T-12102 (sprint 121) [intent: INT-0007, INT-0008]: Apply checked benchmark budgets and retain trace-bound attribution — touches: bench runner/budget/results/summary, CLI bench and default-preserving autonomy constructors.
 - [ ] T-12103 (sprint 121) [intent: INT-0007, INT-0008]: Prevent diagnostic budgets from promoting durable capability — touches: bench summary/calibration, CLI publication and tests.
 - [ ] T-12104 (sprint 121) [intent: INT-0007, INT-0008]: Qualify and document the composed budget increment — touches: source-owned live/composed fixtures, expert docs and sprint evidence.

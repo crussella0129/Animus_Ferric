@@ -2006,3 +2006,12 @@ qualification below after final PR checks reopened Test.**
 - **Source:** `808cd9f0eb4651f3c56a84daca2dd79a66957a9d` adds bounded admission/script-stage diagnostics; `4f4e4f04d4ee132f9df9bb422be88a5ce366915d` ratchets the controlled native workspace schedule and operator command. No deadline, argument assertion, product race or cleanup check was relaxed.
 - **Verification:** [Renewed Test report](../sprints/s120/sprint-tests/test-report.md) and independently rechecked [proceed-with-caveats critique](../sprints/s120/sprint-tests/critique.md), committed at `ae18535`. Both exact-head eight-job CI runs passed without reruns; all native suite confirmations, root's fresh canonical gates, source-owned live acceptance and actual terminal interaction are retained.
 - **Limits:** Two original checkpoint failures, the one authorized rerun and all diagnostic samples remain historical evidence. Qualification is for the controlled schedule; the earlier stage/cause and arbitrary parallel-suite robustness remain unknown/T-12027. T-12026 is separate native admission work. Broader model/workflow/platform intentions stay active; PR 108 remains the only checkpoint and the owner alone merges.
+
+## T-12101 (sprint 121)
+
+- **Description:** Added a shared context-reserve-bounded explicit main-action output cap, actual request-budget provenance, and shell-correct invocation-scoped resume guidance without changing omitted defaults or tool authority.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md) AC-12 partial; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) AC-6/11/12 preservation.
+- **Completed:** 2026-09-05T23:56:36Z.
+- **Files modified:** `crates/ferric-core/src/{scale,lib}.rs`, `crates/ferric-cli/src/{query,trace_cmd,trace_verify}.rs`, `crates/ferric-cli/tests/{cli,query_output_budget}.rs`, `crates/ferric-trace/src/{event,lib}.rs`, `crates/ferric-loop/src/run.rs`, `crates/ferric-loop/tests/{common/mod,loop_core,output_budget}.rs`, Sprint 121 metadata/Build verification and work ledgers.
+- **Verification:** Core/trace/loop 311 passed; CLI 75 and HTTP fixture three passed; workspace formatting and affected all-target warnings-denied Clippy passed. Named E01-A through E01-E coverage, source-owned cleanup, initial failures and the Windows fragmented-request negative control are retained in [Build verification](../sprints/s121/sprint-tests/build-verification.md). Formal Test/Loop and model acceptance remain outstanding.
+- **Commit:** PENDING

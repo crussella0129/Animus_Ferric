@@ -253,6 +253,12 @@ pub struct QueryArgs {
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..))]
     pub max_turns: Option<u8>,
 
+    /// Main-action output cap only; must fit declared context minus prompt
+    /// reserve. Does not change tools, turns, reasoning, compaction or timeouts.
+    /// Invocation-scoped: repeat on resume; generated guidance repeats cap/ctx.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_output_tokens: Option<u32>,
+
     /// Directory holding `model_profiles.json` (written by `ferric bench` and
     /// `toolbench --calibrate-rings`). When a record exists for this model, its
     /// `measured_level` sets the tier and its `calibrated_ring` defaults
@@ -1270,6 +1276,7 @@ fn format_resume_command(
     workspace_root: &Path,
     external_trace_root: Option<&Path>,
     needs_answer: bool,
+    output_budget: Option<&ferric_core::OutputBudget>,
 ) -> String {
     let mut command = format!(
         "ferric query --resume {} --workspace {}",
@@ -1283,6 +1290,15 @@ fn format_resume_command(
     if needs_answer {
         command.push_str(" --answer ");
         command.push_str(&documented_shell_quote("<answer>"));
+    }
+    if let Some((cap, ctx)) =
+        output_budget.and_then(|budget| budget.requested.zip(budget.declared_ctx))
+    {
+        command.push_str(&format!(
+            " --max-output-tokens {} --ctx {}",
+            documented_shell_quote(&cap.to_string()),
+            documented_shell_quote(&ctx.to_string())
+        ));
     }
     command
 }
@@ -1400,6 +1416,20 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let output_budget = match ferric_core::resolve_output_budget(
+        &config.policy,
+        resolved_ctx,
+        args.max_output_tokens,
+    ) {
+        Ok(budget) => budget,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    config.policy.max_output_tokens = output_budget.effective;
+    config.sampling.max_tokens = output_budget.effective;
+    config.policy.output_budget = Some(output_budget);
     if let Some(max_turns) = args.max_turns {
         config.policy.max_turns = max_turns;
     }
@@ -1685,6 +1715,7 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
                 workspace.root(),
                 external_trace_root.as_deref(),
                 outcome.needs_input.is_some(),
+                config.policy.output_budget.as_ref(),
             )
         );
     }
@@ -2593,7 +2624,7 @@ mod tests {
         let trace = PathBuf::from("C:\\trace dir\\quo'te\"$`;&.jsonl");
         let workspace = PathBuf::from("C:\\work dir\\quo'te\"$`;&");
         let root = PathBuf::from("C:\\evidence dir\\quo'te\"$`;&");
-        let command = format_resume_command(&trace, &workspace, Some(&root), true);
+        let command = format_resume_command(&trace, &workspace, Some(&root), true, None);
         let script = format!(
             "[Console]::Error.WriteLine('{ENTERED}'); function ferric {{ foreach ($value in $args) {{ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value)) }} }}; {command}; [Console]::Error.WriteLine('{COMPLETE}')"
         );
@@ -2664,7 +2695,7 @@ mod tests {
         let trace = PathBuf::from("/tmp/trace dir/quo'te\"$`;&.jsonl");
         let workspace = PathBuf::from("/tmp/work dir/quo'te\"$`;&");
         let root = PathBuf::from("/tmp/evidence dir/quo'te\"$`;&");
-        let command = format_resume_command(&trace, &workspace, Some(&root), true);
+        let command = format_resume_command(&trace, &workspace, Some(&root), true, None);
         let script =
             format!("ferric() {{ for value do printf '%s\\0' \"$value\"; done; }}; {command}");
         let mut command = std::process::Command::new("/bin/sh");
