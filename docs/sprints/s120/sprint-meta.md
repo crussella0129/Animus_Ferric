@@ -54,3 +54,18 @@ has not been inferred. Research is complete, Plan is awaiting owner approval,
 and Build, Test, Loop, the extra post-Loop audit and the sprint PR have not
 occurred. Sprint status remains in-progress. The user's one-sprint/one-PR rule
 is preserved: no second sprint or premature PR is created.
+
+## Plan-approval handoff
+
+Reviewed proposal commit: `d5125cd`. At that checkpoint the Book was fully
+committed, the router reported Plan, and a diff of implementation/dependency/
+tool/CI paths against the merged baseline was empty. No source regression fix,
+model load, application test, or completed sprint is claimed.
+
+The preserved Sprint 114 edit was then restored from the exact stash above and
+SHA-256 verified against the original value. It is intentionally the sole
+user-owned working-tree modification after this metadata checkpoint is saved.
+The stash remains available for recovery. A subsequent clean-Book gate must
+preserve this edit explicitly again rather than absorb or overwrite it.
+These research/proposal commits are local on dev; no Sprint 120 push or PR has
+been performed at this approval boundary.
