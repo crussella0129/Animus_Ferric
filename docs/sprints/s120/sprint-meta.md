@@ -14,6 +14,17 @@
 
 ## Approved resume
 
+### Current closeout status
+
+Test accepted exact source `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d` after
+the independent critic closed the real E04-D guidance gap. All eight CI jobs
+in run `33947290181`, native Windows gates, fresh live-model acceptance and
+actual Cargo terminal interaction passed with source-owned cleanup. Accepted
+Test evidence was committed at `dc9c900`; the clean-Book router reported Loop.
+[Loop reconciliation](loop-review.md) retains partial active intents and open
+work. Closure, the extra post-Loop audit and actual PR checkpoint are recorded
+separately; the older phase paragraphs below preserve their historical boundary.
+
 ### Build exit
 
 All six approved tasks now have implementation and focused/native verification

@@ -5,9 +5,9 @@
 - **State:** active
 - **Work evidence:** [T-11406 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-11905 next repository-wide review/refactor](../work/tasks.md#next-sprint--repository-wide-review-and-bounded-refactor); [T-12002 configuration increment](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
-- **Code evidence:** none
+- **Code evidence:** [T-12002 configuration implementation](../work/completed-tasks.md#t-12002-sprint-120)
 - **Test evidence:** [Sprint 120 accepted prepared-host/configuration/Python Test increment](../sprints/s120/sprint-tests/test-report.md)
-- **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md)
+- **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md); [Current configuration contract](../configuration.md)
 
 ## Intent
 
@@ -62,6 +62,15 @@ truthfulness and maintenance problem even when it does not yet cause execution.
 Some old serialized shapes may need compatibility aliases or deprecation notes.
 The policy surface becomes smaller and more honest, and later orchestration
 must earn a new explicit protocol.
+
+## Sprint 120 progress
+
+Sprint 120 accepted the configuration portion of AC-5/6: present invalid layers
+fail closed with safe diagnostics, selected workspace drives provider discovery,
+and streaming/resume inheritance match effective settings. API reload timing was
+preserved deliberately; T-12022 owns the lifetime/direct-library/compaction
+follow-up and T-11406 owns inert planner/subagent vocabulary. This intent stays
+active; accepted configuration work is not the whole public-policy migration.
 
 ## Transition history
 

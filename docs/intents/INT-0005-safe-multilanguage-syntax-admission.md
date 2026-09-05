@@ -5,9 +5,9 @@
 - **State:** active
 - **Work evidence:** [T-11405 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-12001 Python 0.5 maintenance](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
-- **Code evidence:** none
+- **Code evidence:** [T-12001 Python 0.5 implementation](../work/completed-tasks.md#t-12001-sprint-120)
 - **Test evidence:** [Sprint 120 accepted prepared-host/configuration/Python Test increment](../sprints/s120/sprint-tests/test-report.md)
-- **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md)
+- **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md); [Sprint 120 scoped acceptance](../sprints/s120/sprint-tests/test-report.md)
 
 ## Intent
 
@@ -49,6 +49,14 @@ package script before authorization would recreate the boundary just removed.
 Parser dependencies and language-version drift require deliberate maintenance.
 Syntax validity remains only an admission signal, never proof of semantic
 correctness or a substitute for operator-authorized checks.
+
+## Sprint 120 progress
+
+Sprint 120 accepted the Python-only maintenance increment at `0ec5a0e` with
+strict invalid/unchecked outcomes, atomic mutation regressions and in-process
+Legacy customization coverage. Rust and JavaScript/TypeScript remain T-11405;
+this intent stays active and has no whole-intent completion evidence. Syntax
+admission still does not establish semantic correctness or authorize execution.
 
 ## Transition history
 

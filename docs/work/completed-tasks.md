@@ -1970,3 +1970,28 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** CLI human journey/startup model/probe/lifetime tests, `tests/{human_cli,human_docs,source_execution}.rs`, `.github/workflows/ci.yml`, Linux wrapper/reaper, README, commands/configuration/process docs, tools README, Sprint 120 unit/integration/E2E evidence, metadata and work ledgers.
 - **Verification:** Final coherent native Windows workspace run passed 1,245 tests / 7 intentional ignores; native lifecycle 5/5 passed in 19.82 seconds. Workspace and lifecycle warnings-denied clippy, workspace fmt and explicit included-fixture rustfmt passed. Final startup focused suite 37/37; human command/docs/source gates 7+1+2 passed. Independent read-only review found no remaining blocker after strengthening actual E03 outcomes and repairing demonstrably defective finite HTTP fixture readers/writers. Earlier failures and limits remain in unit evidence. The separately executed real-model and PTY Build trials passed with owned cleanup. Immutable implementation-head push, all required native/compile CI, exact-head live/TTY reruns, formal Test critique, Loop and post-Loop audit still gate the PR; none is inferred from static workflow strings or this task completion.
 - **Commit:** `f33669ea15e68fab2a04879c566bbfb8c4c32584`
+
+## Sprint 120 final Test acceptance
+
+- **Intent:** INT-0005/6/8, only the locked Python/configuration/prepared-host portions.
+- **Final implementation:** `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`; Test artifacts committed at `dc9c900`.
+- **Verification:** [Accepted Test report](../sprints/s120/sprint-tests/test-report.md), [clean independent critique](../sprints/s120/sprint-tests/critique.md), all eight exact-head CI jobs, fresh source-owned live and actual terminal runs. Windows workspace 1,247 passed / seven intentional ignores; isolated Linux 1,253 / five; backend-free 407 each; native lifecycle five/six. The C-001 guidance correction and failed earlier candidates remain retained in unit/CI records.
+- **Boundary:** Task implementation entries above retain their historical counts and pending-at-that-time gates. This acceptance supplies the final Test evidence without rewriting those commits. Loop and the additional post-Loop audit still gate the sole PR; no whole intent is realized.
+
+## T-11905 (sprint 120)
+
+- **Description:** Completed the requested repository-wide selective review and the owner-approved bounded human-first refactor, with all unselected findings retained as prioritized work.
+- **Intent:** [INT-0006](../intents/INT-0006-truthful-policy-contract.md), [INT-0008](../intents/INT-0008-unified-local-model-workflow.md).
+- **Completed:** 2026-09-05T05:43:36Z (review/refactor umbrella reconciliation during Loop).
+- **Coverage:** [Repository review](../sprints/s120/sprint-research/repository-review.md) spans all sixteen workspace crates selectively; [research](../sprints/s120/sprint-research/research-report.md) retains the explicit 51-file budget override and primary-source investigation. This is not an exhaustive security seal.
+- **Implementation:** T-12001–06 preserve individual commits, dependencies and verification above; final source `0ec5a0e` includes bounded Test corrections. No unrelated refactor was folded in merely to clear the findings list.
+- **Verification:** Accepted clause-level [Test report](../sprints/s120/sprint-tests/test-report.md) and [critique](../sprints/s120/sprint-tests/critique.md); final exact-head native/CI/live evidence above.
+- **Carry-forward:** T-11405/6, T-12020/22–25 and the ordered model/platform work stay open. Sprint 119's process increment alone was not counted as this review/refactor.
+
+## T-12021 (sprint 120, reconciled umbrella)
+
+- **Description:** R04/R16 provider cancellation and strict byte-framed UTF-8 work was selected into T-12005; the duplicated research backlog entry is now reconciled with that delivered task.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), named provider response phases only.
+- **Completed:** 2026-09-05T05:43:36Z (ledger reconciliation; implementation is T-12005, not new code).
+- **Commit:** `742d442e56ea3cc121c3a6765c94c504922a6012`, with final composition accepted at `0ec5a0e`.
+- **Verification:** E05-A/B in the accepted Test report; six cancelled response-phase fixtures, every-byte Unicode framing, finite joined HTTP fixtures and human whole-request deadline/cleanup composition. This is not a universal deadline on all expert commands or whole-Work cancellation; T-12024 retains the Git/process boundary.
