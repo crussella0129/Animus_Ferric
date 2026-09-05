@@ -1,5 +1,9 @@
 # Refactoring Tasks (From Architecture Report)
 
+## Next sprint — repository-wide review and bounded refactor
+
+- [ ] T-11905 (backlog, next after the owner merges Sprint 119) [intent: INT-0006, INT-0008]: Conduct the requested repository-wide code/architecture review with an explicit coverage ledger, validate the configuration/policy, UTF-8 streaming, cancellation and persistence candidates in `docs/sprints/s119/next-sprint-review-preparation.md`, and select a coherent tested refactor. Coordinate the truthful configuration/policy candidate with T-11406; retain every unselected confirmed defect as prioritized intent-linked work. Do not mistake Sprint 119's process-only increment or its read-only preparation for the full requested review/refactor. — touches: workspace review evidence, public configuration/policy boundaries, affected tests/docs selected by the next locked plan
+
 ## animus-launch
 - [ ] Migrate `std::fs` to `tokio::fs` for async filesystem operations in project scaffolding.
 

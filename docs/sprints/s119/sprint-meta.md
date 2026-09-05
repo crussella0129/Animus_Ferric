@@ -7,12 +7,12 @@
 - **Model:** gpt-6-astra, ultra (user-selected; runtime model identity is not independently exposed)
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
-- **Token count:** (filled at Loop Phase if observable)
+- **Token count:** unavailable from the active harness; not estimated
 - **Summary:** Review and refactor source-owned subprocess cleanup and Cargo-driven verification after Sprint 118's actual merge.
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), AC-6 and model-free enabling AC-9 evidence only.
 - **Completion evidence:** (filled at Loop Phase)
 
-## Phase status
+## Initial phase status (superseded by the resume and closeout records below)
 
 Research report and unlocked plan proposal are committed at `e720128`.
 `research-budget.sh` passed with 20 code files and four external sources.
@@ -61,3 +61,23 @@ No direct target executable or manual leftover-process cleanup was used.
 T-11903's PR/phase promise is an offer-for-merge gate: closing its implementation
 does not claim the later Test, Loop, or remote actions have already occurred.
 The unrelated file remains in the exact authorized stash until final handoff.
+
+## Loop reconciliation
+
+Test accepted source head `81c9aeaf0a9c08f8909395d77a6c7bd53204ee94` with
+six-job CI `33935893263` successful, local Windows workspace 1,128 passes /
+6 intentional ignores, and native lifecycle Linux 6/6 / Windows 5/5.
+The independent Test critique is clean. The initial failed run and every
+review-driven correction remain retained; no production ownership assertion
+was weakened to make the Linux fixture pass.
+
+INT-0008 remains active: this is its partial AC-6 source-process increment,
+with enabling model-free AC-9 evidence, not the compact workflow or model app.
+T-11904 preserves the broader Unix cancellation/escape boundary. T-11905 makes
+the owner's repository-wide review/refactor the explicit next sprint, with
+read-only preparation linked and no next-sprint implementation started.
+The next sprint waits for the owner to merge this sprint's sole dev-to-main PR.
+
+Loop validation/closure and the extra independent post-Loop adversarial audit
+are separate recorded actions. The authorized unrelated evidence stash must
+be restored and hash-verified after the clean Book/remote gates, before handoff.
