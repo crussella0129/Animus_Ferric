@@ -1,3 +1,5 @@
+Finalized - DO NOT EDIT
+
 # Sprint 120 Test Plan
 
 Approved proposal promoted without weakening its clauses or evidence boundaries.

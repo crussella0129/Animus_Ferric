@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0005
-- **State:** planned
+- **State:** active
 - **Work evidence:** [T-11405 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-12001 Python 0.5 maintenance](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -51,6 +51,9 @@ Syntax validity remains only an admission signal, never proof of semantic
 correctness or a substitute for operator-authorized checks.
 
 ## Transition history
+
+- 2026-09-05: moved from `planned` to `active` when Build began T-12001 under
+  the locked owner-approved plan. Existing Python admission maintenance only.
 
 - 2026-09-05: moved from `proposed` to `planned` after owner approval of Sprint 120 T-12001. This maintains existing Python admission only; Rust/JavaScript expansion remains T-11405.
 

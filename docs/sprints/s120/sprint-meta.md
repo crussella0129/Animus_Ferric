@@ -8,11 +8,15 @@
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** Human-first prepared-host startup and repository review; canonical plans owner-approved, under independent review before lock.
+- **Summary:** Human-first prepared-host startup and repository review; approved canonical plans locked, Build in progress.
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
 - **Completion evidence:** (filled at Loop Phase)
 
 ## Approved resume
+
+Canonical critique is clean. `finalize-plan.sh` locked both plans atomically
+after commit `6bcb15f`; the router reported Build. Tasks are queued in dependency
+order. No acceptance criterion was weakened during proposal promotion.
 
 The owner reviewed the proposal and explicitly approved proceeding. The canonical
 Build/Test plans are promoted from that reviewed proposal, with only schema
