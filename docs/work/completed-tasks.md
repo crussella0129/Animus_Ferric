@@ -1943,3 +1943,12 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** `crates/ferric-provider/src/openai.rs`, `crates/ferric-provider/src/openai_io_tests.rs`, Sprint 120 unit evidence and work ledgers.
 - **Verification:** Source-aware provider suite 45 passed, 0 failed, 0 ignored; all-target backend provider clippy with warnings denied and scoped fmt check passed. Root and independent read-only boundary review found no blocker. Whole-request fixtures prove cancellation and connection closure within two seconds across stalled headers, error bodies, nonstream JSON and SSE. Human owned-engine integration remains a later T-12004/06 gate, not claimed by this provider commit.
 - **Commit:** `742d442e56ea3cc121c3a6765c94c504922a6012`
+
+## T-12003 (sprint 120)
+
+- **Description:** Added foreground preparation with distinct borrowed/owned lifetimes, bounded model/probe/engine operations, persistent workspace coordination, safe model preferences and retained-file trace allocation.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), prepared-host portions of AC-3/5/6/7/10/12.
+- **Completed:** 2026-09-05T04:08:14Z
+- **Files modified:** `crates/ferric-cli/src/startup.rs`, `startup/{models,probe,probe_tests,runtime,storage,tests}.rs`, CLI Cargo dependencies/main module declaration, `Cargo.lock`, `.gitignore`, `crates/ferric-guard/src/{denylist,checker}.rs`, Sprint 120 unit evidence/metadata and work ledgers.
+- **Verification:** Native Windows startup suite 30 passed, 0 failed; three corrected model-binding tests reran successfully after a lint-only fixture cleanup. CLI scoped backend clippy with warnings denied passed; guard lock regression and guard clippy passed; workspace formatting passed. Separate review found and closed directory-binding, stale-choice and version-deadline issues. Generation transport preservation is implemented and tested in T-12004 but is not part of this startup commit. Linux native execution, integrated human acceptance and live-model evidence remain Test gates.
+- **Commit:** PENDING

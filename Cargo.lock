@@ -564,6 +564,8 @@ dependencies = [
  "animus-launch",
  "async-trait",
  "axum",
+ "cap-fs-ext",
+ "cap-std",
  "clap",
  "ferric-bench",
  "ferric-core",

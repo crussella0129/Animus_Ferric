@@ -14,6 +14,24 @@
 
 ## Approved resume
 
+### Build implementation dependencies
+
+T-12003's workspace concurrency contract requires a persistent root
+`.ferric-startup.lock`, protected by the model write denylist and ignored by Git.
+Putting the only lock inside replaceable `.ferric` could admit two starts after
+a directory replacement. Retained directory capabilities protect preference
+and trace publication; human traces use the existing canonical `.ferric/trace`
+directory, not a second plural spelling. These are implementation dependencies
+of locked E03, not new user authority or additional workflow ledgers.
+
+Independent Build review found and closed stale-single-model selection, missing
+resource copy, implicit model-directory rebinding and late version-probe
+success. T-12004 additionally requires a retained-file JsonlSink constructor,
+direct nonredirecting prepared-endpoint generation, and a `conservative` tier
+provenance label distinct from an operator override. These preserve the approved
+truthfulness/ownership contract; the locked plans are unchanged. Aggregate Test,
+live acceptance, Loop and the extra post-Loop audit remain outstanding.
+
 Canonical critique is clean. `finalize-plan.sh` locked both plans atomically
 after commit `6bcb15f`; the router reported Build. Tasks are queued in dependency
 order. No acceptance criterion was weakened during proposal promotion.

@@ -71,3 +71,39 @@ spawn no processes. The request future is pinned once and dropped on cancellatio
 no detached provider task survives. Human-session cleanup integration and the
 real model gate remain pending. Root and separate read-only review found no
 blocker at this task boundary; full exact-head Test acceptance is still required.
+
+## T-12003 — Foreground preparation
+
+- `cargo test --locked -p ferric-cli --features backend-openai --bin ferric startup:: -- --test-threads=1`:
+  30 passed, 0 failed, 0 ignored, 7.59 seconds after review corrections.
+- `cargo clippy --locked -p ferric-cli --features backend-openai --bin ferric --tests -- -D warnings`: pass.
+- `cargo test --locked -p ferric-cli --features backend-openai --bin ferric startup::models::tests -- --test-threads=1`:
+  3 passed after the final lint-only fixture correction.
+- `cargo test --locked -p ferric-guard startup_lock_cannot_be_replaced_by_model_tools`: 1 passed.
+- `cargo clippy --locked -p ferric-guard --all-targets -- -D warnings`: pass.
+- `cargo fmt --all --check`: pass at the coherent startup boundary.
+
+Named E03 tests cover exact owned listener/readiness; borrowed survival and
+Ready discovery; ambiguous-registration preservation; cancelled startup,
+failed/early-exit and unwound owned scopes; actual concurrent lock acquisition;
+atomic preference publication; stale model re-selection; exclusive retained
+trace handles; model/body/count/redirect limits; finite probes; and read-only
+explain. The extra discovered-directory swap test performs a real symlink swap
+even on Windows by relaxing only its test handle's delete sharing; production
+handles retain native rename denial as well as identity revalidation. Retained
+model handles remain bound to their original workspace/models directory.
+
+Retained intermediate failures: initial canonical-path expectation lacked the
+Windows extended path prefix; an early cancellation fixture assertion lacked
+its error payload and failed once (not reproduced in the full corrected run or
+six isolated repetitions); two strengthened directory tests expected
+PermissionDenied but Windows returned sharing violation 32 as Uncategorized.
+The tests now distinguish that exact native refusal and exercise actual swapped
+bindings separately. A needless unwrap lint in the test was replaced by a match,
+then clippy and the model tests passed. No run was repaired with manual process
+termination, and no Linux or model-backed result is inferred from these passes.
+
+The independent review also caught generation proxy/redirect authority drift;
+the front door's pinned transport constructor and its regression tests belong
+to T-12004. This startup task remains staged behind a temporary dead-code module
+annotation until that frontend consumes the API; T-12004 removes it.

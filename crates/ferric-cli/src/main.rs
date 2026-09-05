@@ -34,6 +34,9 @@ mod server_process;
 mod server_registration;
 mod server_resolution;
 mod skills_cmd;
+#[cfg(feature = "backend-openai")]
+#[allow(dead_code)] // T3 startup contract; the human frontend is integrated in T4.
+mod startup;
 mod tailscale_localapi;
 mod tailscale_serve;
 #[cfg(test)]
