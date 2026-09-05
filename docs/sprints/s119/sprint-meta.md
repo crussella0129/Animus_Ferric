@@ -11,6 +11,7 @@
 - **Summary:** Review and refactor source-owned subprocess cleanup and Cargo-driven verification after Sprint 118's actual merge.
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), AC-6 and model-free enabling AC-9 evidence only.
 - **Completion evidence:** Partial INT-0008 AC-6 verified at 1d877c1; extra-audit deadline defects corrected; CI 33937071734 all six jobs passed; repeated independent Test critique clean; repeated Loop reconciled; final post-Loop recheck and owner PR follow.
+- **Checkpoint:** https://github.com/crussella0129/Animus_Ferric/pull/107
 
 ## Initial phase status (superseded by the resume and closeout records below)
 
