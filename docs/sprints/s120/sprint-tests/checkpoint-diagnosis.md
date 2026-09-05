@@ -72,6 +72,38 @@ checked cleanup. A fixed-size stage summary is retained on successful runs too;
 bounded raw output remains failure-only. These are diagnostic checks, not a
 resolution of C-002.
 
+The diagnostic head `808cd9f0eb4651f3c56a84daca2dd79a66957a9d` passed all eight
+jobs in both [push run 33949321009](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949321009)
+and [PR run 33949323495](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949323495).
+The four Windows quoting samples all passed with both markers observed:
+
+| Sample | Execution wall | Native admission | CLI unit duration |
+|---|---:|---:|---:|
+| Push backend-free | 1.7584259s | 23.041ms | 7.34s |
+| PR backend-free | 2.8406316s | 22.5581ms | 7.23s |
+| Push full | 2.1699213s | 50.0987ms | 12.10s |
+| PR full | 8.4410958s | 34.1342ms | 14.19s |
+
+The slowest measured success used 84.4% of the original deadline. These success
+samples do not recover the missing stage telemetry from either prior failure.
+
+## Controlled-schedule mitigation
+
+Independent review of locked E06 and the explicit startup race accepted a
+bounded mitigation for qualification: align Windows's canonical workspace
+command with Linux's existing `--test-threads=1` inter-test schedule. This
+executes every test with its original deadlines and assertions. The product
+startup race still creates two simultaneous worker threads, bounded barriers
+and a retained winner lock inside its test; it is not serialized away.
+The exact Windows command and matching operator documentation are ratcheted.
+
+This is a controlled test schedule, **not a proven historical timeout cause or
+parallel-suite robustness claim**. The original stages cannot be recovered
+from logs that discarded them. T-12027 retains that separate investigation;
+the new timing/marker diagnostics remain. C-002 stays blocked until all required
+exact-head source/native/CI gates pass under this declared schedule. A recurrence
+under isolation is a fresh blocker, not an invitation to retry or raise limits.
+
 Independent source inspection also found that Windows admission counts any
 non-error `ResumeThread` return as resumed, and accepts enumeration termination
 without distinguishing exhaustion from error. Microsoft's

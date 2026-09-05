@@ -8,8 +8,15 @@ the source defines their lifetime, ownership, assertions, and cleanup.
 For the usual Windows development gate:
 
 ```powershell
-cargo test --workspace --locked
+cargo test --workspace --locked -- --test-threads=1
 ```
+
+The native workspace gates serialize unrelated test bodies on both Windows and
+Linux. Every test and its original timeout still runs; explicit concurrency
+tests create their own simultaneous workers and barriers. This gives native
+runtime fixtures a controlled test schedule, not a claim that arbitrary
+parallel-suite load cannot delay startup. Timeout diagnostics retain native
+admission and script-stage evidence; they do not replace checked cleanup.
 
 The model-free native lifecycle gate on Windows is:
 

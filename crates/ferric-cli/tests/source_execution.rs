@@ -26,10 +26,22 @@ fn source_quality_and_feature_matrix() {
         .split("\n  no-default-features:\n")
         .next()
         .unwrap();
+    let windows_gate = workspace_gate
+        .split_once("- name: workspace tests (Windows)\n")
+        .expect("native Windows workspace gate")
+        .1
+        .split("- name: workspace tests (isolated non-root Linux)")
+        .next()
+        .unwrap();
+    assert!(windows_gate.contains("if: runner.os == 'Windows'\n"));
+    let windows_command = "cargo test --workspace --locked -- --test-threads=1";
     assert!(
-        workspace_gate
-            .contains("if: runner.os == 'Windows'\n        run: cargo test --workspace --locked")
+        windows_gate
+            .lines()
+            .any(|line| line.trim() == format!("run: {windows_command}")),
+        "keep the full native suite, finite fixture budgets and isolated inter-test schedule"
     );
+    assert!(include_str!("../../../docs/process-execution.md").contains(windows_command));
     assert!(workspace_gate.contains(
         "if: runner.os == 'Linux'\n        shell: bash\n        run: bash tools/test-lifecycle-linux.sh workspace"
     ));

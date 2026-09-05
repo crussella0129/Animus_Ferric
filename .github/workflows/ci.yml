@@ -31,7 +31,10 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: workspace tests (Windows)
         if: runner.os == 'Windows'
-        run: cargo test --workspace --locked
+        # Match the Linux gate's controlled inter-test scheduling. Native
+        # runtime startup keeps its finite budget; explicit race tests still
+        # create their own simultaneous workers and bounded barriers.
+        run: cargo test --workspace --locked -- --test-threads=1
       - name: workspace tests (isolated non-root Linux)
         if: runner.os == 'Linux'
         shell: bash
