@@ -2,7 +2,7 @@
 
 ## Next sprint — repository-wide review and bounded refactor
 
-- [ ] T-11905 (backlog, next after the owner merges Sprint 119) [intent: INT-0006, INT-0008]: Conduct the requested repository-wide code/architecture review with an explicit coverage ledger, validate the configuration/policy, UTF-8 streaming, cancellation and persistence candidates in `docs/sprints/s119/next-sprint-review-preparation.md`, and select a coherent tested refactor. Coordinate the truthful configuration/policy candidate with T-11406; retain every unselected confirmed defect as prioritized intent-linked work. Do not mistake Sprint 119's process-only increment or its read-only preparation for the full requested review/refactor. — touches: workspace review evidence, public configuration/policy boundaries, affected tests/docs selected by the next locked plan
+- [ ] T-11905 (active review; Sprint 120 implementation awaits plan approval) [intent: INT-0006, INT-0008]: Conduct the requested repository-wide code/architecture review with an explicit coverage ledger, validate the configuration/policy, UTF-8 streaming, cancellation and persistence candidates in `docs/sprints/s119/next-sprint-review-preparation.md`, and select a coherent tested refactor. Coordinate the truthful configuration/policy candidate with T-11406; retain every unselected confirmed defect as prioritized intent-linked work. The [Sprint 120 review](../sprints/s120/sprint-research/repository-review.md) and [unlocked proposal](../sprints/s120/sprint-plans/plan-proposal.md) now record that review and selection, not completed implementation. Do not mistake Sprint 119's process-only increment or its read-only preparation for the full requested review/refactor. — touches: workspace review evidence, public configuration/policy boundaries, affected tests/docs selected by the next locked plan
 
 ## animus-launch
 - [ ] Migrate `std::fs` to `tokio::fs` for async filesystem operations in project scaffolding.
@@ -251,8 +251,6 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 - [ ] T-11508 (backlog, after T-11505) [intent: INT-0008]: Add explicit adapter-scoped native-reasoning request/response support, retain reasoning provenance, and give compaction a small deterministic sampler; do not infer thinking policy from model family. — touches: `crates/ferric-provider`, `crates/ferric-loop`, configuration/docs
 - [ ] T-11509 (backlog, after T-11505 through T-11508) [intent: INT-0008]: Build the installed compact local-model front door for run, status, resume, explain/dry-run, evidence, and cleanup, composing the proven lower-level controls behind a small cross-platform human command surface. — touches: CLI/workflow state, platform adapters, integration tests, operator docs
 
-## Book v2 carry-forward from Sprint 113
-
 ## Sprint 120 review — prioritized findings retained for follow-up
 
 Research provenance and exact baseline locations are in
@@ -267,7 +265,7 @@ front-door work remains subject to plan approval and lock.
 - [ ] T-12024 (backlog) [intent: INT-0008]: Migrate doctor, Git snapshots/bootstrap and human shell capture to bounded, fully drained, checked source-owned processes. Preserve private-index isolation and explicit human-only shell authority; prove cleanup for overflow, cancellation and timeout. R14/R17/R18. — touches: CLI doctor, `crates/ferric-vcs`, `crates/animus-launch`, `crates/ferric-tools/src/builtin/shell_exec.rs`
 - [ ] T-12025 (backlog) [intent: INT-0006, INT-0008]: Surface non-absence skill discovery errors, serialize cron prompts through TOML round trips, and remove stale in-process inference advice. R19/R20/R21. Do not label Sprint Loops compatible merely because a skill directory can be listed. — touches: `crates/ferric-skills`, `crates/ferric-cron`, bench/operator docs
 
-## Book v2 carry-forward from Sprint 113 (continued)
+## Book v2 carry-forward from Sprint 113
 
 - [ ] T-11401 (backlog) [intent: INT-0002]: Design and implement a deterministic operator-authored project check profile that Launch can scaffold and supported surfaces can load without a repeated `--checks-file`, while preserving the no-implicit-execution boundary. — touches: `crates/animus-launch`, `crates/ferric-cli/src/query.rs`, `crates/ferric-tools/src/builtin/run_check.rs`, `docs/commands.md`, `docs/configuration.md`
 - [ ] T-11402 (backlog) [intent: INT-0003]: Specify and experimentally evaluate a typed requirement ledger with causal evidence transitions and completion gating, without reviving the rejected planner label. — touches: `crates/ferric-trace`, `crates/ferric-loop`, `crates/ferric-bench`, `crates/ferric-cli`

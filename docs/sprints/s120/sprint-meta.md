@@ -8,8 +8,8 @@
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** (one-line description of sprint goal, filled after Plan Phase)
-- **Intents:** (filled after Plan Phase)
+- **Summary:** Human-first prepared-host startup and repository review; Research complete, reviewed Plan proposal awaits owner approval.
+- **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
 - **Completion evidence:** (filled at Loop Phase)
 
 ## Intake and preservation
@@ -32,3 +32,25 @@ The requested 0.21.0 skill path is absent; installed 0.22.0 is used and was
 disclosed. Its Claude-specific EnterPlanMode/ExitPlanMode APIs are unavailable
 on this Codex host. Source remains unchanged during Research and proposal
 review; no plan approval or Build completion is inferred from tool absence.
+
+## Research exit and Plan checkpoint
+
+Research/intent records were committed at `9368bff`. The installed budget helper
+reported `files=51 sources=5` (file cap exceeded); the report's explicit Budget
+Override justifies the owner-requested cross-crate review. The clean Book check
+passed and the router reported `plan`. No source implementation was changed.
+
+[Plan scratch](sprint-plans/plan-proposal.md) contains the proposed Build/Test
+plans and exact affected acceptance boundaries. Its
+[independent preliminary critique](sprint-plans/proposal-critique.md) is clean
+after correcting an overbroad cancellation acceptance implication. The proposed
+provider task selects R04/R16 from the initial review follow-up list; other
+unselected findings remain durable backlog. Canonical build/test plans remain
+empty and unlocked; this preliminary review does not substitute for their
+required post-approval critic and lock.
+
+The installed skill's explicit plan-approval gate pauses this turn. Approval
+has not been inferred. Research is complete, Plan is awaiting owner approval,
+and Build, Test, Loop, the extra post-Loop audit and the sprint PR have not
+occurred. Sprint status remains in-progress. The user's one-sprint/one-PR rule
+is preserved: no second sprint or premature PR is created.
