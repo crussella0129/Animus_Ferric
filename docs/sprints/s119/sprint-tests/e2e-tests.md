@@ -31,8 +31,9 @@ ownership refusal was correct and remains unchanged.
   must then confirm that actual PR before handoff. A Test report does not
   pretend those future Loop/remote actions have already occurred.
 
-Final corrected-head results are recorded below. Only E08's subsequent Loop
-and actual remote receipts remain pending at this Test-phase boundary.
+The earlier corrected-head results are recorded below. The extra post-Loop
+audit later rejected a remaining deadline defect; its correction requires new
+committed-head native results before repeated Test and Loop acceptance.
 
 ## Corrected intermediate native result
 
@@ -51,7 +52,7 @@ teardown, registration restoration, unrelated-state preservation, and absence
 of broad mutation/retry. The real launcher is now reaped before status is
 published, while its source supervisor remains the live owned group anchor.
 
-## Final source-head result
+## Pre-extra-audit source-head result (superseded)
 
 Head **`81c9aeaf0a9c08f8909395d77a6c7bd53204ee94`** passed all six jobs in
 [CI run 33935893263](https://github.com/crussella0129/Animus_Ferric/actions/runs/33935893263).

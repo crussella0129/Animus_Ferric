@@ -4,7 +4,7 @@ use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus};
 use std::time::Instant;
 
-use crate::{CLEANUP_TIMEOUT, POLL_INTERVAL, registry};
+use crate::{CLEANUP_TIMEOUT, POLL_INTERVAL, cleanup_complete, registry};
 
 pub(crate) struct ChildScope {
     child: Option<Child>,
@@ -117,49 +117,65 @@ impl ChildScope {
         let mut diagnostics = Vec::new();
         loop {
             let mut registry = registry::lock();
-            if !registry.contains(self.key) {
-                // Shutdown already proved this scope absent while holding the
-                // same lock. Never touch its potentially reusable number again.
-                self.child.take();
-                return Ok(());
-            }
-            if let Err(error) = registry.signal_once(self.key, || signal_anchored_group(self.pgid))
-            {
+            // Lock acquisition consumes the same budget as native drain work.
+            // Release it before fail-closed shutdown, which acquires it again.
+            if let Err(error) = cleanup_complete(false, Instant::now(), deadline) {
                 drop(registry);
                 crate::abort_on_cleanup_failure(
-                    "lost anchored process-group termination authority",
+                    "Unix cleanup deadline exceeded acquiring its registry",
                     error,
                 );
             }
-            if !leader_reaped {
-                match child.try_wait() {
-                    Ok(Some(_)) => leader_reaped = true,
-                    Ok(None) => {}
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                    Err(error) if error.raw_os_error() == Some(libc::ECHILD) => {
-                        leader_reaped = true
+            let drained = if !registry.contains(self.key) {
+                // Shutdown already proved this scope absent while holding the
+                // same lock. Never touch its potentially reusable number again.
+                true
+            } else {
+                if let Err(error) =
+                    registry.signal_once(self.key, || signal_anchored_group(self.pgid))
+                {
+                    drop(registry);
+                    crate::abort_on_cleanup_failure(
+                        "lost anchored process-group termination authority",
+                        error,
+                    );
+                }
+                if !leader_reaped {
+                    match child.try_wait() {
+                        Ok(Some(_)) => leader_reaped = true,
+                        Ok(None) => {}
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                        Err(error) if error.raw_os_error() == Some(libc::ECHILD) => {
+                            leader_reaped = true
+                        }
+                        Err(error) => diagnostics.push(error.to_string()),
                     }
-                    Err(error) => diagnostics.push(error.to_string()),
                 }
-            }
-            if leader_reaped {
-                // If this process opted into subreaping, adopted descendants
-                // are ours to reap. ECHILD is normal without adopted children.
-                if let Err(error) = reap_group(self.pgid) {
-                    diagnostics.push(error.to_string());
+                if leader_reaped {
+                    // If this process opted into subreaping, adopted descendants
+                    // are ours to reap. ECHILD is normal without adopted children.
+                    if let Err(error) = reap_group(self.pgid) {
+                        diagnostics.push(error.to_string());
+                    }
+                    match registry.remove_if_absent(self.key, || group_absent(self.pgid)) {
+                        Ok(drained) => drained,
+                        Err(error) => {
+                            diagnostics.push(error.to_string());
+                            false
+                        }
+                    }
+                } else {
+                    false
                 }
-                match registry.remove_if_absent(self.key, || group_absent(self.pgid)) {
-                    Ok(true) => break,
-                    Ok(false) => {}
-                    Err(error) => diagnostics.push(error.to_string()),
-                }
-            }
+            };
             drop(registry);
-            if Instant::now() >= deadline {
-                crate::abort_on_cleanup_failure(
+            match cleanup_complete(drained, Instant::now(), deadline) {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(error) => crate::abort_on_cleanup_failure(
                     "Unix scope did not drain in five seconds",
-                    diagnostics.join("; "),
-                );
+                    format!("{error}; {}", diagnostics.join("; ")),
+                ),
             }
             std::thread::sleep(POLL_INTERVAL);
         }

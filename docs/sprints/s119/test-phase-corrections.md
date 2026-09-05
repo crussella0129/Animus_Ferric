@@ -60,3 +60,32 @@ first. `windows_cleanup_deadline_precedes_success` deterministically checks
 drained and non-drained states before, exactly at, and after the deadline.
 Windows shared fmt/clippy and tests passed **8/8, one source fixture ignored**.
 This final Windows-only correction must receive its own confirmed CI head.
+
+## Extra post-Loop audit correction
+
+The first extra audit rejected the supposedly final Unix path: registry-key
+absence and successful group drain could return before evaluating the deadline.
+Root's adjacent review found the same ordering in Windows suspended-child
+rollback. The close at `f3cb48b` was explicitly superseded at `291f4d9`; the
+router returned to Test. The failed audit is retained in
+[the first-pass record](post-loop-adversarial-first-pass.md).
+
+One shared `cleanup_complete` decision now governs Unix drain and already-
+removed registrations, Windows Job drain, and suspended-child rollback.
+Unix checks again after registry acquisition, releases the lock before any
+fail-closed shutdown, and evaluates the final observation after native work.
+Rollback starts its deadline before termination. The portable
+`tests::cleanup_deadline_precedes_success` asserts both drained and pending
+states before, exactly at, and after the deadline; the original named Windows
+regression also uses that decision. Native regression suites still prove the
+actual process cleanup, not just the decision helper.
+
+Working-tree source checks passed: shared Windows Cargo tests **9 passed,
+1 recursive fixture ignored**, 0.89s, plus crate fmt and Windows/aarch64
+all-target warnings-denied clippy. The cross-target lint is compile evidence,
+not native Linux execution. The corrected committed head must pass the full
+native CI matrix before the next independent Test critique and Loop close.
+
+The deadline rejects late successful observations; it cannot preempt a stalled
+native syscall, mutex acquisition, or host scheduler. Last-resort shutdown is
+a failure-only best-effort sweep, never proof of successful bounded cleanup.

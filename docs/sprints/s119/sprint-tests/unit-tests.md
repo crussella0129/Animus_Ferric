@@ -74,9 +74,10 @@ E07 and E08 combine integration/E2E execution and the closing audit, documented
 in the adjacent result files. Fixture ignores are deliberate recursive source
 entry points; the two Windows research ignores are pre-existing platform gates.
 
-## Frozen source head
+## Pre-extra-audit source head (superseded)
 
-`81c9aeaf0a9c08f8909395d77a6c7bd53204ee94` is the final implementation head.
+`81c9aeaf0a9c08f8909395d77a6c7bd53204ee94` was the initially accepted head,
+superseded by the extra post-Loop audit's uncovered Unix deadline defect.
 Local Windows source verification at that head:
 
 - `cargo fmt --check`: pass.

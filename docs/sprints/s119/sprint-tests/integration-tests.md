@@ -33,13 +33,14 @@ per-suite confirmations and native clause test names remain in those job logs.
 This is positive evidence for the live supervisor and admission fence, but the
 subsequent deadline-ordering correction requires final head `81c9aea` CI too.
 
-## Final source-head acceptance evidence
+## Pre-extra-audit acceptance evidence (superseded)
 
 Head **`81c9aeaf0a9c08f8909395d77a6c7bd53204ee94`** was pushed and confirmed
 by `git ls-remote`. [CI run 33935893263](https://github.com/crussella0129/Animus_Ferric/actions/runs/33935893263)
-completed **success, all six jobs**. Only Book evidence has changed since that
-frozen implementation head; no source/CI script is substituted beneath these
-results.
+completed **success, all six jobs**. At initial Test acceptance only Book
+evidence had changed after that head. The extra audit later rejected a remaining
+deadline defect, so these results remain historical and cannot accept its
+subsequent source correction.
 
 | Required gate | Authoritative confirmation |
 |---------------|----------------------------|

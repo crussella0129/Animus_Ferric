@@ -12,6 +12,25 @@ const FIXTURE_LIMIT: Duration = Duration::from_secs(45);
 const READY_LIMIT: Duration = Duration::from_secs(10);
 const LARGE_OUTPUT: usize = 256 * 1024;
 
+#[test]
+pub(crate) fn cleanup_deadline_precedes_success() {
+    let observed_at = Instant::now();
+    let deadline = observed_at + Duration::from_millis(1);
+    assert!(crate::cleanup_complete(true, observed_at, deadline).unwrap());
+    assert!(!crate::cleanup_complete(false, observed_at, deadline).unwrap());
+    for drained in [false, true] {
+        for expired_at in [deadline, deadline + Duration::from_millis(1)] {
+            assert_eq!(
+                crate::cleanup_complete(drained, expired_at, deadline)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::TimedOut,
+                "the deadline wins even when the scope is already drained"
+            );
+        }
+    }
+}
+
 fn fixture_command(mode: &str, directory: &Path) -> Command {
     let mut command = Command::new(std::env::current_exe().expect("locate source test harness"));
     #[cfg(windows)]

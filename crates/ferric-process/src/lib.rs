@@ -37,6 +37,19 @@ pub use supervision::{enable_subreaper, watch_current_parent};
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+/// Classify the final observation, never accepting drain proof at or after its
+/// deadline. Callers must release registry locks before handling failure because
+/// fail-closed shutdown may acquire those locks again.
+fn cleanup_complete(drained: bool, observed_at: Instant, deadline: Instant) -> io::Result<bool> {
+    if observed_at >= deadline {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "process scope cleanup deadline exceeded",
+        ));
+    }
+    Ok(drained)
+}
+
 /// Owns a Windows Job or cooperative Unix process group until cleanup succeeds.
 pub struct ProcessTree {
     scope: Option<platform::ChildScope>,

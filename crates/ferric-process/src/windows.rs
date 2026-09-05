@@ -1,21 +1,11 @@
 //! Non-interactive Windows process scopes: no console windows are opened.
-use crate::{CLEANUP_TIMEOUT, POLL_INTERVAL};
+use crate::{CLEANUP_TIMEOUT, POLL_INTERVAL, cleanup_complete};
 use std::io;
 use std::process::{Command, ExitStatus};
 use std::time::Instant;
 
 fn with_cleanup_error(context: &str, error: io::Error, cleanup: io::Result<()>) -> io::Error {
     io::Error::other(format!("{context}: {error}; cleanup={cleanup:?}"))
-}
-
-fn cleanup_complete(drained: bool, observed_at: Instant, deadline: Instant) -> io::Result<bool> {
-    if observed_at >= deadline {
-        return Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            "Job cleanup deadline exceeded",
-        ));
-    }
-    Ok(drained)
 }
 
 pub(crate) struct ChildScope {
@@ -426,17 +416,22 @@ impl Drop for UnassignedWindowsChild {
         let Some(mut child) = self.0.take() else {
             return;
         };
-        if child.kill().is_err() {
-            std::process::exit(125);
-        }
         let deadline = Instant::now()
             .checked_add(CLEANUP_TIMEOUT)
             .unwrap_or_else(Instant::now);
+        if child.kill().is_err() {
+            std::process::exit(125);
+        }
         loop {
-            match child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) if Instant::now() < deadline => std::thread::sleep(POLL_INTERVAL),
-                Ok(None) | Err(_) => std::process::exit(125),
+            let drained = match child.try_wait() {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(_) => std::process::exit(125),
+            };
+            match cleanup_complete(drained, Instant::now(), deadline) {
+                Ok(true) => return,
+                Ok(false) => std::thread::sleep(POLL_INTERVAL),
+                Err(_) => std::process::exit(125),
             }
         }
     }
@@ -720,21 +715,9 @@ pub(crate) fn watch_current_parent() -> Result<(), String> {
 
 #[test]
 fn windows_cleanup_deadline_precedes_success() {
-    let observed_at = Instant::now();
-    let deadline = observed_at + std::time::Duration::from_millis(1);
-    assert!(cleanup_complete(true, observed_at, deadline).unwrap());
-    assert!(!cleanup_complete(false, observed_at, deadline).unwrap());
-    for drained in [false, true] {
-        for expired_at in [deadline, deadline + std::time::Duration::from_millis(1)] {
-            assert_eq!(
-                cleanup_complete(drained, expired_at, deadline)
-                    .unwrap_err()
-                    .kind(),
-                io::ErrorKind::TimedOut,
-                "the deadline wins even when every retained member is drained"
-            );
-        }
-    }
+    // Retain the original regression name while exercising the exact shared
+    // decision now used by Job drain, suspended-child rollback and Unix scopes.
+    crate::tests::cleanup_deadline_precedes_success();
 }
 
 #[test]
