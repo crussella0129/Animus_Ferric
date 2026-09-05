@@ -204,3 +204,29 @@ clippy passed and its serial Cargo integration suite passed 5/5 in 19.82 seconds
 All shell wrapper static syntax checks passed. No direct artifact command or
 manual process repair was used. Final immutable-head formal results follow in
 the integration record; Build evidence is not the CI conclusion.
+
+## Formal Test: first implementation-head CI correction
+
+Pushed and remotely confirmed head `8695b5066412f99abf909caacb58486223a25230`.
+All 17 commits in `origin/main..dev` belonged only to Sprint 120; main remained
+the owner-merged `17fc166`. No PR was opened.
+
+CI run [33945666076](https://github.com/crussella0129/Animus_Ferric/actions/runs/33945666076)
+failed its [ARM64 job](https://github.com/crussella0129/Animus_Ferric/actions/runs/33945666076/job/101251155125):
+the default-enabled backend brings in `ring 0.17.14`, whose C build could not
+find `aarch64-linux-gnu-gcc` (cc-rs ToolNotFound; exit 101). That is a missing
+cross toolchain prerequisite, not passing ARM64 qualification. The correction
+provisions the cross compiler on the ephemeral runner and preserves both the
+actual backend-enabled workspace check and lifecycle compile check.
+
+At this first head, local L passed 1/1 with checked model cleanup; N passed
+407/407 and CN passed; H passed 13/13; HU passed 17 with only the explicitly
+separate live test ignored; S passed 37/37. These results remain bound to this
+head. Final source/CI evidence must identify the corrected immutable head.
+
+The same Test correction clarifies read-only resource copy: CPU defaults apply
+to local launch, while borrowed-server resources are unverified. A process-level
+JSON assertion covers that distinction, and configuration docs explicitly retain
+shared-host Linux refusal and unsupported automatic macOS startup. This changes
+no authority or resource defaults. Affected source-quality/human/docs tests and
+warnings-denied CLI clippy pass before the correction commit.

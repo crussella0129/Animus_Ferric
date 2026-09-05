@@ -55,6 +55,32 @@ fn source_quality_and_feature_matrix() {
         assert!(!line.contains("--features"), "{line}");
         assert!(!line.contains("test-lifecycle-linux.sh"), "{line}");
     }
+
+    // The default HTTP backend includes ring's C build. Cross checks need the
+    // target C compiler even though cargo check does not link Ferric itself.
+    let cross_gate = workflow
+        .split_once("\n  aarch64-check:\n")
+        .expect("aarch64 portability job")
+        .1;
+    let install = "sudo apt-get install --yes --no-install-recommends gcc-aarch64-linux-gnu";
+    for required in [
+        "runs-on: ubuntu-latest",
+        "CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc",
+        "sudo apt-get update",
+        install,
+        "cargo check --workspace --target aarch64-unknown-linux-gnu --locked",
+        "cargo check -p ferric-cli --features lifecycle-fixture --all-targets --target aarch64-unknown-linux-gnu --locked",
+    ] {
+        assert!(
+            cross_gate.contains(required),
+            "missing cross gate: {required}"
+        );
+    }
+    assert!(cross_gate.find(install).unwrap() < cross_gate.find("run: cargo check").unwrap());
+    assert!(
+        !cross_gate.contains("--no-default-features"),
+        "the real default backend must remain covered by portability checks"
+    );
 }
 
 #[test]

@@ -197,6 +197,12 @@ fn human_explain_does_not_contact_endpoint_or_prepare() {
         );
         let summary: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
         assert_eq!(summary["context"], 4096);
+        assert!(
+            summary["resource_policy"]
+                .as_str()
+                .unwrap()
+                .contains("borrowed-server resources are unverified")
+        );
         assert!(summary["ownership"].as_str().unwrap().contains("borrowed"));
         assert!(summary["effects"].as_str().unwrap().contains("no network"));
         assert!(

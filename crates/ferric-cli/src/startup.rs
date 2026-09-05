@@ -702,7 +702,7 @@ pub(crate) fn describe(
         endpoint,
         local_models,
         context: config.ctx.unwrap_or(DEFAULT_CONTEXT),
-        resource_policy: "CPU, zero GPU layers, one slot; no memory-fit guarantee",
+        resource_policy: "local launch defaults: CPU, zero GPU layers, one slot; no memory-fit guarantee; borrowed-server resources are unverified",
         ownership: "explicit endpoint or a verified Ready managed server is borrowed; otherwise a foreground llama-server is owned until exit",
         effects: "explain performs no network, process launch, download, lock creation, or writes; actual setup takes a workspace lock, probes metadata, may start an engine, and atomically saves only the selected model choice",
         qualification: "unqualified: GGUF and server metadata do not establish hardware fit, context support, grammar support, or throughput",

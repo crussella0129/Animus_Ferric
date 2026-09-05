@@ -78,3 +78,21 @@ Full acquisition/calibration/resume, ordinary-host Linux positive authority,
 whole-Work Git cancellation and model-built application qualification remain
 the named INT-0007/INT-0008 follow-ups in the locked plan. Native Linux source
 acceptance must pass the explicitly isolated CI environment.
+
+## Formal Test live run at first CI head
+
+Exact head: `8695b5066412f99abf909caacb58486223a25230`. The exact L invocation
+in the integration map passed 1/1 in 10.90 seconds. Same existing
+Qwen2.5-Coder-7B-Instruct Q4_K_M file and actual llama-server
+`10034 (505b1ed15)`, CPU-only, context 4096, temperature 0, unqualified.
+Session elapsed: 10.8772423 seconds; Ready: 8.928912 seconds; first response:
+9.5977077 seconds. Inputs remained exactly `ask`, `y`,
+`Reply with exactly: Ferric is ready.`, `/quit`. Actual answer remained
+`Ferric is ready.` The trace ended `answered`; session result was Ok after
+checked owned cleanup and workspace lock reacquisition passed. No manual
+termination, download or capability promotion occurred.
+
+This is a passing live result, not a passing overall Test verdict: that head's
+required ARM64 CI gate failed for a missing cross C compiler. The CI correction
+and final acceptance must remain explicit; this earlier live result is not
+silently rebound to a later commit.

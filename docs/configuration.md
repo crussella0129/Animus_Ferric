@@ -18,6 +18,12 @@ These settings are unqualified: model metadata does not establish memory fit,
 speed, grammar support, or coding capability. No model/engine downloads or
 capability benchmarks run implicitly.
 
+Those are local-launch defaults, not measurements of a borrowed server's
+resources. On shared Linux hosts, exact process ownership may be uninspectable;
+automatic local launch then refuses, while explicitly configured servers remain
+usable. Linux's positive native tests use an isolated CI environment. Automatic
+native macOS startup is not supported; no platform-parity claim is made.
+
 After successful preparation, `.ferric/startup-preference.json` remembers the
 selected model coordinate. It contains no API key or permission to edit files,
 does not replace `model_profiles.json`, and is revalidated before reuse.
