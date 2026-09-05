@@ -1,15 +1,12 @@
 # Sprint 119 Test Report
 
-**Historical result, superseded by the extra post-Loop audit.** The following
-report records the real earlier pass at `81c9aea`; it is not current acceptance.
-The blocking [critique](critique.md) returns this sprint to Test until the
-deadline correction receives its own source-head verification and critique.
+**Result: pass for the locked source-process increment after extra-audit correction.**
 
-- **Tested implementation head:** `81c9aeaf0a9c08f8909395d77a6c7bd53204ee94`.
-- **Authoritative CI:** [run 33935893263](https://github.com/crussella0129/Animus_Ferric/actions/runs/33935893263), completed success, all six jobs.
-- **Local Windows:** 1,128 Cargo workspace tests passed, 6 intentional ignores;
-  fmt and workspace/backend-openai/lifecycle-feature clippy passed with warnings
-  denied. Native CI lifecycle passed Windows 5/5 and Linux 6/6.
+- **Tested implementation head:** `1d877c1858f1eae73716132cf2ae1a5d1a587eb9`.
+- **Authoritative CI:** [run 33937071734](https://github.com/crussella0129/Animus_Ferric/actions/runs/33937071734), completed success, all six jobs.
+- **Local Windows:** 1,129 Cargo workspace tests passed, 6 intentional ignores;
+  fmt and workspace all-target clippy passed with warnings denied. Both feature
+  clippy matrices passed in CI. Native lifecycle passed Windows 5/5 and Linux 6/6.
 - **Independent Test critique:** [clean](critique.md), after checking the exact
   source SHA, six-job conclusion, assertion mapping and corrected evidence.
 
@@ -28,6 +25,13 @@ The initial Windows cleanup test, lint failure, first failed Linux lifecycle
 CI, and later source-review corrections remain visible in
 [Test corrections](../test-phase-corrections.md). A previous green result was
 never substituted for an updated implementation.
+
+The [first extra post-Loop audit](../post-loop-adversarial-first-pass.md)
+blocked on deadline ordering despite the prior green matrix. It was preserved,
+the actual first close was explicitly superseded, both platforms' successful
+cleanup paths were corrected, and Test was repeated at the head above. The
+independent critic verified the new native logs and closed that concern before
+this replacement report was written. The old report and closure remain in Git.
 
 This accepts the affected **partial INT-0008 AC-6** safety increment and adds
 model-free enabling AC-9 evidence. INT-0008 remains **active**, not realized.

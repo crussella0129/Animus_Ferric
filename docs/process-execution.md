@@ -39,6 +39,10 @@ by benchmark commands and CLI test adapters. Successful cleanup must prove the
 owned scope is empty, not only that its initial child exited. Failure to prove
 cleanup cannot produce a successful result. Tests own their cleanup even when
 an assertion unwinds; manually killing leftovers does not repair test evidence.
+The cleanup deadline rejects final observations made at or after the limit on
+both platforms. It is not a hard real-time scheduler or a mechanism to interrupt
+an indefinitely stalled native call or mutex acquisition. Last-resort shutdown
+is a failure path, never evidence that bounded cleanup succeeded.
 
 Windows uses a kill-on-close Job and suspended creation: ownership precedes
 execution, post-create failure rolls back the retained child, and completion

@@ -41,3 +41,18 @@ in the PR. A clean Book gate run before that restoration is distinct from the
 deliberately restored user-owned modification; do not claim a clean working
 tree after restoring it. No manual test-process termination, model deletion,
 or direct target executable launch is part of this sprint's acceptance.
+
+## Repeated Loop after the failed extra audit
+
+The failed first audit is [retained](post-loop-adversarial-first-pass.md), with
+explicit re-entry to Test at `291f4d9`. Corrected source `1d877c1` passed all six
+jobs in CI `33937071734`, 1,129 local Windows tests / 6 intentional ignores,
+and native lifecycle Linux 6/6 / Windows 5/5. The repeated independent Test
+critique is clean after checking the exact head, native assertions and evidence.
+This supersedes the initial Test/close acceptance, not its historical existence.
+
+Intent and backlog reconciliation above remains unchanged and truthful. The
+patched confidence outcome is recorded once. Repeated clean Book validation,
+terminal close and fresh read-only post-Loop recheck must precede the actual
+PR; remote confirmation and exact unrelated-file restoration still happen
+afterward and are not preclaimed here.

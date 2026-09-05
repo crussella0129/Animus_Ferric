@@ -97,3 +97,27 @@ Local Windows source verification at that head:
 The independent final source-review verdict is clean after the deadline
 correction. Final Test critique remains separate and must consider the complete
 CI result and all three evidence artifacts before the report is written.
+
+## Post-audit corrected source verification
+
+Corrected source **`1d877c1858f1eae73716132cf2ae1a5d1a587eb9`** was committed,
+pushed and independently matched with `git ls-remote`. Local Windows
+`cargo fmt --check` and workspace/all-target locked offline clippy with warnings
+denied passed (clippy 4.41s). `cargo test --workspace --locked --offline --quiet`
+with an explicit real `FERRIC_TEST_PYTHON` passed **1,129 tests, 0 failures,
+6 intentional ignores**, across **73** Cargo suite/doc-suite confirmations.
+Shared process tests passed 9/1 ignored, CLI units 310, command integration 68,
+bench command integration 7, bench 78/3 ignored, source ratchet 1 and template
+hygiene 3. No source test session remained after exit 0.
+
+E01/E02 add `tests::cleanup_deadline_precedes_success`: the exact shared
+decision rejects drained and pending observations at or after the deadline.
+Source review independently verified its use on both Unix success paths,
+Windows Job drain and suspended-child rollback, and lock release before
+fail-closed shutdown. The retained native success/timeout/unwind, descendant,
+and suspended-spawn rollback assertions still prove actual process cleanup.
+Linux CI job `101226962804` explicitly executed the new regression together
+with `leader_exit_reaps_descendants` and `scope_cleanup_success_timeout_unwind`;
+its shared suite passed **8/1 ignored in 0.17s**. This is native Linux evidence,
+not the cross-target compile check. See the final integration matrix for the
+complete CI conclusion.

@@ -62,7 +62,7 @@ T-11903's PR/phase promise is an offer-for-merge gate: closing its implementatio
 does not claim the later Test, Loop, or remote actions have already occurred.
 The unrelated file remains in the exact authorized stash until final handoff.
 
-## Loop reconciliation
+## Initial Loop reconciliation (superseded by extra-audit correction)
 
 Test accepted source head `81c9aeaf0a9c08f8909395d77a6c7bd53204ee94` with
 six-job CI `33935893263` successful, local Windows workspace 1,128 passes /
@@ -96,3 +96,17 @@ sprint; no new sprint, changed locked promise, or remote checkpoint is created.
 The original close and accepted reports remain available in Git and the
 retained audit record. A corrected source head, new CI, independent Test
 critique, repeated Loop closure and post-Loop audit are required before PR.
+
+## Corrected Test and repeated Loop
+
+Source `1d877c1858f1eae73716132cf2ae1a5d1a587eb9` passed all six CI jobs in
+run `33937071734`, plus 1,129 local Windows Cargo workspace tests / 6 intentional
+ignores. Native CI lifecycle passed Linux 6/6 and Windows 5/5. The independent
+Test critic verified the exact head, all six job conclusions and named native
+assertions, and returned clean. No implementation changed after that head.
+
+The same partial intent reconciliation and T-11904/T-11905 backlog remain valid;
+no intent is realized and no next-sprint implementation has started. Confidence
+was already updated once for this sprint's patched outcome; it is not counted
+again for the extra-audit retry. Repeat Book validation and close precede the
+independent final post-Loop recheck and the owner's sole merge checkpoint.

@@ -68,3 +68,17 @@ independent Test critique and before handoff; the closing audit will link back
 to these results. There is no claim of a live model app, real tailnet exercise,
 macOS parity, ordinary-host Linux listener-owner exclusivity, general group
 escape containment, or completion of the entire INT-0008 workflow.
+
+## Post-audit corrected native results
+
+At **`1d877c1858f1eae73716132cf2ae1a5d1a587eb9`**, CI run `33937071734`
+passed the native Linux lifecycle suite **6/6 in 4.89s** (job `101226962739`)
+and Windows suite **5/5 in 19.76s** (job `101226962716`). The same named tests
+above ran, including Linux's exact-owner pidfd regression and both platforms'
+real command outputs, ownership refusals, cleanup and preserved unrelated
+LocalAPI state. Linux still executes Cargo inside the isolated non-root
+namespace; no production authority checks or assertions were weakened.
+
+These results replace the prior source head for E04/E05/E07. E08 still requires
+the repeated independent Test critique, actual Loop close, extra post-Loop audit
+and verified sole PR before handoff, with no merge performed by the agent.

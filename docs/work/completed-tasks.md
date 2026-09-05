@@ -1907,3 +1907,11 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** `.github/workflows/ci.yml`, `AGENTS.md`, `tools/{test-lifecycle-linux.sh,lifecycle-linux-reaper.sh,README.md}`, `crates/ferric-cli/tests/source_execution.rs`, `docs/process-execution.md`, Sprint 119 metadata, unit evidence, and `next-sprint-review-preparation.md`.
 - **Verification:** `source_driven_ci_contract` passes in Windows Cargo workspace test; both shell scripts pass `bash -n`; fmt, workspace/backend/lifecycle clippy and native Windows lifecycle tests pass. E07's actual Linux namespace run is the required CI Test gate. E08 is conditional on offering a PR: formal Test critique, Loop reconciliation/validation, the extra independent post-Loop audit, confirmed push, and exact one-sprint dev-to-main PR must all be proved before that offer. This implementation completion is not a claim those later actions occurred.
 - **Commit:** `92e8f29a9ab9cc938b93d64f5e713a97662f13eb`
+
+## Sprint 119 post-Loop deadline correction
+
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), partial AC-6; correction within T-11901/E01/E02, not a new task or weakened plan.
+- **Commit:** `1d877c1858f1eae73716132cf2ae1a5d1a587eb9`.
+- **Cause:** The extra independent audit rejected Unix cleanup's success-before-deadline paths; adjacent Windows suspended-child rollback had the same ordering. The first close at `f3cb48b` was explicitly superseded at `291f4d9`.
+- **Outcome:** Shared deadline-first classification now covers both Unix successful observations, Windows Job drain and suspended-child rollback. Registry locks are released before fail-closed shutdown.
+- **Verification:** Local source-driven Windows workspace 1,129 passes / 6 intentional ignores, fmt and warnings-denied clippy; all six native/compile CI jobs at exact corrected head in run `33937071734` passed. Retained audit, source-review closure and current clause mapping are in the [Test correction record](../sprints/s119/test-phase-corrections.md) and [integration evidence](../sprints/s119/sprint-tests/integration-tests.md#final-post-audit-source-head-evidence). Formal Test critique, repeated Loop close, extra audit and actual PR checkpoint still gate the offer for merge.

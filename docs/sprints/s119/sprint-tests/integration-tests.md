@@ -56,3 +56,26 @@ Local final-head Windows verification independently passed 1,128 tests with
 as detailed in the unit record. The E01-E06 assertion map is in that record;
 E07 combines the static ratchet with actual native CI execution. E08 remains
 the documented mandatory Loop/offer-for-merge audit, not a waived condition.
+
+## Final post-audit source-head evidence
+
+**Source `1d877c1858f1eae73716132cf2ae1a5d1a587eb9`: all six jobs passed** in
+[CI run 33937071734](https://github.com/crussella0129/Animus_Ferric/actions/runs/33937071734).
+The run's exact `headSha`, completed status and success conclusion were checked
+after completion, not inferred from the previous source run.
+
+| Required gate | Successful job |
+|---------------|----------------|
+| Linux workspace fmt/clippy/tests | [101226962804](https://github.com/crussella0129/Animus_Ferric/actions/runs/33937071734/job/101226962804) |
+| Windows workspace fmt/clippy/tests | [101226962735](https://github.com/crussella0129/Animus_Ferric/actions/runs/33937071734/job/101226962735) |
+| backend-openai all-target clippy | [101226962771](https://github.com/crussella0129/Animus_Ferric/actions/runs/33937071734/job/101226962771) |
+| Linux lifecycle-feature lint + isolated Cargo lifecycle | [101226962739](https://github.com/crussella0129/Animus_Ferric/actions/runs/33937071734/job/101226962739), 6/6 in 4.89s |
+| Windows lifecycle-feature lint + native Cargo lifecycle | [101226962716](https://github.com/crussella0129/Animus_Ferric/actions/runs/33937071734/job/101226962716), 5/5 in 19.76s |
+| aarch64 workspace + lifecycle-feature compile checks | [101226962635](https://github.com/crussella0129/Animus_Ferric/actions/runs/33937071734/job/101226962635), compile-only |
+
+Local source verification independently passed 1,129 Windows workspace tests,
+6 intentional ignores, fmt and workspace all-target warnings-denied clippy.
+Named E01/E02 deadline assertions supplement the preserved native process
+regressions; per-suite CI logs retain the actual confirmations. The new evidence
+supersedes `81c9aea` acceptance after the failed extra audit, without rewriting
+that audit or pretending its original green CI proved the uncovered edge case.
