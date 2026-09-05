@@ -1933,4 +1933,4 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-09-05T03:40:04Z
 - **Files modified:** `crates/ferric-cli/src/{config,backend,query,mcp,api,chat,icm,skills_cmd,bench_cmd,autonomy_cmd,toolbench_cmd}.rs`, `crates/ferric-cli/tests/cli.rs`, `docs/configuration.md`, INT-0006, Sprint 120 unit evidence and work ledgers.
 - **Verification:** Backend and no-default configuration suites each 24 passed; backend units 4 passed; named API reload, chat streaming, multi-consumer invalid config, selected-workspace, effective-number and resume-inheritance assertions passed. Existing CLI config regression filter 8 passed. All-target backend CLI clippy with warnings denied and scoped formatting passed. Root reviewed the changed boundaries; API reload timing and legacy tolerated unknown fields remain unchanged. See unit evidence for retained initial fixture failures.
-- **Commit:** PENDING
+- **Commit:** `c1000088a1014b17f38d8d58feef1da755b14c37`
