@@ -471,6 +471,7 @@ fn bounded_capture_head_tail_and_noisy_child() {
     let head = run_bounded(&mut command, READY_LIMIT, CapturePlan::head(256, 256)).unwrap();
     assert_eq!(head.exit_code, Some(0));
     assert!(!head.timed_out);
+    assert!(head.spawn_wall <= head.wall);
     assert_eq!(head.stdout.len(), 256);
     assert_eq!(head.stderr.len(), 256);
     assert!(String::from_utf8_lossy(&head.stdout).contains("OUT_HEAD\n"));
@@ -482,6 +483,7 @@ fn bounded_capture_head_tail_and_noisy_child() {
     let tail = run_bounded(&mut command, READY_LIMIT, CapturePlan::stderr_tail(9)).unwrap();
     assert_eq!(tail.exit_code, Some(0));
     assert!(!tail.timed_out);
+    assert!(tail.spawn_wall <= tail.wall);
     assert!(tail.stdout.is_empty());
     assert_eq!(tail.stderr, b"ERR_TAIL\n");
 
@@ -489,6 +491,7 @@ fn bounded_capture_head_tail_and_noisy_child() {
     let deadline = Duration::from_millis(75);
     let timeout = run_bounded(&mut command, deadline, CapturePlan::discard()).unwrap();
     assert!(timeout.timed_out);
+    assert!(timeout.spawn_wall <= timeout.wall);
     assert!(timeout.exit_code.is_none());
     assert!(timeout.status.is_none());
     assert!(timeout.stdout.is_empty() && timeout.stderr.is_empty());

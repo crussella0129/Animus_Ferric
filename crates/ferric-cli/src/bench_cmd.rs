@@ -98,6 +98,12 @@ pub struct BenchArgs {
 }
 
 pub fn run_bench(args: BenchArgs) -> ExitCode {
+    if let Err(error) =
+        crate::config::validate_effective_numbers(args.params_b, args.ctx, 0.0, None)
+    {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
     if args.models.is_some() && args.model_sha256.is_some() {
         eprintln!("--model-sha256 is only valid with one --model, not --models");
         return ExitCode::FAILURE;

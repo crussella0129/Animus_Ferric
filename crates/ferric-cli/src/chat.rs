@@ -401,8 +401,15 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     };
 
     // Layered config (CLI > project > user > default), same as `ferric query`.
-    let loaded_config = crate::config::load_layered(&workspace_root);
+    let loaded_config = match crate::config::load_layered(&workspace_root) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let cfg = loaded_config.config;
+    let stream = crate::config::effective_stream(args.no_stream, cfg.stream);
     let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
     let config = build_run_config(&RunConfigArgs {
         // Chat is the workspace owner at their own terminal, so their standing
@@ -438,6 +445,13 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         model_key: backend_opts.model.clone(),
         hooks: None,
     });
+    let config = match config {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     if let Err(error) = ensure_supported_harness_policy(config.harness_policy) {
         eprintln!("{error}");
         return ExitCode::FAILURE;
@@ -445,9 +459,6 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     let mut human_registry =
         ferric_tools::Registry::with_truncation_limit(config.registry.truncation_limit());
     ferric_tools::register_human_tools(&mut human_registry);
-    for diag in &loaded_config.diagnostics {
-        eprintln!("{diag}");
-    }
     if let Some(err) = &config.prompt_composition_error {
         eprintln!("{err}");
     }
@@ -455,7 +466,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     let backend = match if args.mock {
         Ok(ChatBackend::Mock)
     } else {
-        ChatBackend::real(&backend_opts)
+        ChatBackend::real_in(&backend_opts, workspace.root())
     } {
         Ok(b) => b,
         Err(e) => {
@@ -535,10 +546,10 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             ChatInput::Talk(text) => {
                 history.push(Message::user(text));
                 let request = talk_request(&history, &config.sampling);
-                match backend.talk(request, !args.no_stream) {
+                match backend.talk(request, stream) {
                     Ok(completion) => {
                         let resp = completion.message.text.unwrap_or_default();
-                        if args.no_stream {
+                        if !stream {
                             println!("{resp}");
                         } else {
                             println!(); // ensure newline after stream
@@ -571,14 +582,7 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                         continue;
                     }
                 };
-                match backend.escalate(
-                    &config,
-                    &workspace,
-                    &mut esc_sink,
-                    &text,
-                    seed,
-                    !args.no_stream,
-                ) {
+                match backend.escalate(&config, &workspace, &mut esc_sink, &text, seed, stream) {
                     Ok(outcome) => {
                         let resp = outcome.final_text.unwrap_or_default();
                         println!("{resp}");
@@ -780,7 +784,8 @@ mod tests {
             profile_dir: PathBuf::from("benchmarks"),
             model_key: None,
             hooks: None,
-        });
+        })
+        .unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let seed = escalation_seed(&history, &config, "chat-123", workspace.path());
         assert_eq!(
@@ -805,5 +810,118 @@ mod tests {
         assert!(error.contains("truthful synthetic evidence continuation"));
         assert_eq!(escalation_policy_error(None), None);
         assert_eq!(escalation_policy_error(Some(HarnessPolicy::Legacy)), None);
+    }
+
+    #[cfg(feature = "backend-openai")]
+    #[test]
+    fn chat_effective_stream_matrix() {
+        use std::sync::{Arc, Mutex};
+        struct RecordingProvider(Arc<Mutex<Vec<bool>>>);
+        impl RecordingProvider {
+            fn response(request: &CompletionRequest) -> Completion {
+                if request.tools.is_empty() && request.constraint.is_none() {
+                    return mock_talk_completion();
+                }
+                let mut message = Message::assistant("");
+                message.text = None;
+                message.tool_calls = vec![ferric_core::ToolCall {
+                    id: "finish".to_string(),
+                    name: ferric_loop::TASK_COMPLETE.to_string(),
+                    args: serde_json::json!({"summary": "done"}),
+                }];
+                Completion {
+                    message,
+                    input_tokens: Some(10),
+                    output_tokens: Some(5),
+                    truncated: false,
+                }
+            }
+        }
+        #[async_trait::async_trait]
+        impl Provider for RecordingProvider {
+            fn id(&self) -> &str {
+                "stream-observer"
+            }
+            fn capabilities(&self) -> ferric_provider::Capabilities {
+                ferric_provider::Capabilities {
+                    supports_native_tool_calls: true,
+                    supports_constraint: false,
+                    exposes_logits: false,
+                    supports_media: false,
+                }
+            }
+            async fn complete(
+                &self,
+                request: CompletionRequest,
+                _: Option<Arc<std::sync::atomic::AtomicBool>>,
+            ) -> Result<Completion, ferric_provider::ProviderError> {
+                self.0.lock().unwrap().push(false);
+                Ok(Self::response(&request))
+            }
+            async fn complete_streaming(
+                &self,
+                request: CompletionRequest,
+                _: &(dyn Fn(ferric_provider::StreamDelta) + Sync),
+                _: Option<Arc<std::sync::atomic::AtomicBool>>,
+            ) -> Result<Completion, ferric_provider::ProviderError> {
+                self.0.lock().unwrap().push(true);
+                Ok(Self::response(&request))
+            }
+        }
+        for (configured, no_stream, expected) in [
+            (None, false, true),
+            (Some(true), false, true),
+            (Some(false), false, false),
+            (None, true, false),
+            (Some(true), true, false),
+            (Some(false), true, false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let backend = ChatBackend::Real {
+                provider: Box::new(RecordingProvider(calls.clone())),
+                runtime: tokio::runtime::Runtime::new().unwrap(),
+            };
+            let config = build_run_config(&RunConfigArgs {
+                mock: true,
+                params_b: 1.2,
+                ctx: 4096,
+                temperature: 0.0,
+                quant: "Q4_K_M".to_string(),
+                family: "test".to_string(),
+                protocol_override: None,
+                harness_policy: None,
+                prompts_dir: None,
+                max_ring: None,
+                tier_override: None,
+                profile_dir: dir.path().to_path_buf(),
+                model_key: None,
+                hooks: None,
+                workspace_root: dir.path().to_path_buf(),
+                requested_skills: Vec::new(),
+                allowed_skills: Vec::new(),
+            })
+            .unwrap();
+            let stream = crate::config::effective_stream(no_stream, configured);
+            let history = vec![
+                Message::system("Answer the question"),
+                Message::user("hello"),
+            ];
+            backend
+                .talk(talk_request(&history, &config.sampling), stream)
+                .unwrap();
+            let workspace = Workspace::new(dir.path()).unwrap();
+            let seed = escalation_seed(&history, &config, "chat-stream", workspace.root());
+            let mut sink = JsonlSink::open(dir.path().join("stream.jsonl"), "stream").unwrap();
+            let outcome = backend
+                .escalate(&config, &workspace, &mut sink, "finish", seed, stream)
+                .unwrap();
+            assert_eq!(outcome.final_text.as_deref(), Some("done"));
+            assert_eq!(
+                *calls.lock().unwrap(),
+                vec![expected, expected],
+                "talk and action must use the same effective stream selection"
+            );
+        }
     }
 }

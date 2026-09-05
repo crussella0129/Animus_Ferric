@@ -4,6 +4,50 @@ Ferric reads a small, **named** set of config inputs — never a generic key-val
 map, and none of them can touch security policy (that stays hardcoded, ADR-005).
 Everything is per-workspace and optional.
 
+## Ordinary sessions
+
+Start with `cargo r` in the repository, or installed `ferric` in a work folder.
+Existing expert configuration supplies model/endpoint choices and applicable
+defaults; setup does not rewrite `.ferric/config.toml`. A missing configuration
+does not require a settings questionnaire.
+
+With an installed `llama-server`, setup can select a regular GGUF already in
+the workspace's `models` directory. Local launch defaults to CPU, zero GPU
+layers, and a 4096-token context unless context is explicitly configured.
+These settings are unqualified: model metadata does not establish memory fit,
+speed, grammar support, or coding capability. No model/engine downloads or
+capability benchmarks run implicitly.
+
+Those are local-launch defaults, not measurements of a borrowed server's
+resources. On shared Linux hosts, exact process ownership may be uninspectable;
+automatic local launch then refuses, while explicitly configured servers remain
+usable. Linux's positive native tests use an isolated CI environment. Automatic
+native macOS startup is not supported; no platform-parity claim is made.
+
+After successful preparation, `.ferric/startup-preference.json` remembers the
+selected model coordinate. It contains no API key or permission to edit files,
+does not replace `model_profiles.json`, and is revalidated before reuse.
+Malformed or stale preferences require a fresh selection or an explicit error.
+The human session uses conservative tool limits even when expert tier/ring
+overrides exist; expert commands retain their configured controls.
+Trace provenance labels these limits `conservative`, not measured capability
+or an expert override.
+
+Ask-only gives the model no file tools. Folder work requires consent on each
+session or `--allow-edits`, and grants no shell, hooks, or delegation. Ferric
+still writes its own preferences and traces in both modes. Session traces use
+the shared `.ferric/trace` directory.
+
+`.ferric-startup.lock` serializes startup within one workspace and remains on
+disk after the session; do not infer a running process from its presence or
+remove it while a session may be active. Status and explain read configuration
+and local resources without health probes, lock creation, or writes. They do
+not represent completed or resumable application checkpoints.
+
+Cancellation is bounded during startup and provider requests. In folder-work
+mode, an existing Git snapshot may delay cancellation until Git returns;
+T-12024 tracks that remaining boundary.
+
 ---
 
 ## Precedence
@@ -13,6 +57,27 @@ For the tunables below, Ferric resolves each value as:
 **CLI flag > project `.ferric/config.toml` > user config > built-in default**
 
 So config sets your defaults and flags override them per run.
+
+Only an absent file uses defaults. An unreadable, malformed, oversized, or
+invalid present configuration stops the command before provider requests,
+hooks, or agent work. This applies even when a CLI flag would override the
+invalid setting: a broken project layer must never reveal user-level hooks or
+skills beneath it. Errors name the file or setting and a corrective action;
+they do not print configuration contents, credentials, or parser excerpts.
+Configuration files must be regular UTF-8 files of at most 1 MiB. Previously
+tolerated unknown fields, including the retired `backend` key, remain tolerated.
+
+Parameter count must be finite and greater than zero, context must be greater
+than zero, temperature must be finite and between 0 and 2 inclusive, and a
+configured tool ring must be between 0 and 3 inclusive. The same checks apply
+to effective CLI settings. These limits validate inputs; they do not prove
+that a model fits the host or has earned a capability tier.
+
+Query, chat, MCP and API select configuration and managed backends from the
+same `--workspace`; ICM uses its pipeline root. An explicit API endpoint still
+wins over discovery. Conflicting or unverifiable managed registrations require
+operator resolution. Relative expert paths such as `profile_dir` retain their
+existing invocation-directory interpretation.
 
 ---
 
@@ -36,7 +101,7 @@ temperature = 0.0              # 0.0 = deterministic sampler
 
 # Behavior
 max_ring    = 1                # cap the active tool ring (restrict-only)
-harness_policy = "legacy"      # legacy | evidence | evidence_planner
+harness_policy = "legacy"      # legacy | evidence (evidence_planner is unavailable)
 profile_dir = "benchmarks"     # where model_profiles.json lives (ADR-029)
 stream      = true             # stream output by default
 
@@ -45,6 +110,17 @@ pre_turn  = "scripts/pre.sh"
 post_turn = "scripts/post.sh"
 on_error  = "scripts/err.sh"
 ```
+
+`stream = false` disables streaming in both query and chat, including chat's
+`/do` turns. `--no-stream` also disables it. MCP and API retain their own
+transport behavior. An omitted harness policy remains omitted until execution:
+fresh runs use Legacy and resumed runs inherit their trace's policy.
+
+The expert API continues to reload valid configuration for each request;
+MCP and chat hold their admitted settings for the session. An invalid API
+configuration is rejected at startup or, if changed later, at the next request.
+`quant` and `family` remain accepted compatibility labels; ordinary query/chat
+policy selection does not use them to infer model capability.
 
 The field list is fixed and bounded on purpose — config can configure behavior,
 but it can never reach the guard, denylists, or workspace boundary.
@@ -135,6 +211,10 @@ Hooks run via the host shell (`sh -c` / `cmd /C`) in the workspace root. They ar
 per-workspace escape hatch you author — distinct from cron jobs, whose command is a
 bounded enum, not arbitrary shell.
 
+Query and ICM use configured hooks. Chat, MCP, and API do not implicitly run
+them. Query and chat honor the standing `allowed_skills` list; MCP, API, and ICM
+retain their separate skill-authorization rules.
+
 ---
 
 ## Environment variables
@@ -149,14 +229,16 @@ bounded enum, not arbitrary shell.
 
 ## Data & runtime files
 
-Written under `.ferric/` in the workspace (all git-ignorable), except that an
-individual `ferric query --trace-dir <DIR>` writes that query's trace to the
-validated external directory instead:
+Written under `.ferric/` in the workspace (all git-ignorable), apart from the
+workspace-root startup lock and an individual `ferric query --trace-dir <DIR>`
+writing that query's trace to its validated external directory:
 
 | Path | What |
 |---|---|
 | `.ferric/server.json` | running server runfile (auto-discovery) |
 | `.ferric/trace/*.jsonl` | default per-session traces (the source of truth); query traces may use explicit `--trace-dir` |
+| `.ferric/startup-preference.json` | atomically saved model choice; separate from expert configuration and capability profiles |
+| `.ferric-startup.lock` | persistent, ignored workspace coordination file; the operating-system lock is released after owned cleanup |
 | `.ferric/cron/*.toml` + `.state.json` | cron jobs + last-run state |
 | `.ferric/MEMORY.md` | dream-mode consolidated memory |
 | `.ferric/tasks/` | background-task stdout/stderr redirects |

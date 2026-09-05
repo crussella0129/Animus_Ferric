@@ -41,6 +41,7 @@ e2e_log_*.txt
 # Runtime artifacts: per-session traces + the `ferric server` runfile, and
 # toolbench reports written by --report (single + fleet sweeps).
 .ferric/
+.ferric-startup.lock
 /report*.md
 /report*.jsonl
 /fleet*.md

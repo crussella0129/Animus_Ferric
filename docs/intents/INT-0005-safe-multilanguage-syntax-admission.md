@@ -2,12 +2,12 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0005
-- **State:** proposed
-- **Work evidence:** [T-11405 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113)
+- **State:** active
+- **Work evidence:** [T-11405 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-12001 Python 0.5 maintenance](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
-- **Code evidence:** none
-- **Test evidence:** none
-- **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md)
+- **Code evidence:** [T-12001 Python 0.5 implementation](../work/completed-tasks.md#t-12001-sprint-120)
+- **Test evidence:** [Sprint 120 requalified partial increment at 4f4e4f0, controlled-schedule caveat](../sprints/s120/sprint-tests/test-report.md)
+- **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md); [Sprint 120 scoped acceptance](../sprints/s120/sprint-tests/test-report.md)
 
 ## Intent
 
@@ -50,6 +50,23 @@ Parser dependencies and language-version drift require deliberate maintenance.
 Syntax validity remains only an admission signal, never proof of semantic
 correctness or a substitute for operator-authorized checks.
 
+## Sprint 120 progress
+
+Sprint 120 initially accepted the Python-only maintenance increment at `0ec5a0e` with
+strict invalid/unchecked outcomes, atomic mutation regressions and in-process
+Legacy customization coverage. Rust and JavaScript/TypeScript remain T-11405;
+this intent stays active and has no whole-intent completion evidence. Syntax
+admission still does not establish semantic correctness or authorize execution.
+
+Renewed qualification at `4f4e4f0` preserves the same Python maintenance
+contract; native test scheduling and its explicit caveat are recorded in the
+current Test report. This is renewed evidence, not another intent transition.
+
 ## Transition history
+
+- 2026-09-05: moved from `planned` to `active` when Build began T-12001 under
+  the locked owner-approved plan. Existing Python admission maintenance only.
+
+- 2026-09-05: moved from `proposed` to `planned` after owner approval of Sprint 120 T-12001. This maintains existing Python admission only; Rust/JavaScript expansion remains T-11405.
 
 - 2026-08-26: created as `proposed` after the Sprint 113 Python boundary repair.

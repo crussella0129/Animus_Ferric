@@ -3,11 +3,11 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0008
 - **State:** active
-- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [Sprint 117 T-11606 recovery plan](../sprints/s117/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 ownership-safe Tailscale Serve plan](../sprints/s118/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [post-Sprint 117 lifecycle carry-forward](../work/tasks.md#post-sprint-117-lifecycle-carry-forward); [post-Sprint 118 Tailscale proof carry-forward](../work/tasks.md#post-sprint-118-tailscale-proof-carry-forward); [Sprint 119 source-owned process refactor plan](../sprints/s119/sprint-plans/build-plan.md)
+- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [Sprint 117 T-11606 recovery plan](../sprints/s117/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 ownership-safe Tailscale Serve plan](../sprints/s118/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [post-Sprint 117 lifecycle carry-forward](../work/tasks.md#post-sprint-117-lifecycle-carry-forward); [post-Sprint 118 Tailscale proof carry-forward](../work/tasks.md#post-sprint-118-tailscale-proof-carry-forward); [Sprint 119 source-owned process refactor plan](../sprints/s119/sprint-plans/build-plan.md); [Sprint 120 human-first approved plan](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
-- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116); [T-11606 accepted lifecycle remediation](../work/completed-tasks.md#t-11606-sprint-117); [T-11801 initial adapter and typed ownership record](../work/completed-tasks.md#t-11801-sprint-118); [T-11802 crash-safe launch](../work/completed-tasks.md#t-11802-sprint-118); [T-11803 status and teardown](../work/completed-tasks.md#t-11803-sprint-118); [T-11804 doctor and operator surface](../work/completed-tasks.md#t-11804-sprint-118); [T-11805 initial lifecycle evidence](../work/completed-tasks.md#t-11805-sprint-118); [Sprint 118 direct-LocalAPI correction](../work/completed-tasks.md#sprint-118-post-loop-correction); [T-11510 Sprint 118 umbrella completion](../work/completed-tasks.md#t-11510-sprint-118); [Sprint 119 shared source-process increment](../work/completed-tasks.md#t-11901-sprint-119); [Sprint 119 source test lifetimes](../work/completed-tasks.md#t-11902-sprint-119)
-- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md); [Sprint 117 accepted lifecycle test report](../sprints/s117/sprint-tests/test-report.md); [Sprint 117 clean test critique](../sprints/s117/sprint-tests/critique.md); [Sprint 118 ownership-safe Tailscale lifecycle test report](../sprints/s118/sprint-tests/test-report.md); [Sprint 118 Test critique](../sprints/s118/sprint-tests/critique.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [Sprint 119 source-owned process Test report](../sprints/s119/sprint-tests/test-report.md)
-- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Sprint 117 acceptance-recovery research](../sprints/s117/sprint-research/research-report.md); [Sprint 118 ownership-safe Serve research](../sprints/s118/sprint-research/research-report.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [current server lifecycle and Tailscale contract](../server-configuration.md#tailscale-serve-exposure); [Source-driven process contract](../process-execution.md); [Sprint 119 Loop reconciliation](../sprints/s119/loop-review.md)
+- **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116); [T-11606 accepted lifecycle remediation](../work/completed-tasks.md#t-11606-sprint-117); [T-11801 initial adapter and typed ownership record](../work/completed-tasks.md#t-11801-sprint-118); [T-11802 crash-safe launch](../work/completed-tasks.md#t-11802-sprint-118); [T-11803 status and teardown](../work/completed-tasks.md#t-11803-sprint-118); [T-11804 doctor and operator surface](../work/completed-tasks.md#t-11804-sprint-118); [T-11805 initial lifecycle evidence](../work/completed-tasks.md#t-11805-sprint-118); [Sprint 118 direct-LocalAPI correction](../work/completed-tasks.md#sprint-118-post-loop-correction); [T-11510 Sprint 118 umbrella completion](../work/completed-tasks.md#t-11510-sprint-118); [Sprint 119 shared source-process increment](../work/completed-tasks.md#t-11901-sprint-119); [Sprint 119 source test lifetimes](../work/completed-tasks.md#t-11902-sprint-119); [T-12002 configuration](../work/completed-tasks.md#t-12002-sprint-120); [T-12003 foreground preparation](../work/completed-tasks.md#t-12003-sprint-120); [T-12004 human entry point](../work/completed-tasks.md#t-12004-sprint-120); [T-12005 provider I/O](../work/completed-tasks.md#t-12005-sprint-120); [T-12006 qualification](../work/completed-tasks.md#t-12006-sprint-120)
+- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md); [Sprint 117 accepted lifecycle test report](../sprints/s117/sprint-tests/test-report.md); [Sprint 117 clean test critique](../sprints/s117/sprint-tests/critique.md); [Sprint 118 ownership-safe Tailscale lifecycle test report](../sprints/s118/sprint-tests/test-report.md); [Sprint 118 Test critique](../sprints/s118/sprint-tests/critique.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [Sprint 119 source-owned process Test report](../sprints/s119/sprint-tests/test-report.md); [Sprint 120 accepted prepared-host/configuration/Python Test increment](../sprints/s120/sprint-tests/test-report.md)
+- **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Sprint 117 acceptance-recovery research](../sprints/s117/sprint-research/research-report.md); [Sprint 118 ownership-safe Serve research](../sprints/s118/sprint-research/research-report.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [current server lifecycle and Tailscale contract](../server-configuration.md#tailscale-serve-exposure); [Source-driven process contract](../process-execution.md); [Sprint 119 Loop reconciliation](../sprints/s119/loop-review.md); [Human-first command surface](../commands.md); [Prepared-host configuration and limits](../configuration.md)
 
 ## Intent
 
@@ -40,12 +40,24 @@ operation.
 
 The first-run path should therefore behave like product setup, not a published
 runbook: detect hardware, validate an accelerated or CPU backend, provision or
-select a compatible engine, find or add a model by stable alias, run bounded
-calibration, and persist attributable defaults. INT-0007 owns the measurement
-and profile semantics; this intent composes them behind one idempotent front
-door. Subsequent use should require only that front door and an objective, while
-the existing expert commands remain available and script-compatible through
-progressive disclosure.
+select a compatible engine, find or add a model by stable alias, and persist
+attributable defaults. A normal `cargo r` or installed `ferric` invocation must
+open that front door, not fail because the human omitted an internal command.
+The product owns mechanical phase ordering, readiness checks, model metadata,
+and cleanup. Humans choose the objective, an ambiguous model, and meaningful
+authority/resource commitments; they should not complete a technical settings
+questionnaire before they can start.
+
+Bounded readiness and resource checks must be distinguished from capability
+qualification. The expensive L0-L6 benchmark is not a prerequisite to ordinary
+conversation. Unmeasured capability remains explicitly unmeasured and cannot
+silently promote tool authority. INT-0007 owns measurement and profile semantics;
+this intent composes qualification when it is required for the requested work.
+Subsequent use should require only that front door and an objective, while the
+existing expert commands remain available and script-compatible through
+progressive disclosure. In non-interactive no-argument use, show a short useful
+welcome and exit successfully without prompts, downloads, or process launches;
+malformed explicit commands still report an error.
 
 The current native identity-safe teardown boundary is intentionally narrower
 than the eventual cross-platform goal in AC-8: Windows, plus little-endian
@@ -128,6 +140,16 @@ complete.
     and machine-readable forms remain available for CI, debugging, and power
     users directly or through a stable advanced namespace; migration does not
     turn the front door into the only route to retained evidence or controls.
+12. Normal zero-argument launch opens a useful interactive front door on a
+    terminal, and a non-mutating successful welcome without a terminal. A
+    prepared-host first session asks at most three meaningful decisions before
+    accepting an objective; repeat use does not ask for parameter count,
+    quantization, family, context, protocol, ring, or calibration commands.
+    Selecting an ask-only session never grants filesystem mutation, and any
+    permission to work in a folder is explicit and scoped to that folder.
+    Decline, EOF, cancellation, invalid configuration, absent resources, and
+    ambiguous existing ownership have bounded, actionable outcomes. Errors
+    state what happened and the next safe action instead of printing a runbook.
 
 ## Rationale
 
@@ -146,6 +168,13 @@ unrunnable fixed-timeout calibration make the current operator surface too
 expensive. The report is external evidence, not an instruction source or
 acceptance result; this chapter independently adopts its durable product
 outcomes and leaves implementation ordering to the work ledger.
+
+The owner's Sprint 120 usability feedback makes human decision cost a first-
+class acceptance concern: "simplicity is genius" means carrying the mechanical
+work, not merely shortening command names or hiding failed checks. Prepared-
+host usability can ship as an explicitly partial increment while clean-host
+acquisition, measured hardware fit, and full resumable application execution
+remain visible work; a welcome screen alone does not satisfy those outcomes.
 
 ## Alternatives
 
@@ -173,8 +202,10 @@ also creates a compatibility promise: new backends and platforms must extend
 the same concepts instead of adding another public runbook.
 
 First use may take longer because setup performs explicit detection and bounded
-calibration. Later use becomes materially smaller and safer because aliases,
-profiles, and verified checkpoints are reused idempotently. Preserving the
+readiness checks. Capability benchmarking is a separate, attributable operation,
+not an undisclosed wait before first conversation. Later use becomes materially
+smaller and safer because aliases, profiles, and verified checkpoints are reused
+idempotently. Preserving the
 advanced surface increases compatibility work, but avoids forcing CI and power
 users through an opaque wizard.
 
@@ -192,7 +223,50 @@ guarantee. Until then, tests must state their boundary and fail if their own
 children cannot be proved reaped; this limitation does not waive that test
 success condition.
 
+## Sprint 120 progress
+
+Sprint 120 initially accepted a prepared-host increment at `0ec5a0e`: normal source/installed
+launch, no more than three meaningful setup choices, remembered model (not file
+consent), read-only description, bounded owned preparation and borrowed survival,
+conservative Evidence work, byte-correct cancellable provider I/O, actionable
+errors and retained traces. Code, named tests, both native CI environments and a
+fresh real-model/terminal conversation support the locked portions of
+AC-1/3/5/6/7/9/10/11/12. This is progress, not a state transition or realization.
+
+Readiness is intentionally separate from capability qualification: default local
+CPU/4096 settings are unmeasured, not a hardware-fit promise. A saved model choice
+does not persist mutation consent, revive a calibration profile or authorize
+shell/ICM. T-11509 now carries the remaining acquisition/calibration/resume and
+workflow-checkpoint work. T-11707 retains ordinary-host Linux authority and
+T-12024 retains synchronous Git/whole-Work cancellation; macOS and broader
+ownership limits remain explicit. INT-0007's application/skill qualification is
+not advanced by a short Ask response. State remains active.
+
+Checkpoint diagnosis renewed the same partial acceptance at `4f4e4f0` with a
+controlled native-test-schedule caveat. Unrelated native test bodies run serially
+on both CI platforms, while product race tests retain simultaneous workers and
+bounded barriers. This avoids making qualification depend on competition among
+unrelated fixtures without skipping tests, raising deadlines or weakening
+cleanup. A narrower shared mutex was rejected because cohort membership and
+nested acquisition add correctness risks; capping Tokio workers alone would not
+isolate native process creation. This is a qualification-schedule decision, not
+proof of the historical Windows timeout's cause or a production performance fix.
+Retained stage diagnostics and T-12027 own parallel-suite robustness; T-12026
+separately owns exact Windows thread-resume/enumeration admission. A recurrence
+under the canonical schedule is a blocker. Code and renewed evidence are in the
+[checkpoint requalification record](../work/completed-tasks.md#sprint-120-checkpoint-requalification).
+T-12028 retains the ordinary-Cargo duplicate-target warning as separate UX
+cleanup. No intent realization or additional model authority is inferred.
+
 ## Transition history
+
+- 2026-09-05: revised the active intent at the owner's direction for normal
+  zero-argument launch, a measurable prepared-host decision budget, explicit
+  folder authority, concise errors, and separation of readiness from expensive
+  capability qualification. Added AC-12 without declaring AC-2's clean-host
+  acquisition/calibration/resumption complete. Sprint 120 research records the
+  repository-wide review and the proposed human-first increment; state remains
+  active and no acceptance result is implied.
 
 - 2026-09-04: clarified AC-6 at the owner's direction with the source-driven
   execution and source-owned reaping contract. Sprint 119 reviews and

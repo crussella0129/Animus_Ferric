@@ -19,6 +19,8 @@ pub const DENIED_WRITE_FILES: &[&str] = &[
     "known_hosts",
     "credentials",
     ".ferricignore",
+    // Persistent workspace startup coordination must not be replaced by tools.
+    ".ferric-startup.lock",
 ];
 
 /// Command patterns reserved for the future exec tool (s1+). Present now so

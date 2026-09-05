@@ -5,11 +5,18 @@ from `target/` manually, or create background executable proofs to work around
 a failing test. Source-defined child modes inside Cargo tests are legitimate:
 the source defines their lifetime, ownership, assertions, and cleanup.
 
-For the usual development gate:
+For the usual Windows development gate:
 
 ```powershell
-cargo test --workspace --locked
+cargo test --workspace --locked -- --test-threads=1
 ```
+
+The native workspace gates serialize unrelated test bodies on both Windows and
+Linux. Every test and its original timeout still runs; explicit concurrency
+tests create their own simultaneous workers and barriers. This gives native
+runtime fixtures a controlled test schedule, not a claim that arbitrary
+parallel-suite load cannot delay startup. Timeout diagnostics retain native
+admission and script-stage evidence; they do not replace checked cleanup.
 
 The model-free native lifecycle gate on Windows is:
 
@@ -24,12 +31,19 @@ namespace setup, plus `unshare`, `setpriv`, and `ip`):
 bash tools/test-lifecycle-linux.sh
 ```
 
+The backend-enabled Linux workspace suite also exercises exact native listener
+ownership. Run its full source gate in the same qualified environment:
+
+```sh
+bash tools/test-lifecycle-linux.sh workspace
+```
+
 That wrapper warms the Cargo target, creates an isolated PID/network namespace,
 then drops privilege before running `cargo test --offline`. A source shell
 remains namespace PID 1 to reap adopted fixture children. It forwards Cargo's
 exit status; the namespace supervisor's hard-cleanup link survives credential
 changes. It never executes a target artifact directly. The separate namespace
-is necessary for the lifecycle suite's complete listener-owner visibility; an
+is necessary for the lifecycle and startup suites' complete listener-owner visibility; an
 ordinary-host positive ownership claim remains separate work.
 
 ## Ownership boundary

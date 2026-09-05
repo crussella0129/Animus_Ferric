@@ -4,7 +4,48 @@ Every `ferric` command and its key flags. Run `ferric <command> --help` for the
 authoritative, always-current list. Global flag: `-v`/`-vv`/`-vvv` (verbosity, see
 [Observability](#observability)).
 
-Commands marked 🔵 need a running model (or `--mock`); the rest work offline.
+## Start here
+
+```sh
+cargo r
+```
+
+In the repository, this opens a session in the current folder. An installed
+`ferric` does the same. Choose ask-only conversation or permit file work for
+the displayed folder, then type normally. `/quit` or `/exit` ends the session.
+Without a terminal, no-argument launch prints a short welcome and exits without
+state changes or resource preparation.
+
+| Primary action | Meaning |
+|---|---|
+| `ferric run [PROMPT] [--workspace DIR] [--allow-edits]` | Open a session, or ask one question; file work requires this session's consent or `--allow-edits`. |
+| `ferric status [--workspace DIR] [--json]` | Describe configuration and local model choices without health probes. |
+| `ferric explain [--workspace DIR] [--json]` | Describe intended settings, ownership, and setup effects without network, processes, writes, or locks. |
+| `ferric advanced` | Show expert commands; `ferric advanced query ...` and the original `ferric query ...` spelling both work. |
+
+Ask mode has no file tools. File work uses the existing Evidence controller
+with conservative, unmeasured limits and grants no shell, hooks, or delegation.
+The new session does not interpret legacy chat's `/do`, `/run`, or `!` as
+special commands. Both modes keep Ferric's own preferences and session traces.
+Each file-work objective starts a fresh task. If Ferric needs a decision, it
+shows the question and stops; start a new task that includes your answer.
+Ordinary sessions do not resume paused tasks.
+
+Preparation uses an explicitly configured server, an identity-verified Ready
+managed server, or an installed `llama-server` with a local GGUF in `models`.
+An owned engine is stopped and reaped on session exit; a borrowed server is
+left running. Missing or ambiguous resources are reported without downloads
+or automatic registration repair. Local defaults are CPU and 4096 context
+tokens, with no hardware-fit or capability claim. See [Configuration](configuration.md).
+
+Status and explain describe setup, not completed workflow checkpoints or
+successful model execution. Startup and provider requests support bounded
+cancellation; an existing controlled-turn Git snapshot can still delay
+cancellation until Git returns (T-12024).
+
+For source execution, use `cargo r -- <arguments>`. Original expert spellings
+and formats below remain supported. Commands marked 🔵 need a model, or their
+documented `--mock` mode; the rest work offline.
 
 ---
 
@@ -22,13 +63,13 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--workspace <DIR>` | containment boundary (default: current dir) |
 | `--trace-dir <DIR>` | query-only trace root; default `<workspace>/.ferric/trace`; relative paths resolve from the invocation directory |
 | `--mock` | use the built-in scripted model — **no engine needed** |
-| `--model <NAME>` | model id (required for a real backend) |
+| `--model <NAME>` | model id; the expert backend uses `default` when omitted |
 | `--api-base <URL>` | server URL (default: the running `ferric server`, else `http://localhost:1234/v1`) |
 | `--api-key <KEY>` | API key, if your server needs one |
 | `--params-b <N>` · `--quant <Q>` · `--family <F>` · `--ctx <N>` | model profile → run policy (defaults 1.2 / Q4_K_M / unknown / 4096) |
 | `--temperature <T>` | sampling temperature (0.0 = deterministic) |
 | `--protocol native\|grammar\|xml` | override the action protocol (default: from backend caps) |
-| `--harness-policy legacy\|evidence\|evidence-planner` | autonomous control policy; fresh runs default to `legacy`, omitted resumes inherit the source trace |
+| `--harness-policy legacy\|evidence\|evidence-planner` | expert control policy; fresh runs default to `legacy`, omitted resumes inherit the source trace; `evidence-planner` is unavailable and rejected |
 | `--max-ring <N>` | cap the active tool ring (`0` = core only); restrict-only |
 | `--profile-dir <DIR>` | read `model_profiles.json` for the earned tier/ring (default `benchmarks`) |
 | `--checks-file <PATH>` | explicitly authorize fixed named verification commands and expose `run_check`; no checks are inferred when omitted |
@@ -54,7 +95,7 @@ rejected by `--resume`, while an incomplete resumable `session_end` remains a
 valid source. This is a low-level `query` option, not a high-level
 run/status/resume/evidence workflow.
 
-`evidence` is an opt-in experimental policy that binds supported mutations and
+For expert `query`, `evidence` is an opt-in experimental policy that binds supported mutations and
 named checks to recorded workspace evidence. Its Sprint 113 frozen Qwen screen
 remained 0/3 after both permitted revisions, so it is not presented as a
 performance promotion. `evidence-planner` has no implementation and fails
@@ -369,7 +410,9 @@ overrides with a per-crate filter, e.g. `FERRIC_LOG=ferric_loop=debug`. Quiet
 |---|---|
 | `.ferric/server.json` | local managed-server registration; schema v2 is mirrored in the user config directory for auto-discovery and is also the write-ahead ownership journal for a Ferric Tailscale Serve path |
 | `.ferric/trace/*.jsonl` | default per-session traces; `query --trace-dir` can place only query traces in a validated external directory |
-| `.ferric/config.toml` | project config (backend, model, hooks, …) |
+| `.ferric/config.toml` | expert project defaults (model, endpoint, hooks, …); human setup never overwrites this file |
+| `.ferric/startup-preference.json` | remembered model identity; no API key, measured qualification, or permission to edit |
+| `.ferric-startup.lock` | persistent workspace coordination file; its presence alone does not mean a session is running |
 | `.ferric/cron/*.toml` | cron job definitions |
 | `.ferric/MEMORY.md` | dream-mode consolidated memory |
 | `Animus.md` | freeform system-prompt instructions (workspace root) |

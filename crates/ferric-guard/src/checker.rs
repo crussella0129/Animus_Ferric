@@ -237,6 +237,17 @@ mod tests {
     }
 
     #[test]
+    fn startup_lock_cannot_be_replaced_by_model_tools() {
+        for name in [".ferric-startup.lock", ".FERRIC-STARTUP.LOCK"] {
+            let path = Path::new("workspace").join(name);
+            for permission in [PermissionLevel::Write, PermissionLevel::Execute] {
+                assert!(!check(permission, &path).is_allow());
+            }
+        }
+        assert!(check(PermissionLevel::Write, Path::new("startup-notes.md")).is_allow());
+    }
+
+    #[test]
     fn denylist_is_const() {
         // The lists are compile-time constants — this test pins their
         // non-emptiness; no setter API exists to mutate them at runtime.

@@ -1915,3 +1915,94 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Cause:** The extra independent audit rejected Unix cleanup's success-before-deadline paths; adjacent Windows suspended-child rollback had the same ordering. The first close at `f3cb48b` was explicitly superseded at `291f4d9`.
 - **Outcome:** Shared deadline-first classification now covers both Unix successful observations, Windows Job drain and suspended-child rollback. Registry locks are released before fail-closed shutdown.
 - **Verification:** Local source-driven Windows workspace 1,129 passes / 6 intentional ignores, fmt and warnings-denied clippy; all six native/compile CI jobs at exact corrected head in run `33937071734` passed. Retained audit, source-review closure and current clause mapping are in the [Test correction record](../sprints/s119/test-phase-corrections.md) and [integration evidence](../sprints/s119/sprint-tests/integration-tests.md#final-post-audit-source-head-evidence). Formal Test critique, repeated Loop close, extra audit and actual PR checkpoint still gate the offer for merge.
+
+
+## T-12001 (sprint 120)
+
+- **Description:** Restored RustPython 0.5 compilation and maintained Python candidate admission with strict invalid/unchecked distinctions, recursive generic guard, actual adapter diagnostics and positive except-star coverage.
+- **Intent:** [INT-0005](../intents/INT-0005-safe-multilanguage-syntax-admission.md), Python maintenance portion of AC-1–5 only.
+- **Completed:** 2026-09-05T03:18:59Z
+- **Files modified:** `crates/ferric-tools/src/builtin/check_syntax.rs`, `crates/ferric-tools/tests/controlled_mutations.rs`, INT-0005, Sprint 120 unit record and work ledgers.
+- **Verification:** Source-aware Cargo: 16 syntax units, 15 controlled-mutation integrations, all-target ferric-tools clippy with warnings denied, and workspace fmt check passed. Independent read-only review found no blocker; additional try/handler/finally/match generic-guard cases were added and the same checks rerun successfully. See [unit evidence](../sprints/s120/sprint-tests/unit-tests.md).
+- **Commit:** `5d783cd59ecff6f27dbcc2e91b89d42a0e60056a`
+
+## T-12002 (sprint 120)
+
+- **Description:** Made present invalid configuration fail closed with bounded, sanitized admission, validated effective numeric inputs, selected-workspace provider discovery and shared chat streaming resolution.
+- **Intent:** [INT-0006](../intents/INT-0006-truthful-policy-contract.md) AC-5/6 increment; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) partial AC-12.
+- **Completed:** 2026-09-05T03:40:04Z
+- **Files modified:** `crates/ferric-cli/src/{config,backend,query,mcp,api,chat,icm,skills_cmd,bench_cmd,autonomy_cmd,toolbench_cmd}.rs`, `crates/ferric-cli/tests/cli.rs`, `docs/configuration.md`, INT-0006, Sprint 120 unit evidence and work ledgers.
+- **Verification:** Backend and no-default configuration suites each 24 passed; backend units 4 passed; named API reload, chat streaming, multi-consumer invalid config, selected-workspace, effective-number and resume-inheritance assertions passed. Existing CLI config regression filter 8 passed. All-target backend CLI clippy with warnings denied and scoped formatting passed. Root reviewed the changed boundaries; API reload timing and legacy tolerated unknown fields remain unchanged. See unit evidence for retained initial fixture failures.
+- **Commit:** `c1000088a1014b17f38d8d58feef1da755b14c37`
+
+## T-12005 (sprint 120)
+
+- **Description:** Added whole-response cancellation and byte-framed strict UTF-8 SSE decoding, with joined bounded HTTP fixtures for all response phases and every Unicode split.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), provider portion of AC-6/12.
+- **Completed:** 2026-09-05T03:40:04Z
+- **Files modified:** `crates/ferric-provider/src/openai.rs`, `crates/ferric-provider/src/openai_io_tests.rs`, Sprint 120 unit evidence and work ledgers.
+- **Verification:** Source-aware provider suite 45 passed, 0 failed, 0 ignored; all-target backend provider clippy with warnings denied and scoped fmt check passed. Root and independent read-only boundary review found no blocker. Whole-request fixtures prove cancellation and connection closure within two seconds across stalled headers, error bodies, nonstream JSON and SSE. Human owned-engine integration remains a later T-12004/06 gate, not claimed by this provider commit.
+- **Commit:** `742d442e56ea3cc121c3a6765c94c504922a6012`
+
+## T-12003 (sprint 120)
+
+- **Description:** Added foreground preparation with distinct borrowed/owned lifetimes, bounded model/probe/engine operations, persistent workspace coordination, safe model preferences and retained-file trace allocation.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), prepared-host portions of AC-3/5/6/7/10/12.
+- **Completed:** 2026-09-05T04:08:14Z
+- **Files modified:** `crates/ferric-cli/src/startup.rs`, `startup/{models,probe,probe_tests,runtime,storage,tests}.rs`, CLI Cargo dependencies/main module declaration, `Cargo.lock`, `.gitignore`, `crates/ferric-guard/src/{denylist,checker}.rs`, Sprint 120 unit evidence/metadata and work ledgers.
+- **Verification:** Native Windows startup suite 30 passed, 0 failed; three corrected model-binding tests reran successfully after a lint-only fixture cleanup. CLI scoped backend clippy with warnings denied passed; guard lock regression and guard clippy passed; workspace formatting passed. Separate review found and closed directory-binding, stale-choice and version-deadline issues. Generation transport preservation is implemented and tested in T-12004 but is not part of this startup commit. Linux native execution, integrated human acceptance and live-model evidence remain Test gates.
+- **Commit:** `998367cf9c19dca90d795e91672a4d3e851eabd0`
+
+## T-12004 (sprint 120)
+
+- **Description:** Made default Cargo launch the human session, with four primary actions, remembered model, structural Ask isolation, consented conservative Evidence work, pinned generation transport, retained-file tracing and synchronous cancellation admission.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), prepared-host portions of AC-1/6/9/10/11/12.
+- **Completed:** 2026-09-05T04:25:48Z
+- **Files modified:** root/CLI Cargo manifests, CLI `main.rs`, `human.rs`, `human_journey_tests.rs`, `query.rs`, parser assertions in `autonomy_cmd.rs`, `tests/{cli,human_cli}.rs`, core scale provenance, provider prepared transport/tests, trace retained-file constructor/tests, Sprint 120 unit evidence and work ledgers.
+- **Verification:** Human source journeys 16 passed / 1 opt-in live test ignored; that live test was separately executed successfully with checked engine cleanup. Primary/expert CLI integration 5 passed, routing 2 passed; no-default CLI suite 407 passed with no ignored tests; backend and no-default all-target clippy with warnings denied passed. Provider 47 passed; additive provenance and retained-file tests passed. Actual Cargo terminal conversation exited zero. Independent review closed routing, Ctrl-C registration and recovery-command literal-quoting defects. Final exact-head native/CI acceptance remains T-12006/Test, not implied by this task boundary.
+- **Commit:** `b4475d1dac561d23ec0201964acb21b7fe89b2fe`
+
+## T-12006 (sprint 120)
+
+- **Description:** Added complete clause-mapped journey, native concurrency/cancellation/refusal and finite HTTP fixture tests; routed Linux workspace acceptance through the existing source namespace; published cargo-r-first compact docs without README sprint history.
+- **Intent:** [INT-0005](../intents/INT-0005-safe-multilanguage-syntax-admission.md), [INT-0006](../intents/INT-0006-truthful-policy-contract.md), [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), only the locked partial criteria.
+- **Completed:** 2026-09-05T04:48:32Z (implementation boundary; final-head CI/Test acceptance remains mandatory below).
+- **Files modified:** CLI human journey/startup model/probe/lifetime tests, `tests/{human_cli,human_docs,source_execution}.rs`, `.github/workflows/ci.yml`, Linux wrapper/reaper, README, commands/configuration/process docs, tools README, Sprint 120 unit/integration/E2E evidence, metadata and work ledgers.
+- **Verification:** Final coherent native Windows workspace run passed 1,245 tests / 7 intentional ignores; native lifecycle 5/5 passed in 19.82 seconds. Workspace and lifecycle warnings-denied clippy, workspace fmt and explicit included-fixture rustfmt passed. Final startup focused suite 37/37; human command/docs/source gates 7+1+2 passed. Independent read-only review found no remaining blocker after strengthening actual E03 outcomes and repairing demonstrably defective finite HTTP fixture readers/writers. Earlier failures and limits remain in unit evidence. The separately executed real-model and PTY Build trials passed with owned cleanup. Immutable implementation-head push, all required native/compile CI, exact-head live/TTY reruns, formal Test critique, Loop and post-Loop audit still gate the PR; none is inferred from static workflow strings or this task completion.
+- **Commit:** `f33669ea15e68fab2a04879c566bbfb8c4c32584`
+
+## Sprint 120 final Test acceptance
+
+**Historical first accepted-source checkpoint; superseded by the renewed
+qualification below after final PR checks reopened Test.**
+
+- **Intent:** INT-0005/6/8, only the locked Python/configuration/prepared-host portions.
+- **Implementation at this checkpoint:** `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`; Test artifacts committed at `dc9c900`.
+- **Verification:** [Historical accepted Test report](https://github.com/crussella0129/Animus_Ferric/blob/dc9c900253683875b179fccec0649c0bb116c5e1/docs/sprints/s120/sprint-tests/test-report.md), [historical clean independent critique](https://github.com/crussella0129/Animus_Ferric/blob/dc9c900253683875b179fccec0649c0bb116c5e1/docs/sprints/s120/sprint-tests/critique.md), all eight exact-head CI jobs, fresh source-owned live and actual terminal runs. Windows workspace 1,247 passed / seven intentional ignores; isolated Linux 1,253 / five; backend-free 407 each; native lifecycle five/six. The C-001 guidance correction and failed earlier candidates remain retained in unit/CI records.
+- **Boundary:** Task implementation entries above retain their historical counts and pending-at-that-time gates. This acceptance supplies the final Test evidence without rewriting those commits. Loop and the additional post-Loop audit still gate the sole PR; no whole intent is realized.
+
+## T-11905 (sprint 120)
+
+- **Description:** Completed the requested repository-wide selective review and the owner-approved bounded human-first refactor, with all unselected findings retained as prioritized work.
+- **Intent:** [INT-0006](../intents/INT-0006-truthful-policy-contract.md), [INT-0008](../intents/INT-0008-unified-local-model-workflow.md).
+- **Completed:** 2026-09-05T05:43:36Z (review/refactor umbrella reconciliation during Loop).
+- **Coverage:** [Repository review](../sprints/s120/sprint-research/repository-review.md) spans all sixteen workspace crates selectively; [research](../sprints/s120/sprint-research/research-report.md) retains the explicit 51-file budget override and primary-source investigation. This is not an exhaustive security seal.
+- **Implementation:** T-12001–06 preserve individual commits, dependencies and verification above; final source `0ec5a0e` includes bounded Test corrections. No unrelated refactor was folded in merely to clear the findings list.
+- **Verification:** Accepted clause-level [Test report](../sprints/s120/sprint-tests/test-report.md) and [critique](../sprints/s120/sprint-tests/critique.md); final exact-head native/CI/live evidence above.
+- **Carry-forward:** T-11405/6, T-12020/22–25 and the ordered model/platform work stay open. Sprint 119's process increment alone was not counted as this review/refactor.
+
+## T-12021 (sprint 120, reconciled umbrella)
+
+- **Description:** R04/R16 provider cancellation and strict byte-framed UTF-8 work was selected into T-12005; the duplicated research backlog entry is now reconciled with that delivered task.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), named provider response phases only.
+- **Completed:** 2026-09-05T05:43:36Z (ledger reconciliation; implementation is T-12005, not new code).
+- **Commit:** `742d442e56ea3cc121c3a6765c94c504922a6012`, with final composition accepted at `0ec5a0e`.
+- **Verification:** E05-A/B in the accepted Test report; six cancelled response-phase fixtures, every-byte Unicode framing, finite joined HTTP fixtures and human whole-request deadline/cleanup composition. This is not a universal deadline on all expert commands or whole-Work cancellation; T-12024 retains the Git/process boundary.
+
+## Sprint 120 checkpoint requalification
+
+- **Intent:** INT-0005/6/8, the unchanged locked partial increment.
+- **Completed:** 2026-09-05T06:47:19Z (renewed Test/Loop evidence reconciliation).
+- **Source:** `808cd9f0eb4651f3c56a84daca2dd79a66957a9d` adds bounded admission/script-stage diagnostics; `4f4e4f04d4ee132f9df9bb422be88a5ce366915d` ratchets the controlled native workspace schedule and operator command. No deadline, argument assertion, product race or cleanup check was relaxed.
+- **Verification:** [Renewed Test report](../sprints/s120/sprint-tests/test-report.md) and independently rechecked [proceed-with-caveats critique](../sprints/s120/sprint-tests/critique.md), committed at `ae18535`. Both exact-head eight-job CI runs passed without reruns; all native suite confirmations, root's fresh canonical gates, source-owned live acceptance and actual terminal interaction are retained.
+- **Limits:** Two original checkpoint failures, the one authorized rerun and all diagnostic samples remain historical evidence. Qualification is for the controlled schedule; the earlier stage/cause and arbitrary parallel-suite robustness remain unknown/T-12027. T-12026 is separate native admission work. Broader model/workflow/platform intentions stay active; PR 108 remains the only checkpoint and the owner alone merges.
