@@ -44,6 +44,9 @@ Windows uses a kill-on-close Job and suspended creation: ownership precedes
 execution, post-create failure rolls back the retained child, and completion
 requires both zero active Job processes and signalled retained member handles
 within the same cleanup deadline. Accounting alone is not sufficient.
+The lifetime admission counter is fenced around the member snapshot and final
+drain: an intervening admission makes that snapshot incomplete and cleanup
+fails closed. This does not claim retention of every historical process object.
 
 Linux, macOS, and FreeBSD use a cooperative process group; other Unix targets
 fail closed before spawning. Native acceptance covers Windows and Linux only,

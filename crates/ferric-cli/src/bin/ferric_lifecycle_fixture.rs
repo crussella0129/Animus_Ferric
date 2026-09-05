@@ -167,8 +167,121 @@ fn respond(mut stream: TcpStream) -> std::io::Result<()> {
     stream.flush()
 }
 
+/// A live Linux process-group anchor for the intentional `server up` handoff.
+/// The real CLI is reaped before its status is published, so production's
+/// complete /proc listener inspection never encounters a retained zombie CLI.
+#[cfg(target_os = "linux")]
+fn supervise_cli() -> std::io::Result<()> {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{Child, Command, Stdio};
+    use std::time::Instant;
+
+    struct CliChild {
+        child: Child,
+        reaped: bool,
+    }
+    impl Drop for CliChild {
+        fn drop(&mut self) {
+            if self.reaped {
+                return;
+            }
+            let termination = self.child.kill();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match self.child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) if Instant::now() < deadline => {
+                        thread::sleep(Duration::from_millis(10))
+                    }
+                    result => {
+                        eprintln!(
+                            "source CLI supervisor could not reap its launcher: termination={termination:?}; reap={result:?}"
+                        );
+                        std::process::exit(125);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut arguments = std::env::args_os().skip(2);
+    let status_path = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(|| std::io::Error::other("CLI supervisor requires a status coordinate"))?;
+    let program = arguments
+        .next()
+        .ok_or_else(|| std::io::Error::other("CLI supervisor requires the real CLI executable"))?;
+    let token = std::env::var_os(LIFETIME_TOKEN_ENV)
+        .map(PathBuf::from)
+        .filter(|token| token.is_file())
+        .ok_or_else(|| std::io::Error::other("CLI supervisor requires a live lifetime token"))?;
+    let owner = HarnessOwner::acquire_from_environment()?;
+    let lifetime_deadline = Instant::now() + Duration::from_secs(90);
+    let mut cli = CliChild {
+        child: Command::new(program)
+            .args(arguments)
+            .stdin(Stdio::null())
+            .spawn()?,
+        reaped: false,
+    };
+    let launcher_pid = cli.child.id();
+    let launch_deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = cli.child.try_wait()? {
+            cli.reaped = true;
+            break status;
+        }
+        if Instant::now() >= launch_deadline || !token.is_file() || owner.exited()? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "real CLI exceeded its source-owned launcher lifetime",
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let record = serde_json::json!({
+        "schema_version": 1,
+        "supervisor_pid": std::process::id(),
+        "launcher_pid": launcher_pid,
+        "launcher_reaped": true,
+        "raw_exit_status": status.into_raw(),
+    });
+    let staged = status_path.with_extension("pending");
+    std::fs::write(
+        &staged,
+        serde_json::to_vec(&record).map_err(std::io::Error::other)?,
+    )?;
+    std::fs::rename(staged, status_path)?;
+
+    // Keep the group leader live while the test exercises its managed server.
+    // The containing source scope owns all descendants on every failure path.
+    loop {
+        if !token.is_file() || owner.exited()? {
+            return Ok(());
+        }
+        if Instant::now() >= lifetime_deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "CLI supervisor lifetime expired",
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn main() -> ExitCode {
-    // This optional marker is test-only and intentionally precedes all argv
+    #[cfg(target_os = "linux")]
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--supervise-cli")) {
+        return match supervise_cli() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("fixture CLI supervision failed: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    // This optional marker is test-only and precedes ordinary engine argv
     // handling: either fake executable alias leaves evidence if it is invoked.
     if let Err(error) = record_invocation() {
         eprintln!("fixture could not record invocation: {error}");

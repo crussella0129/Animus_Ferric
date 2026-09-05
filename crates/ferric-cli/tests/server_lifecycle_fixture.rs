@@ -270,6 +270,33 @@ fn run_managed_cli_output_bounded(
 ) -> Output {
     use std::io::{Seek, SeekFrom};
 
+    #[cfg(target_os = "linux")]
+    let status_directory = tempfile::tempdir().expect("create source CLI handoff coordinate");
+    #[cfg(target_os = "linux")]
+    let status_path = status_directory.path().join("launcher-status.json");
+    #[cfg(target_os = "linux")]
+    let mut supervisor = {
+        let mut supervisor = Command::new(fixture_executable());
+        supervisor
+            .arg("--supervise-cli")
+            .arg(&status_path)
+            .arg(command.get_program())
+            .args(command.get_args());
+        if let Some(directory) = command.get_current_dir() {
+            supervisor.current_dir(directory);
+        }
+        for (name, value) in command.get_envs() {
+            if let Some(value) = value {
+                supervisor.env(name, value);
+            } else {
+                supervisor.env_remove(name);
+            }
+        }
+        supervisor
+    };
+    #[cfg(target_os = "linux")]
+    let command = &mut supervisor;
+
     let mut stdout = tempfile::tempfile().expect("create managed CLI stdout capture");
     let mut stderr = tempfile::tempfile().expect("create managed CLI stderr capture");
     command
@@ -279,16 +306,61 @@ fn run_managed_cli_output_bounded(
     let child = test_process_containment::ContainedChild::spawn(command)
         .unwrap_or_else(|error| panic!("spawn {label} in retained lifecycle scope: {error}"));
     // `server up` deliberately hands its server to the test's lifecycle owner.
-    // Keep the launcher's scope (and unreaped leader identity) through that
-    // handoff, including failures before a registration can be decoded.
+    // On Linux a live source supervisor anchors this scope and reaps the real
+    // launcher before publishing its status. Retaining the exited launcher as
+    // the anchor would make production /proc inspection see an unreadable
+    // zombie peer. Windows retains the launcher's native Job directly.
     lifetime.scopes.push(child);
     let child = lifetime.scopes.last_mut().unwrap();
     let deadline = Instant::now() + CLI_TIMEOUT;
+    #[cfg(windows)]
     let status = loop {
         match child.try_wait_leader() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
             result => panic!("{label} did not complete its bounded launcher handoff: {result:?}"),
+        }
+    };
+    #[cfg(target_os = "linux")]
+    let status = loop {
+        assert!(
+            child
+                .try_wait_leader()
+                .expect("observe live CLI supervisor")
+                .is_none(),
+            "{label} source supervisor exited before its managed-server handoff"
+        );
+        match fs::read(&status_path) {
+            Ok(bytes) => {
+                use std::os::unix::process::ExitStatusExt;
+                let record: serde_json::Value = serde_json::from_slice(&bytes)
+                    .expect("decode atomically published launcher status");
+                assert_eq!(record["schema_version"], 1);
+                assert_eq!(record["supervisor_pid"], child.child().id());
+                assert_eq!(record["launcher_reaped"], true);
+                let launcher_pid = record["launcher_pid"]
+                    .as_u64()
+                    .and_then(|pid| u32::try_from(pid).ok())
+                    .expect("bounded source launcher PID");
+                assert!(launcher_pid > 1 && launcher_pid != child.child().id());
+                let raw_status = record["raw_exit_status"]
+                    .as_i64()
+                    .and_then(|status| i32::try_from(status).ok())
+                    .expect("native source launcher exit status");
+                assert!(
+                    child.try_wait_leader().unwrap().is_none(),
+                    "source supervisor lost its live scope anchor"
+                );
+                break ExitStatus::from_raw(raw_status);
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            result => {
+                panic!("{label} did not publish a bounded reaped-launcher handoff: {result:?}")
+            }
         }
     };
     stdout.seek(SeekFrom::Start(0)).unwrap();

@@ -1,7 +1,11 @@
 //! Bounded ownership of native subprocess scopes.
 //!
 //! Windows children start suspended, enter a kill-on-close Job, and only then
-//! resume. Linux/macOS/FreeBSD children enter a cooperative process group: this is not a
+//! resume. Windows cleanup requires zero active Job members, signalled retained
+//! leader/member handles, and an unchanged cumulative admission count across
+//! retention and termination. Admission during cleanup fails closed; this is
+//! not a historical observer of every departed child's process-object signalling.
+//! Linux/macOS/FreeBSD children enter a cooperative process group: this is not a
 //! security boundary against `setsid`, group escape, or abrupt owner SIGKILL.
 //! Normal return and unwind clean the complete owned scope. Controlled Linux
 //! orphan tests must explicitly enable a scoped subreaper or use a reaping PID

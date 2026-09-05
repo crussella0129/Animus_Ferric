@@ -83,6 +83,15 @@ impl ChildScope {
     }
 
     pub(crate) fn cleanup(&mut self) -> io::Result<()> {
+        self.cleanup_checked(|| Ok(()))
+    }
+
+    // The checkpoint is a source-test seam, not a public process API. Production
+    // cleanup does no work between the member snapshot and termination.
+    pub(crate) fn cleanup_checked(
+        &mut self,
+        checkpoint: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<()> {
         use windows_sys::Win32::System::JobObjects::TerminateJobObject;
 
         let Some(child) = self.child.as_mut() else {
@@ -94,18 +103,32 @@ impl ChildScope {
         // Job accounting can reach zero before the last process object's exit
         // event is signalled. Retain current member identities before initiating
         // termination, then wait for those exact objects as well as accounting.
-        let retained = self.job.retain_members(deadline);
+        // TotalProcesses is cumulative: any admission after this fence makes
+        // the retained snapshot incomplete, even if that new member disappears
+        // from ActiveProcesses before we observe it. Refuse success in that
+        // case; another snapshot or ActiveProcesses alone cannot close the race.
+        let snapshot = self.job.accounting().and_then(|accounting| {
+            self.job
+                .retain_members(deadline)
+                .map(|members| (accounting.TotalProcesses, members))
+        });
+        let checkpoint_error = snapshot.as_ref().ok().and_then(|_| checkpoint().err());
         let kill_error =
             (unsafe { TerminateJobObject(self.job.get(), 1) } == 0).then(io::Error::last_os_error);
-        let retained = match retained {
-            Ok(retained) => retained,
+        let (total_before_snapshot, retained) = match snapshot {
+            Ok(snapshot) => snapshot,
             Err(error) => {
                 eprintln!("cannot retain owned Job process identities: {error}");
                 std::process::exit(125);
             }
         };
+        if let Some(error) = checkpoint_error {
+            eprintln!("Job cleanup checkpoint failed after retention: {error}");
+            std::process::exit(125);
+        }
         let mut leader_done = false;
         let mut reap_error = None;
+        let mut membership_changed = false;
 
         loop {
             if !leader_done {
@@ -121,13 +144,30 @@ impl ChildScope {
                 }
             }
 
-            let active = match self.job.active_processes() {
-                Ok(active) => active,
+            let accounting = match self.job.accounting() {
+                Ok(accounting) => accounting,
                 Err(_) => std::process::exit(125),
             };
+            membership_changed |= accounting.TotalProcesses != total_before_snapshot;
             let members_done = retained.iter().all(|process| process.exited());
-            if leader_done && active == 0 && members_done {
-                break;
+            if leader_done && accounting.ActiveProcesses == 0 && members_done {
+                // Reconcile after observing every retained exit event too, so
+                // admission between the preceding counter read and those waits
+                // cannot be mistaken for a fully covered snapshot.
+                let final_accounting = match self.job.accounting() {
+                    Ok(accounting) => accounting,
+                    Err(_) => std::process::exit(125),
+                };
+                membership_changed |= final_accounting.TotalProcesses != total_before_snapshot;
+                if final_accounting.ActiveProcesses == 0 {
+                    if membership_changed {
+                        eprintln!(
+                            "Job membership changed after identity snapshot; cleanup cannot certify every native process exit"
+                        );
+                        std::process::exit(125);
+                    }
+                    break;
+                }
             }
             if Instant::now() >= deadline {
                 std::process::exit(125);
@@ -204,7 +244,10 @@ impl WindowsJob {
         self.0 as windows_sys::Win32::Foundation::HANDLE
     }
 
-    fn active_processes(&self) -> io::Result<u32> {
+    fn accounting(
+        &self,
+    ) -> io::Result<windows_sys::Win32::System::JobObjects::JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>
+    {
         use std::mem::size_of;
         use windows_sys::Win32::System::JobObjects::{
             JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
@@ -224,7 +267,7 @@ impl WindowsJob {
         if queried == 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(accounting.ActiveProcesses)
+        Ok(accounting)
     }
 
     fn retain_members(&self, deadline: Instant) -> io::Result<Vec<RetainedProcess>> {
@@ -237,7 +280,7 @@ impl WindowsJob {
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
         };
 
-        let mut capacity = self.active_processes()?.max(1) as usize;
+        let mut capacity = self.accounting()?.ActiveProcesses.max(1) as usize;
         loop {
             let bytes = 8_usize
                 .checked_add(

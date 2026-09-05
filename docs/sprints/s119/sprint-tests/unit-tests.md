@@ -29,3 +29,29 @@ CLI units 310/0, CLI integration 68/0, bench_mock 7/0, source ratchet 1/0,
 template hygiene 3/0, and shared process 6/1 ignored. The separate serialized
 lifecycle-feature suite passed 5/5 in 19.72s. Benchmark Python checks used an
 explicit available interpreter through `FERRIC_TEST_PYTHON`, not skipped probes.
+
+## First committed Test head (superseded)
+
+Head `712e3cc5eae19170601d3c3feaee4deab03bbbd4` was pushed and independently
+confirmed with `git ls-remote`. Local Windows `cargo test --workspace --locked
+--offline --quiet` passed **1,126 tests, 6 intentional ignores**, with the real
+test Python selected explicitly. The separate final-head fmt, workspace,
+backend-openai and lifecycle-feature warnings-denied clippy checks passed.
+
+[CI run 33934904691](https://github.com/crussella0129/Animus_Ferric/actions/runs/33934904691)
+passed Linux workspace tests, backend-openai clippy, aarch64 compile checks,
+and the Windows native lifecycle job, but failed the isolated Linux lifecycle
+suite **3 passed / 3 failed**, exit 101. The retained unreaped launcher was a
+zombie; complete `/proc` listener-owner enumeration correctly refused its
+unreadable fd directory. The failing tests were
+`model_free_server_lifecycle_fixture_e2e`,
+`tailscale_localapi_lifecycle_preserves_unrelated_state`, and
+`tailscale_localapi_log_contains_no_broad_mutation_or_retry`.
+The exact-owner-death regression passed. Production ownership checks must not
+be relaxed to hide the fixture topology error.
+
+The same head's final source review found that a Windows child born after the
+member-handle snapshot could escape that snapshot's termination proof.
+Thus even its passing Windows tests are **not final acceptance**. A counted
+membership fence and deterministic late-birth regression are required before
+accepting E01; the first stable-descendant regression alone was insufficient.

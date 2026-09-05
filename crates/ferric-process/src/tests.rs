@@ -14,6 +14,11 @@ const LARGE_OUTPUT: usize = 256 * 1024;
 
 fn fixture_command(mode: &str, directory: &Path) -> Command {
     let mut command = Command::new(std::env::current_exe().expect("locate source test harness"));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
     command
         .args([
             "--exact",
@@ -141,6 +146,42 @@ fn process_fixture() {
             stdout.flush().unwrap();
             stderr.flush().unwrap();
         }
+        #[cfg(windows)]
+        "late-admission-owner" => {
+            let mut command = fixture_command("late-admission-leader", &directory);
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            let mut leader = ProcessTree::spawn(&mut command).expect("own admission-race leader");
+            await_file(&directory.join("late-leader-ready"), READY_LIMIT);
+            leader
+                .scope
+                .as_mut()
+                .expect("armed fixture scope")
+                .cleanup_checked(|| {
+                    // This child is admitted strictly after the inner Job's
+                    // exact-handle snapshot, not merely concurrently by chance.
+                    publish(&directory, "late-admission-start", "snapshot retained");
+                    await_file(&directory.join("descendant-ready"), READY_LIMIT);
+                    await_file(&directory.join("late-admission-retained"), READY_LIMIT);
+                    Ok(())
+                })
+                .expect("inner cleanup must reject incomplete identity proof");
+            panic!("post-snapshot admission was incorrectly accepted");
+        }
+        #[cfg(windows)]
+        "late-admission-leader" => {
+            publish(
+                &directory,
+                "late-leader-ready",
+                &std::process::id().to_string(),
+            );
+            await_file(&directory.join("late-admission-start"), READY_LIMIT);
+            let mut command = fixture_command("descendant", &directory);
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            let _descendant = InheritedChild(Some(
+                command.spawn().expect("admit post-snapshot descendant"),
+            ));
+            std::thread::sleep(FIXTURE_LIMIT);
+        }
         other => panic!("unknown source fixture mode: {other}"),
     }
 }
@@ -151,8 +192,16 @@ struct ExactProcess(windows_sys::Win32::Foundation::HANDLE);
 #[cfg(windows)]
 impl ExactProcess {
     fn acquire(pid: u32) -> Self {
-        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
-        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        };
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            )
+        };
         assert!(
             !handle.is_null(),
             "retain exact fixture process: {}",
@@ -176,6 +225,27 @@ impl ExactProcess {
             windows_sys::Win32::Foundation::WAIT_OBJECT_0,
             "exact retained {role} remained live after scope cleanup returned"
         );
+    }
+
+    fn wait_exit_code(&self, timeout: Duration) -> io::Result<u32> {
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
+        let wait = unsafe {
+            WaitForSingleObject(
+                self.0,
+                timeout.as_millis().try_into().unwrap_or(u32::MAX - 1),
+            )
+        };
+        if wait != WAIT_OBJECT_0 {
+            return Err(io::Error::other(format!(
+                "exact fixture exit was not observed within deadline: {wait}"
+            )));
+        }
+        let mut code = 0;
+        if unsafe { GetExitCodeProcess(self.0, &mut code) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(code)
     }
 }
 
@@ -325,6 +395,52 @@ fn leader_exit_reaps_descendants() {
         leader.assert_reaped("successful leader with a descendant");
         descendant.assert_reaped("inherited-writer descendant");
     });
+}
+
+#[test]
+#[cfg(windows)]
+fn windows_cleanup_rejects_post_snapshot_admission() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = fixture_command("late-admission-owner", directory.path());
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let mut outer = ProcessTree::spawn(&mut command).expect("own admission-race fixture tree");
+    let owner = ExactProcess::acquire(outer.child().id());
+    let leader_pid = await_file(&directory.path().join("late-leader-ready"), READY_LIMIT)
+        .parse()
+        .unwrap();
+    let descendant_pid = await_file(&directory.path().join("descendant-ready"), READY_LIMIT)
+        .parse()
+        .unwrap();
+    let leader = ExactProcess::acquire(leader_pid);
+    let descendant = ExactProcess::acquire(descendant_pid);
+    owner.assert_running();
+    leader.assert_running();
+    descendant.assert_running();
+    let started = Instant::now();
+    let mut owner_code = None;
+    outer
+        .scope
+        .as_mut()
+        .expect("armed outer scope")
+        .cleanup_checked(|| {
+            // The outer scope retains all three exact objects BEFORE allowing
+            // the inner failure path. Its unchanged admission fence and native
+            // waits therefore prove fixture cleanup even when the inner owner
+            // intentionally exits 125 without asserting an incomplete proof.
+            publish(
+                directory.path(),
+                "late-admission-retained",
+                "outer snapshot owns every admitted fixture",
+            );
+            owner_code = Some(owner.wait_exit_code(CLEANUP_TIMEOUT)?);
+            Ok(())
+        })
+        .expect("outer scope proves admission-race fixture cleanup");
+    assert_eq!(owner_code, Some(125), "inner cleanup must fail closed");
+    assert!(started.elapsed() < CLEANUP_TIMEOUT + Duration::from_secs(1));
+    owner.assert_reaped("fail-closed cleanup owner");
+    leader.assert_reaped("post-snapshot admission leader");
+    descendant.assert_reaped("post-snapshot admitted descendant");
 }
 
 #[test]
