@@ -11,6 +11,7 @@
 - **Summary:** Human-first local sessions with safe automatic preparation and compact expert access
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
 - **Completion evidence:** Accepted Test at 0ec5a0e: all eight CI jobs, named clauses, fresh Cargo live/TTY and checked cleanup; Loop reconciled and closed at 6d9e0d4; separate post-loop-adversarial-review.md returned clean before the sole PR.
+- **Checkpoint:** https://github.com/crussella0129/Animus_Ferric/pull/108
 
 ## Approved resume
 
