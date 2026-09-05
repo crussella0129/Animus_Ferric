@@ -64,3 +64,18 @@ The installed skill's explicit plan-approval gate pauses this turn. After
 approval, use these reviewed scratch boundaries to write canonical plans,
 attach Work evidence to active intents without no-op transitions, obtain the
 canonical critic verdict, commit the Book and run the finalization helper.
+
+## Plan-approval handoff
+
+The reviewed proposal was committed at `b3412baf98232993d7ee0cee1e6e21bc570399e1`.
+At that checkpoint `check-tracked.sh` reported a fully committed Book and
+`current-phase.sh` reported `plan`. Source, dependencies, CI and tooling are
+unchanged from the owner-merged baseline. No new runtime tests or model loads
+were performed; no sprint push or PR was created.
+
+The exact protected stash `2428203eee25ad36bf684a09bc4b2c151ef71765` was then
+applied successfully and its original SHA-256 verified. The Sprint 114 JSON is
+again the sole unrelated unstaged modification; recovery stashes remain.
+Do not apply this stash again. Before a future clean-Book gate, preserve that
+current edit explicitly rather than staging it into Sprint 121. The source-
+unchanged proposal is awaiting owner approval; the sprint remains in-progress.
