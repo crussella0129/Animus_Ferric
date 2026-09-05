@@ -52,3 +52,22 @@ Present invalid configuration is rejected before trace allocation/provider use;
 credential source bytes never enter diagnostics. Unknown legacy fields remain
 tolerated. API configuration still reloads per request as before; its broader
 snapshot contract and direct-library numeric admission remain T-12022.
+
+## T-12005 — Provider cancellation and byte-correct streaming
+
+- `cargo test --locked -p ferric-provider --features backend-openai --lib`:
+  45 passed, 0 failed, 0 ignored; test runtime 0.81 seconds.
+- `cargo clippy --locked -p ferric-provider --features backend-openai --all-targets -- -D warnings`: pass.
+- `cargo fmt -p ferric-provider -- --check`: pass.
+
+Named assertions: `provider_cancellation_all_response_phases` covers six stalled
+response cases and observed connection closure within two seconds;
+`cancelled_provider_does_not_poll_request` covers pre-cancelled input;
+`sse_unicode_every_split`, `sse_malformed_utf8_reports_error`,
+`sse_ascii_done_compatibility` and `sse_unicode_and_invalid_bytes_over_tcp`
+cover pure byte splits plus actual joined TCP behavior. The three preexisting
+streaming fixtures were also converted to finite joined futures. These tests
+spawn no processes. The request future is pinned once and dropped on cancellation;
+no detached provider task survives. Human-session cleanup integration and the
+real model gate remain pending. Root and separate read-only review found no
+blocker at this task boundary; full exact-head Test acceptance is still required.

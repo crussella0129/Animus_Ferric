@@ -1934,3 +1934,12 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Files modified:** `crates/ferric-cli/src/{config,backend,query,mcp,api,chat,icm,skills_cmd,bench_cmd,autonomy_cmd,toolbench_cmd}.rs`, `crates/ferric-cli/tests/cli.rs`, `docs/configuration.md`, INT-0006, Sprint 120 unit evidence and work ledgers.
 - **Verification:** Backend and no-default configuration suites each 24 passed; backend units 4 passed; named API reload, chat streaming, multi-consumer invalid config, selected-workspace, effective-number and resume-inheritance assertions passed. Existing CLI config regression filter 8 passed. All-target backend CLI clippy with warnings denied and scoped formatting passed. Root reviewed the changed boundaries; API reload timing and legacy tolerated unknown fields remain unchanged. See unit evidence for retained initial fixture failures.
 - **Commit:** `c1000088a1014b17f38d8d58feef1da755b14c37`
+
+## T-12005 (sprint 120)
+
+- **Description:** Added whole-response cancellation and byte-framed strict UTF-8 SSE decoding, with joined bounded HTTP fixtures for all response phases and every Unicode split.
+- **Intent:** [INT-0008](../intents/INT-0008-unified-local-model-workflow.md), provider portion of AC-6/12.
+- **Completed:** 2026-09-05T03:40:04Z
+- **Files modified:** `crates/ferric-provider/src/openai.rs`, `crates/ferric-provider/src/openai_io_tests.rs`, Sprint 120 unit evidence and work ledgers.
+- **Verification:** Source-aware provider suite 45 passed, 0 failed, 0 ignored; all-target backend provider clippy with warnings denied and scoped fmt check passed. Root and independent read-only boundary review found no blocker. Whole-request fixtures prove cancellation and connection closure within two seconds across stalled headers, error bodies, nonstream JSON and SSE. Human owned-engine integration remains a later T-12004/06 gate, not claimed by this provider commit.
+- **Commit:** PENDING

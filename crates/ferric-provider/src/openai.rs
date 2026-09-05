@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
+use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tracing::{debug, warn};
 
 use crate::stream_scan::ConstrainedJsonScanner;
@@ -10,6 +13,34 @@ use crate::types::{
     ToolDescriptor,
 };
 use ferric_core::{MediaPart, Message, Role, ToolCall};
+
+/// Keep one request future alive across cancellation polls. Dropping it on
+/// interruption also drops its request/response body; no detached request task
+/// can continue waiting after the caller starts cleaning up its owned engine.
+async fn with_cancellation<T>(
+    cancel: Option<&AtomicBool>,
+    operation: impl Future<Output = Result<T, ProviderError>>,
+) -> Result<T, ProviderError> {
+    let Some(cancel) = cancel else {
+        return operation.await;
+    };
+    if cancel.load(Ordering::Relaxed) {
+        return Err(ProviderError::Backend("Interrupted".into()));
+    }
+    tokio::pin!(operation);
+    let mut interval = tokio::time::interval(Duration::from_millis(50));
+    loop {
+        tokio::select! {
+            biased;
+            _ = interval.tick() => {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(ProviderError::Backend("Interrupted".into()));
+                }
+            }
+            result = &mut operation => return result,
+        }
+    }
+}
 
 pub struct OpenAiConfig {
     pub base_url: String,
@@ -180,130 +211,109 @@ impl Provider for OpenAiProvider {
         cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Completion, ProviderError> {
         request.validate()?;
+        with_cancellation(cancel_flag.as_deref(), async {
+            let body = self.build_body(&request);
 
-        let body = self.build_body(&request);
+            let url = format!(
+                "{}/chat/completions",
+                self.config.base_url.trim_end_matches('/')
+            );
 
-        let url = format!(
-            "{}/chat/completions",
-            self.config.base_url.trim_end_matches('/')
-        );
+            debug!(
+                model = %self.config.model,
+                messages = request.messages.len(),
+                constrained = request.constraint.is_some(),
+                "POST /chat/completions"
+            );
 
-        debug!(
-            model = %self.config.model,
-            messages = request.messages.len(),
-            constrained = request.constraint.is_some(),
-            "POST /chat/completions"
-        );
+            let response = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.config.api_key))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await;
 
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
-        // Build the request future ONCE and pin it. A non-streaming completion can
-        // take seconds; re-creating the `send()` future inside the `select!` on
-        // every iteration would cancel the in-flight request each time the 50 ms
-        // cancel-poll interval ticks, so it could never finish (the request keeps
-        // reconnecting and never gets a response). Polling the *same* pinned future
-        // across ticks preserves its progress. (`complete_streaming` already sends
-        // once before its read loop, which is why the streaming path is unaffected.)
-        let send_fut = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send();
-        tokio::pin!(send_fut);
-        let response = loop {
-            tokio::select! {
-                res = &mut send_fut => {
-                    break res;
+            let response = match response {
+                Ok(res) => res,
+                Err(e) => {
+                    warn!(error = %e, "network error contacting the inference server (retryable)");
+                    return Err(ProviderError::RetryableBackend(format!(
+                        "Network error: {}",
+                        e
+                    )));
                 }
-                _ = interval.tick() => {
-                    if let Some(cancel) = &cancel_flag
-                        && cancel.load(std::sync::atomic::Ordering::Relaxed)
-                    {
-                        return Err(ProviderError::Backend("Interrupted".into()));
-                    }
+            };
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                warn!(%status, "inference server returned an error status");
+                return Err(ProviderError::Backend(format!("HTTP {}: {}", status, text)));
+            }
+
+            let json_res: serde_json::Value = response.json().await.map_err(|e| {
+                ProviderError::Backend(format!("Failed to parse response JSON: {}", e))
+            })?;
+
+            let choice = json_res["choices"]
+                .as_array()
+                .and_then(|c| c.first())
+                .ok_or_else(|| ProviderError::Backend("Response carried no choices".to_string()))?;
+
+            let message = &choice["message"];
+            let content = message["content"].as_str().map(|s| s.to_string());
+
+            let mut tool_calls = Vec::new();
+            if let Some(tcs) = message["tool_calls"].as_array() {
+                for tc in tcs {
+                    let id = tc["id"].as_str().unwrap_or_default().to_string();
+                    let name = tc["function"]["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    let args_str = tc["function"]["arguments"].as_str().unwrap_or_default();
+
+                    let args = serde_json::from_str(args_str)
+                        .unwrap_or_else(|_| serde_json::Value::String(args_str.to_string()));
+
+                    tool_calls.push(ToolCall { id, name, args });
                 }
             }
-        };
 
-        let response = match response {
-            Ok(res) => res,
-            Err(e) => {
-                warn!(error = %e, "network error contacting the inference server (retryable)");
-                return Err(ProviderError::RetryableBackend(format!(
-                    "Network error: {}",
-                    e
-                )));
+            // ADR-024 fallback: ollama's OpenAI-compatible endpoint returns a tool
+            // call as plain text in `content` with `tool_calls` null. If nothing
+            // parsed natively but the content is itself a tool-call object, recover
+            // it so the native path sees the call instead of `no_action`.
+            if tool_calls.is_empty()
+                && let Some(text) = &content
+                && let Some(tc) = toolcall_from_content(text)
+            {
+                tool_calls.push(tc);
             }
-        };
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            warn!(%status, "inference server returned an error status");
-            return Err(ProviderError::Backend(format!("HTTP {}: {}", status, text)));
-        }
+            let finish_reason = choice["finish_reason"].as_str().unwrap_or("");
+            let truncated = finish_reason == "length";
 
-        let json_res: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| ProviderError::Backend(format!("Failed to parse response JSON: {}", e)))?;
+            let usage = &json_res["usage"];
+            let input_tokens = usage["prompt_tokens"].as_u64().map(|v| v as u32);
+            let output_tokens = usage["completion_tokens"].as_u64().map(|v| v as u32);
 
-        let choice = json_res["choices"]
-            .as_array()
-            .and_then(|c| c.first())
-            .ok_or_else(|| ProviderError::Backend("Response carried no choices".to_string()))?;
-
-        let message = &choice["message"];
-        let content = message["content"].as_str().map(|s| s.to_string());
-
-        let mut tool_calls = Vec::new();
-        if let Some(tcs) = message["tool_calls"].as_array() {
-            for tc in tcs {
-                let id = tc["id"].as_str().unwrap_or_default().to_string();
-                let name = tc["function"]["name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
-                let args_str = tc["function"]["arguments"].as_str().unwrap_or_default();
-
-                let args = serde_json::from_str(args_str)
-                    .unwrap_or_else(|_| serde_json::Value::String(args_str.to_string()));
-
-                tool_calls.push(ToolCall { id, name, args });
-            }
-        }
-
-        // ADR-024 fallback: ollama's OpenAI-compatible endpoint returns a tool
-        // call as plain text in `content` with `tool_calls` null. If nothing
-        // parsed natively but the content is itself a tool-call object, recover
-        // it so the native path sees the call instead of `no_action`.
-        if tool_calls.is_empty()
-            && let Some(text) = &content
-            && let Some(tc) = toolcall_from_content(text)
-        {
-            tool_calls.push(tc);
-        }
-
-        let finish_reason = choice["finish_reason"].as_str().unwrap_or("");
-        let truncated = finish_reason == "length";
-
-        let usage = &json_res["usage"];
-        let input_tokens = usage["prompt_tokens"].as_u64().map(|v| v as u32);
-        let output_tokens = usage["completion_tokens"].as_u64().map(|v| v as u32);
-
-        Ok(Completion {
-            message: Message {
-                role: Role::Assistant,
-                text: content,
-                tool_calls,
-                tool_call_id: None,
-                media: Vec::new(),
-            },
-            input_tokens,
-            output_tokens,
-            truncated,
+            Ok(Completion {
+                message: Message {
+                    role: Role::Assistant,
+                    text: content,
+                    tool_calls,
+                    tool_call_id: None,
+                    media: Vec::new(),
+                },
+                input_tokens,
+                output_tokens,
+                truncated,
+            })
         })
+        .await
     }
 
     /// Real streaming (ADR-047): sets `stream: true`, reads the response body
@@ -322,63 +332,103 @@ impl Provider for OpenAiProvider {
         cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Completion, ProviderError> {
         request.validate()?;
-        let constrained = request.constraint.is_some();
-        let mut body = self.build_body(&request);
-        body["stream"] = json!(true);
+        with_cancellation(cancel_flag.as_deref(), async {
+            let constrained = request.constraint.is_some();
+            let mut body = self.build_body(&request);
+            body["stream"] = json!(true);
 
-        let url = format!(
-            "{}/chat/completions",
-            self.config.base_url.trim_end_matches('/')
-        );
-        let mut response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::RetryableBackend(format!("Network error: {e}")))?;
+            let url = format!(
+                "{}/chat/completions",
+                self.config.base_url.trim_end_matches('/')
+            );
+            let mut response = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.config.api_key))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| ProviderError::RetryableBackend(format!("Network error: {e}")))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(ProviderError::Backend(format!("HTTP {status}: {text}")));
-        }
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                return Err(ProviderError::Backend(format!("HTTP {status}: {text}")));
+            }
 
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
-        let mut acc = StreamAccumulator::new(constrained, on_delta);
-        let mut buf = String::new();
-        loop {
-            let bytes = tokio::select! {
-                chunk_res = response.chunk() => {
-                    match chunk_res.map_err(|e| ProviderError::RetryableBackend(format!("stream error: {e}")))? {
-                        Some(b) => b,
-                        None => break,
+            let mut acc = StreamAccumulator::new(constrained, on_delta);
+            let mut decoder = SseDecoder::default();
+            while let Some(bytes) = response
+                .chunk()
+                .await
+                .map_err(|e| ProviderError::RetryableBackend(format!("stream error: {e}")))?
+            {
+                for line in decoder.push(&bytes)? {
+                    match line {
+                        SseLine::Data(data) => acc.feed_line(&data),
+                        SseLine::Done => return Ok(acc.finish()),
+                        SseLine::Ignored => {}
                     }
-                }
-                _ = interval.tick() => {
-                    if let Some(cancel) = &cancel_flag
-                        && cancel.load(std::sync::atomic::Ordering::Relaxed)
-                    {
-                        return Err(ProviderError::Backend("Interrupted".into()));
-                    }
-                    continue;
-                }
-            };
-            buf.push_str(&String::from_utf8_lossy(&bytes));
-            while let Some(pos) = buf.find('\n') {
-                let line = buf[..pos].trim_end_matches('\r').to_string();
-                buf.drain(..=pos);
-                match classify_sse_line(&line) {
-                    SseLine::Data(data) => acc.feed_line(&data),
-                    SseLine::Done => return Ok(acc.finish()),
-                    SseLine::Ignored => {}
                 }
             }
-        }
-        Ok(acc.finish())
+            decoder.finish()?;
+            Ok(acc.finish())
+        })
+        .await
     }
+}
+
+/// Frame SSE in bytes before decoding UTF-8. A network chunk can end anywhere
+/// within a code point; incomplete final bytes are errors, not replacement
+/// characters silently inserted into content or native tool arguments.
+#[derive(Default)]
+struct SseDecoder {
+    pending: Vec<u8>,
+    scanned: usize,
+    done: bool,
+}
+
+impl SseDecoder {
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<SseLine>, ProviderError> {
+        if self.done {
+            return Ok(Vec::new());
+        }
+        self.pending.extend_from_slice(bytes);
+        let mut lines = Vec::new();
+        let mut consumed = 0;
+        let mut search_from = self.scanned;
+        while let Some(offset) = self.pending[search_from..].iter().position(|b| *b == b'\n') {
+            let end = search_from + offset;
+            let line = std::str::from_utf8(&self.pending[consumed..end]).map_err(sse_utf8_error)?;
+            let line = classify_sse_line(line.trim_end_matches('\r'));
+            let done = line == SseLine::Done;
+            lines.push(line);
+            consumed = end + 1;
+            search_from = consumed;
+            if done {
+                self.pending.clear();
+                self.scanned = 0;
+                self.done = true;
+                return Ok(lines);
+            }
+        }
+        self.pending.drain(..consumed);
+        // Do not rescan a growing incomplete line on every tiny TCP chunk.
+        self.scanned = self.pending.len();
+        Ok(lines)
+    }
+
+    fn finish(self) -> Result<(), ProviderError> {
+        // Preserve the existing behavior of ignoring an unterminated SSE line,
+        // but still reject a malformed or truncated UTF-8 tail at EOF.
+        std::str::from_utf8(&self.pending).map_err(sse_utf8_error)?;
+        Ok(())
+    }
+}
+
+fn sse_utf8_error(error: std::str::Utf8Error) -> ProviderError {
+    ProviderError::Backend(format!("Malformed UTF-8 in SSE response: {error}"))
 }
 
 /// Classify one already-line-split piece of SSE framing. Pure — no I/O — so
@@ -928,7 +978,7 @@ mod streaming_e2e {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let server = tokio::spawn(async move {
+        let server = async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = [0u8; 4096];
             // Drain enough of the request to know it was sent; this fake
@@ -950,7 +1000,7 @@ mod streaming_e2e {
             );
             socket.write_all(response.as_bytes()).await.unwrap();
             socket.shutdown().await.unwrap();
-        });
+        };
 
         let provider = OpenAiProvider::new(OpenAiConfig {
             base_url: format!("http://{addr}/v1"),
@@ -967,12 +1017,17 @@ mod streaming_e2e {
         let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
-        let completion = provider
-            .complete_streaming(request, &sink, None)
-            .await
+        let (served, completion) = tokio::join!(
+            tokio::time::timeout(Duration::from_secs(3), server),
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                provider.complete_streaming(request, &sink, None),
+            ),
+        );
+        served.expect("server fixture completed within its deadline");
+        let completion = completion
+            .expect("provider fixture completed within its deadline")
             .expect("streaming completion should succeed");
-
-        server.await.unwrap();
 
         assert_eq!(completion.message.text.as_deref(), Some("Hello world"));
         assert!(!completion.truncated);
@@ -994,7 +1049,7 @@ mod streaming_e2e {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let server = tokio::spawn(async move {
+        let server = async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = [0u8; 4096];
             let _ = socket.read(&mut buf).await;
@@ -1004,7 +1059,7 @@ mod streaming_e2e {
             );
             socket.write_all(response.as_bytes()).await.unwrap();
             socket.shutdown().await.unwrap();
-        });
+        };
 
         let provider = OpenAiProvider::new(OpenAiConfig {
             base_url: format!("http://{addr}/v1"),
@@ -1019,8 +1074,15 @@ mod streaming_e2e {
         };
         let sink = |_: StreamDelta| panic!("no delta should fire on an HTTP error response");
 
-        let result = provider.complete_streaming(request, &sink, None).await;
-        server.await.unwrap();
+        let (served, result) = tokio::join!(
+            tokio::time::timeout(Duration::from_secs(3), server),
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                provider.complete_streaming(request, &sink, None),
+            ),
+        );
+        served.expect("server fixture completed within its deadline");
+        let result = result.expect("provider fixture completed within its deadline");
 
         match result {
             Err(ProviderError::Backend(msg)) => {
@@ -1045,7 +1107,7 @@ mod streaming_e2e {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let server = tokio::spawn(async move {
+        let server = async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buf = [0u8; 4096];
             let _ = socket.read(&mut buf).await;
@@ -1065,7 +1127,7 @@ mod streaming_e2e {
             let second_half = "lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
             socket.write_all(second_half.as_bytes()).await.unwrap();
             socket.shutdown().await.unwrap();
-        });
+        };
 
         let provider = OpenAiProvider::new(OpenAiConfig {
             base_url: format!("http://{addr}/v1"),
@@ -1081,11 +1143,17 @@ mod streaming_e2e {
         let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
-        let completion = provider
-            .complete_streaming(request, &sink, None)
-            .await
+        let (served, completion) = tokio::join!(
+            tokio::time::timeout(Duration::from_secs(3), server),
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                provider.complete_streaming(request, &sink, None),
+            ),
+        );
+        served.expect("server fixture completed within its deadline");
+        let completion = completion
+            .expect("provider fixture completed within its deadline")
             .expect("a mid-line split must not break parsing");
-        server.await.unwrap();
 
         assert_eq!(completion.message.text.as_deref(), Some("Hello"));
         assert_eq!(
@@ -1094,3 +1162,7 @@ mod streaming_e2e {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "openai_io_tests.rs"]
+mod io_tests;
