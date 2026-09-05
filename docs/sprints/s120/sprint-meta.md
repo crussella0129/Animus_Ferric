@@ -3,19 +3,31 @@
 - **Sprint number:** 120
 - **Book schema version:** 2
 - **Start timestamp:** 2026-09-05T02:20:09Z
-- **End timestamp:** (pending reopened Test and Loop)
+- **End timestamp:** (pending renewed Loop closure)
 - **Model:** gpt-6-astra, ultra (user-selected; runtime identity not independently exposed)
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
 - **Summary:** Human-first local sessions with safe automatic preparation and compact expert access
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
-- **Completion evidence:** Reopened Test: repeated Windows PowerShell fixture timeouts at checkpoint 3b966dd block final acceptance; prior accepted-source evidence and closure remain historical, not final checkpoint qualification.
+- **Completion evidence:** Renewed Test accepted 4f4e4f0 with controlled-schedule caveat at ae18535; full exact-head CI/native/live/TTY passed; renewed Loop closure and separate post-Loop audit follow within PR 108.
 - **Checkpoint:** https://github.com/crussella0129/Animus_Ferric/pull/108
 
 ## Approved resume
 
 ### Current closeout status
+
+Renewed Test accepted source `4f4e4f04d4ee132f9df9bb422be88a5ce366915d` with
+`proceed-with-caveats`: native workspace test scheduling is controlled, while
+historical timeout cause and arbitrary parallel-suite robustness remain
+unqualified. Both eight-job CI runs, all local canonical gates, fresh source-owned
+live-model acceptance and actual Cargo terminal interaction passed. Test evidence
+was committed at `ae18535`; the committed-Book router reports Loop. The critic's
+post-evidence recheck preserved that verdict. Only Book files changed afterward.
+Renewed Loop reconciliation retains active intents and T-12026/27 follow-ups.
+PR 108 remains the sole checkpoint and must not be merged by the agent.
+
+### Checkpoint reopening history
 
 The final checkpoint `3b966dd` reproduced the existing PowerShell quoting
 fixture's ten-second timeout in both original push and PR CI runs. Sprint 120

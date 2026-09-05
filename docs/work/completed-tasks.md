@@ -1973,9 +1973,12 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 
 ## Sprint 120 final Test acceptance
 
+**Historical first accepted-source checkpoint; superseded by the renewed
+qualification below after final PR checks reopened Test.**
+
 - **Intent:** INT-0005/6/8, only the locked Python/configuration/prepared-host portions.
-- **Final implementation:** `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`; Test artifacts committed at `dc9c900`.
-- **Verification:** [Accepted Test report](../sprints/s120/sprint-tests/test-report.md), [clean independent critique](../sprints/s120/sprint-tests/critique.md), all eight exact-head CI jobs, fresh source-owned live and actual terminal runs. Windows workspace 1,247 passed / seven intentional ignores; isolated Linux 1,253 / five; backend-free 407 each; native lifecycle five/six. The C-001 guidance correction and failed earlier candidates remain retained in unit/CI records.
+- **Implementation at this checkpoint:** `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`; Test artifacts committed at `dc9c900`.
+- **Verification:** [Historical accepted Test report](https://github.com/crussella0129/Animus_Ferric/blob/dc9c900253683875b179fccec0649c0bb116c5e1/docs/sprints/s120/sprint-tests/test-report.md), [historical clean independent critique](https://github.com/crussella0129/Animus_Ferric/blob/dc9c900253683875b179fccec0649c0bb116c5e1/docs/sprints/s120/sprint-tests/critique.md), all eight exact-head CI jobs, fresh source-owned live and actual terminal runs. Windows workspace 1,247 passed / seven intentional ignores; isolated Linux 1,253 / five; backend-free 407 each; native lifecycle five/six. The C-001 guidance correction and failed earlier candidates remain retained in unit/CI records.
 - **Boundary:** Task implementation entries above retain their historical counts and pending-at-that-time gates. This acceptance supplies the final Test evidence without rewriting those commits. Loop and the additional post-Loop audit still gate the sole PR; no whole intent is realized.
 
 ## T-11905 (sprint 120)
@@ -1995,3 +1998,11 @@ README Status bumped to sprint 42 + a new Sprint 42 timeline entry (the hybrid s
 - **Completed:** 2026-09-05T05:43:36Z (ledger reconciliation; implementation is T-12005, not new code).
 - **Commit:** `742d442e56ea3cc121c3a6765c94c504922a6012`, with final composition accepted at `0ec5a0e`.
 - **Verification:** E05-A/B in the accepted Test report; six cancelled response-phase fixtures, every-byte Unicode framing, finite joined HTTP fixtures and human whole-request deadline/cleanup composition. This is not a universal deadline on all expert commands or whole-Work cancellation; T-12024 retains the Git/process boundary.
+
+## Sprint 120 checkpoint requalification
+
+- **Intent:** INT-0005/6/8, the unchanged locked partial increment.
+- **Completed:** 2026-09-05T06:47:19Z (renewed Test/Loop evidence reconciliation).
+- **Source:** `808cd9f0eb4651f3c56a84daca2dd79a66957a9d` adds bounded admission/script-stage diagnostics; `4f4e4f04d4ee132f9df9bb422be88a5ce366915d` ratchets the controlled native workspace schedule and operator command. No deadline, argument assertion, product race or cleanup check was relaxed.
+- **Verification:** [Renewed Test report](../sprints/s120/sprint-tests/test-report.md) and independently rechecked [proceed-with-caveats critique](../sprints/s120/sprint-tests/critique.md), committed at `ae18535`. Both exact-head eight-job CI runs passed without reruns; all native suite confirmations, root's fresh canonical gates, source-owned live acceptance and actual terminal interaction are retained.
+- **Limits:** Two original checkpoint failures, the one authorized rerun and all diagnostic samples remain historical evidence. Qualification is for the controlled schedule; the earlier stage/cause and arbitrary parallel-suite robustness remain unknown/T-12027. T-12026 is separate native admission work. Broader model/workflow/platform intentions stay active; PR 108 remains the only checkpoint and the owner alone merges.

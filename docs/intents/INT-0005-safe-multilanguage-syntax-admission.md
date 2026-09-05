@@ -52,11 +52,15 @@ correctness or a substitute for operator-authorized checks.
 
 ## Sprint 120 progress
 
-Sprint 120 accepted the Python-only maintenance increment at `0ec5a0e` with
+Sprint 120 initially accepted the Python-only maintenance increment at `0ec5a0e` with
 strict invalid/unchecked outcomes, atomic mutation regressions and in-process
 Legacy customization coverage. Rust and JavaScript/TypeScript remain T-11405;
 this intent stays active and has no whole-intent completion evidence. Syntax
 admission still does not establish semantic correctness or authorize execution.
+
+Renewed qualification at `4f4e4f0` preserves the same Python maintenance
+contract; native test scheduling and its explicit caveat are recorded in the
+current Test report. This is renewed evidence, not another intent transition.
 
 ## Transition history
 

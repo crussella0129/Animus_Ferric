@@ -72,6 +72,10 @@ preserved deliberately; T-12022 owns the lifetime/direct-library/compaction
 follow-up and T-11406 owns inert planner/subagent vocabulary. This intent stays
 active; accepted configuration work is not the whole public-policy migration.
 
+Renewed Test at `4f4e4f0` requalified this unchanged configuration increment
+with the native-test scheduling caveat documented in its report. The policy
+scope and active state did not change during checkpoint diagnosis.
+
 ## Transition history
 
 - 2026-09-05: moved from `planned` to `active` as T-12002 Build began after the

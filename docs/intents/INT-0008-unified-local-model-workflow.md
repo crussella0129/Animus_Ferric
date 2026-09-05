@@ -225,7 +225,7 @@ success condition.
 
 ## Sprint 120 progress
 
-Sprint 120 accepted a prepared-host increment at `0ec5a0e`: normal source/installed
+Sprint 120 initially accepted a prepared-host increment at `0ec5a0e`: normal source/installed
 launch, no more than three meaningful setup choices, remembered model (not file
 consent), read-only description, bounded owned preparation and borrowed survival,
 conservative Evidence work, byte-correct cancellable provider I/O, actionable
@@ -241,6 +241,22 @@ workflow-checkpoint work. T-11707 retains ordinary-host Linux authority and
 T-12024 retains synchronous Git/whole-Work cancellation; macOS and broader
 ownership limits remain explicit. INT-0007's application/skill qualification is
 not advanced by a short Ask response. State remains active.
+
+Checkpoint diagnosis renewed the same partial acceptance at `4f4e4f0` with a
+controlled native-test-schedule caveat. Unrelated native test bodies run serially
+on both CI platforms, while product race tests retain simultaneous workers and
+bounded barriers. This avoids making qualification depend on competition among
+unrelated fixtures without skipping tests, raising deadlines or weakening
+cleanup. A narrower shared mutex was rejected because cohort membership and
+nested acquisition add correctness risks; capping Tokio workers alone would not
+isolate native process creation. This is a qualification-schedule decision, not
+proof of the historical Windows timeout's cause or a production performance fix.
+Retained stage diagnostics and T-12027 own parallel-suite robustness; T-12026
+separately owns exact Windows thread-resume/enumeration admission. A recurrence
+under the canonical schedule is a blocker. Code and renewed evidence are in the
+[checkpoint requalification record](../work/completed-tasks.md#sprint-120-checkpoint-requalification).
+T-12028 retains the ordinary-Cargo duplicate-target warning as separate UX
+cleanup. No intent realization or additional model authority is inferred.
 
 ## Transition history
 

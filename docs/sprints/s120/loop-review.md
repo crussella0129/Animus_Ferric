@@ -1,5 +1,40 @@
 # Sprint 120 Loop reconciliation
 
+## Renewed Loop after checkpoint diagnosis
+
+Renewed accepted Test evidence was committed at `ae18535`; the installed helper
+reported a fully committed Book and phase `loop`. Tested source remains
+`4f4e4f04d4ee132f9df9bb422be88a5ce366915d`, with two eight-job CI runs and
+fresh local canonical, live-model and actual terminal evidence. The independent
+critic rechecked the renewed report and intent links and retained
+`proceed-with-caveats`. No source changed after qualification.
+
+The old closure and clean audit below are historical, not erased. C-002 is
+mitigated by the explicitly controlled native workspace schedule; all tests,
+deadlines, argument assertions, checked cleanup and internal startup races
+remain. Neither the new diagnostics nor passing serialized runs identify the
+old timeout stage. T-12027 retains parallel-native-fixture qualification;
+T-12026 separately retains exact Windows resume/enumeration hardening. A
+recurrence under the qualified schedule would reopen Test again.
+
+INT-0005/6/8 remain active with renewed Test evidence and no whole-intent
+completion claim. INT-0007 remains an unadvanced dependency. Durable scheduling
+rationale and alternatives live in INT-0008; implementation and renewed
+qualification are linked in completed work without rewriting the original six
+task boundaries. The observed ordinary-Cargo duplicate-source warning is
+separate low-priority human-surface follow-up T-12028, not silently fixed here.
+
+Confidence remains 0.2: this sprint's `patched` adjustment already occurred
+once at the first Loop. Reopening for checkpoint evidence is not a new sprint
+or grounds for a duplicate decrement. Validate and reclose the committed Book,
+then obtain a new independent extra post-Loop verdict. Preserve PR 108, confirm
+only this sprint's commits and remote final head, verify final checkpoint CI,
+restore/hash-check the latest protected stash
+`58a0dff8d57a91aea48d234394db3ebebd94563c`, and leave the sole unrelated edit
+unstaged with its recovery stash retained. Stop for the owner's merge.
+
+## Initial Loop and closure history
+
 Test entered Loop from committed accepted evidence at `dc9c900`;
 `check-tracked.sh` reported a fully committed Book and the router reported
 `loop`. Tested implementation remains `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`.
