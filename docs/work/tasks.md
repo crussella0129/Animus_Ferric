@@ -269,6 +269,10 @@ below remain executable follow-up work; the review did not silently fix them.
 - [ ] T-12027 (backlog, parallel native-fixture robustness) [intent: INT-0008]: Investigate Windows native-runtime startup under concurrent suite load using retained admission/script-stage timings and explicit resource budgets. Sprint 120's canonical native workspace gates isolate unrelated test bodies; this does not explain the earlier uninstrumented PowerShell timeouts or qualify arbitrary parallel-suite load. Keep every deadline, exact argument assertion, source ownership and checked cleanup. — touches: native fixture scheduling, diagnostic CI coverage
 - [ ] T-12028 (backlog, low priority human surface) [intent: INT-0008]: Remove Cargo's duplicate-source build-target warning from ordinary `cargo r` while retaining the feature-gated lifecycle test binary, original expert compatibility and source-owned fixture execution. The warning was observed in the real terminal trials and is not a launch failure. — touches: CLI Cargo target layout, source execution regressions
 
+## Sprint 121 research follow-up
+
+- [ ] T-12110 (backlog, usage provenance) [intent: INT-0007]: Replace unchecked OpenAI usage-count `u64 as u32` narrowing with an explicit checked outcome in streaming and non-streaming decoding, and test oversized/invalid counts without wrapping reported usage. Source-identified during Sprint 121 Research; not a successful runtime reproduction or part of the T-11505 explicit CLI budget increment. — touches: `crates/ferric-provider/src/openai.rs`, provider response fixtures
+
 ## Book v2 carry-forward from Sprint 113
 
 - [ ] T-11401 (backlog) [intent: INT-0002]: Design and implement a deterministic operator-authored project check profile that Launch can scaffold and supported surfaces can load without a repeated `--checks-file`, while preserving the no-implicit-execution boundary. — touches: `crates/animus-launch`, `crates/ferric-cli/src/query.rs`, `crates/ferric-tools/src/builtin/run_check.rs`, `docs/commands.md`, `docs/configuration.md`

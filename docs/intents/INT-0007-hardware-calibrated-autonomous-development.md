@@ -162,7 +162,26 @@ constants. Accelerated backends remain optional capabilities: unsupported or
 CPU-only hosts must receive truthful slower defaults rather than a false GPU
 claim.
 
+Explicit budget controls can ship as a diagnostic increment before automatic
+calibration. Main-action output limits remain separate from reasoning and
+compaction settings, and an explicit context-reserve check does not guarantee
+tokenizer-accurate request fit or actual hardware capacity. A benchmark using a
+non-default execution-time scale or an explicit output override must retain its
+task results while marking calibration evidence ineligible, rather than
+silently publishing a measured level under an old model/protocol-only profile.
+Coordinate-bound calibration can lift that restriction once it represents and
+requalifies those settings. Omitted defaults remain compatible; diagnostic
+overrides must not enlarge tool authority or unrelated cleanup/grader deadlines.
+
 ## Transition history
+
+- 2026-09-05: clarified the active intent's diagnostic budget boundary during
+  Sprint 121 research. An explicit main-action output override or non-default
+  benchmark execution-time scale may produce retained task observations, but
+  must not publish or advertise a durable calibrated profile until the changed
+  budget coordinates can be represented and requalified. Manual scaling is
+  not automatic speed calibration; a declared context reserve is not measured
+  model/hardware fit. State remains active and no new acceptance is claimed.
 
 - 2026-08-26: created as `proposed` from the user's request for a
   hardware-fitting current model, a Ferric-built application, complete run
