@@ -4,7 +4,22 @@
 
 use std::process::Command;
 
+#[path = "../src/test_process_containment.rs"]
+mod test_process_containment;
+
+trait BoundedOutput {
+    fn output_bounded(&mut self) -> std::io::Result<std::process::Output>;
+}
+
+impl BoundedOutput for Command {
+    fn output_bounded(&mut self) -> std::io::Result<std::process::Output> {
+        test_process_containment::output_bounded(self, std::time::Duration::from_secs(60))
+    }
+}
+
 fn ferric() -> Command {
+    test_process_containment::ensure_current_process_tree_is_contained()
+        .expect("install benchmark integration-test process containment");
     Command::new(env!("CARGO_BIN_EXE_ferric"))
 }
 
@@ -23,7 +38,7 @@ fn bench_mock_l0_passes_and_writes_results() {
         .args(["bench", "full", "--mock", "--level", "0"])
         .arg("--results-dir")
         .arg(results.path())
-        .output()
+        .output_bounded()
         .unwrap();
     // The harness ran to completion (exit reflects pass/fail of the level;
     // either is fine — we assert the row was written).
@@ -46,25 +61,70 @@ fn bench_mock_l0_passes_and_writes_results() {
 fn bench_mock_records_each_requested_level() {
     let results = tempfile::tempdir().unwrap();
     let out = ferric()
-        .args(["bench", "full", "--mock", "--level", "3", "--level", "4"])
+        .args(["bench", "full", "--mock", "--level", "0", "--level", "1"])
         .arg("--results-dir")
         .arg(results.path())
-        .output()
+        .output_bounded()
         .unwrap();
     let _ = out.status;
-    let content = std::fs::read_to_string(results.path().join("results.jsonl")).unwrap();
+    let content =
+        std::fs::read_to_string(results.path().join("results.jsonl")).unwrap_or_else(|error| {
+            panic!(
+                "multi-level mock did not write results: {error}\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
     let levels: Vec<u64> = content
         .lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter_map(|v| v["level"].as_u64())
         .collect();
-    assert_eq!(levels, vec![3, 4], "one row per requested level, in order");
-    let first: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
-    assert_eq!(first["spec_version"], 2);
-    assert_eq!(
-        first["command_checks"][0]["status"], "model_failure",
-        "a missing model artifact is grading evidence, not infrastructure failure"
-    );
+    assert_eq!(levels, vec![0, 1], "one row per requested level, in order");
+}
+
+#[test]
+fn bench_mock_v2_checks_record_model_failure_with_cargo_fixture() {
+    let results = tempfile::tempdir().unwrap();
+
+    // The benchmark preflight only requires its configured Python command to
+    // accept `--version`. The Cargo-built Ferric fixture does that, while its
+    // deliberate rejection of Python's `-m` arguments gives the v2 grader a
+    // deterministic non-zero check result. This keeps the integration test
+    // source-driven and independent of any machine Python alias.
+    let out = ferric()
+        .args(["bench", "full", "--mock", "--level", "3", "--level", "4"])
+        .arg("--python-bin")
+        .arg(env!("CARGO_BIN_EXE_ferric"))
+        .arg("--results-dir")
+        .arg(results.path())
+        .output_bounded()
+        .unwrap();
+    let _ = out.status;
+
+    let content =
+        std::fs::read_to_string(results.path().join("results.jsonl")).unwrap_or_else(|error| {
+            panic!(
+                "v2 mock run did not write results: {error}\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+    let rows: Vec<serde_json::Value> = content
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("valid benchmark result row"))
+        .collect();
+
+    assert_eq!(rows.len(), 2, "one result row per requested v2 level");
+    assert_eq!(rows[0]["level"], 3);
+    assert_eq!(rows[1]["level"], 4);
+    for row in rows {
+        assert_eq!(row["spec_version"], 2);
+        assert_eq!(
+            row["command_checks"][0]["status"], "model_failure",
+            "a non-zero trusted check is grading evidence, not infrastructure failure"
+        );
+    }
 }
 
 #[test]
@@ -77,7 +137,7 @@ fn bench_check_preflight_distinguishes_missing_python_infrastructure() {
         .arg(&missing_python)
         .arg("--results-dir")
         .arg(results.path())
-        .output()
+        .output_bounded()
         .unwrap();
 
     assert!(!out.status.success());
@@ -107,7 +167,7 @@ fn bench_keep_workspace_preserves_dir() {
         ])
         .arg("--results-dir")
         .arg(results.path())
-        .output()
+        .output_bounded()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -137,7 +197,7 @@ fn bench_three_trials_rotate_levels_retain_traces_and_write_statistics() {
         ])
         .arg("--results-dir")
         .arg(results.path())
-        .output()
+        .output_bounded()
         .unwrap();
     let _ = out.status;
 
@@ -218,7 +278,7 @@ fn bench_rejects_out_of_range_trial_and_pass_rate_arguments() {
         let out = ferric()
             .args(["bench", "full", "--mock", "--level", "0"])
             .args(args)
-            .output()
+            .output_bounded()
             .unwrap();
         assert!(!out.status.success(), "invalid args unexpectedly succeeded");
         assert!(

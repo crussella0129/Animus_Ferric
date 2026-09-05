@@ -2,7 +2,6 @@
 
 ## Current Sprint 119
 
-- [ ] T-11902 (sprint 119) [intent: INT-0008]: Consolidate source test ownership, exact-parent/reaping evidence, and registration capture while preserving lifecycle assertions. — touches: CLI helpers, units/integration tests, lifecycle fixture
 - [ ] T-11903 (sprint 119) [intent: INT-0008]: Replace direct lifecycle test-artifact execution with Cargo-driven CI; document scope and close all phase/review/remote gates. — touches: CI, process contract, AGENTS.md, Book evidence
 
 ## animus-launch

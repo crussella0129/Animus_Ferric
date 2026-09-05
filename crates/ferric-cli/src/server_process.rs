@@ -1097,7 +1097,7 @@ mod platform {
         use std::fs;
         use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
         use std::path::{Path, PathBuf};
-        use std::process::{Child, Command, Stdio};
+        use std::process::{Command, Stdio};
         use std::sync::atomic::{AtomicU64, Ordering};
         use std::thread;
         use std::time::Instant;
@@ -1125,32 +1125,59 @@ mod platform {
         impl Drop for ReadyMarker {
             fn drop(&mut self) {
                 let _ = fs::remove_file(&self.0);
+                let _ = fs::remove_file(staged_ready_path(&self.0));
             }
         }
 
-        struct ChildGuard(Option<Child>);
-
-        impl ChildGuard {
-            fn child_mut(&mut self) -> &mut Child {
-                self.0.as_mut().expect("smoke child remains retained")
-            }
-
-            fn take(&mut self) -> Child {
-                self.0.take().expect("smoke child remains retained")
-            }
+        fn staged_ready_path(path: &Path) -> PathBuf {
+            path.with_extension("ready.pending")
         }
 
-        impl Drop for ChildGuard {
-            fn drop(&mut self) {
-                if let Some(mut child) = self.0.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        fn publish_ready(path: &Path, port: u16) {
+            let pid = std::process::id();
+            let staged = staged_ready_path(path);
+            fs::write(&staged, format!("ferric-native-smoke-v1 {pid} {port}\n"))
+                .expect("stage complete native smoke readiness coordinate");
+            fs::rename(&staged, path).expect("atomically publish native smoke readiness");
+        }
+
+        fn parse_ready(value: &str, expected_pid: u32) -> Option<u16> {
+            let mut fields = value.split_whitespace();
+            let version = fields.next()?;
+            let pid = fields.next()?.parse::<u32>().ok()?;
+            let port = fields.next()?.parse::<u16>().ok()?;
+            if version != "ferric-native-smoke-v1"
+                || pid != expected_pid
+                || port == 0
+                || fields.next().is_some()
+            {
+                return None;
+            }
+            Some(port)
+        }
+
+        #[test]
+        fn native_smoke_ready_marker_requires_complete_matching_coordinate() {
+            assert_eq!(
+                parse_ready("ferric-native-smoke-v1 42 8080\n", 42),
+                Some(8080)
+            );
+            for invalid in [
+                "",
+                "ferric-native-smoke-v1",
+                "ferric-native-smoke-v1 42",
+                "ferric-native-smoke-v1 42 0",
+                "ferric-native-smoke-v1 41 8080",
+                "ferric-native-smoke-v1 42 8080 trailing",
+                "ferric-native-smoke-v2 42 8080",
+            ] {
+                assert_eq!(parse_ready(invalid, 42), None, "accepted {invalid:?}");
             }
         }
 
         struct RetainedSmokeGuard {
             process: Option<LiveProcess>,
+            child: Option<crate::test_process_containment::ContainedChild>,
             _ready: ReadyMarker,
         }
 
@@ -1165,22 +1192,49 @@ mod platform {
         impl Drop for RetainedSmokeGuard {
             fn drop(&mut self) {
                 if let Some(process) = self.process.take() {
-                    let _ = process.terminate();
-                    let _ = process.wait(Duration::from_secs(5));
+                    let cleanup = process.terminate().and_then(|_| {
+                        if process.wait(Duration::from_secs(5))? {
+                            Ok(())
+                        } else {
+                            Err(ProcessError::Operation(format!(
+                                "retained Windows native-smoke process {} did not exit within 5s",
+                                process.pid()
+                            )))
+                        }
+                    });
+                    if let Err(error) = cleanup {
+                        crate::test_process_containment::abort_on_cleanup_failure(
+                            "could not terminate retained Windows native-smoke process",
+                            error,
+                        );
+                    }
+                }
+                if let Some(mut child) = self.child.take()
+                    && let Err(error) = child.terminate_and_reap()
+                {
+                    crate::test_process_containment::abort_on_cleanup_failure(
+                        "could not clean Windows native-smoke process tree",
+                        error,
+                    );
                 }
             }
         }
 
-        fn wait_for_ready(child: &mut Child, path: &Path) -> u16 {
+        fn wait_for_ready(
+            child: &mut crate::test_process_containment::ContainedChild,
+            path: &Path,
+        ) -> u16 {
             let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
             loop {
                 if let Ok(value) = fs::read_to_string(path)
-                    && let Ok(port) = value.trim().parse::<u16>()
-                    && port != 0
+                    && let Some(port) = parse_ready(&value, child.child().id())
                 {
                     return port;
                 }
-                if let Some(status) = child.try_wait().expect("inspect smoke helper status") {
+                if let Some(status) = child
+                    .try_wait_leader()
+                    .expect("inspect smoke helper status")
+                {
                     panic!("native smoke helper exited before readiness: {status}");
                 }
                 assert!(
@@ -1192,8 +1246,12 @@ mod platform {
         }
 
         fn spawn_retained_smoke_child(mode: &str) -> (RetainedSmokeGuard, u16) {
+            crate::test_process_containment::ensure_current_process_tree_is_contained()
+                .expect("install Windows native-smoke process containment");
             let ready = ReadyMarker::new(mode);
-            let child = Command::new(std::env::current_exe().expect("current test executable"))
+            let mut command =
+                Command::new(std::env::current_exe().expect("current test executable"));
+            command
                 .args([
                     "--exact",
                     "server_process::platform::tests::native_process_smoke_helper",
@@ -1204,25 +1262,22 @@ mod platform {
                 .env(NATIVE_SMOKE_READY_ENV, &ready.0)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .expect("spawn native process smoke helper");
-            let mut child = ChildGuard(Some(child));
-            let port = wait_for_ready(child.child_mut(), &ready.0);
-            let source_handle = child.child_mut().as_raw_handle() as Handle;
-            let process = LiveProcess::acquire_child(child.child_mut())
+                .stderr(Stdio::null());
+            let mut child = crate::test_process_containment::ContainedChild::spawn(&mut command)
+                .expect("spawn contained native process smoke helper");
+            let port = wait_for_ready(&mut child, &ready.0);
+            let source_handle = child.child().as_raw_handle() as Handle;
+            let process = LiveProcess::acquire_child(child.child())
                 .expect("duplicate the spawned child's exact process HANDLE");
             assert_ne!(
                 process.handle, source_handle,
                 "acquire_child must retain a distinct duplicated HANDLE"
             );
 
-            // Close the `Child` source HANDLE. Every later inspection, signal,
-            // and wait in this smoke now has only the retained duplicate.
-            drop(child.take());
             (
                 RetainedSmokeGuard {
                     process: Some(process),
+                    child: Some(child),
                     _ready: ready,
                 },
                 port,
@@ -1281,6 +1336,8 @@ mod platform {
             if std::env::var(NATIVE_SMOKE_HELPER_ENV).ok().as_deref() != Some("1") {
                 return;
             }
+            crate::test_process_containment::arm_current_process_parent_death_signal()
+                .expect("arm native-smoke parent-death containment");
             let mode = std::env::var(NATIVE_SMOKE_MODE_ENV).expect("native smoke mode");
             let ready = PathBuf::from(
                 std::env::var_os(NATIVE_SMOKE_READY_ENV).expect("native smoke ready path"),
@@ -1292,8 +1349,7 @@ mod platform {
                 other => panic!("unknown native smoke mode {other:?}"),
             }
             .expect("bind native smoke listener");
-            fs::write(&ready, listener.local_addr().unwrap().port().to_string())
-                .expect("publish native smoke readiness");
+            publish_ready(&ready, listener.local_addr().unwrap().port());
             thread::sleep(Duration::from_secs(60));
         }
 
@@ -1613,8 +1669,9 @@ mod platform {
             assert_eq!(facts.listener, ListenerState::OwnedByTarget);
 
             // Take the retained duplicate out of its cleanup guard. The
-            // original `Child` HANDLE was already closed by the spawn helper,
-            // so termination and waiting below can target only this HANDLE.
+            // contained child remains owned solely as the bounded process-tree
+            // reap authority; termination and process-exit observation below
+            // still target only the retained duplicate HANDLE.
             let retained = loopback
                 .process
                 .take()
@@ -1639,6 +1696,12 @@ mod platform {
             retained
                 .release_for_test()
                 .expect("the LiveProcess drop path must release its duplicated HANDLE");
+            loopback
+                .child
+                .as_mut()
+                .expect("contained smoke child remains retained")
+                .terminate_and_reap()
+                .expect("reap the exact-terminated Windows smoke process tree");
 
             let (wildcard, wildcard_port) = spawn_retained_smoke_child("ipv4-wildcard");
             let wildcard_state = wait_for_listener_state(
@@ -2267,7 +2330,7 @@ mod platform {
         use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
         use std::os::unix::process::CommandExt;
         use std::path::{Path, PathBuf};
-        use std::process::{Child, Command, Stdio};
+        use std::process::{Command, Stdio};
         use std::sync::atomic::{AtomicU64, Ordering};
         use std::thread;
 
@@ -2304,33 +2367,60 @@ mod platform {
         impl Drop for ReadyMarker {
             fn drop(&mut self) {
                 let _ = fs::remove_file(&self.0);
+                let _ = fs::remove_file(staged_ready_path(&self.0));
             }
         }
 
-        struct ChildGuard(Option<Child>);
-
-        impl ChildGuard {
-            fn child_mut(&mut self) -> &mut Child {
-                self.0.as_mut().expect("smoke child remains retained")
-            }
-
-            fn take(&mut self) -> Child {
-                self.0.take().expect("smoke child remains retained")
-            }
+        fn staged_ready_path(path: &Path) -> PathBuf {
+            path.with_extension("ready.pending")
         }
 
-        impl Drop for ChildGuard {
-            fn drop(&mut self) {
-                if let Some(mut child) = self.0.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        fn publish_ready(path: &Path, port: u16) {
+            let pid = std::process::id();
+            let staged = staged_ready_path(path);
+            fs::write(&staged, format!("ferric-native-smoke-v1 {pid} {port}\n"))
+                .expect("stage complete native smoke readiness coordinate");
+            fs::rename(&staged, path).expect("atomically publish native smoke readiness");
+        }
+
+        fn parse_ready(value: &str, expected_pid: u32) -> Option<u16> {
+            let mut fields = value.split_whitespace();
+            let version = fields.next()?;
+            let pid = fields.next()?.parse::<u32>().ok()?;
+            let port = fields.next()?.parse::<u16>().ok()?;
+            if version != "ferric-native-smoke-v1"
+                || pid != expected_pid
+                || port == 0
+                || fields.next().is_some()
+            {
+                return None;
+            }
+            Some(port)
+        }
+
+        #[test]
+        fn native_smoke_ready_marker_requires_complete_matching_coordinate() {
+            assert_eq!(
+                parse_ready("ferric-native-smoke-v1 42 8080\n", 42),
+                Some(8080)
+            );
+            for invalid in [
+                "",
+                "ferric-native-smoke-v1",
+                "ferric-native-smoke-v1 42",
+                "ferric-native-smoke-v1 42 0",
+                "ferric-native-smoke-v1 41 8080",
+                "ferric-native-smoke-v1 42 8080 trailing",
+                "ferric-native-smoke-v2 42 8080",
+            ] {
+                assert_eq!(parse_ready(invalid, 42), None, "accepted {invalid:?}");
             }
         }
 
         struct RetainedSmokeGuard {
             process: Option<LiveProcess>,
-            child: Option<Child>,
+            child: Option<crate::test_process_containment::ContainedChild>,
+            child_pid: u32,
             _ready: ReadyMarker,
         }
 
@@ -2342,41 +2432,56 @@ mod platform {
             }
 
             fn child_pid(&self) -> u32 {
-                self.child
-                    .as_ref()
-                    .expect("smoke child remains retained")
-                    .id()
+                self.child_pid
             }
         }
 
         impl Drop for RetainedSmokeGuard {
             fn drop(&mut self) {
                 if let Some(process) = self.process.take() {
-                    let _ = process.terminate();
-                    let _ = process.wait(Duration::from_secs(5));
-                }
-                if let Some(mut child) = self.child.take() {
-                    match child.try_wait() {
-                        Ok(Some(_)) => {}
-                        Ok(None) | Err(_) => {
-                            let _ = child.kill();
-                            let _ = child.wait();
+                    let cleanup = process.terminate().and_then(|_| {
+                        if process.wait(Duration::from_secs(5))? {
+                            Ok(())
+                        } else {
+                            Err(ProcessError::Operation(format!(
+                                "retained Linux native-smoke process {} did not exit within 5s",
+                                process.pid()
+                            )))
                         }
+                    });
+                    if let Err(error) = cleanup {
+                        crate::test_process_containment::abort_on_cleanup_failure(
+                            "could not terminate retained Linux native-smoke process",
+                            error,
+                        );
                     }
+                }
+                if let Some(mut child) = self.child.take()
+                    && let Err(error) = child.terminate_and_reap()
+                {
+                    crate::test_process_containment::abort_on_cleanup_failure(
+                        "could not clean Linux native-smoke process tree",
+                        error,
+                    );
                 }
             }
         }
 
-        fn wait_for_ready(child: &mut Child, path: &Path) -> u16 {
+        fn wait_for_ready(
+            child: &mut crate::test_process_containment::ContainedChild,
+            path: &Path,
+        ) -> u16 {
             let deadline = Instant::now() + NATIVE_SMOKE_TIMEOUT;
             loop {
                 if let Ok(value) = fs::read_to_string(path)
-                    && let Ok(port) = value.trim().parse::<u16>()
-                    && port != 0
+                    && let Some(port) = parse_ready(&value, child.child().id())
                 {
                     return port;
                 }
-                if let Some(status) = child.try_wait().expect("inspect smoke helper status") {
+                if let Some(status) = child
+                    .try_wait_leader()
+                    .expect("inspect smoke helper status")
+                {
                     panic!("native smoke helper exited before readiness: {status}");
                 }
                 assert!(
@@ -2391,6 +2496,8 @@ mod platform {
             mode: &str,
             inherited_listener: Option<(&TcpListener, u16)>,
         ) -> (RetainedSmokeGuard, u16) {
+            crate::test_process_containment::ensure_current_process_tree_is_contained()
+                .expect("install Linux native-smoke process containment");
             let ready = ReadyMarker::new(mode);
             let mut command =
                 Command::new(std::env::current_exe().expect("current test executable"));
@@ -2406,7 +2513,6 @@ mod platform {
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
-
             if let Some((listener, port)) = inherited_listener {
                 let inherited_fd = listener.as_raw_fd();
                 let flags = unsafe { fcntl(inherited_fd, F_GETFD) };
@@ -2427,16 +2533,18 @@ mod platform {
                 }
             }
 
-            let child = command.spawn().expect("spawn native process smoke helper");
-            let mut child = ChildGuard(Some(child));
-            let port = wait_for_ready(child.child_mut(), &ready.0);
-            let process = LiveProcess::acquire_child(child.child_mut())
+            let mut child = crate::test_process_containment::ContainedChild::spawn(&mut command)
+                .expect("spawn contained native process smoke helper");
+            let port = wait_for_ready(&mut child, &ready.0);
+            let process = LiveProcess::acquire_child(child.child())
                 .expect("retain the spawned child's exact pidfd");
-            assert_eq!(process.pid(), child.child_mut().id());
+            let child_pid = child.child().id();
+            assert_eq!(process.pid(), child_pid);
             (
                 RetainedSmokeGuard {
                     process: Some(process),
-                    child: Some(child.take()),
+                    child: Some(child),
+                    child_pid,
                     _ready: ready,
                 },
                 port,
@@ -2509,6 +2617,8 @@ mod platform {
             if std::env::var(NATIVE_SMOKE_HELPER_ENV).ok().as_deref() != Some("1") {
                 return;
             }
+            crate::test_process_containment::arm_current_process_parent_death_signal()
+                .expect("arm native-smoke parent-death containment");
             let mode = std::env::var(NATIVE_SMOKE_MODE_ENV).expect("native smoke mode");
             let ready = PathBuf::from(
                 std::env::var_os(NATIVE_SMOKE_READY_ENV).expect("native smoke ready path"),
@@ -2536,11 +2646,11 @@ mod platform {
                 }
                 .expect("bind native smoke listener");
                 let port = listener.local_addr().unwrap().port();
-                fs::write(&ready, port.to_string()).expect("publish native smoke readiness");
+                publish_ready(&ready, port);
                 thread::sleep(Duration::from_secs(60));
                 return;
             };
-            fs::write(&ready, port.to_string()).expect("publish native smoke readiness");
+            publish_ready(&ready, port);
             thread::sleep(Duration::from_secs(60));
         }
 
@@ -2857,8 +2967,9 @@ mod platform {
                     .expect("live pidfd must not poll as exited")
             );
 
-            // Signal and poll only through the pidfd. Child::wait below is
-            // used solely after pidfd-observed exit to reap our child zombie.
+            // Signal and poll only through the pidfd. The contained child is
+            // consulted only after pidfd-observed exit, then its bounded
+            // process-tree cleanup contract proves the helper was reaped.
             let retained = loopback.process.take().expect("retained loopback pidfd");
             let pidfd = retained.pidfd.as_raw_fd();
             assert!(
@@ -2875,13 +2986,21 @@ mod platform {
                     .wait(Duration::from_secs(5))
                     .expect("poll only through retained pidfd")
             );
-            let mut child = loopback.child.take().expect("reap smoke helper child");
-            let status = child.wait().expect("reap pidfd-terminated child");
+            let child = loopback
+                .child
+                .as_mut()
+                .expect("contained smoke child remains retained");
+            let status = child
+                .try_wait_leader()
+                .expect("inspect pidfd-terminated child")
+                .expect("pidfd-observed exit must be visible through Child");
             assert!(
                 !status.success(),
                 "SIGKILLed helper must not report success"
             );
-            drop(child);
+            child
+                .terminate_and_reap()
+                .expect("reap the exact-terminated Linux smoke process tree");
             drop(retained);
             assert_eq!(
                 unsafe { fcntl(pidfd, F_GETFD) },
