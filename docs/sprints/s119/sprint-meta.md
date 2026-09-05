@@ -3,14 +3,14 @@
 - **Sprint number:** 119
 - **Book schema version:** 2
 - **Start timestamp:** 2026-09-04T23:34:16Z
-- **End timestamp:** (filled at Loop Phase)
+- **End timestamp:** 2026-09-05T01:35:24Z
 - **Model:** gpt-6-astra, ultra (user-selected; runtime model identity is not independently exposed)
 - **Bundle version:** 0.22.0
-- **Exit status:** in-progress
+- **Exit status:** success
 - **Token count:** unavailable from the active harness; not estimated
 - **Summary:** Review and refactor source-owned subprocess cleanup and Cargo-driven verification after Sprint 118's actual merge.
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), AC-6 and model-free enabling AC-9 evidence only.
-- **Completion evidence:** (filled at Loop Phase)
+- **Completion evidence:** Partial INT-0008 AC-6 source-process increment verified at 81c9aea; Test critique clean; six-job CI 33935893263 passed; Loop reconciliation in docs/sprints/s119/loop-review.md; extra audit and owner-only PR checkpoint follow.
 
 ## Initial phase status (superseded by the resume and closeout records below)
 
