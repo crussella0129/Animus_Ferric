@@ -195,6 +195,9 @@ pub struct ProcessOutcome {
     pub exit_code: Option<i32>,
     pub status: Option<ExitStatus>,
     pub timed_out: bool,
+    /// Elapsed native admission, included in `wall` and the execution deadline.
+    /// On Windows this includes suspended creation, Job assignment and resume.
+    pub spawn_wall: Duration,
     pub wall: Duration,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
@@ -213,6 +216,7 @@ pub fn run_bounded(
     command.stdout(stdout.stdio()?).stderr(stderr.stdio()?);
     let started = Instant::now();
     let mut tree = ProcessTree::spawn(command)?;
+    let spawn_wall = started.elapsed();
     let (status, timed_out) = loop {
         match tree.try_wait_leader() {
             Ok(Some(status)) => break (Some(status), false),
@@ -230,6 +234,7 @@ pub fn run_bounded(
         exit_code: status.and_then(|status| status.code()),
         status,
         timed_out,
+        spawn_wall,
         wall,
         stdout: stdout.read(capture.stdout_mode)?,
         stderr: stderr.read(capture.stderr_mode)?,

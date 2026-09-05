@@ -1,5 +1,10 @@
 # Sprint 120 extra post-Loop adversarial review
 
+**Historical pre-PR audit.** Final checkpoint CI subsequently reproduced a
+Windows fixture timeout twice; [Test diagnosis](sprint-tests/checkpoint-diagnosis.md)
+reopens acceptance within this same sprint/PR. Another extra post-Loop audit
+is required after that blocker is addressed.
+
 **Verdict: clean for the PR checkpoint; no blocking finding.** Independent
 reviewer `build_boundary_review` inspected close commit
 `6d9e0d43a16f532857bd8ff01b76a513c146832e` after actual Loop closure. This is

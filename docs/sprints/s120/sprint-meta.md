@@ -3,19 +3,37 @@
 - **Sprint number:** 120
 - **Book schema version:** 2
 - **Start timestamp:** 2026-09-05T02:20:09Z
-- **End timestamp:** 2026-09-05T05:47:27Z
+- **End timestamp:** (pending reopened Test and Loop)
 - **Model:** gpt-6-astra, ultra (user-selected; runtime identity not independently exposed)
 - **Bundle version:** 0.22.0
-- **Exit status:** success
+- **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
 - **Summary:** Human-first local sessions with safe automatic preparation and compact expert access
 - **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md), [INT-0006](../../intents/INT-0006-truthful-policy-contract.md), [INT-0005](../../intents/INT-0005-safe-multilanguage-syntax-admission.md); [INT-0007](../../intents/INT-0007-hardware-calibrated-autonomous-development.md) reviewed dependency, not an acceptance claim.
-- **Completion evidence:** Accepted Test at 0ec5a0e: all eight CI jobs, named clauses, fresh Cargo live/TTY and checked cleanup; Loop reconciled and closed at 6d9e0d4; separate post-loop-adversarial-review.md returned clean before the sole PR.
+- **Completion evidence:** Reopened Test: repeated Windows PowerShell fixture timeouts at checkpoint 3b966dd block final acceptance; prior accepted-source evidence and closure remain historical, not final checkpoint qualification.
 - **Checkpoint:** https://github.com/crussella0129/Animus_Ferric/pull/108
 
 ## Approved resume
 
 ### Current closeout status
+
+The final checkpoint `3b966dd` reproduced the existing PowerShell quoting
+fixture's ten-second timeout in both original push and PR CI runs. Sprint 120
+returns to Test within PR 108; no new sprint, branch or PR is introduced.
+[Checkpoint diagnosis](sprint-tests/checkpoint-diagnosis.md) retains both
+failures, the one authorized rerun and bounded local checks. The earlier close
+timestamp was `2026-09-05T05:47:27Z`; its accepted-source report and extra audit
+below remain historical. Fresh Test acceptance, Loop reconciliation/closure
+and another extra post-Loop audit are required after diagnosis. The confidence
+throttle was already adjusted once for this sprint and is not decremented again.
+
+The same protected Sprint 114 edit was rechecked against its original SHA-256
+and preserved again in exact file-specific stash
+`58a0dff8d57a91aea48d234394db3ebebd94563c`. Restore this latest stash, verify
+the original hash and leave it unstaged before final handoff; retain recovery
+stashes. No unrelated edit enters the sprint commits.
+
+### Prior accepted-source closure
 
 Test accepted exact source `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d` after
 the independent critic closed the real E04-D guidance gap. All eight CI jobs

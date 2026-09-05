@@ -1,5 +1,12 @@
 # Sprint 120 Test report
 
+**Historical accepted-source report; final checkpoint acceptance is reopened.**
+Two original CI runs at Book-only checkpoint `3b966dd` repeated the bounded
+PowerShell quoting fixture timeout. See [checkpoint diagnosis](checkpoint-diagnosis.md)
+and the current blocking critique. The report below preserves what passed at
+`0ec5a0e`; it does not waive the later Windows gate or claim a diagnostic patch
+resolved the failure.
+
 **Pass for the locked prepared-host increment**, after the independent
 [Test critique](critique.md) returned `clean`. Tested implementation:
 `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`.

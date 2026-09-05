@@ -2588,26 +2588,55 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn powershell_quote_round_trips_argv() {
+        const ENTERED: &str = "ferric-argv-script-entered";
+        const COMPLETE: &str = "ferric-argv-script-complete";
         let trace = PathBuf::from("C:\\trace dir\\quo'te\"$`;&.jsonl");
         let workspace = PathBuf::from("C:\\work dir\\quo'te\"$`;&");
         let root = PathBuf::from("C:\\evidence dir\\quo'te\"$`;&");
         let command = format_resume_command(&trace, &workspace, Some(&root), true);
         let script = format!(
-            "function ferric {{ foreach ($value in $args) {{ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value)) }} }}; {command}"
+            "[Console]::Error.WriteLine('{ENTERED}'); function ferric {{ foreach ($value in $args) {{ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value)) }} }}; {command}; [Console]::Error.WriteLine('{COMPLETE}')"
         );
+        crate::test_process_containment::ensure_current_process_tree_is_contained()
+            .expect("source harness containment before PowerShell admission");
         let mut command = std::process::Command::new("powershell.exe");
         command
             .args(["-NoProfile", "-NonInteractive", "-Command"])
-            .arg(script);
-        let output = crate::test_process_containment::output_bounded(
+            .arg(script)
+            .stdin(std::process::Stdio::null());
+        // Use the same capture/cleanup boundary directly so timeout evidence is
+        // retained. The normal adapter converts it to a generic io::Error.
+        let output = ferric_process::run_bounded(
             &mut command,
             std::time::Duration::from_secs(10),
+            ferric_process::CapturePlan::head(64 * 1024, 64 * 1024),
         )
-        .unwrap();
+        .expect("bounded PowerShell capture and checked scope cleanup");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let entered = stderr.lines().any(|line| line == ENTERED);
+        let complete = stderr.lines().any(|line| line == COMPLETE);
+        // Retain one fixed-size stage summary even on success; libtest normally
+        // hides captured prints. Raw command output remains failure-only.
+        let _ = std::io::Write::write_fmt(
+            &mut std::io::stderr(),
+            format_args!(
+                "PowerShell argv fixture: execution_wall={:?}, spawn_wall={:?}, script_entered={entered}, script_complete={complete}, timed_out={}\n",
+                output.wall, output.spawn_wall, output.timed_out
+            ),
+        );
         assert!(
-            output.status.success(),
-            "PowerShell failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            output.status.is_some_and(|status| status.success()),
+            "PowerShell failed after checked cleanup: status={:?}, timed_out={}, execution_wall={:?}, spawn_wall={:?}, script_entered={}, script_complete={}, stdout_bytes={}, stderr_bytes={}, stdout={:?}, stderr={:?}",
+            output.status,
+            output.timed_out,
+            output.wall,
+            output.spawn_wall,
+            entered,
+            complete,
+            output.stdout.len(),
+            output.stderr.len(),
+            String::from_utf8_lossy(&output.stdout),
+            stderr
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
         let observed: Vec<&str> = stdout.lines().collect();
