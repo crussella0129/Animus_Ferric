@@ -6,7 +6,7 @@
 - **Work evidence:** [T-11406 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-11905 next repository-wide review/refactor](../work/tasks.md#next-sprint--repository-wide-review-and-bounded-refactor); [T-12002 configuration increment](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
 - **Code evidence:** [T-12002 configuration implementation](../work/completed-tasks.md#t-12002-sprint-120)
-- **Test evidence:** [Sprint 120 accepted prepared-host/configuration/Python Test increment](../sprints/s120/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 120 requalified partial increment at 4f4e4f0, controlled-schedule caveat](../sprints/s120/sprint-tests/test-report.md)
 - **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md); [Current configuration contract](../configuration.md)
 
 ## Intent

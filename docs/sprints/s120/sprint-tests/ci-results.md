@@ -358,3 +358,201 @@ hardware-fit and medium-horizon success remain outside CI's claims.
 This section was produced from read-only GitHub metadata/log inspection.
 No local Cargo execution or GitHub mutation was performed to create it.
 
+## Qualification candidate CI: 4f4e4f0
+
+Candidate `4f4e4f04d4ee132f9df9bb422be88a5ce366915d` completed both
+[push run 33949875039](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039)
+and [PR run 33949876363](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363)
+on 2026-09-05 with **8 successful jobs each, 16 in total**. No job was rerun
+to obtain these candidate results. All observations below come from these
+exact-head runs, not the earlier implementation, checkpoint or diagnostic runs.
+
+This is candidate evidence, **not formal Test acceptance**. The historical
+cause of C002's Windows PowerShell timeouts remains unknown. Qualification
+here uses the serialized workspace test schedule; robustness under the
+previous parallel libtest schedule remains follow-up **T-12027**.
+The successful mitigation samples do not retroactively identify the cause of
+the earlier failures or convert them into successes.
+
+### Exact-head job outcomes
+
+| Job | Push run | PR run |
+|---|---|---|
+| aarch64-unknown-linux-gnu check | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262499888) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503771) |
+| fmt + clippy + test (windows-latest) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262499961) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503759) |
+| fmt + clippy + test (ubuntu-latest) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262499973) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503733) |
+| lifecycle fixture (windows-latest) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262500000) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503760) |
+| lifecycle fixture (ubuntu-latest) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262500047) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503804) |
+| CLI without backend (windows-latest) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262500048) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503752) |
+| CLI without backend (ubuntu-latest) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262500067) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503728) |
+| backend-openai clippy (ubuntu) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262500096) | [Success](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503674) |
+
+### Workspace schedule and retained concurrent behavior
+
+Both Windows logs explicitly record:
+
+```text
+cargo test --workspace --locked -- --test-threads=1
+```
+
+Both Linux logs explicitly record
+`bash tools/test-lifecycle-linux.sh workspace`, whose source reaper runs
+`cargo test --workspace --locked --offline -- --test-threads=1`
+after the build-only warmup in the non-root PID/network namespace.
+
+This changes the Windows libtest scheduling contract, not the PowerShell
+fixture's 10-second execution bound, checked cleanup, argv assertions, or
+the concurrency implemented inside individual source tests. Both native
+Windows jobs and both native Linux jobs explicitly log `ok` for:
+
+- `startup::tests::startup_concurrent_invocations_serialize`
+- `startup::storage::tests::startup_concurrent_invocations_serialize`
+
+The first is the source-defined simultaneous startup/barrier regression,
+not merely the second storage-lock test. Its pass is directly observed;
+it is not inferred from the total or from the `--test-threads=1` spelling.
+
+Both workspace jobs on both runs also passed workspace formatting,
+included human-fixture formatting and workspace all-target Clippy. The
+source-execution ratchet and human documentation tests are included in the
+suite confirmations below.
+
+### All 75 suite confirmations per platform and run
+
+All four workspace logs were independently read and their ordered Cargo
+suite/result records compared. Each has **75 summaries**. Push and PR match
+exactly for each platform, so this shared table applies independently to
+both runs; all 300 source-suite/doc-target confirmations were checked.
+No count was transferred from an earlier source head.
+
+Columns are **passed / ignored**; every row has **0 failed**. The table
+includes all zero-test targets and all 15 doc-test targets.
+
+| Workspace invocation | Push passed / failed / ignored | PR passed / failed / ignored |
+|---|---:|---:|
+| Native Windows, serialized libtest | 1247 / 0 / 7 | 1247 / 0 / 7 |
+| Native Linux, serialized libtest in namespace | 1253 / 0 / 5 | 1253 / 0 / 5 |
+
+| Source suite / doc target | Windows passed / ignored (each run) | Linux passed / ignored (each run) |
+|---|---:|---:|
+| `crates/animus-launch/src/lib.rs` | 10 / 0 | 10 / 0 |
+| `crates/animus-launch/tests/scaffold.rs` | 12 / 0 | 13 / 0 |
+| `crates/ferric-bench/src/lib.rs` | 78 / 3 | 78 / 3 |
+| `crates/ferric-cli/src/main.rs` | 381 / 1 | 382 / 1 |
+| `crates/ferric-cli/tests/bench_mock.rs` | 7 / 0 | 7 / 0 |
+| `crates/ferric-cli/tests/cli.rs` | 72 / 0 | 72 / 0 |
+| `crates/ferric-cli/tests/human_cli.rs` | 8 / 0 | 8 / 0 |
+| `crates/ferric-cli/tests/human_docs.rs` | 1 / 0 | 1 / 0 |
+| `crates/ferric-cli/tests/server_lifecycle_fixture.rs` | 0 / 0 | 0 / 0 |
+| `crates/ferric-cli/tests/source_execution.rs` | 2 / 0 | 2 / 0 |
+| `crates/ferric-cli/tests/template_hygiene.rs` | 3 / 0 | 3 / 0 |
+| `crates/ferric-core/src/lib.rs` | 31 / 0 | 31 / 0 |
+| `crates/ferric-core/tests/tier_table_snapshot.rs` | 1 / 0 | 1 / 0 |
+| `crates/ferric-cron/src/lib.rs` | 17 / 0 | 17 / 0 |
+| `crates/ferric-guard/src/lib.rs` | 26 / 0 | 27 / 0 |
+| `crates/ferric-icm/src/lib.rs` | 6 / 0 | 6 / 0 |
+| `crates/ferric-icm/tests/workspace.rs` | 10 / 0 | 10 / 0 |
+| `crates/ferric-loop/src/lib.rs` | 131 / 0 | 131 / 0 |
+| `crates/ferric-loop/tests/accept_edits.rs` | 8 / 0 | 8 / 0 |
+| `crates/ferric-loop/tests/backoff_tests.rs` | 3 / 0 | 3 / 0 |
+| `crates/ferric-loop/tests/clarification_tests.rs` | 3 / 0 | 3 / 0 |
+| `crates/ferric-loop/tests/compaction_tests.rs` | 5 / 0 | 5 / 0 |
+| `crates/ferric-loop/tests/constrained_loop.rs` | 3 / 0 | 3 / 0 |
+| `crates/ferric-loop/tests/evidence_dispatch_tests.rs` | 15 / 0 | 15 / 0 |
+| `crates/ferric-loop/tests/failure_tests.rs` | 2 / 0 | 2 / 0 |
+| `crates/ferric-loop/tests/grammar_loop.rs` | 5 / 0 | 5 / 0 |
+| `crates/ferric-loop/tests/hooks_tests.rs` | 2 / 0 | 2 / 0 |
+| `crates/ferric-loop/tests/loop_core.rs` | 6 / 0 | 6 / 0 |
+| `crates/ferric-loop/tests/oscillation_tests.rs` | 5 / 0 | 5 / 0 |
+| `crates/ferric-loop/tests/progress_tests.rs` | 2 / 0 | 2 / 0 |
+| `crates/ferric-loop/tests/provenance_gate.rs` | 5 / 0 | 5 / 0 |
+| `crates/ferric-loop/tests/recovery_protocol_tests.rs` | 7 / 0 | 7 / 0 |
+| `crates/ferric-loop/tests/repetition_tests.rs` | 3 / 0 | 3 / 0 |
+| `crates/ferric-loop/tests/resume_tests.rs` | 11 / 0 | 11 / 0 |
+| `crates/ferric-loop/tests/streaming_tests.rs` | 2 / 0 | 2 / 0 |
+| `crates/ferric-loop/tests/terminator_tests.rs` | 6 / 0 | 6 / 0 |
+| `crates/ferric-loop/tests/tool_output_truncation_tests.rs` | 6 / 0 | 6 / 0 |
+| `crates/ferric-loop/tests/tracing_capture.rs` | 2 / 0 | 2 / 0 |
+| `crates/ferric-loop/tests/truncation_tests.rs` | 3 / 0 | 3 / 0 |
+| `crates/ferric-loop/tests/verification_gate_tests.rs` | 2 / 0 | 2 / 0 |
+| `crates/ferric-process/src/lib.rs` | 9 / 1 | 8 / 1 |
+| `crates/ferric-prompt/src/lib.rs` | 4 / 0 | 4 / 0 |
+| `crates/ferric-provider/src/lib.rs` | 47 / 0 | 47 / 0 |
+| `crates/ferric-provider/tests/mock_loop_skeleton.rs` | 1 / 0 | 1 / 0 |
+| `crates/ferric-research/src/lib.rs` | 36 / 2 | 38 / 0 |
+| `crates/ferric-research/tests/airlock_live.rs` | 4 / 0 | 4 / 0 |
+| `crates/ferric-research/tests/local_fs_query.rs` | 6 / 0 | 6 / 0 |
+| `crates/ferric-research/tests/sandbox_live.rs` | 10 / 0 | 10 / 0 |
+| `crates/ferric-skills/src/lib.rs` | 16 / 0 | 16 / 0 |
+| `crates/ferric-tools/src/lib.rs` | 74 / 0 | 77 / 0 |
+| `crates/ferric-tools/tests/background_tasks.rs` | 6 / 0 | 6 / 0 |
+| `crates/ferric-tools/tests/builtin_file_tools.rs` | 45 / 0 | 45 / 0 |
+| `crates/ferric-tools/tests/controlled_mutations.rs` | 15 / 0 | 14 / 0 |
+| `crates/ferric-tools/tests/controlled_navigation.rs` | 10 / 0 | 10 / 0 |
+| `crates/ferric-tools/tests/controlled_registry.rs` | 8 / 0 | 8 / 0 |
+| `crates/ferric-tools/tests/controlled_structural.rs` | 14 / 0 | 14 / 0 |
+| `crates/ferric-tools/tests/guarded_traced_execution.rs` | 1 / 0 | 1 / 0 |
+| `crates/ferric-trace/src/lib.rs` | 34 / 0 | 34 / 0 |
+| `crates/ferric-vcs/src/lib.rs` | 0 / 0 | 0 / 0 |
+| `crates/ferric-vcs/tests/vcs_tests.rs` | 5 / 0 | 5 / 0 |
+| `Doc-tests animus_launch` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_bench` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_core` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_cron` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_guard` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_icm` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_loop` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_process` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_prompt` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_provider` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_research` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_skills` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_tools` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_trace` | 0 / 0 | 0 / 0 |
+| `Doc-tests ferric_vcs` | 0 / 0 | 0 / 0 |
+
+These are workspace-member results. They do not claim separately rerun
+H/HU/S/P/PY/M/CLI commands. The live local-model test remains ignored in CI;
+L and TTY require their separate evidence.
+
+### Four Windows PowerShell diagnostic records
+
+Each of the following exact job logs directly records
+`query::tests::powershell_quote_round_trips_argv ... ok` and a fixed stage
+summary. **All four report `script_entered=true`,
+`script_complete=true`, and `timed_out=false`.**
+`execution_wall` is the fixture's measured execution time before cleanup;
+`spawn_wall` is the reported spawn portion, not the full child lifetime.
+
+| Windows job | Execution wall | Spawn wall | CLI unit workload duration | CLI unit result |
+|---|---:|---:|---:|---|
+| [Push workspace](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262499961) | 2.1209363 s | 10.3508 ms | 36.23 s | 381 passed / 0 failed / 1 ignored |
+| [PR workspace](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503759) | 763.9054 ms | 10.7551 ms | 35.76 s | 381 passed / 0 failed / 1 ignored |
+| [Push backend-free](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039/job/101262500048) | 2.7945745 s | 27.2345 ms | 7.85 s | 318 passed / 0 failed / 0 ignored |
+| [PR backend-free](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363/job/101262503752) | 1.9317416 s | 21.6973 ms | 7.64 s | 318 passed / 0 failed / 0 ignored |
+
+The backend-free jobs retain their existing ordinary Cargo invocation; they
+are not evidence for the full default-backend workload. Conversely, the two
+serialized full-workspace samples are not proof of arbitrary parallel
+workload timing. Test-profile build times were 1m 41s / 1m 45s for the
+Windows push/PR workspace jobs and 39.57s / 35.00s for their backend-free jobs;
+those are separate from fixture execution and CLI unit workload durations.
+
+### Other native and compile-only confirmations
+
+The independently read auxiliary test summaries at this candidate are:
+
+| Suite/gate | Push Windows | PR Windows | Push Linux | PR Linux |
+|---|---:|---:|---:|---:|
+| Backend-free CLI: eight target summaries, passed / failed / ignored | 407 / 0 / 0 | 407 / 0 / 0 | 407 / 0 / 0 | 407 / 0 / 0 |
+| `server_lifecycle_fixture.rs`: passed / failed / ignored | 5 / 0 / 0 | 5 / 0 / 0 | 6 / 0 / 0 | 6 / 0 / 0 |
+
+Backend-free Clippy, lifecycle all-target Clippy, explicit backend Clippy
+and both actual backend-enabled aarch64 checks passed in both runs. The
+aarch64 jobs retain explicit compiler/header preparation and remain
+compile-only evidence, not native hardware qualification.
+
+No local Cargo command, source edit, commit, or GitHub mutation was performed
+by this observer to produce this section. The sole artifact change is this
+append-only candidate record; prior evidence is retained.
+

@@ -360,3 +360,35 @@ HU 17 / one separately executed live ignore in 2.66 seconds, S 38 in 13.54
 seconds, P 47 in 0.71 seconds, PY 16, M 15, CLI 72 in 17.53 seconds. All used
 the integration table's exact source-aware commands; no source edits occurred
 between them or the live/terminal checks.
+
+## Requalified controlled-schedule candidate
+
+Exact source `4f4e4f04d4ee132f9df9bb422be88a5ce366915d` was committed, pushed
+and remotely confirmed before the following fresh local checks. The canonical
+Windows schedule now isolates unrelated test bodies while preserving explicit
+concurrent worker/barrier tests. Earlier parallel failures remain in
+[checkpoint diagnosis](checkpoint-diagnosis.md); they are not reclassified.
+
+| Source invocation | Actual result |
+|---|---|
+| `cargo test --workspace --locked --quiet -- --test-threads=1` | All 75 suite confirmations: 1,247 passed / 0 failed / 7 intentional ignores |
+| `cargo test -p ferric-cli --no-default-features --locked --quiet` | All eight suite confirmations: 407 passed / 0 failed / 0 ignored |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
+| `cargo clippy -p ferric-cli --no-default-features --all-targets --locked -- -D warnings` | Passed |
+| `cargo clippy -p ferric-cli --features lifecycle-fixture --all-targets --locked -- -D warnings` | Passed |
+| `cargo fmt --all --check` and included-fixture `rustfmt --edition 2024 --check crates/ferric-cli/src/human_journey_tests.rs` | Passed |
+| `cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1` | 5 passed / 0 failed / 0 ignored, 20.34s |
+| Exact L invocation from the integration map | 1 passed, 7.02s; checked cleanup and workspace lock reacquisition |
+
+Root summed the actual 75 returned workspace result rows, not an assumed prior
+total. CLI units passed 381/0/1 in 37.88s. The PowerShell fixture recorded
+execution wall 250.8161ms, native admission 67.6373ms, both script markers and
+no timeout. Backend-free CLI units passed 318/0/0 in 11.02s, with execution
+1.4049011s and admission 1.2009898s. Source process timing invariants passed in
+the full gate (nine passed, one source-mode ignore); all ignore reasons remain
+unchanged. L explicitly executes the otherwise opt-in real-model test.
+
+No native timeout, capture limit, argument assertion, product race or cleanup
+contract was relaxed. The diagnostic-only commit is `808cd9f`; the controlled
+schedule/doc ratchet is `4f4e4f0`. This qualifies the declared schedule, not
+arbitrary parallel fixture load or a fabricated cause for the historical failure.

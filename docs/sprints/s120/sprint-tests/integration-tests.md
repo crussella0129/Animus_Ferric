@@ -2,11 +2,24 @@
 
 ## Status and evidence boundary
 
-**Final implementation HEAD: `0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`.
-Local native and all eight CI jobs passed; [formal critique](critique.md): clean.** This is an assertion inventory and invocation map,
+**Current qualified source: `4f4e4f04d4ee132f9df9bb422be88a5ce366915d`.
+Fresh local native and both eight-job CI runs passed; renewed formal critique:
+`proceed-with-caveats` for controlled test scheduling.** Prior acceptance at `0ec5a0e` remains historical after the
+checkpoint timeout recurrence. This is an assertion inventory and invocation map,
 not a replacement for the locked [test plan](../sprint-plans/test-plan.md) or
 [build clauses](../sprint-plans/build-plan.md). Aggregate pass counts do not
 prove every clause.
+
+The current candidate executes every named E01–E06 assertion below through the
+full default-backend canonical workspace gate (75 native suite confirmations)
+and the unchanged backend-free matrix, with L explicitly run separately at the
+same head. The exact current invocations/results are in the appended unit and
+E2E sections. Per-key invocations recorded below at earlier heads remain their
+own historical focused evidence, not falsely relabeled new executions. The
+source clauses/argv/cleanup assertions are unchanged; diagnostics and controlled
+Windows inter-test scheduling add qualification observability. Explicit startup
+worker/barrier races still run concurrently. See [checkpoint diagnosis](checkpoint-diagnosis.md)
+for the C-002 mitigation and unresolved historical cause/parallel-load boundary.
 
 [Unit/affected-package evidence](unit-tests.md) records earlier Build checks and
 final corrected-head results. [E2E evidence](e2e-tests.md) separately binds each
@@ -27,9 +40,15 @@ Commands run from the repository root. Normal defaults include the real
 backend. Positive startup/session fixtures on Linux require the isolated
 workspace mode; do not infer ordinary-host listener authority from that mode.
 
-| Key | Source-aware invocation | Final result |
+Rows H/HU/S/P/PY/M/CLI retain their **historical focused invocations at
+`0ec5a0eb0f465e8220b7f2010428aed3d6f2975d`** and timings. Every other row below
+records fresh qualification at `4f4e4f04d4ee132f9df9bb422be88a5ce366915d`.
+At that current head, all H/HU/S/P/PY/M/CLI assertions also ran inside W-WIN
+and W-LINUX; they were not separately refiltered and relabeled new focused runs.
+
+| Key | Source-aware invocation | Result (head policy above) |
 |---|---|---|
-| W-WIN | `cargo test --workspace --locked` on native Windows | Local and native CI passed: 1,247 / 7 intentional ignores |
+| W-WIN | `cargo test --workspace --locked -- --test-threads=1` on native Windows | Local and both native CI runs passed: 1,247 / 7 intentional ignores |
 | W-LINUX | `bash tools/test-lifecycle-linux.sh workspace` in Linux CI | Native isolated Linux passed: 1,253 / 5 intentional ignores |
 | N | `cargo test -p ferric-cli --no-default-features --locked` | Native Windows local and both CI hosts passed: 407 / 0 ignored each |
 | H | `cargo test --locked -p ferric-cli --test human_cli --test human_docs --test source_execution --test template_hygiene` | Passed 14: human 8, docs 1, source 2, hygiene 3 |
@@ -39,20 +58,23 @@ workspace mode; do not infer ordinary-host listener authority from that mode.
 | PY | `cargo test --locked -p ferric-tools --lib check_syntax` | Passed 16 / 0 ignored |
 | M | `cargo test --locked -p ferric-tools --test controlled_mutations` | Passed 15 / 0 ignored |
 | CLI | `cargo test --locked -p ferric-cli --test cli` | Passed separate rerun: 72 / 0 ignored, 17.53 seconds |
-| L | `cargo test --locked -p ferric-cli --bin ferric real_model_prepared_host_journey -- --ignored --exact human::enabled::tests::real_model_prepared_host_journey --nocapture --test-threads=1` | Passed 1 / 0 ignored, 5.96 seconds; see final-head E2E timings/cleanup |
+| L | `cargo test --locked -p ferric-cli --bin ferric real_model_prepared_host_journey -- --ignored --exact human::enabled::tests::real_model_prepared_host_journey --nocapture --test-threads=1` | Passed 1 / 0 ignored, 7.02 seconds; see current-head E2E timings/cleanup |
 | TTY | Actual terminal `cargo r -- run --workspace "<fresh-temporary-workspace>" --model "<existing-local-model.gguf>"`, then the bounded Ask transcript | Passed actual native terminal: expected answer, /quit, checked source cleanup, exit 0; see E2E |
 | F | `cargo fmt --all --check` | Passed |
 | FI | `rustfmt --edition 2024 --check crates/ferric-cli/src/human_journey_tests.rs` | Passed; included fixture checked explicitly |
 | C | `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed |
 | CN | `cargo clippy -p ferric-cli --no-default-features --all-targets --locked -- -D warnings` | Passed |
-| LF-WIN | `cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1` | Local passed 5 / 0 ignored, 18.67 seconds; native CI passed 5 / 0 ignored |
+| LF-WIN | `cargo test -p ferric-cli --features lifecycle-fixture --test server_lifecycle_fixture --locked -- --test-threads=1` | Local passed 5 / 0 ignored, 20.34 seconds; both native CI runs passed 5 / 0 ignored |
 | LF-LINUX | `bash tools/test-lifecycle-linux.sh` | Native isolated Linux passed 6 / 0 ignored |
 
-Authoritative [CI run 33947290181](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181)
-passed all eight jobs at the exact final implementation head above, including
-backend clippy and both backend-enabled ARM64 compile checks. Local W-WIN/N
-used the output-only `--quiet` option; CI ran the listed non-quiet commands.
-All focused H/HU/S/P/PY/M/CLI invocations were also executed separately locally.
+Authoritative current-head [push run 33949875039](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949875039)
+and [PR run 33949876363](https://github.com/crussella0129/Animus_Ferric/actions/runs/33949876363)
+each passed all eight jobs at `4f4e4f0`, including backend clippy and both
+backend-enabled ARM64 compile checks. Local W-WIN/N used the output-only
+`--quiet` option; CI ran the listed non-quiet commands. Historical
+[CI run 33947290181](https://github.com/crussella0129/Animus_Ferric/actions/runs/33947290181)
+belongs to `0ec5a0e`, as do the separately executed focused H/HU/S/P/PY/M/CLI
+numbers retained above. It is not evidence for the later candidate's CI state.
 
 W-LINUX first warms source with `cargo test --workspace --locked --no-run`,
 then runs `cargo test --workspace --locked --offline -- --test-threads=1`

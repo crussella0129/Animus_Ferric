@@ -202,3 +202,39 @@ No manual termination, target-artifact command or ad-hoc executable proof was
 used. The explicit temporary folder/model isolate this terminal test; zero-arg
 routing remains the separately named manifest/shared-orchestration evidence.
 These are fresh observed results, not transferred candidate transcripts.
+
+## Fresh post-checkpoint qualification at controlled-schedule source
+
+Exact head: `4f4e4f04d4ee132f9df9bb422be88a5ce366915d`. Root again executed
+the exact source-owned L command from the integration map, separately from
+the default ignored-test count. It passed 1/1 in 7.02s with session elapsed
+6.9956057s, Ready at 5.0798109s and first response at 5.7437076s. The existing
+repository `models/qwen2.5-coder-7b-instruct-q4_k_m.gguf` ran through installed
+llama-server `10034 (505b1ed15)`, CPU-only, context 4096, temperature zero,
+explicitly unmeasured. No model/runtime acquisition occurred.
+
+Observed input: `ask`, `y`, `Reply with exactly: Ferric is ready.`, `/quit`.
+Observed answer: `Ferric is ready.` The transcript included memory/resource
+warning, Checking/Loading, owned Ready, Ask/no-file-change scope and Closing.
+Trace `human-c4aff2917dcb5182e54267601ca76fd0` recorded SessionStart at
+1788590016218ms, actual model/runtime/settings/user provenance, the answer and
+SessionEnd `answered` at 1788590017492ms. Result was `Ok`,
+`checked_cleanup: true`, followed by successful workspace lock reacquisition.
+
+### Independent actual terminal interaction
+
+At the same source head, a new Windows PTY executed
+`cargo r -- run --workspace <fresh-isolated-folder> --model <existing-repository-model>`.
+Root supplied actual terminal input, not scripted IO: `ask`, then `y` after
+the CPU/unmeasured-memory warning, then the same question and `/quit`.
+The terminal displayed Checking/Loading/owned Ready, streamed `Ferric is ready.`,
+and Closing. Cargo/terminal exited zero after source-owned checked cleanup.
+
+The retained trace `human-551db54ad68804068ea856ebebfb5a67` was read back. It
+contains SessionStart at 1788590148542ms, actual model/runtime/settings/user
+provenance, the answer, and SessionEnd `answered` at 1788590149737ms. PTY latency
+includes operator/tool input delays and is not an inference benchmark. This is
+the explicit isolated-folder/model argv, not mislabeled zero-argument execution;
+the separate manifest/shared-orchestration/non-TTY regressions cover that route.
+No manual process termination, target-artifact invocation or ad-hoc executable
+proof was used. The original prepared-host and unqualified-model limits remain.
