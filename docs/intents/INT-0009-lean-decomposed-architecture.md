@@ -1,6 +1,6 @@
 # INT-0009 — Lean, decomposed harness architecture
 
-- **State:** proposed
+- **State:** planned
 - **Work evidence:** [Sprint 123 ferric-cli library extraction plan](../sprints/s123/sprint-plans/build-plan.md#execution-sequence); [direction & refactor plan](../plans/2026-09-06-direction-and-refactor.md)
 - **Test evidence:** (none yet)
 
@@ -72,3 +72,6 @@ because the code stays in one crate. Later increments (serving-layer crate,
   `ferric-cli` library extraction with thin binaries — which also closes the
   INT-0008 T-12028 duplicate-source warning. Later increments (serving-layer
   separability, large-file module splits) remain proposed.
+- 2026-09-06: moved `proposed` → `planned` when Sprint 123's Plan locked the
+  library-extraction increment (T-12301), targeting AC-1; AC-2/AC-4 remain
+  proposed for later increments.
