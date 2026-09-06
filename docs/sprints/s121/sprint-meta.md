@@ -178,3 +178,20 @@ the first attempt's missing stage timings. Full details and report/source
 digests are in Build verification. Formal immutable-source Test/CI, independent
 critic, Loop, extra fresh audit and the sole PR remain outstanding. Confidence
 is still 0.2, and both intents remain active partial work.
+
+## Formal Test checkpoint interruption
+
+T-12104 committed at `688b939`, with backfill/immutable source head
+`2856c63209865f69b3d3727f84fd92f63f9dfa51`. Clean Book routing entered Test;
+that exact head was pushed and confirmed on `origin/dev`. No PR exists.
+Root's fresh Windows workspace passed 1,299 tests/eleven documented ignores,
+and the independently retained `live-test-001` smoke passed in 13.55 s.
+
+However, initial exact-head CI run `34002834811` failed its Windows workspace
+job in the existing first-run decision-budget journey. The other seven jobs
+passed, including Linux's 1,305-test workspace. [Checkpoint evidence](sprint-tests/ci-checkpoint-001.md)
+retains the exact failure and counts. The original native inspection error
+was discarded; no cause or successful final matrix can be inferred. Test-only
+diagnostics and one fixed bounded local series are the next diagnostic checks,
+not a blind CI rerun or production native-ownership redesign. Formal Test,
+Loop and the single PR remain blocked on qualification; confidence is unchanged.

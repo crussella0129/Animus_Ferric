@@ -41,20 +41,35 @@ impl Preparation for FixturePreparation {
         cancel: Arc<AtomicBool>,
         progress: &mut dyn FnMut(&str),
     ) -> Result<PreparedSession, crate::startup::StartupError> {
-        crate::startup::test_support::prepare(start, index, cancel, progress, |port| {
-            self.port.store(port, Ordering::Release);
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-            command
-                .args([
-                    "--exact",
-                    "human::enabled::tests::fixture_human_engine",
-                    "--nocapture",
-                    "--test-threads=1",
-                ])
-                .env("FERRIC_HUMAN_FIXTURE", self.mode)
-                .env("FERRIC_HUMAN_FIXTURE_PORT", port.to_string());
-            command
-        })
+        let started = std::time::Instant::now();
+        let result =
+            crate::startup::test_support::prepare(start, index, cancel, progress, |port| {
+                self.port.store(port, Ordering::Release);
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                command
+                    .args([
+                        "--exact",
+                        "human::enabled::tests::fixture_human_engine",
+                        "--nocapture",
+                        "--test-threads=1",
+                    ])
+                    .env("FERRIC_HUMAN_FIXTURE", self.mode)
+                    .env("FERRIC_HUMAN_FIXTURE_PORT", port.to_string());
+                command
+            });
+        if let Err(error) = &result {
+            // Keep the original structured failure and bounded engine tail;
+            // the deliberately short human renderer does not expose either.
+            eprintln!(
+                "HUMAN_FIXTURE_PREPARATION_FAILURE={}",
+                serde_json::json!({
+                    "elapsed_ms":started.elapsed().as_millis(),"mode":self.mode,
+                    "port":self.port.load(Ordering::Acquire),
+                    "startup_error_debug":format!("{error:?}"),
+                })
+            );
+        }
+        result
     }
 }
 
@@ -190,6 +205,13 @@ fn fixture_human_engine() {
     let Ok(mode) = std::env::var("FERRIC_HUMAN_FIXTURE") else {
         return;
     };
+    let started = std::time::Instant::now();
+    eprintln!(
+        "HUMAN_FIXTURE_ENGINE_STAGE={}",
+        serde_json::json!({
+            "stage":"start","mode":mode,"pid":std::process::id(),"elapsed_ms":started.elapsed().as_millis(),
+        })
+    );
     let port: u16 = std::env::var("FERRIC_HUMAN_FIXTURE_PORT")
         .unwrap()
         .parse()
@@ -197,7 +219,14 @@ fn fixture_human_engine() {
     let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).unwrap();
     listener.set_nonblocking(true).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    eprintln!(
+        "HUMAN_FIXTURE_ENGINE_STAGE={}",
+        serde_json::json!({
+            "stage":"listener","port":port,"elapsed_ms":started.elapsed().as_millis(),"lifetime_ms":45000,
+        })
+    );
     let mut work_turn = 0;
+    let mut exit_reason = "lifetime_expired";
     while std::time::Instant::now() < deadline {
         let mut socket = match listener.accept() {
             Ok((socket, _)) => socket,
@@ -205,7 +234,17 @@ fn fixture_human_engine() {
                 std::thread::sleep(Duration::from_millis(10));
                 continue;
             }
-            Err(_) => break,
+            Err(error) => {
+                eprintln!(
+                    "HUMAN_FIXTURE_ENGINE_STAGE={}",
+                    serde_json::json!({
+                        "stage":"accept_error","kind":format!("{:?}",error.kind()),
+                        "os_error":error.raw_os_error(),"elapsed_ms":started.elapsed().as_millis(),
+                    })
+                );
+                exit_reason = "accept_error";
+                break;
+            }
         };
         socket
             .set_read_timeout(Some(Duration::from_millis(300)))
@@ -279,6 +318,14 @@ fn fixture_human_engine() {
         );
         let _ = socket.write_all(response.as_bytes());
     }
+    // This marker means natural source return only. Forced scope cleanup need
+    // not run this code and is proved independently by the existing owner.
+    eprintln!(
+        "HUMAN_FIXTURE_ENGINE_STAGE={}",
+        serde_json::json!({
+            "stage":"source_return","reason":exit_reason,"elapsed_ms":started.elapsed().as_millis(),
+        })
+    );
 }
 
 fn run_fixture(
@@ -286,6 +333,7 @@ fn run_fixture(
     lines: &[Option<&str>],
     preparation: &FixturePreparation,
 ) -> (Result<(), String>, ScriptedIo) {
+    let started = std::time::Instant::now();
     let io = ScriptedIo::new(lines);
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let result = session_with(
@@ -299,6 +347,19 @@ fn run_fixture(
         preparation,
     );
     preparation.assert_closed();
+    if let Err(error) = &result {
+        eprintln!(
+            "HUMAN_FIXTURE_SESSION_FAILURE={}",
+            serde_json::json!({
+                "elapsed_ms":started.elapsed().as_millis(),"error":error,
+                "mode":preparation.mode,"port":preparation.port.load(Ordering::Acquire),
+                "closed_listener_check":true,
+                "prompts":io.prompts.lock().unwrap().clone(),
+                "answers":io.answers.lock().unwrap().clone(),
+                "output":io.output.lock().unwrap().clone(),
+            })
+        );
+    }
     (result, io)
 }
 
@@ -342,6 +403,97 @@ fn human_first_run_decision_budget() {
                 .any(|prompt| prompt.contains(technical))
         );
     }
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "opt-in diagnostic series, not acceptance; 32 journeys under a 60s Windows Job owner"]
+fn human_first_run_diagnostic_series() {
+    crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--ignored",
+            "--exact",
+            "human::enabled::tests::human_first_run_diagnostic_series_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("FERRIC_HUMAN_DIAGNOSTIC_SERIES_CHILD", "1");
+    // Windows nested Jobs own every journey engine even if this source child
+    // is synchronously stalled. This is not a Unix nested-group parity claim.
+    let outcome = ferric_process::run_bounded(
+        &mut command,
+        Duration::from_secs(60),
+        ferric_process::CapturePlan::head(64 * 1024, 128 * 1024),
+    )
+    .expect("diagnostic parent execution and checked process-scope cleanup must return");
+    let stdout = String::from_utf8_lossy(&outcome.stdout);
+    let completed: Vec<u32> = stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("HUMAN_DIAGNOSTIC_ITERATION_COMPLETE="))
+        .map(|value| {
+            value
+                .parse()
+                .expect("source completion marker must be an integer")
+        })
+        .collect();
+    println!(
+        "HUMAN_DIAGNOSTIC_SERIES_EVIDENCE={}",
+        serde_json::json!({
+            "requested_iterations":32,"completed_iterations":completed.len(),
+            "completion_sequence":completed,"parent_execution_budget_ms":60000,
+            "parent_cleanup_budget_ms":ferric_process::CLEANUP_TIMEOUT.as_millis(),
+            "parent_execution_timeout":outcome.timed_out,"parent_exit_code":outcome.exit_code,
+            "parent_spawn_ms":outcome.spawn_wall.as_millis(),"parent_execution_ms":outcome.wall.as_millis(),
+            "parent_checked_process_scope_cleanup":true,
+            "stdout":stdout,"stderr":String::from_utf8_lossy(&outcome.stderr),
+            "qualification":"one fixed diagnostic sample; not acceptance or a repair of the original CI failure",
+        })
+    );
+    assert!(
+        !outcome.timed_out,
+        "diagnostic series exceeded its fixed 60s execution budget"
+    );
+    assert_eq!(
+        outcome.exit_code,
+        Some(0),
+        "diagnostic child failed; no retry or deadline reset"
+    );
+    assert_eq!(completed, (1..=32).collect::<Vec<_>>());
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "source child entered only by the opt-in diagnostic series Cargo parent"]
+fn human_first_run_diagnostic_series_child() {
+    assert_eq!(
+        std::env::var("FERRIC_HUMAN_DIAGNOSTIC_SERIES_CHILD").as_deref(),
+        Ok("1"),
+        "diagnostic source mode requires its supervising Cargo parent"
+    );
+    crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
+    let started = std::time::Instant::now();
+    let deadline = started + Duration::from_secs(60);
+    for iteration in 1..=32 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "fixed diagnostic series deadline reached"
+        );
+        println!("HUMAN_DIAGNOSTIC_ITERATION_START={iteration}");
+        // Call the actual original test: all decisions, answer, authority and
+        // checked-cleanup assertions remain identical. A panic stops the series.
+        human_first_run_decision_budget();
+        println!("HUMAN_DIAGNOSTIC_ITERATION_COMPLETE={iteration}");
+    }
+    assert!(
+        std::time::Instant::now() < deadline,
+        "fixed diagnostic series deadline reached"
+    );
+    println!(
+        "HUMAN_DIAGNOSTIC_SERIES_CHILD_ELAPSED_MS={}",
+        started.elapsed().as_millis()
+    );
 }
 
 #[test]
