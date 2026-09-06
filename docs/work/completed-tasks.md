@@ -2069,4 +2069,4 @@ qualification below after final PR checks reopened Test.**
 - **Description:** Best-effort system-memory probe behind an injectable MemoryProbe seam (Windows GlobalMemoryStatusEx, Linux /proc/meminfo pure parser, other targets Unknown); None is a valid non-fabricated outcome.
 - **Completed:** 2026-09-06T19:12:45Z
 - **Files modified:** crates/ferric-cli/src/startup/memory.rs, crates/ferric-cli/src/startup.rs, crates/ferric-cli/Cargo.toml
-- **Commit:** PENDING
+- **Commit:** `7832edb1ec8ed7993b6611dab250b5c660ea2bfd`
