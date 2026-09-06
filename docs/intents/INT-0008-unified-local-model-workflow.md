@@ -407,3 +407,14 @@ the whole intent stays active; no state transition is appended for this progress
   the front-door picker — leaving AC-13's acquisition/download clause and
   GPU/VRAM calibration as named active follow-on work. State remains active; no
   acceptance is implied by this planning entry.
+- 2026-09-06: Sprint 122 delivered and accepted the hardware-informed RAM-fit
+  increment — a best-effort system-memory probe (Windows `GlobalMemoryStatusEx`,
+  Linux `/proc/meminfo`, else Unknown), a pure estimate/classify in
+  `ferric-core`, and a front-door picker that annotates each model and gates a
+  won't-fit start on a confirmation naming the estimate and available memory. The
+  first human use test's 27B-on-CPU trap now classifies WontFit. Full workspace
+  green at `9eabcbc` (40 suites, 0 failed); Test verdict proceed-with-caveats,
+  the one caveat a deferred full picker-driver E2E (model bytes come from real
+  file metadata). This accepts the hardware-informed-recommendation clause of
+  AC-13 for the RAM path; AC-13's acquisition/download clause and GPU/VRAM
+  calibration remain active follow-on. State remains active; not realized.

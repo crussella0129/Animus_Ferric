@@ -305,3 +305,6 @@ below remain executable follow-up work; the review did not silently fix them.
 ## Sprint 121 — approved explicit budgets
 
 ## Sprint 122 — hardware-informed model fit (INT-0008 AC-13)
+
+- [ ] T-12204 (backlog) [intent: INT-0008]: Add a front-door test seam — a `#[cfg(test)]` `Startup` constructor accepting a synthetic model list, or an injectable `MemoryProbe` threaded into `session_with` — so the won't-fit picker gate gains a full driver E2E rather than only decision-helper coverage (Sprint 122 C-001). — touches: `crates/ferric-cli/src/startup.rs`, `crates/ferric-cli/src/human.rs`, front-door tests
+- [ ] T-12205 (backlog, after T-12204) [intent: INT-0008]: Extend hardware fit to GPU/VRAM discovery and safe layer calibration (the GPU half of T-11507), and feed both RAM and VRAM fit into AC-13's acquisition recommendation. — touches: `crates/ferric-cli/src/startup/memory.rs`, `crates/ferric-cli/src/backend.rs`, `crates/ferric-cli/src/server.rs`
