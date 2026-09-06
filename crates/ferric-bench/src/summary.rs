@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::budget::{AttemptBudgetReference, AttemptIdentity, RunBudgetEvidence};
 use crate::results::ResultRow;
 use crate::verify::CommandCheckStatus;
 
@@ -208,6 +209,10 @@ pub struct RunSummary {
     pub issues: Vec<RunIssue>,
     pub levels: Vec<LevelSummary>,
     pub calibration: CalibrationEvidence,
+    /// Additive parent controls and per-attempt retained evidence references.
+    /// Missing from old summaries means unknown, never invented scale 1.0.
+    #[serde(default)]
+    pub budget: Option<RunBudgetEvidence>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -266,6 +271,31 @@ pub fn summarize_run(
         None
     };
     let summary_file = format!("summary-{run_id}.json");
+    let attributed: Vec<_> = run_rows
+        .iter()
+        .filter_map(|row| row.budget.as_ref())
+        .collect();
+    let budget = attributed.first().map(|first| RunBudgetEvidence {
+        controls: (attributed.len() == run_rows.len()
+            && attributed
+                .iter()
+                .all(|budget| budget.controls == first.controls))
+        .then(|| first.controls.clone()),
+        attempts: run_rows
+            .iter()
+            .filter_map(|row| {
+                let budget = row.budget.as_ref()?;
+                Some(AttemptBudgetReference {
+                    identity: AttemptIdentity {
+                        run_id: row.run_id.clone()?,
+                        trial_id: row.trial_id.clone()?,
+                        level: row.level,
+                    },
+                    retained: budget.retained.clone(),
+                })
+            })
+            .collect(),
+    });
 
     RunSummary {
         schema_version: SUMMARY_SCHEMA_VERSION,
@@ -284,6 +314,7 @@ pub fn summarize_run(
         provenance,
         issues,
         levels: level_summaries,
+        budget,
         calibration: CalibrationEvidence {
             run_id: run_id.to_string(),
             summary_file,
@@ -448,6 +479,7 @@ mod tests {
             started_at_unix_ms: Some(1),
             finished_at_unix_ms: Some(2),
             trace_path: None,
+            budget: None,
             infrastructure_error: None,
             level,
             spec_version: 1,
@@ -500,6 +532,62 @@ mod tests {
             variant: "test".to_string(),
             python_bin: "python".to_string(),
         }
+    }
+
+    #[test]
+    fn legacy_budget_metadata_is_unknown() {
+        let summary = summarize_run(
+            "run",
+            1,
+            2,
+            1,
+            1.0,
+            &[0],
+            false,
+            &[row("run", "trial-001", 0, true, 10)],
+            Vec::new(),
+            provenance(),
+        );
+        let mut value = serde_json::to_value(&summary).unwrap();
+        value.as_object_mut().unwrap().remove("budget");
+        let legacy: RunSummary = serde_json::from_value(value).unwrap();
+        assert!(legacy.budget.is_none());
+        let mut value = serde_json::to_value(row("run", "trial-001", 0, true, 10)).unwrap();
+        value.as_object_mut().unwrap().remove("budget");
+        let legacy: ResultRow = serde_json::from_value(value).unwrap();
+        assert!(legacy.budget.is_none());
+    }
+
+    #[test]
+    fn summary_budget_controls_and_references_match_rows() {
+        let controls = crate::budget::BudgetControls::new(0.5, Some(1024), 7.0, 4096).unwrap();
+        let mut row = row("run", "trial-001", 0, true, 10);
+        let mut evidence = controls.resolve_agent(60).unwrap().evidence(Some(0), false);
+        let reference = crate::budget::RetainedBudgetEvidence {
+            identity: AttemptIdentity::new("run", "trial-001", 0).unwrap(),
+            trace_path: "traces/run/trial-001-l0.jsonl".into(),
+            sidecar_path: "traces/run/trial-001-l0.budget.json".into(),
+            trace_sha256: "a".repeat(64),
+        };
+        evidence.retained = Some(reference.clone());
+        row.budget = Some(evidence);
+        let summary = summarize_run(
+            "run",
+            1,
+            2,
+            1,
+            1.0,
+            &[0],
+            false,
+            &[row],
+            Vec::new(),
+            provenance(),
+        );
+        let budget = summary.budget.unwrap();
+        assert_eq!(budget.controls.as_ref(), Some(&controls));
+        assert_eq!(budget.attempts.len(), 1);
+        assert_eq!(budget.attempts[0].identity, reference.identity);
+        assert_eq!(budget.attempts[0].retained.as_ref(), Some(&reference));
     }
 
     #[test]

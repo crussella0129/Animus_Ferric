@@ -4,8 +4,8 @@
 //! spec's wall-clock timeout, and locate the resulting trace.
 //!
 //! Std-only (no tokio in the default graph): the timeout is a `try_wait`
-//! poll loop. Release-profile children are required for usable speed (debug
-//! candle is ~1 tok/s — s1 lesson); the CLI warns under debug_assertions.
+//! poll loop. External inference speed belongs to the selected server/runtime,
+//! not the build profile of this HTTP client.
 
 use std::collections::BTreeSet;
 use std::io;
@@ -16,6 +16,7 @@ use std::time::Duration;
 use ferric_core::{ActionProtocol, HarnessPolicy};
 use tempfile::TempDir;
 
+use crate::budget::{AttemptBudgetEvidence, BudgetControls, ResolvedAgentBudget};
 use crate::process::{CapturePlan, run_bounded};
 use crate::spec::BenchSpec;
 
@@ -33,6 +34,9 @@ pub struct Invocation {
     /// Prompt library dir passed through as `--prompts-dir`.
     pub prompts_dir: Option<PathBuf>,
     pub keep_workspace: bool,
+    /// None preserves historical initial/continuation argv. Selected controls
+    /// propagate declared parameters/context to both real and mock children.
+    pub budget: Option<BudgetControls>,
 }
 
 #[derive(Clone)]
@@ -54,6 +58,7 @@ impl Invocation {
             openai: None,
             prompts_dir: None,
             keep_workspace: false,
+            budget: None,
         }
     }
 }
@@ -69,6 +74,9 @@ pub struct RunRecord {
     /// when `keep_workspace` moved it to a persisted path.
     pub workspace: WorkspaceHandle,
     pub stderr_tail: String,
+    /// Known parent enforcement even when the child creates no trace. Legacy
+    /// callers without selected controls retain unknown attribution.
+    pub budget: Option<AttemptBudgetEvidence>,
 }
 
 /// One process segment in the autonomy matrix. Initial segments supply a
@@ -124,6 +132,67 @@ const STDERR_TAIL_BYTES: usize = 1000;
 
 /// Materialize the spec's workspace, run the agent, and return the raw record.
 pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord> {
+    match &inv.budget {
+        Some(controls) => {
+            let budget = controls
+                .resolve_agent(spec.timeout_s)
+                .map_err(invalid_budget)?;
+            run_spec_with_budget(spec, inv, &budget)
+        }
+        None => run_spec_inner(spec, inv, Duration::from_secs(spec.timeout_s), None),
+    }
+}
+
+/// Execute one pre-resolved selected spec budget. Validation is before even
+/// temporary workspace/profile allocation; no silent re-resolution per trial.
+pub fn run_spec_with_budget(
+    spec: &BenchSpec,
+    inv: &Invocation,
+    budget: &ResolvedAgentBudget,
+) -> io::Result<RunRecord> {
+    validate_invocation_budget(inv)?;
+    let controls = budget.controls();
+    if budget.base_timeout_s() != spec.timeout_s
+        || match &inv.budget {
+            Some(selected) => selected != controls,
+            None => controls.timeout_scale() != 1.0 || controls.max_output_tokens().is_some(),
+        }
+    {
+        return Err(invalid_budget(
+            "resolved budget does not match selected spec/invocation",
+        ));
+    }
+    if let Some(openai) = &inv.openai
+        && (openai.params_b != controls.params_b() || openai.ctx != controls.ctx())
+    {
+        return Err(invalid_budget(
+            "resolved budget does not match real child parameters/context",
+        ));
+    }
+    run_spec_inner(spec, inv, budget.duration(), Some(budget))
+}
+
+fn invalid_budget(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message.into())
+}
+
+fn validate_invocation_budget(inv: &Invocation) -> io::Result<()> {
+    if let (Some(controls), Some(openai)) = (&inv.budget, &inv.openai)
+        && (openai.params_b != controls.params_b() || openai.ctx != controls.ctx())
+    {
+        return Err(invalid_budget(
+            "selected budget does not match real child parameters/context",
+        ));
+    }
+    Ok(())
+}
+
+fn run_spec_inner(
+    spec: &BenchSpec,
+    inv: &Invocation,
+    timeout: Duration,
+    budget: Option<&ResolvedAgentBudget>,
+) -> io::Result<RunRecord> {
     let dir = tempfile::tempdir()?;
     // A calibration run must not consume a profile written by an earlier run.
     // Keep the empty profile directory alive until the child exits.
@@ -151,7 +220,7 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
 
     let outcome = run_bounded(
         &mut cmd,
-        Duration::from_secs(spec.timeout_s),
+        timeout,
         CapturePlan::stderr_tail(STDERR_TAIL_BYTES),
     )?;
 
@@ -171,6 +240,7 @@ pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord
         trace_path,
         workspace,
         stderr_tail: String::from_utf8_lossy(&outcome.stderr).into_owned(),
+        budget: budget.map(|budget| budget.evidence(outcome.exit_code, outcome.timed_out)),
     })
 }
 
@@ -181,6 +251,7 @@ pub fn run_query_segment(
     inv: &Invocation,
     request: &QuerySegmentRequest<'_>,
 ) -> std::io::Result<QuerySegmentRecord> {
+    validate_invocation_budget(inv)?;
     validate_segment_request(request)?;
     let before = trace_files(request.workspace)?;
     let mut cmd = Command::new(&inv.ferric_bin);
@@ -297,7 +368,9 @@ fn query_args(
         ]);
     } else {
         args.push("--mock".to_string());
+        append_mock_budget_coordinates(&mut args, inv);
     }
+    append_output_cap(&mut args, inv);
     if let Some(prompts) = &inv.prompts_dir {
         args.push("--prompts-dir".to_string());
         args.push(prompts.display().to_string());
@@ -346,7 +419,9 @@ fn query_segment_args(inv: &Invocation, request: &QuerySegmentRequest<'_>) -> Ve
         ]);
     } else {
         args.push("--mock".to_string());
+        append_mock_budget_coordinates(&mut args, inv);
     }
+    append_output_cap(&mut args, inv);
     if request.resume.is_none()
         && let Some(prompts) = &inv.prompts_dir
     {
@@ -356,6 +431,27 @@ fn query_segment_args(inv: &Invocation, request: &QuerySegmentRequest<'_>) -> Ve
         args.extend(["--harness-policy".to_string(), policy.to_string()]);
     }
     args
+}
+
+fn append_mock_budget_coordinates(args: &mut Vec<String>, inv: &Invocation) {
+    if let Some(controls) = &inv.budget {
+        args.extend([
+            "--params-b".to_string(),
+            controls.params_b().to_string(),
+            "--ctx".to_string(),
+            controls.ctx().to_string(),
+        ]);
+    }
+}
+
+fn append_output_cap(args: &mut Vec<String>, inv: &Invocation) {
+    if let Some(cap) = inv
+        .budget
+        .as_ref()
+        .and_then(BudgetControls::max_output_tokens)
+    {
+        args.extend(["--max-output-tokens".to_string(), cap.to_string()]);
+    }
 }
 
 fn trace_files(workspace: &Path) -> io::Result<BTreeSet<PathBuf>> {
@@ -404,11 +500,290 @@ mod tests {
             openai: None,
             prompts_dir: None,
             keep_workspace: false,
+            budget: None,
         }
     }
 
     fn has_pair(args: &[String], flag: &str, value: &str) -> bool {
         args.windows(2).any(|w| w[0] == flag && w[1] == value)
+    }
+
+    #[test]
+    fn bench_budget_argv_real_mock_and_resume() {
+        for real in [false, true] {
+            let mut inv = base();
+            inv.budget = Some(BudgetControls::new(0.5, Some(4096), 7.0, 32768).unwrap());
+            inv.prompts_dir = Some(PathBuf::from("prompts with spaces ' &"));
+            if real {
+                inv.openai = Some(OpenAiArgs {
+                    api_base: Some("http://127.0.0.1:8080/v1".into()),
+                    model: "model with spaces".into(),
+                    params_b: 7.0,
+                    ctx: 32768,
+                });
+            }
+            validate_invocation_budget(&inv).unwrap();
+            let initial = query_args(
+                "task",
+                12,
+                &inv,
+                Path::new("workspace ' &"),
+                Path::new("profiles ' &"),
+            );
+            let request = QuerySegmentRequest {
+                workspace: Path::new("workspace ' &"),
+                profile_dir: Path::new("profiles ' &"),
+                checks_file: Some(Path::new("checks ' &.toml")),
+                prompt: None,
+                resume: Some(Path::new("prior ' &.jsonl")),
+                answer: Some("answer ' &"),
+                max_turns: 7,
+                timeout: Duration::from_secs(17),
+                api_base_override: Some("http://127.0.0.1:9/v1"),
+                harness_policy: Some(HarnessPolicy::Evidence),
+            };
+            let resumed = query_segment_args(&inv, &request);
+            for args in [&initial, &resumed] {
+                assert!(has_pair(args, "--params-b", "7"));
+                assert!(has_pair(args, "--ctx", "32768"));
+                assert!(has_pair(args, "--max-output-tokens", "4096"));
+                assert_eq!(
+                    args.iter()
+                        .filter(|arg| *arg == "--max-output-tokens")
+                        .count(),
+                    1
+                );
+                assert_eq!(args.iter().filter(|arg| *arg == "--ctx").count(), 1);
+                assert_eq!(args.iter().filter(|arg| *arg == "--params-b").count(), 1);
+                assert!(has_pair(args, "--profile-dir", "profiles ' &"));
+                assert!(has_pair(args, "--workspace", "workspace ' &"));
+                assert!(has_pair(args, "--temperature", "0.0"));
+                assert!(has_pair(args, "--protocol", "grammar"));
+                assert!(args.iter().any(|arg| arg == "--no-config"));
+            }
+            assert!(has_pair(
+                &initial,
+                "--prompts-dir",
+                "prompts with spaces ' &"
+            ));
+            assert!(!resumed.iter().any(|arg| arg == "--prompts-dir"));
+            assert!(has_pair(&resumed, "--resume", "prior ' &.jsonl"));
+            assert!(has_pair(&resumed, "--answer", "answer ' &"));
+            assert!(has_pair(&resumed, "--checks-file", "checks ' &.toml"));
+            assert!(has_pair(&resumed, "--harness-policy", "evidence"));
+            if real {
+                assert!(has_pair(&resumed, "--api-base", "http://127.0.0.1:9/v1"));
+            } else {
+                assert!(resumed.iter().any(|arg| arg == "--mock"));
+            }
+            assert_eq!(
+                request.timeout,
+                Duration::from_secs(17),
+                "segment fixture budget is not scaled"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_continuation_argv_unchanged() {
+        let inv = base();
+        let request = QuerySegmentRequest {
+            workspace: Path::new("/ws"),
+            profile_dir: Path::new("/profiles"),
+            checks_file: None,
+            prompt: None,
+            resume: Some(Path::new("/prior.jsonl")),
+            answer: Some("continue"),
+            max_turns: 9,
+            timeout: Duration::from_secs(17),
+            api_base_override: None,
+            harness_policy: None,
+        };
+        assert_eq!(
+            query_segment_args(&inv, &request),
+            [
+                "query",
+                "--resume",
+                "/prior.jsonl",
+                "--answer",
+                "continue",
+                "--workspace",
+                "/ws",
+                "--protocol",
+                "grammar",
+                "--no-config",
+                "--profile-dir",
+                "/profiles",
+                "--temperature",
+                "0.0",
+                "--max-turns",
+                "9",
+                "--no-stream",
+                "--mock",
+            ]
+        );
+        assert_eq!(
+            query_args("task", 9, &inv, Path::new("/ws"), Path::new("/profiles")),
+            [
+                "query",
+                "task",
+                "--workspace",
+                "/ws",
+                "--protocol",
+                "grammar",
+                "--no-config",
+                "--profile-dir",
+                "/profiles",
+                "--temperature",
+                "0.0",
+                "--max-turns",
+                "9",
+                "--no-stream",
+                "--mock",
+            ]
+        );
+    }
+
+    #[test]
+    fn mismatched_pre_resolved_budget_rejects_before_workspace_or_child() {
+        let spec = crate::embedded_specs().unwrap().remove(0);
+        let mut inv = base();
+        inv.ferric_bin = PathBuf::from("not-a-real-ferric-child");
+        let controls = BudgetControls::new(0.5, Some(1024), 7.0, 4096).unwrap();
+        let resolved = controls.resolve_agent(spec.timeout_s).unwrap();
+        let error = run_spec_with_budget(&spec, &inv, &resolved).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        inv.budget = Some(controls.clone());
+        let wrong_spec = controls.resolve_agent(spec.timeout_s + 1).unwrap();
+        assert_eq!(
+            run_spec_with_budget(&spec, &inv, &wrong_spec)
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        inv.openai = Some(OpenAiArgs {
+            api_base: None,
+            model: "model".into(),
+            params_b: 7.0,
+            ctx: 8192,
+        });
+        assert_eq!(
+            run_spec_with_budget(&spec, &inv, &resolved)
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    fn run_scaled_source_fixture(
+        mode: &str,
+    ) -> (tempfile::TempDir, crate::budget::AttemptBudgetEvidence) {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("source.jsonl");
+        let started = dir.path().join("started");
+        let budget = BudgetControls::new(1.0 / 30.0, Some(1024), 7.0, 4096)
+            .unwrap()
+            .resolve_agent(60)
+            .unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--ignored",
+                "--exact",
+                "runner::tests::budget_source_child_fixture",
+                "--nocapture",
+            ])
+            .env("FERRIC_BUDGET_FIXTURE_MODE", mode)
+            .env("FERRIC_BUDGET_FIXTURE_TRACE", &trace)
+            .env("FERRIC_BUDGET_FIXTURE_STARTED", &started);
+        let outcome = run_bounded(
+            &mut command,
+            budget.duration(),
+            CapturePlan::stderr_tail(STDERR_TAIL_BYTES),
+        )
+        .unwrap();
+        assert!(outcome.timed_out);
+        assert!(outcome.wall >= budget.duration());
+        assert!(
+            started.is_file(),
+            "source fixture must actually reach its stalled phase"
+        );
+        if mode == "partial-noisy" {
+            assert_eq!(outcome.stderr.len(), STDERR_TAIL_BYTES);
+            assert!(outcome.stderr.iter().all(|byte| *byte == b'x'));
+        }
+        let mut evidence = budget.evidence(outcome.exit_code, outcome.timed_out);
+        evidence
+            .observe_trace(trace.is_file().then_some(trace.as_path()))
+            .unwrap();
+        // run_bounded has synchronously completed checked cleanup before this
+        // successful return. No manual process repair is permitted here.
+        (dir, evidence)
+    }
+
+    #[test]
+    fn bench_early_timeout_retains_parent_budget() {
+        let (_dir, evidence) = run_scaled_source_fixture("no-trace");
+        assert_eq!(evidence.base_timeout_s, 60);
+        assert_eq!(evidence.controls.timeout_scale(), 1.0 / 30.0);
+        assert_eq!(
+            evidence.enforced_duration,
+            crate::budget::ExactDuration { secs: 2, nanos: 0 }
+        );
+        assert_eq!(
+            evidence.parent_termination,
+            crate::budget::ParentTermination::ExecutionTimeout
+        );
+        assert_eq!(
+            evidence.trace,
+            crate::budget::TraceBudgetObservation::missing()
+        );
+        assert!(evidence.retained.is_none());
+    }
+
+    #[test]
+    fn scaled_deadline_owns_checked_cleanup() {
+        let (dir, evidence) = run_scaled_source_fixture("partial-noisy");
+        assert!(matches!(
+            evidence.trace.state,
+            crate::budget::TraceEvidenceState::Malformed { .. }
+        ));
+        assert!(evidence.trace.main_action_budgets.is_none());
+        assert!(evidence.trace.child_terminal.is_none());
+        let reference = crate::retain_budget_trace(
+            &dir.path().join("source.jsonl"),
+            &dir.path().join("retained"),
+            crate::budget::AttemptIdentity::new("run-timeout", "trial-001", 0).unwrap(),
+            &evidence,
+        )
+        .unwrap();
+        let sidecar = crate::verify_budget_trace(&dir.path().join("retained"), &reference).unwrap();
+        assert_eq!(
+            sidecar.evidence.parent_termination,
+            crate::budget::ParentTermination::ExecutionTimeout
+        );
+        assert_eq!(sidecar.evidence.trace, evidence.trace);
+    }
+
+    #[test]
+    #[ignore = "finite source child mode, invoked only by the checked Cargo parent tests"]
+    fn budget_source_child_fixture() {
+        let Ok(mode) = std::env::var("FERRIC_BUDGET_FIXTURE_MODE") else {
+            return;
+        };
+        std::fs::write(
+            std::env::var_os("FERRIC_BUDGET_FIXTURE_STARTED").unwrap(),
+            b"started",
+        )
+        .unwrap();
+        if mode == "partial-noisy" {
+            std::fs::write(std::env::var_os("FERRIC_BUDGET_FIXTURE_TRACE").unwrap(),
+                b"{\"v\":1,\"ts_ms\":1,\"session\":\"child\",\"seq\":0,\"event\":{\"type\":\"main_action_budget\",\"turn\":0,\"budget\":{\"requested\":1024,\"effective\":1024,\"declared_ctx\":4096,\"source\":\"explicit\"}}}\n{\"v\":1").unwrap();
+            eprint!("{}", "x".repeat(128 * 1024));
+        }
+        std::thread::sleep(Duration::from_secs(8));
     }
 
     #[test]

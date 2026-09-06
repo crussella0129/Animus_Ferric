@@ -2015,3 +2015,12 @@ qualification below after final PR checks reopened Test.**
 - **Files modified:** `crates/ferric-core/src/{scale,lib}.rs`, `crates/ferric-cli/src/{query,trace_cmd,trace_verify}.rs`, `crates/ferric-cli/tests/{cli,query_output_budget}.rs`, `crates/ferric-trace/src/{event,lib}.rs`, `crates/ferric-loop/src/run.rs`, `crates/ferric-loop/tests/{common/mod,loop_core,output_budget}.rs`, Sprint 121 metadata/Build verification and work ledgers.
 - **Verification:** Core/trace/loop 311 passed; CLI 75 and HTTP fixture three passed; workspace formatting and affected all-target warnings-denied Clippy passed. Named E01-A through E01-E coverage, source-owned cleanup, initial failures and the Windows fragmented-request negative control are retained in [Build verification](../sprints/s121/sprint-tests/build-verification.md). Formal Test/Loop and model acceptance remain outstanding.
 - **Commit:** `8be0e9ffe980bf5b3efde3ce004d77dd3870ca10`
+
+## T-12102 (sprint 121)
+
+- **Description:** Added checked benchmark execution scales, default-preserving child output controls, and no-clobber SHA-256-bound parent sidecars with actual trace observations and truthful recording failures.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md) AC-11/12 partial; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) AC-6/11 preservation.
+- **Completed:** 2026-09-06T00:11:41Z.
+- **Files modified:** `crates/ferric-bench/src/{budget,budget_trace,runner,results,summary,lib,calibrate}.rs`, `crates/ferric-cli/src/{bench_cmd,autonomy_cmd}.rs`, `crates/ferric-cli/tests/bench_budget.rs`, Sprint 121 metadata/Build verification and work ledgers. Calibration changes at this boundary are constructor-only; its guard is T-12103.
+- **Verification:** Eight new plus seven existing CLI integrations, 94 benchmark library tests and 26 autonomy units passed; four library source-child entries are entered through checked parent tests. Workspace formatting, affected all-target warnings-denied Clippy and independent read-only Build review passed. Full E02 coverage and attribution limits are retained in [Build verification](../sprints/s121/sprint-tests/build-verification.md). Process/spec/verifier implementations remain unchanged. No model/calibration or formal Test/Loop acceptance is inferred.
+- **Commit:** PENDING

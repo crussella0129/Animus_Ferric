@@ -120,3 +120,11 @@ retained trace or experiment evidence. Further local gates disable Cargo
 incremental caching only; production policy, test assertions and CI schedule
 are unchanged. A source compiler-cache failure is not a lifecycle cleanup
 failure or an accepted run.
+
+T-12101 subsequently passed its corrected coherent gates and was committed at
+`8be0e9f` (`ddf0aed` ledger backfill). Its initial failures and verified Windows
+HTTP-fixture correction remain in [Build verification](sprint-tests/build-verification.md).
+T-12102 is in progress: the first integrated compile and fifteen source-owned
+CLI tests passed, while library fault matrices and task-boundary gates remain
+outstanding. T-12103/04, formal Test, Loop, the extra independent review and
+the sole PR are still ahead. No confidence update or model verdict is claimed.

@@ -4,17 +4,19 @@
 //! required for usable speed — warns under debug). `--mock` is the CI-runnable
 //! self-test path (no model needed).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Args;
 use ferric_bench::{
-    BenchSpec, BinaryProvenance, Invocation, ModelProfileRecord, ModelProvenance, OpenAiArgs,
-    ResultRow, RunIssue, RunProvenance, RunSummary, append_row, calibrate_from_evidence, completed,
-    embedded_specs, failure_admission, parse_trace, preflight_command_checks, run_spec,
-    summarize_run, verify_command_checks, verify_expectations, verify_tools, write_summary,
+    AttemptIdentity, BenchSpec, BinaryProvenance, BudgetControls, Invocation, ModelProfileRecord,
+    ModelProvenance, OpenAiArgs, ResolvedAgentBudget, ResultRow, RunBudgetEvidence, RunIssue,
+    RunProvenance, RunSummary, append_row, calibrate_from_evidence, completed, embedded_specs,
+    failure_admission, parse_trace, preflight_command_checks, retain_budget_trace,
+    run_spec_with_budget, summarize_run, verify_command_checks, verify_expectations, verify_tools,
+    write_summary,
 };
 use ferric_core::{ActionProtocol, tier_for_params};
 
@@ -59,6 +61,14 @@ pub struct BenchArgs {
 
     #[arg(long, default_value_t = 4096)]
     pub ctx: u32,
+
+    /// Multiply only agent execution deadlines (positive finite; default 1).
+    #[arg(long, default_value_t = 1.0)]
+    pub timeout_scale: f64,
+
+    /// Explicit main-action output cap; constrained by declared context reserve.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_output_tokens: Option<u32>,
 
     /// Prompt-element library passed to each run.
     #[arg(long)]
@@ -130,6 +140,35 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         eprintln!("no matching levels for {:?}", args.level);
         return ExitCode::FAILURE;
     }
+    // Resolve every selected deadline exactly once, before preflight or any
+    // benchmark result/workspace effects. The same values serve every trial.
+    let controls = match BudgetControls::new(
+        args.timeout_scale,
+        args.max_output_tokens,
+        args.params_b,
+        args.ctx,
+    ) {
+        Ok(controls) => controls,
+        Err(error) => {
+            eprintln!("invalid benchmark budget: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let budgets = match selected
+        .iter()
+        .map(|spec| controls.resolve_agent(spec.timeout_s))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(budgets) => budgets,
+        Err(error) => {
+            eprintln!("invalid benchmark budget: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // No effective override keeps historical argv, including frozen mock and
+    // continuation controls. Parent deadline attribution is still retained.
+    let child_budget =
+        (args.timeout_scale != 1.0 || args.max_output_tokens.is_some()).then_some(controls);
     if let Err(e) = preflight_command_checks(&selected, &args.python_bin) {
         eprintln!("benchmark check infrastructure: {e}");
         return ExitCode::FAILURE;
@@ -160,6 +199,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         for model_id in &model_ids {
             println!("\n=== {model_id} ===");
             let inv = Invocation {
+                budget: child_budget.clone(),
                 ferric_bin: ferric_bin.clone(),
                 protocol,
                 openai: Some(OpenAiArgs {
@@ -173,6 +213,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
             };
             let outcome = run_trials(
                 &selected,
+                &budgets,
                 &inv,
                 protocol,
                 &Some(model_id.clone()),
@@ -261,6 +302,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         (Some(oa), Some(model_id))
     };
     let inv = Invocation {
+        budget: child_budget,
         ferric_bin,
         protocol,
         openai,
@@ -268,7 +310,15 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         keep_workspace: args.keep_workspace,
     };
 
-    let outcome = run_trials(&selected, &inv, protocol, &model_name, full_ladder, &args);
+    let outcome = run_trials(
+        &selected,
+        &budgets,
+        &inv,
+        protocol,
+        &model_name,
+        full_ladder,
+        &args,
+    );
     let mut infrastructure_ok = outcome.infrastructure_ok;
 
     // Calibrate from this sweep's rows — but ONLY from a full ladder.
@@ -337,6 +387,7 @@ struct BenchRunOutcome {
 /// trial so persistent ordering effects are attributable rather than fixed.
 fn run_trials(
     selected: &[BenchSpec],
+    budgets: &[ResolvedAgentBudget],
     inv: &Invocation,
     protocol: ActionProtocol,
     model_name: &Option<String>,
@@ -360,9 +411,10 @@ fn run_trials(
         }
         let offset = trial_index as usize % selected.len();
         for position in 0..selected.len() {
-            let spec = &selected[(position + offset) % selected.len()];
+            let spec_index = (position + offset) % selected.len();
+            let spec = &selected[spec_index];
             let attempt_started_at = now_unix_ms();
-            let record = match run_spec(spec, inv) {
+            let record = match run_spec_with_budget(spec, inv, &budgets[spec_index]) {
                 Ok(record) => record,
                 Err(error) => {
                     let message = format!("cannot execute benchmark child: {error}");
@@ -377,10 +429,39 @@ fn run_trials(
             };
 
             let mut attempt_issues = Vec::new();
+            let mut budget = record.budget.clone().unwrap_or_else(|| {
+                attempt_issues.push("runner omitted required budget attribution".to_string());
+                budgets[spec_index].evidence(record.exit_code, record.timed_out)
+            });
+            if let Err(error) = budget.observe_trace(record.trace_path.as_deref()) {
+                attempt_issues.push(format!("cannot observe trace budget: {error}"));
+            }
+            if let ferric_bench::TraceEvidenceState::Malformed { error } = &budget.trace.state {
+                attempt_issues.push(format!("malformed trace budget evidence: {error}"));
+            }
             let retained_trace = match record.trace_path.as_deref() {
                 Some(source) => {
-                    match retain_trace(source, &args.results_dir, &run_id, &trial_id, spec.level) {
-                        Ok(path) => Some(path),
+                    let retained = AttemptIdentity::new(&run_id, &trial_id, spec.level)
+                        .and_then(|identity| {
+                            retain_budget_trace(source, &args.results_dir, identity, &budget)
+                        })
+                        .and_then(|reference| {
+                            ferric_bench::verify_budget_trace(&args.results_dir, &reference)
+                                .map(|sidecar| (reference, sidecar.evidence))
+                        });
+                    match retained {
+                        Ok((reference, retained_budget)) => {
+                            let path = reference.trace_path.clone();
+                            budget = retained_budget;
+                            if let ferric_bench::TraceEvidenceState::Malformed { error } =
+                                &budget.trace.state
+                            {
+                                attempt_issues.push(format!(
+                                    "malformed retained trace budget evidence: {error}"
+                                ));
+                            }
+                            Some(path)
+                        }
                         Err(error) => {
                             attempt_issues.push(format!("cannot retain trace: {error}"));
                             None
@@ -392,7 +473,13 @@ fn run_trials(
                     None
                 }
             };
-            let metrics = match record.trace_path.as_deref() {
+            // Successful rows derive their metrics from the exact retained
+            // evidence, not another read of the disposable child workspace.
+            let metrics_path = retained_trace
+                .as_ref()
+                .map(|relative| args.results_dir.join(relative))
+                .or_else(|| record.trace_path.clone());
+            let metrics = match metrics_path.as_deref() {
                 Some(path) => match parse_trace(path) {
                     Ok(metrics) => metrics,
                     Err(error) => {
@@ -440,6 +527,7 @@ fn run_trials(
             }
 
             let row = ResultRow {
+                budget: Some(budget),
                 run_id: Some(run_id.clone()),
                 trial_id: Some(trial_id.clone()),
                 started_at_unix_ms: Some(attempt_started_at),
@@ -474,20 +562,30 @@ fn run_trials(
                 tier_from_params: format!("{:?}", tier_for_params(args.params_b)),
                 stderr_tail: record.stderr_tail.clone(),
             };
-            if let Err(error) = append_row(&args.results_dir, &row) {
-                let message = format!("cannot append results row: {error}");
-                eprintln!("{trial_prefix}L{} {message}", spec.level);
-                issues.push(RunIssue {
-                    trial_id: Some(trial_id.clone()),
-                    level: Some(spec.level),
-                    message,
-                });
-            }
+            let row_written = match append_row(&args.results_dir, &row) {
+                Ok(()) => true,
+                Err(error) => {
+                    let message = format!("cannot append results row: {error}");
+                    eprintln!("{trial_prefix}L{} {message}", spec.level);
+                    issues.push(RunIssue {
+                        trial_id: Some(trial_id.clone()),
+                        level: Some(spec.level),
+                        message,
+                    });
+                    false
+                }
+            };
             println!(
                 "{trial_prefix}L{} {} — {} ({} turns, {} tok, {} ms){}",
                 spec.level,
                 spec.name,
-                if done { "PASS" } else { "FAIL" },
+                if !row_written || row.infrastructure_error.is_some() {
+                    "INFRASTRUCTURE FAILURE"
+                } else if done {
+                    "PASS"
+                } else {
+                    "FAIL"
+                },
                 row.turns,
                 row.output_tokens,
                 row.wall_ms,
@@ -504,7 +602,7 @@ fn run_trials(
 
     let finished_at_unix_ms = now_unix_ms();
     let expected_levels: Vec<u8> = selected.iter().map(|spec| spec.level).collect();
-    let summary = summarize_run(
+    let mut summary = summarize_run(
         &run_id,
         started_at_unix_ms,
         finished_at_unix_ms,
@@ -516,6 +614,12 @@ fn run_trials(
         issues,
         provenance(inv, args),
     );
+    if summary.budget.is_none() {
+        summary.budget = Some(RunBudgetEvidence {
+            controls: budgets.first().map(|budget| budget.controls().clone()),
+            attempts: Vec::new(),
+        });
+    }
     let summary_written = match write_summary(&args.results_dir, &summary) {
         Ok(path) => {
             println!("summary: {}", path.display());
@@ -532,22 +636,6 @@ fn run_trials(
         infrastructure_ok: summary.infrastructure_clean && summary_written,
         summary,
     }
-}
-
-fn retain_trace(
-    source: &Path,
-    results_dir: &Path,
-    run_id: &str,
-    trial_id: &str,
-    level: u8,
-) -> std::io::Result<String> {
-    let relative = format!("traces/{run_id}/{trial_id}-l{level}.jsonl");
-    let destination = results_dir.join(&relative);
-    if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::copy(source, destination)?;
-    Ok(relative)
 }
 
 fn provenance(inv: &Invocation, args: &BenchArgs) -> RunProvenance {

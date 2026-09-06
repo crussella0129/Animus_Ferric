@@ -208,6 +208,7 @@ mod tests {
             started_at_unix_ms: None,
             finished_at_unix_ms: None,
             trace_path: None,
+            budget: None,
             infrastructure_error: None,
             level,
             spec_version: 1,
