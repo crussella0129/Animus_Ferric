@@ -2081,4 +2081,4 @@ qualification below after final PR checks reopened Test.**
 - **Description:** Extract ferric-cli into a library with thin binary shims: lib.rs owns the ~28 modules + command surface + run(bin_name); main.rs and bin/ferric_lifecycle_test.rs are shims; a set-once bin_identity seam replaces the library-invalid env!(CARGO_BIN_NAME) at the tailscale fixture gate. Removes the duplicate-source build warning (INT-0008 T-12028). Behavior-preserving: full workspace + lifecycle-fixture (5/5) green.
 - **Completed:** 2026-09-06T23:46:29Z
 - **Files modified:** crates/ferric-cli/src/lib.rs, crates/ferric-cli/src/main.rs, crates/ferric-cli/src/bin/ferric_lifecycle_test.rs, crates/ferric-cli/src/bin_identity.rs, crates/ferric-cli/src/tailscale_localapi.rs, crates/ferric-cli/Cargo.toml, crates/ferric-cli/tests/source_execution.rs
-- **Commit:** PENDING
+- **Commit:** `642e4d249868a4f7fee8a80cf90e593d95b8c692`
