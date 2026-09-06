@@ -1,8 +1,13 @@
 # INT-0009 — Lean, decomposed harness architecture
 
+<!-- sprint-loop-intent-v2 -->
+- **Intent ID:** INT-0009
 - **State:** active
 - **Work evidence:** [Sprint 123 ferric-cli library extraction plan](../sprints/s123/sprint-plans/build-plan.md#execution-sequence); [direction & refactor plan](../plans/2026-09-06-direction-and-refactor.md)
+- **Completion evidence:** none
+- **Code evidence:** [T-12301 ferric-cli library extraction](../work/completed-tasks.md#t-12301-sprint-123)
 - **Test evidence:** [Sprint 123 library-extraction test report](../sprints/s123/sprint-tests/test-report.md)
+- **Documentation evidence:** [direction & refactor plan](../plans/2026-09-06-direction-and-refactor.md)
 
 ## Intent
 
