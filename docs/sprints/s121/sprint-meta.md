@@ -207,3 +207,11 @@ must precede the Test report and Loop. Existing Ubuntu WSL additionally passed
 35 process-free core tests and core Clippy; local namespace runtime gates remain
 unavailable without sudo authorization. Full details are retained under
 `sprint-tests/`, including the original failure and diagnostic checkpoints.
+
+Corrected immutable source `a417c5d00361fd25a238346e5015fb07ed5ae7c7` passed
+root's 1,303-test Windows workspace, all eight canonical CI jobs and a fresh
+15.07-second owned-model smoke. Independent Test re-review resolved C-001/002,
+verified source/report/trace digests and accepted `proceed-with-caveats` for
+the still-unknown historical CI cause. The accepted Test report is linked from
+both active intents. This ends Test only: confidence, Loop reconciliation,
+extra fresh audit and the sole PR checkpoint remain subsequent obligations.

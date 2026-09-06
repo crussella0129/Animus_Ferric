@@ -1,12 +1,16 @@
 # Sprint 121 integration evidence
 
-Immutable source: `2856c63209865f69b3d3727f84fd92f63f9dfa51`.
+Corrected immutable source: `a417c5d00361fd25a238346e5015fb07ed5ae7c7`.
 Root executed the canonical Windows `cargo test --workspace --locked -- --test-threads=1`
 with existing Python 3.12.14 selected by `FERRIC_TEST_PYTHON` and local
 `CARGO_INCREMENTAL=0`. Formatting, included-fixture formatting and workspace
-all-target warnings-denied Clippy passed. [Per-suite output](windows-source-2856c63.txt)
-confirms 1,299 passes/eleven documented ignores. The separate required
-[CI checkpoint failed](ci-checkpoint-001.md); this is evidence, not a Test pass.
+all-target warnings-denied Clippy passed. [Per-suite output](windows-source-a417c5d.txt)
+confirms 1,303 passes/thirteen documented ignores and zero failures. The
+[corrected CI matrix](ci-checkpoint-003.md) and fresh live qualification passed;
+final independent review/report remain acceptance gates.
+The earlier [failed CI](ci-checkpoint-001.md), [instrumented non-reproduction](ci-checkpoint-002.md)
+and [fixture correction with negative control](windows-reset-correction.md)
+are retained separately; the historical native failure's cause is unknown.
 
 ## Actual query / HTTP / trace / resume
 
@@ -58,16 +62,28 @@ the first example, the four primary actions, non-TTY zero-effect success,
 bounded decline/EOF/configuration outcomes, expert discovery and documentation
 of diagnostic controls/evidence without new mandatory setup choices.
 
-The independent source-head CI matrix passed Linux workspace (1,305/nine
+The original source-head CI matrix passed Linux workspace (1,305/nine
 ignores), backend-free CLI on both hosts (416/no ignores each), native
 lifecycle (five Windows/six Linux), backend Clippy and ARM64 compilation.
 Windows workspace failed one existing first-run journey after 507 partial
 passes; its later CLI integration suites did not run on that CI host.
 Root's local successes do not erase that failed gate. No CI rerun occurred.
+The later instrumented matrix passed unchanged suites but was not accepted as
+a repair. The corrected source adds a real reset-recovery journey, a composed
+fatal-refusal/cleanup journey, a five-kind fatal matrix and deterministic
+absolute-deadline coverage. All four passed in the fresh full Windows run.
+The corrected immutable matrix then passed all eight jobs: Windows workspace
+1,303/thirteen ignores, isolated Linux 1,309/nine, backend-free 416 each, native
+lifecycle five/six, backend Clippy and both ARM64 checks. All four new regressions
+passed both native workspace jobs; no timing, test schedule or assertion was
+weakened to obtain this result. Full job identities and confirmations are in
+[corrected CI evidence](ci-checkpoint-003.md).
 
 Existing Ubuntu WSL2 has Rust and namespace tools, but `sudo -n` requires
 interactive authentication. Native WSL formatting passed; the canonical
 non-root namespace runtime gate was not run locally and no sudoers/root
 bypass was made. Successful isolated Linux CI is not broad ordinary-host or
 macOS parity. The optional local model smoke is retained separately in
-[E2E evidence](e2e-tests.md).
+[E2E evidence](e2e-tests.md). Additional [WSL qualification](wsl-checkpoint-001.md)
+passed 35 process-free core tests and core Clippy with an unchanged locked
+dependency graph, without claiming full runtime or ownership parity.

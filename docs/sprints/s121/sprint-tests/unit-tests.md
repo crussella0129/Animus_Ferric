@@ -1,10 +1,27 @@
 # Sprint 121 unit and clause evidence
 
-Source head: `2856c63209865f69b3d3727f84fd92f63f9dfa51`.
-Root's canonical Windows workspace run passed 1,299 tests with eleven
-documented ignores. [Per-suite confirmations](windows-source-2856c63.txt) retain
-the exact counts; they are not an acceptance override for the separate
-[failed Windows CI checkpoint](ci-checkpoint-001.md). Formal Test is not passed.
+Corrected source head: `a417c5d00361fd25a238346e5015fb07ed5ae7c7`.
+Root's fresh canonical Windows workspace passed 1,303 tests with thirteen
+documented ignores and zero failures. [Per-suite confirmations](windows-source-a417c5d.txt)
+retain all 79 suite results, ignored-entry reasons and executed Python grader
+confirmations. Workspace/included-fixture formatting and warnings-denied
+workspace all-target Clippy passed. [Corrected canonical CI](ci-checkpoint-003.md)
+passed all eight jobs, and [fresh live evidence](e2e-tests.md) passed. Renewed
+independent critique remains required; this record alone is not the accepted
+Test report.
+
+Windows's thirteen ignores are four source-child entries in bench, six CLI
+entries (two diagnostic modes, two live-budget child/engine modes and two
+opt-in actual-model tests), one process source mode and two existing external
+web retrieval tests in research. The source-child modes are exercised through
+their bounded parents, not directly by an operator. The budget GGUF smoke is
+separately executed; the other historical live journey is not claimed rerun by
+this sprint. Research's real-network tests remain outside deterministic gates.
+
+The earlier `2856c63` [1,299-test local run](windows-source-2856c63.txt),
+[failed initial CI](ci-checkpoint-001.md), and [instrumented non-reproduction](ci-checkpoint-002.md)
+remain retained. [The independent fixture correction](windows-reset-correction.md)
+has a meaningful failing mutation control; the original CI cause stays unknown.
 
 The [sixteen-clause coverage index](coverage-ledger.md) maps the locked EARS
 clauses to actual named tests and their source-backed assertions. This record
@@ -70,7 +87,7 @@ separate integration evidence, not a mock L0 substitute.
 
 ## T-12104 — bounded fixture evidence
 
-The immutable CLI unit suite passed 389 tests/four documented ignores locally.
+The corrected immutable CLI unit suite passed 393 tests/six documented ignores locally.
 `live_budget_fixture_stalled_phases_reap` proves actual setup/provider
 cancellation and independent synchronous-stall outer timeouts with checked
 cleanup. Five further tests cover known SHA vectors/chunks, refusal before
@@ -78,13 +95,18 @@ read, cancellation between chunks, cancellation after read before update and
 raw partial stage-journal retention. Both ordinary debug and release Build
 gates passed these six tests; the fresh immutable full workspace executed
 them again. The two opt-in real-model tests are not silently treated as runs;
-the explicit-budget test was separately executed and recorded in E2E evidence.
+the explicit-budget test is separately executed and recorded in E2E evidence.
+The two additional Windows-only ignored entries are opt-in diagnostic-series
+parent/child modes, not acceptance skips. Four new accept-reset/fatal/deadline
+regressions passed again in this full run after the restored-source hash check;
+the [correction record](windows-reset-correction.md) names their exact assertions.
 
 ## Intent boundary
 
 INT-0007 AC-11/12 advance only explicit controls and attribution, not measured
 speed, hardware fit, reasoning or compaction tuning. INT-0008 AC-6/11/12 are
 preservation requirements: bounded source ownership, expert compatibility and
-the existing small human front door. The Windows CI first-run failure leaves
-that composed acceptance unproved until diagnosed and requalified; neither
-intent is realized and no final Test verdict is inferred from unit totals.
+the existing small human front door. The initial Windows first-run failure
+remains historical evidence, distinct from the independently demonstrated
+fixture correction. Corrected-source canonical CI passed; final independent
+review/report still gate acceptance. Neither intent is realized by these totals.

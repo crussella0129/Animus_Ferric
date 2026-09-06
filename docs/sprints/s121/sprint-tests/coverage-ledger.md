@@ -1,9 +1,10 @@
 # Sprint 121 clause coverage ledger
 
-Build coverage index, not final Test acceptance. Task-boundary counts and
-retained corrections are in [Build verification](build-verification.md).
-Immutable composed-source head, fresh qualification and final review remain
-pending at the completed T-12104 Build boundary.
+Clause-level Test coverage index at corrected source
+`a417c5d00361fd25a238346e5015fb07ed5ae7c7`, not a substitute for the final
+independent critique/report. Historical task counts remain in [Build verification](build-verification.md).
+Actual fresh [unit](unit-tests.md), [integration](integration-tests.md) and
+[E2E](e2e-tests.md) records preserve source heads, confirmations and limits.
 
 | Clause | Source-backed verification | Current evidence boundary |
 |---|---|---|
@@ -20,6 +21,6 @@ pending at the completed T-12104 Build boundary.
 | E03-A | `diagnostic_budget_evidence_cannot_calibrate`, `mixed_budget_controls_and_later_defaults_cannot_hide_diagnostics`, `default_budget_calibration_compatible` | Synthetic full ladders, mixed/forged flags/default reapplication; direct library denial and old/default compatibility; raw level statistics preserved. |
 | E03-B | `diagnostic_single_fleet_preserve_profile_bytes`, `default_budget_calibration_compatible` | Actual shared publication helper with synthetic full-success/failure matrices; separate real HTTP-error full-ladder single/fleet routes preserve every store snapshot. Ferric-as-Python fixture proves argv plumbing only. |
 | E03-C | `diagnostic_budget_operator_output`, `benchmark_termination_causes_remain_distinct`, recording/timeout integration tests | Actual diagnostic/cause labels and retained/fallback evidence destinations; no diagnostic calibrated board or false persistence error. |
-| E04-A | `budget_docs_preserve_human_front_door`, `human_cli`, `human_docs`, `source_execution` | Initial twelve-test gate passed; first command remains `cargo r`, four primary actions, no primary budget knobs, expert limits documented, stale speed claim removed. |
-| E04-B | `real_model_explicit_budget_smoke`, `live_budget_fixture_stalled_phases_reap`, five `live_identity_hash_*` / journal regressions | Corrected deterministic modes passed under debug/release; unchanged-contract release live smoke passed with actual cap/trace and checked cleanup (`live-build-002`). Original debug setup failure retained. Windows local-live qualification only; explicit unsupported Unix nested-engine outer-timeout boundary. |
-| E04-C | Final Windows/native/workspace/backend-free/lifecycle gates, Linux CI and available WSL checks, ARM64 compile, Test critic, Loop and extra audit | Pending; neither this Build index nor prior task counts satisfy final composed-source acceptance. |
+| E04-A | `budget_docs_preserve_human_front_door`, `human_cli`, `human_docs`, `source_execution`; original and reset/fatal first-run journeys | Fresh twelve-test command/docs group and all 21 human source tests passed; first command remains `cargo r`, four primary actions, no primary budget knobs. Reset correction retains every original assertion, with an executed failing mutation control and fatal/deadline controls. |
+| E04-B | `real_model_explicit_budget_smoke`, `live_budget_fixture_stalled_phases_reap`, five `live_identity_hash_*` / journal regressions | Fresh corrected-source release live smoke passed with actual cap/trace and checked cleanup (`live-test-002`, 15.07 s); deterministic modes passed again in full Windows. Original debug setup failure retained. Windows local-live qualification only; unsupported Unix nested-engine outer-timeout boundary explicit. |
+| E04-C | Corrected Windows/native/workspace/backend-free/lifecycle gates, Linux CI and WSL checks, ARM64 compile, Test critic; later Loop and extra audit | Test-stage results require final independent acceptance; the same-source current matrix and canonical confirmations are indexed in unit/integration records. Loop reconciliation, extra fresh post-Loop audit and final PR head/check verification are later mandatory offer-for-merge obligations, not claimed performed by this Test index. |

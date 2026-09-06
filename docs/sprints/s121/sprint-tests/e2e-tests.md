@@ -2,8 +2,7 @@
 
 ## Immutable source and route
 
-Tested source head: `2856c63209865f69b3d3727f84fd92f63f9dfa51` (completed
-T-12104 `688b939a1f1793f36321fdb5ae570a5b75dcf272` plus its ledger backfill).
+Corrected tested source head: `a417c5d00361fd25a238346e5015fb07ed5ae7c7`.
 This record is Test input, not the final accepted report; the independent
 critic and authoritative CI conclusion remain required.
 
@@ -13,9 +12,41 @@ synthetic-versus-real boundaries are retained in [integration evidence](integrat
 and [clause coverage](coverage-ledger.md). No argv-only or mock-L0 result
 substitutes for those composed routes.
 
-## Fresh local explicit-budget live smoke — passed
+## Corrected-source live-test-002 — passed
 
-At the immutable head above, root executed:
+After all corrected-source Windows workspace/Clippy/format gates passed, root
+ran the same source-aware release Cargo test below with the existing model and
+fresh append-only `live-test-002` evidence destination. One test passed in
+**15.07 s**, no failures/ignores, command exit zero. The release test build took
+35.49 s; build time is separate from the source-owned acceptance execution.
+
+[Raw corrected-source report](live-test-002/live-budget-report.json) SHA-256:
+`a9e82fb7060af17751c359f72a730160424b409fdd9ca617f3d98765d302280b`.
+The live fixture source itself remains SHA-256
+`3e2103f8a7fb1e19adb628c98bf3ee9b00c0dd823c8f572afcdad1478486f525`.
+The exact original model/runtime hashes, context 4096, declared 7B, CPU-only,
+zero GPU layers, parallel one, temperature zero and explicit cap 1024 remained
+unchanged; no model/runtime download or settings waiver occurred.
+
+- Parent total 15.051 s; setup 6.801 s; engine preparation 4.299 s;
+  model hashing 2.452 s; actual request 7.464 s.
+- Actual provider-admission sampler and `main_action_budget` trace both
+  recorded explicit 1024; response was non-truncated `task_complete` with
+  summary `Ferric budget smoke complete` and 63 reported output tokens.
+- Setup/request watchdogs did not fire and were joined. Owned-engine and
+  independent parent process-scope cleanup both passed, with no manual repair.
+- Trace SHA-256 `6a8b26d62c05b3d3536a33e693b5ab1f1b7b8aef2e14380b0481d4a2428cc2af`
+  was independently recomputed from retained UTF-8 bytes and matched. All
+  thirteen events decoded, ending in `session_end` / `task_complete`; the
+  expected non-Git snapshot note remains distinct from application success.
+
+This fresh run proves the locked narrow smoke at the corrected source. It
+does not explain the earlier uninstrumented human-fixture CI failure, establish
+debug-profile live acceptance, or satisfy the deferred larger-model app trial.
+
+## Earlier live-test-001 — passed, retained unchanged
+
+At earlier immutable head `2856c63209865f69b3d3727f84fd92f63f9dfa51`, root executed:
 
 ```text
 cargo test -p ferric-cli --bin ferric --release live_budget_tests::real_model_explicit_budget_smoke --locked -- --ignored --exact --test-threads=1 --nocapture

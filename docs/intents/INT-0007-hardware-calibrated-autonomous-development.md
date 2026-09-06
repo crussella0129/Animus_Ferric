@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 114 T-11407 through T-11413](../sprints/s114/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 continuation plan](../sprints/s115/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 partial closeout](../sprints/s115/sprint-tests/test-report.md); [stable ordered calibration and workflow backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [Sprint 121 approved explicit-budget plan](../sprints/s121/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** [Sprint 115 release, harness, and managed-runtime evidence](../sprints/s115/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 115 release, harness, and managed-runtime evidence](../sprints/s115/sprint-tests/test-report.md); [Sprint 121 accepted explicit-budget increment](../sprints/s121/sprint-tests/test-report.md)
 - **Documentation evidence:** [Sprint 114 research](../sprints/s114/sprint-research/research-report.md); [external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md)
 
 ## Intent

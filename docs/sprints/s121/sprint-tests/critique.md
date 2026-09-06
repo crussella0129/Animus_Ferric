@@ -2,22 +2,22 @@
 
 ## Concerns
 
-### C-001: Canonical Windows acceptance remains unproved
+### C-003: Historical Windows failure remains unexplained
 
-- **Where:** `sprint-plans/build-plan.md` E04-C; `sprint-tests/ci-checkpoint-001.md`; INT-0008 AC-6/12 and Sprint 120 progress.
-- **Quote:** "fresh source-level focused/native tests and the canonical final-head CI matrix SHALL pass"; "A recurrence under the canonical schedule is a blocker."
-- **Failure mode:** EARS-coverage
-- **Why it matters:** Source `2856c63209865f69b3d3727f84fd92f63f9dfa51` failed the actual first-run journey under the canonical Windows schedule. The 32-journey diagnostic sample did not reproduce or explain it; an instrumented green run alone cannot establish a repair or erase that failure.
-- **Suggested response:** add-test — retain the original failure, resolve any evidenced fixture defect with targeted negative/positive regression coverage, and qualify the resulting immutable source through the unchanged gates. Keep any historical-cause uncertainty explicit. No accepted Test report or Loop close yet.
-
-### C-002: A connection-level accept error ends the entire human fixture engine
-
-- **Where:** `crates/ferric-cli/src/human_journey_tests.rs`, `fixture_human_engine`; E04-A/C human-front-door preservation.
-- **Quote:** `exit_reason = "accept_error"; break;`
+- **Where:** `sprint-tests/ci-checkpoint-001.md`, `ci-checkpoint-002.md`, `ci-checkpoint-003.md`, `windows-reset-correction.md`; INT-0008 qualification boundary.
+- **Quote:** "The historical uninstrumented failure's cause remains unknown."
 - **Failure mode:** flake-risk
-- **Why it matters:** Only `WouldBlock` continues the accept loop. Microsoft documents that `accept` may return `WSAECONNRESET` when a queued peer terminates before acceptance—a connection-level event, not proof that the listening engine must stop. The current fixture then exits normally, potentially converting a recoverable peer event into "owned engine exited" during preparation or use. This establishes a fixture weakness, not the cause of the original CI failure. [Microsoft accept contract](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-accept).
-- **Suggested response:** add-test — deterministically inject the documented reset through the actual fixture accept loop, then prove a subsequent valid request is served under the original absolute lifetime and checked cleanup. Make only narrowly justified connection-level errors recoverable; retain a fatal-error negative control. Do not add production identity retries or expand lifecycle authority.
+- **Why it matters:** The correction demonstrably fixes a connection-reset fixture defect, but neither its injected regression nor subsequent successful qualification establishes the original failure’s cause. Corrected-source acceptance must not become a claim of a diagnosed production ownership repair or arbitrary parallel-run robustness.
+- **Suggested response:** defer-with-rationale — retain the original failure, diagnostic non-reproduction and mutation control alongside corrected-source evidence. Preserve the existing native-admission/parallel-robustness backlog and fail closed on future canonical recurrence. No additional Test-stage change is required for this documented caveat.
+
+C-001 is resolved for corrected source `a417c5d00361fd25a238346e5015fb07ed5ae7c7`: fresh Windows formatting, included-fixture formatting, workspace Clippy and canonical tests passed; the retained 79 suite confirmations total 1,303 passes/13 documented ignores. Exact-head CI `34004554100` passed all eight required jobs. Fresh `live-test-002` passed with the unchanged model/runtime, explicit 1024 cap, original deadlines and checked cleanup. I independently verified its report/source hashes and recomputed its retained trace digest.
+
+C-002 is resolved: the actual fixture accept loop narrowly preserves its listener across connection resets, retains fatal-error refusal and the absolute deadline, and has composed reset/fatal regressions plus deterministic deadline coverage. The executed mutation control fails under the old behavior after checked cleanup.
+
+The updated Python-grader confirmations now match the evidence text. The locked plans, linked intent chapters, completed entries and current unit/integration/E2E records provide adequate named coverage for the Test-stage promises. Actual wire observations, exact-byte assertions, no-clobber evidence matrices and diagnostic calibration guards are substantive positive controls.
+
+E04-C’s later Loop reconciliation, separate fresh post-Loop audit, single PR and final PR-head checks remain mandatory—not certified by this Test review. Neither intent is realized; larger-model application, hardware calibration, reasoning/compaction and broader platform guarantees remain deferred.
 
 ## Confidence
 
-block
+proceed-with-caveats
