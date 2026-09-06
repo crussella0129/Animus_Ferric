@@ -4,6 +4,7 @@
 struct FixturePreparation {
     mode: &'static str,
     port: std::sync::atomic::AtomicU16,
+    accept_fault_marker: Option<std::path::PathBuf>,
 }
 
 impl FixturePreparation {
@@ -11,7 +12,12 @@ impl FixturePreparation {
         Self {
             mode,
             port: std::sync::atomic::AtomicU16::new(0),
+            accept_fault_marker: None,
         }
+    }
+    fn with_accept_fault_marker(mut self, path: std::path::PathBuf) -> Self {
+        self.accept_fault_marker = Some(path);
+        self
     }
     fn assert_closed(&self) {
         let port = self.port.load(Ordering::Acquire);
@@ -55,6 +61,9 @@ impl Preparation for FixturePreparation {
                     ])
                     .env("FERRIC_HUMAN_FIXTURE", self.mode)
                     .env("FERRIC_HUMAN_FIXTURE_PORT", port.to_string());
+                if let Some(marker) = &self.accept_fault_marker {
+                    command.env("FERRIC_HUMAN_ACCEPT_FAULT_MARKER", marker);
+                }
                 command
             });
         if let Err(error) = &result {
@@ -199,6 +208,115 @@ fn fixture_request_poll_timeout_preserves_fragments_and_absolute_bound() {
     assert!(started.elapsed() < Duration::from_secs(2));
 }
 
+/// A reset belongs to an incoming connection, not the listening socket.
+/// WinSock explicitly permits WSAECONNRESET when a queued peer aborts:
+/// https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-accept
+/// Keep every other unexpected error fatal, with the original absolute bound.
+fn fixture_accept_next<T>(
+    deadline: std::time::Instant,
+    mut now: impl FnMut() -> std::time::Instant,
+    mut accept: impl FnMut() -> std::io::Result<T>,
+    mut pause: impl FnMut(Duration),
+    mut observe_error: impl FnMut(&std::io::Error, bool),
+) -> std::io::Result<Option<T>> {
+    loop {
+        if now() >= deadline {
+            return Ok(None);
+        }
+        match accept() {
+            Ok(socket) => return Ok((now() < deadline).then_some(socket)),
+            Err(error) => {
+                let retry = matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::ConnectionReset
+                );
+                observe_error(&error, retry);
+                if !retry {
+                    return Err(error);
+                }
+                let remaining = deadline.saturating_duration_since(now());
+                if remaining.is_zero() {
+                    return Ok(None);
+                }
+                pause(remaining.min(Duration::from_millis(10)));
+            }
+        }
+    }
+}
+
+#[test]
+fn fixture_accept_fatal_error_is_not_retried() {
+    for kind in [
+        std::io::ErrorKind::PermissionDenied,
+        std::io::ErrorKind::Interrupted,
+        std::io::ErrorKind::ConnectionAborted,
+        std::io::ErrorKind::NotConnected,
+        std::io::ErrorKind::Other,
+    ] {
+        let now = std::time::Instant::now();
+        let mut attempts = 0;
+        let mut observed = Vec::new();
+        let error = fixture_accept_next::<()>(
+            now + Duration::from_secs(1),
+            || now,
+            || {
+                attempts += 1;
+                Err(kind.into())
+            },
+            |_| panic!("fatal accept errors must not poll"),
+            |error, retry| observed.push((error.kind(), retry)),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), kind);
+        assert_eq!(attempts, 1);
+        assert_eq!(observed, [(kind, false)]);
+    }
+}
+
+#[test]
+fn fixture_accept_repeated_resets_keep_absolute_deadline() {
+    for kind in [
+        std::io::ErrorKind::ConnectionReset,
+        std::io::ErrorKind::WouldBlock,
+    ] {
+        let started = std::time::Instant::now();
+        let clock = std::cell::Cell::new(started);
+        let deadline = started + Duration::from_millis(35);
+        let mut attempts = 0;
+        let mut observed = 0;
+        let result = fixture_accept_next::<()>(
+            deadline,
+            || clock.get(),
+            || {
+                attempts += 1;
+                Err(kind.into())
+            },
+            |duration| clock.set(clock.get() + duration),
+            |error, retry| {
+                assert_eq!(error.kind(), kind);
+                assert!(retry);
+                observed += 1;
+            },
+        )
+        .unwrap();
+        assert!(result.is_none());
+        assert_eq!(attempts, 4);
+        assert_eq!(observed, 4);
+        assert_eq!(clock.get(), deadline);
+        assert!(
+            fixture_accept_next::<()>(
+                deadline,
+                || clock.get(),
+                || panic!("expired deadline must not accept"),
+                |_| panic!("expired deadline must not sleep"),
+                |_, _| panic!("expired deadline must not fabricate an error"),
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+}
+
 #[test]
 fn fixture_human_engine() {
     use std::io::{Read, Write};
@@ -227,21 +345,69 @@ fn fixture_human_engine() {
     );
     let mut work_turn = 0;
     let mut exit_reason = "lifetime_expired";
+    let mut injected_error = match mode.as_str() {
+        "accept-reset-once" => Some(std::io::ErrorKind::ConnectionReset),
+        "accept-fatal-once" => Some(std::io::ErrorKind::PermissionDenied),
+        _ => None,
+    };
+    let injected = std::cell::Cell::new(false);
     while std::time::Instant::now() < deadline {
-        let mut socket = match listener.accept() {
-            Ok((socket, _)) => socket,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(10));
-                continue;
-            }
-            Err(error) => {
-                eprintln!(
-                    "HUMAN_FIXTURE_ENGINE_STAGE={}",
-                    serde_json::json!({
-                        "stage":"accept_error","kind":format!("{:?}",error.kind()),
-                        "os_error":error.raw_os_error(),"elapsed_ms":started.elapsed().as_millis(),
-                    })
-                );
+        let accepted = fixture_accept_next(
+            deadline,
+            std::time::Instant::now,
+            || {
+                if let Some(kind) = injected_error.take() {
+                    injected.set(true);
+                    // On Windows use the actual WinSock reset code, so the
+                    // composed regression also checks std's native mapping.
+                    #[cfg(windows)]
+                    if kind == std::io::ErrorKind::ConnectionReset {
+                        return Err(std::io::Error::from_raw_os_error(10054));
+                    }
+                    Err(kind.into())
+                } else {
+                    listener.accept()
+                }
+            },
+            std::thread::sleep,
+            |error, retry| {
+                let was_injected = injected.replace(false);
+                if error.kind() != std::io::ErrorKind::WouldBlock {
+                    eprintln!(
+                        "HUMAN_FIXTURE_ENGINE_STAGE={}",
+                        serde_json::json!({
+                            "stage":if retry {"accept_connection_reset"} else {"accept_error"},
+                            "kind":format!("{:?}",error.kind()),"os_error":error.raw_os_error(),
+                            "elapsed_ms":started.elapsed().as_millis(),"injected":was_injected,
+                        })
+                    );
+                }
+                if was_injected {
+                    // Publication occurs only after the shared branch has
+                    // classified the delivered fault, never at configuration.
+                    let marker = std::env::var_os("FERRIC_HUMAN_ACCEPT_FAULT_MARKER")
+                        .expect("source fault requires its parent-owned observation path");
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(marker)
+                        .unwrap();
+                    serde_json::to_writer(
+                        &mut file,
+                        &serde_json::json!({
+                            "injected":true,"kind":format!("{:?}",error.kind()),
+                            "os_error":error.raw_os_error(),"retry":retry,"observed_count":1,
+                        }),
+                    )
+                    .unwrap();
+                    file.flush().unwrap();
+                }
+            },
+        );
+        let mut socket = match accepted {
+            Ok(Some((socket, _))) => socket,
+            Ok(None) => break,
+            Err(_) => {
                 exit_reason = "accept_error";
                 break;
             }
@@ -375,8 +541,64 @@ fn setup_decisions(io: &ScriptedIo) -> usize {
 #[test]
 fn human_first_run_decision_budget() {
     let root = tempfile::tempdir().unwrap();
-    fixture_models(root.path(), 2);
     let preparation = FixturePreparation::new("ready");
+    assert_first_run_decision_budget(root.path(), &preparation);
+}
+
+fn assert_first_run_decision_budget(root: &Path, preparation: &FixturePreparation) {
+    fixture_models(root, 2);
+    let (result, io) = run_fixture(
+        root,
+        &[
+            Some("2"),
+            Some("ask"),
+            Some("y"),
+            Some("hello"),
+            Some("/quit"),
+        ],
+        preparation,
+    );
+    result.unwrap();
+    assert_eq!(setup_decisions(&io), 3);
+    let output = io.output.lock().unwrap();
+    assert!(output.contains("Ready: human-fixture-model"));
+    assert!(output.contains("Hello from the source-owned fixture."));
+    assert!(!root.join("human-result.txt").exists());
+    for technical in ["parameters?", "context?", "quantization?", "GPU layers?"] {
+        assert!(
+            !io.prompts
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|prompt| prompt.contains(technical))
+        );
+    }
+}
+
+#[test]
+fn human_first_run_accept_reset_preserves_decisions_answer_and_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("accept-fault.json");
+    let preparation =
+        FixturePreparation::new("accept-reset-once").with_accept_fault_marker(marker.clone());
+    assert_first_run_decision_budget(root.path(), &preparation);
+    let observed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+    assert_eq!(observed["injected"], true);
+    assert_eq!(observed["observed_count"], 1);
+    assert_eq!(observed["kind"], "ConnectionReset");
+    assert_eq!(observed["retry"], true);
+    #[cfg(windows)]
+    assert_eq!(observed["os_error"], 10054);
+}
+
+#[test]
+fn human_first_run_fatal_accept_error_refuses_and_reaps() {
+    let root = tempfile::tempdir().unwrap();
+    fixture_models(root.path(), 2);
+    let marker = root.path().join("accept-fault.json");
+    let preparation =
+        FixturePreparation::new("accept-fatal-once").with_accept_fault_marker(marker.clone());
     let (result, io) = run_fixture(
         root.path(),
         &[
@@ -388,21 +610,28 @@ fn human_first_run_decision_budget() {
         ],
         &preparation,
     );
-    result.unwrap();
-    assert_eq!(setup_decisions(&io), 3);
+    assert!(
+        result.is_err(),
+        "fatal listener error must refuse the journey"
+    );
     let output = io.output.lock().unwrap();
-    assert!(output.contains("Ready: human-fixture-model"));
-    assert!(output.contains("Hello from the source-owned fixture."));
+    assert!(!output.contains("Ready: human-fixture-model"));
+    assert!(!output.contains("Hello from the source-owned fixture."));
+    assert_eq!(setup_decisions(&io), 3);
     assert!(!root.path().join("human-result.txt").exists());
-    for technical in ["parameters?", "context?", "quantization?", "GPU layers?"] {
-        assert!(
-            !io.prompts
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|prompt| prompt.contains(technical))
-        );
-    }
+    let observed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+    assert_eq!(observed["injected"], true);
+    assert_eq!(observed["observed_count"], 1);
+    assert_eq!(observed["kind"], "PermissionDenied");
+    assert_eq!(observed["retry"], false);
+    let _again = crate::startup::test_support::begin(
+        root.path(),
+        &Config::default(),
+        None,
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
 }
 
 #[cfg(windows)]

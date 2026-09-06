@@ -1,0 +1,30 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.33s
+     Running unittests src\main.rs (target\debug\deps\ferric-afbcad2b82f86bc7.exe)
+
+running 24 tests
+test human::enabled::tests::cancellation_is_registered_before_listener_can_be_polled ... ok
+test human::enabled::tests::fixture_accept_fatal_error_is_not_retried ... ok
+test human::enabled::tests::fixture_accept_repeated_resets_keep_absolute_deadline ... ok
+test human::enabled::tests::fixture_human_engine ... ok
+test human::enabled::tests::fixture_request_poll_timeout_preserves_fragments_and_absolute_bound ... ok
+test human::enabled::tests::human_ask_never_dispatches ... ok
+test human::enabled::tests::human_cancel_during_request_reaps_owned_engine ... ok
+test human::enabled::tests::human_decline_eof_and_errors_are_bounded ... ok
+test human::enabled::tests::human_empty_answer_is_not_success ... ok
+test human::enabled::tests::human_failure_is_concise ... ok
+test human::enabled::tests::human_first_run_accept_reset_preserves_decisions_answer_and_cleanup ... ok
+test human::enabled::tests::human_first_run_decision_budget ... ok
+test human::enabled::tests::human_first_run_diagnostic_series ... ignored, opt-in diagnostic series, not acceptance; 32 journeys under a 60s Windows Job owner
+test human::enabled::tests::human_first_run_diagnostic_series_child ... ignored, source child entered only by the opt-in diagnostic series Cargo parent
+test human::enabled::tests::human_first_run_fatal_accept_error_refuses_and_reaps ... ok
+test human::enabled::tests::human_journey_e2e_matrix ... ok
+test human::enabled::tests::human_repeat_reuses_model ... ok
+test human::enabled::tests::human_stale_single_model_requires_reselection ... ok
+test human::enabled::tests::human_text_is_not_shell ... ok
+test human::enabled::tests::human_work_policy_does_not_reuse_qualification_or_expert_authority ... ok
+test human::enabled::tests::human_work_requires_scoped_consent ... ok
+test human::enabled::tests::human_work_surfaces_required_decisions ... ok
+test human::enabled::tests::new_session_does_not_inherit_edit_consent ... ok
+test human::enabled::tests::real_model_prepared_host_journey ... ignored, explicit live local-model acceptance; set FERRIC_LIVE_MODEL to an existing GGUF
+
+test result: ok. 21 passed; 0 failed; 3 ignored; 0 measured; 375 filtered out; finished in 2.94s

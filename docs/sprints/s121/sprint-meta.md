@@ -195,3 +195,15 @@ was discarded; no cause or successful final matrix can be inferred. Test-only
 diagnostics and one fixed bounded local series are the next diagnostic checks,
 not a blind CI rerun or production native-ownership redesign. Formal Test,
 Loop and the single PR remain blocked on qualification; confidence is unchanged.
+
+The instrumented `4eded51` checkpoint passed all eight CI jobs, but this was
+retained as non-reproduction, not a repair. Independent Test critique returned
+`block` and found a separate concrete connection-reset defect in the human
+source fixture. Its narrow correction now has four new regressions and an
+executed failing mutation control with checked cleanup; production native
+ownership and every existing deadline remain unchanged. Historical CI cause
+remains unknown. Corrected immutable-source qualification and renewed critic
+must precede the Test report and Loop. Existing Ubuntu WSL additionally passed
+35 process-free core tests and core Clippy; local namespace runtime gates remain
+unavailable without sudo authorization. Full details are retained under
+`sprint-tests/`, including the original failure and diagnostic checkpoints.

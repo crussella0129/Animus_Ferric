@@ -1,0 +1,20 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.96s
+     Running unittests src\main.rs (target\debug\deps\ferric-afbcad2b82f86bc7.exe)
+
+running 1 test
+test human::enabled::tests::human_first_run_accept_reset_preserves_decisions_answer_and_cleanup ... HUMAN_FIXTURE_PREPARATION_FAILURE={"elapsed_ms":104,"mode":"accept-reset-once","port":63205,"startup_error_debug":"StartupError { message: \"The engine exited while loading the model. Choose a compatible model.\", next_action: None, diagnostics: Some(\"\\nrunning 1 test\\ntest human::enabled::tests::fixture_human_engine ... ok\\n\\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 398 filtered out; finished in 0.01s\\n\\nHUMAN_FIXTURE_ENGINE_STAGE={\\\"stage\\\":\\\"start\\\",\\\"mode\\\":\\\"accept-reset-once\\\",\\\"pid\\\":35688,\\\"elapsed_ms\\\":0}\\nHUMAN_FIXTURE_ENGINE_STAGE={\\\"stage\\\":\\\"listener\\\",\\\"port\\\":63205,\\\"elapsed_ms\\\":1,\\\"lifetime_ms\\\":45000}\\nHUMAN_FIXTURE_ENGINE_STAGE={\\\"stage\\\":\\\"accept_error\\\",\\\"kind\\\":\\\"ConnectionReset\\\",\\\"os_error\\\":10054,\\\"elapsed_ms\\\":1,\\\"injected\\\":true}\\nHUMAN_FIXTURE_ENGINE_STAGE={\\\"stage\\\":\\\"source_return\\\",\\\"reason\\\":\\\"accept_error\\\",\\\"elapsed_ms\\\":10}\\n\"), cancelled: false }"}
+HUMAN_FIXTURE_SESSION_FAILURE={"elapsed_ms":125,"error":"The engine exited while loading the model. Choose a compatible model.","mode":"accept-reset-once","port":63205,"closed_listener_check":true,"prompts":["Which model? [number, or Enter to cancel] ","Ask only, or allow file work here? [Enter = ask / work / quit] ","Start the local model? [y/N] "],"answers":[["Which model? [number, or Enter to cancel] ","2"],["Ask only, or allow file work here? [Enter = ask / work / quit] ","ask"],["Start the local model? [y/N] ","y"]],"output":"Folder: \\\\?\\C:\\Users\\charl\\AppData\\Local\\Temp\\.tmp2PJidE\n  1. fixture-0.gguf (0.0 GiB file)\n  2. fixture-1.gguf (0.0 GiB file)\nThis starts a local CPU model and may use substantial memory. Resource fit is not measured.\nChecking the installed engine…\nLoading the model with conservative CPU settings (not hardware-qualified)…\n"}
+
+thread 'human::enabled::tests::human_first_run_accept_reset_preserves_decisions_answer_and_cleanup' (42012) panicked at crates\ferric-cli\src\human_journey_tests.rs:561:12:
+called `Result::unwrap()` on an `Err` value: "The engine exited while loading the model. Choose a compatible model."
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    human::enabled::tests::human_first_run_accept_reset_preserves_decisions_answer_and_cleanup
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 398 filtered out; finished in 0.13s
+
+error: test failed, to rerun pass `-p ferric-cli --bin ferric`
