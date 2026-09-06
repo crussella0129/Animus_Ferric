@@ -2,7 +2,7 @@
 
 - **State:** active
 - **Work evidence:** [Sprint 123 ferric-cli library extraction plan](../sprints/s123/sprint-plans/build-plan.md#execution-sequence); [direction & refactor plan](../plans/2026-09-06-direction-and-refactor.md)
-- **Test evidence:** (none yet)
+- **Test evidence:** [Sprint 123 library-extraction test report](../sprints/s123/sprint-tests/test-report.md)
 
 ## Intent
 
