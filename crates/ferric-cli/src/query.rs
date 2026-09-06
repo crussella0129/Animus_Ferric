@@ -2637,9 +2637,13 @@ mod tests {
             .stdin(std::process::Stdio::null());
         // Use the same capture/cleanup boundary directly so timeout evidence is
         // retained. The normal adapter converts it to a generic io::Error.
+        // PowerShell cold-start on a loaded CI runner can exceed a tight budget
+        // (observed script_entered=false at 10s on a post-merge Windows runner):
+        // a real-parser round-trip needs headroom for process startup, not just
+        // for quoting. The job's own timeout-minutes still bounds a true hang.
         let output = ferric_process::run_bounded(
             &mut command,
-            std::time::Duration::from_secs(10),
+            std::time::Duration::from_secs(60),
             ferric_process::CapturePlan::head(64 * 1024, 64 * 1024),
         )
         .expect("bounded PowerShell capture and checked scope cleanup");

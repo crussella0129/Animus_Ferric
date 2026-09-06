@@ -334,6 +334,52 @@ mod enabled {
         )
     }
 
+    /// A defaulted current folder that is Ferric's own checkout is almost always
+    /// `cargo run` from the repo, not an intent to edit Ferric. Two workspace
+    /// crates no unrelated project would coincidentally carry together keep this
+    /// from tripping on any other `crates/` layout.
+    fn looks_like_ferric_source_tree(root: &Path) -> bool {
+        root.join("crates")
+            .join("ferric-cli")
+            .join("Cargo.toml")
+            .is_file()
+            && root
+                .join("crates")
+                .join("ferric-loop")
+                .join("Cargo.toml")
+                .is_file()
+    }
+
+    /// Classify a non-successful Work outcome. A user interrupt (Ctrl-C set the
+    /// cancel flag) is reported as a deliberate stop, not the generic
+    /// `provider_error` the loop records when its in-flight request is dropped —
+    /// the misleading message from the first human use test.
+    fn work_stop_message(stop: &str, cancelled: bool, recovery: &str) -> String {
+        if cancelled {
+            format!("You stopped the task. Retained trace: {recovery}")
+        } else {
+            format!("Task incomplete ({stop}). Inspect: {recovery}")
+        }
+    }
+
+    /// Render one Work-loop progress event on the small human surface. In the
+    /// constrained protocol the model emits no prose, so the tool-name and
+    /// tool-completion signals are the only sign the session is alive — the
+    /// blank-screen failure from the first human use test. Raw reasoning tokens
+    /// are intentionally not surfaced here.
+    fn render_progress(io: &dyn HumanIo, delta: StreamDelta) {
+        match delta {
+            StreamDelta::Text(text) => io.delta(&safe_text(&text)),
+            StreamDelta::ToolNamed(name) => io.say(&format!("  → {}…", safe_text(&name))),
+            StreamDelta::ToolCompleted { name, summary } => io.say(&format!(
+                "  ✓ {} — {}",
+                safe_text(&name),
+                safe_text(&summary)
+            )),
+            StreamDelta::Thought(_) => {}
+        }
+    }
+
     pub(super) fn session(
         args: &RunArgs,
         root: &Path,
@@ -429,6 +475,33 @@ mod enabled {
             io.say("Cancelled. No session started.");
             return Ok(());
         };
+        // A defaulted current folder that is Ferric's own source tree is almost
+        // always `cargo run` from the repo — the accident behind the first human
+        // use test, where Work mode created files inside Ferric itself. Require a
+        // deliberate choice before any engine starts; an explicit --workspace
+        // already is one.
+        if mode == Mode::Work && args.workspace.is_none() && looks_like_ferric_source_tree(root) {
+            if interactive {
+                let answer = io.read(&format!(
+                    "This folder is Ferric's own source tree:\n  {}\nFolder work here can modify Ferric itself. Work here anyway? [y/N] ",
+                    safe_text(&root.display().to_string())
+                ))?;
+                if !matches!(
+                    answer.as_deref().map(str::trim),
+                    Some("y" | "Y" | "yes" | "Yes")
+                ) {
+                    io.say(
+                        "Cancelled. Re-run from your project folder, or pass --workspace <dir>.",
+                    );
+                    return Ok(());
+                }
+            } else {
+                return Err(
+                    "Refusing folder work in Ferric's own source tree. Pass --workspace <dir> to choose a project folder."
+                        .to_string(),
+                );
+            }
+        }
         if start.will_start_engine {
             io.say("This starts a local CPU model and may use substantial memory. Resource fit is not measured.");
             if interactive {
@@ -718,6 +791,15 @@ mod enabled {
                     }
                 }
             } else {
+                // Show life while the model works. In the constrained protocol
+                // there is no prose to stream, so without these signals the
+                // session looked frozen (first human use test). The loop emits
+                // tool-name/completion deltas even when the content is opaque
+                // action JSON; honor an explicit stream=false opt-out.
+                io.say("Working…");
+                let progress = |delta| render_progress(io, delta);
+                let sink: Option<&(dyn Fn(StreamDelta) + Sync)> =
+                    if stream { Some(&progress) } else { None };
                 let setup = crate::query::LoopSetup {
                     registry: &config.registry,
                     workspace,
@@ -728,7 +810,7 @@ mod enabled {
                     system_prompt: None,
                     lineage: None,
                     media: Vec::new(),
-                    stream_sink: None,
+                    stream_sink: sink,
                     resume: None,
                     answer: None,
                     provenance: ferric_guard::Provenance::Clean,
@@ -760,9 +842,10 @@ mod enabled {
                     ));
                 }
                 if !outcome.stop.is_success() {
-                    return Err(format!(
-                        "Task incomplete ({}). Inspect: {recovery}",
-                        outcome.stop.as_str()
+                    return Err(work_stop_message(
+                        outcome.stop.as_str(),
+                        cancel.load(Ordering::Acquire),
+                        &recovery,
                     ));
                 }
             }
@@ -1044,6 +1127,55 @@ mod enabled {
             for text in ["Which format?", "changes the implementation", "JSON", "CSV"] {
                 assert!(output.contains(text));
             }
+        }
+
+        #[test]
+        fn ferric_source_tree_is_detected_only_by_its_workspace_crates() {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path();
+            assert!(!looks_like_ferric_source_tree(root));
+            let crates = root.join("crates");
+            std::fs::create_dir_all(crates.join("ferric-cli")).unwrap();
+            std::fs::write(crates.join("ferric-cli").join("Cargo.toml"), "").unwrap();
+            // One sentinel crate is not enough — an unrelated project might use it.
+            assert!(!looks_like_ferric_source_tree(root));
+            std::fs::create_dir_all(crates.join("ferric-loop")).unwrap();
+            std::fs::write(crates.join("ferric-loop").join("Cargo.toml"), "").unwrap();
+            assert!(looks_like_ferric_source_tree(root));
+        }
+
+        #[test]
+        fn work_interrupt_is_reported_as_a_stop_not_a_provider_error() {
+            let recovery = "ferric advanced trace cat trace.jsonl";
+            let interrupted = work_stop_message("provider_error", true, recovery);
+            assert!(interrupted.contains("You stopped the task"));
+            assert!(!interrupted.contains("provider_error"));
+            assert!(interrupted.contains(recovery));
+            let failed = work_stop_message("max_turns", false, recovery);
+            assert_eq!(
+                failed,
+                format!("Task incomplete (max_turns). Inspect: {recovery}")
+            );
+        }
+
+        #[test]
+        fn work_progress_renders_tool_activity_but_not_raw_thoughts() {
+            let io = ScriptedIo::new(&[]);
+            render_progress(&io, StreamDelta::ToolNamed("write_file".into()));
+            render_progress(
+                &io,
+                StreamDelta::ToolCompleted {
+                    name: "write_file".into(),
+                    summary: "wrote index.html".into(),
+                },
+            );
+            render_progress(&io, StreamDelta::Thought("secret chain of thought".into()));
+            render_progress(&io, StreamDelta::Text("visible answer".into()));
+            let output = io.output.lock().unwrap();
+            assert!(output.contains("→ write_file"));
+            assert!(output.contains("✓ write_file — wrote index.html"));
+            assert!(output.contains("visible answer"));
+            assert!(!output.contains("secret chain of thought"));
         }
 
         #[test]
