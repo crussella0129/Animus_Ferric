@@ -11,6 +11,7 @@
 - **Summary:** Add explicit attributable expert output/benchmark budgets without changing normal launch or promoting diagnostic calibration.
 - **Intents:** INT-0007 AC-11/12 partial; INT-0008 AC-6/11/12 preservation.
 - **Completion evidence:** Accepted Test/critique at 322fe20; corrected source a417c5d, eight-job CI 34004554100 and fresh 15.07s live pass; Loop 889010a and helper close 7c5650b; extra fresh post-Loop audit accepted proceed-with-caveats. Human-approve checkpoint and final-head checks follow.
+- **Checkpoint:** https://github.com/crussella0129/Animus_Ferric/pull/109
 
 ## Intake and protected state
 
