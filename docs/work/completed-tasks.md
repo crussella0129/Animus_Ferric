@@ -2024,3 +2024,12 @@ qualification below after final PR checks reopened Test.**
 - **Files modified:** `crates/ferric-bench/src/{budget,budget_trace,runner,results,summary,lib,calibrate}.rs`, `crates/ferric-cli/src/{bench_cmd,autonomy_cmd}.rs`, `crates/ferric-cli/tests/bench_budget.rs`, Sprint 121 metadata/Build verification and work ledgers. Calibration changes at this boundary are constructor-only; its guard is T-12103.
 - **Verification:** Eight new plus seven existing CLI integrations, 94 benchmark library tests and 26 autonomy units passed; four library source-child entries are entered through checked parent tests. Workspace formatting, affected all-target warnings-denied Clippy and independent read-only Build review passed. Full E02 coverage and attribution limits are retained in [Build verification](../sprints/s121/sprint-tests/build-verification.md). Process/spec/verifier implementations remain unchanged. No model/calibration or formal Test/Loop acceptance is inferred.
 - **Commit:** `f313ad341226c96f6e02b5319107d46ad653c70d`
+
+## T-12103 (sprint 121)
+
+- **Description:** Made modified-budget evidence diagnostic and calibration-ineligible, shared the single/fleet pre-I/O publication guard, preserved profile bytes and raw observations, and exposed distinct result causes/evidence destinations.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md) AC-11/12 partial and diagnostic consequence; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) AC-6/11 preservation.
+- **Completed:** 2026-09-06T00:22:17Z.
+- **Files modified:** `crates/ferric-bench/src/{budget,summary,calibrate}.rs`, `crates/ferric-cli/src/bench_cmd.rs`, `crates/ferric-cli/tests/bench_budget.rs`, Sprint 121 Build verification and work ledgers.
+- **Verification:** Benchmark library 97 passed/four parent-entered source modes ignored; two new shared publication tests plus thirteen existing toolbench units passed; ten budget and seven existing mock CLI integrations passed. Two strengthened diagnostic-prefix tests reran successfully after review. Workspace formatting, affected warnings-denied Clippy and independent read-only review passed. [Build evidence](../sprints/s121/sprint-tests/build-verification.md) distinguishes synthetic full-success publication matrices from actual scripted-provider full-ladder profile preservation. No live model or formal Test/Loop acceptance is inferred.
+- **Commit:** PENDING

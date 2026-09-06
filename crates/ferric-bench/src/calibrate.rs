@@ -78,7 +78,13 @@ pub fn calibrate(
     protocol: &str,
     rows: &[ResultRow],
 ) -> ModelProfileRecord {
-    let measured_level = longest_completed_prefix(rows);
+    let diagnostic = rows
+        .iter()
+        .filter_map(|row| row.budget.as_ref())
+        .any(|budget| budget.controls.is_diagnostic());
+    let measured_level = (!diagnostic)
+        .then(|| longest_completed_prefix(rows))
+        .flatten();
     ModelProfileRecord {
         model: model.to_string(),
         params_b,
@@ -112,6 +118,7 @@ pub fn calibrate_from_evidence(
     let attribution_valid = !evidence.run_id.is_empty()
         && evidence.summary_file == format!("summary-{}.json", evidence.run_id);
     if !evidence.eligible
+        || evidence.is_diagnostic()
         || !evidence.full_ladder
         || !evidence.complete
         || !evidence.infrastructure_clean
@@ -380,6 +387,8 @@ mod tests {
             eligible: true,
             measured_level: Some(1),
             ineligible_reason: None,
+            diagnostic: false,
+            budget_controls: None,
         };
         let record = calibrate_from_evidence("model", 7.0, "ConstrainedJson", &evidence).unwrap();
         assert_eq!(record.measured_level, Some(1));

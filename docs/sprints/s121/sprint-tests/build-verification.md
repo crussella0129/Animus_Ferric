@@ -133,3 +133,48 @@ A separate read-only reviewer inspected all E02 clauses and their named source
 coverage and returned no remaining blocking findings. This is T-12102 Build
 readiness only: the diagnostic calibration guard is intentionally the next
 ordered task, and formal Test, live smoke, Loop and PR remain outstanding.
+
+## T-12103 completed task boundary
+
+T-12102 is committed at `f313ad3`, with reachable ledger backfill `416ffc0`.
+T-12103 now prevents known modified budgets from producing durable measured
+capability. Every distinct observed budget is retained even for mixed rows;
+adding default controls later cannot clear a diagnostic restriction. Direct
+`calibrate_from_evidence` rechecks those controls independently of mutable
+eligibility/diagnostic flags. The actual single/fleet publication function
+returns before profile I/O for diagnostic evidence, including invalid stores.
+Raw task outcomes and level statistics remain intact.
+
+Source-aware coherent gates on 2026-09-06 (local incremental caching disabled):
+
+- Workspace formatting and affected all-target warnings-denied Clippy passed.
+- `cargo test -p ferric-cli --bin ferric bench_cmd::tests --locked -- --test-threads=1`: 15 passed (two new publication tests and thirteen existing toolbench tests matched by the substring), no failures/ignores.
+- `cargo test -p ferric-bench --locked -- --test-threads=1`: 97 passed, zero failures, the same four parent-entered source-child ignores.
+- `cargo test -p ferric-cli --test bench_budget --test bench_mock --locked -- --test-threads=1`: ten budget integrations plus seven existing mock integrations passed, no failures/ignores.
+- After independent review requested two exact per-trial `DIAGNOSTIC` prefix
+  assertions, formatting/Clippy passed again and
+  `cargo test -p ferric-cli --test bench_budget diagnostic_ --locked -- --test-threads=1`
+  passed both strengthened tests (eight unrelated cases filtered).
+
+E03-A uses synthetic complete successful ladders to prove changed caps/scales,
+mixed controls, forged derived flags and later defaults cannot calibrate;
+known scale 1 without cap and legacy unknown metadata still calibrate as before.
+E03-B's shared production-publication matrix covers four controls, successful
+and failed synthetic complete ladders, single/fleet model lists and absent,
+valid-target, multi-model and malformed profile bytes, plus a directory sentinel.
+Successful default publication and partial-sweep preservation are positive controls.
+
+Separate real CLI single/fleet full-ladder tests cover eight profile-store
+cases and 84 scripted HTTP provider errors, preserving raw failed outcomes and
+every profile byte. Their `--python-bin` is the source-built Ferric command:
+it passes version preflight and deliberately rejects Python grading argv, as
+in the existing mock fixture. This is deterministic fixed-argv plumbing, not
+Python/model/grader qualification or a model-success claim. The complete-success
+publication matrix above is explicitly synthetic, not a mock L0 shortcut.
+
+E03-C's actual output assertions distinguish diagnostic status, provider error,
+output limit, parent timeout and infrastructure failure while naming retained
+sidecar or fallback evidence destinations. No diagnostic calibrated leaderboard
+or persistence failure is invented. Independent read-only Build review found
+no remaining blocker. Source-child cleanup and joined HTTP workers passed;
+no manual repair, live model acceptance, formal Test or Loop is claimed here.

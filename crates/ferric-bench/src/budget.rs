@@ -87,6 +87,12 @@ impl BudgetControls {
         self.ctx
     }
 
+    /// Modified execution/output budgets are useful diagnostics, but the
+    /// current profile key cannot represent their calibration coordinates.
+    pub fn is_diagnostic(&self) -> bool {
+        self.timeout_scale != 1.0 || self.max_output_tokens.is_some()
+    }
+
     /// Resolve once before preflight, then reuse this exact duration across
     /// trials. The 1.0 branch avoids floating conversion of large integers.
     pub fn resolve_agent(&self, base_timeout_s: u64) -> Result<ResolvedAgentBudget, String> {

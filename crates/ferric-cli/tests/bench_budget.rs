@@ -1,4 +1,5 @@
-//! T-12102: compose the real benchmark CLI, child request, and parent evidence.
+//! T-12102/03: compose the benchmark CLI, request/evidence budgets, and the
+//! diagnostic publication boundary. Scripted outcomes are not model claims.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -86,9 +87,23 @@ fn assert_retained_pair(root: &Path, row: &Value, summary: &Value) -> Vec<Value>
     assert_eq!(sidecar["trace_sha256"], digest);
     assert_eq!(sidecar["evidence"], *budget);
     assert_eq!(summary["budget"]["controls"], budget["controls"]);
+    let attempts = summary["budget"]["attempts"].as_array().unwrap();
     assert_eq!(
-        summary["budget"]["attempts"],
-        json!([{"identity":identity,"retained":retained}])
+        attempts.len() as u64,
+        summary["observed_rows"].as_u64().unwrap()
+    );
+    let matching: Vec<_> = attempts
+        .iter()
+        .filter(|attempt| attempt["identity"] == identity)
+        .collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "one exact summary reference per row identity"
+    );
+    assert_eq!(
+        *matching[0],
+        json!({"identity":identity,"retained":retained})
     );
     std::str::from_utf8(&bytes)
         .unwrap()
@@ -420,6 +435,196 @@ mod http {
         command
     }
 
+    fn assert_operator_evidence(output: &Output, root: &Path, row: &Value) {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let sidecar = row["budget"]["retained"]["sidecar_path"].as_str().unwrap();
+        let destination = root.join("results").join(sidecar);
+        assert!(
+            stdout.contains(&format!("evidence destination: {}", destination.display())),
+            "operator must see this attempt's actual evidence destination: {stdout}"
+        );
+    }
+
+    #[test]
+    fn diagnostic_single_fleet_preserve_profile_bytes() {
+        fn profile(model: &str) -> Value {
+            json!({
+                "model": model, "params_b":7.0, "protocol":"ConstrainedJson",
+                "measured_level":6, "tier_from_params":"Small",
+                "tier_from_measured":"Large", "calibrated_ring":1,
+                "calibration_evidence":null
+            })
+        }
+        let states = [
+            ("absent", None, vec!["--max-output-tokens", "1024"]),
+            (
+                "valid-target",
+                Some(
+                    serde_json::to_vec_pretty(&json!([
+                        profile("budget-fixture-a"),
+                        profile("budget-fixture-b")
+                    ]))
+                    .unwrap(),
+                ),
+                vec!["--timeout-scale", "0.5"],
+            ),
+            (
+                "unrelated-multi-model",
+                Some(
+                    serde_json::to_vec_pretty(&json!([
+                        profile("unrelated-fixture-one"),
+                        profile("unrelated-fixture-two")
+                    ]))
+                    .unwrap(),
+                ),
+                vec!["--timeout-scale", "2"],
+            ),
+            (
+                "malformed",
+                Some(b"[ deliberately incomplete profile data\r\n".to_vec()),
+                vec!["--timeout-scale", "0.5", "--max-output-tokens", "1024"],
+            ),
+        ];
+        for (state, before, controls) in states {
+            for fleet in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let results_dir = root.path().join("results");
+                let profile_path = results_dir.join("model_profiles.json");
+                if let Some(bytes) = &before {
+                    std::fs::create_dir(&results_dir).unwrap();
+                    std::fs::write(&profile_path, bytes).unwrap();
+                }
+                let mut server = Server::new(Reply::ProviderError);
+                let mut command = bench(root.path());
+                command
+                    .args([
+                        "--params-b",
+                        "7",
+                        "--ctx",
+                        "4096",
+                        "--api-base",
+                        &server.endpoint,
+                    ])
+                    .args(&controls)
+                    .arg("--python-bin")
+                    .arg(env!("CARGO_BIN_EXE_ferric"));
+                if fleet {
+                    command.args(["--models", "budget-fixture-a,budget-fixture-b"]);
+                } else {
+                    command.args(["--model", "budget-fixture-a"]);
+                }
+                let result = output(&mut command);
+                server.finish();
+                // Fleet compatibility: a complete, infrastructure-clean
+                // measurement returns success even when its raw tasks fail.
+                assert_eq!(
+                    result.status.success(),
+                    fleet,
+                    "state={state} fleet={fleet}\n{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                let after = match std::fs::read(&profile_path) {
+                    Ok(bytes) => Some(bytes),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => panic!("profile readback: {error}"),
+                };
+                assert_eq!(
+                    after, before,
+                    "profile bytes changed: state={state} fleet={fleet}"
+                );
+                let rows = read_rows(root.path(), &result);
+                let count = if fleet { 14 } else { 7 };
+                assert_eq!(rows.len(), count);
+                let requests = server.requests.lock().unwrap();
+                assert_eq!(requests.len(), count);
+                for model in if fleet {
+                    vec!["budget-fixture-a", "budget-fixture-b"]
+                } else {
+                    vec!["budget-fixture-a"]
+                } {
+                    assert_eq!(
+                        requests
+                            .iter()
+                            .filter(|request| request["model"] == model)
+                            .count(),
+                        7
+                    );
+                }
+                for row in &rows {
+                    assert_eq!(
+                        row["completed"], false,
+                        "scripted provider failure is not a successful ladder"
+                    );
+                    assert_eq!(row["terminator"], "provider_error");
+                    assert_eq!(row["timed_out"], false);
+                    assert_eq!(row["infrastructure_error"], Value::Null);
+                    let summary = summary(root.path(), row);
+                    assert_eq!(summary["complete"], true);
+                    assert_eq!(summary["infrastructure_clean"], true);
+                    assert_eq!(summary["observed_rows"], 7);
+                    assert_eq!(summary["calibration"]["full_ladder"], true);
+                    assert_eq!(summary["calibration"]["diagnostic"], true);
+                    assert_eq!(summary["calibration"]["eligible"], false);
+                    assert_eq!(summary["calibration"]["measured_level"], Value::Null);
+                    assert!(
+                        summary["calibration"]["ineligible_reason"]
+                            .as_str()
+                            .unwrap()
+                            .contains("diagnostic benchmark budgets")
+                    );
+                    assert!(
+                        summary["levels"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .all(|level| level["failures"] == 1)
+                    );
+                    assert_retained_pair(root.path(), row, &summary);
+                    assert_operator_evidence(&result, root.path(), row);
+                }
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                assert!(stdout.contains("diagnostic budgets — profile left unchanged"));
+                assert!(stdout.contains("observations only"));
+                assert!(stdout.contains("PROVIDER ERROR (provider_error)"));
+                assert!(stdout.contains("DIAGNOSTIC — PROVIDER ERROR (provider_error)"));
+                assert!(!stdout.contains("Agentic Capability Leaderboard"));
+                assert!(!stdout.contains("calibrated budget-fixture"));
+                assert!(!stdout.contains("INFRASTRUCTURE FAILURE"));
+                assert!(!stderr.contains("cannot write model profile"));
+                assert!(!stderr.contains("calibration evidence is not eligible"));
+            }
+        }
+    }
+
+    #[test]
+    fn diagnostic_budget_operator_output() {
+        let mut server = Server::new(Reply::Complete);
+        let root = tempfile::tempdir().unwrap();
+        let result = output(&mut real_bench(root.path(), &server));
+        server.finish();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let rows = read_rows(root.path(), &result);
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row["completed"], true);
+        assert_operator_evidence(&result, root.path(), row);
+        let summary = summary(root.path(), row);
+        assert_eq!(summary["calibration"]["diagnostic"], true);
+        assert_eq!(summary["calibration"]["eligible"], false);
+        assert_eq!(summary["calibration"]["measured_level"], Value::Null);
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(stdout.contains("diagnostic budgets — profile left unchanged"));
+        assert!(stdout.contains("observations only"));
+        assert!(stdout.contains("DIAGNOSTIC — PASS"));
+        assert!(!stdout.contains("calibrated budget-fixture"));
+        assert!(!root.path().join("results/model_profiles.json").exists());
+    }
+
     #[test]
     fn bench_budget_trace_sidecar_roundtrip() {
         let mut server = Server::new(Reply::Complete);
@@ -490,6 +695,18 @@ mod http {
             assert_eq!(row["infrastructure_error"], Value::Null);
             assert_eq!(server.requests.lock().unwrap().len(), expected_requests);
             assert_retained_pair(root.path(), row, &summary(root.path(), row));
+            assert_operator_evidence(&result, root.path(), row);
+            let expected_label = match reply {
+                Reply::ProviderError => "PROVIDER ERROR (provider_error)",
+                Reply::OutputLimit => "OUTPUT LIMIT (truncated_action)",
+                _ => unreachable!(),
+            };
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            assert!(
+                stdout.contains(expected_label),
+                "observed cause must remain visible: {stdout}"
+            );
+            assert!(!stdout.contains("PARENT TIMEOUT"));
         }
     }
 
@@ -529,6 +746,10 @@ mod http {
             1
         );
         let events = assert_retained_pair(root.path(), row, &summary(root.path(), row));
+        assert_operator_evidence(&result, root.path(), row);
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(stdout.contains("PARENT TIMEOUT"));
+        assert!(!stdout.contains("PROVIDER ERROR"));
         assert!(
             !events.iter().any(|event| event["type"] == "session_end"),
             "parent must not synthesize a child completion"
@@ -568,6 +789,11 @@ mod http {
             stdout.contains("INFRASTRUCTURE FAILURE"),
             "recording failure must not print an unqualified PASS: {stdout}"
         );
+        assert!(stdout.contains("INFRASTRUCTURE FAILURE; observed PASS"));
+        assert!(stdout.contains(&format!(
+            "evidence destination: {}",
+            results.join("results.jsonl").display()
+        )));
         assert!(!stdout.contains("— PASS"));
         assert_eq!(std::fs::read(results.join("traces")).unwrap(), sentinel);
         assert!(!results.join("model_profiles.json").exists());
@@ -613,6 +839,16 @@ mod http {
             stdout.contains("INFRASTRUCTURE FAILURE"),
             "append failure must not print an unqualified PASS: {stdout}"
         );
+        assert!(stdout.contains("INFRASTRUCTURE FAILURE; observed PASS"));
+        // The trace pair survived this append failure, so it remains the
+        // precise evidence destination even though the row could not publish.
+        let sidecar = summary["budget"]["attempts"][0]["retained"]["sidecar_path"]
+            .as_str()
+            .unwrap();
+        assert!(stdout.contains(&format!(
+            "evidence destination: {}",
+            results.join(sidecar).display()
+        )));
         assert!(!stdout.contains("— PASS"));
         assert_eq!(
             std::fs::read(results.join("results.jsonl/sentinel")).unwrap(),

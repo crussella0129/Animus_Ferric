@@ -4,7 +4,7 @@
 //! required for usable speed — warns under debug). `--mock` is the CI-runnable
 //! self-test path (no model needed).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -225,28 +225,25 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
                 infrastructure_ok = false;
                 continue;
             }
-            let Some(record) = calibrate_from_evidence(
+            let record = match publish_calibration(
+                &args.results_dir,
                 model_id,
                 args.params_b,
                 &ferric_core::protocol_key(protocol),
                 &outcome.summary.calibration,
-            ) else {
-                println!(
-                    "{model_id}: profile left unchanged ({})",
-                    outcome
-                        .summary
-                        .calibration
-                        .ineligible_reason
-                        .as_deref()
-                        .unwrap_or("calibration evidence was not eligible")
-                );
-                continue;
+            ) {
+                Ok(ProfilePublication::Published(record)) => *record,
+                Ok(ProfilePublication::Diagnostic) => continue,
+                Ok(ProfilePublication::Ineligible(reason)) => {
+                    println!("{model_id}: profile left unchanged ({reason})");
+                    continue;
+                }
+                Err(error) => {
+                    eprintln!("cannot write model profile: {error}");
+                    infrastructure_ok = false;
+                    continue;
+                }
             };
-            if let Err(e) = ferric_bench::write_profile(&args.results_dir, &record) {
-                eprintln!("cannot write model profile: {e}");
-                infrastructure_ok = false;
-                continue;
-            }
             match record.measured_level {
                 Some(level) => println!(
                     "calibrated {model_id}: measured_level {level} ({} -> {})",
@@ -263,9 +260,16 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
                 .cmp(&a.measured_level)
                 .then_with(|| a.model.cmp(&b.model))
         });
-        println!("\n# Agentic Capability Leaderboard (L0-L6)");
-        println!("| Model | measured_level | tier |");
-        println!("|-------|----------------|------|");
+        if child_budget
+            .as_ref()
+            .is_some_and(BudgetControls::is_diagnostic)
+        {
+            println!("\nDiagnostic sweep — no calibrated leaderboard was published.");
+        } else {
+            println!("\n# Agentic Capability Leaderboard (L0-L6)");
+            println!("| Model | measured_level | tier |");
+            println!("|-------|----------------|------|");
+        }
         for r in &board {
             println!(
                 "| {} | {} | {} |",
@@ -328,7 +332,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
     // qwen2.5-coder-7b's L5 rewrote its record from measured_level 6 (Large) to
     // 5 (Medium), and `ferric query` reads that profile to size its policy
     // (ADR-029/086). Looking at one rung must not change the model's tier.
-    if model_name.is_some() && !full_ladder {
+    if model_name.is_some() && !full_ladder && !outcome.summary.calibration.is_diagnostic() {
         println!(
             "partial sweep ({} level(s)) — profile left unchanged; run without --level to recalibrate",
             selected.len()
@@ -338,32 +342,31 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         && full_ladder
         && infrastructure_ok
     {
-        let Some(record) = calibrate_from_evidence(
+        match publish_calibration(
+            &args.results_dir,
             model_name,
             args.params_b,
             &ferric_core::protocol_key(protocol),
             &outcome.summary.calibration,
-        ) else {
-            eprintln!(
-                "calibration evidence is not eligible: {}",
-                outcome
-                    .summary
-                    .calibration
-                    .ineligible_reason
-                    .as_deref()
-                    .unwrap_or("unknown reason")
-            );
-            return ExitCode::FAILURE;
-        };
-        if let Err(e) = ferric_bench::write_profile(&args.results_dir, &record) {
-            eprintln!("cannot write model profile: {e}");
-            infrastructure_ok = false;
-        } else if let Some(level) = record.measured_level {
-            println!(
-                "calibrated {model_name}: measured_level {level} ({} -> {})",
-                record.tier_from_params,
-                record.tier_from_measured.as_deref().unwrap_or("?")
-            );
+        ) {
+            Ok(ProfilePublication::Diagnostic) => {}
+            Ok(ProfilePublication::Ineligible(reason)) => {
+                eprintln!("calibration evidence is not eligible: {reason}");
+                return ExitCode::FAILURE;
+            }
+            Ok(ProfilePublication::Published(record)) => {
+                if let Some(level) = record.measured_level {
+                    println!(
+                        "calibrated {model_name}: measured_level {level} ({} -> {})",
+                        record.tier_from_params,
+                        record.tier_from_measured.as_deref().unwrap_or("?")
+                    );
+                }
+            }
+            Err(error) => {
+                eprintln!("cannot write model profile: {error}");
+                infrastructure_ok = false;
+            }
         }
     }
     if model_name.is_some() && full_ladder && !infrastructure_ok {
@@ -381,6 +384,64 @@ struct BenchRunOutcome {
     qualified: bool,
     infrastructure_ok: bool,
     summary: RunSummary,
+}
+
+#[derive(Debug)]
+enum ProfilePublication {
+    Diagnostic,
+    Ineligible(String),
+    Published(Box<ModelProfileRecord>),
+}
+
+/// The actual shared single/fleet publication boundary. Diagnostic evidence
+/// returns before even reading the profile store, including malformed bytes.
+fn publish_calibration(
+    results_dir: &Path,
+    model: &str,
+    params_b: f32,
+    protocol: &str,
+    evidence: &ferric_bench::CalibrationEvidence,
+) -> std::io::Result<ProfilePublication> {
+    if evidence.is_diagnostic() {
+        return Ok(ProfilePublication::Diagnostic);
+    }
+    let Some(record) = calibrate_from_evidence(model, params_b, protocol, evidence) else {
+        return Ok(ProfilePublication::Ineligible(
+            evidence
+                .ineligible_reason
+                .clone()
+                .unwrap_or_else(|| "calibration evidence was not eligible".into()),
+        ));
+    };
+    ferric_bench::write_profile(results_dir, &record)?;
+    Ok(ProfilePublication::Published(Box::new(record)))
+}
+
+fn trial_outcome_label(row: &ResultRow, row_written: bool) -> String {
+    let observed = if row.timed_out {
+        "PARENT TIMEOUT"
+    } else {
+        match row.terminator.as_deref() {
+            Some("truncated_action") => "OUTPUT LIMIT (truncated_action)",
+            Some("provider_error") => "PROVIDER ERROR (provider_error)",
+            _ if row.completed => "PASS",
+            _ => "FAIL",
+        }
+    };
+    let label = if !row_written || row.infrastructure_error.is_some() {
+        format!("INFRASTRUCTURE FAILURE; observed {observed}")
+    } else {
+        observed.to_string()
+    };
+    if row
+        .budget
+        .as_ref()
+        .is_some_and(|budget| budget.controls.is_diagnostic())
+    {
+        format!("DIAGNOSTIC — {label}")
+    } else {
+        label
+    }
 }
 
 /// Run every requested trial for one model, rotating the first level on each
@@ -579,13 +640,7 @@ fn run_trials(
                 "{trial_prefix}L{} {} — {} ({} turns, {} tok, {} ms){}",
                 spec.level,
                 spec.name,
-                if !row_written || row.infrastructure_error.is_some() {
-                    "INFRASTRUCTURE FAILURE"
-                } else if done {
-                    "PASS"
-                } else {
-                    "FAIL"
-                },
+                trial_outcome_label(&row, row_written),
                 row.turns,
                 row.output_tokens,
                 row.wall_ms,
@@ -596,6 +651,19 @@ fn run_trials(
                     .to_string()
                     .pipe_kept(args.keep_workspace),
             );
+            let evidence_path = row
+                .budget
+                .as_ref()
+                .and_then(|budget| budget.retained.as_ref())
+                .map(|reference| args.results_dir.join(&reference.sidecar_path))
+                .unwrap_or_else(|| {
+                    args.results_dir.join(if row_written {
+                        "results.jsonl".to_string()
+                    } else {
+                        format!("summary-{run_id}.json")
+                    })
+                });
+            println!("  evidence destination: {}", evidence_path.display());
             rows.push(row);
         }
     }
@@ -619,6 +687,19 @@ fn run_trials(
             controls: budgets.first().map(|budget| budget.controls().clone()),
             attempts: Vec::new(),
         });
+    }
+    summary
+        .calibration
+        .record_budget_controls(budgets.first().map(|budget| budget.controls().clone()));
+    if summary.calibration.is_diagnostic() {
+        println!(
+            "diagnostic budgets — profile left unchanged ({}); observations only",
+            summary
+                .calibration
+                .ineligible_reason
+                .as_deref()
+                .unwrap_or("modified budget controls"),
+        );
     }
     let summary_written = match write_summary(&args.results_dir, &summary) {
         Ok(path) => {
@@ -730,5 +811,218 @@ impl PipeKept for String {
         } else {
             String::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Deliberately synthetic full-ladder success/failure. This exercises the
+    // real publication decision without pretending that the mock passed L0.
+    fn synthetic_summary(passed: bool, controls: BudgetControls) -> RunSummary {
+        let specs = embedded_specs().unwrap();
+        let rows: Vec<_> = specs
+            .iter()
+            .map(|spec| ResultRow {
+                run_id: Some("synthetic-run".into()),
+                trial_id: Some("trial-001".into()),
+                started_at_unix_ms: Some(1),
+                finished_at_unix_ms: Some(2),
+                trace_path: None,
+                budget: Some(
+                    controls
+                        .resolve_agent(spec.timeout_s)
+                        .unwrap()
+                        .evidence(Some(0), false),
+                ),
+                infrastructure_error: None,
+                level: spec.level,
+                spec_version: spec.version,
+                level_name: spec.name.clone(),
+                variant: "synthetic-publication-only".into(),
+                protocol: "ConstrainedJson".into(),
+                model: Some("synthetic-model".into()),
+                completed: passed,
+                timed_out: false,
+                exit_code: Some(0),
+                turns: 1,
+                input_tokens: 1,
+                output_tokens: 1,
+                wall_ms: 1,
+                terminator: Some("task_complete".into()),
+                tier_observed: None,
+                protocol_observed: None,
+                repetition_guard_fires: 0,
+                tools_called: Vec::new(),
+                task_complete_summary: None,
+                failure_admission: None,
+                plan_steps: None,
+                expectations_ok: passed,
+                tools_ok: passed,
+                command_checks: Vec::new(),
+                tier_from_params: "Small".into(),
+                stderr_tail: String::new(),
+            })
+            .collect();
+        summarize_run(
+            "synthetic-run",
+            1,
+            2,
+            1,
+            1.0,
+            &[0, 1, 2, 3, 4, 5, 6],
+            true,
+            &rows,
+            Vec::new(),
+            RunProvenance {
+                ferric_version: "synthetic".into(),
+                git_commit: None,
+                binary: BinaryProvenance {
+                    path: "synthetic-no-process".into(),
+                    size_bytes: None,
+                    modified_at_unix_ms: None,
+                    sha256: None,
+                },
+                model: ModelProvenance {
+                    backend: "synthetic".into(),
+                    model: Some("synthetic-model".into()),
+                    api_base: None,
+                    params_b: 7.0,
+                    ctx: 4096,
+                    sha256: None,
+                },
+                protocol: "ConstrainedJson".into(),
+                variant: "synthetic-publication-only".into(),
+                python_bin: "not-executed".into(),
+            },
+        )
+    }
+
+    fn default_controls() -> BudgetControls {
+        BudgetControls::new(1.0, None, 7.0, 4096).unwrap()
+    }
+
+    #[test]
+    fn diagnostic_single_fleet_preserve_profile_bytes() {
+        let default = synthetic_summary(true, default_controls());
+        assert!(default.calibration.eligible);
+        assert_eq!(default.calibration.measured_level, Some(6));
+        let target =
+            calibrate_from_evidence("diagnostic-a", 7.0, "ConstrainedJson", &default.calibration)
+                .unwrap();
+        let unrelated =
+            calibrate_from_evidence("unrelated", 7.0, "ConstrainedJson", &default.calibration)
+                .unwrap();
+        let snapshots = [
+            None,
+            Some(serde_json::to_vec(&vec![target.clone()]).unwrap()),
+            Some(serde_json::to_vec(&vec![target, unrelated]).unwrap()),
+            Some(b"{malformed profile bytes must survive".to_vec()),
+        ];
+        for (scale, cap) in [
+            (0.5, None),
+            (2.0, None),
+            (1.0, Some(1024)),
+            (0.5, Some(512)),
+        ] {
+            for passed in [false, true] {
+                let summary =
+                    synthetic_summary(passed, BudgetControls::new(scale, cap, 7.0, 4096).unwrap());
+                assert!(summary.complete && summary.infrastructure_clean);
+                assert_eq!(summary.levels.iter().all(|level| level.qualified), passed);
+                assert_eq!(summary.calibration.measured_level, None);
+                for models in [&["diagnostic-a"][..], &["diagnostic-a", "diagnostic-b"][..]] {
+                    for snapshot in &snapshots {
+                        let root = tempfile::tempdir().unwrap();
+                        let results = root.path().join("results");
+                        let profile = results.join("model_profiles.json");
+                        if let Some(bytes) = snapshot {
+                            std::fs::create_dir(&results).unwrap();
+                            std::fs::write(&profile, bytes).unwrap();
+                        }
+                        for model in models {
+                            assert!(matches!(
+                                publish_calibration(
+                                    &results,
+                                    model,
+                                    7.0,
+                                    "ConstrainedJson",
+                                    &summary.calibration
+                                )
+                                .unwrap(),
+                                ProfilePublication::Diagnostic
+                            ));
+                            assert_eq!(std::fs::read(&profile).ok().as_ref(), snapshot.as_ref());
+                            if snapshot.is_none() {
+                                assert!(
+                                    !results.exists(),
+                                    "diagnostic publication must have no store effects"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // A non-file store is also deliberately never opened by this path.
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("model_profiles.json");
+        std::fs::create_dir(&profile).unwrap();
+        std::fs::write(profile.join("sentinel"), b"untouched").unwrap();
+        let diagnostic =
+            synthetic_summary(true, BudgetControls::new(2.0, None, 7.0, 4096).unwrap());
+        assert!(matches!(
+            publish_calibration(
+                root.path(),
+                "model",
+                7.0,
+                "ConstrainedJson",
+                &diagnostic.calibration
+            )
+            .unwrap(),
+            ProfilePublication::Diagnostic
+        ));
+        assert_eq!(
+            std::fs::read(profile.join("sentinel")).unwrap(),
+            b"untouched"
+        );
+    }
+
+    #[test]
+    fn default_budget_calibration_compatible() {
+        let summary = synthetic_summary(true, default_controls());
+        let root = tempfile::tempdir().unwrap();
+        for model in ["single", "fleet-a", "fleet-b"] {
+            let ProfilePublication::Published(record) = publish_calibration(
+                root.path(),
+                model,
+                7.0,
+                "ConstrainedJson",
+                &summary.calibration,
+            )
+            .unwrap() else {
+                panic!("default complete evidence must still publish");
+            };
+            assert_eq!(record.measured_level, Some(6));
+            assert_eq!(record.tier_from_measured.as_deref(), Some("Large"));
+            assert_eq!(
+                ferric_bench::read_profile(root.path(), model, "ConstrainedJson"),
+                Some(*record)
+            );
+        }
+        let before = std::fs::read(root.path().join("model_profiles.json")).unwrap();
+        let mut partial = summary.calibration;
+        partial.full_ladder = false;
+        partial.eligible = false;
+        partial.ineligible_reason = Some("partial ladder".into());
+        assert!(matches!(
+            publish_calibration(root.path(), "single", 7.0, "ConstrainedJson", &partial).unwrap(),
+            ProfilePublication::Ineligible(_)
+        ));
+        assert_eq!(
+            std::fs::read(root.path().join("model_profiles.json")).unwrap(),
+            before
+        );
     }
 }
