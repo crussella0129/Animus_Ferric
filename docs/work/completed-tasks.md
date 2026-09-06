@@ -2058,3 +2058,9 @@ qualification below after final PR checks reopened Test.**
 - **Source:** Individual T-12101–04 commits remain above; corrected composition `a417c5d00361fd25a238346e5015fb07ed5ae7c7` is accepted by the final Test report/critique.
 - **Verification:** [Accepted Test evidence](../sprints/s121/sprint-tests/test-report.md), all sixteen clause mappings, exact-head eight-job CI, fresh checked-cleanup model smoke and retained mutation controls. This is Loop reconciliation, not new code or automatic calibration.
 - **Remaining:** T-11506 → T-11410 → T-11412 stays ordered; hardware/profile coordination, reasoning/compaction and complete workflow/platform work remain open. No whole intent is realized.
+
+## T-12202 (sprint 122)
+- **Description:** Pure estimate_model_memory + classify_fit (Fits/Tight/WontFit/Unknown) in ferric-core; unmeasured stays Unknown, comparison keys on available not total.
+- **Completed:** 2026-09-06T19:02:14Z
+- **Files modified:** crates/ferric-core/src/fit.rs, crates/ferric-core/src/lib.rs
+- **Commit:** PENDING

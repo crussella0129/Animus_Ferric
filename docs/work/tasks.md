@@ -303,3 +303,7 @@ below remain executable follow-up work; the review did not silently fix them.
 ## Sprint 120 — approved human-first implementation
 
 ## Sprint 121 — approved explicit budgets
+
+## Sprint 122 — hardware-informed model fit (INT-0008 AC-13)
+
+- [ ] T-12201 (sprint 122) [intent: INT-0008]: Best-effort system-memory probe behind an injectable `MemoryProbe` seam (Windows GlobalMemoryStatusEx, Linux /proc/meminfo, others unknown); `None` is a valid non-fabricated outcome. — touches: `crates/ferric-cli/src/startup/memory.rs`, `crates/ferric-cli/src/startup.rs`, `crates/ferric-cli/Cargo.toml`- [ ] T-12203 (sprint 122) [intent: INT-0008]: Honest front-door picker annotation and a won't-fit confirmation naming the estimate and available memory before the engine starts. — touches: `crates/ferric-cli/src/human.rs`

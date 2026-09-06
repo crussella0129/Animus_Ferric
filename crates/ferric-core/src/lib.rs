@@ -2,6 +2,7 @@
 
 mod check_env;
 mod error;
+mod fit;
 mod harness;
 pub mod hooks;
 mod media;
@@ -11,6 +12,7 @@ mod user_input;
 
 pub use check_env::{CHECK_ENV_REMOVE, CHECK_ENV_SET, configure_check_environment};
 pub use error::FerricError;
+pub use fit::{Fit, classify_fit, estimate_model_memory};
 pub use harness::{HarnessPolicy, ParseHarnessPolicyError};
 pub use hooks::HooksConfig;
 pub use media::{
