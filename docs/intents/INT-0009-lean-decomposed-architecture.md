@@ -77,3 +77,11 @@ because the code stays in one crate. Later increments (serving-layer crate,
   proposed for later increments.
 - 2026-09-06: moved `planned` → `active` when Sprint 123's Build began the
   library extraction (T-12301).
+- 2026-09-06: Sprint 123 delivered and accepted **AC-1** — `ferric-cli` is now a
+  library with thin `ferric` / `ferric-lifecycle-test` shims over a set-once
+  `bin_identity` seam; the duplicate-source build warning is gone and the
+  lifecycle fixture (5/5) proves the `CARGO_BIN_NAME` identity gate unchanged.
+  Full workspace green at `d038ec6` (40 suites, 0 failed); Test verdict clean.
+  This closes INT-0008 T-12028. **AC-2** (serving-layer separability) and **AC-4**
+  (large-file module splits, `server.rs` the flagship) remain active follow-on
+  increments. State remains active; the intent is not realized.
