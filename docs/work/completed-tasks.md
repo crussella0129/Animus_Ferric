@@ -2050,3 +2050,11 @@ qualification below after final PR checks reopened Test.**
 - **Source:** `a417c5d00361fd25a238346e5015fb07ed5ae7c7`, including the independently demonstrated source-fixture reset correction; original implementation commits above remain unchanged.
 - **Verification:** Accepted [Test report](../sprints/s121/sprint-tests/test-report.md), independently renewed [proceed-with-caveats critique](../sprints/s121/sprint-tests/critique.md), all eight exact-head CI jobs, root's full Windows 1,303-pass/thirteen-ignore run, isolated Linux 1,309/nine, backend-free 416 each, native lifecycle five/six, and fresh 15.07-second source-owned live smoke with actual 1024 budget/trace agreement and checked cleanup. Existing WSL separately passed 35 process-free core tests and Clippy; full local namespace runtime evidence remains unavailable without sudo authorization.
 - **Limits:** Original CI failure, instrumented non-reproduction, mutation control and earlier Build failures remain retained; original native cause is unknown. No whole intent, larger-model app, calibrated hardware, reasoning/compaction, arbitrary parallel load or platform-parity claim is inferred. Loop, extra fresh audit, sole PR and its final-head gates still precede the offer to merge.
+
+## T-11505 (sprint 121, reconciled umbrella)
+
+- **Description:** Completed the selected explicit query/benchmark budget prerequisite through T-12101–04, including attributable deadlines/output limits, default/authority preservation, exact-byte large-action fixtures and diagnostic-only calibration handling.
+- **Intent:** INT-0007 AC-11/12 partial; INT-0008 AC-6/11/12 preservation.
+- **Source:** Individual T-12101–04 commits remain above; corrected composition `a417c5d00361fd25a238346e5015fb07ed5ae7c7` is accepted by the final Test report/critique.
+- **Verification:** [Accepted Test evidence](../sprints/s121/sprint-tests/test-report.md), all sixteen clause mappings, exact-head eight-job CI, fresh checked-cleanup model smoke and retained mutation controls. This is Loop reconciliation, not new code or automatic calibration.
+- **Remaining:** T-11506 → T-11410 → T-11412 stays ordered; hardware/profile coordination, reasoning/compaction and complete workflow/platform work remain open. No whole intent is realized.
