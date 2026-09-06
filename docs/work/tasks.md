@@ -305,4 +305,3 @@ below remain executable follow-up work; the review did not silently fix them.
 ## Sprint 121 — approved explicit budgets
 
 ## Sprint 122 — hardware-informed model fit (INT-0008 AC-13)
-- [ ] T-12203 (sprint 122) [intent: INT-0008]: Honest front-door picker annotation and a won't-fit confirmation naming the estimate and available memory before the engine starts. — touches: `crates/ferric-cli/src/human.rs`

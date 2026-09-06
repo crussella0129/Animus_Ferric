@@ -2070,3 +2070,9 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-06T19:12:45Z
 - **Files modified:** crates/ferric-cli/src/startup/memory.rs, crates/ferric-cli/src/startup.rs, crates/ferric-cli/Cargo.toml
 - **Commit:** `7832edb1ec8ed7993b6611dab250b5c660ea2bfd`
+
+## T-12203 (sprint 122)
+- **Description:** Honest front-door picker: each model annotated with its fit; a won't-fit selection requires an extra confirmation naming the estimate and available memory before the engine starts; Unknown preserves the prior behavior verbatim. Fit keys on available, not total (C-002).
+- **Completed:** 2026-09-06T19:13:03Z
+- **Files modified:** crates/ferric-cli/src/human.rs
+- **Commit:** PENDING
