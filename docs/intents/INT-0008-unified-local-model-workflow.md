@@ -48,6 +48,17 @@ and cleanup. Humans choose the objective, an ambiguous model, and meaningful
 authority/resource commitments; they should not complete a technical settings
 questionnaire before they can start.
 
+Missing engine or model resources are setup work for Ferric, not the normal
+end of first run. The same interactive front door must recommend a compatible
+runtime/model, disclose the source and expected download/storage cost, obtain
+the necessary consent, then acquire, validate, prepare and open the session.
+Acquired GGUFs belong in the selected workspace's `models/` directory. A
+supported clean-host path must not send the human away to fetch archives,
+choose engine flags or execute a separate `server up`/doctor command sequence.
+Existing configured resources remain reusable without unnecessary downloads.
+This is an outstanding product requirement, not behavior delivered by the
+current prepared-host increment or permission to download anything now.
+
 Bounded readiness and resource checks must be distinguished from capability
 qualification. The expensive L0-L6 benchmark is not a prerequisite to ordinary
 conversation. Unmeasured capability remains explicitly unmeasured and cannot
@@ -150,6 +161,22 @@ complete.
     Decline, EOF, cancellation, invalid configuration, absent resources, and
     ambiguous existing ownership have bounded, actionable outcomes. Errors
     state what happened and the next safe action instead of printing a runbook.
+13. With Rust/Ferric available but no model or engine, one interactive launch
+    offers and carries out supported engine/model acquisition through to a
+    first conversation. Hardware-informed recommendations avoid asking users
+    to choose quantization, acceleration flags or paths; only meaningful
+    model, network/storage/license and folder-authority decisions require
+    consent. Models are saved under the selected workspace's `models/`;
+    runtime setup is application-managed without silent privileged changes.
+    Downloads have visible progress, bounded cancellation, verified artifact
+    identity and safe interrupted recovery; failed or partial artifacts are
+    never published as ready. A prepared rerun reuses verified resources.
+    Decline, offline/unavailable sources, insufficient disk, corrupt downloads
+    and unsupported hosts preserve existing resources and offer an actionable
+    in-product recovery where supported. Non-interactive no-argument launch
+    and explain/status remain non-acquiring. Clean-host and prepared-host
+    journey tests prove these outcomes without a manual preflight command
+    sequence or a mandatory capability benchmark before conversation.
 
 ## Rationale
 
@@ -175,6 +202,15 @@ work, not merely shortening command names or hiding failed checks. Prepared-
 host usability can ship as an explicitly partial increment while clean-host
 acquisition, measured hardware fit, and full resumable application execution
 remain visible work; a welcome screen alone does not satisfy those outcomes.
+
+The owner's post-Sprint 121 README review explicitly rejects "explains what
+to add" as the finished missing-resource experience. Acquisition already
+belonged to this intent; AC-13 makes that obligation independently testable.
+The current README must remain truthful until implementation is accepted.
+When the behavior changes, introductory guides must agree on the single-launch
+path and describe manual server management as optional expert work, not a
+second required setup sequence. T-11509 owns this follow-up; the completed
+Sprint 121 evidence and scope are unchanged.
 
 ## Alternatives
 
