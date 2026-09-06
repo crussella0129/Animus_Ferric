@@ -75,6 +75,13 @@ tracing-subscriber = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+# GlobalMemoryStatusEx for the front door's hardware-fit probe (startup/memory.rs).
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+] }
+
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",

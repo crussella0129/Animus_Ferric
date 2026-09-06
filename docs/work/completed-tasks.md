@@ -2064,3 +2064,9 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-06T19:02:14Z
 - **Files modified:** crates/ferric-core/src/fit.rs, crates/ferric-core/src/lib.rs
 - **Commit:** `10780528e58406cf708d2b75fd707a4bf6c950b1`
+
+## T-12201 (sprint 122)
+- **Description:** Best-effort system-memory probe behind an injectable MemoryProbe seam (Windows GlobalMemoryStatusEx, Linux /proc/meminfo pure parser, other targets Unknown); None is a valid non-fabricated outcome.
+- **Completed:** 2026-09-06T19:12:45Z
+- **Files modified:** crates/ferric-cli/src/startup/memory.rs, crates/ferric-cli/src/startup.rs, crates/ferric-cli/Cargo.toml
+- **Commit:** PENDING

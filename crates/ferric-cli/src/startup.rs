@@ -1,6 +1,7 @@
 //! Foreground startup owns only the process scope it creates. Saved choices
 //! are hints, never model qualification, consent, or managed-server authority.
 
+mod memory;
 mod models;
 mod probe;
 mod runtime;
@@ -23,6 +24,7 @@ use crate::backend::BackendOpts;
 use crate::config::Config;
 use crate::server::{self, ManagedDiscoveryScope, ManagedServer, ManagedServerState};
 use crate::server_process::{ListenerState, LiveProcess};
+pub(crate) use memory::{MemoryProbe, NativeMemoryProbe, SystemMemory};
 use models::LocalModel;
 use runtime::OwnedEngine;
 use storage::{Preference, WorkspaceState};
