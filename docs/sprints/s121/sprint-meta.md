@@ -3,14 +3,14 @@
 - **Sprint number:** 121
 - **Book schema version:** 2
 - **Start timestamp:** 2026-09-05T13:07:50Z
-- **End timestamp:** (filled at Loop Phase)
+- **End timestamp:** 2026-09-06T02:03:54Z
 - **Model:** unknown
 - **Bundle version:** 0.22.0
-- **Exit status:** in-progress
+- **Exit status:** success
 - **Token count:** (filled at Loop Phase if observable)
 - **Summary:** Add explicit attributable expert output/benchmark budgets without changing normal launch or promoting diagnostic calibration.
 - **Intents:** INT-0007 AC-11/12 partial; INT-0008 AC-6/11/12 preservation.
-- **Completion evidence:** (filled at Loop Phase)
+- **Completion evidence:** Accepted Test/critique at 322fe20; corrected source a417c5d, eight-job CI 34004554100 and fresh 15.07s live pass; Loop reconciliation 889010a. Fresh extra audit and human-approve checkpoint follow.
 
 ## Intake and protected state
 
