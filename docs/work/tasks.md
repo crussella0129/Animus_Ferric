@@ -302,5 +302,3 @@ below remain executable follow-up work; the review did not silently fix them.
 ## Sprint 120 — approved human-first implementation
 
 ## Sprint 121 — approved explicit budgets
-
-- [ ] T-12104 (sprint 121) [intent: INT-0007, INT-0008]: Qualify and document the composed budget increment — touches: source-owned live/composed fixtures, expert docs and sprint evidence.

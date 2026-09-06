@@ -178,3 +178,109 @@ sidecar or fallback evidence destinations. No diagnostic calibrated leaderboard
 or persistence failure is invented. Independent read-only Build review found
 no remaining blocker. Source-child cleanup and joined HTTP workers passed;
 no manual repair, live model acceptance, formal Test or Loop is claimed here.
+
+## T-12104 initial composed qualification
+
+The twelve-test expert/human/source documentation gate passed. The new
+`live_budget_fixture_stalled_phases_reap` then passed all four internal cases:
+cooperative setup cancellation (1.149 s), actual provider-observed request
+cancellation (1.322 s), synchronous setup outer timeout (4.021 s), and
+synchronous request outer timeout (4.021 s). Every parent reported checked
+process-scope cleanup. Both cooperative engine listeners were released; the
+two synchronous modes deliberately created no nested engine. Workspace
+formatting and affected warnings-denied Clippy passed before this run.
+
+The first local `real_model_explicit_budget_smoke` is an explicit **failure**,
+retained unchanged in [live-build-001](live-build-001/live-budget-report.json).
+The existing 7B Q4_K_M control and installed runtime reached a verified local
+endpoint, but the 90-second setup watchdog expired before any main request.
+Identity hashes were available when the child returned; this report does not
+separately time startup and hashing, so their individual contributions are
+not yet established. Parent total was 94.835 s, exit 101, without its own
+150-second timeout. Both owned-engine and outer process-scope cleanup passed;
+no manual termination or model/request success is claimed. Model, phase and
+cleanup limits remain unchanged. Further acceptance requires a diagnosed
+correction and new separately retained evidence, not an unexamined rerun.
+
+The unaffected initial Windows composed source round subsequently passed:
+`cargo fmt --all --check`, the separately included human-fixture rustfmt check,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`, and the
+canonical serialized workspace suite (1,294 passed, zero failed, eleven
+documented ignores). The backend-free all-target warnings-denied Clippy and
+serialized CLI suite also passed (416 tests, zero failures/ignores).
+`FERRIC_TEST_PYTHON` named the existing bundled Python interpreter for the
+authoritative grader tests. These candidate results precede the fixture-only
+hash-cancellation/timing correction and do not replace its requalification or
+the immutable final Test gates.
+
+The eleven workspace ignores comprise five parent-entered benchmark/process
+source modes, two new parent-entered live fixture modes, the two opt-in model
+acceptance tests, and two pre-existing Windows-conditioned research retrieval
+tests. Default workspace excludes the feature-gated lifecycle integration;
+its separate native gate remains required. Optional unavailable Docker/network
+paths are not model or live sandbox qualification.
+
+Read-only Ubuntu WSL2 inspection found the Rust 1.96.1 toolchain and namespace
+tools, but `sudo -n` required interactive authentication. Therefore the exact
+non-root isolated Linux runner was not invoked locally. A WSL formatting check
+ran while the new fixture correction was still being written and exited one
+on that file's pending formatting; this is an incomplete-candidate format
+failure, not Linux runtime evidence. Recheck after the coherent source freeze.
+No installation, privilege bypass or sudoers change occurred.
+
+## T-12104 diagnosed fixture correction
+
+Source inspection identified an actual fixture defect: bulk identity hashing
+used the general synchronous file hash loop without checking the setup cancel
+flag. That could continue after the setup watchdog fired; only the outer owner
+bounded it. The fixture now checks cancellation/deadline around each 64 KiB
+read/update/finalization and never returns a partial digest. A retained stage
+journal records actual preparation, hash, request and cleanup boundaries,
+including raw partial journal bytes after outer termination. Production hash,
+startup, process, verifier and CI code are unchanged.
+
+The corrected focused gate passed six normal tests and three intentionally
+ignored opt-in/source entries. This includes all four actual stalled-phase
+modes plus five hash/journal regressions. Independent read-only review found
+no new blockers; affected warnings-denied Clippy passed. The 16 MiB known-byte
+file hash matched its digest and took 386 ms with `debug_assertions=true` on
+Windows x86_64. That directly measures fixture-local crypto cost, not external
+inference or the unavailable historical split of `live-build-001`.
+
+After stable-source formatting, the native Ubuntu WSL `cargo fmt --all --check`
+and included human-fixture rustfmt check both passed. This is formatting
+evidence only, not a substitute for the unavailable local namespace test gate.
+
+## T-12104 accepted Build boundary
+
+The unchanged native lifecycle Clippy gate and all five serialized Windows
+lifecycle integration tests passed. The exact same 16 MiB hash test under
+`cargo test --release` passed in 13 ms (same digest, `debug_assertions=false`),
+supporting an optimized fixture build for bulk evidence hashing. No Cargo
+manifest/profile, model, runtime, feature, assertion or deadline was changed.
+Independent review confirmed this remains the locked source-execution contract;
+it does not relabel the historical debug failure or claim faster inference.
+
+All six normal live/hash/journal tests passed under that release profile,
+including their checked cancellation/outer-timeout cleanup. The new separate
+`cargo test -p ferric-cli --bin ferric --release live_budget_tests::real_model_explicit_budget_smoke --locked -- --ignored --exact --test-threads=1 --nocapture`
+then passed one of one in 13.76 s. [Live-build-002 raw evidence](live-build-002/live-budget-report.json)
+retains the same 7B Q4_K_M model and runtime hashes as the first attempt,
+CPU-only/context 4096/parallel one, the actual provider-admission request and
+response, full trace, stage journal and checked engine/process cleanup.
+
+Observed setup was 6.205 s (engine prepare 3.759 s and model hashing 2.427 s),
+request 6.806 s, parent total 13.730 s. The model returned `task_complete` with
+summary `Ferric budget smoke complete`, 63 reported output tokens, no truncation
+and no cancellation. Actual main-action trace and provider-admission cap both
+equal explicit 1024. The retained trace digest was independently recomputed
+from its UTF-8 bytes and matched. A VCS note reports the deliberately isolated
+non-Git workspace; this is not application/Git acceptance.
+
+Fixture source SHA-256 at these corrected gates:
+`3e2103f8a7fb1e19adb628c98bf3ee9b00c0dd823c8f572afcdad1478486f525`.
+Raw report SHA-256 values: failed build-001
+`e89d295994c93afb0d2b24c40f6ffc4946ddb252640c89768eb74cfc439ff3a6`;
+passed build-002 `302a884e9bdb2a0647e7ef9e0bce71306736ccc3d54133063b2cad57491a37a9`.
+No manual process repair occurred. Final immutable-source Test/CI, critic,
+Loop and post-Loop review remain separate gates before the single PR.

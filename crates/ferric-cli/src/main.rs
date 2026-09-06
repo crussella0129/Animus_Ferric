@@ -26,6 +26,8 @@ mod dream_cmd;
 mod human;
 mod icm;
 mod launch;
+#[cfg(all(test, feature = "backend-openai", any(windows, target_os = "linux")))]
+mod live_budget_tests;
 mod logging;
 mod mcp;
 mod query;

@@ -128,3 +128,53 @@ T-12102 is in progress: the first integrated compile and fifteen source-owned
 CLI tests passed, while library fault matrices and task-boundary gates remain
 outstanding. T-12103/04, formal Test, Loop, the extra independent review and
 the sole PR are still ahead. No confidence update or model verdict is claimed.
+
+The owner additionally noted that WSL is installed on this computer. After
+the current Windows qualification round, inspect the existing WSL distribution
+and toolchain for local Linux verification. Availability alone is not a test
+pass, and no distribution installation or ownership-boundary expansion is
+inferred. The existing Unix nested-process-group limitation remains explicit.
+
+T-12103 passed its coherent gates and was committed at `9e0f9c8`, with ledger
+backfill `17691cf`. T-12104 has begun. Its first expert-help/human/source
+documentation gate passed twelve tests (one budget-doc, eight human CLI, one
+human-doc and two source-execution ratchets). The primary surface remains four
+actions, with no new budget choices in normal launch or `run`.
+
+Live fixture design review exposed the already documented Unix nested-group
+boundary: forcibly stopping a test-body process cannot prove teardown of an
+engine launched in a separate process group by that body. Windows nested Jobs
+can own that scope. The live smoke is therefore Windows-qualified; an opt-in
+Linux live attempt must report an explicit non-pass before resource effects.
+This is not a model or Linux-live parity verdict. Deterministic Linux normal
+setup/request cancellation fixtures still prove their own cleanup; outer
+synchronous-stall fixtures deliberately run before engine creation or with a
+pure provider and prove only their actual child scope. Independent read-only
+review found this consistent with the locked local-live requirement and
+existing T-11904 deferral. WSL does not remove that limitation by its presence.
+
+The initial Windows composed workspace gate passed 1,294 tests with eleven
+documented ignores; workspace formatting, included-fixture formatting and
+warnings-denied Clippy passed. The separate first live smoke failed its setup
+deadline before a request, with checked engine/process cleanup; raw evidence
+and the attribution gap are retained in Build verification. This is not a
+completed T-12104 or formal Test pass.
+
+After that Windows round, read-only WSL inspection found an existing Ubuntu
+WSL2 distribution, non-root user, Rust/Cargo 1.96.1, Python and the required
+namespace tools. Passwordless `sudo -n` was unavailable (interactive
+authentication required), so the canonical isolated Linux workspace/lifecycle
+runner is not locally ready. No sudoers change, root test bypass, distribution
+or toolchain installation was made. The unchanged Linux CI gate remains
+required; local availability is not substituted for its result.
+
+T-12104 completed its Build boundary after a fixture-only cancellation/timing
+correction and an independently reviewed Cargo release-profile qualification.
+All native lifecycle and focused hash/cancellation tests passed. The separate
+live-build-002 smoke passed in 13.76 s with actual explicit-1024 provenance and
+checked cleanup; failed live-build-001 remains unchanged. The optimized
+fixture hash comparison does not imply faster external inference or reconstruct
+the first attempt's missing stage timings. Full details and report/source
+digests are in Build verification. Formal immutable-source Test/CI, independent
+critic, Loop, extra fresh audit and the sole PR remain outstanding. Confidence
+is still 0.2, and both intents remain active partial work.

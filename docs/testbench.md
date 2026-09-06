@@ -1,12 +1,13 @@
 # The Ferric testbench
 
-Ferric's thesis is that behaviour should **scale to the model**: a big model just
-works; a small model needs smaller steps. The testbench makes that observable —
-it answers *"is this model good enough to drive the tools?"* with a per-tool
-readout, so you can pick the smallest model that still works for your machine.
+These are optional expert measurements, not setup steps for ordinary use.
+Start a normal prepared-host session with `cargo r`; it does not require a
+benchmark. See the [human entry point](commands.md#start-here).
 
-It's two commands: `ferric server` (launch the inference server) and
-`ferric bench ltd` (measure + diagnose).
+The testbench records what a selected model/runtime actually does with Ferric's
+tools. Model size alone does not establish capability or local hardware fit.
+An existing configured server can be reused; the server commands below are for
+operators who deliberately manage one for an experiment.
 
 ## 1. Launch a server
 
@@ -158,8 +159,11 @@ read-back is a safe no-op until you've actually measured the model.
 
 `ferric bench ltd` measures whether a model fires the *right single tool call*.
 `ferric bench full` runs the **whole multi-turn loop** against a ladder of real tasks
-(L0 single readonly call → L6 a full todo app), and sets the model's
-`measured_level` = the highest level it *completes* end-to-end:
+(L0 single readonly call → L6 a full todo app). An eligible, complete,
+infrastructure-clean full sweep with default budgets can publish a
+`measured_level`: the end of its qualified contiguous prefix starting at L0,
+not simply its highest passing rung. `--trials` and `--min-pass-rate` control
+repeated-trial qualification:
 
 ```sh
 ferric bench full --api-base http://localhost:11434/v1 \
@@ -173,7 +177,9 @@ L6 full-todo-app        — PASS (5 turns, 1110 tok)
 calibrated qwen2.5-coder:7b: measured_level 6 (Small -> Large)
 ```
 
-It writes `measured_level` into `benchmarks/model_profiles.json`, so a later
+The displayed ladder above is an illustrative output shape, not a model result.
+An eligible default sweep writes `measured_level` into
+`benchmarks/model_profiles.json`, so a later
 `ferric query --profile-dir benchmarks` auto-runs the model at its *earned* tier
 (§5's read-back, now with full-loop data). The real backend (`--model`/
 `--api-base`) targets ollama or a `ferric server`; `--mock` is the CI self-test.
@@ -185,7 +191,58 @@ ladder for each model and prints an **agentic capability leaderboard**
 (`model | measured_level | tier`) — the multi-turn analogue of §4's fire-rate
 leaderboard. It answers "how small can a model be and still *complete* real tasks?",
 and writes each model's `measured_level` so `query --profile-dir` auto-runs it at its
-earned tier.
+earned tier. Partial ladders and diagnostic budgets do not publish profiles.
+
+### Explicit budgets and evidence
+
+`bench full --timeout-scale S` multiplies each selected agent execution
+deadline. S must be finite and positive; unrepresentable or underflowed
+durations fail before preflight or child/workspace effects. Omission or an
+explicit 1 preserves the embedded durations exactly. Fractional enforced
+durations are retained as seconds plus nanoseconds. The scale does not change
+grader, startup, provider-independent fixture, capture or checked cleanup
+deadlines, and adds no provider HTTP timeout. Manual scaling is not measured
+speed calibration. External inference speed depends on the server/runtime
+and hardware, not Ferric's debug/release build profile.
+
+`query --max-output-tokens N` and `bench full --max-output-tokens N` set a
+positive main-action cap within declared context minus the selected prompt
+reserve. They do not retune reasoning or the separate compaction sampler,
+grant more tools/turns, or promise tokenizer/hardware fit. Omitted caps retain
+existing defaults. Query's cap is invocation-scoped: generated resume guidance
+repeats it and context; manual omission chooses a fresh default, and any new
+cap must pass the fresh policy's reserve check.
+
+Any explicit cap (even equal to a default) or non-default timeout scale makes
+a benchmark diagnostic. Single and fleet runs preserve absent, valid,
+unrelated and malformed profile stores byte-for-byte. Summaries retain raw
+task outcomes and level statistics but mark calibration ineligible, explain
+why and carry no durable measured level. No calibrated leaderboard entry is
+advertised. Explicit scale 1 with no cap keeps default calibration semantics.
+
+Each result row records parent declarations separately from child observations:
+
+- Base deadline, requested scale, exact enforced duration and requested cap.
+- Observed main-action caps and contexts only when the child emitted them;
+  unavailable values remain null. `controls.params_b` and `controls.ctx` are
+  declared inputs, not proof of effective hardware/runtime settings. For
+  compatibility, old no-override mock argv can ignore those declarations;
+  its actual request records remain authoritative.
+- Warmup `not_performed`, parent execution timeout or exit, and the separate
+  observed child terminal cause. A provider error is not called a provider
+  deadline; output-limit truncation is not a parent timeout.
+- A retained trace and versioned `.budget.json` sidecar with shared
+  run/trial/level identity and SHA-256 over unchanged child trace bytes.
+  The row and per-run summary reference that same verified pair.
+
+The parent never inserts synthetic completion events in the child trace.
+Both retained files use create-new publication: collisions preserve prior
+bytes; incomplete new artifacts remain failed evidence rather than a valid
+pair. Recording failures are infrastructure failures, even when the scripted
+task itself passed. Each trial prints its observed cause and evidence
+destination. Legacy rows/summaries remain readable with unknown budget
+attribution rather than invented defaults. These observations do not establish
+automatic hardware calibration or a successful medium-horizon application.
 
 ## 7. Repository autonomy — `ferric bench autonomy`
 

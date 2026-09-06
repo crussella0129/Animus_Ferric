@@ -496,6 +496,10 @@ mod http {
                 }
                 let mut server = Server::new(Reply::ProviderError);
                 let mut command = bench(root.path());
+                // The Cargo-built Ferric child accepts --version for the
+                // preflight, then rejects Python's -m check argv. This proves
+                // deterministic nonzero grading plumbing, not Python runtime
+                // availability or successful authoritative grader execution.
                 command
                     .args([
                         "--params-b",

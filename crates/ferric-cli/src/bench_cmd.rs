@@ -1,8 +1,8 @@
 //! `ferric bench` — run the L0–L6 ladder, append results.jsonl, calibrate.
 //!
-//! Spawns this same binary's `query` subcommand per level (release profile
-//! required for usable speed — warns under debug). `--mock` is the CI-runnable
-//! self-test path (no model needed).
+//! Spawns this same binary's `query` subcommand per level. External inference
+//! speed belongs to the selected server/runtime, not this HTTP client's build
+//! profile. `--mock` is the source-test path (no model needed).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -63,10 +63,14 @@ pub struct BenchArgs {
     pub ctx: u32,
 
     /// Multiply only agent execution deadlines (positive finite; default 1).
+    /// Grader, startup, capture and cleanup bounds are unchanged. A non-default
+    /// scale is diagnostic: profiles are left unchanged; evidence is retained.
     #[arg(long, default_value_t = 1.0)]
     pub timeout_scale: f64,
 
     /// Explicit main-action output cap; constrained by declared context reserve.
+    /// Does not retune reasoning or compaction. Any explicit cap is diagnostic:
+    /// no calibrated profile is published, even when it equals a tier default.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_output_tokens: Option<u32>,
 
@@ -90,7 +94,8 @@ pub struct BenchArgs {
     #[arg(long, default_value_t = 0.90, value_parser = parse_pass_rate)]
     pub min_pass_rate: f64,
 
-    /// Where results.jsonl and model_profiles.json are written.
+    /// Evidence destination: results.jsonl, summaries and trace budget sidecars.
+    /// Eligible default full sweeps may also publish model_profiles.json.
     #[arg(long, default_value = "benchmarks")]
     pub results_dir: PathBuf,
 
@@ -118,13 +123,6 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
         eprintln!("--model-sha256 is only valid with one --model, not --models");
         return ExitCode::FAILURE;
     }
-    if cfg!(debug_assertions) && !args.mock {
-        eprintln!(
-            "warning: running a real-model sweep from a DEBUG binary — inference will be ~1 tok/s. \
-             Rebuild with --release."
-        );
-    }
-
     let all_specs = match embedded_specs() {
         Ok(s) => s,
         Err(e) => {

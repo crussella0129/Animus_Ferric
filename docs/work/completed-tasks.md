@@ -2033,3 +2033,12 @@ qualification below after final PR checks reopened Test.**
 - **Files modified:** `crates/ferric-bench/src/{budget,summary,calibrate}.rs`, `crates/ferric-cli/src/bench_cmd.rs`, `crates/ferric-cli/tests/bench_budget.rs`, Sprint 121 Build verification and work ledgers.
 - **Verification:** Benchmark library 97 passed/four parent-entered source modes ignored; two new shared publication tests plus thirteen existing toolbench units passed; ten budget and seven existing mock CLI integrations passed. Two strengthened diagnostic-prefix tests reran successfully after review. Workspace formatting, affected warnings-denied Clippy and independent read-only review passed. [Build evidence](../sprints/s121/sprint-tests/build-verification.md) distinguishes synthetic full-success publication matrices from actual scripted-provider full-ladder profile preservation. No live model or formal Test/Loop acceptance is inferred.
 - **Commit:** `9e0f9c8639ce24941680ac5d4c72f75ec6f31a43`
+
+## T-12104 (sprint 121)
+
+- **Description:** Preserved the compact human front door, documented expert budget/evidence boundaries, and added bounded prepared-model smoke, cancellation, identity-hashing and retained stage-journal fixtures.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md) AC-11/12 partial; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) AC-6/11/12 preservation.
+- **Completed:** 2026-09-06T00:59:34Z.
+- **Files modified:** `crates/ferric-cli/src/{bench_cmd,main,live_budget_tests}.rs`, `crates/ferric-cli/tests/{bench_budget,budget_docs}.rs`, `docs/{commands,testbench}.md`, Sprint 121 metadata/Build verification/clause coverage/raw live reports, and work ledgers.
+- **Verification:** Initial Windows workspace 1,294 passed/eleven documented ignores; backend-free CLI 416 passed/no ignores; five native lifecycle integrations passed. Corrected fixture six tests passed under debug and release; separate unchanged-contract release model smoke passed in 13.76 s with actual cap/trace/identity and checked cleanup. Windows warnings-denied Clippy/formatting and native WSL formatting passed; WSL namespace runtime gate is unavailable without passwordless sudo. [Build verification](../sprints/s121/sprint-tests/build-verification.md) retains the first live failure, diagnosed fixture correction, source/report hashes, ignored-test scope and limited qualification. Formal Test/CI/Loop remains separate acceptance, not implied by this task record.
+- **Commit:** PENDING

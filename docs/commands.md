@@ -68,6 +68,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--api-key <KEY>` | API key, if your server needs one |
 | `--params-b <N>` · `--quant <Q>` · `--family <F>` · `--ctx <N>` | model profile → run policy (defaults 1.2 / Q4_K_M / unknown / 4096) |
 | `--temperature <T>` | sampling temperature (0.0 = deterministic) |
+| `--max-output-tokens <N>` | optional positive main-action cap, bounded by declared context minus the selected policy's prompt reserve; omitted tier defaults are unchanged |
 | `--protocol native\|grammar\|xml` | override the action protocol (default: from backend caps) |
 | `--harness-policy legacy\|evidence\|evidence-planner` | expert control policy; fresh runs default to `legacy`, omitted resumes inherit the source trace; `evidence-planner` is unavailable and rejected |
 | `--max-ring <N>` | cap the active tool ring (`0` = core only); restrict-only |
@@ -94,6 +95,15 @@ syntax on Unix (`cmd.exe` is not supported). Successful terminal traces are
 rejected by `--resume`, while an incomplete resumable `session_end` remains a
 valid source. This is a low-level `query` option, not a high-level
 run/status/resume/evidence workflow.
+
+An explicit `--max-output-tokens` is invocation-scoped. Generated resume
+guidance repeats both the cap and declared `--ctx`; a manually written resume
+without it selects a fresh default. A new cap is revalidated against the newly
+selected policy, so a changed prompt reserve can reject it before effects.
+The cap does not grant tools or turns, retune reasoning or compaction, or impose
+a request timeout. Declared context headroom is not tokenizer-accurate fit or
+measured hardware capacity. Main-action trace records distinguish requested,
+effective and observed settings from the source of the selected tier.
 
 For expert `query`, `evidence` is an opt-in experimental policy that binds supported mutations and
 named checks to recorded workspace evidence. Its Sprint 113 frozen Qwen screen
@@ -272,7 +282,18 @@ ferric bench autonomy [OPTIONS] # internal repository-work/recovery baseline
 `--profile-dir`, `--params-b`.
 
 `bench full` key flags: `--model`/`--models`, `--level <N>` (repeatable),
-`--protocol` (default grammar), `--results-dir`, `--mock`.
+`--protocol` (default grammar), `--results-dir`, `--mock`, plus optional expert
+`--timeout-scale <S>` and `--max-output-tokens <N>`.
+
+The scale defaults to 1 and affects only agent execution, not grader, startup,
+capture or cleanup bounds. Any explicit output cap or non-default scale makes
+the sweep diagnostic: task observations are retained, but profile files stay
+unchanged and no calibrated leaderboard entry is published. Explicit scale 1
+alone keeps normal calibration semantics. Each trial names its evidence
+destination and distinguishes parent timeout, output limit, provider error and
+infrastructure failure. SHA-256-bound budget sidecars accompany retained traces;
+see [budget evidence and limits](testbench.md#explicit-budgets-and-evidence).
+These are optional expert controls, not prerequisites to `cargo r`.
 
 `bench autonomy` uses the real server-backed path only and requires
 `--model <ID>`. Key flags: repeatable `--task <ID>` and
