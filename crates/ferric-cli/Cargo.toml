@@ -18,7 +18,7 @@ required-features = ["lifecycle-fixture"]
 
 [[bin]]
 name = "ferric-lifecycle-test"
-path = "src/main.rs"
+path = "src/bin/ferric_lifecycle_test.rs"
 required-features = ["lifecycle-fixture"]
 test = false
 bench = false

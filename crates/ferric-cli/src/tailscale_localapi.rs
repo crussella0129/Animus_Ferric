@@ -216,7 +216,7 @@ impl Default for TailscaleLocalApiClient {
 impl TailscaleLocalApiClient {
     pub fn new() -> Self {
         #[cfg(feature = "lifecycle-fixture")]
-        if env!("CARGO_BIN_NAME") == "ferric-lifecycle-test"
+        if crate::bin_identity::is_lifecycle_fixture_binary()
             && let Some(raw) = std::env::var_os(TEST_TCP_ENDPOINT_ENV)
         {
             return match parse_test_tcp_endpoint(&raw.to_string_lossy()) {
