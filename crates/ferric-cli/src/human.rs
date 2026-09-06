@@ -129,8 +129,10 @@ mod enabled {
     use std::time::Duration;
 
     use crate::config::Config;
-    use crate::startup::{PreparedSession, Startup};
-    use ferric_core::{HarnessPolicy, Message, ModelProfile, Tier};
+    use crate::startup::{MemoryProbe, NativeMemoryProbe, PreparedSession, Startup, SystemMemory};
+    use ferric_core::{
+        Fit, HarnessPolicy, Message, ModelProfile, Tier, classify_fit, estimate_model_memory,
+    };
     use ferric_guard::Workspace;
     use ferric_provider::{Completion, CompletionRequest, Provider, SamplingParams, StreamDelta};
     use ferric_trace::{Event, JsonlSink};
@@ -203,6 +205,7 @@ mod enabled {
         start: &Startup,
         interactive: bool,
         io: &dyn HumanIo,
+        memory: Option<SystemMemory>,
     ) -> Result<Option<usize>, String> {
         if start.models.is_empty() {
             return Err("No local model was found. Put an existing GGUF in this folder's models directory, then start again.".to_string());
@@ -227,22 +230,35 @@ mod enabled {
                 .map(|bytes| format!(" ({:.1} GiB file)", bytes as f64 / 1_073_741_824.0))
                 .unwrap_or_default();
             io.say(&format!(
-                "  {}. {}{size}",
+                "  {}. {}{size}{}",
                 index + 1,
-                safe_text(&model.label)
+                safe_text(&model.label),
+                fit_annotation(model.bytes, memory),
             ));
         }
-        match io.read("Which model? [number, or Enter to cancel] ")? {
-            None => Ok(None),
-            Some(answer) if answer.trim().is_empty() => Ok(None),
+        let idx = match io.read("Which model? [number, or Enter to cancel] ")? {
+            None => return Ok(None),
+            Some(answer) if answer.trim().is_empty() => return Ok(None),
             Some(answer) => answer
                 .trim()
                 .parse::<usize>()
                 .ok()
                 .filter(|n| *n > 0 && *n <= start.models.len())
-                .map(|n| Some(n - 1))
-                .ok_or("No model selected. Start again and choose a listed number.".to_string()),
+                .map(|n| n - 1)
+                .ok_or("No model selected. Start again and choose a listed number.".to_string())?,
+        };
+        // The 27B-on-CPU trap: a model that will not fit must not start on a
+        // single Enter. Name the numbers and require a deliberate yes.
+        if let Some(prompt) = wontfit_confirm_prompt(start.models[idx].bytes, memory) {
+            let confirm = io.read(&prompt)?;
+            if !matches!(
+                confirm.as_deref().map(str::trim),
+                Some("y" | "Y" | "yes" | "Yes")
+            ) {
+                return Ok(None);
+            }
         }
+        Ok(Some(idx))
     }
 
     pub(super) fn run(args: RunArgs, interactive: bool) -> ExitCode {
@@ -380,6 +396,81 @@ mod enabled {
         }
     }
 
+    /// Context used for the picker's pre-start fit estimate. The real context is
+    /// set at prepare; 4096 is a representative baseline for a warning.
+    const FIT_ESTIMATE_CONTEXT: u32 = 4096;
+
+    fn gib(bytes: u64) -> String {
+        format!("{:.1} GiB", bytes as f64 / 1_073_741_824.0)
+    }
+
+    fn model_fit(bytes: Option<u64>, memory: Option<SystemMemory>) -> Fit {
+        match bytes {
+            Some(bytes) => classify_fit(
+                estimate_model_memory(bytes, FIT_ESTIMATE_CONTEXT),
+                memory.map(|m| m.available_bytes),
+            ),
+            None => Fit::Unknown,
+        }
+    }
+
+    /// A short fit note for a picker line. Empty when unmeasured, so an unknown
+    /// machine shows exactly what it does today — no fabricated numbers.
+    fn fit_annotation(bytes: Option<u64>, memory: Option<SystemMemory>) -> String {
+        match model_fit(bytes, memory) {
+            Fit::Fits => " — likely fits".to_string(),
+            Fit::Tight => " — tight fit".to_string(),
+            Fit::WontFit => match memory {
+                Some(m) => format!(
+                    " — likely won't fit (needs ~{}, ~{} free)",
+                    gib(estimate_model_memory(
+                        bytes.unwrap_or_default(),
+                        FIT_ESTIMATE_CONTEXT
+                    )),
+                    gib(m.available_bytes)
+                ),
+                None => " — likely won't fit".to_string(),
+            },
+            Fit::Unknown => String::new(),
+        }
+    }
+
+    /// The confirmation a won't-fit model must clear before it starts, naming the
+    /// estimate and available memory. `None` for any other fit (including
+    /// unmeasured), so a normal start is never interrupted.
+    fn wontfit_confirm_prompt(bytes: Option<u64>, memory: Option<SystemMemory>) -> Option<String> {
+        if model_fit(bytes, memory) != Fit::WontFit {
+            return None;
+        }
+        let estimate = estimate_model_memory(bytes.unwrap_or_default(), FIT_ESTIMATE_CONTEXT);
+        let available = memory.map(|m| m.available_bytes).unwrap_or_default();
+        Some(format!(
+            "This model likely won't fit: needs ~{}, ~{} free. Start it anyway? [y/N] ",
+            gib(estimate),
+            gib(available),
+        ))
+    }
+
+    /// The engine-start notice for the selected model. Replaces the blanket
+    /// "Resource fit is not measured" with the measured fit when known, and keeps
+    /// the honest unmeasured line otherwise.
+    fn start_engine_notice(bytes: Option<u64>, memory: Option<SystemMemory>) -> String {
+        match model_fit(bytes, memory) {
+            Fit::Unknown => {
+                "This starts a local model and may use substantial memory. Resource fit is not measured."
+                    .to_string()
+            }
+            Fit::Fits => "This starts a local model that likely fits in available memory.".to_string(),
+            Fit::Tight => {
+                "This starts a local model; it is a tight fit and may run slowly.".to_string()
+            }
+            Fit::WontFit => {
+                "This starts a local model that likely will not fit; it may fail or thrash."
+                    .to_string()
+            }
+        }
+    }
+
     pub(super) fn session(
         args: &RunArgs,
         root: &Path,
@@ -467,7 +558,8 @@ mod enabled {
             }
             Err(error) => return Err(render_startup_error(&error)),
         };
-        let Some(index) = choose_model(&start, interactive, io)? else {
+        let memory = NativeMemoryProbe.probe();
+        let Some(index) = choose_model(&start, interactive, io, memory)? else {
             io.say("Cancelled. No session started.");
             return Ok(());
         };
@@ -503,7 +595,10 @@ mod enabled {
             }
         }
         if start.will_start_engine {
-            io.say("This starts a local CPU model and may use substantial memory. Resource fit is not measured.");
+            io.say(&start_engine_notice(
+                start.models.get(index).and_then(|m| m.bytes),
+                memory,
+            ));
             if interactive {
                 let answer = io.read("Start the local model? [y/N] ")?;
                 if !matches!(
@@ -1176,6 +1271,57 @@ mod enabled {
             assert!(output.contains("✓ write_file — wrote index.html"));
             assert!(output.contains("visible answer"));
             assert!(!output.contains("secret chain of thought"));
+        }
+
+        const GIB: u64 = 1024 * 1024 * 1024;
+
+        #[test]
+        fn picker_annotates_each_model_fit() {
+            let mem = Some(SystemMemory {
+                total_bytes: 8 * GIB,
+                available_bytes: 8 * GIB,
+            });
+            assert!(fit_annotation(Some(GIB), mem).contains("fits"));
+            let big = fit_annotation(Some(20 * GIB), mem);
+            assert!(big.contains("won't fit"));
+            assert!(big.contains("free")); // names the available memory
+        }
+
+        #[test]
+        fn wontfit_requires_extra_confirmation() {
+            let mem = Some(SystemMemory {
+                total_bytes: 8 * GIB,
+                available_bytes: 8 * GIB,
+            });
+            let prompt = wontfit_confirm_prompt(Some(20 * GIB), mem).expect("wontfit prompts");
+            assert!(prompt.contains("won't fit"));
+            assert!(prompt.contains("free"));
+            assert!(prompt.contains("[y/N]"));
+            // A comfortable model never interrupts the start.
+            assert!(wontfit_confirm_prompt(Some(GIB), mem).is_none());
+        }
+
+        #[test]
+        fn unknown_memory_preserves_current_behavior() {
+            // No reading: no annotation, no extra prompt, and the original
+            // "Resource fit is not measured" line verbatim.
+            assert_eq!(fit_annotation(Some(20 * GIB), None), "");
+            assert!(wontfit_confirm_prompt(Some(20 * GIB), None).is_none());
+            assert_eq!(
+                start_engine_notice(Some(20 * GIB), None),
+                "This starts a local model and may use substantial memory. Resource fit is not measured."
+            );
+        }
+
+        #[test]
+        fn fit_keys_on_available_not_total() {
+            // C-002: a large total with little available must still be WontFit.
+            let mem = Some(SystemMemory {
+                total_bytes: 64 * GIB,
+                available_bytes: 2 * GIB,
+            });
+            assert_eq!(model_fit(Some(10 * GIB), mem), Fit::WontFit);
+            assert!(wontfit_confirm_prompt(Some(10 * GIB), mem).is_some());
         }
 
         #[test]

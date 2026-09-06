@@ -3,10 +3,10 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0008
 - **State:** active
-- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [Sprint 117 T-11606 recovery plan](../sprints/s117/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 ownership-safe Tailscale Serve plan](../sprints/s118/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [post-Sprint 117 lifecycle carry-forward](../work/tasks.md#post-sprint-117-lifecycle-carry-forward); [post-Sprint 118 Tailscale proof carry-forward](../work/tasks.md#post-sprint-118-tailscale-proof-carry-forward); [Sprint 119 source-owned process refactor plan](../sprints/s119/sprint-plans/build-plan.md); [Sprint 120 human-first approved plan](../sprints/s120/sprint-plans/build-plan.md); [Sprint 121 approved explicit-budget plan](../sprints/s121/sprint-plans/build-plan.md#execution-sequence)
+- **Work evidence:** [Sprint 115 T-11414 external trace-root and resume increment](../sprints/s115/sprint-plans/build-plan.md#t-11414-add-a-safe-query-only-external-trace-root-and-truthful-resume-surface); [ordered follow-up from field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md#ordered-follow-up); [Sprint 116 finalized lifecycle plan](../sprints/s116/sprint-plans/build-plan.md#execution-sequence); [Sprint 117 T-11606 recovery plan](../sprints/s117/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 ownership-safe Tailscale Serve plan](../sprints/s118/sprint-plans/build-plan.md#execution-sequence); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [stable ordered local-model backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [post-Sprint 117 lifecycle carry-forward](../work/tasks.md#post-sprint-117-lifecycle-carry-forward); [post-Sprint 118 Tailscale proof carry-forward](../work/tasks.md#post-sprint-118-tailscale-proof-carry-forward); [Sprint 119 source-owned process refactor plan](../sprints/s119/sprint-plans/build-plan.md); [Sprint 120 human-first approved plan](../sprints/s120/sprint-plans/build-plan.md); [Sprint 121 approved explicit-budget plan](../sprints/s121/sprint-plans/build-plan.md#execution-sequence); [Sprint 122 hardware-informed model-fit plan](../sprints/s122/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** [T-11414 implementation record](../work/completed-tasks.md#t-11414-sprint-115); [T-11504 partial identity-safe lifecycle implementation](../work/completed-tasks.md#t-11504-sprint-116); [T-11606 accepted lifecycle remediation](../work/completed-tasks.md#t-11606-sprint-117); [T-11801 initial adapter and typed ownership record](../work/completed-tasks.md#t-11801-sprint-118); [T-11802 crash-safe launch](../work/completed-tasks.md#t-11802-sprint-118); [T-11803 status and teardown](../work/completed-tasks.md#t-11803-sprint-118); [T-11804 doctor and operator surface](../work/completed-tasks.md#t-11804-sprint-118); [T-11805 initial lifecycle evidence](../work/completed-tasks.md#t-11805-sprint-118); [Sprint 118 direct-LocalAPI correction](../work/completed-tasks.md#sprint-118-post-loop-correction); [T-11510 Sprint 118 umbrella completion](../work/completed-tasks.md#t-11510-sprint-118); [Sprint 119 shared source-process increment](../work/completed-tasks.md#t-11901-sprint-119); [Sprint 119 source test lifetimes](../work/completed-tasks.md#t-11902-sprint-119); [T-12002 configuration](../work/completed-tasks.md#t-12002-sprint-120); [T-12003 foreground preparation](../work/completed-tasks.md#t-12003-sprint-120); [T-12004 human entry point](../work/completed-tasks.md#t-12004-sprint-120); [T-12005 provider I/O](../work/completed-tasks.md#t-12005-sprint-120); [T-12006 qualification](../work/completed-tasks.md#t-12006-sprint-120); [Sprint 121 accepted optional-budget increment](../work/completed-tasks.md#t-11505-sprint-121-reconciled-umbrella)
-- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md); [Sprint 117 accepted lifecycle test report](../sprints/s117/sprint-tests/test-report.md); [Sprint 117 clean test critique](../sprints/s117/sprint-tests/critique.md); [Sprint 118 ownership-safe Tailscale lifecycle test report](../sprints/s118/sprint-tests/test-report.md); [Sprint 118 Test critique](../sprints/s118/sprint-tests/critique.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [Sprint 119 source-owned process Test report](../sprints/s119/sprint-tests/test-report.md); [Sprint 120 accepted prepared-host/configuration/Python Test increment](../sprints/s120/sprint-tests/test-report.md); [Sprint 121 accepted explicit-budget increment](../sprints/s121/sprint-tests/test-report.md)
+- **Test evidence:** [T-11414 query and CLI results](../sprints/s115/sprint-tests/unit-tests.md#t-11414-query-surface); [Sprint 116 invalidated test report](../sprints/s116/sprint-tests/test-report.md); [Sprint 116 blocking critique](../sprints/s116/sprint-tests/critique.md); [Sprint 116 failure report](../sprints/s116/failure-report.md); [Sprint 117 accepted lifecycle test report](../sprints/s117/sprint-tests/test-report.md); [Sprint 117 clean test critique](../sprints/s117/sprint-tests/critique.md); [Sprint 118 ownership-safe Tailscale lifecycle test report](../sprints/s118/sprint-tests/test-report.md); [Sprint 118 Test critique](../sprints/s118/sprint-tests/critique.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [Sprint 119 source-owned process Test report](../sprints/s119/sprint-tests/test-report.md); [Sprint 120 accepted prepared-host/configuration/Python Test increment](../sprints/s120/sprint-tests/test-report.md); [Sprint 121 accepted explicit-budget increment](../sprints/s121/sprint-tests/test-report.md); [Sprint 122 hardware-informed model-fit test report](../sprints/s122/sprint-tests/test-report.md)
 - **Documentation evidence:** [Sprint 115 external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Sprint 117 acceptance-recovery research](../sprints/s117/sprint-research/research-report.md); [Sprint 118 ownership-safe Serve research](../sprints/s118/sprint-research/research-report.md); [Sprint 118 post-Loop adversarial correction](../sprints/s118/post-loop-adversarial-review.md); [current server lifecycle and Tailscale contract](../server-configuration.md#tailscale-serve-exposure); [Source-driven process contract](../process-execution.md); [Sprint 119 Loop reconciliation](../sprints/s119/loop-review.md); [Human-first command surface](../commands.md); [Prepared-host configuration and limits](../configuration.md); [Expert budget and calibration limits](../testbench.md#explicit-budgets-and-evidence)
 
 ## Intent
@@ -47,6 +47,17 @@ The product owns mechanical phase ordering, readiness checks, model metadata,
 and cleanup. Humans choose the objective, an ambiguous model, and meaningful
 authority/resource commitments; they should not complete a technical settings
 questionnaire before they can start.
+
+Missing engine or model resources are setup work for Ferric, not the normal
+end of first run. The same interactive front door must recommend a compatible
+runtime/model, disclose the source and expected download/storage cost, obtain
+the necessary consent, then acquire, validate, prepare and open the session.
+Acquired GGUFs belong in the selected workspace's `models/` directory. A
+supported clean-host path must not send the human away to fetch archives,
+choose engine flags or execute a separate `server up`/doctor command sequence.
+Existing configured resources remain reusable without unnecessary downloads.
+This is an outstanding product requirement, not behavior delivered by the
+current prepared-host increment or permission to download anything now.
 
 Bounded readiness and resource checks must be distinguished from capability
 qualification. The expensive L0-L6 benchmark is not a prerequisite to ordinary
@@ -150,6 +161,22 @@ complete.
     Decline, EOF, cancellation, invalid configuration, absent resources, and
     ambiguous existing ownership have bounded, actionable outcomes. Errors
     state what happened and the next safe action instead of printing a runbook.
+13. With Rust/Ferric available but no model or engine, one interactive launch
+    offers and carries out supported engine/model acquisition through to a
+    first conversation. Hardware-informed recommendations avoid asking users
+    to choose quantization, acceleration flags or paths; only meaningful
+    model, network/storage/license and folder-authority decisions require
+    consent. Models are saved under the selected workspace's `models/`;
+    runtime setup is application-managed without silent privileged changes.
+    Downloads have visible progress, bounded cancellation, verified artifact
+    identity and safe interrupted recovery; failed or partial artifacts are
+    never published as ready. A prepared rerun reuses verified resources.
+    Decline, offline/unavailable sources, insufficient disk, corrupt downloads
+    and unsupported hosts preserve existing resources and offer an actionable
+    in-product recovery where supported. Non-interactive no-argument launch
+    and explain/status remain non-acquiring. Clean-host and prepared-host
+    journey tests prove these outcomes without a manual preflight command
+    sequence or a mandatory capability benchmark before conversation.
 
 ## Rationale
 
@@ -175,6 +202,15 @@ work, not merely shortening command names or hiding failed checks. Prepared-
 host usability can ship as an explicitly partial increment while clean-host
 acquisition, measured hardware fit, and full resumable application execution
 remain visible work; a welcome screen alone does not satisfy those outcomes.
+
+The owner's post-Sprint 121 README review explicitly rejects "explains what
+to add" as the finished missing-resource experience. Acquisition already
+belonged to this intent; AC-13 makes that obligation independently testable.
+The current README must remain truthful until implementation is accepted.
+When the behavior changes, introductory guides must agree on the single-launch
+path and describe manual server management as optional expert work, not a
+second required setup sequence. T-11509 owns this follow-up; the completed
+Sprint 121 evidence and scope are unchanged.
 
 ## Alternatives
 
@@ -364,3 +400,21 @@ the whole intent stays active; no state transition is appended for this progress
   identity/ETag atomicity, T-11806's local-path-resolution fault seam, native
   transport and macOS/platform parity, AC-8, AC-9, and the broader compact
   model-backed workflow remain active; the intent is not realized.
+- 2026-09-06: the owner added AC-13 (missing engine/model resources are setup
+  work: in-product consented acquisition plus hardware-informed recommendation
+  through to a first conversation, no manual preflight). Sprint 122 plans the
+  hardware-informed clause's first increment — measured system-memory fit for
+  the front-door picker — leaving AC-13's acquisition/download clause and
+  GPU/VRAM calibration as named active follow-on work. State remains active; no
+  acceptance is implied by this planning entry.
+- 2026-09-06: Sprint 122 delivered and accepted the hardware-informed RAM-fit
+  increment — a best-effort system-memory probe (Windows `GlobalMemoryStatusEx`,
+  Linux `/proc/meminfo`, else Unknown), a pure estimate/classify in
+  `ferric-core`, and a front-door picker that annotates each model and gates a
+  won't-fit start on a confirmation naming the estimate and available memory. The
+  first human use test's 27B-on-CPU trap now classifies WontFit. Full workspace
+  green at `9eabcbc` (40 suites, 0 failed); Test verdict proceed-with-caveats,
+  the one caveat a deferred full picker-driver E2E (model bytes come from real
+  file metadata). This accepts the hardware-informed-recommendation clause of
+  AC-13 for the RAM path; AC-13's acquisition/download clause and GPU/VRAM
+  calibration remain active follow-on. State remains active; not realized.

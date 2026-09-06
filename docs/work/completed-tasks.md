@@ -2058,3 +2058,21 @@ qualification below after final PR checks reopened Test.**
 - **Source:** Individual T-12101–04 commits remain above; corrected composition `a417c5d00361fd25a238346e5015fb07ed5ae7c7` is accepted by the final Test report/critique.
 - **Verification:** [Accepted Test evidence](../sprints/s121/sprint-tests/test-report.md), all sixteen clause mappings, exact-head eight-job CI, fresh checked-cleanup model smoke and retained mutation controls. This is Loop reconciliation, not new code or automatic calibration.
 - **Remaining:** T-11506 → T-11410 → T-11412 stays ordered; hardware/profile coordination, reasoning/compaction and complete workflow/platform work remain open. No whole intent is realized.
+
+## T-12202 (sprint 122)
+- **Description:** Pure estimate_model_memory + classify_fit (Fits/Tight/WontFit/Unknown) in ferric-core; unmeasured stays Unknown, comparison keys on available not total.
+- **Completed:** 2026-09-06T19:02:14Z
+- **Files modified:** crates/ferric-core/src/fit.rs, crates/ferric-core/src/lib.rs
+- **Commit:** `10780528e58406cf708d2b75fd707a4bf6c950b1`
+
+## T-12201 (sprint 122)
+- **Description:** Best-effort system-memory probe behind an injectable MemoryProbe seam (Windows GlobalMemoryStatusEx, Linux /proc/meminfo pure parser, other targets Unknown); None is a valid non-fabricated outcome.
+- **Completed:** 2026-09-06T19:12:45Z
+- **Files modified:** crates/ferric-cli/src/startup/memory.rs, crates/ferric-cli/src/startup.rs, crates/ferric-cli/Cargo.toml
+- **Commit:** `7832edb1ec8ed7993b6611dab250b5c660ea2bfd`
+
+## T-12203 (sprint 122)
+- **Description:** Honest front-door picker: each model annotated with its fit; a won't-fit selection requires an extra confirmation naming the estimate and available memory before the engine starts; Unknown preserves the prior behavior verbatim. Fit keys on available, not total (C-002).
+- **Completed:** 2026-09-06T19:13:03Z
+- **Files modified:** crates/ferric-cli/src/human.rs
+- **Commit:** `215d07407e09139663bb3bbb1cc865dbde026c1f`
