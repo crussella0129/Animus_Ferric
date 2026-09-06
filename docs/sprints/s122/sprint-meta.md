@@ -8,6 +8,6 @@
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** (one-line description of sprint goal, filled after Plan Phase)
-- **Intents:** (filled after Plan Phase)
+- **Summary:** Hardware-informed model fit — a measured system-memory probe plus a pure fit classifier so the front-door picker annotates each model and requires confirmation before starting one that will not fit (INT-0008 AC-13 increment).
+- **Intents:** [INT-0008](../../intents/INT-0008-unified-local-model-workflow.md) — active; AC-13 hardware-informed-recommendation clause (RAM-fit increment; acquisition and GPU/VRAM remain active follow-on).
 - **Completion evidence:** (filled at Loop Phase)

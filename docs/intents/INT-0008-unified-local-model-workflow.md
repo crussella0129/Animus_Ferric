@@ -400,3 +400,10 @@ the whole intent stays active; no state transition is appended for this progress
   identity/ETag atomicity, T-11806's local-path-resolution fault seam, native
   transport and macOS/platform parity, AC-8, AC-9, and the broader compact
   model-backed workflow remain active; the intent is not realized.
+- 2026-09-06: the owner added AC-13 (missing engine/model resources are setup
+  work: in-product consented acquisition plus hardware-informed recommendation
+  through to a first conversation, no manual preflight). Sprint 122 plans the
+  hardware-informed clause's first increment — measured system-memory fit for
+  the front-door picker — leaving AC-13's acquisition/download clause and
+  GPU/VRAM calibration as named active follow-on work. State remains active; no
+  acceptance is implied by this planning entry.
