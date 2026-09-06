@@ -2063,4 +2063,4 @@ qualification below after final PR checks reopened Test.**
 - **Description:** Pure estimate_model_memory + classify_fit (Fits/Tight/WontFit/Unknown) in ferric-core; unmeasured stays Unknown, comparison keys on available not total.
 - **Completed:** 2026-09-06T19:02:14Z
 - **Files modified:** crates/ferric-core/src/fit.rs, crates/ferric-core/src/lib.rs
-- **Commit:** PENDING
+- **Commit:** `10780528e58406cf708d2b75fd707a4bf6c950b1`
