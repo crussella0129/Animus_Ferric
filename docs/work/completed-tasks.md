@@ -2032,4 +2032,4 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-06T00:22:17Z.
 - **Files modified:** `crates/ferric-bench/src/{budget,summary,calibrate}.rs`, `crates/ferric-cli/src/bench_cmd.rs`, `crates/ferric-cli/tests/bench_budget.rs`, Sprint 121 Build verification and work ledgers.
 - **Verification:** Benchmark library 97 passed/four parent-entered source modes ignored; two new shared publication tests plus thirteen existing toolbench units passed; ten budget and seven existing mock CLI integrations passed. Two strengthened diagnostic-prefix tests reran successfully after review. Workspace formatting, affected warnings-denied Clippy and independent read-only review passed. [Build evidence](../sprints/s121/sprint-tests/build-verification.md) distinguishes synthetic full-success publication matrices from actual scripted-provider full-ladder profile preservation. No live model or formal Test/Loop acceptance is inferred.
-- **Commit:** PENDING
+- **Commit:** `9e0f9c8639ce24941680ac5d4c72f75ec6f31a43`
