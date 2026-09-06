@@ -175,3 +175,4 @@
 - [Sprint 121](sprints/s121/sprint-meta.md)
   - [Accepted Test report](sprints/s121/sprint-tests/test-report.md)
   - [Loop reconciliation](sprints/s121/loop-review.md)
+  - [Extra post-Loop audit](sprints/s121/post-loop-adversarial-review.md)

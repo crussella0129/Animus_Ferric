@@ -10,7 +10,7 @@
 - **Token count:** (filled at Loop Phase if observable)
 - **Summary:** Add explicit attributable expert output/benchmark budgets without changing normal launch or promoting diagnostic calibration.
 - **Intents:** INT-0007 AC-11/12 partial; INT-0008 AC-6/11/12 preservation.
-- **Completion evidence:** Accepted Test/critique at 322fe20; corrected source a417c5d, eight-job CI 34004554100 and fresh 15.07s live pass; Loop reconciliation 889010a. Fresh extra audit and human-approve checkpoint follow.
+- **Completion evidence:** Accepted Test/critique at 322fe20; corrected source a417c5d, eight-job CI 34004554100 and fresh 15.07s live pass; Loop 889010a and helper close 7c5650b; extra fresh post-Loop audit accepted proceed-with-caveats. Human-approve checkpoint and final-head checks follow.
 
 ## Intake and protected state
 
@@ -215,3 +215,13 @@ verified source/report/trace digests and accepted `proceed-with-caveats` for
 the still-unknown historical CI cause. The accepted Test report is linked from
 both active intents. This ends Test only: confidence, Loop reconciliation,
 extra fresh audit and the sole PR checkpoint remain subsequent obligations.
+
+The installed Book validator passed eight intent chapters; Loop reconciliation
+committed at `889010a` and the helper closed this sprint at `7c5650b`.
+Clean-Book routing then reported `ready-for-next-sprint`; no next sprint began.
+The owner's separate fresh post-Loop adversarial review found no new code or
+phase blocker and returned `proceed-with-caveats`. Its independent source,
+plan-lock, count, CI and digest checks are retained in
+[the extra audit](post-loop-adversarial-review.md). The original Windows cause
+remains unknown. Only push/confirm, the sole owner-merged PR, final-head checks
+and protected-edit restoration remain as handoff obligations.
