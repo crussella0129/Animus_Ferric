@@ -2023,4 +2023,4 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-06T00:11:41Z.
 - **Files modified:** `crates/ferric-bench/src/{budget,budget_trace,runner,results,summary,lib,calibrate}.rs`, `crates/ferric-cli/src/{bench_cmd,autonomy_cmd}.rs`, `crates/ferric-cli/tests/bench_budget.rs`, Sprint 121 metadata/Build verification and work ledgers. Calibration changes at this boundary are constructor-only; its guard is T-12103.
 - **Verification:** Eight new plus seven existing CLI integrations, 94 benchmark library tests and 26 autonomy units passed; four library source-child entries are entered through checked parent tests. Workspace formatting, affected all-target warnings-denied Clippy and independent read-only Build review passed. Full E02 coverage and attribution limits are retained in [Build verification](../sprints/s121/sprint-tests/build-verification.md). Process/spec/verifier implementations remain unchanged. No model/calibration or formal Test/Loop acceptance is inferred.
-- **Commit:** PENDING
+- **Commit:** `f313ad341226c96f6e02b5319107d46ad653c70d`
