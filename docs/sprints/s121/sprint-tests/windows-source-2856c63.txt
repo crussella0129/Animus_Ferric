@@ -1,0 +1,243 @@
+Source head: 2856c63209865f69b3d3727f84fd92f63f9dfa51
+Local Windows root execution; Cargo exit 0.
+Command: cargo test --workspace --locked -- --test-threads=1
+CARGO_INCREMENTAL=0; FERRIC_TEST_PYTHON selected existing bundled Python 3.12.14.
+Source-level cleanup remained mandatory. No manual process termination.
+Per-suite confirmations copied from the tool output; target paths identify Cargo's selections, not operator-invoked artifact commands.
+
+Running unittests src\lib.rs (target\debug\deps\animus_launch-5acd2592295d462a.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.28s
+
+Running tests\scaffold.rs (target\debug\deps\scaffold-1ebc67beeef3fac0.exe)
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.04s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_bench-6b90fa1dfb580f38.exe)
+test result: ok. 97 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 10.92s
+
+Running unittests src\main.rs (target\debug\deps\ferric-afbcad2b82f86bc7.exe)
+test result: ok. 389 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 48.92s
+
+Running tests\bench_budget.rs (target\debug\deps\bench_budget-9d916fd59061ecc4.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 44.71s
+
+Running tests\bench_mock.rs (target\debug\deps\bench_mock-49211fd529316ffa.exe)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.17s
+
+Running tests\budget_docs.rs (target\debug\deps\budget_docs-6636cbbb1e013cff.exe)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+Running tests\cli.rs (target\debug\deps\cli-cbde04fc4a647175.exe)
+test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.78s
+
+Running tests\human_cli.rs (target\debug\deps\human_cli-3229d34484350f5d.exe)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.88s
+
+Running tests\human_docs.rs (target\debug\deps\human_docs-e5e2a6a39a9269a1.exe)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+
+Running tests\query_output_budget.rs (target\debug\deps\query_output_budget-5c92415393adc8fa.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+
+Running tests\server_lifecycle_fixture.rs (target\debug\deps\server_lifecycle_fixture-09fd81ce3f9179a6.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Running tests\source_execution.rs (target\debug\deps\source_execution-fe40102b8bab376d.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Running tests\template_hygiene.rs (target\debug\deps\template_hygiene-25428875f5f88814.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_core-020fceece7cacc2e.exe)
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Running tests\tier_table_snapshot.rs (target\debug\deps\tier_table_snapshot-cd27af1323cb2172.exe)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_cron-98e228438daecae5.exe)
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_guard-07d91abdb5833de3.exe)
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_icm-f93a9d9824e36cf9.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+Running tests\workspace.rs (target\debug\deps\workspace-42048ac9a456a1bc.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_loop-c915f066b2c5f635.exe)
+test result: ok. 131 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+Running tests\accept_edits.rs (target\debug\deps\accept_edits-b4e8ee31ca09fc51.exe)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.90s
+
+Running tests\backoff_tests.rs (target\debug\deps\backoff_tests-cd40770dc900f116.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+Running tests\clarification_tests.rs (target\debug\deps\clarification_tests-86b0e2299693f99a.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+Running tests\compaction_tests.rs (target\debug\deps\compaction_tests-616669f731434e1c.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.94s
+
+Running tests\constrained_loop.rs (target\debug\deps\constrained_loop-c65ee7bb7c0e25c1.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.22s
+
+Running tests\evidence_dispatch_tests.rs (target\debug\deps\evidence_dispatch_tests-abc7f3f12dbdaa2b.exe)
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.92s
+
+Running tests\failure_tests.rs (target\debug\deps\failure_tests-b793b10e2cc590b0.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.38s
+
+Running tests\grammar_loop.rs (target\debug\deps\grammar_loop-5f213bf17e0e6e02.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.89s
+
+Running tests\hooks_tests.rs (target\debug\deps\hooks_tests-417655c17bb12f0f.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+Running tests\loop_core.rs (target\debug\deps\loop_core-eb9328efca58c844.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.41s
+
+Running tests\oscillation_tests.rs (target\debug\deps\oscillation_tests-6e8d07ed5679bb47.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.80s
+
+Running tests\output_budget.rs (target\debug\deps\output_budget-335cb0b0f55e33cb.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.77s
+
+Running tests\progress_tests.rs (target\debug\deps\progress_tests-b97c1cbb777f5b5b.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.97s
+
+Running tests\provenance_gate.rs (target\debug\deps\provenance_gate-b9a336a53bad3698.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.38s
+
+Running tests\recovery_protocol_tests.rs (target\debug\deps\recovery_protocol_tests-c3aa0ea3d9158b6b.exe)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+Running tests\repetition_tests.rs (target\debug\deps\repetition_tests-be76a26f6fa07852.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.63s
+
+Running tests\resume_tests.rs (target\debug\deps\resume_tests-303a223124b913d4.exe)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+Running tests\streaming_tests.rs (target\debug\deps\streaming_tests-cf3246f3cc227768.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+Running tests\terminator_tests.rs (target\debug\deps\terminator_tests-e4d6ca521a5c945f.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.40s
+
+Running tests\tool_output_truncation_tests.rs (target\debug\deps\tool_output_truncation_tests-ad07b7c67b3f1f00.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.79s
+
+Running tests\tracing_capture.rs (target\debug\deps\tracing_capture-b4ee0bd72d679448.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.60s
+
+Running tests\truncation_tests.rs (target\debug\deps\truncation_tests-a862323909de065b.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.36s
+
+Running tests\verification_gate_tests.rs (target\debug\deps\verification_gate_tests-26b091cc77ebf24f.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_process-5948e2e5c257e87c.exe)
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_prompt-9435985cc456b6e9.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_provider-9bac5502902fd729.exe)
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+Running tests\mock_loop_skeleton.rs (target\debug\deps\mock_loop_skeleton-d16bbffc2840f01a.exe)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_research-ad2311a3035e754b.exe)
+test result: ok. 36 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+Running tests\airlock_live.rs (target\debug\deps\airlock_live-3f2776259a8f6e69.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+
+Running tests\local_fs_query.rs (target\debug\deps\local_fs_query-25cd2a6553fc1a60.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+Running tests\sandbox_live.rs (target\debug\deps\sandbox_live-d6b9de27c0576de8.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.18s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_skills-6c3a7167ea1594bb.exe)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_tools-e9dc3584dd97d827.exe)
+test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+
+Running tests\background_tasks.rs (target\debug\deps\background_tasks-d7e2120c8e4e744e.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+Running tests\builtin_file_tools.rs (target\debug\deps\builtin_file_tools-73ac7e61695dd5cf.exe)
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+Running tests\controlled_mutations.rs (target\debug\deps\controlled_mutations-ba934905f27b3203.exe)
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+Running tests\controlled_navigation.rs (target\debug\deps\controlled_navigation-c744f9835ab4595d.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+Running tests\controlled_registry.rs (target\debug\deps\controlled_registry-ee0e3869ba8c5513.exe)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+Running tests\controlled_structural.rs (target\debug\deps\controlled_structural-8aedda7e0eef1c55.exe)
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+Running tests\guarded_traced_execution.rs (target\debug\deps\guarded_traced_execution-b2c4e284a9f78b65.exe)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_trace-a8461b4d358b45a0.exe)
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+Running unittests src\lib.rs (target\debug\deps\ferric_vcs-e8b5099bc5c84f7f.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Running tests\vcs_tests.rs (target\debug\deps\vcs_tests-2e341d65c7398b0a.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.69s
+
+Doc-tests animus_launch
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_bench
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_core
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_cron
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_guard
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_icm
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_loop
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_process
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_prompt
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_provider
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_research
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_skills
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_tools
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_trace
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Doc-tests ferric_vcs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

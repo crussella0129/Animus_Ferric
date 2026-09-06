@@ -180,10 +180,18 @@ impl OwnedEngine {
     }
 
     pub(super) fn listener(&self) -> Result<ListenerState, StartupError> {
-        let facts = self
-            .process
-            .inspect(self.port)
-            .map_err(|_| StartupError::cause("The owned engine exited or cannot be verified."))?;
+        let facts = self.process.inspect(self.port).map_err(|_error| {
+            #[cfg(test)]
+            eprintln!(
+                "OWNED_ENGINE_INSPECTION_FAILURE={}",
+                serde_json::json!({
+                    "pid":self.process.pid(),"port":self.port,
+                    "typed_error":format!("{_error:?}"),
+                    "engine_tail_snapshot":self.child.diagnostics(),
+                })
+            );
+            StartupError::cause("The owned engine exited or cannot be verified.")
+        })?;
         if facts.identity != self.identity {
             return Err(StartupError::cause(
                 "The engine identity changed during the session.",

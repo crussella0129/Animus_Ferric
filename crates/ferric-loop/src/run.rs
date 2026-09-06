@@ -321,6 +321,34 @@ impl<'a> LoopState<'a> {
             self.projector.step(&evt);
         }
 
+        let budget = self
+            .args
+            .policy
+            .output_budget
+            .as_ref()
+            .filter(|budget| {
+                budget.effective == request.sampling.max_tokens
+                    && self.args.policy.max_output_tokens == request.sampling.max_tokens
+            })
+            .cloned()
+            .unwrap_or_else(|| ferric_core::OutputBudget {
+                requested: None,
+                effective: request.sampling.max_tokens,
+                declared_ctx: self
+                    .args
+                    .policy
+                    .output_budget
+                    .as_ref()
+                    .and_then(|budget| budget.declared_ctx),
+                source: if request.sampling.max_tokens == self.args.policy.max_output_tokens {
+                    ferric_core::OutputBudgetSource::Policy
+                } else {
+                    ferric_core::OutputBudgetSource::Caller
+                },
+            });
+        self.sink
+            .write_event(Event::MainActionBudget { turn, budget })?;
+
         let completion_result = match self.args.stream_sink {
             Some(on_delta) => {
                 crate::backoff::complete_streaming_with_backoff(

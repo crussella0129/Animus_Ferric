@@ -1,0 +1,414 @@
+{
+  "schema_version": 1,
+  "mode": "live",
+  "parent_execution_budget_ms": 150000,
+  "fixture_compilation": {
+    "debug_assertions": false,
+    "target_os": "windows",
+    "target_arch": "x86_64"
+  },
+  "parent_cleanup_budget_ms": 5000,
+  "parent_execution_timeout": false,
+  "parent_exit_code": 0,
+  "parent_spawn_ms": 45,
+  "parent_execution_ms": 13511,
+  "parent_total_ms": 13519,
+  "parent_checked_process_scope_cleanup": true,
+  "nested_engine_outer_containment": "windows_jobs",
+  "child": {
+    "identity": {
+      "model_file": "C:\\Users\\charl\\Animus_Ferric\\models\\qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "model_sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c",
+      "model_bytes": 4683073536,
+      "runtime": "\\\\?\\C:\\Users\\charl\\.cargo\\bin\\llama-server.exe — version: 10034 (505b1ed15)",
+      "runtime_sha256": "05db01f06449ddf2ac178efb761e5229b9e097170fae81ee08ee3a2dbe1fd976",
+      "model_hash_error": null,
+      "runtime_hash_error": null,
+      "model_hash_ms": 2398,
+      "runtime_hash_ms": 0,
+      "runtime_hash_skipped": false,
+      "verified_endpoint": "http://127.0.0.1:55205/v1",
+      "verified_model": "\\\\?\\C:\\Users\\charl\\Animus_Ferric\\models\\qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "context": 4096,
+      "params_b_declared": 7.0,
+      "cpu_only": true,
+      "gpu_layers": 0,
+      "parallel": 1,
+      "identity_hashes_available": true
+    },
+    "setup_ms": 6069,
+    "setup_watchdog_fired": false,
+    "request": {
+      "stop": "task_complete",
+      "error": null,
+      "duration_ms": 6740,
+      "within_request_deadline": true,
+      "request_deadline_ms": 30000,
+      "watchdog_deadline_ms": 30000,
+      "provider_cancel_observed": false,
+      "cancel_requested": false,
+      "watchdog_fired": false,
+      "watchdog_joined": true,
+      "request_cap_verified": true,
+      "output_budget": {
+        "requested": 1024,
+        "effective": 1024,
+        "declared_ctx": 4096,
+        "source": "explicit"
+      },
+      "exchanges": [
+        {
+          "request": {
+            "observation_layer": "provider_admission",
+            "messages": [
+              {
+                "role": "system",
+                "text": "Return the task_complete action immediately with summary 'Ferric budget smoke complete'. This is a tiny connectivity smoke; do not request input or perform any other action."
+              },
+              {
+                "role": "user",
+                "text": "Complete this smoke now using task_complete."
+              }
+            ],
+            "sampling": {
+              "temperature": 0.0,
+              "top_p": 0.949999988079071,
+              "max_tokens": 1024
+            },
+            "tools": [],
+            "constraint": {
+              "json_schema": {
+                "type": "object",
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "thought": {
+                        "type": "string",
+                        "description": "CRITICAL: Scratchpad space. You MUST use this to draft pseudocode, consider edge cases, and plan the exact logic BEFORE picking a tool or writing code."
+                      },
+                      "tool": {
+                        "const": "request_user_input"
+                      },
+                      "args": {
+                        "type": "object",
+                        "properties": {
+                          "question": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The concrete decision or missing fact the user must supply"
+                          },
+                          "context": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Why the answer is material and unavailable from the workspace"
+                          },
+                          "options": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "description": "Suggested answers; use an empty array for free-form input"
+                          }
+                        },
+                        "required": [
+                          "question",
+                          "context",
+                          "options"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "thought",
+                      "tool",
+                      "args"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "thought": {
+                        "type": "string",
+                        "description": "CRITICAL: Scratchpad space. You MUST use this to draft pseudocode, consider edge cases, and plan the exact logic BEFORE picking a tool or writing code."
+                      },
+                      "tool": {
+                        "const": "task_complete"
+                      },
+                      "args": {
+                        "type": "object",
+                        "properties": {
+                          "summary": {
+                            "type": "string",
+                            "description": "One-sentence summary of the completed task"
+                          }
+                        },
+                        "required": [
+                          "summary"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "thought",
+                      "tool",
+                      "args"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          },
+          "response": {
+            "message": {
+              "role": "assistant",
+              "text": "{\n  \"thought\": \"Ferric budget smoke complete. This is a tiny connectivity smoke; do not request input or perform any other action.\",\n  \"tool\": \"task_complete\",\n  \"args\": {\n    \"summary\": \"Ferric budget smoke complete\"\n  }\n}",
+              "tool_calls": [
+                {
+                  "id": "",
+                  "name": "task_complete",
+                  "args": {
+                    "summary": "Ferric budget smoke complete"
+                  }
+                }
+              ]
+            },
+            "input_tokens": 54,
+            "output_tokens": 63,
+            "truncated": false
+          }
+        }
+      ],
+      "trace_sha256": "2eb300ca17142630dee9e9f5f8f45f0f4f3e40358cc177752f2b63c5f1f9804f",
+      "trace_bytes": "{\"v\":1,\"ts_ms\":1788656532787,\"session\":\"live-budget\",\"seq\":0,\"event\":{\"type\":\"session_start\",\"workspace\":\"\\\\\\\\?\\\\C:\\\\Users\\\\charl\\\\AppData\\\\Local\\\\Temp\\\\.tmpIIbGd7\"}}\n{\"v\":1,\"ts_ms\":1788656532787,\"session\":\"live-budget\",\"seq\":1,\"event\":{\"type\":\"policy_selected\",\"tier\":\"small\",\"protocol\":\"constrained_json\",\"harness_policy\":\"legacy\",\"max_turns\":20,\"max_tools\":14,\"prompt_budget_tokens\":2867,\"max_output_tokens\":1024,\"truncation_limit\":4000,\"tier_source\":\"params\"}}\n{\"v\":1,\"ts_ms\":1788656532787,\"session\":\"live-budget\",\"seq\":2,\"event\":{\"type\":\"session_prompt\",\"system\":\"Return the task_complete action immediately with summary 'Ferric budget smoke complete'. This is a tiny connectivity smoke; do not request input or perform any other action.\",\"user\":\"Complete this smoke now using task_complete.\"}}\n{\"v\":1,\"ts_ms\":1788656532788,\"session\":\"live-budget\",\"seq\":3,\"event\":{\"type\":\"turn_start\",\"turn\":0}}\n{\"v\":1,\"ts_ms\":1788656532788,\"session\":\"live-budget\",\"seq\":4,\"event\":{\"type\":\"prompt_assembled\",\"turn\":0,\"message_count\":2,\"chars\":217,\"offered_tools\":[\"request_user_input\",\"task_complete\"]}}\n{\"v\":1,\"ts_ms\":1788656532788,\"session\":\"live-budget\",\"seq\":5,\"event\":{\"type\":\"constraint_applied\",\"kind\":\"json_schema\"}}\n{\"v\":1,\"ts_ms\":1788656532788,\"session\":\"live-budget\",\"seq\":6,\"event\":{\"type\":\"main_action_budget\",\"turn\":0,\"budget\":{\"requested\":1024,\"effective\":1024,\"declared_ctx\":4096,\"source\":\"explicit\"}}}\n{\"v\":1,\"ts_ms\":1788656539483,\"session\":\"live-budget\",\"seq\":7,\"event\":{\"type\":\"turn_end\",\"turn\":0,\"text\":\"{\\n  \\\"thought\\\": \\\"Ferric budget smoke complete. This is a tiny connectivity smoke; do not request input or perform any other action.\\\",\\n  \\\"tool\\\": \\\"task_complete\\\",\\n  \\\"args\\\": {\\n    \\\"summary\\\": \\\"Ferric budget smoke complete\\\"\\n  }\\n}\",\"tool_call_count\":1,\"input_tokens\":54,\"output_tokens\":63,\"truncated\":false}}\n{\"v\":1,\"ts_ms\":1788656539528,\"session\":\"live-budget\",\"seq\":8,\"event\":{\"type\":\"note\",\"text\":\"vcs snapshot failed: Git command failed: fatal: not a git repository (or any of the parent directories): .git\\n\"}}\n{\"v\":1,\"ts_ms\":1788656539528,\"session\":\"live-budget\",\"seq\":9,\"event\":{\"type\":\"actions_proposed\",\"turn\":0,\"calls\":[{\"id\":\"g-0-0\",\"name\":\"task_complete\",\"args\":{\"summary\":\"Ferric budget smoke complete\"}}]}}\n{\"v\":1,\"ts_ms\":1788656539528,\"session\":\"live-budget\",\"seq\":10,\"event\":{\"type\":\"tool_call\",\"id\":\"g-0-0\",\"name\":\"task_complete\",\"args\":{\"summary\":\"Ferric budget smoke complete\"}}}\n{\"v\":1,\"ts_ms\":1788656539528,\"session\":\"live-budget\",\"seq\":11,\"event\":{\"type\":\"turn_committed\",\"turn\":0,\"dispatched\":0,\"errored\":0,\"stop_reason\":\"task_complete\"}}\n{\"v\":1,\"ts_ms\":1788656539528,\"session\":\"live-budget\",\"seq\":12,\"event\":{\"type\":\"session_end\",\"reason\":\"task_complete\"}}\n"
+    },
+    "watchdogs_joined": true,
+    "owned_engine_checked_cleanup": true,
+    "cleanup_error": null,
+    "stage_observations": [
+      {
+        "stage": "setup",
+        "boundary": "start",
+        "elapsed_ms": 0
+      },
+      {
+        "stage": "model_selection",
+        "boundary": "start",
+        "elapsed_ms": 16
+      },
+      {
+        "stage": "model_selection",
+        "boundary": "end",
+        "elapsed_ms": 16
+      },
+      {
+        "stage": "startup_begin",
+        "boundary": "start",
+        "elapsed_ms": 16
+      },
+      {
+        "stage": "startup_begin",
+        "boundary": "end",
+        "elapsed_ms": 23
+      },
+      {
+        "stage": "engine_prepare",
+        "boundary": "start",
+        "elapsed_ms": 23
+      },
+      {
+        "stage": "engine_prepare",
+        "boundary": "end",
+        "elapsed_ms": 3656
+      },
+      {
+        "stage": "model_hash",
+        "boundary": "start",
+        "elapsed_ms": 3657
+      },
+      {
+        "stage": "model_hash",
+        "boundary": "end",
+        "elapsed_ms": 6055
+      },
+      {
+        "stage": "runtime_hash",
+        "boundary": "start",
+        "elapsed_ms": 6055
+      },
+      {
+        "stage": "runtime_hash",
+        "boundary": "end",
+        "elapsed_ms": 6056
+      },
+      {
+        "stage": "setup",
+        "boundary": "end",
+        "elapsed_ms": 6069
+      },
+      {
+        "stage": "request",
+        "boundary": "start",
+        "elapsed_ms": 6069
+      },
+      {
+        "stage": "request",
+        "boundary": "end",
+        "elapsed_ms": 12830
+      },
+      {
+        "stage": "owned_cleanup",
+        "boundary": "start",
+        "elapsed_ms": 12830
+      },
+      {
+        "stage": "owned_cleanup",
+        "boundary": "end",
+        "elapsed_ms": 13397
+      }
+    ],
+    "phase_cancelled": false,
+    "request_cap_verified": true,
+    "passed": true
+  },
+  "phase_markers": [
+    {
+      "name": "setup-entered",
+      "data": {
+        "mode": "live",
+        "limit_ms": 90000
+      }
+    },
+    {
+      "name": "request-entered",
+      "data": {
+        "max_tokens": 1024
+      }
+    }
+  ],
+  "stage_journal": {
+    "raw_utf8": "{\"stage\":\"setup\",\"boundary\":\"start\",\"elapsed_ms\":0}\n{\"stage\":\"model_selection\",\"boundary\":\"start\",\"elapsed_ms\":16}\n{\"stage\":\"model_selection\",\"boundary\":\"end\",\"elapsed_ms\":16}\n{\"stage\":\"startup_begin\",\"boundary\":\"start\",\"elapsed_ms\":16}\n{\"stage\":\"startup_begin\",\"boundary\":\"end\",\"elapsed_ms\":23}\n{\"stage\":\"engine_prepare\",\"boundary\":\"start\",\"elapsed_ms\":23}\n{\"stage\":\"engine_prepare\",\"boundary\":\"end\",\"elapsed_ms\":3656}\n{\"stage\":\"model_hash\",\"boundary\":\"start\",\"elapsed_ms\":3657}\n{\"stage\":\"model_hash\",\"boundary\":\"end\",\"elapsed_ms\":6055}\n{\"stage\":\"runtime_hash\",\"boundary\":\"start\",\"elapsed_ms\":6055}\n{\"stage\":\"runtime_hash\",\"boundary\":\"end\",\"elapsed_ms\":6056}\n{\"stage\":\"setup\",\"boundary\":\"end\",\"elapsed_ms\":6069}\n{\"stage\":\"request\",\"boundary\":\"start\",\"elapsed_ms\":6069}\n{\"stage\":\"request\",\"boundary\":\"end\",\"elapsed_ms\":12830}\n{\"stage\":\"owned_cleanup\",\"boundary\":\"start\",\"elapsed_ms\":12830}\n{\"stage\":\"owned_cleanup\",\"boundary\":\"end\",\"elapsed_ms\":13397}\n",
+    "raw_hex": null,
+    "sha256": "06ab2d948cbb8154b93d49224056a51b7356153ca3eca68ff451a0ed7d70169f",
+    "final_newline": true,
+    "records": [
+      {
+        "record": {
+          "stage": "setup",
+          "boundary": "start",
+          "elapsed_ms": 0
+        }
+      },
+      {
+        "record": {
+          "stage": "model_selection",
+          "boundary": "start",
+          "elapsed_ms": 16
+        }
+      },
+      {
+        "record": {
+          "stage": "model_selection",
+          "boundary": "end",
+          "elapsed_ms": 16
+        }
+      },
+      {
+        "record": {
+          "stage": "startup_begin",
+          "boundary": "start",
+          "elapsed_ms": 16
+        }
+      },
+      {
+        "record": {
+          "stage": "startup_begin",
+          "boundary": "end",
+          "elapsed_ms": 23
+        }
+      },
+      {
+        "record": {
+          "stage": "engine_prepare",
+          "boundary": "start",
+          "elapsed_ms": 23
+        }
+      },
+      {
+        "record": {
+          "stage": "engine_prepare",
+          "boundary": "end",
+          "elapsed_ms": 3656
+        }
+      },
+      {
+        "record": {
+          "stage": "model_hash",
+          "boundary": "start",
+          "elapsed_ms": 3657
+        }
+      },
+      {
+        "record": {
+          "stage": "model_hash",
+          "boundary": "end",
+          "elapsed_ms": 6055
+        }
+      },
+      {
+        "record": {
+          "stage": "runtime_hash",
+          "boundary": "start",
+          "elapsed_ms": 6055
+        }
+      },
+      {
+        "record": {
+          "stage": "runtime_hash",
+          "boundary": "end",
+          "elapsed_ms": 6056
+        }
+      },
+      {
+        "record": {
+          "stage": "setup",
+          "boundary": "end",
+          "elapsed_ms": 6069
+        }
+      },
+      {
+        "record": {
+          "stage": "request",
+          "boundary": "start",
+          "elapsed_ms": 6069
+        }
+      },
+      {
+        "record": {
+          "stage": "request",
+          "boundary": "end",
+          "elapsed_ms": 12830
+        }
+      },
+      {
+        "record": {
+          "stage": "owned_cleanup",
+          "boundary": "start",
+          "elapsed_ms": 12830
+        }
+      },
+      {
+        "record": {
+          "stage": "owned_cleanup",
+          "boundary": "end",
+          "elapsed_ms": 13397
+        }
+      }
+    ]
+  },
+  "stdout": "\nrunning 1 test\ntest live_budget_tests::live_budget_child ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 392 filtered out; finished in 13.43s\n\n",
+  "stderr": "",
+  "qualification": "explicit-budget prepared-path smoke only; no application, hardware calibration or skill-support verdict"
+}

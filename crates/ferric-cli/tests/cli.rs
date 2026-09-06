@@ -662,6 +662,306 @@ fn incomplete_mock_resume_hint_round_trips_in_documented_shell() {
     );
 }
 
+struct BudgetResumeFixture {
+    root: tempfile::TempDir,
+    workspace: std::path::PathBuf,
+    trace_root: std::path::PathBuf,
+    profile_dir: std::path::PathBuf,
+    paused_trace: std::path::PathBuf,
+    hint: String,
+}
+
+impl BudgetResumeFixture {
+    fn new(cap: u32) -> Self {
+        let root = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        let hostile = "space 'double\" $dollar `tick`; & end";
+        #[cfg(windows)]
+        let hostile = "space ' $dollar `tick`; & end";
+        let workspace = root.path().join(format!("work {hostile}"));
+        let trace_root = root.path().join(format!("trace {hostile}"));
+        let profile_dir = root.path().join("isolated-profiles");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::create_dir(&profile_dir).unwrap();
+        let output = ferric()
+            .args([
+                "query",
+                "--mock",
+                "--no-config",
+                "--protocol",
+                "native",
+                "--model",
+                "budget-resume-fixture",
+                "--params-b",
+                "1.2",
+                "--ctx",
+                "32768",
+                "--max-turns",
+                "1",
+                "--max-output-tokens",
+            ])
+            .arg(cap.to_string())
+            .arg("--workspace")
+            .arg(&workspace)
+            .arg("--trace-dir")
+            .arg(&trace_root)
+            .arg("--profile-dir")
+            .arg(&profile_dir)
+            .arg("do a mock task")
+            .output_bounded()
+            .unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(!output.status.success(), "fixture must pause: {stderr}");
+        assert!(stderr.contains("max_turns"), "wrong pause: {stderr}");
+        let hint = stderr
+            .lines()
+            .find_map(|line| line.strip_prefix("Resume: "))
+            .expect("paused query prints its actual public resume command")
+            .to_string();
+        let traces = q_trace_paths(&trace_root);
+        assert_eq!(traces.len(), 1, "one real paused trace");
+        let paused_trace = traces[0].clone();
+        assert_eq!(
+            budget_trace_event(&paused_trace, "policy_selected")["tier"],
+            "nano"
+        );
+        assert_eq!(
+            budget_trace_event(&paused_trace, "policy_selected")["max_output_tokens"],
+            cap
+        );
+        assert_resume_budget(&paused_trace, Some(cap), cap);
+        Self {
+            root,
+            workspace,
+            trace_root,
+            profile_dir,
+            paused_trace,
+            hint,
+        }
+    }
+
+    fn command(&self) -> Command {
+        let mut command = ferric();
+        command
+            .args([
+                "query",
+                "--no-config",
+                "--protocol",
+                "native",
+                "--model",
+                "budget-resume-fixture",
+                "--params-b",
+                "1.2",
+                "--ctx",
+                "32768",
+                "--resume",
+            ])
+            .arg(&self.paused_trace)
+            .arg("--workspace")
+            .arg(&self.workspace)
+            .arg("--trace-dir")
+            .arg(&self.trace_root)
+            .arg("--profile-dir")
+            .arg(&self.profile_dir);
+        command
+    }
+
+    fn continuation(&self) -> std::path::PathBuf {
+        let traces = q_trace_paths(&self.trace_root);
+        assert_eq!(traces.len(), 2, "exactly one continuation was allocated");
+        traces
+            .into_iter()
+            .find(|path| path != &self.paused_trace)
+            .unwrap()
+    }
+}
+
+fn budget_trace_event(path: &std::path::Path, kind: &str) -> serde_json::Value {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|value| value["event"]["type"] == kind)
+        .unwrap_or_else(|| panic!("{} contains no {kind} event", path.display()))["event"]
+        .clone()
+}
+
+fn assert_resume_budget(path: &std::path::Path, requested: Option<u32>, effective: u32) {
+    let event = budget_trace_event(path, "main_action_budget");
+    let budget = &event["budget"];
+    assert_eq!(budget["requested"], serde_json::json!(requested));
+    assert_eq!(budget["effective"], effective);
+    assert_eq!(budget["declared_ctx"], 32768);
+    assert_eq!(
+        budget["source"],
+        if requested.is_some() {
+            "explicit"
+        } else {
+            "policy"
+        }
+    );
+}
+
+#[test]
+fn query_output_budget_resume_guidance_roundtrip() {
+    let fixture = BudgetResumeFixture::new(4096);
+    let captured = execute_resume_hint(&fixture.hint, fixture.root.path());
+    let canonical =
+        |path: &std::path::Path| std::fs::canonicalize(path).unwrap().display().to_string();
+    for (flag, expected) in [
+        ("--resume", canonical(&fixture.paused_trace)),
+        ("--workspace", canonical(&fixture.workspace)),
+        ("--trace-dir", canonical(&fixture.trace_root)),
+        ("--max-output-tokens", "4096".to_string()),
+        ("--ctx", "32768".to_string()),
+    ] {
+        let values: Vec<_> = captured
+            .windows(2)
+            .filter(|pair| pair[0] == flag)
+            .map(|pair| pair[1].as_str())
+            .collect();
+        assert_eq!(values, [expected.as_str()], "{flag}: {captured:?}");
+    }
+    assert_eq!(captured[0], "query");
+    assert_eq!(
+        captured.len(),
+        11,
+        "no hidden policy inheritance: {captured:?}"
+    );
+
+    // Execute the shell-decoded public argv, without supplying a replacement
+    // cap or context. The isolated backend/model settings preserve the prior
+    // policy; they are deliberately not inherited as new authority by the hint.
+    let output = ferric()
+        .args(&captured)
+        .args([
+            "--mock",
+            "--no-config",
+            "--model",
+            "budget-resume-fixture",
+            "--profile-dir",
+        ])
+        .arg(&fixture.profile_dir)
+        .output_bounded()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "generated resume failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let continuation = fixture.continuation();
+    assert_resume_budget(&continuation, Some(4096), 4096);
+    assert_eq!(
+        budget_trace_event(&continuation, "policy_selected")["max_output_tokens"],
+        4096
+    );
+    assert_eq!(
+        budget_trace_event(&continuation, "session_start")["resumed_from"],
+        first_session_start(&fixture.paused_trace)["session"]
+    );
+    assert_eq!(
+        std::fs::read(fixture.workspace.join("ferric-mock.txt")).unwrap(),
+        b"mock run"
+    );
+    assert!(!fixture.workspace.join(".ferric").exists());
+}
+
+#[test]
+fn query_resume_budget_is_invocation_scoped() {
+    for (requested, effective) in [(None, 512_u32), (Some(2048_u32), 2048)] {
+        let fixture = BudgetResumeFixture::new(4096);
+        let paused_bytes = std::fs::read(&fixture.paused_trace).unwrap();
+        let mut command = fixture.command();
+        command.arg("--mock");
+        if let Some(cap) = requested {
+            command.arg("--max-output-tokens").arg(cap.to_string());
+        }
+        let output = command.output_bounded().unwrap();
+        assert!(
+            output.status.success(),
+            "resume {requested:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let continuation = fixture.continuation();
+        assert_resume_budget(&continuation, requested, effective);
+        let policy = budget_trace_event(&continuation, "policy_selected");
+        assert_eq!(policy["max_output_tokens"], effective, "{requested:?}");
+        assert_eq!(policy["tier"], "nano");
+        assert_eq!(policy["tier_source"], "params");
+        assert_eq!(std::fs::read(&fixture.paused_trace).unwrap(), paused_bytes);
+        assert!(!fixture.workspace.join(".ferric").exists());
+    }
+}
+
+fn budget_resume_tree(
+    root: &std::path::Path,
+) -> std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>> {
+    fn visit(
+        path: &std::path::Path,
+        result: &mut std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>>,
+    ) {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                result.insert(entry.path(), None);
+                visit(&entry.path(), result);
+            } else {
+                assert!(kind.is_file(), "fixture must contain only ordinary files");
+                result.insert(entry.path(), Some(std::fs::read(entry.path()).unwrap()));
+            }
+        }
+    }
+    let mut result = std::collections::BTreeMap::new();
+    visit(root, &mut result);
+    result
+}
+
+#[test]
+fn query_resume_changed_reserve_rejects_before_effects() {
+    let fixture = BudgetResumeFixture::new(16384);
+    // The same declared model/context now selects a fresh measured Large
+    // policy: its 22400-token prompt reserve leaves only 10368 for output.
+    // A stale Nano policy would incorrectly admit the prior 16384-token cap.
+    std::fs::write(
+        fixture.profile_dir.join("model_profiles.json"),
+        r#"[{"model":"budget-resume-fixture","params_b":1.2,"protocol":"NativeTools","measured_level":6,"tier_from_params":"Nano","tier_from_measured":"Large","calibrated_ring":0}]"#,
+    )
+    .unwrap();
+    let before = budget_resume_tree(fixture.root.path());
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let mut command = fixture.command();
+    command
+        .args(["--max-output-tokens", "16384", "--api-base"])
+        .arg(&endpoint)
+        .env("NO_PROXY", "*")
+        .env("no_proxy", "*");
+    let output = bounded_test_output(&mut command);
+    assert!(
+        !output.status.success(),
+        "incompatible fresh reserve was accepted"
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("max-output-tokens") && stderr.contains("10368"),
+        "must refuse the fresh policy's reserve, not an unrelated error: {stderr}"
+    );
+    assert_eq!(
+        budget_resume_tree(fixture.root.path()),
+        before,
+        "rejection must preserve every workspace/profile/trace byte and directory"
+    );
+    // No accept thread is necessary: any attempted provider connection remains
+    // queued on this still-live listener even if the child closes its socket.
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock,
+        "invalid resume contacted its provider"
+    );
+}
+
 #[cfg(feature = "backend-openai")]
 #[test]
 fn resume_hint_round_trips_in_documented_shell() {

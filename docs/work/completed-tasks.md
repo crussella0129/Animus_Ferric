@@ -2006,3 +2006,55 @@ qualification below after final PR checks reopened Test.**
 - **Source:** `808cd9f0eb4651f3c56a84daca2dd79a66957a9d` adds bounded admission/script-stage diagnostics; `4f4e4f04d4ee132f9df9bb422be88a5ce366915d` ratchets the controlled native workspace schedule and operator command. No deadline, argument assertion, product race or cleanup check was relaxed.
 - **Verification:** [Renewed Test report](../sprints/s120/sprint-tests/test-report.md) and independently rechecked [proceed-with-caveats critique](../sprints/s120/sprint-tests/critique.md), committed at `ae18535`. Both exact-head eight-job CI runs passed without reruns; all native suite confirmations, root's fresh canonical gates, source-owned live acceptance and actual terminal interaction are retained.
 - **Limits:** Two original checkpoint failures, the one authorized rerun and all diagnostic samples remain historical evidence. Qualification is for the controlled schedule; the earlier stage/cause and arbitrary parallel-suite robustness remain unknown/T-12027. T-12026 is separate native admission work. Broader model/workflow/platform intentions stay active; PR 108 remains the only checkpoint and the owner alone merges.
+
+## T-12101 (sprint 121)
+
+- **Description:** Added a shared context-reserve-bounded explicit main-action output cap, actual request-budget provenance, and shell-correct invocation-scoped resume guidance without changing omitted defaults or tool authority.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md) AC-12 partial; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) AC-6/11/12 preservation.
+- **Completed:** 2026-09-05T23:56:36Z.
+- **Files modified:** `crates/ferric-core/src/{scale,lib}.rs`, `crates/ferric-cli/src/{query,trace_cmd,trace_verify}.rs`, `crates/ferric-cli/tests/{cli,query_output_budget}.rs`, `crates/ferric-trace/src/{event,lib}.rs`, `crates/ferric-loop/src/run.rs`, `crates/ferric-loop/tests/{common/mod,loop_core,output_budget}.rs`, Sprint 121 metadata/Build verification and work ledgers.
+- **Verification:** Core/trace/loop 311 passed; CLI 75 and HTTP fixture three passed; workspace formatting and affected all-target warnings-denied Clippy passed. Named E01-A through E01-E coverage, source-owned cleanup, initial failures and the Windows fragmented-request negative control are retained in [Build verification](../sprints/s121/sprint-tests/build-verification.md). Formal Test/Loop and model acceptance remain outstanding.
+- **Commit:** `8be0e9ffe980bf5b3efde3ce004d77dd3870ca10`
+
+## T-12102 (sprint 121)
+
+- **Description:** Added checked benchmark execution scales, default-preserving child output controls, and no-clobber SHA-256-bound parent sidecars with actual trace observations and truthful recording failures.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md) AC-11/12 partial; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) AC-6/11 preservation.
+- **Completed:** 2026-09-06T00:11:41Z.
+- **Files modified:** `crates/ferric-bench/src/{budget,budget_trace,runner,results,summary,lib,calibrate}.rs`, `crates/ferric-cli/src/{bench_cmd,autonomy_cmd}.rs`, `crates/ferric-cli/tests/bench_budget.rs`, Sprint 121 metadata/Build verification and work ledgers. Calibration changes at this boundary are constructor-only; its guard is T-12103.
+- **Verification:** Eight new plus seven existing CLI integrations, 94 benchmark library tests and 26 autonomy units passed; four library source-child entries are entered through checked parent tests. Workspace formatting, affected all-target warnings-denied Clippy and independent read-only Build review passed. Full E02 coverage and attribution limits are retained in [Build verification](../sprints/s121/sprint-tests/build-verification.md). Process/spec/verifier implementations remain unchanged. No model/calibration or formal Test/Loop acceptance is inferred.
+- **Commit:** `f313ad341226c96f6e02b5319107d46ad653c70d`
+
+## T-12103 (sprint 121)
+
+- **Description:** Made modified-budget evidence diagnostic and calibration-ineligible, shared the single/fleet pre-I/O publication guard, preserved profile bytes and raw observations, and exposed distinct result causes/evidence destinations.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md) AC-11/12 partial and diagnostic consequence; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) AC-6/11 preservation.
+- **Completed:** 2026-09-06T00:22:17Z.
+- **Files modified:** `crates/ferric-bench/src/{budget,summary,calibrate}.rs`, `crates/ferric-cli/src/bench_cmd.rs`, `crates/ferric-cli/tests/bench_budget.rs`, Sprint 121 Build verification and work ledgers.
+- **Verification:** Benchmark library 97 passed/four parent-entered source modes ignored; two new shared publication tests plus thirteen existing toolbench units passed; ten budget and seven existing mock CLI integrations passed. Two strengthened diagnostic-prefix tests reran successfully after review. Workspace formatting, affected warnings-denied Clippy and independent read-only review passed. [Build evidence](../sprints/s121/sprint-tests/build-verification.md) distinguishes synthetic full-success publication matrices from actual scripted-provider full-ladder profile preservation. No live model or formal Test/Loop acceptance is inferred.
+- **Commit:** `9e0f9c8639ce24941680ac5d4c72f75ec6f31a43`
+
+## T-12104 (sprint 121)
+
+- **Description:** Preserved the compact human front door, documented expert budget/evidence boundaries, and added bounded prepared-model smoke, cancellation, identity-hashing and retained stage-journal fixtures.
+- **Intent:** [INT-0007](../intents/INT-0007-hardware-calibrated-autonomous-development.md) AC-11/12 partial; [INT-0008](../intents/INT-0008-unified-local-model-workflow.md) AC-6/11/12 preservation.
+- **Completed:** 2026-09-06T00:59:34Z.
+- **Files modified:** `crates/ferric-cli/src/{bench_cmd,main,live_budget_tests}.rs`, `crates/ferric-cli/tests/{bench_budget,budget_docs}.rs`, `docs/{commands,testbench}.md`, Sprint 121 metadata/Build verification/clause coverage/raw live reports, and work ledgers.
+- **Verification:** Initial Windows workspace 1,294 passed/eleven documented ignores; backend-free CLI 416 passed/no ignores; five native lifecycle integrations passed. Corrected fixture six tests passed under debug and release; separate unchanged-contract release model smoke passed in 13.76 s with actual cap/trace/identity and checked cleanup. Windows warnings-denied Clippy/formatting and native WSL formatting passed; WSL namespace runtime gate is unavailable without passwordless sudo. [Build verification](../sprints/s121/sprint-tests/build-verification.md) retains the first live failure, diagnosed fixture correction, source/report hashes, ignored-test scope and limited qualification. Formal Test/CI/Loop remains separate acceptance, not implied by this task record.
+- **Commit:** `688b939a1f1793f36321fdb5ae570a5b75dcf272`
+
+## Sprint 121 final Test acceptance
+
+- **Intent:** INT-0007 AC-11/12 explicit-control/attribution increment; INT-0008 AC-6/11/12 preservation only.
+- **Completed:** 2026-09-06T01:57:35Z (Test evidence boundary, not Loop or merge).
+- **Source:** `a417c5d00361fd25a238346e5015fb07ed5ae7c7`, including the independently demonstrated source-fixture reset correction; original implementation commits above remain unchanged.
+- **Verification:** Accepted [Test report](../sprints/s121/sprint-tests/test-report.md), independently renewed [proceed-with-caveats critique](../sprints/s121/sprint-tests/critique.md), all eight exact-head CI jobs, root's full Windows 1,303-pass/thirteen-ignore run, isolated Linux 1,309/nine, backend-free 416 each, native lifecycle five/six, and fresh 15.07-second source-owned live smoke with actual 1024 budget/trace agreement and checked cleanup. Existing WSL separately passed 35 process-free core tests and Clippy; full local namespace runtime evidence remains unavailable without sudo authorization.
+- **Limits:** Original CI failure, instrumented non-reproduction, mutation control and earlier Build failures remain retained; original native cause is unknown. No whole intent, larger-model app, calibrated hardware, reasoning/compaction, arbitrary parallel load or platform-parity claim is inferred. Loop, extra fresh audit, sole PR and its final-head gates still precede the offer to merge.
+
+## T-11505 (sprint 121, reconciled umbrella)
+
+- **Description:** Completed the selected explicit query/benchmark budget prerequisite through T-12101–04, including attributable deadlines/output limits, default/authority preservation, exact-byte large-action fixtures and diagnostic-only calibration handling.
+- **Intent:** INT-0007 AC-11/12 partial; INT-0008 AC-6/11/12 preservation.
+- **Source:** Individual T-12101–04 commits remain above; corrected composition `a417c5d00361fd25a238346e5015fb07ed5ae7c7` is accepted by the final Test report/critique.
+- **Verification:** [Accepted Test evidence](../sprints/s121/sprint-tests/test-report.md), all sixteen clause mappings, exact-head eight-job CI, fresh checked-cleanup model smoke and retained mutation controls. This is Loop reconciliation, not new code or automatic calibration.
+- **Remaining:** T-11506 → T-11410 → T-11412 stays ordered; hardware/profile coordination, reasoning/compaction and complete workflow/platform work remain open. No whole intent is realized.

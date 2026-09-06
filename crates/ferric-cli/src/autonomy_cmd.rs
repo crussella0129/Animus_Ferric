@@ -391,6 +391,7 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
                 },
                 invocation: Invocation {
                     ferric_bin: frozen.control.path.clone(),
+                    budget: None,
                     protocol,
                     openai: openai.clone(),
                     prompts_dir: None,
@@ -406,6 +407,7 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
                 },
                 invocation: Invocation {
                     ferric_bin: frozen.candidate.path.clone(),
+                    budget: None,
                     protocol,
                     openai: openai.clone(),
                     prompts_dir: None,
@@ -438,6 +440,7 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
             coordinate,
             invocation: Invocation {
                 ferric_bin: invocation_binary,
+                budget: None,
                 protocol,
                 openai,
                 prompts_dir: None,
@@ -3119,6 +3122,7 @@ mod tests {
         };
         let invocation = Invocation {
             ferric_bin: child,
+            budget: None,
             protocol: ActionProtocol::ConstrainedJson,
             openai: None,
             prompts_dir: None,
@@ -3244,6 +3248,7 @@ mod tests {
             },
             invocation: Invocation {
                 ferric_bin: frozen.control.path.clone(),
+                budget: None,
                 protocol: ActionProtocol::ConstrainedJson,
                 openai: None,
                 prompts_dir: None,
@@ -3259,6 +3264,7 @@ mod tests {
             },
             invocation: Invocation {
                 ferric_bin: frozen.candidate.path.clone(),
+                budget: None,
                 protocol: ActionProtocol::ConstrainedJson,
                 openai: None,
                 prompts_dir: None,
@@ -3326,6 +3332,7 @@ mod tests {
         };
         let invocation = Invocation {
             ferric_bin: invocation_path.clone(),
+            budget: None,
             protocol: ActionProtocol::ConstrainedJson,
             openai: None,
             prompts_dir: None,

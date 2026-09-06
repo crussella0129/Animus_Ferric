@@ -451,6 +451,12 @@ pub struct TraceEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    /// Actual main-action sampler at provider admission, never compaction.
+    /// Missing from legacy traces means unknown, not an invented request cap.
+    MainActionBudget {
+        turn: u32,
+        budget: ferric_core::OutputBudget,
+    },
     SessionStart {
         workspace: String,
         /// The prior session's `session` id, when this run continues an

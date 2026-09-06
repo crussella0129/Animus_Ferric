@@ -19,8 +19,9 @@ pub use media::{
 };
 pub use message::{Message, Role, ToolCall};
 pub use scale::{
-    ActionProtocol, DEFAULT_TRUNCATION_LIMIT, ModelProfile, RunPolicy, Tier, TierSource,
-    default_truncation_limit, policy_for, policy_for_with_override, protocol_key, ring_for_tier,
-    tier_decision, tier_for_level, tier_for_params,
+    ActionProtocol, DEFAULT_TRUNCATION_LIMIT, ModelProfile, OutputBudget, OutputBudgetSource,
+    RunPolicy, Tier, TierSource, default_truncation_limit, policy_for, policy_for_with_override,
+    protocol_key, resolve_output_budget, ring_for_tier, tier_decision, tier_for_level,
+    tier_for_params,
 };
 pub use user_input::{UserInputRequest, UserInputValidationError};

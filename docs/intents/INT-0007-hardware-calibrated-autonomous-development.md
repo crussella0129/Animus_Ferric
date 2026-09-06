@@ -3,11 +3,11 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0007
 - **State:** active
-- **Work evidence:** [Sprint 114 T-11407 through T-11413](../sprints/s114/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 continuation plan](../sprints/s115/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 partial closeout](../sprints/s115/sprint-tests/test-report.md); [stable ordered calibration and workflow backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work)
+- **Work evidence:** [Sprint 114 T-11407 through T-11413](../sprints/s114/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 continuation plan](../sprints/s115/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 partial closeout](../sprints/s115/sprint-tests/test-report.md); [stable ordered calibration and workflow backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [Sprint 121 approved explicit-budget plan](../sprints/s121/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
-- **Code evidence:** none
-- **Test evidence:** [Sprint 115 release, harness, and managed-runtime evidence](../sprints/s115/sprint-tests/test-report.md)
-- **Documentation evidence:** [Sprint 114 research](../sprints/s114/sprint-research/research-report.md); [external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md)
+- **Code evidence:** [Sprint 121 explicit-cap implementation](../work/completed-tasks.md#t-12101-sprint-121); [parent budget/evidence implementation](../work/completed-tasks.md#t-12102-sprint-121); [diagnostic calibration guard](../work/completed-tasks.md#t-12103-sprint-121); [qualified composition](../work/completed-tasks.md#t-12104-sprint-121)
+- **Test evidence:** [Sprint 115 release, harness, and managed-runtime evidence](../sprints/s115/sprint-tests/test-report.md); [Sprint 121 accepted explicit-budget increment](../sprints/s121/sprint-tests/test-report.md)
+- **Documentation evidence:** [Sprint 114 research](../sprints/s114/sprint-research/research-report.md); [external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Explicit budgets and evidence](../testbench.md#explicit-budgets-and-evidence)
 
 ## Intent
 
@@ -162,7 +162,48 @@ constants. Accelerated backends remain optional capabilities: unsupported or
 CPU-only hosts must receive truthful slower defaults rather than a false GPU
 claim.
 
+Explicit budget controls can ship as a diagnostic increment before automatic
+calibration. Main-action output limits remain separate from reasoning and
+compaction settings, and an explicit context-reserve check does not guarantee
+tokenizer-accurate request fit or actual hardware capacity. A benchmark using a
+non-default execution-time scale or an explicit output override must retain its
+task results while marking calibration evidence ineligible, rather than
+silently publishing a measured level under an old model/protocol-only profile.
+Coordinate-bound calibration can lift that restriction once it represents and
+requalifies those settings. Omitted defaults remain compatible; diagnostic
+overrides must not enlarge tool authority or unrelated cleanup/grader deadlines.
+
+## Sprint 121 progress
+
+The accepted explicit-budget increment completes the T-11505 prerequisite,
+not this intent. Operators can select a context-reserve-bounded main-action
+cap and a checked positive finite benchmark scale; omitted defaults, prompt
+reserve, compaction settings and tool authority remain unchanged. Parent
+deadline evidence stays separate from actual child request/terminal evidence,
+with no-clobber digest-bound sidecars rather than fabricated child events.
+
+Modified-budget results remain observations, not a durable measured profile.
+An explicit cap is diagnostic even when numerically equal to an old default:
+the existing profile coordinates cannot represent and requalify the override.
+The shared library/CLI guards therefore preserve prior profile bytes and raw
+task outcomes. T-12023/11507 own coordinate-bound calibration that could safely
+lift this restriction; default calibration remains compatible.
+
+The exact-source seven-billion-parameter smoke verifies only the existing
+prepared path and explicit cap. T-11506 → T-11410 → T-11412 still owns the
+fresh larger-model handoff, frozen no-repair app and archived verdict. Speed,
+hardware-fit, reasoning and compaction acceptance remain open. State stays
+active, with no transition or realization inferred from this partial result.
+
 ## Transition history
+
+- 2026-09-05: clarified the active intent's diagnostic budget boundary during
+  Sprint 121 research. An explicit main-action output override or non-default
+  benchmark execution-time scale may produce retained task observations, but
+  must not publish or advertise a durable calibrated profile until the changed
+  budget coordinates can be represented and requalified. Manual scaling is
+  not automatic speed calibration; a declared context reserve is not measured
+  model/hardware fit. State remains active and no new acceptance is claimed.
 
 - 2026-08-26: created as `proposed` from the user's request for a
   hardware-fitting current model, a Ferric-built application, complete run

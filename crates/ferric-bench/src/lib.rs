@@ -6,6 +6,8 @@
 
 pub mod autonomy;
 pub mod autonomy_results;
+pub mod budget;
+pub mod budget_trace;
 pub mod calibrate;
 mod process;
 pub mod provenance;
@@ -33,6 +35,14 @@ pub use autonomy_results::{
     RetainedTraceValidation, append_autonomy_row, read_autonomy_rows, summarize_autonomy_run,
     summarize_autonomy_run_with_coordinates, write_autonomy_summary,
 };
+pub use budget::{
+    AttemptBudgetEvidence, AttemptBudgetReference, AttemptIdentity, BudgetControls, ExactDuration,
+    ObservedMainActionBudget, ParentTermination, ResolvedAgentBudget, RetainedBudgetEvidence,
+    RunBudgetEvidence, TraceBudgetObservation, TraceEvidenceState, WarmupState,
+};
+pub use budget_trace::{
+    BUDGET_SIDECAR_VERSION, BudgetSidecarV1, retain_budget_trace, verify_budget_trace,
+};
 pub use calibrate::{
     ModelProfileRecord, calibrate, calibrate_from_evidence, highest_completed_level,
     longest_completed_prefix, non_monotonic_failures, read_profile, write_calibrated_ring,
@@ -44,7 +54,7 @@ pub use repository_brief::{RepositoryBrief, RepositoryBriefLimits, generate_repo
 pub use results::{ResultRow, append_row, read_rows};
 pub use runner::{
     Invocation, OpenAiArgs, QuerySegmentRecord, QuerySegmentRequest, RunRecord, WorkspaceHandle,
-    run_query_segment, run_spec,
+    run_query_segment, run_spec, run_spec_with_budget,
 };
 pub use spec::{BenchSpec, CommandCheck, ExpectKind, Expectation, embedded_specs};
 pub use summary::{

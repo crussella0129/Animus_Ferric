@@ -130,9 +130,11 @@ pub struct RunPolicy {
     pub max_turns: u8,
     pub max_tools: u8,
     pub prompt_budget_tokens: u32,
-    /// Per-turn generation cap (ADR-018). Caps worst-case turn wall-time and
-    /// leaves headroom over the largest expected single action (~450 tokens).
+    /// Main-action generation cap (ADR-018), not a wall-time guarantee.
     pub max_output_tokens: u32,
+    /// Invocation-scoped explicit-budget provenance. Old policies have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_budget: Option<OutputBudget>,
     pub allows_subagents: bool,
     /// Operator cap on the active tool ring (ADR-028). `None` ⇒ the tier's
     /// `ring_for_tier` ceiling; `Some(n)` caps the active rings at
@@ -148,6 +150,57 @@ pub struct RunPolicy {
 
 fn default_compact_trigger_fraction() -> f32 {
     0.85
+}
+
+/// Source of a main-action sampler allowance, independent of tier authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputBudgetSource {
+    Policy,
+    Explicit,
+    /// A direct caller supplied a sampler differing from the selected policy.
+    Caller,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputBudget {
+    pub requested: Option<u32>,
+    pub effective: u32,
+    /// Absent for a direct caller which did not provide context provenance.
+    pub declared_ctx: Option<u32>,
+    pub source: OutputBudgetSource,
+}
+
+/// Admit an explicit main-action cap without shrinking prompts or changing
+/// authority. Omission deliberately preserves historical small-context caps.
+/// This declared reserve is not a tokenizer or hardware-fit measurement.
+pub fn resolve_output_budget(
+    policy: &RunPolicy,
+    ctx: u32,
+    requested: Option<u32>,
+) -> Result<OutputBudget, String> {
+    if let Some(cap) = requested {
+        let remaining = ctx
+            .checked_sub(policy.prompt_budget_tokens)
+            .filter(|_| ctx > 0);
+        if cap == 0 || remaining.is_none_or(|remaining| cap > remaining) {
+            return Err(format!(
+                "--max-output-tokens must be positive and fit declared context {ctx} minus prompt reserve {} (available output: {}). Choose a smaller output cap or an explicitly supported context.",
+                policy.prompt_budget_tokens,
+                remaining.map_or_else(|| "invalid reserve".to_string(), |value| value.to_string())
+            ));
+        }
+    }
+    Ok(OutputBudget {
+        requested,
+        effective: requested.unwrap_or(policy.max_output_tokens),
+        declared_ctx: Some(ctx),
+        source: if requested.is_some() {
+            OutputBudgetSource::Explicit
+        } else {
+            OutputBudgetSource::Policy
+        },
+    })
 }
 fn default_compact_keep_last_turns() -> u8 {
     2
@@ -316,6 +369,7 @@ pub fn policy_for_with_override(profile: &ModelProfile, override_tier: Option<Ti
         prompt_budget_tokens,
         max_output_tokens,
         allows_subagents: subagents,
+        output_budget: None,
         max_ring: None,
         compact_trigger_fraction,
         compact_keep_last_turns,
@@ -340,6 +394,71 @@ mod tests {
     fn policy_for_is_deterministic() {
         let p = profile(7.0, Some(3));
         assert_eq!(policy_for(&p), policy_for(&p.clone()));
+    }
+
+    #[test]
+    fn output_budget_default_matrix() {
+        for (tier, cap) in [
+            (Tier::Nano, 512),
+            (Tier::Small, 768),
+            (Tier::Medium, 1024),
+            (Tier::Large, 1536),
+            (Tier::Xl, 2048),
+            (Tier::Ultra, 2048),
+        ] {
+            for ctx in [1, 4096, 32768, u32::MAX] {
+                let mut profile = profile(7.0, None);
+                profile.ctx = ctx;
+                let policy = policy_for_with_override(&profile, Some(tier));
+                let before = policy.clone();
+                let budget = resolve_output_budget(&policy, ctx, None).unwrap();
+                assert_eq!(budget.effective, cap);
+                assert_eq!(budget.requested, None);
+                assert_eq!(budget.source, OutputBudgetSource::Policy);
+                assert_eq!(budget.declared_ctx, Some(ctx));
+                assert_eq!(policy, before);
+                let remaining = ctx - policy.prompt_budget_tokens;
+                for explicit in [1, remaining] {
+                    let budget = resolve_output_budget(&policy, ctx, Some(explicit)).unwrap();
+                    assert_eq!(budget.effective, explicit);
+                    assert_eq!(budget.source, OutputBudgetSource::Explicit);
+                    assert_eq!(budget.requested, Some(explicit));
+                }
+                if let Some(excess) = remaining.checked_add(1) {
+                    assert!(resolve_output_budget(&policy, ctx, Some(excess)).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn output_budget_invalid_matrix() {
+        let mut policy = policy_for(&profile(7.0, None));
+        for (ctx, requested) in [(4096, 0), (4096, 1230), (0, 1), (2866, 1), (4096, u32::MAX)] {
+            let before = policy.clone();
+            assert!(resolve_output_budget(&policy, ctx, Some(requested)).is_err());
+            assert_eq!(policy, before);
+        }
+        policy.prompt_budget_tokens = u32::MAX;
+        assert!(resolve_output_budget(&policy, u32::MAX - 1, Some(1)).is_err());
+        assert!(resolve_output_budget(&policy, u32::MAX, Some(1)).is_err());
+        policy.prompt_budget_tokens = 0;
+        assert_eq!(
+            resolve_output_budget(&policy, u32::MAX, Some(u32::MAX))
+                .unwrap()
+                .effective,
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn legacy_budget_metadata_is_unknown() {
+        let policy = policy_for(&profile(7.0, None));
+        let mut value = serde_json::to_value(&policy).unwrap();
+        value.as_object_mut().unwrap().remove("output_budget");
+        let old: RunPolicy = serde_json::from_value(value).unwrap();
+        assert!(old.output_budget.is_none());
+        assert_eq!(old.max_output_tokens, policy.max_output_tokens);
     }
 
     // --- ADR-098: an operator tier, and saying so ---

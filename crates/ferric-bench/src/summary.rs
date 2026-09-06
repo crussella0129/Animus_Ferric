@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::budget::{AttemptBudgetReference, AttemptIdentity, BudgetControls, RunBudgetEvidence};
 use crate::results::ResultRow;
 use crate::verify::CommandCheckStatus;
 
@@ -187,6 +188,67 @@ pub struct CalibrationEvidence {
     /// Longest qualified contiguous prefix beginning at L0.
     pub measured_level: Option<u8>,
     pub ineligible_reason: Option<String>,
+    /// True means known modified budgets; false with absent budget_controls
+    /// retains legacy unknown attribution, not a fabricated default scale.
+    #[serde(default)]
+    pub diagnostic: bool,
+    /// Every distinct declared coordinate observed across this run, including
+    /// mixed attempts whose RunBudgetEvidence has no common controls.
+    #[serde(default)]
+    pub budget_controls: Option<Vec<BudgetControls>>,
+}
+
+impl CalibrationEvidence {
+    /// Recheck actual recorded coordinates, not only a derived eligibility
+    /// flag. Direct calibration callers must not bypass a diagnostic budget
+    /// by changing `eligible`, `diagnostic`, or a measured-level field.
+    pub fn is_diagnostic(&self) -> bool {
+        self.diagnostic
+            || self
+                .budget_controls
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .any(BudgetControls::is_diagnostic)
+    }
+
+    /// Add admitted controls monotonically. This also attributes a run that
+    /// failed before producing rows, without clearing any observed override.
+    pub fn record_budget_controls(&mut self, controls: impl IntoIterator<Item = BudgetControls>) {
+        for controls in controls {
+            let recorded = self.budget_controls.get_or_insert_with(Vec::new);
+            if !recorded.contains(&controls) {
+                recorded.push(controls);
+            }
+        }
+        if self.is_diagnostic() {
+            self.diagnostic = true;
+            self.eligible = false;
+            self.measured_level = None;
+            let controls = self.budget_controls.as_deref().unwrap_or_default();
+            let mut reasons = Vec::new();
+            if controls
+                .iter()
+                .any(|controls| controls.timeout_scale() != 1.0)
+            {
+                reasons.push("non-default --timeout-scale");
+            }
+            if controls
+                .iter()
+                .any(|controls| controls.max_output_tokens().is_some())
+            {
+                reasons.push("explicit --max-output-tokens");
+            }
+            self.ineligible_reason = Some(if reasons.is_empty() {
+                "diagnostic benchmark budgets are not eligible for durable calibration".into()
+            } else {
+                format!(
+                    "diagnostic benchmark budgets ({}); profile left unchanged",
+                    reasons.join(" and ")
+                )
+            });
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -208,6 +270,10 @@ pub struct RunSummary {
     pub issues: Vec<RunIssue>,
     pub levels: Vec<LevelSummary>,
     pub calibration: CalibrationEvidence,
+    /// Additive parent controls and per-attempt retained evidence references.
+    /// Missing from old summaries means unknown, never invented scale 1.0.
+    #[serde(default)]
+    pub budget: Option<RunBudgetEvidence>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -266,6 +332,50 @@ pub fn summarize_run(
         None
     };
     let summary_file = format!("summary-{run_id}.json");
+    let attributed: Vec<_> = run_rows
+        .iter()
+        .filter_map(|row| row.budget.as_ref())
+        .collect();
+    let budget = attributed.first().map(|first| RunBudgetEvidence {
+        controls: (attributed.len() == run_rows.len()
+            && attributed
+                .iter()
+                .all(|budget| budget.controls == first.controls))
+        .then(|| first.controls.clone()),
+        attempts: run_rows
+            .iter()
+            .filter_map(|row| {
+                let budget = row.budget.as_ref()?;
+                Some(AttemptBudgetReference {
+                    identity: AttemptIdentity {
+                        run_id: row.run_id.clone()?,
+                        trial_id: row.trial_id.clone()?,
+                        level: row.level,
+                    },
+                    retained: budget.retained.clone(),
+                })
+            })
+            .collect(),
+    });
+
+    let mut calibration = CalibrationEvidence {
+        run_id: run_id.to_string(),
+        summary_file,
+        completed_at_unix_ms: finished_at_unix_ms,
+        trials,
+        min_pass_rate,
+        required_passes: required,
+        qualified_levels,
+        full_ladder,
+        complete,
+        infrastructure_clean,
+        eligible,
+        measured_level,
+        ineligible_reason,
+        diagnostic: false,
+        budget_controls: None,
+    };
+    calibration.record_budget_controls(attributed.iter().map(|budget| budget.controls.clone()));
 
     RunSummary {
         schema_version: SUMMARY_SCHEMA_VERSION,
@@ -284,21 +394,8 @@ pub fn summarize_run(
         provenance,
         issues,
         levels: level_summaries,
-        calibration: CalibrationEvidence {
-            run_id: run_id.to_string(),
-            summary_file,
-            completed_at_unix_ms: finished_at_unix_ms,
-            trials,
-            min_pass_rate,
-            required_passes: required,
-            qualified_levels,
-            full_ladder,
-            complete,
-            infrastructure_clean,
-            eligible,
-            measured_level,
-            ineligible_reason,
-        },
+        budget,
+        calibration,
     }
 }
 
@@ -448,6 +545,7 @@ mod tests {
             started_at_unix_ms: Some(1),
             finished_at_unix_ms: Some(2),
             trace_path: None,
+            budget: None,
             infrastructure_error: None,
             level,
             spec_version: 1,
@@ -500,6 +598,291 @@ mod tests {
             variant: "test".to_string(),
             python_bin: "python".to_string(),
         }
+    }
+
+    #[test]
+    fn legacy_budget_metadata_is_unknown() {
+        let summary = summarize_run(
+            "run",
+            1,
+            2,
+            1,
+            1.0,
+            &[0],
+            false,
+            &[row("run", "trial-001", 0, true, 10)],
+            Vec::new(),
+            provenance(),
+        );
+        let mut value = serde_json::to_value(&summary).unwrap();
+        value.as_object_mut().unwrap().remove("budget");
+        value["calibration"]
+            .as_object_mut()
+            .unwrap()
+            .remove("diagnostic");
+        value["calibration"]
+            .as_object_mut()
+            .unwrap()
+            .remove("budget_controls");
+        let legacy: RunSummary = serde_json::from_value(value).unwrap();
+        assert!(legacy.budget.is_none());
+        assert!(legacy.calibration.budget_controls.is_none());
+        assert!(!legacy.calibration.is_diagnostic());
+        let mut value = serde_json::to_value(row("run", "trial-001", 0, true, 10)).unwrap();
+        value.as_object_mut().unwrap().remove("budget");
+        let legacy: ResultRow = serde_json::from_value(value).unwrap();
+        assert!(legacy.budget.is_none());
+    }
+
+    fn synthetic_successful_ladder(controls: Option<&BudgetControls>) -> Vec<ResultRow> {
+        crate::embedded_specs()
+            .unwrap()
+            .iter()
+            .map(|spec| {
+                let mut row = row("run-synthetic", "trial-001", spec.level, true, 10);
+                row.budget = controls.map(|controls| {
+                    controls
+                        .resolve_agent(spec.timeout_s)
+                        .unwrap()
+                        .evidence(Some(0), false)
+                });
+                row
+            })
+            .collect()
+    }
+
+    fn synthetic_summary(rows: &[ResultRow]) -> RunSummary {
+        summarize_run(
+            "run-synthetic",
+            1,
+            2,
+            1,
+            1.0,
+            &[0, 1, 2, 3, 4, 5, 6],
+            true,
+            rows,
+            Vec::new(),
+            provenance(),
+        )
+    }
+
+    #[test]
+    fn diagnostic_budget_evidence_cannot_calibrate() {
+        // This is synthetic complete success, not a mock failing L0. Even a
+        // cap equal to Nano's old 512 default is explicitly diagnostic.
+        for (scale, cap) in [
+            (0.5, None),
+            (2.0, None),
+            (1.0, Some(512)),
+            (1.0, Some(1024)),
+            (2.0, Some(512)),
+            (f64::from_bits(1.0_f64.to_bits() - 1), None),
+            (f64::from_bits(1.0_f64.to_bits() + 1), None),
+        ] {
+            let controls = BudgetControls::new(scale, cap, 1.2, 4096).unwrap();
+            let rows = synthetic_successful_ladder(Some(&controls));
+            let summary = synthetic_summary(&rows);
+            assert!(summary.complete && summary.infrastructure_clean);
+            assert!(
+                summary
+                    .levels
+                    .iter()
+                    .all(|level| level.qualified && level.passes == 1)
+            );
+            assert_eq!(
+                summary.calibration.qualified_levels,
+                vec![0, 1, 2, 3, 4, 5, 6]
+            );
+            assert!(summary.calibration.diagnostic);
+            assert!(!summary.calibration.eligible);
+            assert_eq!(summary.calibration.measured_level, None);
+            assert!(
+                summary
+                    .calibration
+                    .ineligible_reason
+                    .as_deref()
+                    .unwrap()
+                    .contains("diagnostic")
+            );
+            assert!(
+                crate::calibrate_from_evidence(
+                    "model",
+                    1.2,
+                    "ConstrainedJson",
+                    &summary.calibration
+                )
+                .is_none()
+            );
+
+            let mut altered = summary.calibration.clone();
+            altered.eligible = true;
+            altered.diagnostic = false;
+            altered.measured_level = Some(6);
+            altered.ineligible_reason = None;
+            assert!(
+                crate::calibrate_from_evidence("model", 1.2, "ConstrainedJson", &altered).is_none(),
+                "recorded modified coordinates must defeat altered derived flags"
+            );
+            altered.budget_controls = None;
+            altered.diagnostic = true;
+            assert!(
+                crate::calibrate_from_evidence("model", 1.2, "ConstrainedJson", &altered).is_none(),
+                "an explicit diagnostic flag remains restrictive when coordinates are unavailable"
+            );
+
+            let legacy_entry = crate::calibrate("model", 1.2, "ConstrainedJson", &rows);
+            assert_eq!(legacy_entry.measured_level, None);
+            assert_eq!(legacy_entry.tier_from_measured, None);
+            assert_eq!(
+                crate::highest_completed_level(&rows),
+                Some(6),
+                "raw observed outcomes remain available"
+            );
+        }
+    }
+
+    #[test]
+    fn default_budget_calibration_compatible() {
+        let default = BudgetControls::new(1.0, None, 1.2, 4096).unwrap();
+        for controls in [Some(&default), None] {
+            let rows = synthetic_successful_ladder(controls);
+            let summary = synthetic_summary(&rows);
+            assert!(summary.calibration.eligible);
+            assert!(!summary.calibration.is_diagnostic());
+            assert_eq!(summary.calibration.measured_level, Some(6));
+            let record = crate::calibrate_from_evidence(
+                "model",
+                1.2,
+                "ConstrainedJson",
+                &summary.calibration,
+            )
+            .unwrap();
+            assert_eq!(record.measured_level, Some(6));
+            assert_eq!(
+                record.tier_from_measured,
+                Some(format!("{:?}", ferric_core::tier_for_level(6)))
+            );
+            assert_eq!(
+                crate::calibrate("model", 1.2, "ConstrainedJson", &rows).measured_level,
+                Some(6)
+            );
+            if controls.is_none() {
+                assert!(summary.calibration.budget_controls.is_none());
+                let mut serialized = serde_json::to_value(&summary.calibration).unwrap();
+                serialized.as_object_mut().unwrap().remove("diagnostic");
+                serialized
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("budget_controls");
+                let legacy: CalibrationEvidence = serde_json::from_value(serialized).unwrap();
+                assert!(legacy.budget_controls.is_none());
+                assert!(
+                    crate::calibrate_from_evidence("model", 1.2, "ConstrainedJson", &legacy)
+                        .is_some()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_budget_controls_and_later_defaults_cannot_hide_diagnostics() {
+        let default = BudgetControls::new(1.0, None, 1.2, 4096).unwrap();
+        let changed = BudgetControls::new(2.0, Some(512), 1.2, 4096).unwrap();
+        for baseline in [Some(&default), None] {
+            let mut rows = synthetic_successful_ladder(baseline);
+            rows[3].budget = Some(changed.resolve_agent(180).unwrap().evidence(Some(0), false));
+            let mut summary = synthetic_summary(&rows);
+            assert!(
+                summary.budget.as_ref().unwrap().controls.is_none(),
+                "mixed controls have no common aggregate"
+            );
+            assert!(summary.calibration.is_diagnostic());
+            assert!(!summary.calibration.eligible);
+            assert_eq!(summary.calibration.measured_level, None);
+            summary
+                .calibration
+                .record_budget_controls([default.clone()]);
+            summary
+                .calibration
+                .record_budget_controls([default.clone()]);
+            assert!(summary.calibration.is_diagnostic());
+            assert!(
+                summary
+                    .calibration
+                    .budget_controls
+                    .as_ref()
+                    .unwrap()
+                    .contains(&changed)
+            );
+            assert_eq!(
+                summary.calibration.budget_controls.as_ref().unwrap().len(),
+                2
+            );
+            assert!(!summary.calibration.eligible);
+            assert!(
+                summary
+                    .calibration
+                    .ineligible_reason
+                    .as_ref()
+                    .unwrap()
+                    .contains("--timeout-scale")
+            );
+            assert!(
+                summary
+                    .calibration
+                    .ineligible_reason
+                    .as_ref()
+                    .unwrap()
+                    .contains("--max-output-tokens")
+            );
+            assert!(
+                crate::calibrate_from_evidence(
+                    "model",
+                    1.2,
+                    "ConstrainedJson",
+                    &summary.calibration
+                )
+                .is_none()
+            );
+        }
+        let mut empty = synthetic_summary(&[]);
+        assert!(empty.calibration.budget_controls.is_none());
+        empty.calibration.record_budget_controls([changed]);
+        assert!(empty.calibration.is_diagnostic());
+        assert!(!empty.calibration.eligible);
+        assert_eq!(empty.calibration.measured_level, None);
+    }
+
+    #[test]
+    fn summary_budget_controls_and_references_match_rows() {
+        let controls = crate::budget::BudgetControls::new(0.5, Some(1024), 7.0, 4096).unwrap();
+        let mut row = row("run", "trial-001", 0, true, 10);
+        let mut evidence = controls.resolve_agent(60).unwrap().evidence(Some(0), false);
+        let reference = crate::budget::RetainedBudgetEvidence {
+            identity: AttemptIdentity::new("run", "trial-001", 0).unwrap(),
+            trace_path: "traces/run/trial-001-l0.jsonl".into(),
+            sidecar_path: "traces/run/trial-001-l0.budget.json".into(),
+            trace_sha256: "a".repeat(64),
+        };
+        evidence.retained = Some(reference.clone());
+        row.budget = Some(evidence);
+        let summary = summarize_run(
+            "run",
+            1,
+            2,
+            1,
+            1.0,
+            &[0],
+            false,
+            &[row],
+            Vec::new(),
+            provenance(),
+        );
+        let budget = summary.budget.unwrap();
+        assert_eq!(budget.controls.as_ref(), Some(&controls));
+        assert_eq!(budget.attempts.len(), 1);
+        assert_eq!(budget.attempts[0].identity, reference.identity);
+        assert_eq!(budget.attempts[0].retained.as_ref(), Some(&reference));
     }
 
     #[test]

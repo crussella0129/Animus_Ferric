@@ -24,6 +24,10 @@ pub struct ResultRow {
     /// Results-dir-relative path to the retained JSONL trace.
     #[serde(default)]
     pub trace_path: Option<String>,
+    /// Parent enforcement and separately observed child output provenance.
+    /// Legacy rows have unknown attribution, not an assumed default budget.
+    #[serde(default)]
+    pub budget: Option<crate::budget::AttemptBudgetEvidence>,
     /// Harness/infrastructure failure attributable to this attempt, if any.
     #[serde(default)]
     pub infrastructure_error: Option<String>,
@@ -105,6 +109,7 @@ mod tests {
             started_at_unix_ms: Some(1),
             finished_at_unix_ms: Some(2),
             trace_path: Some("traces/run-test/trial-001-l0.jsonl".to_string()),
+            budget: None,
             infrastructure_error: None,
             level,
             spec_version: 1,
@@ -162,12 +167,14 @@ mod tests {
         object.remove("finished_at_unix_ms");
         object.remove("trace_path");
         object.remove("infrastructure_error");
+        object.remove("budget");
 
         let legacy: ResultRow = serde_json::from_value(value).unwrap();
         assert_eq!(legacy.spec_version, 1);
         assert!(legacy.command_checks.is_empty());
         assert!(legacy.run_id.is_none());
         assert!(legacy.trial_id.is_none());
+        assert!(legacy.budget.is_none());
     }
 
     #[test]

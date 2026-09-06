@@ -369,6 +369,7 @@ pub fn kinds(records: &[TraceRecord]) -> Vec<&'static str> {
             ParsedEvent::Known(Event::SessionStart { .. }) => "session_start",
             ParsedEvent::Known(Event::SessionEnd { .. }) => "session_end",
             ParsedEvent::Known(Event::SessionPaused { .. }) => "session_paused",
+            ParsedEvent::Known(Event::MainActionBudget { .. }) => "main_action_budget",
             ParsedEvent::Known(Event::PolicySelected { .. }) => "policy_selected",
             ParsedEvent::Known(Event::PromptComposed { .. }) => "prompt_composed",
             ParsedEvent::Known(Event::SessionPrompt { .. }) => "session_prompt",

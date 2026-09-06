@@ -234,7 +234,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
                 pre_dispatch_stop: None,
             });
         }
-        Event::PromptAssembled { turn, .. } => {
+        Event::PromptAssembled { turn, .. } | Event::MainActionBudget { turn, .. } => {
             let current = current_turn_mut(index, state)?;
             if current.number != turn {
                 return Err(format!(
@@ -244,7 +244,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
             }
             if current.ended {
                 return Err(format!(
-                    "record {index} assembles a prompt after turn {turn} ended"
+                    "record {index} records request metadata after turn {turn} ended"
                 ));
             }
         }
