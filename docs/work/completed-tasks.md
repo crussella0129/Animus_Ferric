@@ -2075,4 +2075,4 @@ qualification below after final PR checks reopened Test.**
 - **Description:** Honest front-door picker: each model annotated with its fit; a won't-fit selection requires an extra confirmation naming the estimate and available memory before the engine starts; Unknown preserves the prior behavior verbatim. Fit keys on available, not total (C-002).
 - **Completed:** 2026-09-06T19:13:03Z
 - **Files modified:** crates/ferric-cli/src/human.rs
-- **Commit:** PENDING
+- **Commit:** `215d07407e09139663bb3bbb1cc865dbde026c1f`
