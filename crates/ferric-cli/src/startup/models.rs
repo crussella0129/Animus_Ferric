@@ -171,26 +171,38 @@ impl LocalModel {
     }
 }
 
+/// Discover GGUFs in the workspace's conventional `models/` subdirectory — the
+/// historical entry point, unchanged. The configured, decoupled models
+/// directory goes through [`scan_dir`].
 pub(super) fn scan(
     workspace: &Path,
+    explicit: Option<&Path>,
+) -> Result<Vec<LocalModel>, StartupError> {
+    scan_dir(&workspace.join("models"), explicit)
+}
+
+/// Discover GGUFs in an explicit models directory, decoupled from the working
+/// folder so an installed `ferric` run in any project can find them.
+pub(super) fn scan_dir(
+    models_dir: &Path,
     explicit: Option<&Path>,
 ) -> Result<Vec<LocalModel>, StartupError> {
     if let Some(path) = explicit {
         let selected = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            workspace.join(path)
+            models_dir.join(path)
         };
         return Ok(vec![LocalModel::open(&selected)?]);
     }
-    scan_discovered(workspace, |_| Ok(()))
+    scan_discovered(models_dir, |_| Ok(()))
 }
 
 fn scan_discovered(
-    workspace: &Path,
+    models_dir: &Path,
     checkpoint: impl FnOnce(&DiscoveredDirectory) -> Result<(), StartupError>,
 ) -> Result<Vec<LocalModel>, StartupError> {
-    let Some(binding) = DiscoveredDirectory::open(workspace)? else {
+    let Some(binding) = DiscoveredDirectory::open(models_dir)? else {
         return Ok(Vec::new());
     };
     scan_binding(binding, checkpoint)
@@ -248,7 +260,7 @@ fn scan_binding(
             // canonicalizing an ambient path assembled from a stale enumeration.
             LocalModel::open_in(
                 &binding.directory,
-                binding.root_path.join("models").join(name),
+                binding.root_path.join(&binding.leaf).join(name),
                 Some(Arc::clone(&binding)),
             )
         })
@@ -262,6 +274,9 @@ fn scan_binding(
 /// search root nor authorization to admit a model outside the selected root.
 struct DiscoveredDirectory {
     root_path: PathBuf,
+    /// The models directory's own leaf name under `root_path` (e.g. `models`),
+    /// so a configured directory anywhere is opened the same confined way.
+    leaf: PathBuf,
     root: Dir,
     root_identity: (u64, u64),
     directory: Dir,
@@ -269,19 +284,29 @@ struct DiscoveredDirectory {
 }
 
 impl DiscoveredDirectory {
-    fn open(workspace: &Path) -> Result<Option<Self>, StartupError> {
-        let root_path = workspace.canonicalize().map_err(|_| changed())?;
+    fn open(models_dir: &Path) -> Result<Option<Self>, StartupError> {
+        // Open the models directory via its parent as a confined cap-std root,
+        // so a directory outside the workspace is admitted the same safe way the
+        // in-workspace `models/` always was: canonicalized, symlink-checked, and
+        // identity-verified. The default `<workspace>/models` splits to
+        // (workspace, "models") — byte-identical to the historical behavior.
+        let (Some(parent), Some(leaf)) = (models_dir.parent(), models_dir.file_name()) else {
+            return Err(changed());
+        };
+        let leaf = PathBuf::from(leaf);
+        let root_path = parent.canonicalize().map_err(|_| changed())?;
         let root = open_root(&root_path)?;
         let root_identity = identity(&plain_directory_metadata(&root)?);
-        match root.symlink_metadata("models") {
+        match root.symlink_metadata(&leaf) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(changed()),
             Ok(_) => {}
         }
-        let directory = open_plain_directory(&root, Path::new("models"))?;
+        let directory = open_plain_directory(&root, &leaf)?;
         let directory_identity = identity(&plain_directory_metadata(&directory)?);
         let binding = Self {
             root_path,
+            leaf,
             root,
             root_identity,
             directory,
@@ -298,7 +323,7 @@ impl DiscoveredDirectory {
         {
             return Err(changed());
         }
-        let current = open_plain_directory(&self.root, Path::new("models"))?;
+        let current = open_plain_directory(&self.root, &self.leaf)?;
         if identity(&plain_directory_metadata(&current)?) != self.directory_identity
             || identity(&plain_directory_metadata(&self.directory)?) != self.directory_identity
         {
@@ -400,6 +425,28 @@ mod tests {
         std::os::windows::fs::symlink_dir(target, path).unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(target, path).unwrap();
+    }
+
+    #[test]
+    fn scan_dir_discovers_gguf_in_an_external_directory() {
+        // A models directory that is not a `<workspace>/models` — enumerated
+        // directly, confined to itself. This is the run-from-anywhere path.
+        let external = tempfile::tempdir().unwrap();
+        let first = gguf(external.path(), 0);
+        std::fs::copy(&first, external.path().join("second.gguf")).unwrap();
+        std::fs::write(external.path().join("notes.txt"), b"ignored").unwrap();
+        let models = scan_dir(external.path(), None).unwrap();
+        assert_eq!(models.len(), 2);
+    }
+
+    #[test]
+    fn scan_dir_rejects_a_non_file_gguf_entry() {
+        // The safety checks port over: a directory named `*.gguf` in the resolved
+        // directory is rejected, not admitted as a model.
+        let external = tempfile::tempdir().unwrap();
+        gguf(external.path(), 0);
+        std::fs::create_dir(external.path().join("a-directory.gguf")).unwrap();
+        assert!(scan_dir(external.path(), None).is_err());
     }
 
     #[test]

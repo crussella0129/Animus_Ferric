@@ -36,9 +36,10 @@ impl Preparation for FixturePreparation {
         cfg: &Config,
         model: Option<&Path>,
         cancel: &Arc<AtomicBool>,
+        models_dir: Option<&Path>,
     ) -> Result<Startup, crate::startup::StartupError> {
         crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
-        crate::startup::test_support::begin(root, cfg, model, cancel)
+        crate::startup::test_support::begin(root, cfg, model, cancel, models_dir)
     }
     fn prepare(
         &self,
@@ -630,6 +631,7 @@ fn human_first_run_fatal_accept_error_refuses_and_reaps() {
         &Config::default(),
         None,
         &Arc::new(AtomicBool::new(false)),
+        None,
     )
     .unwrap();
 }
@@ -726,7 +728,7 @@ fn human_first_run_diagnostic_series_child() {
 }
 
 #[test]
-fn human_repeat_reuses_model() {
+fn human_repeat_with_multiple_models_always_reasks() {
     let root = tempfile::tempdir().unwrap();
     fixture_models(root.path(), 2);
     let first = FixturePreparation::new("ready");
@@ -740,13 +742,14 @@ fn human_repeat_reuses_model() {
     let second = FixturePreparation::new("ready");
     let (result, io) = run_fixture(
         root.path(),
-        &[Some("ask"), Some("y"), Some("/quit")],
+        &[Some("1"), Some("ask"), Some("y"), Some("/quit")],
         &second,
     );
     result.unwrap();
-    assert_eq!(setup_decisions(&io), 2);
+    // More than one model always shows the picker — a saved preference is at
+    // most a highlight, never a silent skip.
     assert!(
-        !io.prompts
+        io.prompts
             .lock()
             .unwrap()
             .iter()
@@ -755,7 +758,7 @@ fn human_repeat_reuses_model() {
 }
 
 #[test]
-fn human_stale_single_model_requires_reselection() {
+fn human_stale_single_model_still_auto_picks() {
     let root = tempfile::tempdir().unwrap();
     fixture_models(root.path(), 1);
     let preparation = FixturePreparation::new("ready");
@@ -773,13 +776,21 @@ fn human_stale_single_model_requires_reselection() {
     let next = FixturePreparation::new("ready");
     let (result, io) = run_fixture(
         root.path(),
-        &[Some("1"), Some("ask"), Some("y"), Some("/quit")],
+        &[Some("ask"), Some("y"), Some("/quit")],
         &next,
     );
     result.unwrap();
-    assert_eq!(setup_decisions(&io), 3);
+    // One model auto-picks even when the saved preference is stale — there is
+    // nothing else to choose, so it neither lists nor nags.
     assert!(
-        io.output
+        !io.prompts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|prompt| prompt.contains("Which model"))
+    );
+    assert!(
+        !io.output
             .lock()
             .unwrap()
             .contains("saved model choice changed")
@@ -881,6 +892,7 @@ fn human_cancel_during_request_reaps_owned_engine() {
         &Config::default(),
         None,
         &Arc::new(AtomicBool::new(false)),
+        None,
     )
     .unwrap();
 }
@@ -950,6 +962,7 @@ fn real_model_prepared_host_journey() {
         &Config::default(),
         Some(&model),
         &Arc::new(AtomicBool::new(false)),
+        None,
     )
     .unwrap();
 }

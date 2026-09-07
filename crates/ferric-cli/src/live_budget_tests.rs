@@ -696,7 +696,7 @@ fn child_body(mode: &str, root: &Path) -> Value {
         ..Default::default()
     };
     stages.record("startup_begin", "start");
-    let start = crate::startup::test_support::begin(root, &cfg, Some(&model), &cancel);
+    let start = crate::startup::test_support::begin(root, &cfg, Some(&model), &cancel, None);
     stages.record(
         "startup_begin",
         if start.is_ok() { "end" } else { "failed" },

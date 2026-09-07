@@ -315,3 +315,8 @@ below remain executable follow-up work; the review did not silently fix them.
 - [ ] T-12303 (backlog, after T-12302) [intent: INT-0009]: Extract the inference-server / Tailscale / process-ownership cluster into a separate crate so the agent core (loop + tools + provider) builds without the serving layer (AC-2). — touches: new `crates/ferric-serve`, `crates/ferric-cli/Cargo.toml`, `crates/ferric-cli/src/lib.rs`
 
 ## Sprint 124 — begin server.rs decomposition (INT-0009 AC-4)
+
+## Sprint 125 — deployable run-from-anywhere front door (INT-0008)
+
+- [ ] T-12502 (sprint 125) [intent: INT-0008]: Owner's 0/1/>1 picker rule — 0 GGUFs → message naming the resolved dir; 1 → auto-pick with fit; >1 → picker with fit annotations (never a silent saved-preference skip). — touches: `crates/ferric-cli/src/human.rs`
+- [ ] T-12503 (sprint 125) [intent: INT-0008]: Install-once/run-anywhere deploy docs — `welcome()` + `docs/getting-started.md` describe `cargo install`, run in your project folder, `FERRIC_MODELS_DIR`. — touches: `crates/ferric-cli/src/human.rs`, `docs/getting-started.md`

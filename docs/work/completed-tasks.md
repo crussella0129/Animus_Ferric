@@ -2088,3 +2088,10 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-07T00:27:01Z
 - **Files modified:** crates/ferric-cli/src/server.rs (deleted), crates/ferric-cli/src/server/mod.rs, crates/ferric-cli/src/server/tests.rs
 - **Commit:** `b2cbb0e2a9d97ded633c67c4494cd37f396bf532`
+
+## T-12501 (sprint 125)
+- **Description:** Configured models directory decoupled from the workspace. `startup::resolve_models_dir` resolves in order `--models-dir` flag > `FERRIC_MODELS_DIR` env > config `models_dir` > default `<workspace>/models`; `models::scan_dir(dir, …)` opens the *resolved* directory as its own cap-std confined root (parent as ambient root + leaf as confined dir) so it enumerates GGUFs from anywhere while preserving every safety check (canonicalize, reject symlinks/non-files, entry/file caps). The historical `scan(workspace, …)` is now a thin `scan_dir(&workspace.join("models"), …)` wrapper, so the default `<workspace>/models` path is byte-for-byte identical to before. `begin`/`begin_in` thread `models_dir: Option<&Path>`; `human.rs` defines `--models-dir` and calls `resolve_models_dir`. Verified green: `resolve_models_dir_precedence`, `scan_dir_discovers_gguf_in_an_external_directory`, `scan_dir_rejects_a_non_file_gguf_entry`, full workspace suite.
+- **Intent:** INT-0008 (run-from-anywhere + configured discovery).
+- **Completed:** 2026-09-07T15:47:15Z
+- **Files modified:** crates/ferric-cli/src/config.rs, crates/ferric-cli/src/startup.rs, crates/ferric-cli/src/startup/models.rs, crates/ferric-cli/src/startup/tests.rs, crates/ferric-cli/src/human.rs, crates/ferric-cli/src/human_journey_tests.rs, crates/ferric-cli/src/live_budget_tests.rs, docs/intents/INT-0008-unified-local-model-workflow.md. (human.rs also carries the T-12502 picker rewrite and the T-12503 `welcome()` text — the three tasks share this file and are committed here to keep every HEAD compiling.)
+- **Commit:** PENDING

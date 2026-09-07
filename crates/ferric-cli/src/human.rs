@@ -11,6 +11,10 @@ pub(crate) struct RunArgs {
     /// Folder to work in. Defaults to the current folder.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
+    /// Folder to look for GGUF models in. Overrides FERRIC_MODELS_DIR and config;
+    /// defaults to the workspace's `models/` folder.
+    #[arg(long)]
+    pub models_dir: Option<PathBuf>,
     /// Permit controlled file changes in this folder, for this session only.
     #[arg(long)]
     pub allow_edits: bool,
@@ -47,9 +51,18 @@ pub(crate) fn render_startup_error(error: &crate::startup::StartupError) -> Stri
 pub(crate) fn welcome() {
     println!("Ferric — a local model, ready to help.");
     #[cfg(feature = "backend-openai")]
-    println!("Run cargo r in a terminal to begin, or ferric run \"your question\".");
+    {
+        println!(
+            "Install once: cargo install --path crates/ferric-cli --force. Then run ferric in your project folder."
+        );
+        println!(
+            "Point FERRIC_MODELS_DIR at the folder holding your .gguf models (or keep them in ./models)."
+        );
+    }
     #[cfg(not(feature = "backend-openai"))]
-    println!("This build has no real backend. Run cargo r --features backend-openai to enable it.");
+    println!(
+        "This build has no real backend. Install with cargo install --path crates/ferric-cli --features backend-openai."
+    );
     println!("Ask mode cannot change files. Folder work needs your permission.");
     println!(
         "Use ferric explain for a read-only setup summary; ferric advanced for expert commands."
@@ -201,64 +214,114 @@ mod enabled {
         }
     }
 
+    /// The owner's model-selection rule, purely by how many GGUFs were found.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum Selection {
+        /// No GGUF in the resolved models directory.
+        NoModel,
+        /// Exactly one — use it (still surfacing its fit).
+        Auto,
+        /// More than one — always show the picker.
+        Pick,
+    }
+
+    pub(super) fn model_selection(count: usize) -> Selection {
+        match count {
+            0 => Selection::NoModel,
+            1 => Selection::Auto,
+            _ => Selection::Pick,
+        }
+    }
+
+    /// Nothing to run: name the exact directory to drop a GGUF into, rather than
+    /// a generic "this folder" — the models dir is decoupled from the workspace.
+    pub(super) fn no_model_message(models_dir: &Path) -> String {
+        format!(
+            "No model found. Add a GGUF file to {} to begin, then run again.",
+            safe_text(&models_dir.display().to_string())
+        )
+    }
+
+    fn confirmed_yes(answer: Option<&str>) -> bool {
+        matches!(answer.map(str::trim), Some("y" | "Y" | "yes" | "Yes"))
+    }
+
     pub(super) fn choose_model(
         start: &Startup,
         interactive: bool,
         io: &dyn HumanIo,
         memory: Option<SystemMemory>,
+        models_dir: &Path,
     ) -> Result<Option<usize>, String> {
-        if start.models.is_empty() {
-            return Err("No local model was found. Put an existing GGUF in this folder's models directory, then start again.".to_string());
-        }
-        if let Some(index) = start.preferred_index {
-            return Ok(Some(index));
-        }
-        if start.models.len() == 1 && !start.requires_model_choice {
-            return Ok(Some(0));
-        }
-        if !interactive {
-            return Err(
-                "A model choice is needed. Run ferric in a terminal to choose one.".to_string(),
-            );
-        }
-        if start.requires_model_choice {
-            io.say("The saved model choice changed. Please choose again.");
-        }
-        for (index, model) in start.models.iter().enumerate() {
-            let size = model
-                .bytes
-                .map(|bytes| format!(" ({:.1} GiB file)", bytes as f64 / 1_073_741_824.0))
-                .unwrap_or_default();
-            io.say(&format!(
-                "  {}. {}{size}{}",
-                index + 1,
-                safe_text(&model.label),
-                fit_annotation(model.bytes, memory),
-            ));
-        }
-        let idx = match io.read("Which model? [number, or Enter to cancel] ")? {
-            None => return Ok(None),
-            Some(answer) if answer.trim().is_empty() => return Ok(None),
-            Some(answer) => answer
-                .trim()
-                .parse::<usize>()
-                .ok()
-                .filter(|n| *n > 0 && *n <= start.models.len())
-                .map(|n| n - 1)
-                .ok_or("No model selected. Start again and choose a listed number.".to_string())?,
-        };
-        // The 27B-on-CPU trap: a model that will not fit must not start on a
-        // single Enter. Name the numbers and require a deliberate yes.
-        if let Some(prompt) = wontfit_confirm_prompt(start.models[idx].bytes, memory) {
-            let confirm = io.read(&prompt)?;
-            if !matches!(
-                confirm.as_deref().map(str::trim),
-                Some("y" | "Y" | "yes" | "Yes")
-            ) {
-                return Ok(None);
+        match model_selection(start.models.len()) {
+            Selection::NoModel => Err(no_model_message(models_dir)),
+            Selection::Auto => {
+                // One model: use it, but a won't-fit still requires a deliberate
+                // yes rather than starting a doomed engine silently.
+                if interactive
+                    && let Some(prompt) = wontfit_confirm_prompt(start.models[0].bytes, memory)
+                {
+                    let confirm = io.read(&prompt)?;
+                    if !confirmed_yes(confirm.as_deref()) {
+                        return Ok(None);
+                    }
+                }
+                Ok(Some(0))
+            }
+            Selection::Pick => {
+                // More than one: always list and require a choice — a saved
+                // preference is at most a highlight, never a silent skip.
+                if !interactive {
+                    return Err(
+                        "A model choice is needed. Run ferric in a terminal to choose one."
+                            .to_string(),
+                    );
+                }
+                if start.requires_model_choice {
+                    io.say("The saved model choice changed. Please choose again.");
+                }
+                for (index, model) in start.models.iter().enumerate() {
+                    let size = model
+                        .bytes
+                        .map(|bytes| format!(" ({:.1} GiB file)", bytes as f64 / 1_073_741_824.0))
+                        .unwrap_or_default();
+                    let remembered = if start.preferred_index == Some(index) {
+                        " (last used)"
+                    } else {
+                        ""
+                    };
+                    io.say(&format!(
+                        "  {}. {}{size}{}{remembered}",
+                        index + 1,
+                        safe_text(&model.label),
+                        fit_annotation(model.bytes, memory),
+                    ));
+                }
+                let idx = match io.read("Which model? [number, or Enter to cancel] ")? {
+                    None => return Ok(None),
+                    Some(answer) if answer.trim().is_empty() => return Ok(None),
+                    Some(answer) => answer
+                        .trim()
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|n| *n > 0 && *n <= start.models.len())
+                        .map(|n| n - 1)
+                        .ok_or(
+                            "No model selected. Start again and choose a listed number."
+                                .to_string(),
+                        )?,
+                };
+                // The 27B-on-CPU trap: a model that will not fit must not start
+                // on a single Enter. Name the numbers and require a deliberate yes.
+                if let Some(prompt) = wontfit_confirm_prompt(start.models[idx].bytes, memory) {
+                    let confirm = io.read(&prompt)?;
+                    if !confirmed_yes(confirm.as_deref()) {
+                        return Ok(None);
+                    }
+                }
+                Ok(Some(idx))
             }
         }
-        Ok(Some(idx))
     }
 
     pub(super) fn run(args: RunArgs, interactive: bool) -> ExitCode {
@@ -499,6 +562,7 @@ mod enabled {
             cfg: &Config,
             model: Option<&Path>,
             cancel: &Arc<AtomicBool>,
+            models_dir: Option<&Path>,
         ) -> Result<Startup, crate::startup::StartupError>;
         fn prepare(
             &self,
@@ -517,8 +581,9 @@ mod enabled {
             cfg: &Config,
             model: Option<&Path>,
             cancel: &Arc<AtomicBool>,
+            models_dir: Option<&Path>,
         ) -> Result<Startup, crate::startup::StartupError> {
-            Startup::begin(root, cfg, model, cancel)
+            Startup::begin(root, cfg, model, cancel, models_dir)
         }
         fn prepare(
             &self,
@@ -550,7 +615,19 @@ mod enabled {
             "Folder: {}",
             safe_text(&workspace.root().display().to_string())
         ));
-        let start = match preparation.begin(workspace.root(), cfg, args.model.as_deref(), &cancel) {
+        let models_dir = crate::startup::resolve_models_dir(
+            args.models_dir.as_deref(),
+            &|key| std::env::var(key).ok(),
+            cfg.models_dir.as_deref(),
+            workspace.root(),
+        );
+        let start = match preparation.begin(
+            workspace.root(),
+            cfg,
+            args.model.as_deref(),
+            &cancel,
+            Some(&models_dir),
+        ) {
             Ok(start) => start,
             Err(error) if error.is_cancelled() => {
                 io.say("Cancelled. No session started.");
@@ -559,7 +636,7 @@ mod enabled {
             Err(error) => return Err(render_startup_error(&error)),
         };
         let memory = NativeMemoryProbe.probe();
-        let Some(index) = choose_model(&start, interactive, io, memory)? else {
+        let Some(index) = choose_model(&start, interactive, io, memory, &models_dir)? else {
             io.say("Cancelled. No session started.");
             return Ok(());
         };
@@ -1322,6 +1399,21 @@ mod enabled {
             });
             assert_eq!(model_fit(Some(10 * GIB), mem), Fit::WontFit);
             assert!(wontfit_confirm_prompt(Some(10 * GIB), mem).is_some());
+        }
+
+        #[test]
+        fn model_selection_is_by_count() {
+            assert_eq!(model_selection(0), Selection::NoModel);
+            assert_eq!(model_selection(1), Selection::Auto);
+            assert_eq!(model_selection(2), Selection::Pick);
+            assert_eq!(model_selection(9), Selection::Pick);
+        }
+
+        #[test]
+        fn no_model_message_names_the_resolved_dir() {
+            let msg = no_model_message(Path::new("/tmp/my-ggufs"));
+            assert!(msg.contains("my-ggufs"), "{msg}");
+            assert!(msg.contains("GGUF"));
         }
 
         #[test]
