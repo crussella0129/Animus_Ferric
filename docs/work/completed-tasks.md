@@ -2095,3 +2095,11 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-07T15:47:15Z
 - **Files modified:** crates/ferric-cli/src/config.rs, crates/ferric-cli/src/startup.rs, crates/ferric-cli/src/startup/models.rs, crates/ferric-cli/src/startup/tests.rs, crates/ferric-cli/src/human.rs, crates/ferric-cli/src/human_journey_tests.rs, crates/ferric-cli/src/live_budget_tests.rs, docs/intents/INT-0008-unified-local-model-workflow.md. (human.rs also carries the T-12502 picker rewrite and the T-12503 `welcome()` text — the three tasks share this file and are committed here to keep every HEAD compiling.)
 - **Commit:** `424a1dde3f49427de126693720efd2432890b466`
+
+## T-12502 (sprint 125)
+- **Description:** Owner's 0/1/>1 picker rule with honest selection. `choose_model` is rewritten around `model_selection(count) -> Selection {NoModel, Auto, Pick}`: **0 GGUFs** → stop with `no_model_message` naming the *resolved* models dir ("add a GGUF file to <dir> to begin"); **1** → auto-pick index 0, surfacing its fit (won't-fit still confirms); **>1** → list every model with its `fit_annotation` and a `(last used)` highlight for the saved preference, print "saved model choice changed" when the stored choice is stale, and require a numeric choice. A saved preference is at most the default highlight, never a silent skip. **The picker code lives in `human.rs` and was committed with T-12501 (`424a1dde3f49427de126693720efd2432890b466`) because the three sprint-125 tasks share that file and splitting it per-task would leave an intermediate HEAD that does not compile.** This entry records the task and its acceptance; the code is resolvable at that commit.
+- **Intent:** INT-0008 (honest model selection).
+- **Completed:** 2026-09-07T15:47:15Z
+- **Files modified:** crates/ferric-cli/src/human.rs and crates/ferric-cli/src/human_journey_tests.rs, both in commit `424a1dde3f49427de126693720efd2432890b466`.
+- **EARS verified:** `model_selection_is_by_count`, `no_model_message_names_the_resolved_dir`, `human_repeat_with_multiple_models_always_reasks` (>1 always re-asks), `human_stale_single_model_still_auto_picks` (1 auto-picks, no "saved model choice changed") — all green in the full suite.
+- **Commit:** PENDING
