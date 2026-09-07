@@ -2103,3 +2103,10 @@ qualification below after final PR checks reopened Test.**
 - **Files modified:** crates/ferric-cli/src/human.rs and crates/ferric-cli/src/human_journey_tests.rs, both in commit `424a1dde3f49427de126693720efd2432890b466`.
 - **EARS verified:** `model_selection_is_by_count`, `no_model_message_names_the_resolved_dir`, `human_repeat_with_multiple_models_always_reasks` (>1 always re-asks), `human_stale_single_model_still_auto_picks` (1 auto-picks, no "saved model choice changed") — all green in the full suite.
 - **Commit:** `0bff40ac79969bbfdad7db09457e173203f365da`
+
+## T-12503 (sprint 125)
+- **Description:** Install-once / run-anywhere deploy story. `welcome()` now prints "Install once: cargo install --path crates/ferric-cli --force. Then run ferric in your project folder." and "Point FERRIC_MODELS_DIR at the folder holding your .gguf models (or keep them in ./models)." — no more "run cargo r in the repo". `docs/getting-started.md` gains section **3c "The simple way — just run `ferric`"** (set `FERRIC_MODELS_DIR`, run `ferric` in your project folder, 0/1/>1 discovery + auto-start), and the old manual server bring-up is renamed **3d "Manual server management (expert)"**. The ferric-source-tree Work guard remains the backstop for a stray `cargo run` in the repo. The `welcome()` change lives in `human.rs` and was committed with T-12501 (`424a1dde3f49427de126693720efd2432890b466`); the docs change is committed here.
+- **Intent:** INT-0008 (discoverable deploy path).
+- **Completed:** 2026-09-07T15:47:15Z
+- **Files modified:** docs/getting-started.md (this commit); crates/ferric-cli/src/human.rs `welcome()` (in commit `424a1dde3f49427de126693720efd2432890b466`).
+- **Commit:** PENDING
