@@ -2094,4 +2094,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** INT-0008 (run-from-anywhere + configured discovery).
 - **Completed:** 2026-09-07T15:47:15Z
 - **Files modified:** crates/ferric-cli/src/config.rs, crates/ferric-cli/src/startup.rs, crates/ferric-cli/src/startup/models.rs, crates/ferric-cli/src/startup/tests.rs, crates/ferric-cli/src/human.rs, crates/ferric-cli/src/human_journey_tests.rs, crates/ferric-cli/src/live_budget_tests.rs, docs/intents/INT-0008-unified-local-model-workflow.md. (human.rs also carries the T-12502 picker rewrite and the T-12503 `welcome()` text — the three tasks share this file and are committed here to keep every HEAD compiling.)
-- **Commit:** PENDING
+- **Commit:** `424a1dde3f49427de126693720efd2432890b466`
