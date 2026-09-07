@@ -179,3 +179,4 @@
   - [Extra post-Loop audit](sprints/s121/post-loop-adversarial-review.md)
 - [Sprint 122](sprints/s122/sprint-meta.md)
 - [Sprint 123](sprints/s123/sprint-meta.md)
+- [Sprint 124](sprints/s124/sprint-meta.md)
