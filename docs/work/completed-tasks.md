@@ -2109,4 +2109,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** INT-0008 (discoverable deploy path).
 - **Completed:** 2026-09-07T15:47:15Z
 - **Files modified:** docs/getting-started.md (this commit); crates/ferric-cli/src/human.rs `welcome()` (in commit `424a1dde3f49427de126693720efd2432890b466`).
-- **Commit:** PENDING
+- **Commit:** `48af5ff38659d44f1384b2ca0d22bf89a2172d58`
