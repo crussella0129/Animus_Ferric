@@ -2082,3 +2082,9 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-06T23:46:29Z
 - **Files modified:** crates/ferric-cli/src/lib.rs, crates/ferric-cli/src/main.rs, crates/ferric-cli/src/bin/ferric_lifecycle_test.rs, crates/ferric-cli/src/bin_identity.rs, crates/ferric-cli/src/tailscale_localapi.rs, crates/ferric-cli/Cargo.toml, crates/ferric-cli/tests/source_execution.rs
 - **Commit:** `642e4d249868a4f7fee8a80cf90e593d95b8c692`
+
+## T-12401 (sprint 124)
+- **Description:** Extract server.rs's ~11.7K-line #[cfg(test)] mod tests into server/tests.rs, converting server.rs → server/mod.rs. Halves the file (18,257 → 6,561 lines in mod.rs). Production region byte-identical (verified by diff); crate::server::X and crate::server::tests::X (server_resolution's cross-module helpers) preserved. Behavior-preserving: full workspace green, lifecycle-fixture 5/5, the 11.7K relocated tests pass from the new file.
+- **Completed:** 2026-09-07T00:27:01Z
+- **Files modified:** crates/ferric-cli/src/server.rs (deleted), crates/ferric-cli/src/server/mod.rs, crates/ferric-cli/src/server/tests.rs
+- **Commit:** PENDING
