@@ -427,6 +427,13 @@ mod tests {
         std::os::unix::fs::symlink(target, path).unwrap();
     }
 
+    fn symlink_file(target: &Path, path: &Path) {
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, path).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, path).unwrap();
+    }
+
     #[test]
     fn scan_dir_discovers_gguf_in_an_external_directory() {
         // A models directory that is not a `<workspace>/models` — enumerated
@@ -446,6 +453,18 @@ mod tests {
         let external = tempfile::tempdir().unwrap();
         gguf(external.path(), 0);
         std::fs::create_dir(external.path().join("a-directory.gguf")).unwrap();
+        assert!(scan_dir(external.path(), None).is_err());
+    }
+
+    #[test]
+    fn scan_dir_rejects_a_symlinked_gguf_in_an_external_directory() {
+        // The symlink half of the T-12501 safety clause: a `*.gguf` that is a
+        // symlink in the resolved external directory is refused during the scan,
+        // not admitted as a model — the same `is_link` check the in-workspace
+        // `models/` path always enforced (scan_binding rejects at enumeration).
+        let external = tempfile::tempdir().unwrap();
+        let real = gguf(external.path(), 0);
+        symlink_file(&real, &external.path().join("link.gguf"));
         assert!(scan_dir(external.path(), None).is_err());
     }
 

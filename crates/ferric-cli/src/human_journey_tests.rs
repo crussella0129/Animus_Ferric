@@ -798,6 +798,53 @@ fn human_stale_single_model_still_auto_picks() {
 }
 
 #[test]
+fn human_external_models_dir_end_to_end() {
+    // Run-from-anywhere, end to end: the run/workspace folder holds no models,
+    // and `--models-dir` points at a separate external directory. The full
+    // session must discover and auto-pick the one model there — proving model
+    // discovery is decoupled from the working folder, which is the sprint's
+    // core fix (the second human test launched only inside the repo because
+    // discovery scanned the current folder's `models/`).
+    let run = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let mut header = [0_u8; 24];
+    header[..4].copy_from_slice(b"GGUF");
+    header[4..8].copy_from_slice(&3_u32.to_le_bytes());
+    std::fs::write(external.path().join("only.gguf"), header).unwrap();
+
+    let args = RunArgs {
+        models_dir: Some(external.path().to_path_buf()),
+        ..RunArgs::default()
+    };
+    let io = ScriptedIo::new(&[Some("ask"), Some("y"), Some("/quit")]);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let preparation = FixturePreparation::new("ready");
+    let result = session_with(
+        &args,
+        run.path(),
+        &Config::default(),
+        true,
+        &io,
+        &runtime,
+        Arc::new(AtomicBool::new(false)),
+        &preparation,
+    );
+    result.unwrap();
+    preparation.assert_closed();
+    // The run folder never had a `models/` of its own — discovery came from the
+    // external directory — and the single external model auto-picked with no
+    // picker prompt.
+    assert!(!run.path().join("models").exists());
+    assert!(
+        !io.prompts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|prompt| prompt.contains("Which model"))
+    );
+}
+
+#[test]
 fn human_journey_e2e_matrix() {
     for lines in [vec![None], vec![Some("ask"), Some("n")], vec![Some("quit")]] {
         let root = tempfile::tempdir().unwrap();
