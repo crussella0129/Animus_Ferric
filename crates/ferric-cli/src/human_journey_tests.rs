@@ -774,11 +774,7 @@ fn human_stale_single_model_still_auto_picks() {
     bytes.push(0);
     std::fs::write(&model, bytes).unwrap();
     let next = FixturePreparation::new("ready");
-    let (result, io) = run_fixture(
-        root.path(),
-        &[Some("ask"), Some("y"), Some("/quit")],
-        &next,
-    );
+    let (result, io) = run_fixture(root.path(), &[Some("ask"), Some("y"), Some("/quit")], &next);
     result.unwrap();
     // One model auto-picks even when the saved preference is stale — there is
     // nothing else to choose, so it neither lists nor nags.
