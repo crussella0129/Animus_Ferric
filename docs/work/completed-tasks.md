@@ -2087,4 +2087,4 @@ qualification below after final PR checks reopened Test.**
 - **Description:** Extract server.rs's ~11.7K-line #[cfg(test)] mod tests into server/tests.rs, converting server.rs → server/mod.rs. Halves the file (18,257 → 6,561 lines in mod.rs). Production region byte-identical (verified by diff); crate::server::X and crate::server::tests::X (server_resolution's cross-module helpers) preserved. Behavior-preserving: full workspace green, lifecycle-fixture 5/5, the 11.7K relocated tests pass from the new file.
 - **Completed:** 2026-09-07T00:27:01Z
 - **Files modified:** crates/ferric-cli/src/server.rs (deleted), crates/ferric-cli/src/server/mod.rs, crates/ferric-cli/src/server/tests.rs
-- **Commit:** PENDING
+- **Commit:** `b2cbb0e2a9d97ded633c67c4494cd37f396bf532`
