@@ -8,6 +8,6 @@
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** (one-line description of sprint goal, filled after Plan Phase)
-- **Intents:** (filled after Plan Phase)
+- **Summary:** Begin decomposing server.rs (INT-0009 AC-4): extract its ~11.7K-line test module into server/tests.rs (server.rs → server/mod.rs), halving the file so the 74 production types become legible — the enabling first cut before the production-cluster splits.
+- **Intents:** [INT-0009](../../intents/INT-0009-lean-decomposed-architecture.md) — active; AC-4 first increment (test-module extraction; production-cluster splits remain active follow-on).
 - **Completion evidence:** (filled at Loop Phase)
