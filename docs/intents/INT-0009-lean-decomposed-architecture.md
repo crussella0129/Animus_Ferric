@@ -90,3 +90,12 @@ because the code stays in one crate. Later increments (serving-layer crate,
   This closes INT-0008 T-12028. **AC-2** (serving-layer separability) and **AC-4**
   (large-file module splits, `server.rs` the flagship) remain active follow-on
   increments. State remains active; the intent is not realized.
+- 2026-09-06: Sprint 124 delivered the first **AC-4** increment — extracted
+  `server.rs`'s ~11,700-line test module into `server/tests.rs`
+  (`server.rs` → `server/mod.rs`), taking the file from 18,257 to 6,561 lines so
+  its 74 production types are legible. Production region byte-identical (verified
+  by diff); the cross-module `crate::server::tests::` helpers and every
+  `crate::server::X` path preserved. Full workspace green at `e77f749`, Test
+  verdict clean. The production-cluster splits (`cli` / `runtime` / `managed` /
+  `doctor` / `publication` / `launch` / `adoption`) remain active AC-4 follow-on
+  work (backlog T-12302). State remains active; the intent is not realized.
