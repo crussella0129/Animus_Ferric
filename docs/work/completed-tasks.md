@@ -2102,4 +2102,4 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-07T15:47:15Z
 - **Files modified:** crates/ferric-cli/src/human.rs and crates/ferric-cli/src/human_journey_tests.rs, both in commit `424a1dde3f49427de126693720efd2432890b466`.
 - **EARS verified:** `model_selection_is_by_count`, `no_model_message_names_the_resolved_dir`, `human_repeat_with_multiple_models_always_reasks` (>1 always re-asks), `human_stale_single_model_still_auto_picks` (1 auto-picks, no "saved model choice changed") — all green in the full suite.
-- **Commit:** PENDING
+- **Commit:** `0bff40ac79969bbfdad7db09457e173203f365da`
