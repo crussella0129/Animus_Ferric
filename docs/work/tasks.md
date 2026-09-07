@@ -308,3 +308,8 @@ below remain executable follow-up work; the review did not silently fix them.
 
 - [ ] T-12204 (backlog) [intent: INT-0008]: Add a front-door test seam — a `#[cfg(test)]` `Startup` constructor accepting a synthetic model list, or an injectable `MemoryProbe` threaded into `session_with` — so the won't-fit picker gate gains a full driver E2E rather than only decision-helper coverage (Sprint 122 C-001). — touches: `crates/ferric-cli/src/startup.rs`, `crates/ferric-cli/src/human.rs`, front-door tests
 - [ ] T-12205 (backlog, after T-12204) [intent: INT-0008]: Extend hardware fit to GPU/VRAM discovery and safe layer calibration (the GPU half of T-11507), and feed both RAM and VRAM fit into AC-13's acquisition recommendation. — touches: `crates/ferric-cli/src/startup/memory.rs`, `crates/ferric-cli/src/backend.rs`, `crates/ferric-cli/src/server.rs`
+
+## Sprint 123 — ferric-cli library extraction (INT-0009 AC-1)
+
+- [ ] T-12302 (backlog) [intent: INT-0009]: Split the largest flat files along their existing responsibility clusters into modules/submodules (AC-4) — `server.rs` (~18 K lines) is the flagship: cli / runtime / managed / doctor / publication / launch / adoption, with real-process tests moved to an integration lane. Behavior-preserving, per-cluster reviewable. — touches: `crates/ferric-cli/src/server.rs`, `crates/ferric-cli/src/server*.rs`, `crates/ferric-cli/tests/`
+- [ ] T-12303 (backlog, after T-12302) [intent: INT-0009]: Extract the inference-server / Tailscale / process-ownership cluster into a separate crate so the agent core (loop + tools + provider) builds without the serving layer (AC-2). — touches: new `crates/ferric-serve`, `crates/ferric-cli/Cargo.toml`, `crates/ferric-cli/src/lib.rs`

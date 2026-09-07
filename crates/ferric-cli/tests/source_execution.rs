@@ -48,8 +48,10 @@ fn source_quality_and_feature_matrix() {
 
     // Backend-free CI cannot accidentally include the positive startup/human
     // fixtures that require native listener visibility on Linux.
-    let main = include_str!("../src/main.rs").replace("\r\n", "\n");
-    assert!(main.contains("#[cfg(feature = \"backend-openai\")]\nmod startup;"));
+    // The command surface (including the feature-gated module declarations) now
+    // lives in the library; the binaries are thin shims over it.
+    let lib = include_str!("../src/lib.rs").replace("\r\n", "\n");
+    assert!(lib.contains("#[cfg(feature = \"backend-openai\")]\nmod startup;"));
     let human = include_str!("../src/human.rs").replace("\r\n", "\n");
     assert!(human.contains("#[cfg(feature = \"backend-openai\")]\nmod enabled {"));
     let backend_free_gate = workflow

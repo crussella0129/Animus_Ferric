@@ -418,3 +418,6 @@ the whole intent stays active; no state transition is appended for this progress
   file metadata). This accepts the hardware-informed-recommendation clause of
   AC-13 for the RAM path; AC-13's acquisition/download clause and GPU/VRAM
   calibration remain active follow-on. State remains active; not realized.
+- 2026-09-06: Sprint 123 closed T-12028 (the duplicate-source build warning
+  observed in the human terminal trials) as a consequence of INT-0009's
+  `ferric-cli` library extraction. No AC state change; INT-0008 remains active.
