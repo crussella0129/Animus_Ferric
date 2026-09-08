@@ -36,9 +36,10 @@ impl Preparation for FixturePreparation {
         cfg: &Config,
         model: Option<&Path>,
         cancel: &Arc<AtomicBool>,
+        models_dir: Option<&Path>,
     ) -> Result<Startup, crate::startup::StartupError> {
         crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
-        crate::startup::test_support::begin(root, cfg, model, cancel)
+        crate::startup::test_support::begin(root, cfg, model, cancel, models_dir)
     }
     fn prepare(
         &self,
@@ -630,6 +631,7 @@ fn human_first_run_fatal_accept_error_refuses_and_reaps() {
         &Config::default(),
         None,
         &Arc::new(AtomicBool::new(false)),
+        None,
     )
     .unwrap();
 }
@@ -726,7 +728,7 @@ fn human_first_run_diagnostic_series_child() {
 }
 
 #[test]
-fn human_repeat_reuses_model() {
+fn human_repeat_with_multiple_models_always_reasks() {
     let root = tempfile::tempdir().unwrap();
     fixture_models(root.path(), 2);
     let first = FixturePreparation::new("ready");
@@ -740,13 +742,14 @@ fn human_repeat_reuses_model() {
     let second = FixturePreparation::new("ready");
     let (result, io) = run_fixture(
         root.path(),
-        &[Some("ask"), Some("y"), Some("/quit")],
+        &[Some("1"), Some("ask"), Some("y"), Some("/quit")],
         &second,
     );
     result.unwrap();
-    assert_eq!(setup_decisions(&io), 2);
+    // More than one model always shows the picker — a saved preference is at
+    // most a highlight, never a silent skip.
     assert!(
-        !io.prompts
+        io.prompts
             .lock()
             .unwrap()
             .iter()
@@ -755,7 +758,7 @@ fn human_repeat_reuses_model() {
 }
 
 #[test]
-fn human_stale_single_model_requires_reselection() {
+fn human_stale_single_model_still_auto_picks() {
     let root = tempfile::tempdir().unwrap();
     fixture_models(root.path(), 1);
     let preparation = FixturePreparation::new("ready");
@@ -771,18 +774,69 @@ fn human_stale_single_model_requires_reselection() {
     bytes.push(0);
     std::fs::write(&model, bytes).unwrap();
     let next = FixturePreparation::new("ready");
-    let (result, io) = run_fixture(
-        root.path(),
-        &[Some("1"), Some("ask"), Some("y"), Some("/quit")],
-        &next,
-    );
+    let (result, io) = run_fixture(root.path(), &[Some("ask"), Some("y"), Some("/quit")], &next);
     result.unwrap();
-    assert_eq!(setup_decisions(&io), 3);
+    // One model auto-picks even when the saved preference is stale — there is
+    // nothing else to choose, so it neither lists nor nags.
     assert!(
-        io.output
+        !io.prompts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|prompt| prompt.contains("Which model"))
+    );
+    assert!(
+        !io.output
             .lock()
             .unwrap()
             .contains("saved model choice changed")
+    );
+}
+
+#[test]
+fn human_external_models_dir_end_to_end() {
+    // Run-from-anywhere, end to end: the run/workspace folder holds no models,
+    // and `--models-dir` points at a separate external directory. The full
+    // session must discover and auto-pick the one model there — proving model
+    // discovery is decoupled from the working folder, which is the sprint's
+    // core fix (the second human test launched only inside the repo because
+    // discovery scanned the current folder's `models/`).
+    let run = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let mut header = [0_u8; 24];
+    header[..4].copy_from_slice(b"GGUF");
+    header[4..8].copy_from_slice(&3_u32.to_le_bytes());
+    std::fs::write(external.path().join("only.gguf"), header).unwrap();
+
+    let args = RunArgs {
+        models_dir: Some(external.path().to_path_buf()),
+        ..RunArgs::default()
+    };
+    let io = ScriptedIo::new(&[Some("ask"), Some("y"), Some("/quit")]);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let preparation = FixturePreparation::new("ready");
+    let result = session_with(
+        &args,
+        run.path(),
+        &Config::default(),
+        true,
+        &io,
+        &runtime,
+        Arc::new(AtomicBool::new(false)),
+        &preparation,
+    );
+    result.unwrap();
+    preparation.assert_closed();
+    // The run folder never had a `models/` of its own — discovery came from the
+    // external directory — and the single external model auto-picked with no
+    // picker prompt.
+    assert!(!run.path().join("models").exists());
+    assert!(
+        !io.prompts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|prompt| prompt.contains("Which model"))
     );
 }
 
@@ -881,6 +935,7 @@ fn human_cancel_during_request_reaps_owned_engine() {
         &Config::default(),
         None,
         &Arc::new(AtomicBool::new(false)),
+        None,
     )
     .unwrap();
 }
@@ -950,6 +1005,7 @@ fn real_model_prepared_host_journey() {
         &Config::default(),
         Some(&model),
         &Arc::new(AtomicBool::new(false)),
+        None,
     )
     .unwrap();
 }

@@ -88,7 +88,32 @@ GGUF blobs you can reuse without re-downloading (see
 [llama-cpp.md](llama-cpp.md#2-point-it-at-a-model--reuse-an-ollama-blob-no-re-download)).
 A good starting model for a laptop is a 7B coder such as `qwen2.5-coder`.
 
-### 3c. Bring the server up
+### 3c. The simple way — just run `ferric`
+
+Point `FERRIC_MODELS_DIR` at the folder holding your `.gguf` files — this is what
+lets an installed `ferric` find your models from *any* project folder, instead of
+only a `models/` in the current directory — then run `ferric` where you want to
+work:
+
+```sh
+# once, so ferric finds your models from anywhere (or pass --models-dir per run):
+export FERRIC_MODELS_DIR=/path/to/your/ggufs        # macOS / Linux
+setx    FERRIC_MODELS_DIR C:\path\to\your\ggufs      # Windows (takes effect in new shells)
+
+cd /path/to/your/project
+ferric
+```
+
+Ferric looks in that directory and: **no model** → tells you to drop a GGUF there
+to begin; **one model** → uses it; **several** → asks which (each shown with a fit
+note for your RAM, so an over-large model can't start unnoticed). It then starts
+`llama-server` for you and opens the session **in your project folder** — you do
+not run `server up` yourself. This is the normal way in.
+
+The rest of this section is the **manual / expert** route — for pinning an exact
+engine, attaching a remote server, or Tailscale exposure.
+
+### 3d. Manual server management (expert)
 
 `ferric server` launches and supervises the engine, pinned to loopback:
 

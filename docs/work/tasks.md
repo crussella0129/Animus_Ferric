@@ -315,3 +315,6 @@ below remain executable follow-up work; the review did not silently fix them.
 - [ ] T-12303 (backlog, after T-12302) [intent: INT-0009]: Extract the inference-server / Tailscale / process-ownership cluster into a separate crate so the agent core (loop + tools + provider) builds without the serving layer (AC-2). — touches: new `crates/ferric-serve`, `crates/ferric-cli/Cargo.toml`, `crates/ferric-cli/src/lib.rs`
 
 ## Sprint 124 — begin server.rs decomposition (INT-0009 AC-4)
+
+## Sprint 125 — deployable run-from-anywhere front door (INT-0008)
+

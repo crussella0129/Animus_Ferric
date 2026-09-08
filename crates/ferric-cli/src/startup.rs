@@ -170,16 +170,42 @@ pub(crate) struct Startup {
     config: Config,
 }
 
+/// Resolve where GGUF models are discovered, decoupled from the working folder so
+/// an installed `ferric` run in any project can find them: `--models-dir` flag >
+/// `FERRIC_MODELS_DIR` env > config `models_dir` > `<workspace>/models`. A
+/// relative configured path is taken relative to the workspace.
+pub(crate) fn resolve_models_dir(
+    flag: Option<&Path>,
+    env: &dyn Fn(&str) -> Option<String>,
+    config: Option<&Path>,
+    workspace: &Path,
+) -> PathBuf {
+    let configured = flag
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            env("FERRIC_MODELS_DIR")
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from)
+        })
+        .or_else(|| config.map(Path::to_path_buf));
+    match configured {
+        Some(dir) if dir.is_absolute() => dir,
+        Some(dir) => workspace.join(dir),
+        None => workspace.join("models"),
+    }
+}
+
 impl Startup {
     pub(crate) fn begin(
         workspace: &Path,
         config: &Config,
         explicit_model: Option<&Path>,
         cancel: &Arc<AtomicBool>,
+        models_dir: Option<&Path>,
     ) -> Result<Self, StartupError> {
         let scope = ManagedDiscoveryScope::for_workspace(workspace)
             .map_err(|_| StartupError::cause("The workspace cannot be resolved."))?;
-        Self::begin_in(workspace, config, explicit_model, cancel, scope)
+        Self::begin_in(workspace, config, explicit_model, cancel, scope, models_dir)
     }
 
     fn begin_in(
@@ -188,7 +214,13 @@ impl Startup {
         explicit_model: Option<&Path>,
         cancel: &AtomicBool,
         scope: ManagedDiscoveryScope,
+        models_dir: Option<&Path>,
     ) -> Result<Self, StartupError> {
+        // The resolved models directory is decoupled from the workspace; the
+        // default reproduces the historical `<workspace>/models` behavior.
+        let discovered_dir = models_dir
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| workspace.join("models"));
         config
             .validate()
             .map_err(|error| StartupError::actionable(error.to_string()))?;
@@ -247,7 +279,7 @@ impl Startup {
                     path.extension()
                         .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf"))
                 });
-                let local = models::scan(workspace, explicit_model.or(configured_path))?;
+                let local = models::scan_dir(&discovered_dir, explicit_model.or(configured_path))?;
                 let choices = local
                     .iter()
                     .map(|model| model.choice.clone())
@@ -749,6 +781,7 @@ pub(crate) mod test_support {
         config: &Config,
         explicit_model: Option<&Path>,
         cancel: &Arc<AtomicBool>,
+        models_dir: Option<&Path>,
     ) -> Result<Startup, StartupError> {
         Startup::begin_in(
             workspace,
@@ -759,6 +792,7 @@ pub(crate) mod test_support {
                 workspace: workspace.to_path_buf(),
                 global: None,
             },
+            models_dir,
         )
     }
 

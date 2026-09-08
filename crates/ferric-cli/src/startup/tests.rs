@@ -28,8 +28,43 @@ fn begin_local(workspace: &Path) -> Startup {
         None,
         &AtomicBool::new(false),
         scope(workspace),
+        None,
     )
     .unwrap()
+}
+
+#[test]
+fn resolve_models_dir_precedence() {
+    use super::resolve_models_dir;
+    let ws = Path::new("ws-root");
+    let unset = |_: &str| -> Option<String> { None };
+    let env_set =
+        |k: &str| -> Option<String> { (k == "FERRIC_MODELS_DIR").then(|| "env".to_string()) };
+    // Default: the workspace's `models/` subdir.
+    assert_eq!(
+        resolve_models_dir(None, &unset, None, ws),
+        ws.join("models")
+    );
+    // Config beats default; a relative value is joined to the workspace.
+    assert_eq!(
+        resolve_models_dir(None, &unset, Some(Path::new("cfg")), ws),
+        ws.join("cfg")
+    );
+    // Env beats config.
+    assert_eq!(
+        resolve_models_dir(None, &env_set, Some(Path::new("cfg")), ws),
+        ws.join("env")
+    );
+    // Flag beats env.
+    assert_eq!(
+        resolve_models_dir(
+            Some(Path::new("flag")),
+            &env_set,
+            Some(Path::new("cfg")),
+            ws
+        ),
+        ws.join("flag")
+    );
 }
 
 fn fixture_command(mode: &str, port: u16) -> Command {
@@ -363,6 +398,7 @@ fn startup_borrows_ready_server() {
         None,
         &AtomicBool::new(false),
         scope(directory.path()),
+        None,
     )
     .unwrap();
     assert!(!startup.will_start_engine);
@@ -397,6 +433,7 @@ fn borrowed_server_survives_session_exit() {
         None,
         &AtomicBool::new(false),
         scope(directory.path()),
+        None,
     )
     .unwrap();
     let session = startup
@@ -429,7 +466,8 @@ fn startup_ambiguous_registration_is_nonmutating() {
             &config,
             None,
             &AtomicBool::new(false),
-            scope(directory.path())
+            scope(directory.path()),
+            None,
         )
         .is_err()
     );
@@ -605,6 +643,7 @@ fn startup_concurrent_invocations_serialize() {
             None,
             &AtomicBool::new(false),
             scope(workspace.path()),
+            None,
         );
         // Retain an admitted Startup and its exact lock until both racing
         // attempts have resolved. The winner cannot release early and admit
@@ -838,6 +877,7 @@ fn startup_typed_refusal_matrix_preserves_resources() {
             None,
             &AtomicBool::new(false),
             discovery_scope,
+            None,
         )
         .and_then(|startup| {
             startup.prepare_with(

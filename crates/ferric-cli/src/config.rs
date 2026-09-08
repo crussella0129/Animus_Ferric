@@ -29,6 +29,10 @@ pub struct Config {
     /// `--tier`. Separate from `params_b`, which stays a fact about the model.
     pub tier: Option<crate::query::TierArg>,
     pub profile_dir: Option<PathBuf>,
+    /// Where to discover GGUF models, decoupled from the working folder so an
+    /// installed `ferric` run in any project finds them. Resolved as
+    /// `--models-dir` > `FERRIC_MODELS_DIR` > this > `<workspace>/models`.
+    pub models_dir: Option<PathBuf>,
     pub stream: Option<bool>,
     pub hooks: Option<ferric_core::HooksConfig>,
     /// Skills the user has standing-authorized for this workspace.
@@ -93,6 +97,7 @@ impl Config {
             harness_policy: self.harness_policy.or(user.harness_policy),
             tier: self.tier.or(user.tier),
             profile_dir: self.profile_dir.or(user.profile_dir),
+            models_dir: self.models_dir.or(user.models_dir),
             stream: self.stream.or(user.stream),
             hooks: self.hooks.or(user.hooks),
             allowed_skills: self.allowed_skills.or(user.allowed_skills),
