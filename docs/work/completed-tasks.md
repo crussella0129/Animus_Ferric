@@ -2123,4 +2123,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-1)
 - **Completed:** 2026-09-26T13:02:50Z
 - **Files modified:** crates/ferric-iron/Cargo.toml, crates/ferric-iron/tests/dependency_boundary.rs, Cargo.lock, docs/sprints/s126/sprint-tests/extraction-measurement.md
-- **Commit:** PENDING
+- **Commit:** `ae9bdc5a45d7d6d544e1c5ef8b16f6e6d78d804d`
