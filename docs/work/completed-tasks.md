@@ -2195,4 +2195,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-1 response half, AC-2, AC-3)
 - **Completed:** 2026-09-26T13:14:19Z
 - **Files modified:** crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/README.md, crates/ferric-valve/src/{lib,sse,translate,upstream}.rs, crates/ferric-valve/tests/common/mod.rs, crates/ferric-valve/tests/exchange.rs
-- **Commit:** PENDING
+- **Commit:** `eb1ac06d37ee5cfba63badf829efa958e6b6a894`
