@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0012
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [Sprint 126 T-12605–T-12608 build plan](../sprints/s126/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -56,6 +56,12 @@ Boundaries and non-goals:
   Ferric's Tailscale work stays frozen.
 - **Static first.** The grammar admits every tool Hermes offered in that
   request. Adaptive narrowing belongs to INT-0014.
+- **Record-only measurement mode.** An explicit mode forwards every request
+  byte-for-byte, streaming included, while writing the same receipts. A
+  native comparison arm then runs through the same process and receipt code
+  as the constrained arm, and the constraint transform is the only difference
+  between them. Record-only is never the default and never labeled
+  constrained.
 
 ## Acceptance criteria
 
@@ -147,3 +153,4 @@ machinery, because each request already carries the whole conversation.
 
 - 2026-09-26: created as `proposed` from the owner's direction to bring
   Ferric's constrained decoding to Hermes through Amalgam.
+- 2026-09-26: added the record-only measurement mode to the boundaries so a native arm shares the valve's code path. Then moved from `proposed` to `planned` after the owner approved the Sprint 126 plan, with T-12605 to T-12608 covering AC-1 to AC-4, AC-6 and AC-7, and model-free conformance (AC-5).

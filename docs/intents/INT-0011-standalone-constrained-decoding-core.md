@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0011
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [Sprint 126 T-12601–T-12604 build plan](../sprints/s126/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -46,6 +46,18 @@ In scope, moved rather than rewritten:
   arguments and error outcome.
 - **Constrained-JSON stream scanning**: the early committed tool name and the
   thought and summary progress signals (`crates/ferric-provider/src/stream_scan.rs`).
+- **The protocol's prompt-side conventions**: how offered tools are listed to
+  the model (`- name: description`, today in `crates/ferric-loop/src/run.rs`)
+  and how a tool result is replayed under the constrained protocol
+  (`[tool_result for NAME] output`, today in
+  `crates/ferric-loop/src/projector.rs`). A second harness, such as the
+  INT-0012 valve, needs these to speak the same protocol Ferric's recorded
+  results used.
+
+The XML fallback parser (`parse_action`) is not the constrained path, and it
+depends on `regex`. It may stay with its consumer in `ferric-loop` until a
+later increment justifies moving it without widening the core's dependency
+boundary.
 
 Boundaries:
 
@@ -136,3 +148,4 @@ a named consumer: the valve in INT-0012.
   direction and INT-0006's public-policy truthfulness for the extracted
   contract, and it carries the constraint-provenance part of the abandoned
   INT-0004.
+- 2026-09-26: clarified the scope before planning. The protocol's prompt-side conventions (tool listing, constrained tool-result replay) are named as in scope, and the regex-dependent XML fallback may stay in `ferric-loop` for now. Then moved from `proposed` to `planned` after the owner approved the Sprint 126 plan, with T-12601 to T-12604 covering AC-1, AC-2, AC-4 and the adapter part of AC-3. AC-5 to AC-8 remain for later increments.

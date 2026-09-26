@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0010
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [Sprint 126 T-12610 build plan](../sprints/s126/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -137,3 +137,4 @@ do not serve that goal.
 - 2026-09-26: created as `proposed` from the owner's direction to merge Ferric
   (the Iron) with Hermes Agent (the Mercury) as Animus Amalgam. Sprint 126
   research records the survey of both Books and both codebases.
+- 2026-09-26: moved from `proposed` to `planned` after the owner approved the Sprint 126 plan. T-12610 covers AC-1, AC-3 and AC-5 (charter documentation, ledger triage, project instructions), and the sprint PR restores AC-6's green `main`. AC-4 versioning is not scheduled.

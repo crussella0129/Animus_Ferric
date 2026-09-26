@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0013
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [Sprint 126 T-12609 pilot build plan](../sprints/s126/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -134,3 +134,4 @@ backend's native template grammar has to be a real arm rather than a strawman.
 - 2026-09-26: created as `proposed`. It supersedes INT-0007's calibration and
   measurement direction for the Iron. INT-0007's Ferric-built application
   trial and Sprint Loops compatibility probe are not carried forward.
+- 2026-09-26: moved from `proposed` to `planned` after the owner approved a Sprint 126 pilot (T-12609). It covers two arms (native through record-only, and today's F-thought through the valve) on a four-task corpus with three repetitions, touching AC-1 and part of AC-3. The other arms, the reasoning axis (AC-4) and the verdict (AC-5 to AC-7) remain open.
