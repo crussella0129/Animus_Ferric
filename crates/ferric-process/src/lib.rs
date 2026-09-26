@@ -20,6 +20,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+pub mod memory;
 #[cfg(unix)]
 #[path = "unix.rs"]
 mod platform;
