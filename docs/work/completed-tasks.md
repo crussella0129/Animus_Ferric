@@ -2225,4 +2225,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-4, AC-5, AC-6, record-only boundary, loopback default)
 - **Completed:** 2026-09-26T13:20:32Z
 - **Files modified:** crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/src/{lib,server,receipt,probe,main}.rs, crates/ferric-valve/tests/server.rs, crates/ferric-valve/tests/fixtures/hermes_file_tools.json
-- **Commit:** PENDING
+- **Commit:** `a44b587da5ce9fc75c94a90ec7c2299924e2c1f8`
