@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0003
-- **State:** proposed
+- **State:** abandoned
 - **Work evidence:** [T-11402 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -10,6 +10,8 @@
 - **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md)
 
 ## Intent
+
+> **Abandoned 2026-09-26.** Completion semantics belong to Hermes's loop inside Animus Amalgam; see [INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md).
 
 Give Ferric a typed requirement ledger so `task_complete` means the requested
 obligations have evidence, not merely that tools stopped failing. This is a
@@ -57,3 +59,4 @@ must never silently narrow the user's request.
 ## Transition history
 
 - 2026-08-26: created as `proposed` after Sprint 113 falsified file-evidence alone.
+- 2026-09-26: moved from `proposed` to `abandoned` by the owner's direction change ([INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md)). Hermes owns the conversation and completion in Amalgam, and Ferric's loop is now only the core's test consumer, so a Ferric-side requirement ledger has no product to serve. This is a change of direction, not a falsification. See [Sprint 126 direction research](../sprints/s126/sprint-research/research-report.md).

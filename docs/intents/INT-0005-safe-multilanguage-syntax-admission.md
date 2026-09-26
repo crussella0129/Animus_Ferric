@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0005
-- **State:** active
+- **State:** abandoned
 - **Work evidence:** [T-11405 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-12001 Python 0.5 maintenance](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
 - **Code evidence:** [T-12001 Python 0.5 implementation](../work/completed-tasks.md#t-12001-sprint-120)
@@ -10,6 +10,8 @@
 - **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md); [Sprint 120 scoped acceptance](../sprints/s120/sprint-tests/test-report.md)
 
 ## Intent
+
+> **Abandoned 2026-09-26.** Pre-publication syntax admission belongs to Ferric's own file tools, which are in maintenance under [INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md). The shipped Python admission stays as maintained code.
 
 Extend pre-publication syntax admission beyond Python to supported Rust and
 JavaScript/TypeScript source using bounded, in-process parsing of the exact
@@ -70,3 +72,4 @@ current Test report. This is renewed evidence, not another intent transition.
 - 2026-09-05: moved from `proposed` to `planned` after owner approval of Sprint 120 T-12001. This maintains existing Python admission only; Rust/JavaScript expansion remains T-11405.
 
 - 2026-08-26: created as `proposed` after the Sprint 113 Python boundary repair.
+- 2026-09-26: moved from `active` to `abandoned` by the owner's direction change ([INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md)). Hermes owns file tools in Amalgam, so Rust and JavaScript/TypeScript admission (T-11405) will not be built in Ferric. The accepted Sprint 120 Python increment remains shipped, maintained code and is not reverted. The no-implicit-execution rule for syntax checks remains available to Amalgam as a lesson. See [Sprint 126 direction research](../sprints/s126/sprint-research/research-report.md).

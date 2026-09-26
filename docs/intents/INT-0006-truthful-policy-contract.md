@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0006
-- **State:** active
+- **State:** superseded
 - **Work evidence:** [T-11406 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113); [T-11905 next repository-wide review/refactor](../work/tasks.md#next-sprint--repository-wide-review-and-bounded-refactor); [T-12002 configuration increment](../sprints/s120/sprint-plans/build-plan.md)
 - **Completion evidence:** none
 - **Code evidence:** [T-12002 configuration implementation](../work/completed-tasks.md#t-12002-sprint-120)
@@ -10,6 +10,8 @@
 - **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md); [Current configuration contract](../configuration.md)
 
 ## Intent
+
+> **Superseded 2026-09-26 by [INT-0011](INT-0011-standalone-constrained-decoding-core.md)**, which carries AC-1 to AC-3 (no inert planner, plan-budget or subagent fields in the exported policy) for the extracted core. The accepted configuration increment stays as maintained code.
 
 Make every public run-policy field and capability claim correspond to active,
 tested runtime behavior or an explicit reserved/unavailable state. Ferric must
@@ -90,3 +92,4 @@ scope and active state did not change during checkpoint diagnosis.
   clarification, not a claim that the inert-field audit or refactor is complete.
 
 - 2026-08-26: created as `proposed` from the Sprint 113 dead-policy-field audit.
+- 2026-09-26: moved from `active` to `superseded` by [INT-0011](INT-0011-standalone-constrained-decoding-core.md) under the owner's direction change ([INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md)). Public-policy truthfulness (AC-1 to AC-3) now applies to the extracted core's exported contract, where Amalgam will depend on it. The accepted Sprint 120 configuration increment (AC-5/6) remains shipped. Further Ferric CLI configuration work is maintenance only. See [Sprint 126 direction research](../sprints/s126/sprint-research/research-report.md).

@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0002
-- **State:** proposed
+- **State:** abandoned
 - **Work evidence:** [T-11401 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -10,6 +10,8 @@
 - **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md)
 
 ## Intent
+
+> **Abandoned 2026-09-26.** Ferric's standalone agent surfaces are in maintenance under [INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md); Hermes, inside Animus Amalgam, owns tool execution and verification authority.
 
 Make meaningful verification available to an ordinary Ferric project without
 requiring the operator to remember `--checks-file` on every invocation. The
@@ -58,3 +60,4 @@ verification-capable without silently granting new execution authority.
 ## Transition history
 
 - 2026-08-26: created as `proposed` from the supplied analyses and Sprint 113 wider-field audit.
+- 2026-09-26: moved from `proposed` to `abandoned` by the owner's direction change ([INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md)). This is a change of direction, not a falsification. Hermes, inside Animus Amalgam, owns tool execution and verification, so Ferric will not grow its own default-check profile. The idea that repository text is not execution authority remains available to Amalgam as a lesson. See [Sprint 126 direction research](../sprints/s126/sprint-research/research-report.md).

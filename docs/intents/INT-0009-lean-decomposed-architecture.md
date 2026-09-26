@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0009
-- **State:** active
+- **State:** superseded
 - **Work evidence:** [Sprint 123 ferric-cli library extraction plan](../sprints/s123/sprint-plans/build-plan.md#execution-sequence); [direction & refactor plan](../plans/2026-09-06-direction-and-refactor.md)
 - **Completion evidence:** none
 - **Code evidence:** [T-12301 ferric-cli library extraction](../work/completed-tasks.md#t-12301-sprint-123)
@@ -10,6 +10,8 @@
 - **Documentation evidence:** [direction & refactor plan](../plans/2026-09-06-direction-and-refactor.md)
 
 ## Intent
+
+> **Superseded 2026-09-26 by [INT-0011](INT-0011-standalone-constrained-decoding-core.md).** The decomposition that now has a real reuse win is extracting the constrained-decoding core. Splitting frozen serving code (AC-4, T-12302) is declined under this chapter's own rule against churn without a win.
 
 The agent harness's structure should read the way the crate graph already does:
 a clean, layered core with peripheral concerns as satellites, and no single file
@@ -99,3 +101,4 @@ because the code stays in one crate. Later increments (serving-layer crate,
   verdict clean. The production-cluster splits (`cli` / `runtime` / `managed` /
   `doctor` / `publication` / `launch` / `adoption`) remain active AC-4 follow-on
   work (backlog T-12302). State remains active; the intent is not realized.
+- 2026-09-26: moved from `active` to `superseded` by [INT-0011](INT-0011-standalone-constrained-decoding-core.md) under the owner's direction change ([INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md)). AC-1 was accepted in Sprint 123. AC-2's separability goal is retargeted to the stricter core dependency boundary in [INT-0011](INT-0011-standalone-constrained-decoding-core.md) AC-1. AC-4's `server.rs` production-cluster splits (T-12302) would reorganize code that is now frozen, which this chapter itself declines as churn without a readability or reuse win. See [Sprint 126 direction research](../sprints/s126/sprint-research/research-report.md).
