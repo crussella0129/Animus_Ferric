@@ -2138,3 +2138,28 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T13:04:10Z
 - **Files modified:** crates/ferric-iron/src/openai_tools.rs, crates/ferric-iron/src/lib.rs
 - **Commit:** `31f403972c13a872c01f7e0b559b2a6ed3265675`
+
+## T-12605 (sprint 126)
+- **Description:** Created `crates/ferric-valve` with the pure request transform, which uses no I/O and no clock.
+
+  A Hermes chat-completions request is **constrained** when it has non-empty `tools`, `tool_choice` other than `none`, and no `response_format`. Otherwise it is **pass-through**, with the body byte-identical.
+
+  In constrained mode the transform:
+  - removes `tools`, `tool_choice` and `parallel_tool_calls`, and forces `stream: true`;
+  - sets a strict `response_format.json_schema` named `ferric_action`, built by `ferric_iron::action_schema` over the adapted tools plus the final-answer control (`task_complete`, whose `summary` is the whole reply);
+  - admits controls according to `tool_choice`: `auto` or absent gives all tools plus the reply, `required` gives the tools only, and a named function gives only that tool;
+  - forwards every other field unchanged;
+  - appends the teaching text and `render_tool_listing` to the first system message, or inserts one if none exists.
+
+  History is projected into Ferric's replay convention:
+  - an assistant tool call becomes the compact canonical action, with the thought taken from echoed `reasoning_content`;
+  - a `tool` message becomes `tool_result_text(name, content)`, with the name resolved from `tool_call_id`;
+  - a final answer becomes a canonical `task_complete` action.
+
+  An orphan `tool_call_id` or non-object `arguments` yields a typed `TransformError`, which T-12607 maps to 400. `message_hashes` and `prefix_hash` give content-free receipt identities.
+
+  EARS verified by 14 unit tests in `crates/ferric-valve/src/transform_tests.rs`: mode selection and pass-through (×3), rewrite/insert/forward, `tool_choice` admission, the three history projections, the two typed errors, `transform_is_deterministic` and `appended_turns_preserve_rendered_prefix`. The crate README records the request contract table. Clippy is clean.
+- **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-1, request half)
+- **Completed:** 2026-09-26T13:06:42Z
+- **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-valve/Cargo.toml, crates/ferric-valve/README.md, crates/ferric-valve/src/lib.rs, crates/ferric-valve/src/transform.rs, crates/ferric-valve/src/transform_tests.rs, docs/intents/INT-0012-constrained-valve-at-hermes-boundary.md
+- **Commit:** PENDING

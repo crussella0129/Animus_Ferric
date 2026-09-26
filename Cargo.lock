@@ -767,6 +767,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferric-valve"
+version = "0.1.0"
+dependencies = [
+ "ferric-iron",
+ "hex",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "ferric-vcs"
 version = "0.1.0"
 dependencies = [

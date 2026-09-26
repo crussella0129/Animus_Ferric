@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0012
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 126 T-12605–T-12608 build plan](../sprints/s126/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -154,3 +154,4 @@ machinery, because each request already carries the whole conversation.
 - 2026-09-26: created as `proposed` from the owner's direction to bring
   Ferric's constrained decoding to Hermes through Amalgam.
 - 2026-09-26: added the record-only measurement mode to the boundaries so a native arm shares the valve's code path. Then moved from `proposed` to `planned` after the owner approved the Sprint 126 plan, with T-12605 to T-12608 covering AC-1 to AC-4, AC-6 and AC-7, and model-free conformance (AC-5).
+- 2026-09-26: moved from `planned` to `active` when Sprint 126 Build began T-12605 (valve request transform), after the T-12602 extraction gate passed.

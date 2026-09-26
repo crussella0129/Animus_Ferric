@@ -19,6 +19,7 @@ members = [
     "crates/ferric-cli",
     "crates/ferric-vcs",
     "crates/ferric-skills",
+    "crates/ferric-valve",
 ]
 
 [workspace.package]
@@ -105,3 +106,4 @@ ferric-icm = { path = "crates/ferric-icm" }
 ferric-cron = { path = "crates/ferric-cron" }
 ferric-vcs = { path = "crates/ferric-vcs" }
 ferric-skills = { path = "crates/ferric-skills" }
+ferric-valve = { path = "crates/ferric-valve" }
