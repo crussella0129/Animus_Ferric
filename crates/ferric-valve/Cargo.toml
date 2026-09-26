@@ -9,6 +9,14 @@ repository.workspace = true
 [dependencies]
 ferric-iron = { workspace = true }
 hex = { workspace = true }
+reqwest = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+
+[dev-dependencies]
+# The integration tests stand up a scripted fake upstream on loopback.
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "time", "sync"] }
+tokio-stream = { workspace = true }

@@ -44,3 +44,34 @@ The final-answer control is `task_complete`, with `summary` described as the
 complete reply to the user. The same transform always produces the same
 bytes, and appending turns only appends projected messages, so a backend
 prefix cache survives from request to request.
+
+## Response contract (upstream to Hermes)
+
+The upstream request always streams. How the finished constrained action
+reaches the client:
+
+| Upstream outcome | Final message | `finish_reason` |
+|---|---|---|
+| Offered tool | `content: null`, `reasoning_content` = thought, one `tool_calls` entry (arguments as compact JSON) | `tool_calls` |
+| `task_complete` | `content` = `summary`, `reasoning_content` = thought | `stop` |
+| Upstream `finish_reason: length` | no content, no `tool_calls` (the partial action is never parsed) | `length` |
+| Unparsable output, or a tool that was not offered | Non-streaming: HTTP 502 with an OpenAI `error` body. Streaming: an in-band `error` event and no `[DONE]` | none |
+| Upstream non-2xx or unreachable | HTTP 502 with the upstream status and a bounded excerpt of its error body; no retry | none |
+
+Streaming order:
+
+1. a role chunk;
+2. `reasoning_content` deltas as the thought decodes;
+3. the tool name as soon as the scanner commits to an offered tool;
+4. the arguments, or the final answer as `content`, once the action parses;
+5. a finish chunk, then `data: [DONE]`.
+
+The final answer and the arguments are held until the action parses, so a
+truncated completion never reaches the client as a partial answer. If a
+completion is truncated after the tool name has streamed, its arguments are
+never sent. An empty-delta heartbeat is sent only when upstream bytes have
+arrived since the last chunk, so a wedged upstream still looks stale to the
+client.
+
+When the client disconnects, the upstream response is dropped and its
+connection closes, which is how llama.cpp stops generating.

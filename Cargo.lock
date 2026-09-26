@@ -770,11 +770,15 @@ dependencies = [
 name = "ferric-valve"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "ferric-iron",
  "hex",
+ "reqwest",
  "serde_json",
  "sha2",
  "thiserror 2.0.20",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

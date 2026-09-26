@@ -321,7 +321,6 @@ below remain executable follow-up work; the review did not silently fix them.
 
 ## Sprint 126 — the Iron: extraction, valve, real-Hermes pilot (INT-0010..0013)
 
-- [ ] T-12606 (sprint 126) [intent: INT-0012]: Valve upstream streaming and honest response translation — touches: crates/ferric-valve/src/
 - [ ] T-12607 (sprint 126) [intent: INT-0012]: Valve receipts, startup enforcement probe, record-only mode, loopback CLI — touches: crates/ferric-valve/src/
 - [ ] T-12608 (sprint 126) [intent: INT-0012]: Source-defined real-Hermes E2E runner; 7B bring-up, 27B readiness and cancellation — touches: crates/ferric-valve/examples/, crates/ferric-valve/e2e/, crates/ferric-process/src/memory.rs, crates/ferric-cli/src/startup/, docs/sprints/s126/sprint-tests/e2e-tests.md
 - [ ] T-12609 (sprint 126) [intent: INT-0013]: Native-vs-valve pilot on the 27B with independent checkers and report — touches: crates/ferric-valve/e2e/tasks/, crates/ferric-valve/examples/hermes_pilot.rs, docs/sprints/s126/sprint-tests/pilot/

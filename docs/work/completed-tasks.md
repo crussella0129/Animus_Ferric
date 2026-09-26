@@ -2163,3 +2163,36 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T13:06:42Z
 - **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-valve/Cargo.toml, crates/ferric-valve/README.md, crates/ferric-valve/src/lib.rs, crates/ferric-valve/src/transform.rs, crates/ferric-valve/src/transform_tests.rs, docs/intents/INT-0012-constrained-valve-at-hermes-boundary.md
 - **Commit:** `93a61ed2b73cc8e5da20ac50d7b52d0c2f8a47fb`
+
+## T-12606 (sprint 126)
+- **Description:** The valve's upstream exchange and honest response translation.
+
+  `run_constrained` posts the constrained body upstream (always streaming), feeds `delta.content` through `ferric_iron::ConstrainedJsonScanner` via the pure `ActionAssembler`, and captures `finish_reason` plus llama.cpp `timings`/`usage` into `UpstreamStats`: prompt, evaluated, cached and predicted tokens and times.
+
+  Streaming emits, in order: a role chunk; `reasoning_content` deltas for the thought; the tool name once, early; then the arguments or final answer, held until the action parses; a finish chunk; `[DONE]`.
+
+  Heartbeats (empty-delta chunks) fire only when upstream bytes arrived since the last downstream chunk. Client disconnect is watched throughout, and dropping the upstream response closes its connection.
+
+  Failure handling:
+  - An upstream non-2xx or connection failure is reported before any byte streams, so the server can answer 502. No retry.
+  - An unparsable action or an unoffered tool becomes an in-band `error` event with no `[DONE]` when streaming, and an error outcome otherwise.
+  - `length` yields finish `length`, with no content and no `tool_calls`.
+
+  EARS verified by unit tests in `translate.rs` and `sse.rs`:
+  - `translate_tool_action`, `translate_final_answer`, `translate_length_is_not_parsed`, `translate_rejects_unparsable`, `translate_rejects_unoffered_tool`, `native_reasoning_passes_through`;
+  - `sse_lines_split_across_reads`, plus 2 more.
+
+  Integration tests in `tests/exchange.rs`, against a scripted loopback fake upstream:
+  - `stream_tool_call_end_to_end`, `stream_final_answer_end_to_end`, `stream_chunk_order`, `nonstream_equals_assembled_stream`;
+  - `heartbeat_only_on_upstream_progress`, `no_heartbeat_when_upstream_stalls`;
+  - `length_truncation_is_reported`, `malformed_upstream_reports_error_in_band`;
+  - `upstream_http_error_is_reported_before_start`, `upstream_unreachable_is_reported_before_start`;
+  - `client_disconnect_closes_upstream` (the fake observes its stream abandoned within bounds).
+
+  11/11 passed in three consecutive runs, and clippy is clean.
+
+  Refinement of the locked clause: after streaming has begun, HTTP status can no longer change, so a streamed invalid action is an explicit in-band OpenAI `error` event rather than HTTP 502. The 502 status for non-streaming requests and pre-start failures is asserted at the server level in T-12607. If truncation lands after the early tool-name delta, the arguments are never sent, and the name-only call with empty arguments cannot validate as a complete call.
+- **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-1 response half, AC-2, AC-3)
+- **Completed:** 2026-09-26T13:14:19Z
+- **Files modified:** crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/README.md, crates/ferric-valve/src/{lib,sse,translate,upstream}.rs, crates/ferric-valve/tests/common/mod.rs, crates/ferric-valve/tests/exchange.rs
+- **Commit:** PENDING
