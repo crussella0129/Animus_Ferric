@@ -7,6 +7,7 @@
 //! constraint for a llama.cpp backend, and turns the constrained action back
 //! into an ordinary OpenAI response. It is stateless per request.
 
+pub mod pilot;
 pub mod probe;
 pub mod receipt;
 pub mod server;

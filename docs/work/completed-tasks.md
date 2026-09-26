@@ -2226,3 +2226,33 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T13:20:32Z
 - **Files modified:** crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/src/{lib,server,receipt,probe,main}.rs, crates/ferric-valve/tests/server.rs, crates/ferric-valve/tests/fixtures/hermes_file_tools.json
 - **Commit:** `a44b587da5ce9fc75c94a90ec7c2299924e2c1f8`
+
+## T-12608 (sprint 126)
+- **Description:** Real Hermes through the Ferric valve, from a source-defined runner.
+
+  **Prerequisite.** Commit `a91231a` moved the Sprint 122 system-memory probe, behavior-preserving, into `ferric_process::memory` so the runner can gate on RAM without depending on the frozen CLI.
+
+  **Pure support (`ferric_valve::pilot`, 10 unit tests):**
+  - `check_lab_root`, which refuses labs inside either repository after canonicalization;
+  - `admit`, covering the CPU-resident weight share plus KV and headroom against available memory, where unknown is refused;
+  - `session_deadline`, set to margin × requests × (context/prefill rate + cap/decode rate) with no fixed constant;
+  - `prefixes_extend`, plus task checkers and tool-call validity.
+
+  **Runner (`examples/hermes_pilot.rs`):**
+  - owns llama-server and each Hermes driver through `ProcessTree`, recording a reap proof per child, and runs the valve in-process;
+  - measures rates, then runs the live enforcement probe;
+  - gives each session a disposable `HERMES_HOME`, redirects `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`, clears the environment to an allowlist, uses Amalgam's lab session config, erases the slot first, and offers the `file` toolset only.
+
+  **Driver (`e2e/hermes_driver.py`)** mirrors Amalgam's `driver.py`; `ruff format --check` and `ruff check` are clean. The corpus is `e2e/tasks.json`.
+
+  **Live results (`docs/sprints/s126/sprint-tests/e2e-tests.md`):**
+  - The first run found Hermes's 64K context floor. The repair was config-only, adopting the Amalgam lab's pin plus compression-off; no valve code changed.
+  - 7B bring-up: `lookup` and `no_tool` are complete, the second request reused 2,531 cached tokens, and prefixes extend.
+  - 27B readiness: `lookup` is complete through `search_files` → `read_file` → answer (37/26/27 decoded tokens per action, continuations reusing 2,561 and 2,656 cached tokens); `no_tool` is complete; prefixes extend.
+  - 27B cancellation: the receipt shows `cancelled`, and the slot was idle 4.88 s after the interrupt.
+
+  All children were reaped. ferric-valve passes 38 unit, 11 exchange and 12 server tests, and clippy (all targets) is clean.
+- **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-7, AC-3 live)
+- **Completed:** 2026-09-26T13:51:26Z
+- **Files modified:** crates/ferric-process/src/memory.rs, crates/ferric-process/{lib.rs,Cargo.toml}, crates/ferric-cli/src/startup/memory.rs, crates/ferric-cli/Cargo.toml (commit `a91231a`); crates/ferric-valve/src/pilot.rs, crates/ferric-valve/src/lib.rs, crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/examples/hermes_pilot.rs, crates/ferric-valve/e2e/hermes_driver.py, crates/ferric-valve/e2e/tasks.json, docs/sprints/s126/sprint-tests/e2e-tests.md, docs/sprints/s126/sprint-tests/e2e/ (this commit)
+- **Commit:** PENDING

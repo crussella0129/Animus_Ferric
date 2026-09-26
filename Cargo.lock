@@ -772,7 +772,9 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "ferric-core",
  "ferric-iron",
+ "ferric-process",
  "hex",
  "reqwest",
  "serde",

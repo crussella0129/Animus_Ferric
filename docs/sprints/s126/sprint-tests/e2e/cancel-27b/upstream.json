@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "-m",
+    "<model>",
+    "-c",
+    "16384",
+    "-ngl",
+    "24",
+    "-fa",
+    "on",
+    "-ctk",
+    "q8_0",
+    "-ctv",
+    "q8_0",
+    "-np",
+    "1",
+    "--jinja",
+    "--cache-ram",
+    "0",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "8181",
+    "--no-webui"
+  ],
+  "load_seconds": 7.0306164,
+  "build_info": "b10964-b29c606e2",
+  "total_slots": 1,
+  "n_ctx": 16384
+}
