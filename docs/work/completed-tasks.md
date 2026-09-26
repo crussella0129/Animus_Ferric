@@ -2255,4 +2255,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-7, AC-3 live)
 - **Completed:** 2026-09-26T13:51:26Z
 - **Files modified:** crates/ferric-process/src/memory.rs, crates/ferric-process/{lib.rs,Cargo.toml}, crates/ferric-cli/src/startup/memory.rs, crates/ferric-cli/Cargo.toml (commit `a91231a`); crates/ferric-valve/src/pilot.rs, crates/ferric-valve/src/lib.rs, crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/examples/hermes_pilot.rs, crates/ferric-valve/e2e/hermes_driver.py, crates/ferric-valve/e2e/tasks.json, docs/sprints/s126/sprint-tests/e2e-tests.md, docs/sprints/s126/sprint-tests/e2e/ (this commit)
-- **Commit:** PENDING
+- **Commit:** `3d584d9208f1dc1eab4deef9b7d2b77d0d4e67b1`
