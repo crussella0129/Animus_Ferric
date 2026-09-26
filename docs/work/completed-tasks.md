@@ -2281,4 +2281,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0013](../intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md) (AC-1, and AC-3 at pilot scope)
 - **Completed:** 2026-09-26T15:54:17Z
 - **Files modified:** crates/ferric-valve/src/pilot.rs, crates/ferric-valve/examples/hermes_pilot.rs, crates/ferric-valve/examples/pilot_report.rs, docs/sprints/s126/sprint-tests/pilot/, docs/sprints/s126/sprint-tests/e2e-tests.md, docs/intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md
-- **Commit:** PENDING
+- **Commit:** `a77b4983d17602c7211db895b3e634888b046380`
