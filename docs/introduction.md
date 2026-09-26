@@ -1,5 +1,21 @@
 # Why Animus?
 
+> **Where Ferric stands now (2026-09-26).** Ferric is the Iron of
+> [Animus Amalgam](https://github.com/crussella0129/Animus_Amalgam), the Animus
+> Project's fork of Hermes Agent. Hermes, inside Amalgam, is the agent people
+> use: its conversation, tools, memory and interface. Ferric supplies what
+> Hermes lacks entirely, harness-owned constrained decoding. It does that
+> through a standalone core (`ferric-iron`) and an OpenAI-compatible valve
+> (`ferric-valve`) that Hermes's custom endpoint points at.
+>
+> The design target has moved up to mid-size quantized models, roughly 20–35B
+> at about Q4 with partial GPU offload. Small models remain the floor.
+>
+> The standalone assistant this chapter introduces is in maintenance. The
+> philosophy below, that the harness is the spine and owns decoding, is
+> exactly what Ferric now contributes to Amalgam. See
+> [INT-0010](intents/INT-0010-ferric-is-the-iron-of-amalgam.md).
+
 **Animus Ferric** is a local-first, agentic coding harness built for *small*
 models — the kind that run on a laptop, a Jetson, or a Raspberry Pi, with no API
 key and no data leaving the machine. This book is its manual, and also, by

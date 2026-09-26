@@ -2256,3 +2256,14 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T13:51:26Z
 - **Files modified:** crates/ferric-process/src/memory.rs, crates/ferric-process/{lib.rs,Cargo.toml}, crates/ferric-cli/src/startup/memory.rs, crates/ferric-cli/Cargo.toml (commit `a91231a`); crates/ferric-valve/src/pilot.rs, crates/ferric-valve/src/lib.rs, crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/examples/hermes_pilot.rs, crates/ferric-valve/e2e/hermes_driver.py, crates/ferric-valve/e2e/tasks.json, docs/sprints/s126/sprint-tests/e2e-tests.md, docs/sprints/s126/sprint-tests/e2e/ (this commit)
 - **Commit:** `3d584d9208f1dc1eab4deef9b7d2b77d0d4e67b1`
+
+## T-12610 (sprint 126)
+- **Description:** Charter documentation and ledger triage (INT-0010).
+  - **Landing docs.** `README.md` now opens with Ferric as the Iron of Animus Amalgam: the ownership split table, the `ferric-iron` and `ferric-valve` roles, and the 20–35B Q4 target, with INT-0013 measuring rather than assuming. The standalone assistant moves under "The standalone assistant (maintenance)", with its `cargo r` block, command table and guarantees intact, and a "Running the valve with Hermes" section is added. `docs/README.md` and `docs/introduction.md` state the same role and envelope and mark the standalone pages as truthful but maintenance-only.
+  - **Project instructions.** `CLAUDE.md` and `AGENTS.md` gain a direction section: Iron work first, standalone surfaces maintenance-only, Amalgam's Book is Amalgam's.
+  - **Ledger triage.** In `docs/work/tasks.md`, the 17 sections holding open tasks from standalone surfaces or closed intents are relabeled "Maintenance — <area> [<closed intent or area>]", under a triage preface. No task line was changed or deleted.
+  - **Verification.** New doc guards in `crates/ferric-cli/tests/charter_docs.rs`: `landing_docs_state_iron_role`, `open_tasks_are_triaged` (mutation control: un-labeling one section fails it), `task_line_count_not_reduced` (task lines plus completion entries at least the 51af84e baseline of 122 + 215; tasks only move between ledgers), and `project_instructions_state_direction`. The existing guards (`human_docs`, `budget_docs`, `getting_started_doc`, `template_hygiene`) pass unchanged.
+- **Intent:** [INT-0010](../intents/INT-0010-ferric-is-the-iron-of-amalgam.md) (AC-1, AC-3, AC-5)
+- **Completed:** 2026-09-26T13:55:22Z
+- **Files modified:** README.md, docs/README.md, docs/introduction.md, CLAUDE.md, AGENTS.md, docs/work/tasks.md, crates/ferric-cli/tests/charter_docs.rs, docs/intents/INT-0010-ferric-is-the-iron-of-amalgam.md
+- **Commit:** PENDING

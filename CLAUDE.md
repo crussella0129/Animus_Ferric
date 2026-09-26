@@ -3,6 +3,23 @@
 Project-specific instructions. These take precedence over the global
 `~/.claude/CLAUDE.md`.
 
+## Direction: Ferric is the Iron of Animus Amalgam
+
+Since 2026-09-26 ([INT-0010](docs/intents/INT-0010-ferric-is-the-iron-of-amalgam.md)),
+Ferric supplies harness-owned constrained decoding to Animus Amalgam, the
+owner's fork of Hermes Agent.
+
+- **Iron work first.** That means the constrained-decoding core
+  (`crates/ferric-iron`), the OpenAI-compatible valve Hermes points at
+  (`crates/ferric-valve`), and component-level evidence (INT-0011 to
+  INT-0014).
+- **Standalone surfaces are maintenance-only.** This covers the human front
+  door, server lifecycle and Tailscale, ICM, cron, Ornstein, skills, MCP,
+  Animus Launch and the autonomy runner. They get fixes, not features.
+  Retiring any of them needs its own owner-approved intent.
+- **Amalgam's Book is Amalgam's.** Hermes integration and session-level
+  qualification belong to its own Book. Do not edit it from a Ferric sprint.
+
 ## Branching: two branches, and only two
 
 **This repository has exactly two branches: `main` and `dev`.** Set by the

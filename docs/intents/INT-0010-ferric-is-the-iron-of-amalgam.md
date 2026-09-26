@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0010
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 126 T-12610 build plan](../sprints/s126/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -138,3 +138,4 @@ do not serve that goal.
   (the Iron) with Hermes Agent (the Mercury) as Animus Amalgam. Sprint 126
   research records the survey of both Books and both codebases.
 - 2026-09-26: moved from `proposed` to `planned` after the owner approved the Sprint 126 plan. T-12610 covers AC-1, AC-3 and AC-5 (charter documentation, ledger triage, project instructions), and the sprint PR restores AC-6's green `main`. AC-4 versioning is not scheduled.
+- 2026-09-26: moved from `planned` to `active` when Sprint 126 Build began T-12610 (charter documentation and ledger triage).

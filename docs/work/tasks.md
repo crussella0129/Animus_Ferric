@@ -1,16 +1,24 @@
 # Refactoring Tasks (From Architecture Report)
 
+Since 2026-09-26, Ferric is the Iron of Animus Amalgam
+([INT-0010](../intents/INT-0010-ferric-is-the-iron-of-amalgam.md)). Sections
+headed **Maintenance —** hold backlog from standalone Ferric or from closed
+intents. Each heading names its area or closed intent. That work is accepted
+only as maintenance (fixes, no new features) unless a live intent promotes
+it. Live Iron work references INT-0010 to INT-0014. No task was deleted in
+this triage.
+
 ## Next sprint — repository-wide review and bounded refactor
 
 - [x] T-11905 [intent: INT-0006, INT-0008]: Repository-wide selective review and bounded human-first refactor completed in Sprint 120; coverage spans all sixteen crates, not an exhaustive security seal. [Review and umbrella completion](completed-tasks.md#t-11905-sprint-120) retain findings, selected implementation and accepted Test evidence. Unselected remediation remains below and in T-11406.
 
-## animus-launch
+## Maintenance — animus-launch [standalone Animus Launch]
 - [ ] Migrate `std::fs` to `tokio::fs` for async filesystem operations in project scaffolding.
 
-## ferric-bench
+## Maintenance — ferric-bench [ferric-bench refactor backlog]
 - [ ] Decouple Validation from Traces in `src/verify.rs` by introducing an `Assertion` trait.
 
-## ferric-cli
+## Maintenance — ferric-cli [standalone CLI]
 - [ ] Consolidate configuration precedence by merging `config.rs` and `backend.rs` into a unified `ConfigManager`.
 
 ## ferric-core
@@ -39,13 +47,13 @@
 - [x] **Direct Terminal Passthrough:** Allow commands prefixed with `!` or `/run` in the chat UI to execute instantly via `shell_exec` without LLM roundtripping. *(Sprint 78, ADR-069 — `ferric chat` `!<cmd>`/`/run <cmd>` runs through the guarded `shell_exec` chokepoint (command denylist still enforced), human-initiated, no LLM, not folded into talk history. A lazily-created tokio runtime backs the sync REPL.)*
 - [x] **Agentic Cron Jobs:** Introduce a `.ferric/cron/` directory and background watcher to schedule periodic agent tasks (e.g., `/dream every 12 hours`). *(Sprint 75, ADR-066 — `ferric-cron` crate (schedule/due/state, pure) + `ferric cron add`/`list`/`run`/`watch`. Jobs run a bounded set of Ferric subcommands (`dream`/`query`), never arbitrary shell. See `docs/cron.md`. Deferred: crontab expressions, detached daemon w/ runfile.)*
 
-## ferric-provider
+## Maintenance — ferric-provider [provider refactor backlog]
 - [ ] Optimize SSE streaming in `src/stream_scan.rs` using `bytes::BytesMut` and `serde_json::StreamDeserializer` instead of `String` buffering.
 
 ## ferric-research
 - [x] Define a `Retriever` trait in `retriever.rs` to implement a plugin architecture for external system integration. *(Done: `retriever.rs:49`, ADR-041 — Local-FS / Tailnet-FS / Web planes implement it.)*
 
-## General Architecture & Observability
+## Maintenance — General Architecture & Observability [standalone architecture backlog]
 - [x] **Observability:** Integrate `tracing` and `tracing-subscriber` crates to provide robust, leveled debug logging across all crates (distinct from the LLM trace JSONL). *(Sprint 72, ADR-063: `ferric-cli` owns a stderr, quiet-by-default subscriber (`-v`/`FERRIC_LOG`); `ferric-loop`/`ferric-tools`/`ferric-provider` emit spans + leveled events. Guard stays pure — its denials are logged at the registry chokepoint.)*
 - [ ] **Tool Registration Macros:** Refactor `ferric-tools` to use a procedural macro (e.g., `#[ferric_tool]`) or `typetag` to automatically discover and register tools, reducing boilerplate in `builtin/mod.rs`.
 - [ ] **Parallel Tool Execution:** Extend the `Tool` trait in `ferric-core` to declare read/write side-effects, allowing `ferric-loop` to safely dispatch parallelizable tool calls (like multiple `read_file`s) concurrently.
@@ -66,7 +74,7 @@ the Dark Matter divergence were each demonstrated by a test written to fail.
 - [x] **Cleanups, all proven safe.** Remove the 6 unused deps (verified: workspace compiles without them); delete the root `test-sweep-prompt.txt` duplicate; rename `prompts/protocol-unified-grammar.md` to `protocol-text-xml.md`; drop `LoopState.registry_tools`, `SandboxConfig::default()`, and either surface or delete `_parse_error`. *(Done sprint 83, ADR-073 — 6 deps removed (verified by compiling without them), duplicate file deleted, prompt atom renamed, `registry_tools` dropped; `SandboxConfig::default()` and `_parse_error` resolved by USE rather than deletion.)*
 - [x] **Dark Matter contract decision.** Ferric requires `query`; DM requires `target` and makes `query` optional, so a DM-legal call is hard-rejected. Ferric returns markdown; DM specifies `{chunks:[{uri,text,score}], truncated}`. Either DM narrows INV-3 to one-corpus-per-stage or Ferric grows `target`. Harden DM's `test_ferric_citations_resolve`: it checks two files exist, neither being `fetch_reference.rs`, and passes on skip. *(Partly done sprint 84, ADR-074 — Ferric accepts `target`, `query` is optional, truncation is signalled, and DM's verifier now reads the real descriptor. STILL OPEN: the return shape (DM's JSON envelope vs markdown), which needs an A/B because it changes what every small model sees.)*
 
-## Round-2 verification (sprint 85) — `docs/verification-2026-07-round2.md`
+## Maintenance — Round-2 verification (sprint 85) — `docs/verification-2026-07-round2.md` [standalone verification backlog]
 Three of these four are regressions introduced by sprints 83–84. The first three
 items below were in the sprint-82 report but were never entered here — they lived
 only in a README "Next" line, which is how they went three sprints without being
@@ -116,7 +124,7 @@ test ever ran the real `tailscale` CLI.
 - [x] **A second, weaker model for failure-mode testing.** The ZimaBoard2 GGUF library was not reachable: it is online on the tailnet (100.95.64.15) with SMB 445/139 open, but it has no sshd, `net view` fails over tailscale (RPC), and no `Y:` drive is currently mapped. Guessing share names (ARK/models/media/data/Public/CasaOS) all failed. **Needs the exact share name or a mounted drive letter from the user.** *(Done sprint 88 — downloaded Qwen2.5-Coder-3B-Instruct-Q4_K_M (1.93 GB, ungated) into models/ rather than mounting the share. Same family as the 7B, so size is the only variable.)*
 
 
-## Sprint 88 follow-ups
+## Maintenance — Sprint 88 follow-ups [standalone follow-ups]
 - [x] **E2 posture decision — now with live evidence.** Live measurement (ADR-078) shows sentence-granularity substring taint is weak in BOTH directions: a benign prefix of a digest sentence is allowed, and so would be a paraphrased injection. Decide the posture knowing that: default the research path to `Warn`; or replace substring taint with something that survives paraphrase; or document `--research` + `Deny` as read-mostly. Re-tuning `MIN_TAINT_SEGMENT_CHARS` is NOT a fix. *(Resolved sprint 90, ADR-080 — Option 4 (approval form): structural Provenance gate replaces substring taint; TaintSet deleted. Default RequireApproval; clean runs never gated. Validated live in all three cases.)*
 - [x] **Fleet re-calibration with the new 3B.** `ferric bench` has not run since sprints 25–26. `Qwen2.5-Coder-3B` is now local alongside the 7B — same family, so a calibration run isolates size and refreshes the capability map that `measured_level` depends on. *(Done sprint 95, ADR-086 — 3B=4/Small (new), 7B=6/Large (confirmed, clean sweep). Found and fixed two calibrator defects: a partial --level sweep downgraded stored profiles, and non-monotonic ladders were silently flattened by max(passed).)*
 - [ ] **A5's sandbox is still unrun.** Docker absent; only `docker_args()` is tested.
@@ -134,12 +142,12 @@ test ever ran the real `tailscale` CLI.
 - [x] **D2 — wire `WebRetriever` into the binary.** Now unblocked: the mechanism exists (`Airlock::start` + `NetworkPolicy::Airlock`) and is verified live. What remains is wiring — a CLI surface for the web plane, the allowlist as configuration (`.ferric/config.toml`), and deciding whether an airlock is per-run or per-query. Note the cost: standing up a gateway is ~15s, so a per-query airlock would be slow; a per-run one shares an allowlist across queries. *(Done sprint 94, ADR-085 — --research-url flag, allowlist derived from the URLs themselves, one airlock per run, gVisor default with a named opt-out. Verified live end to end including the contamination gate.)*
 - [x] **Gateway image cost.** Each `Airlock::start` runs `apk add tinyproxy` inside a fresh alpine container (~10s). A prebuilt image, or a reused gateway with a rewritten filter, would cut that — worth doing before the web plane is used in anger, not before. *(Done sprint 96, ADR-087 — but **the ~10s premise was wrong**. Measured old vs new on the same machine: 2.72s → 2.08s. The 10–15s in ADR-083 came from a suite run that included the alpine pull. The real win is that the airlock no longer depends on reaching the Alpine mirror at start time — an external availability dependency removed from the security boundary. Building it also exposed a worse bug: all three live airlock tests skipped-and-passed when `start` failed, **after** the Docker gate had already passed. Fixed with `start_or_fail`.)*
 
-## Template readiness (sprint 105, ADR-096)
+## Maintenance — Template readiness (sprint 105, ADR-096) [template readiness]
 - [x] **Detach the repo from the machine that grew it.** Applied sprint 97's `docker/.env` lesson everywhere else it held. Untracked `sprints/` (**139 files that were tracked while already gitignored** — `.gitignore` does not untrack), `scratch/`, and `benchmarks/results.jsonl`; `git rm --cached` only, so every file stays on disk. Machine identity out of the Rust fixtures (tailnet IP/MagicDNS suffix/hostname/node id in `server.rs`; device names, IPs and the owner's account handle in `retriever.rs`) — shapes kept exactly, addresses still inside Tailscale's real `100.64.0.0/10` range so the fixtures stay representative. `run_benchmarks.ps1`'s hardcoded GGUF default became a required parameter. **The behavioural one: `benchmarks/model_profiles.json`** — ADR-029 reads it back and lets `measured_level` override the params prior in both directions, so a tracked copy handed every fresh checkout a tier measured on other hardware at an unpinned quantization; now gitignored with a `.example` whose measurements are `null`. New `template_hygiene.rs` ratchets it, and was shown failing against a planted leak.
 - [ ] **DECISION FOR THE USER — the git history still carries what the tree no longer does.** `decisions.md` and `agent-tasks/` were deliberately not scrubbed (rewriting the ADRs to remove the machine that produced the measurements would falsify the evidence they cite), and untracking never removes anything from history. If this is published, tailnet addresses and device names go with it. Removing them needs a history rewrite — a destructive force-push on a shared branch — which is the owner's call, not something to do unasked.
 - [x] **Not yet reviewed for template-readiness:** whether a fresh user has a documented path from clone to first run (a quickstart that assumes no `Animus/` sibling directory, no pre-pulled GGUF, and no `.ferric/` state). *(Verified sprint 108, ADR-099 — **it does, and the docs are accurate.** Walked `docs/getting-started.md` end-to-end from a clean clone of `dev`: Rust pin 1.96 matches, `--version` matches, the no-feature build produces a working binary, and its documented split holds exactly — `trace`/`icm init`/`cron list`/`launch`/every `--mock` path work, while `bench`/`dream`/`api` fail with the one-definition `BACKEND_FEATURE_MISSING` message and exit non-zero. `query --mock` runs to `task_complete` with no engine and no model; `server up` returns in ~1s and `server down` cleans up both runfiles and leaves no orphan process. **Three suspected defects were all my own test harness**, not the product — a 10-minute 'hang' that was bash command substitution waiting for EOF on a pipe the daemonized engine held open (the gotcha already in my notes), an exit-127 'failure' that was a wrong relative path, and an exit-2 'failure' that was passing a positional to a flags-only command. Each looked exactly like a product defect until checked. Only real gap found and fixed: getting-started documented the **local** `.ferric/server.json` but not the **global** runfile `server up` also writes, which is what makes a throwaway server in a scratch folder the one every workspace discovers.)*
 
-## From reading Codex (sprint 109, ADR-100)
+## Maintenance — From reading Codex (sprint 109, ADR-100) [standalone harness ideas]
 - [ ] **Describe `check_command` honestly, and consider path pinning.** `ferric-guard::check_command` (`checker.rs:130`) is `lowered.contains(pattern)` over six fixed strings. Codex's `execpolicy` uses argv-token prefix rules, three-valued decisions, strictest-wins layering, a `justification` naming an alternative, and **`host_executable()`** pinning which absolute paths may satisfy a basename match — which Ferric has **no analogue for**. The substring approach is arguably fine because Ferric's real containment is the path guard at the registry chokepoint, but **nothing says so**, and a denylist that reads like a boundary invites being trusted as one. Minimum: document it as a footgun-catcher. Optional: argv tokenization, and wire the existing `SinkAction::RequireApproval` vocabulary in so it can ask rather than only allow/deny.
 - [ ] **Ferric has no OS-level sandbox for ordinary tool dispatch.** Codex enforces containment at the kernel (Seatbelt / bubblewrap / Windows Sandbox); Ferric's airlock covers only Ornstein's research plane. This is the single biggest architectural divergence and the reason Ferric's in-process guard has to be stricter. Not a defect — a deliberate difference worth revisiting only with the tradeoff stated: an OS sandbox would let several defaults relax safely, at the cost of a large platform-specific surface (Codex spends `linux-sandbox`, `windows-sandbox-rs`, `bwrap`, `sandboxing`, `process-hardening` on it).
 
@@ -241,7 +249,7 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
   delete; implicit `move_path` overwrite; `shell_exec`/`git_*` stay opaque by
   design.
 
-## Post-Sprint 115 — ordered local-model work
+## Maintenance — Post-Sprint 115 — ordered local-model work [INT-0007 and INT-0008, closed]
 
 - [x] T-11505 [intent: INT-0007, INT-0008]: Explicit query/benchmark output caps, checked finite timeout scales, retained budget provenance and model-free large-action/overflow/argv regressions were delivered by [T-12101–04](completed-tasks.md#t-12101-sprint-121) and accepted in [Sprint 121 Test](../sprints/s121/sprint-tests/test-report.md). Omitted defaults and authority remain unchanged; modified-budget observations cannot publish durable calibration. This reconciles the umbrella, not automatic speed/fit calibration or the application trial.
 - [ ] T-11506 (backlog, after T-11505) [intent: INT-0007]: Qualify the changed backend-enabled release and create a fresh append-only managed Qwen runtime handoff for T-11410. Preserve attempts 001/002 byte-for-byte; never treat the expired attempt-002 handoff as live. — touches: release/runtime qualification controls, owned server registrations
@@ -251,7 +259,7 @@ intervention through repository-native Rust, tests, runtime evidence, and Git.
 - [ ] T-11508 (backlog, after T-11505) [intent: INT-0008]: Add explicit adapter-scoped native-reasoning request/response support, retain reasoning provenance, and give compaction a small deterministic sampler; do not infer thinking policy from model family. — touches: `crates/ferric-provider`, `crates/ferric-loop`, configuration/docs
 - [ ] T-11509 (backlog, remaining integration after T-11505 through T-11508) [intent: INT-0008]: Extend the delivered Sprint 120 prepared-host run/status/explain front door with integrated acquisition/calibration, complete resume/workflow checkpoints, evidence and cleanup operations, and supported-platform parity. The owner's post-Sprint 121 clarification is explicit in [INT-0008 AC-13](../intents/INT-0008-unified-local-model-workflow.md#acceptance-criteria): missing engines/models must lead to in-product, consented acquisition and a first session, not merely installation advice; acquired GGUFs go in the selected workspace's `models/`. Prove clean-host, prepared rerun, decline, offline/disk/hash failure and interrupted recovery without a manual server-up/preflight sequence or mandatory conversation benchmark. Align the older getting-started guide with the actual human entry point and retain manual server management as an optional expert route. Retain the compact human surface and expert compatibility; do not treat the existing front door as still unimplemented or this requirement as accepted code. — touches: CLI/workflow state, platform adapters, integration tests, operator docs
 
-## Sprint 120 review — prioritized findings retained for follow-up
+## Maintenance — Sprint 120 review — prioritized findings retained for follow-up [INT-0006 and INT-0008, closed]
 
 Research provenance and exact baseline locations are in
 [the repository-wide review](../sprints/s120/sprint-research/repository-review.md).
@@ -269,13 +277,13 @@ below remain executable follow-up work; the review did not silently fix them.
 - [ ] T-12027 (backlog, parallel native-fixture robustness) [intent: INT-0008]: Investigate Windows native-runtime startup under concurrent suite load using retained admission/script-stage timings and explicit resource budgets. Sprint 120's canonical native workspace gates isolate unrelated test bodies; this does not explain the earlier uninstrumented PowerShell timeouts or qualify arbitrary parallel-suite load. Keep every deadline, exact argument assertion, source ownership and checked cleanup. — touches: native fixture scheduling, diagnostic CI coverage
 - [ ] T-12028 (backlog, low priority human surface) [intent: INT-0008]: Remove Cargo's duplicate-source build-target warning from ordinary `cargo r` while retaining the feature-gated lifecycle test binary, original expert compatibility and source-owned fixture execution. The warning was observed in the real terminal trials and is not a launch failure. — touches: CLI Cargo target layout, source execution regressions
 
-## Sprint 121 research follow-up
+## Maintenance — Sprint 121 research follow-up [INT-0007, closed]
 
 - [ ] T-12111 (backlog, native failure attribution) [intent: INT-0008]: Use the retained source-owned inspection/stage diagnostics and bounded fault controls to investigate the original uninstrumented Sprint 121 canonical Windows first-run failure if it recurs. Distinguish actual process exit from native query failure; retain each failed sample and checked cleanup, never retry to green or claim the independently fixed connection-reset fixture proves the old cause. A new canonical recurrence blocks qualification. Preserve separate T-12026 admission and T-12027 parallel-load boundaries. — touches: `crates/ferric-cli/src/startup/runtime.rs`, human source fixtures, canonical evidence
 
 - [ ] T-12110 (backlog, usage provenance) [intent: INT-0007]: Replace unchecked OpenAI usage-count `u64 as u32` narrowing with an explicit checked outcome in streaming and non-streaming decoding, and test oversized/invalid counts without wrapping reported usage. Source-identified during Sprint 121 Research; not a successful runtime reproduction or part of the T-11505 explicit CLI budget increment. — touches: `crates/ferric-provider/src/openai.rs`, provider response fixtures
 
-## Book v2 carry-forward from Sprint 113
+## Maintenance — Book v2 carry-forward from Sprint 113 [INT-0002 to INT-0006, closed]
 
 - [ ] T-11401 (backlog) [intent: INT-0002]: Design and implement a deterministic operator-authored project check profile that Launch can scaffold and supported surfaces can load without a repeated `--checks-file`, while preserving the no-implicit-execution boundary. — touches: `crates/animus-launch`, `crates/ferric-cli/src/query.rs`, `crates/ferric-tools/src/builtin/run_check.rs`, `docs/commands.md`, `docs/configuration.md`
 - [ ] T-11402 (backlog) [intent: INT-0003]: Specify and experimentally evaluate a typed requirement ledger with causal evidence transitions and completion gating, without reviving the rejected planner label. — touches: `crates/ferric-trace`, `crates/ferric-loop`, `crates/ferric-bench`, `crates/ferric-cli`
@@ -284,11 +292,11 @@ below remain executable follow-up work; the review did not silently fix them.
 - [ ] T-11405 (backlog) [intent: INT-0005]: Add bounded in-process Rust and JavaScript/TypeScript candidate parsing with typed unchecked outcomes and no subprocess/import/temp side effects. — touches: `crates/ferric-tools/src/builtin/check_syntax.rs`, `crates/ferric-tools/tests/controlled_mutations.rs`, `crates/ferric-trace`
 - [ ] T-11406 (backlog) [intent: INT-0006]: Audit every public run-policy field; wire, explicitly reserve, or compatibly retire inert planner, plan-budget, and subagent claims across runtime, wire, CLI, and docs. — touches: `crates/ferric-core/src/scale.rs`, `crates/ferric-loop`, `crates/ferric-cli`, `docs/configuration.md`, `docs/commands.md`
 
-## Post-Sprint 117 lifecycle carry-forward
+## Maintenance — Post-Sprint 117 lifecycle carry-forward [INT-0008, closed]
 
 - [ ] T-11707 (backlog, before AC-8 platform parity is claimed) [intent: INT-0008]: Design and prove ordinary-host Linux lifecycle authority that does not require complete enumeration of every unrelated `/proc/<pid>/fd` peer. Preserve the current fail-closed result for unreadable or shared owners; do not infer exclusivity from incomplete visibility. Prefer a durable launch-owned authority coordinate or equivalent kernel-backed proof, and add shared-host positive and negative CI coverage before changing teardown authorization. — touches: `crates/ferric-cli/src/server_process.rs`, lifecycle registration/ownership schema, Linux integration fixtures, CI, server/operator docs
 
-## Post-Sprint 118 Tailscale proof carry-forward
+## Maintenance — Post-Sprint 118 Tailscale proof carry-forward [INT-0008, closed]
 
 - [ ] T-11904 (backlog, future cancellation-hardening sprint) [intent: INT-0008]: Design and prove durable Linux ownership for nested process groups when their immediate owner is abruptly killed or a descendant leaves its group. Select a source supervisor or kernel-backed scope, retain exact identity and scoped reaping, and do not claim the cooperative-group Sprint 119 increment satisfies this broader AC-6/AC-8 boundary. — touches: process ownership architecture, Linux supervisors/CI, platform capability docs
 
@@ -304,12 +312,12 @@ below remain executable follow-up work; the review did not silently fix them.
 
 ## Sprint 121 — approved explicit budgets
 
-## Sprint 122 — hardware-informed model fit (INT-0008 AC-13)
+## Maintenance — Sprint 122 — hardware-informed model fit (INT-0008 AC-13) [INT-0008, closed]
 
 - [ ] T-12204 (backlog) [intent: INT-0008]: Add a front-door test seam — a `#[cfg(test)]` `Startup` constructor accepting a synthetic model list, or an injectable `MemoryProbe` threaded into `session_with` — so the won't-fit picker gate gains a full driver E2E rather than only decision-helper coverage (Sprint 122 C-001). — touches: `crates/ferric-cli/src/startup.rs`, `crates/ferric-cli/src/human.rs`, front-door tests
 - [ ] T-12205 (backlog, after T-12204) [intent: INT-0008]: Extend hardware fit to GPU/VRAM discovery and safe layer calibration (the GPU half of T-11507), and feed both RAM and VRAM fit into AC-13's acquisition recommendation. — touches: `crates/ferric-cli/src/startup/memory.rs`, `crates/ferric-cli/src/backend.rs`, `crates/ferric-cli/src/server.rs`
 
-## Sprint 123 — ferric-cli library extraction (INT-0009 AC-1)
+## Maintenance — Sprint 123 — ferric-cli library extraction (INT-0009 AC-1) [INT-0009, superseded by INT-0011]
 
 - [ ] T-12302 (backlog) [intent: INT-0009]: Split the largest flat files along their existing responsibility clusters into modules/submodules (AC-4) — `server.rs` (~18 K lines) is the flagship: cli / runtime / managed / doctor / publication / launch / adoption, with real-process tests moved to an integration lane. Behavior-preserving, per-cluster reviewable. — touches: `crates/ferric-cli/src/server.rs`, `crates/ferric-cli/src/server*.rs`, `crates/ferric-cli/tests/`
 - [ ] T-12303 (backlog, after T-12302) [intent: INT-0009]: Extract the inference-server / Tailscale / process-ownership cluster into a separate crate so the agent core (loop + tools + provider) builds without the serving layer (AC-2). — touches: new `crates/ferric-serve`, `crates/ferric-cli/Cargo.toml`, `crates/ferric-cli/src/lib.rs`
@@ -322,4 +330,3 @@ below remain executable follow-up work; the review did not silently fix them.
 ## Sprint 126 — the Iron: extraction, valve, real-Hermes pilot (INT-0010..0013)
 
 - [ ] T-12609 (sprint 126) [intent: INT-0013]: Native-vs-valve pilot on the 27B with independent checkers and report — touches: crates/ferric-valve/e2e/tasks/, crates/ferric-valve/examples/hermes_pilot.rs, docs/sprints/s126/sprint-tests/pilot/
-- [ ] T-12610 (sprint 126) [intent: INT-0010]: Charter docs, project instructions and ledger triage — touches: README.md, docs/README.md, docs/introduction.md, CLAUDE.md, AGENTS.md, docs/work/tasks.md

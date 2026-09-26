@@ -1,10 +1,44 @@
 <p align="center">
-  <img src="docs/Animus.png" alt="Animus Ferric — a local coding assistant written in Rust" width="720">
+  <img src="docs/Animus.png" alt="Animus Ferric — the Iron of Animus Amalgam" width="720">
 </p>
 
 # Animus Ferric
 
-A local coding assistant written in Rust, built for small GGUF models.
+**Ferric is the Iron of [Animus Amalgam](https://github.com/crussella0129/Animus_Amalgam).**
+Amalgam is the Animus Project's fork of Hermes Agent, the Mercury. It owns the
+conversation, tools, memory, human surface and authorization. What Hermes lacks
+entirely is harness-owned constrained decoding: the harness authors the action
+grammar and the backend enforces it, so a malformed tool call cannot be
+produced. Ferric supplies that part.
+
+- **`ferric-iron`** is the constrained-decoding core. It covers action-grammar
+  authoring from any tool list (including Hermes's OpenAI-format tools),
+  action parsing, capability-honest protocol selection, and the protocol's
+  prompt conventions. It depends only on serde and thiserror. It is not a
+  decoder: the backend (llama.cpp) enforces the token mask.
+- **`ferric-valve`** is an OpenAI-compatible service that Hermes's custom
+  endpoint points at. It turns Hermes's native-tools request into one
+  constrained action for llama.cpp, then turns the action back into ordinary
+  `tool_calls` or a reply, so Hermes keeps its loop, tools and history
+  unchanged. See [crates/ferric-valve](crates/ferric-valve/README.md).
+
+| Ferric owns | Amalgam owns |
+|---|---|
+| The core, the valve, and component-level evidence about them | Hermes integration, session-level qualification, and whether each approach advances |
+
+The design target is mid-size quantized GGUF models: roughly 20–35B at about
+Q4, on a consumer GPU plus system RAM with partial offload. The reference model
+is Qwen3.8-27B at Q4. Small models (1B–8B) remain the floor and the regression
+fleet. Whether constrained decoding makes that class faster or more accurate
+is being measured
+([INT-0013](docs/intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md)),
+not assumed.
+
+## The standalone assistant (maintenance)
+
+Ferric's original standalone coding assistant still builds and works. It is in
+maintenance: fixes are accepted, new features are not
+([INT-0010](docs/intents/INT-0010-ferric-is-the-iron-of-amalgam.md)).
 
 ```sh
 cargo r
@@ -45,6 +79,23 @@ File work uses the Evidence controller with conservative, unmeasured tool
 limits. It grants no shell, hooks, or delegation. Existing expert commands,
 including `query`, `chat`, `server`, `bench`, and `trace`, remain available
 under their original names and through `advanced`.
+
+## Running the valve with Hermes
+
+With a llama.cpp server already listening on port 8080:
+
+```sh
+cargo run -p ferric-valve -- --upstream http://127.0.0.1:8080 --receipts receipts.jsonl
+```
+
+Then point Hermes's custom provider at `http://127.0.0.1:8090/v1`.
+
+- The valve refuses to start unless the upstream demonstrably enforces a JSON
+  schema.
+- It binds loopback only.
+- It writes one content-free receipt per request.
+- `--record-only` forwards every request unchanged while writing the same
+  receipts, for a native comparison arm.
 
 ## What preparation guarantees
 
