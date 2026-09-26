@@ -321,7 +321,6 @@ below remain executable follow-up work; the review did not silently fix them.
 
 ## Sprint 126 — the Iron: extraction, valve, real-Hermes pilot (INT-0010..0013)
 
-- [ ] T-12602 (sprint 126) [intent: INT-0011]: Dependency-boundary test and extraction measurement gate — touches: crates/ferric-iron/tests/dependency_boundary.rs, docs/sprints/s126/sprint-tests/extraction-measurement.md
 - [ ] T-12603 (sprint 126) [intent: INT-0011]: Reject an untransmittable Regex constraint instead of sending an unconstrained request — touches: crates/ferric-provider/src/openai.rs
 - [ ] T-12604 (sprint 126) [intent: INT-0011]: OpenAI-tools adapter with typed rejection — touches: crates/ferric-iron/src/openai_tools.rs, crates/ferric-iron/src/lib.rs
 - [ ] T-12605 (sprint 126) [intent: INT-0012]: Valve pure request transform (constrained vs pass-through, history projection) — touches: crates/ferric-valve/, Cargo.toml, Cargo.lock

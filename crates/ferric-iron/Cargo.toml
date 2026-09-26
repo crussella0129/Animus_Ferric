@@ -14,3 +14,8 @@ ferric-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+# Test-only: the boundary test parses manifests. Dev-dependencies never ship,
+# so they are outside the boundary it pins.
+[dev-dependencies]
+toml = { workspace = true }

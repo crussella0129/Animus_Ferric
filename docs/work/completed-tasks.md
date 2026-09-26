@@ -2117,3 +2117,10 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T12:59:57Z
 - **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-iron/Cargo.toml, crates/ferric-iron/src/{lib,types,stream_scan,grammar,terminator,protocol,render}.rs, crates/ferric-provider/Cargo.toml, crates/ferric-provider/src/types.rs, crates/ferric-provider/src/stream_scan.rs, crates/ferric-loop/Cargo.toml, crates/ferric-loop/src/{grammar,terminator,protocol,run,projector}.rs, crates/ferric-loop/tests/iron_reexports.rs, docs/intents/INT-0011-standalone-constrained-decoding-core.md
 - **Commit:** `1128b773149f70e44023c30b5cc9fc4a037e8107`
+
+## T-12602 (sprint 126)
+- **Description:** Pinned the constrained-decoding core's dependency boundary and recorded the extraction measurement that gates Stage B. `crates/ferric-iron/tests/dependency_boundary.rs` parses both manifests. `ferric-iron`'s shipped dependencies (including target-specific tables) must be a subset of {ferric-core, serde, serde_json, thiserror}, and ferric-core's a subset of {serde, serde_json, thiserror}. Dev-dependencies are excluded. A failure names the manifest and the offending crates. EARS verified by `iron_dependencies_are_within_boundary`, `boundary_check_names_offending_crate`, and a real mutation control (adding `regex` failed with the crate named, and the revert passed). The measurements are in `docs/sprints/s126/sprint-tests/extraction-measurement.md`: 19 vs 147 unique crates, a 6.1 s vs 25.2 s clean build, and suite totals of 1,326 → 1,329 (+3 added, 0 lost, ignored 13 → 13). Gate decision: pass, so Stage B may start.
+- **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-1)
+- **Completed:** 2026-09-26T13:02:50Z
+- **Files modified:** crates/ferric-iron/Cargo.toml, crates/ferric-iron/tests/dependency_boundary.rs, Cargo.lock, docs/sprints/s126/sprint-tests/extraction-measurement.md
+- **Commit:** PENDING
