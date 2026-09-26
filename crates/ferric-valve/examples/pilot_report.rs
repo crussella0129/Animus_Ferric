@@ -388,10 +388,7 @@ fn main() {
                 session["arm"].as_str().unwrap_or("?"),
                 session["rep"],
                 session["complete"],
-                session["excluded"]
-                    .as_str()
-                    .unwrap_or("")
-                    .replace('|', "/"),
+                session["excluded"].as_str().unwrap_or("").replace('|', "/"),
             )
             .unwrap();
         }
