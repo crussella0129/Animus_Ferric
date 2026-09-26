@@ -2124,3 +2124,10 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T13:02:50Z
 - **Files modified:** crates/ferric-iron/Cargo.toml, crates/ferric-iron/tests/dependency_boundary.rs, Cargo.lock, docs/sprints/s126/sprint-tests/extraction-measurement.md
 - **Commit:** `ae9bdc5a45d7d6d544e1c5ef8b16f6e6d78d804d`
+
+## T-12603 (sprint 126)
+- **Description:** Capability honesty (a fix, committed separately from the refactor). `OpenAiProvider::build_body` now returns `Result<Value, ProviderError>`, and a `Constraint::Regex` request fails with `ProviderError::InvalidRequest` ("a regex constraint cannot be transmitted to an OpenAI-compatible backend; refusing to send an unconstrained request"). It previously went out silently unconstrained, the overclaim Amalgam's Ferric lineage chapter recorded. `complete` and `complete_streaming` build the body before entering the cancellable network block, so the refusal precedes any I/O. EARS verified by `regex_constraint_is_rejected_without_network` and `regex_constraint_is_rejected_when_streaming`, both against a closed loopback port, so a network attempt would surface a connection error, not `InvalidRequest`. `build_body_unchanged_for_supported_constraints` checks full-body equality for JsonSchema, Lark, tools-only and unconstrained requests. ferric-provider (backend-openai) passes 40/40, and clippy is clean.
+- **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-4)
+- **Completed:** 2026-09-26T13:03:36Z
+- **Files modified:** crates/ferric-provider/src/openai.rs
+- **Commit:** PENDING
