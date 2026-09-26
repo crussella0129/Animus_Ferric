@@ -2116,4 +2116,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-2)
 - **Completed:** 2026-09-26T12:59:57Z
 - **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-iron/Cargo.toml, crates/ferric-iron/src/{lib,types,stream_scan,grammar,terminator,protocol,render}.rs, crates/ferric-provider/Cargo.toml, crates/ferric-provider/src/types.rs, crates/ferric-provider/src/stream_scan.rs, crates/ferric-loop/Cargo.toml, crates/ferric-loop/src/{grammar,terminator,protocol,run,projector}.rs, crates/ferric-loop/tests/iron_reexports.rs, docs/intents/INT-0011-standalone-constrained-decoding-core.md
-- **Commit:** PENDING
+- **Commit:** `1128b773149f70e44023c30b5cc9fc4a037e8107`
