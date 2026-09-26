@@ -2130,4 +2130,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-4)
 - **Completed:** 2026-09-26T13:03:36Z
 - **Files modified:** crates/ferric-provider/src/openai.rs
-- **Commit:** PENDING
+- **Commit:** `73da4cb55b2120aa80ed5f0ebed564d1352dcf46`
