@@ -12,6 +12,7 @@
 //! without pulling in Ferric's loop, tools or CLI.
 
 pub mod grammar;
+pub mod openai_tools;
 pub mod protocol;
 pub mod render;
 pub mod stream_scan;
@@ -19,6 +20,7 @@ pub mod terminator;
 pub mod types;
 
 pub use grammar::{ActionParseError, action_schema, parse_json_action};
+pub use openai_tools::{OpenAiToolsError, RESERVED_CONTROL_NAMES, descriptors_from_openai_tools};
 pub use protocol::select_protocol;
 pub use render::{render_tool_listing, tool_result_text};
 pub use stream_scan::ConstrainedJsonScanner;

@@ -321,7 +321,6 @@ below remain executable follow-up work; the review did not silently fix them.
 
 ## Sprint 126 — the Iron: extraction, valve, real-Hermes pilot (INT-0010..0013)
 
-- [ ] T-12604 (sprint 126) [intent: INT-0011]: OpenAI-tools adapter with typed rejection — touches: crates/ferric-iron/src/openai_tools.rs, crates/ferric-iron/src/lib.rs
 - [ ] T-12605 (sprint 126) [intent: INT-0012]: Valve pure request transform (constrained vs pass-through, history projection) — touches: crates/ferric-valve/, Cargo.toml, Cargo.lock
 - [ ] T-12606 (sprint 126) [intent: INT-0012]: Valve upstream streaming and honest response translation — touches: crates/ferric-valve/src/
 - [ ] T-12607 (sprint 126) [intent: INT-0012]: Valve receipts, startup enforcement probe, record-only mode, loopback CLI — touches: crates/ferric-valve/src/

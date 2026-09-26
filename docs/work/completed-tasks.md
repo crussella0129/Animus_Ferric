@@ -2131,3 +2131,10 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T13:03:36Z
 - **Files modified:** crates/ferric-provider/src/openai.rs
 - **Commit:** `73da4cb55b2120aa80ed5f0ebed564d1352dcf46`
+
+## T-12604 (sprint 126)
+- **Description:** Added `ferric_iron::descriptors_from_openai_tools`, which turns an OpenAI-format `tools` array (the shape Hermes sends) into ordered `ToolDescriptor`s. A missing description becomes empty, and missing or null `parameters` become `{"type":"object","properties":{}}`. It returns a typed `OpenAiToolsError` naming the entry index and name for: a non-array input, a non-`function` type, a missing or empty name, a duplicate name, a name reserved for a control branch (`RESERVED_CONTROL_NAMES` = task_complete, request_user_input, submit_plan), or non-object `parameters`. EARS verified by `openai_tools_adapt_in_order`, `openai_tools_default_missing_parameters`, `openai_tools_reject_non_function`, `openai_tools_reject_duplicate_name`, `openai_tools_reject_reserved_control_name`, `openai_tools_reject_missing_name` and `adapted_tools_schema_has_one_branch_each` (one `anyOf` branch per descriptor, in order). The supported-construct half of INT-0011 AC-3 is left to live E2E evidence, as planned. ferric-iron passes 36 unit and 2 boundary tests, and clippy is clean.
+- **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-3, adapter part)
+- **Completed:** 2026-09-26T13:04:10Z
+- **Files modified:** crates/ferric-iron/src/openai_tools.rs, crates/ferric-iron/src/lib.rs
+- **Commit:** PENDING
