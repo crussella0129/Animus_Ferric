@@ -2266,4 +2266,4 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0010](../intents/INT-0010-ferric-is-the-iron-of-amalgam.md) (AC-1, AC-3, AC-5)
 - **Completed:** 2026-09-26T13:55:22Z
 - **Files modified:** README.md, docs/README.md, docs/introduction.md, CLAUDE.md, AGENTS.md, docs/work/tasks.md, crates/ferric-cli/tests/charter_docs.rs, docs/intents/INT-0010-ferric-is-the-iron-of-amalgam.md
-- **Commit:** PENDING
+- **Commit:** `ad8f8fa49e27c63de9a9ba21721549d42fda6d4f`
