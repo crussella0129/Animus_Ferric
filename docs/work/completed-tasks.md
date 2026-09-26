@@ -2196,3 +2196,33 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T13:14:19Z
 - **Files modified:** crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/README.md, crates/ferric-valve/src/{lib,sse,translate,upstream}.rs, crates/ferric-valve/tests/common/mod.rs, crates/ferric-valve/tests/exchange.rs
 - **Commit:** `eb1ac06d37ee5cfba63badf829efa958e6b6a894`
+
+## T-12607 (sprint 126)
+- **Description:** The valve's HTTP surface, receipts, startup probe, record-only mode and the loopback-only CLI.
+
+  **Server (`server.rs`, axum).** `/v1/chat/completions` and `/chat/completions` go through the transform:
+  - constrained requests run `run_constrained`;
+  - pass-through and record-only requests forward the original bytes byte-for-byte, streaming preserved, while reading the reply passively;
+  - every other path is proxied unchanged;
+  - a transform error is a 400 (`ferric_valve_transform`);
+  - upstream non-2xx, unreachable, or an invalid action (non-stream) is a 502 with an OpenAI error body naming the class and the upstream status.
+
+  Each chat request runs in a spawned task that owns the exchange and writes exactly one receipt, so a hang-up yields a `cancelled` receipt.
+
+  **Receipts (`receipt.rs`)** are append-only JSONL and content-free. Fields: request id, mode, stream, outcome, HTTP status, tools offered, catalog/schema/prefix hashes, per-message `message_hashes`, model, prompt/evaluated/cached/predicted tokens and times, finish reason, action validity, tool, error class, and an `unavailable` list.
+
+  **Probe (`probe.rs`).** It asks for the word "hello" while constraining the reply to `{"ok":"yes"}`, so only an enforcing upstream passes. The CLI exits 3 on failure.
+
+  **CLI (`main.rs`):** `--upstream`, `--listen` (default `127.0.0.1:8090`; non-loopback refused, exit 2), `--receipts`, `--record-only`, `--heartbeat-ms`.
+
+  **EARS verified:**
+  - unit: `receipt_has_required_fields`, `receipt_marks_unavailable_metrics`, `sink_appends_one_line_per_receipt`, `default_listen_is_loopback`, `non_loopback_listen_is_refused`;
+  - integration (`tests/server.rs`, 12/12): `server_maps_transform_error_to_400`, `malformed_upstream_yields_502`, `upstream_http_error_yields_502_with_status` (stream and non-stream), `upstream_unreachable_yields_502`, `one_receipt_per_request`, `receipt_contains_no_message_text`, `cancelled_request_writes_cancelled_receipt`, `probe_accepts_enforcing_upstream`, `probe_refuses_non_enforcing_upstream`, `record_only_is_byte_faithful_streaming`, `record_only_is_byte_faithful_nonstream`, `hermes_captured_request_round_trips`.
+
+  The last test uses the real Hermes `file` toolset definitions, captured from Amalgam `f820dbf` via `model_tools.get_tool_definitions` into `tests/fixtures/hermes_file_tools.json`.
+
+  Source smoke via `cargo run`: a public `--listen` exits 2, and an unreachable upstream refuses constrained mode with exit 3. ferric-valve passes 28 unit, 11 exchange and 12 server tests, and clippy is clean.
+- **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-4, AC-5, AC-6, record-only boundary, loopback default)
+- **Completed:** 2026-09-26T13:20:32Z
+- **Files modified:** crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/src/{lib,server,receipt,probe,main}.rs, crates/ferric-valve/tests/server.rs, crates/ferric-valve/tests/fixtures/hermes_file_tools.json
+- **Commit:** PENDING

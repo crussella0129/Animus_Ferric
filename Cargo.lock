@@ -771,11 +771,14 @@ name = "ferric-valve"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "clap",
  "ferric-iron",
  "hex",
  "reqwest",
+ "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tokio-stream",
