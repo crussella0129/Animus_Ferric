@@ -1,0 +1,7 @@
+[
+  {
+    "run": "pilot-1790430708089",
+    "tasks": ["edit", "create"],
+    "reason": "infrastructure: the runner gave Hermes a Windows verbatim-path working directory, so every file write failed with mkdir '//?' in both arms and completions depended on the model guessing absolute paths. Runner defect, fixed by strip_verbatim; both tasks were re-run on the fixed runner in pilot-1790436617596."
+  }
+]

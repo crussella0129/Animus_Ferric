@@ -82,6 +82,10 @@ struct Args {
     /// Comma-separated task ids to run (default: the plan's set).
     #[arg(long)]
     tasks: Option<String>,
+    /// Skip schedule entries before this index: continue an interrupted run with
+    /// the same schedule (the session index is preserved in the ledger).
+    #[arg(long, default_value_t = 0)]
+    start_index: usize,
 }
 
 const TASKS_JSON: &str = include_str!("../e2e/tasks.json");
@@ -551,7 +555,8 @@ fn run_sessions(
     write_json(&run_dir.join("manifest.json"), &manifest);
 
     let sessions_path = run_dir.join("sessions.jsonl");
-    for (index, (task, arm, rep)) in schedule.iter().enumerate() {
+    manifest_note_start(run_dir, args.start_index);
+    for (index, (task, arm, rep)) in schedule.iter().enumerate().skip(args.start_index) {
         let record = run_session(
             args, run_dir, rt, client, upstream, rates, index, task, *arm, *rep,
         )?;
@@ -843,4 +848,14 @@ fn interrupt_mid_generation(
         std::thread::sleep(Duration::from_millis(100));
     }
     json!({"interrupted": true, "slot_idle_after_seconds": Value::Null, "reason": "slot still processing at deadline"})
+}
+
+/// Record a continuation's starting index next to its manifest.
+fn manifest_note_start(run_dir: &Path, start_index: usize) {
+    if start_index > 0 {
+        write_json(
+            &run_dir.join("continuation.json"),
+            &json!({"start_index": start_index}),
+        );
+    }
 }

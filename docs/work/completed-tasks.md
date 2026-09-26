@@ -2267,3 +2267,18 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T13:55:22Z
 - **Files modified:** README.md, docs/README.md, docs/introduction.md, CLAUDE.md, AGENTS.md, docs/work/tasks.md, crates/ferric-cli/tests/charter_docs.rs, docs/intents/INT-0010-ferric-is-the-iron-of-amalgam.md
 - **Commit:** `ad8f8fa49e27c63de9a9ba21721549d42fda6d4f`
+
+## T-12609 (sprint 126)
+- **Description:** The 27B native-vs-valve pilot with independent checkers, and its report.
+  - **Pass 1.** 24 sessions: `lookup`, `edit`, `create`, `no_tool` × native (record-only) and valve (constrained) × 3 repetitions, ABBA, one llama-server process, erased slot per session.
+  - **Runner defect.** Pass 1 revealed that `check_lab_root` handed Hermes a Windows verbatim working directory, so every Hermes file write failed (`mkdir '//?'`) in both arms. Fixed with `pilot::strip_verbatim` (tests `verbatim_prefix_is_stripped`, `lab_root_is_returned_without_verbatim_prefix`; live 7B check). Pass 1's 12 write sessions are excluded with their reason (`pilot/exclusions.json`) and kept in the ledger.
+  - **Pass 2.** The write tasks re-ran on the fixed runner: 12 sessions, all complete.
+  - **Report.** `pilot::summarize` (unit test `summarize_counts_every_session`) and the `pilot_report` example render `pilot/report.md`: manifest, per-arm table over all included sessions, per-task table, exclusions table and full ledger. The runner gained `--start-index` for continuation runs.
+  - **Result (24 included sessions).** Native 12/12 and valve 12/12 checked completions, with every tool call valid in both arms. The valve decodes +33% tokens per request (42.3 vs 31.9) and takes +31% wall time per session (69.7 vs 53.1 s), mostly from the forced `thought` and JSON wrapper (`no_tool`: 3 vs 51 decoded tokens). Its prompt is smaller and its cache share higher. Prefixes extend 12/12 in both arms.
+  - **Reading.** With today's grammar defaults the constraint does not make the 27B faster, and this corpus cannot show a correctness gain (ceiling). The next arms are INT-0013's `F-none` / `F-bounded`, `N-forced`, a Hermes-sized catalog, and harder tasks.
+  - **Hermes finding.** Its iteration-cap summary request re-rendered an early assistant turn in cap-exhausted sessions.
+  - **Resources.** About 2.3 GPU-hours in total against an estimate of about 1–1.5 (pass 2 was a repeat attempt within the approved class). All children were reaped. Recorded in `docs/sprints/s126/sprint-tests/e2e-tests.md`.
+- **Intent:** [INT-0013](../intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md) (AC-1, and AC-3 at pilot scope)
+- **Completed:** 2026-09-26T15:54:17Z
+- **Files modified:** crates/ferric-valve/src/pilot.rs, crates/ferric-valve/examples/hermes_pilot.rs, crates/ferric-valve/examples/pilot_report.rs, docs/sprints/s126/sprint-tests/pilot/, docs/sprints/s126/sprint-tests/e2e-tests.md, docs/intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md
+- **Commit:** PENDING

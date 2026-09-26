@@ -329,4 +329,3 @@ below remain executable follow-up work; the review did not silently fix them.
 
 ## Sprint 126 — the Iron: extraction, valve, real-Hermes pilot (INT-0010..0013)
 
-- [ ] T-12609 (sprint 126) [intent: INT-0013]: Native-vs-valve pilot on the 27B with independent checkers and report — touches: crates/ferric-valve/e2e/tasks/, crates/ferric-valve/examples/hermes_pilot.rs, docs/sprints/s126/sprint-tests/pilot/

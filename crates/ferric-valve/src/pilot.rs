@@ -23,9 +23,10 @@ pub fn check_lab_root(lab: &Path, repositories: &[PathBuf]) -> Result<PathBuf, S
         .map_err(|error| format!("cannot create lab {}: {error}", lab.display()))?;
     let lab = lab
         .canonicalize()
+        .map(strip_verbatim)
         .map_err(|error| format!("cannot resolve lab {}: {error}", lab.display()))?;
     for repository in repositories {
-        if let Ok(repository) = repository.canonicalize()
+        if let Ok(repository) = repository.canonicalize().map(strip_verbatim)
             && lab.starts_with(&repository)
         {
             return Err(format!(
@@ -36,6 +37,24 @@ pub fn check_lab_root(lab: &Path, repositories: &[PathBuf]) -> Result<PathBuf, S
         }
     }
     Ok(lab)
+}
+
+/// Windows `canonicalize` returns verbatim paths (`\\?\C:\...` and
+/// `\\?\UNC\server\share\...`). Handing one to a child as its working
+/// directory breaks tools that re-split the path: the Sprint 126 pilot's
+/// first run lost every Hermes file write to `mkdir: cannot create directory
+/// '//?'`. Return the ordinary form; other paths pass through unchanged.
+pub fn strip_verbatim(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\")
+        && rest.as_bytes().get(1) == Some(&b':')
+    {
+        return PathBuf::from(rest);
+    }
+    path
 }
 
 /// Admission: the CPU-resident share of the weights (layers not offloaded to
@@ -203,6 +222,140 @@ fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n").trim().to_string()
 }
 
+/// Per-arm aggregates over a pilot's session ledger (T-12609). Every session
+/// counts in `sessions`, whatever happened to it, so no denominator is hidden.
+/// A metric the upstream did not report for some request makes that session
+/// `metrics_incomplete`, and its sums are left out rather than guessed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ArmSummary {
+    pub arm: String,
+    pub sessions: usize,
+    pub completed: usize,
+    pub check_errors: usize,
+    pub deadline_hits: usize,
+    pub driver_errors: usize,
+    pub tool_calls: usize,
+    pub sessions_all_calls_valid: usize,
+    pub requests: usize,
+    pub truncations: usize,
+    pub request_failures: usize,
+    pub sessions_prefix_extends: usize,
+    pub metrics_incomplete: usize,
+    /// Requests in sessions whose metrics are complete (the token denominator).
+    pub metric_requests: usize,
+    pub predicted_tokens: f64,
+    pub prompt_eval_tokens: f64,
+    pub cached_tokens: f64,
+    pub predicted_ms: f64,
+    pub wall_seconds: f64,
+}
+
+impl ArmSummary {
+    fn ratio(numerator: f64, denominator: usize) -> Option<f64> {
+        (denominator > 0).then(|| numerator / denominator as f64)
+    }
+
+    /// Decoded tokens per request, over sessions with complete metrics.
+    pub fn predicted_per_request(&self) -> Option<f64> {
+        Self::ratio(self.predicted_tokens, self.metric_requests)
+    }
+
+    /// All decoded tokens divided by independently checked completions.
+    pub fn predicted_per_completion(&self) -> Option<f64> {
+        Self::ratio(self.predicted_tokens, self.completed)
+    }
+
+    pub fn wall_per_session(&self) -> Option<f64> {
+        Self::ratio(self.wall_seconds, self.sessions)
+    }
+
+    /// All wall time divided by independently checked completions.
+    pub fn wall_per_completion(&self) -> Option<f64> {
+        Self::ratio(self.wall_seconds, self.completed)
+    }
+
+    /// Share of prompt tokens served from the backend's cache.
+    pub fn cache_share(&self) -> Option<f64> {
+        let total = self.cached_tokens + self.prompt_eval_tokens;
+        (total > 0.0).then(|| self.cached_tokens / total)
+    }
+}
+
+/// Aggregate session records (the runner's `sessions.jsonl`) by arm, in the
+/// order arms first appear.
+pub fn summarize(sessions: &[Value]) -> Vec<ArmSummary> {
+    let mut summaries: Vec<ArmSummary> = Vec::new();
+    for session in sessions {
+        let arm = session["arm"].as_str().unwrap_or("unknown").to_string();
+        let index = match summaries.iter().position(|s| s.arm == arm) {
+            Some(index) => index,
+            None => {
+                summaries.push(ArmSummary {
+                    arm,
+                    ..ArmSummary::default()
+                });
+                summaries.len() - 1
+            }
+        };
+        let summary = &mut summaries[index];
+        summary.sessions += 1;
+        if session["complete"] == Value::Bool(true) {
+            summary.completed += 1;
+        }
+        if !session["check_error"].is_null() {
+            summary.check_errors += 1;
+        }
+        if session["deadline_hit"] == Value::Bool(true) {
+            summary.deadline_hits += 1;
+        }
+        if !session["driver_error"].is_null() {
+            summary.driver_errors += 1;
+        }
+        summary.tool_calls += session["tool_calls"].as_u64().unwrap_or(0) as usize;
+        if session["tool_calls_valid"] == Value::Bool(true) {
+            summary.sessions_all_calls_valid += 1;
+        }
+        summary.requests += session["chat_requests"].as_u64().unwrap_or(0) as usize;
+        let finishes = session["finish_reasons"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        summary.truncations += finishes
+            .iter()
+            .filter(|f| f.as_str() == Some("length"))
+            .count();
+        let outcomes = session["request_outcomes"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        summary.request_failures += outcomes
+            .iter()
+            .filter(|o| o.as_str() != Some("completed"))
+            .count();
+        if session["prefixes_extend"] == Value::Bool(true) {
+            summary.sessions_prefix_extends += 1;
+        }
+        let metrics = [
+            session["predicted_tokens"].as_f64(),
+            session["prompt_eval_tokens"].as_f64(),
+            session["cached_tokens"].as_f64(),
+            session["predicted_ms"].as_f64(),
+        ];
+        match metrics {
+            [Some(predicted), Some(evaluated), Some(cached), Some(ms)] => {
+                summary.metric_requests += session["chat_requests"].as_u64().unwrap_or(0) as usize;
+                summary.predicted_tokens += predicted;
+                summary.prompt_eval_tokens += evaluated;
+                summary.cached_tokens += cached;
+                summary.predicted_ms += ms;
+            }
+            _ => summary.metrics_incomplete += 1,
+        }
+        summary.wall_seconds += session["wall_seconds"].as_f64().unwrap_or(0.0);
+    }
+    summaries
+}
+
 /// Every call's arguments parsed as a JSON object and named an offered tool.
 pub fn tool_calls_valid(result: &DriverResult) -> bool {
     result
@@ -245,6 +398,39 @@ mod tests {
         assert!(check_lab_root(&dotted, &[repo.path().to_path_buf()]).is_err());
         let outside = tempfile::tempdir().unwrap();
         assert!(check_lab_root(&outside.path().join("lab"), &[repo.path().to_path_buf()]).is_ok());
+    }
+
+    #[test]
+    fn verbatim_prefix_is_stripped() {
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"\\?\C:\lab\runs")),
+            PathBuf::from(r"C:\lab\runs")
+        );
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"\\?\UNC\server\share\lab")),
+            PathBuf::from(r"\\server\share\lab")
+        );
+        assert_eq!(
+            strip_verbatim(PathBuf::from("/tmp/lab")),
+            PathBuf::from("/tmp/lab")
+        );
+        assert_eq!(
+            strip_verbatim(PathBuf::from(r"\\?\Volume{abc}\x")),
+            PathBuf::from(r"\\?\Volume{abc}\x"),
+            "a non-drive verbatim path has no ordinary form and is kept"
+        );
+    }
+
+    #[test]
+    fn lab_root_is_returned_without_verbatim_prefix() {
+        let outside = tempfile::tempdir().unwrap();
+        let lab = check_lab_root(&outside.path().join("lab"), &[]).unwrap();
+        assert!(
+            !lab.to_string_lossy().starts_with(r"\\?\"),
+            "{}",
+            lab.display()
+        );
+        assert!(lab.is_dir());
     }
 
     #[test]
@@ -396,6 +582,55 @@ mod tests {
         });
         assert!(check(&t, &result("51", 0), fixture.path()).unwrap());
         assert!(!check(&t, &result("51", 1), fixture.path()).unwrap());
+    }
+
+    #[test]
+    fn summarize_counts_every_session() {
+        let sessions = vec![
+            serde_json::json!({"arm": "native", "complete": true, "check_error": null, "deadline_hit": false,
+                "driver_error": null, "tool_calls": 1, "tool_calls_valid": true, "chat_requests": 2,
+                "finish_reasons": ["tool_calls", "stop"], "request_outcomes": ["completed", "completed"],
+                "prefixes_extend": true, "predicted_tokens": 80.0, "prompt_eval_tokens": 2600.0,
+                "cached_tokens": 2500.0, "predicted_ms": 20000.0, "wall_seconds": 40.0}),
+            serde_json::json!({"arm": "valve", "complete": false, "check_error": null, "deadline_hit": true,
+                "driver_error": null, "tool_calls": 0, "tool_calls_valid": true, "chat_requests": 1,
+                "finish_reasons": ["length"], "request_outcomes": ["completed"], "prefixes_extend": true,
+                "predicted_tokens": null, "prompt_eval_tokens": 2600.0, "cached_tokens": 0.0,
+                "predicted_ms": 1.0, "wall_seconds": 90.0}),
+            serde_json::json!({"arm": "native", "complete": false, "check_error": null, "deadline_hit": false,
+                "driver_error": "boom", "tool_calls": 0, "tool_calls_valid": true, "chat_requests": 0,
+                "finish_reasons": [], "request_outcomes": [], "prefixes_extend": true,
+                "predicted_tokens": null, "prompt_eval_tokens": null, "cached_tokens": null,
+                "predicted_ms": null, "wall_seconds": 5.0}),
+        ];
+        let summaries = summarize(&sessions);
+        assert_eq!(summaries.len(), 2);
+        let native = &summaries[0];
+        assert_eq!(
+            (native.arm.as_str(), native.sessions, native.completed),
+            ("native", 2, 1)
+        );
+        assert_eq!(native.driver_errors, 1);
+        assert_eq!(native.metrics_incomplete, 1);
+        assert_eq!(native.predicted_per_request(), Some(40.0));
+        assert_eq!(native.predicted_per_completion(), Some(80.0));
+        assert_eq!(native.wall_per_completion(), Some(45.0));
+        let valve = &summaries[1];
+        assert_eq!(
+            (
+                valve.sessions,
+                valve.completed,
+                valve.deadline_hits,
+                valve.truncations
+            ),
+            (1, 0, 1, 1)
+        );
+        assert_eq!(
+            valve.predicted_per_completion(),
+            None,
+            "no completion, no ratio"
+        );
+        assert_eq!(valve.metrics_incomplete, 1);
     }
 
     #[test]

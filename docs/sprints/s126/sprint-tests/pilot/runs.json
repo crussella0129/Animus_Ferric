@@ -1,0 +1,22 @@
+[
+  {
+    "run": "pilot-1790430708089",
+    "start_index": null,
+    "rates": {
+      "prefill_tokens_per_second": 276.1691140579556,
+      "decode_tokens_per_second": 3.2530209891013633
+    },
+    "ferric_commit": "f06b57ca52442a1a3f9eb188950b4f1dddf53ff8",
+    "sessions": 24
+  },
+  {
+    "run": "pilot-1790436617596",
+    "start_index": null,
+    "rates": {
+      "prefill_tokens_per_second": 272.35111193086436,
+      "decode_tokens_per_second": 3.262065360372593
+    },
+    "ferric_commit": "f06b57ca52442a1a3f9eb188950b4f1dddf53ff8",
+    "sessions": 12
+  }
+]

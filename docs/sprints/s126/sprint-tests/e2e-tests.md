@@ -68,6 +68,72 @@ stream to the valve. The valve's receipt is **`cancelled`**, and llama-server's
 `/slots` reported the slot **idle 4.88 s after the interrupt**, inside the
 rate-derived bound. The driver exited 0, and every child was reaped.
 
-## `pilot_27b` — native vs valve
+## `pilot_27b` — native vs valve (T-12609)
 
-The pilot results are recorded in [pilot/report.md](pilot/report.md) (T-12609).
+The full generated report is [pilot/report.md](pilot/report.md). The sanitized
+manifest, session ledger, run list, exclusions and cleanup proofs sit beside
+it.
+
+**What ran.** Two runs used the same model, build, flags and corpus:
+
+- **Pass 1** (`pilot-1790430708089`, Ferric `f06b57c`): all 24 sessions,
+  covering 4 tasks × 2 arms × 3 repetitions, counterbalanced, in one
+  llama-server process.
+- **Pass 2** (`pilot-1790436617596`): Ferric `f06b57c` plus the working-tree
+  `strip_verbatim` fix committed with T-12609. It re-ran `edit` and `create`,
+  3 repetitions × 2 arms, after pass 1 revealed a runner defect.
+
+**Runner defect found by operating the system.** `check_lab_root`
+canonicalized the lab, which on Windows yields a verbatim path, and that path
+became Hermes's working directory. Hermes then failed every file write in both
+arms with `mkdir: cannot create directory '//?'`. `read_file` worked, so
+`lookup` and `no_tool` were unaffected. `edit` and `create` completions
+depended on the model guessing an absolute path. Native guessed faster, so
+pass 1 misleadingly showed valve 7/12 against native 11/12.
+
+Those 12 pass-1 write sessions are **excluded with their reason**
+([exclusions.json](pilot/exclusions.json)) and remain in the ledger. They were
+re-run on the fixed runner. The fix (`strip_verbatim`) has unit tests and a
+live 7B check. Pass 2's clean runs make the contamination unambiguous: both
+arms completed every write task.
+
+**Result (24 included sessions):**
+
+| | native | valve |
+|---|---|---|
+| Checked completions | **12/12** | **12/12** |
+| All tool calls valid | 12/12 sessions | 12/12 sessions |
+| Decoded tokens per request | 31.9 | 42.3 (+33%) |
+| Decoded tokens per checked completion | 79.8 | 137.5 (+72%) |
+| Wall time per session | 53.1 s | 69.7 s (+31%) |
+| Prompt tokens served from cache | 58.1% | 67.4% |
+| Rendered prefixes only grew | 12/12 | 12/12 |
+
+**Reading.** On this corpus, the 27B's native template tool calling is already
+reliable. Constraining it added **no measurable correctness**, a ceiling
+effect, and cost about 30% more wall time. The cost is decode, not prefill.
+The valve's prompt is smaller (it lists tools as `- name: description`, about
+900 fewer prompt tokens), and its cache share is higher. It decodes more
+because today's grammar forces a `thought` and a JSON wrapper around even a
+one-word reply: `no_tool` decodes 3 tokens native against 51 through the
+valve, and `lookup` 32 against 77.
+
+That is INT-0013's question, answered for today's defaults: **with the
+required `thought`, harness-owned decoding does not make this model faster,
+and this corpus cannot show whether it makes it more accurate.** The next
+measurements are the grammar-option arms INT-0013 already names (`F-none`,
+`F-bounded`), `N-forced`, a Hermes-sized catalog, and harder tasks where
+native calling fails.
+
+**A second finding, about Hermes.** In pass 1's cap-exhausted valve sessions,
+the final summary request re-rendered an early assistant turn, which broke
+prefix extension. Hermes sends this request after hitting its tool-iteration
+cap. The likely mechanism is that the request drops older `reasoning_content`,
+which changes the valve's projected `thought`. It occurred only in sessions
+exhausted by the write defect, and none of the clean sessions show it. It is
+recorded for the valve's history-rendering work and as a lesson for Amalgam.
+
+**Resource note.** The plan estimated about 1–1.5 GPU-hours. The actual total
+was about 2.3 hours, including pass 2's roughly 22 minutes. Pass 2 repaired a
+runner defect on the same model, host and build, a repeat attempt within the
+approved resource class (Amalgam lesson L-18), not a new class.
