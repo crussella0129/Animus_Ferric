@@ -1,0 +1,16 @@
+[package]
+name = "ferric-iron"
+description = "Ferric's constrained-decoding core: action-grammar authoring, parsing, protocol selection and the constrained protocol's conventions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The dependency boundary is part of the contract (INT-0011 AC-1): no async
+# runtime, no HTTP, no filesystem, no Ferric harness crates. It is pinned by
+# `tests/dependency_boundary.rs`.
+[dependencies]
+ferric-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

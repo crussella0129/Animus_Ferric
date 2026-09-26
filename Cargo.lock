@@ -640,12 +640,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferric-iron"
+version = "0.1.0"
+dependencies = [
+ "ferric-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "ferric-loop"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "ferric-core",
  "ferric-guard",
+ "ferric-iron",
  "ferric-provider",
  "ferric-tools",
  "ferric-trace",
@@ -686,6 +697,7 @@ dependencies = [
  "async-trait",
  "ferric-core",
  "ferric-guard",
+ "ferric-iron",
  "ferric-tools",
  "ferric-trace",
  "futures-executor",

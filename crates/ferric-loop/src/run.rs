@@ -1188,13 +1188,12 @@ pub async fn run(
                 .unwrap_or(DEFAULT_SYSTEM_PROMPT)
                 .to_string();
             if args.system_prompt.is_none() {
-                system.push_str("\n\nAvailable tools:\n");
-                for t in &registry_tools {
-                    system.push_str(&format!("- {}: {}\n", t.name, t.description));
-                }
-                for control in crate::terminator::control_descriptors(args.protocol) {
-                    system.push_str(&format!("- {}: {}\n", control.name, control.description));
-                }
+                let listed: Vec<ToolDescriptor> = registry_tools
+                    .iter()
+                    .cloned()
+                    .chain(crate::terminator::control_descriptors(args.protocol))
+                    .collect();
+                system.push_str(&ferric_iron::render_tool_listing(&listed));
             }
             if effective_harness_policy == HarnessPolicy::Evidence {
                 system.push_str("\n\n");

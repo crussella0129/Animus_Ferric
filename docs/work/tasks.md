@@ -318,3 +318,15 @@ below remain executable follow-up work; the review did not silently fix them.
 
 ## Sprint 125 — deployable run-from-anywhere front door (INT-0008)
 
+
+## Sprint 126 — the Iron: extraction, valve, real-Hermes pilot (INT-0010..0013)
+
+- [ ] T-12602 (sprint 126) [intent: INT-0011]: Dependency-boundary test and extraction measurement gate — touches: crates/ferric-iron/tests/dependency_boundary.rs, docs/sprints/s126/sprint-tests/extraction-measurement.md
+- [ ] T-12603 (sprint 126) [intent: INT-0011]: Reject an untransmittable Regex constraint instead of sending an unconstrained request — touches: crates/ferric-provider/src/openai.rs
+- [ ] T-12604 (sprint 126) [intent: INT-0011]: OpenAI-tools adapter with typed rejection — touches: crates/ferric-iron/src/openai_tools.rs, crates/ferric-iron/src/lib.rs
+- [ ] T-12605 (sprint 126) [intent: INT-0012]: Valve pure request transform (constrained vs pass-through, history projection) — touches: crates/ferric-valve/, Cargo.toml, Cargo.lock
+- [ ] T-12606 (sprint 126) [intent: INT-0012]: Valve upstream streaming and honest response translation — touches: crates/ferric-valve/src/
+- [ ] T-12607 (sprint 126) [intent: INT-0012]: Valve receipts, startup enforcement probe, record-only mode, loopback CLI — touches: crates/ferric-valve/src/
+- [ ] T-12608 (sprint 126) [intent: INT-0012]: Source-defined real-Hermes E2E runner; 7B bring-up, 27B readiness and cancellation — touches: crates/ferric-valve/examples/, crates/ferric-valve/e2e/, crates/ferric-process/src/memory.rs, crates/ferric-cli/src/startup/, docs/sprints/s126/sprint-tests/e2e-tests.md
+- [ ] T-12609 (sprint 126) [intent: INT-0013]: Native-vs-valve pilot on the 27B with independent checkers and report — touches: crates/ferric-valve/e2e/tasks/, crates/ferric-valve/examples/hermes_pilot.rs, docs/sprints/s126/sprint-tests/pilot/
+- [ ] T-12610 (sprint 126) [intent: INT-0010]: Charter docs, project instructions and ledger triage — touches: README.md, docs/README.md, docs/introduction.md, CLAUDE.md, AGENTS.md, docs/work/tasks.md

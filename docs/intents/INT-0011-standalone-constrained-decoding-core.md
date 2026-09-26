@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0011
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 126 T-12601–T-12604 build plan](../sprints/s126/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -149,3 +149,4 @@ a named consumer: the valve in INT-0012.
   contract, and it carries the constraint-provenance part of the abandoned
   INT-0004.
 - 2026-09-26: clarified the scope before planning. The protocol's prompt-side conventions (tool listing, constrained tool-result replay) are named as in scope, and the regex-dependent XML fallback may stay in `ferric-loop` for now. Then moved from `proposed` to `planned` after the owner approved the Sprint 126 plan, with T-12601 to T-12604 covering AC-1, AC-2, AC-4 and the adapter part of AC-3. AC-5 to AC-8 remain for later increments.
+- 2026-09-26: moved from `planned` to `active` when Sprint 126 Build began T-12601 (core extraction).

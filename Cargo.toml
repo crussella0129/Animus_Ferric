@@ -3,6 +3,7 @@ resolver = "3"
 default-members = ["crates/ferric-cli"]
 members = [
     "crates/ferric-core",
+    "crates/ferric-iron",
     "crates/ferric-process",
     "crates/ferric-trace",
     "crates/ferric-provider",
@@ -89,6 +90,7 @@ windows-sys = "0.61"
 chrono = "0.4"
 
 ferric-core = { path = "crates/ferric-core" }
+ferric-iron = { path = "crates/ferric-iron" }
 ferric-process = { path = "crates/ferric-process" }
 ferric-trace = { path = "crates/ferric-trace" }
 ferric-provider = { path = "crates/ferric-provider" }
