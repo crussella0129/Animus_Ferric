@@ -59,7 +59,7 @@
   - [INT-0010 — Ferric is the Iron of Animus Amalgam](intents/INT-0010-ferric-is-the-iron-of-amalgam.md)
   - [INT-0011 — A standalone, versioned constrained-decoding core](intents/INT-0011-standalone-constrained-decoding-core.md)
   - [INT-0012 — The constrained valve at Hermes's provider boundary](intents/INT-0012-constrained-valve-at-hermes-boundary.md)
-  - [INT-0013 — Constrained decoding on the mid-size quantized target](intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md)
+  - [INT-0013 — Where constrained decoding pays, across local model sizes](intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md)
   - [INT-0014 — Adaptive constraint policy in the valve](intents/INT-0014-adaptive-constraint-policy.md)
 - [Tasks](work/tasks.md)
 - [Completed tasks](work/completed-tasks.md)

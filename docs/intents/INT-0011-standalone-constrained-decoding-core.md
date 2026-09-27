@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0011
 - **State:** active
-- **Work evidence:** [Sprint 126 T-12601–T-12604 build plan](../sprints/s126/sprint-plans/build-plan.md#execution-sequence)
+- **Work evidence:** [Sprint 126 T-12601–T-12604 build plan](../sprints/s126/sprint-plans/build-plan.md#execution-sequence); [T-12611, T-12619 and T-12620 in the Iron backlog](../work/tasks.md#iron-backlog--size-sweep-grammar-options-verified-invariants)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -102,10 +102,51 @@ Boundaries:
    concepts such as a planner or subagents are not represented as live
    policy.
 8. Grammar features that carry token cost are explicit, versioned
-   schema-authoring options. The required `thought` field can be required,
-   optional, length-bounded or absent. Today's behavior is the default, so
-   Ferric's recorded results stay reproducible. INT-0013 measures which
-   options pay for themselves.
+   schema-authoring options:
+   - the `thought` field can be required, optional, length-bounded (a
+     `maxLength` cap) or absent;
+   - the final reply can be the JSON `task_complete` action (today's form) or,
+     as the F-lean-answer option, plain text after a fixed sentinel.
+
+   The lean-answer form needs a context-free grammar rather than a JSON
+   Schema, so the core also authors that grammar (sent through the backend's
+   `grammar` field) under the same capability-honesty rule as AC-4.
+
+   Today's behavior is the default, so Ferric's recorded results stay
+   reproducible. Each option is identified in the schema hash and in receipts.
+   INT-0013 measures which options pay for themselves at each model size.
+9. The core's safety invariants are **verified**, not just sampled by example
+   tests. Every invariant below holds for arbitrary inputs, checked by
+   property-based tests and, where the input can be bounded, proved with the
+   Kani model checker on the actual Rust functions:
+   - **Admission.** For any set of valid tool descriptors, the action schema's
+     branches name exactly the offered tools plus the requested control
+     branches, in order, with no extras and no duplicates. Every branch
+     forbids additional properties.
+   - **Adapter.** For any OpenAI `tools` input, the adapter either returns
+     descriptors whose names are unique, non-empty and not reserved, or a
+     typed error. It never panics.
+   - **Parsing.** Every input, including invalid UTF-8 boundaries,
+     truncations and adversarial strings, produces a typed result without
+     panicking. `parse_json_action` succeeds only on objects carrying a
+     non-empty `tool` and an object `args`.
+   - **Scanning.** For any byte sequence split at any points, the scanner
+     never panics. Its streamed `thought` and summary deltas, concatenated,
+     are a prefix of the values the parser finally extracts.
+   - **Rendering.** The tool listing and tool-result text are total functions
+     whose output for equal inputs is byte-identical.
+   - **Honesty.** No constraint kind the target cannot transmit is ever
+     accepted as sent (the AC-4 property, stated for all constraint values).
+
+   Property tests run in the default test lane. Kani proofs run in a dedicated
+   Linux CI job, because Kani is not available on Windows; on this host they
+   run through WSL. Adding property-testing and Kani tooling is a recorded
+   amendment to the dependency allowlist (ADR-004): development-only, never a
+   shipped dependency of the core, so it does not move the AC-1 boundary. A
+   machine-checked Lean proof (for example via the Aeneas Rust-to-Lean
+   translator) is an optional later step, taken only if a property that matters
+   cannot be established by the tools above. That decision is recorded either
+   way.
 
 ## Rationale
 
@@ -131,7 +172,17 @@ a named consumer: the valve in INT-0012.
 - **Port to Python first.** Deferred to INT-0010's alternatives. The
   conformance corpus in AC-6 keeps that option open.
 - **Add a new token-mask engine to the core.** Out of scope. Enforcement stays
-  in the backend unless Amalgam's INT-0006 gate opens.
+  in the backend unless Amalgam's INT-0006 gate opens. INT-0013 AC-12's
+  forced-token measurement is what would justify an in-process decode engine;
+  if it does, that engine gets its own intent.
+- **Rely on example tests alone for the invariants.** Rejected for the
+  properties in AC-9. The core is the part other harnesses trust to make
+  malformed or unoffered actions impossible, and example tests only sample
+  that claim.
+- **Prove everything in Lean first.** Not selected as the first step. Kani
+  checks the real Rust functions, and property tests cover unbounded inputs,
+  at a fraction of the cost. A Lean proof is kept as an option for a property
+  those tools cannot settle.
 
 ## Consequences
 
@@ -141,6 +192,9 @@ a named consumer: the valve in INT-0012.
   so many import paths change in a large but mechanical diff.
 - Ring numbers become data supplied by the caller instead of a property only
   of Ferric's builtin tools.
+- Verification adds a Linux-only CI job and development-only tooling. The
+  scanner's incremental JSON-string decoding is the likeliest place for a
+  boundary panic, so it gets the first proofs.
 
 ## Transition history
 
@@ -150,3 +204,4 @@ a named consumer: the valve in INT-0012.
   INT-0004.
 - 2026-09-26: clarified the scope before planning. The protocol's prompt-side conventions (tool listing, constrained tool-result replay) are named as in scope, and the regex-dependent XML fallback may stay in `ferric-loop` for now. Then moved from `proposed` to `planned` after the owner approved the Sprint 126 plan, with T-12601 to T-12604 covering AC-1, AC-2, AC-4 and the adapter part of AC-3. AC-5 to AC-8 remain for later increments.
 - 2026-09-26: moved from `planned` to `active` when Sprint 126 Build began T-12601 (core extraction).
+- 2026-09-27: revised at the owner's direction. AC-8 now names the F-lean-answer option (a plain-text final reply after a sentinel, authored as a context-free grammar under AC-4's honesty rule) and requires options to be identified in the schema hash and receipts. AC-9 was added: the core's admission, adapter, parsing, scanning, rendering and honesty invariants are verified by property-based tests and Kani proofs (Linux CI), with an optional, recorded decision on a Lean proof. The alternatives and consequences were updated to match. Backlog T-12611, T-12619 and T-12620 carry the work. State remains `active`.
