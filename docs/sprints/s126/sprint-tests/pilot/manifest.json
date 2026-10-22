@@ -1,0 +1,63 @@
+{
+  "plan": "Pilot",
+  "model_file": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+  "model_bytes": 16464440224,
+  "model_sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+  "server_sha256": "aa2e1f5c67be55f11be26ae58d643a545ca07c6de498f6f870330ac2f4dfec73",
+  "ferric_commit": "f06b57ca52442a1a3f9eb188950b4f1dddf53ff8",
+  "amalgam_commit": "f820dbfd76d002883cfa98cb92352921574a31f1",
+  "corpus_sha256": "6db2c6717213da5110f09e09024f666d63dbda10bd92b45238458ee678d1e61a",
+  "ctx": 16384,
+  "gpu_layers": 24,
+  "model_layers": 66,
+  "max_tokens": 512,
+  "max_turns": 12,
+  "margin": 3.0,
+  "reps": 3,
+  "host": {
+    "os": "windows",
+    "arch": "x86_64",
+    "logical_cpus": 24,
+    "total_memory_bytes": 34281484288,
+    "available_memory_bytes_at_start": 17997369344
+  },
+  "rates": {
+    "prefill_tokens_per_second": 276.1691140579556,
+    "decode_tokens_per_second": 3.2530209891013633
+  },
+  "enforcement_probe": {
+    "Ok": "enforced"
+  },
+  "deadlines_seconds": {
+    "create": 3900.926302488,
+    "edit": 2600.617534992,
+    "lookup": 1950.463151244,
+    "no_tool": 650.154383748
+  },
+  "schedule": [
+    "lookup:native:r1",
+    "lookup:valve:r1",
+    "edit:native:r1",
+    "edit:valve:r1",
+    "create:native:r1",
+    "create:valve:r1",
+    "no_tool:native:r1",
+    "no_tool:valve:r1",
+    "lookup:valve:r2",
+    "lookup:native:r2",
+    "edit:valve:r2",
+    "edit:native:r2",
+    "create:valve:r2",
+    "create:native:r2",
+    "no_tool:valve:r2",
+    "no_tool:native:r2",
+    "lookup:native:r3",
+    "lookup:valve:r3",
+    "edit:native:r3",
+    "edit:valve:r3",
+    "create:native:r3",
+    "create:valve:r3",
+    "no_tool:native:r3",
+    "no_tool:valve:r3"
+  ]
+}

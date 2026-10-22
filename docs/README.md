@@ -1,7 +1,25 @@
 # Animus Ferric — Documentation
 
-Ferric is a local-first agentic coding harness written in Rust, purpose-built for
-small local models (1B–14B GGUF). This is the full documentation set.
+Ferric is the **Iron of [Animus Amalgam](https://github.com/crussella0129/Animus_Amalgam)**.
+It supplies harness-owned constrained decoding to Amalgam, the Animus
+Project's fork of Hermes Agent.
+
+- Ferric owns the constrained-decoding core (`crates/ferric-iron`), the
+  OpenAI-compatible valve that Hermes's custom endpoint points at
+  (`crates/ferric-valve`), and component-level evidence about both.
+- Amalgam owns the Hermes integration, session-level qualification, and
+  whether each approach advances.
+
+The design target is mid-size quantized GGUF models (roughly 20–35B at about
+Q4 with partial GPU offload), with small models kept as the floor. Start at
+[INT-0010](intents/INT-0010-ferric-is-the-iron-of-amalgam.md) and the
+[valve README](../crates/ferric-valve/README.md).
+
+The rest of this documentation set describes Ferric's original **standalone
+coding assistant**, a local-first agentic harness first built for small
+(1B–14B) GGUF models. It still builds and works, and it is now in
+**maintenance**: fixes are accepted, new features are not. Its pages describe
+shipped behavior truthfully; they are not the project's direction.
 
 ## Start here
 

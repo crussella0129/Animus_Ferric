@@ -3,6 +3,7 @@ resolver = "3"
 default-members = ["crates/ferric-cli"]
 members = [
     "crates/ferric-core",
+    "crates/ferric-iron",
     "crates/ferric-process",
     "crates/ferric-trace",
     "crates/ferric-provider",
@@ -18,6 +19,7 @@ members = [
     "crates/ferric-cli",
     "crates/ferric-vcs",
     "crates/ferric-skills",
+    "crates/ferric-valve",
 ]
 
 [workspace.package]
@@ -89,6 +91,7 @@ windows-sys = "0.61"
 chrono = "0.4"
 
 ferric-core = { path = "crates/ferric-core" }
+ferric-iron = { path = "crates/ferric-iron" }
 ferric-process = { path = "crates/ferric-process" }
 ferric-trace = { path = "crates/ferric-trace" }
 ferric-provider = { path = "crates/ferric-provider" }
@@ -103,3 +106,4 @@ ferric-icm = { path = "crates/ferric-icm" }
 ferric-cron = { path = "crates/ferric-cron" }
 ferric-vcs = { path = "crates/ferric-vcs" }
 ferric-skills = { path = "crates/ferric-skills" }
+ferric-valve = { path = "crates/ferric-valve" }

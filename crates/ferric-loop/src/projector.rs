@@ -68,7 +68,7 @@ pub(crate) fn result_message(
     match protocol {
         ActionProtocol::NativeTools => Message::tool_result(call_id, output),
         ActionProtocol::ConstrainedJson | ActionProtocol::TextXml | ActionProtocol::Plan => {
-            Message::user(format!("[tool_result for {name}] {output}"))
+            Message::user(ferric_iron::tool_result_text(name, output))
         }
     }
 }

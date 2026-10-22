@@ -1,0 +1,48 @@
+[
+  {
+    "id": "lookup",
+    "prompt": "What port number is configured in config.toml? Read the file, then reply with just the number.",
+    "files": {
+      "config.toml": "[server]\nname = \"orchard\"\nport = 7342\n\n[storage]\npath = \"data\"\n"
+    },
+    "check": { "kind": "answer_contains", "expected": "7342" },
+    "planned_requests": 3
+  },
+  {
+    "id": "edit",
+    "prompt": "In hello.py, change the greeting from \"Hello, world\" to \"Hi, world\". Change nothing else, then say done.",
+    "files": {
+      "hello.py": "def greet():\n    return \"Hello, world\"\n\n\nif __name__ == \"__main__\":\n    print(greet())\n"
+    },
+    "check": {
+      "kind": "file_contains",
+      "path": "hello.py",
+      "includes": ["def greet():", "return \"Hi, world\"", "print(greet())"],
+      "excludes": ["Hello, world"]
+    },
+    "planned_requests": 4
+  },
+  {
+    "id": "create",
+    "prompt": "Look at the Python files in the src directory. Create two files: functions.txt listing every function name defined there, one per line, sorted alphabetically; and count.txt containing only the number of functions. Then say done.",
+    "files": {
+      "src/alpha.py": "def parse_config(path):\n    return path\n\n\ndef load_data(source):\n    return source\n",
+      "src/beta.py": "def render(value):\n    return str(value)\n\n\ndef save(value, path):\n    return (value, path)\n"
+    },
+    "check": {
+      "kind": "files_equal",
+      "files": {
+        "functions.txt": "load_data\nparse_config\nrender\nsave",
+        "count.txt": "4"
+      }
+    },
+    "planned_requests": 6
+  },
+  {
+    "id": "no_tool",
+    "prompt": "What is 17 multiplied by 3? Answer with just the number and do not use any tools.",
+    "files": {},
+    "check": { "kind": "answer_without_tools", "expected": "51" },
+    "planned_requests": 1
+  }
+]

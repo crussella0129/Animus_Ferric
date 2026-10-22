@@ -155,7 +155,10 @@ impl OpenAiProvider {
     /// is actually true for the HTTP valve. The schema is NOT injected into the
     /// prompt by the server, so callers must still describe the tools in the
     /// system prompt (the loop's `ConstrainedJson` path does, via ferric-prompt).
-    fn build_body(&self, request: &CompletionRequest) -> serde_json::Value {
+    ///
+    /// A constraint kind this backend cannot transmit is an error, never a
+    /// silently unconstrained request (INT-0011 AC-4, T-12603).
+    fn build_body(&self, request: &CompletionRequest) -> Result<serde_json::Value, ProviderError> {
         let messages: Vec<_> = request.messages.iter().map(Self::map_message).collect();
 
         let mut body = json!({
@@ -181,10 +184,15 @@ impl OpenAiProvider {
             Some(Constraint::Lark(grammar)) => {
                 body["grammar"] = json!(grammar);
             }
-            // No standard OpenAI-compatible field carries a bare regex; the
-            // loop only ever emits `JsonSchema` today, so this is unreachable
-            // in practice and deliberately left unconstrained rather than faked.
-            Some(Constraint::Regex(_)) => {}
+            // No standard OpenAI-compatible field carries a bare regex. Sending
+            // the request without it would claim a constraint the backend never
+            // saw, so refuse before any network I/O (INT-0011 AC-4).
+            Some(Constraint::Regex(_)) => {
+                return Err(ProviderError::InvalidRequest(
+                    "a regex constraint cannot be transmitted to an OpenAI-compatible                      backend; refusing to send an unconstrained request"
+                        .to_string(),
+                ));
+            }
             None => {
                 if !request.tools.is_empty() {
                     let tools: Vec<_> = request.tools.iter().map(Self::map_tool).collect();
@@ -194,7 +202,7 @@ impl OpenAiProvider {
             }
         }
 
-        body
+        Ok(body)
     }
 }
 
@@ -250,9 +258,8 @@ impl Provider for OpenAiProvider {
         cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Completion, ProviderError> {
         request.validate()?;
+        let body = self.build_body(&request)?;
         with_cancellation(cancel_flag.as_deref(), async {
-            let body = self.build_body(&request);
-
             let url = format!(
                 "{}/chat/completions",
                 self.config.base_url.trim_end_matches('/')
@@ -371,10 +378,10 @@ impl Provider for OpenAiProvider {
         cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Completion, ProviderError> {
         request.validate()?;
+        let mut body = self.build_body(&request)?;
+        body["stream"] = json!(true);
         with_cancellation(cancel_flag.as_deref(), async {
             let constrained = request.constraint.is_some();
-            let mut body = self.build_body(&request);
-            body["stream"] = json!(true);
 
             let url = format!(
                 "{}/chat/completions",
@@ -733,6 +740,16 @@ mod tests {
         OpenAiProvider::new(OpenAiConfig::default())
     }
 
+    /// A provider whose endpoint is a closed loopback port: any request that
+    /// reaches the network fails with a connection error, never
+    /// `InvalidRequest`.
+    fn unreachable_provider() -> OpenAiProvider {
+        OpenAiProvider::new(OpenAiConfig {
+            base_url: "http://127.0.0.1:9/v1".to_string(),
+            ..OpenAiConfig::default()
+        })
+    }
+
     fn base_request() -> CompletionRequest {
         CompletionRequest {
             messages: vec![Message::user("hi")],
@@ -829,7 +846,7 @@ mod tests {
         let schema = json!({"type": "object", "required": ["tool", "args"]});
         let mut req = base_request();
         req.constraint = Some(Constraint::JsonSchema(schema.clone()));
-        let body = provider().build_body(&req);
+        let body = provider().build_body(&req).unwrap();
 
         assert_eq!(body["response_format"]["type"], json!("json_schema"));
         assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
@@ -846,7 +863,7 @@ mod tests {
         // set and response_format is absent.
         let mut req = base_request();
         req.tools = vec![tool()];
-        let body = provider().build_body(&req);
+        let body = provider().build_body(&req).unwrap();
 
         assert!(body["tools"].is_array());
         assert_eq!(body["tool_choice"], json!("auto"));
@@ -865,6 +882,74 @@ mod tests {
         let sink = |_: StreamDelta| panic!("must not fire any delta on a validation failure");
         let result = futures_executor::block_on(provider().complete_streaming(req, &sink, None));
         assert!(matches!(result, Err(ProviderError::InvalidRequest(_))));
+    }
+
+    /// T-12603 (INT-0011 AC-4): a regex constraint is refused before any
+    /// network I/O. The base URL points at a closed loopback port, so reaching
+    /// the network would surface a connection error instead of `InvalidRequest`.
+    #[test]
+    fn regex_constraint_is_rejected_without_network() {
+        let mut req = base_request();
+        req.constraint = Some(Constraint::Regex("^a$".to_string()));
+        let result = futures_executor::block_on(unreachable_provider().complete(req, None));
+        assert!(
+            matches!(&result, Err(ProviderError::InvalidRequest(message)) if message.contains("regex")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn regex_constraint_is_rejected_when_streaming() {
+        let mut req = base_request();
+        req.constraint = Some(Constraint::Regex("^a$".to_string()));
+        let sink = |_: StreamDelta| panic!("must not stream for an untransmittable constraint");
+        let result =
+            futures_executor::block_on(unreachable_provider().complete_streaming(req, &sink, None));
+        assert!(
+            matches!(&result, Err(ProviderError::InvalidRequest(message)) if message.contains("regex")),
+            "{result:?}"
+        );
+    }
+
+    /// T-12603: the supported request shapes serialize exactly as before the
+    /// fallible signature — full-body equality, not field spot checks.
+    #[test]
+    fn build_body_unchanged_for_supported_constraints() {
+        let schema = json!({"type": "object", "required": ["tool"]});
+        let mut constrained = base_request();
+        constrained.constraint = Some(Constraint::JsonSchema(schema.clone()));
+        let mut lark = base_request();
+        lark.constraint = Some(Constraint::Lark("root ::= \"a\"".to_string()));
+        let mut tools = base_request();
+        tools.tools = vec![tool()];
+        let plain = base_request();
+
+        let base = |req: &CompletionRequest| {
+            json!({
+                "model": provider().config.model,
+                "messages": req.messages.iter().map(OpenAiProvider::map_message).collect::<Vec<_>>(),
+                "max_tokens": req.sampling.max_tokens,
+                "temperature": req.sampling.temperature,
+                "top_p": req.sampling.top_p,
+            })
+        };
+        let mut expected = base(&constrained);
+        expected["response_format"] = json!({
+            "type": "json_schema",
+            "json_schema": {"name": "ferric_action", "schema": schema, "strict": true}
+        });
+        assert_eq!(provider().build_body(&constrained).unwrap(), expected);
+
+        let mut expected = base(&lark);
+        expected["grammar"] = json!("root ::= \"a\"");
+        assert_eq!(provider().build_body(&lark).unwrap(), expected);
+
+        let mut expected = base(&tools);
+        expected["tools"] = json!([OpenAiProvider::map_tool(&tool())]);
+        expected["tool_choice"] = json!("auto");
+        assert_eq!(provider().build_body(&tools).unwrap(), expected);
+
+        assert_eq!(provider().build_body(&plain).unwrap(), base(&plain));
     }
 
     #[test]

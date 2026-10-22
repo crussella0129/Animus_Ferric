@@ -13,6 +13,7 @@ backend-openai = ["dep:reqwest", "dep:tracing"]
 
 [dependencies]
 ferric-core = { workspace = true }
+ferric-iron = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

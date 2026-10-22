@@ -640,12 +640,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferric-iron"
+version = "0.1.0"
+dependencies = [
+ "ferric-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "toml 1.1.4+spec-1.1.0",
+]
+
+[[package]]
 name = "ferric-loop"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "ferric-core",
  "ferric-guard",
+ "ferric-iron",
  "ferric-provider",
  "ferric-tools",
  "ferric-trace",
@@ -686,6 +698,7 @@ dependencies = [
  "async-trait",
  "ferric-core",
  "ferric-guard",
+ "ferric-iron",
  "ferric-tools",
  "ferric-trace",
  "futures-executor",
@@ -751,6 +764,26 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "ferric-valve"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "ferric-core",
+ "ferric-iron",
+ "ferric-process",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

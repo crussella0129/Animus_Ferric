@@ -475,9 +475,12 @@ mod tests {
         let models_path = workspace.path().join("models");
         gguf(&models_path, 0);
         gguf(outside.path(), 777);
-        let binding = DiscoveredDirectory::open(workspace.path())
-            .unwrap()
-            .unwrap();
+        // `open` takes the models directory itself (T-12501), so watch
+        // `<workspace>/models` — the directory production discovers — not the
+        // workspace. Passing the workspace opened the wrong directory on Unix,
+        // where there is no `#[cfg(windows)]` re-open to correct it, so the swap
+        // below no longer touched the retained handle.
+        let binding = DiscoveredDirectory::open(&models_path).unwrap().unwrap();
         #[cfg(windows)]
         let binding = {
             use std::os::windows::fs::OpenOptionsExt as _;

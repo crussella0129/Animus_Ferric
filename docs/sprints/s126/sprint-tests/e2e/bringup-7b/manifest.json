@@ -1,0 +1,39 @@
+{
+  "plan": "Smoke",
+  "model_file": "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+  "model_bytes": 4683073536,
+  "model_sha256": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c",
+  "server_sha256": "aa2e1f5c67be55f11be26ae58d643a545ca07c6de498f6f870330ac2f4dfec73",
+  "ferric_commit": "a91231ad8d631b616fe2dcc19282d0d5740ff9e4",
+  "amalgam_commit": "f820dbfd76d002883cfa98cb92352921574a31f1",
+  "corpus_sha256": "6db2c6717213da5110f09e09024f666d63dbda10bd92b45238458ee678d1e61a",
+  "ctx": 16384,
+  "gpu_layers": 99,
+  "model_layers": 28,
+  "max_tokens": 512,
+  "max_turns": 12,
+  "margin": 3.0,
+  "reps": 3,
+  "host": {
+    "os": "windows",
+    "arch": "x86_64",
+    "logical_cpus": 24,
+    "total_memory_bytes": 34281484288,
+    "available_memory_bytes_at_start": 17823940608
+  },
+  "rates": {
+    "prefill_tokens_per_second": 2641.6183220223606,
+    "decode_tokens_per_second": 84.65250148141878
+  },
+  "enforcement_probe": {
+    "Ok": "enforced"
+  },
+  "deadlines_seconds": {
+    "lookup": 110.254631551,
+    "no_tool": 36.75154385
+  },
+  "schedule": [
+    "lookup:valve:r1",
+    "no_tool:valve:r1"
+  ]
+}

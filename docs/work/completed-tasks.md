@@ -2110,3 +2110,175 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-07T15:47:15Z
 - **Files modified:** docs/getting-started.md (this commit); crates/ferric-cli/src/human.rs `welcome()` (in commit `424a1dde3f49427de126693720efd2432890b466`).
 - **Commit:** `48af5ff38659d44f1384b2ca0d22bf89a2172d58`
+
+## T-12601 (sprint 126)
+- **Description:** Created `crates/ferric-iron`, the constrained-decoding core, and moved into it verbatim, tests included: `ToolDescriptor`, `Constraint`, `Capabilities` and `StreamDelta` (from `ferric-provider/types.rs`); `ConstrainedJsonScanner`; `action_schema`, `parse_json_action` and `ActionParseError`; the terminator/control descriptors; and `select_protocol`. The prompt-side conventions were extracted as `render_tool_listing` and `tool_result_text`, which `ferric-loop`'s `run.rs` and `projector.rs` now call with byte-identical output. The old modules are re-export shims, so every `ferric_provider::…` and `ferric_loop::…` path is unchanged. The regex-based XML `parse_action` stays in `ferric-loop`. `ferric-iron` depends only on ferric-core, serde, serde_json and thiserror. Verified: the canonical suite `cargo test --workspace --locked -- --test-threads=1` gave 1,326 passed / 0 failed / 13 ignored / 82 suites at `13a1832` (code identical to `bf3c7d8`) and 1,329 / 0 / 13 / 85 after the move. The difference is exactly the 3 tests added here (`tool_listing_bytes_match_legacy_format`, `tool_result_text_matches_legacy_format`, `reexport_paths_resolve`). The 27 moved tests (17 from ferric-loop, 10 from ferric-provider) all pass in ferric-iron, and none was deleted. `cargo clippy --workspace --all-targets --locked -D warnings` is clean.
+- **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-2)
+- **Completed:** 2026-09-26T12:59:57Z
+- **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-iron/Cargo.toml, crates/ferric-iron/src/{lib,types,stream_scan,grammar,terminator,protocol,render}.rs, crates/ferric-provider/Cargo.toml, crates/ferric-provider/src/types.rs, crates/ferric-provider/src/stream_scan.rs, crates/ferric-loop/Cargo.toml, crates/ferric-loop/src/{grammar,terminator,protocol,run,projector}.rs, crates/ferric-loop/tests/iron_reexports.rs, docs/intents/INT-0011-standalone-constrained-decoding-core.md
+- **Commit:** `1128b773149f70e44023c30b5cc9fc4a037e8107`
+
+## T-12602 (sprint 126)
+- **Description:** Pinned the constrained-decoding core's dependency boundary and recorded the extraction measurement that gates Stage B. `crates/ferric-iron/tests/dependency_boundary.rs` parses both manifests. `ferric-iron`'s shipped dependencies (including target-specific tables) must be a subset of {ferric-core, serde, serde_json, thiserror}, and ferric-core's a subset of {serde, serde_json, thiserror}. Dev-dependencies are excluded. A failure names the manifest and the offending crates. EARS verified by `iron_dependencies_are_within_boundary`, `boundary_check_names_offending_crate`, and a real mutation control (adding `regex` failed with the crate named, and the revert passed). The measurements are in `docs/sprints/s126/sprint-tests/extraction-measurement.md`: 19 vs 147 unique crates, a 6.1 s vs 25.2 s clean build, and suite totals of 1,326 → 1,329 (+3 added, 0 lost, ignored 13 → 13). Gate decision: pass, so Stage B may start.
+- **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-1)
+- **Completed:** 2026-09-26T13:02:50Z
+- **Files modified:** crates/ferric-iron/Cargo.toml, crates/ferric-iron/tests/dependency_boundary.rs, Cargo.lock, docs/sprints/s126/sprint-tests/extraction-measurement.md
+- **Commit:** `ae9bdc5a45d7d6d544e1c5ef8b16f6e6d78d804d`
+
+## T-12603 (sprint 126)
+- **Description:** Capability honesty (a fix, committed separately from the refactor). `OpenAiProvider::build_body` now returns `Result<Value, ProviderError>`, and a `Constraint::Regex` request fails with `ProviderError::InvalidRequest` ("a regex constraint cannot be transmitted to an OpenAI-compatible backend; refusing to send an unconstrained request"). It previously went out silently unconstrained, the overclaim Amalgam's Ferric lineage chapter recorded. `complete` and `complete_streaming` build the body before entering the cancellable network block, so the refusal precedes any I/O. EARS verified by `regex_constraint_is_rejected_without_network` and `regex_constraint_is_rejected_when_streaming`, both against a closed loopback port, so a network attempt would surface a connection error, not `InvalidRequest`. `build_body_unchanged_for_supported_constraints` checks full-body equality for JsonSchema, Lark, tools-only and unconstrained requests. ferric-provider (backend-openai) passes 40/40, and clippy is clean.
+- **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-4)
+- **Completed:** 2026-09-26T13:03:36Z
+- **Files modified:** crates/ferric-provider/src/openai.rs
+- **Commit:** `73da4cb55b2120aa80ed5f0ebed564d1352dcf46`
+
+## T-12604 (sprint 126)
+- **Description:** Added `ferric_iron::descriptors_from_openai_tools`, which turns an OpenAI-format `tools` array (the shape Hermes sends) into ordered `ToolDescriptor`s. A missing description becomes empty, and missing or null `parameters` become `{"type":"object","properties":{}}`. It returns a typed `OpenAiToolsError` naming the entry index and name for: a non-array input, a non-`function` type, a missing or empty name, a duplicate name, a name reserved for a control branch (`RESERVED_CONTROL_NAMES` = task_complete, request_user_input, submit_plan), or non-object `parameters`. EARS verified by `openai_tools_adapt_in_order`, `openai_tools_default_missing_parameters`, `openai_tools_reject_non_function`, `openai_tools_reject_duplicate_name`, `openai_tools_reject_reserved_control_name`, `openai_tools_reject_missing_name` and `adapted_tools_schema_has_one_branch_each` (one `anyOf` branch per descriptor, in order). The supported-construct half of INT-0011 AC-3 is left to live E2E evidence, as planned. ferric-iron passes 36 unit and 2 boundary tests, and clippy is clean.
+- **Intent:** [INT-0011](../intents/INT-0011-standalone-constrained-decoding-core.md) (AC-3, adapter part)
+- **Completed:** 2026-09-26T13:04:10Z
+- **Files modified:** crates/ferric-iron/src/openai_tools.rs, crates/ferric-iron/src/lib.rs
+- **Commit:** `31f403972c13a872c01f7e0b559b2a6ed3265675`
+
+## T-12605 (sprint 126)
+- **Description:** Created `crates/ferric-valve` with the pure request transform, which uses no I/O and no clock.
+
+  A Hermes chat-completions request is **constrained** when it has non-empty `tools`, `tool_choice` other than `none`, and no `response_format`. Otherwise it is **pass-through**, with the body byte-identical.
+
+  In constrained mode the transform:
+  - removes `tools`, `tool_choice` and `parallel_tool_calls`, and forces `stream: true`;
+  - sets a strict `response_format.json_schema` named `ferric_action`, built by `ferric_iron::action_schema` over the adapted tools plus the final-answer control (`task_complete`, whose `summary` is the whole reply);
+  - admits controls according to `tool_choice`: `auto` or absent gives all tools plus the reply, `required` gives the tools only, and a named function gives only that tool;
+  - forwards every other field unchanged;
+  - appends the teaching text and `render_tool_listing` to the first system message, or inserts one if none exists.
+
+  History is projected into Ferric's replay convention:
+  - an assistant tool call becomes the compact canonical action, with the thought taken from echoed `reasoning_content`;
+  - a `tool` message becomes `tool_result_text(name, content)`, with the name resolved from `tool_call_id`;
+  - a final answer becomes a canonical `task_complete` action.
+
+  An orphan `tool_call_id` or non-object `arguments` yields a typed `TransformError`, which T-12607 maps to 400. `message_hashes` and `prefix_hash` give content-free receipt identities.
+
+  EARS verified by 14 unit tests in `crates/ferric-valve/src/transform_tests.rs`: mode selection and pass-through (×3), rewrite/insert/forward, `tool_choice` admission, the three history projections, the two typed errors, `transform_is_deterministic` and `appended_turns_preserve_rendered_prefix`. The crate README records the request contract table. Clippy is clean.
+- **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-1, request half)
+- **Completed:** 2026-09-26T13:06:42Z
+- **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-valve/Cargo.toml, crates/ferric-valve/README.md, crates/ferric-valve/src/lib.rs, crates/ferric-valve/src/transform.rs, crates/ferric-valve/src/transform_tests.rs, docs/intents/INT-0012-constrained-valve-at-hermes-boundary.md
+- **Commit:** `93a61ed2b73cc8e5da20ac50d7b52d0c2f8a47fb`
+
+## T-12606 (sprint 126)
+- **Description:** The valve's upstream exchange and honest response translation.
+
+  `run_constrained` posts the constrained body upstream (always streaming), feeds `delta.content` through `ferric_iron::ConstrainedJsonScanner` via the pure `ActionAssembler`, and captures `finish_reason` plus llama.cpp `timings`/`usage` into `UpstreamStats`: prompt, evaluated, cached and predicted tokens and times.
+
+  Streaming emits, in order: a role chunk; `reasoning_content` deltas for the thought; the tool name once, early; then the arguments or final answer, held until the action parses; a finish chunk; `[DONE]`.
+
+  Heartbeats (empty-delta chunks) fire only when upstream bytes arrived since the last downstream chunk. Client disconnect is watched throughout, and dropping the upstream response closes its connection.
+
+  Failure handling:
+  - An upstream non-2xx or connection failure is reported before any byte streams, so the server can answer 502. No retry.
+  - An unparsable action or an unoffered tool becomes an in-band `error` event with no `[DONE]` when streaming, and an error outcome otherwise.
+  - `length` yields finish `length`, with no content and no `tool_calls`.
+
+  EARS verified by unit tests in `translate.rs` and `sse.rs`:
+  - `translate_tool_action`, `translate_final_answer`, `translate_length_is_not_parsed`, `translate_rejects_unparsable`, `translate_rejects_unoffered_tool`, `native_reasoning_passes_through`;
+  - `sse_lines_split_across_reads`, plus 2 more.
+
+  Integration tests in `tests/exchange.rs`, against a scripted loopback fake upstream:
+  - `stream_tool_call_end_to_end`, `stream_final_answer_end_to_end`, `stream_chunk_order`, `nonstream_equals_assembled_stream`;
+  - `heartbeat_only_on_upstream_progress`, `no_heartbeat_when_upstream_stalls`;
+  - `length_truncation_is_reported`, `malformed_upstream_reports_error_in_band`;
+  - `upstream_http_error_is_reported_before_start`, `upstream_unreachable_is_reported_before_start`;
+  - `client_disconnect_closes_upstream` (the fake observes its stream abandoned within bounds).
+
+  11/11 passed in three consecutive runs, and clippy is clean.
+
+  Refinement of the locked clause: after streaming has begun, HTTP status can no longer change, so a streamed invalid action is an explicit in-band OpenAI `error` event rather than HTTP 502. The 502 status for non-streaming requests and pre-start failures is asserted at the server level in T-12607. If truncation lands after the early tool-name delta, the arguments are never sent, and the name-only call with empty arguments cannot validate as a complete call.
+- **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-1 response half, AC-2, AC-3)
+- **Completed:** 2026-09-26T13:14:19Z
+- **Files modified:** crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/README.md, crates/ferric-valve/src/{lib,sse,translate,upstream}.rs, crates/ferric-valve/tests/common/mod.rs, crates/ferric-valve/tests/exchange.rs
+- **Commit:** `eb1ac06d37ee5cfba63badf829efa958e6b6a894`
+
+## T-12607 (sprint 126)
+- **Description:** The valve's HTTP surface, receipts, startup probe, record-only mode and the loopback-only CLI.
+
+  **Server (`server.rs`, axum).** `/v1/chat/completions` and `/chat/completions` go through the transform:
+  - constrained requests run `run_constrained`;
+  - pass-through and record-only requests forward the original bytes byte-for-byte, streaming preserved, while reading the reply passively;
+  - every other path is proxied unchanged;
+  - a transform error is a 400 (`ferric_valve_transform`);
+  - upstream non-2xx, unreachable, or an invalid action (non-stream) is a 502 with an OpenAI error body naming the class and the upstream status.
+
+  Each chat request runs in a spawned task that owns the exchange and writes exactly one receipt, so a hang-up yields a `cancelled` receipt.
+
+  **Receipts (`receipt.rs`)** are append-only JSONL and content-free. Fields: request id, mode, stream, outcome, HTTP status, tools offered, catalog/schema/prefix hashes, per-message `message_hashes`, model, prompt/evaluated/cached/predicted tokens and times, finish reason, action validity, tool, error class, and an `unavailable` list.
+
+  **Probe (`probe.rs`).** It asks for the word "hello" while constraining the reply to `{"ok":"yes"}`, so only an enforcing upstream passes. The CLI exits 3 on failure.
+
+  **CLI (`main.rs`):** `--upstream`, `--listen` (default `127.0.0.1:8090`; non-loopback refused, exit 2), `--receipts`, `--record-only`, `--heartbeat-ms`.
+
+  **EARS verified:**
+  - unit: `receipt_has_required_fields`, `receipt_marks_unavailable_metrics`, `sink_appends_one_line_per_receipt`, `default_listen_is_loopback`, `non_loopback_listen_is_refused`;
+  - integration (`tests/server.rs`, 12/12): `server_maps_transform_error_to_400`, `malformed_upstream_yields_502`, `upstream_http_error_yields_502_with_status` (stream and non-stream), `upstream_unreachable_yields_502`, `one_receipt_per_request`, `receipt_contains_no_message_text`, `cancelled_request_writes_cancelled_receipt`, `probe_accepts_enforcing_upstream`, `probe_refuses_non_enforcing_upstream`, `record_only_is_byte_faithful_streaming`, `record_only_is_byte_faithful_nonstream`, `hermes_captured_request_round_trips`.
+
+  The last test uses the real Hermes `file` toolset definitions, captured from Amalgam `f820dbf` via `model_tools.get_tool_definitions` into `tests/fixtures/hermes_file_tools.json`.
+
+  Source smoke via `cargo run`: a public `--listen` exits 2, and an unreachable upstream refuses constrained mode with exit 3. ferric-valve passes 28 unit, 11 exchange and 12 server tests, and clippy is clean.
+- **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-4, AC-5, AC-6, record-only boundary, loopback default)
+- **Completed:** 2026-09-26T13:20:32Z
+- **Files modified:** crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/src/{lib,server,receipt,probe,main}.rs, crates/ferric-valve/tests/server.rs, crates/ferric-valve/tests/fixtures/hermes_file_tools.json
+- **Commit:** `a44b587da5ce9fc75c94a90ec7c2299924e2c1f8`
+
+## T-12608 (sprint 126)
+- **Description:** Real Hermes through the Ferric valve, from a source-defined runner.
+
+  **Prerequisite.** Commit `a91231a` moved the Sprint 122 system-memory probe, behavior-preserving, into `ferric_process::memory` so the runner can gate on RAM without depending on the frozen CLI.
+
+  **Pure support (`ferric_valve::pilot`, 10 unit tests):**
+  - `check_lab_root`, which refuses labs inside either repository after canonicalization;
+  - `admit`, covering the CPU-resident weight share plus KV and headroom against available memory, where unknown is refused;
+  - `session_deadline`, set to margin × requests × (context/prefill rate + cap/decode rate) with no fixed constant;
+  - `prefixes_extend`, plus task checkers and tool-call validity.
+
+  **Runner (`examples/hermes_pilot.rs`):**
+  - owns llama-server and each Hermes driver through `ProcessTree`, recording a reap proof per child, and runs the valve in-process;
+  - measures rates, then runs the live enforcement probe;
+  - gives each session a disposable `HERMES_HOME`, redirects `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`, clears the environment to an allowlist, uses Amalgam's lab session config, erases the slot first, and offers the `file` toolset only.
+
+  **Driver (`e2e/hermes_driver.py`)** mirrors Amalgam's `driver.py`; `ruff format --check` and `ruff check` are clean. The corpus is `e2e/tasks.json`.
+
+  **Live results (`docs/sprints/s126/sprint-tests/e2e-tests.md`):**
+  - The first run found Hermes's 64K context floor. The repair was config-only, adopting the Amalgam lab's pin plus compression-off; no valve code changed.
+  - 7B bring-up: `lookup` and `no_tool` are complete, the second request reused 2,531 cached tokens, and prefixes extend.
+  - 27B readiness: `lookup` is complete through `search_files` → `read_file` → answer (37/26/27 decoded tokens per action, continuations reusing 2,561 and 2,656 cached tokens); `no_tool` is complete; prefixes extend.
+  - 27B cancellation: the receipt shows `cancelled`, and the slot was idle 4.88 s after the interrupt.
+
+  All children were reaped. ferric-valve passes 38 unit, 11 exchange and 12 server tests, and clippy (all targets) is clean.
+- **Intent:** [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md) (AC-7, AC-3 live)
+- **Completed:** 2026-09-26T13:51:26Z
+- **Files modified:** crates/ferric-process/src/memory.rs, crates/ferric-process/{lib.rs,Cargo.toml}, crates/ferric-cli/src/startup/memory.rs, crates/ferric-cli/Cargo.toml (commit `a91231a`); crates/ferric-valve/src/pilot.rs, crates/ferric-valve/src/lib.rs, crates/ferric-valve/Cargo.toml, Cargo.lock, crates/ferric-valve/examples/hermes_pilot.rs, crates/ferric-valve/e2e/hermes_driver.py, crates/ferric-valve/e2e/tasks.json, docs/sprints/s126/sprint-tests/e2e-tests.md, docs/sprints/s126/sprint-tests/e2e/ (this commit)
+- **Commit:** `3d584d9208f1dc1eab4deef9b7d2b77d0d4e67b1`
+
+## T-12610 (sprint 126)
+- **Description:** Charter documentation and ledger triage (INT-0010).
+  - **Landing docs.** `README.md` now opens with Ferric as the Iron of Animus Amalgam: the ownership split table, the `ferric-iron` and `ferric-valve` roles, and the 20–35B Q4 target, with INT-0013 measuring rather than assuming. The standalone assistant moves under "The standalone assistant (maintenance)", with its `cargo r` block, command table and guarantees intact, and a "Running the valve with Hermes" section is added. `docs/README.md` and `docs/introduction.md` state the same role and envelope and mark the standalone pages as truthful but maintenance-only.
+  - **Project instructions.** `CLAUDE.md` and `AGENTS.md` gain a direction section: Iron work first, standalone surfaces maintenance-only, Amalgam's Book is Amalgam's.
+  - **Ledger triage.** In `docs/work/tasks.md`, the 17 sections holding open tasks from standalone surfaces or closed intents are relabeled "Maintenance — <area> [<closed intent or area>]", under a triage preface. No task line was changed or deleted.
+  - **Verification.** New doc guards in `crates/ferric-cli/tests/charter_docs.rs`: `landing_docs_state_iron_role`, `open_tasks_are_triaged` (mutation control: un-labeling one section fails it), `task_line_count_not_reduced` (task lines plus completion entries at least the 51af84e baseline of 122 + 215; tasks only move between ledgers), and `project_instructions_state_direction`. The existing guards (`human_docs`, `budget_docs`, `getting_started_doc`, `template_hygiene`) pass unchanged.
+- **Intent:** [INT-0010](../intents/INT-0010-ferric-is-the-iron-of-amalgam.md) (AC-1, AC-3, AC-5)
+- **Completed:** 2026-09-26T13:55:22Z
+- **Files modified:** README.md, docs/README.md, docs/introduction.md, CLAUDE.md, AGENTS.md, docs/work/tasks.md, crates/ferric-cli/tests/charter_docs.rs, docs/intents/INT-0010-ferric-is-the-iron-of-amalgam.md
+- **Commit:** `ad8f8fa49e27c63de9a9ba21721549d42fda6d4f`
+
+## T-12609 (sprint 126)
+- **Description:** The 27B native-vs-valve pilot with independent checkers, and its report.
+  - **Pass 1.** 24 sessions: `lookup`, `edit`, `create`, `no_tool` × native (record-only) and valve (constrained) × 3 repetitions, ABBA, one llama-server process, erased slot per session.
+  - **Runner defect.** Pass 1 revealed that `check_lab_root` handed Hermes a Windows verbatim working directory, so every Hermes file write failed (`mkdir '//?'`) in both arms. Fixed with `pilot::strip_verbatim` (tests `verbatim_prefix_is_stripped`, `lab_root_is_returned_without_verbatim_prefix`; live 7B check). Pass 1's 12 write sessions are excluded with their reason (`pilot/exclusions.json`) and kept in the ledger.
+  - **Pass 2.** The write tasks re-ran on the fixed runner: 12 sessions, all complete.
+  - **Report.** `pilot::summarize` (unit test `summarize_counts_every_session`) and the `pilot_report` example render `pilot/report.md`: manifest, per-arm table over all included sessions, per-task table, exclusions table and full ledger. The runner gained `--start-index` for continuation runs.
+  - **Result (24 included sessions).** Native 12/12 and valve 12/12 checked completions, with every tool call valid in both arms. The valve decodes +33% tokens per request (42.3 vs 31.9) and takes +31% wall time per session (69.7 vs 53.1 s), mostly from the forced `thought` and JSON wrapper (`no_tool`: 3 vs 51 decoded tokens). Its prompt is smaller and its cache share higher. Prefixes extend 12/12 in both arms.
+  - **Reading.** With today's grammar defaults the constraint does not make the 27B faster, and this corpus cannot show a correctness gain (ceiling). The next arms are INT-0013's `F-none` / `F-bounded`, `N-forced`, a Hermes-sized catalog, and harder tasks.
+  - **Hermes finding.** Its iteration-cap summary request re-rendered an early assistant turn in cap-exhausted sessions.
+  - **Resources.** About 2.3 GPU-hours in total against an estimate of about 1–1.5 (pass 2 was a repeat attempt within the approved class). All children were reaped. Recorded in `docs/sprints/s126/sprint-tests/e2e-tests.md`.
+- **Intent:** [INT-0013](../intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md) (AC-1, and AC-3 at pilot scope)
+- **Completed:** 2026-09-26T15:54:17Z
+- **Files modified:** crates/ferric-valve/src/pilot.rs, crates/ferric-valve/examples/hermes_pilot.rs, crates/ferric-valve/examples/pilot_report.rs, docs/sprints/s126/sprint-tests/pilot/, docs/sprints/s126/sprint-tests/e2e-tests.md, docs/intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md
+- **Commit:** `a77b4983d17602c7211db895b3e634888b046380`

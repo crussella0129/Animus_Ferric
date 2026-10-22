@@ -1,0 +1,14 @@
+# Linux (WSL Ubuntu) verification of the startup::models fix, before commit bf3c7d8
+# Command: CARGO_TARGET_DIR=<linux-tmp> cargo test -p ferric-cli --lib startup::models
+# Repository path replaced with <repo>.
+
+     Running unittests src/lib.rs (<linux-tmp>/debug/deps/ferric_cli-e805095b43ee2b31)
+running 7 tests
+test startup::models::tests::automatic_symlink_root_is_refused_but_explicit_external_model_is_allowed ... ok
+test startup::models::tests::discovered_models_directory_swap_cannot_admit_external_model ... ok
+test startup::models::tests::scan_dir_rejects_a_non_file_gguf_entry ... ok
+test startup::models::tests::scan_dir_rejects_a_symlinked_gguf_in_an_external_directory ... ok
+test startup::models::tests::scan_dir_discovers_gguf_in_an_external_directory ... ok
+test startup::models::tests::discovered_binding_is_retained_for_later_model_validation ... ok
+test startup::models::tests::local_directory_entry_and_model_count_limits_are_exact ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 409 filtered out; finished in 0.08s

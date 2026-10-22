@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0004
-- **State:** proposed
+- **State:** abandoned
 - **Work evidence:** [T-11403/T-11404 backlog](../work/tasks.md#book-v2-carry-forward-from-sprint-113)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -10,6 +10,8 @@
 - **Documentation evidence:** [Sprint 113 gap audit](../sprints/s113/sprint-research/research-report.md)
 
 ## Intent
+
+> **Abandoned 2026-09-26.** Its constraint-provenance clause returns as a new requirement in [INT-0011](INT-0011-standalone-constrained-decoding-core.md) (AC-5) and [INT-0012](INT-0012-constrained-valve-at-hermes-boundary.md) (receipts); session-audit ergonomics for Ferric's own CLI are not pursued.
 
 Make a Ferric session independently answer what prompt, policy guidance, tool
 descriptions, action schema, sampling configuration, workspace effects, and
@@ -59,3 +61,4 @@ must remain readable without being misrepresented as integrity-bound.
 ## Transition history
 
 - 2026-08-26: created as `proposed` from the Sprint 113 provenance and audit gaps.
+- 2026-09-26: moved from `proposed` to `abandoned` by the owner's direction change ([INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md)). Canonical hashes for the schema, policy and rendered prefix are re-expressed as new acceptance criteria in [INT-0011](INT-0011-standalone-constrained-decoding-core.md) AC-5 and [INT-0012](INT-0012-constrained-valve-at-hermes-boundary.md) AC-4, not transferred as state. Tamper-evident CLI session traces, audit listing and resume-last served the frozen standalone surface. See [Sprint 126 direction research](../sprints/s126/sprint-research/research-report.md).

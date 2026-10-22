@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0007
-- **State:** active
+- **State:** superseded
 - **Work evidence:** [Sprint 114 T-11407 through T-11413](../sprints/s114/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 continuation plan](../sprints/s115/sprint-plans/build-plan.md#execution-sequence); [Sprint 115 partial closeout](../sprints/s115/sprint-tests/test-report.md); [stable ordered calibration and workflow backlog](../work/tasks.md#post-sprint-115--ordered-local-model-work); [Sprint 121 approved explicit-budget plan](../sprints/s121/sprint-plans/build-plan.md#execution-sequence)
 - **Completion evidence:** none
 - **Code evidence:** [Sprint 121 explicit-cap implementation](../work/completed-tasks.md#t-12101-sprint-121); [parent budget/evidence implementation](../work/completed-tasks.md#t-12102-sprint-121); [diagnostic calibration guard](../work/completed-tasks.md#t-12103-sprint-121); [qualified composition](../work/completed-tasks.md#t-12104-sprint-121)
@@ -10,6 +10,8 @@
 - **Documentation evidence:** [Sprint 114 research](../sprints/s114/sprint-research/research-report.md); [external field-report adjudication](../sprints/s115/sprint-research/external-field-report-adjudication.md); [Sprint 116 lifecycle and wider-gap research](../sprints/s116/sprint-research/research-report.md); [Explicit budgets and evidence](../testbench.md#explicit-budgets-and-evidence)
 
 ## Intent
+
+> **Superseded 2026-09-26 by [INT-0013](INT-0013-constrained-decoding-on-midsize-quantized-target.md)** for calibration and measurement of the constrained core on the mid-size quantized target. The Ferric-built application trial and the Sprint Loops compatibility probe are not carried forward.
 
 Prove what Animus Ferric can currently accomplish on this project's local
 hardware by selecting a source-pinned GGUF that fits the host, using Ferric to
@@ -226,3 +228,4 @@ active, with no transition or realization inferred from this partial result.
   modern context/tier profiles, tuned compaction, and first-run calibration
   durable product requirements. The refactor report remains external evidence,
   not completion authority.
+- 2026-09-26: moved from `active` to `superseded` by [INT-0013](INT-0013-constrained-decoding-on-midsize-quantized-target.md) under the owner's direction change ([INT-0010](INT-0010-ferric-is-the-iron-of-amalgam.md)). Measuring whether harness-owned decoding helps a ~27B Q4 model now happens at the action level in [INT-0013](INT-0013-constrained-decoding-on-midsize-quantized-target.md). Amalgam's INT-0004 and INT-0007 own long sessions, host-derived deadlines, reasoning budgets and compaction. The frozen Ferric-built application trial (AC-3/4) and the Sprint Loops layered probe (AC-5) served the standalone surface and are closed without results. The accepted Sprint 121 explicit-budget increment stays shipped. See [Sprint 126 direction research](../sprints/s126/sprint-research/research-report.md).
