@@ -118,3 +118,27 @@ jobs:
         run: cargo check --workspace --target aarch64-unknown-linux-gnu --locked
       - name: check lifecycle fixture (compile only)
         run: cargo check -p ferric-cli --features lifecycle-fixture --all-targets --target aarch64-unknown-linux-gnu --locked
+
+  # Sprint 128 (INT-0016): the one-line installers must at least parse on
+  # every shell they target, including Windows PowerShell 5.1.
+  installers:
+    name: installer syntax (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: install.sh parses
+        if: runner.os != 'Windows'
+        run: sh -n install.sh
+      - name: install.ps1 parses (Windows PowerShell 5.1 and PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $check = '$errors = $null; [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path install.ps1).Path, [ref]$null, [ref]$errors) | Out-Null; if ($errors) { $errors | ForEach-Object { Write-Host $_ }; exit 1 }'
+          foreach ($shell in 'powershell', 'pwsh') {
+            & $shell -NoProfile -Command $check
+            if ($LASTEXITCODE -ne 0) { throw "$shell could not parse install.ps1" }
+          }

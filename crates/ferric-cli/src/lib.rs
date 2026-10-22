@@ -41,6 +41,8 @@ mod server;
 mod server_process;
 mod server_registration;
 mod server_resolution;
+#[cfg(feature = "backend-openai")]
+mod setup_cmd;
 mod skills_cmd;
 #[cfg(feature = "backend-openai")]
 mod startup;
@@ -84,6 +86,9 @@ struct Cli {
 enum Command {
     /// Open a session, ask a question, or work on files with permission
     Run(Box<human::RunArgs>),
+    /// Download the engine and a model that fit this machine (one prompt, verified)
+    #[cfg(feature = "backend-openai")]
+    Setup(Box<setup_cmd::SetupArgs>),
     /// Describe this folder's setup without probes or changes
     Status(human::DescribeArgs),
     /// Explain settings, resources and intended effects without changes
@@ -199,6 +204,8 @@ fn dispatch(command: Option<Command>) -> ExitCode {
     };
     match command {
         Command::Run(args) => human::run(*args),
+        #[cfg(feature = "backend-openai")]
+        Command::Setup(args) => setup_cmd::run_setup(*args),
         Command::Status(args) | Command::Explain(args) => human::describe(args),
         Command::Advanced { .. } => advanced_help(),
         Command::Query(args) => query::run_query(*args),
@@ -283,7 +290,7 @@ fn advanced_help() -> ExitCode {
         .mut_subcommands(|command| {
             let primary = matches!(
                 command.get_name(),
-                "run" | "status" | "explain" | "advanced"
+                "run" | "setup" | "status" | "explain" | "advanced"
             );
             command.hide(primary)
         });

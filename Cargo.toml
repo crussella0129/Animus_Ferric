@@ -21,6 +21,7 @@ members = [
     "crates/ferric-skills",
     "crates/ferric-valve",
     "crates/ferric-gate",
+    "crates/ferric-setup",
 ]
 
 [workspace.package]
@@ -101,6 +102,7 @@ base64 = "0.22"
 
 ferric-core = { path = "crates/ferric-core" }
 ferric-gate = { path = "crates/ferric-gate" }
+ferric-setup = { path = "crates/ferric-setup" }
 ferric-iron = { path = "crates/ferric-iron" }
 ferric-process = { path = "crates/ferric-process" }
 ferric-trace = { path = "crates/ferric-trace" }

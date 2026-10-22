@@ -88,7 +88,11 @@ fn budget_docs_preserve_human_front_door() {
         .lines()
         .filter_map(|line| line.split_whitespace().next())
         .collect();
-    assert_eq!(actions, ["run", "status", "explain", "advanced"]);
+    if cfg!(feature = "backend-openai") {
+        assert_eq!(actions, ["run", "setup", "status", "explain", "advanced"]);
+    } else {
+        assert_eq!(actions, ["run", "status", "explain", "advanced"]);
+    }
     for human_help in [&primary, &run] {
         for expert_flag in ["--max-output-tokens", "--timeout-scale"] {
             assert!(
@@ -143,14 +147,18 @@ fn budget_docs_preserve_human_front_door() {
     let testbench = include_str!("../../../docs/testbench.md");
     for (name, markdown) in [("README", readme), ("commands", commands)] {
         let mut first_example = markdown.lines().skip_while(|line| !line.starts_with("```"));
+        // Sprint 128 (INT-0016): the first example is the one-line install,
+        // still a single command with no preflight checklist.
         assert_eq!(
             first_example.next(),
             Some("```sh"),
-            "{name}: first example remains source-driven"
+            "{name}: first example is the one-line install"
         );
         assert_eq!(
             first_example.next(),
-            Some("cargo r"),
+            Some(
+                "curl -fsSL https://raw.githubusercontent.com/crussella0129/Animus_Ferric/main/install.sh | sh"
+            ),
             "{name}: no preflight checklist"
         );
         assert_eq!(

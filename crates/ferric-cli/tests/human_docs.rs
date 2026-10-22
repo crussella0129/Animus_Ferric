@@ -57,12 +57,20 @@ fn first_run_docs_match_cli() {
     let commands = include_str!("../../../docs/commands.md");
     for (name, markdown) in [("README", readme), ("commands", commands)] {
         let mut lines = markdown.lines();
+        // Sprint 128 (INT-0016): the front door is the one-line installer,
+        // still a single command rather than a setup checklist.
         assert_eq!(
             lines.find(|line| line.starts_with("```")),
             Some("```sh"),
-            "{name}: first example is the source-driven launch"
+            "{name}: first example is the one-line install"
         );
-        assert_eq!(lines.next(), Some("cargo r"), "{name}: first command");
+        assert_eq!(
+            lines.next(),
+            Some(
+                "curl -fsSL https://raw.githubusercontent.com/crussella0129/Animus_Ferric/main/install.sh | sh"
+            ),
+            "{name}: first command"
+        );
         assert_eq!(lines.next(), Some("```"), "{name}: no setup checklist");
     }
 
@@ -98,15 +106,35 @@ fn first_run_docs_match_cli() {
         .lines()
         .filter_map(|line| line.split_whitespace().next())
         .collect();
-    assert_eq!(primary_actions, ["run", "status", "explain", "advanced"]);
-    assert_eq!(documented_actions(readme), primary_actions);
-    assert_eq!(documented_actions(commands), primary_actions);
+    // `setup` needs the backend feature; without it the old four remain.
+    let backend = cfg!(feature = "backend-openai");
+    let expected: &[&str] = if backend {
+        &["run", "setup", "status", "explain", "advanced"]
+    } else {
+        &["run", "status", "explain", "advanced"]
+    };
+    assert_eq!(primary_actions, expected);
+    let in_this_build = |action: &&str| backend || *action != "setup";
+    let readme_actions: Vec<_> = documented_actions(readme)
+        .into_iter()
+        .filter(in_this_build)
+        .collect();
+    let commands_actions: Vec<_> = documented_actions(commands)
+        .into_iter()
+        .filter(in_this_build)
+        .collect();
+    assert_eq!(readme_actions, primary_actions);
+    assert_eq!(commands_actions, primary_actions);
 
     for (action, options) in [
         ("run", &["[PROMPT]", "--workspace", "--allow-edits"][..]),
+        ("setup", &["--list", "--model", "--models-dir", "--yes"][..]),
         ("status", &["--workspace", "--json"][..]),
         ("explain", &["--workspace", "--json"][..]),
-    ] {
+    ]
+    .into_iter()
+    .filter(|(action, _)| in_this_build(action))
+    {
         let action_help = help(root.path(), &[action]);
         let documented = commands
             .lines()

@@ -67,6 +67,25 @@ fn resolve_models_dir_precedence() {
     );
 }
 
+#[test]
+fn default_models_dir_prefers_the_project_then_ferrics_data_folder() {
+    use super::resolve_models_dir;
+    let ws = tempfile::tempdir().unwrap();
+    let data =
+        |k: &str| -> Option<String> { (k == "FERRIC_DATA_DIR").then(|| "/data".to_string()) };
+    // No ./models: the folder `ferric setup` downloads into.
+    assert_eq!(
+        resolve_models_dir(None, &data, None, ws.path()),
+        Path::new("/data").join("models")
+    );
+    // A project's own models/ folder wins once it exists.
+    std::fs::create_dir(ws.path().join("models")).unwrap();
+    assert_eq!(
+        resolve_models_dir(None, &data, None, ws.path()),
+        ws.path().join("models")
+    );
+}
+
 fn fixture_command(mode: &str, port: u16) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command

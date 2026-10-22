@@ -1,0 +1,25 @@
+[package]
+name = "ferric-setup"
+description = "First-run setup for Ferric: a pinned engine and model catalog, hardware-fit recommendations, and verified, resumable downloads"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ferric-process = { workspace = true }
+hex = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util"] }
+
+[dev-dependencies]
+sha2 = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }

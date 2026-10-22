@@ -1,0 +1,96 @@
+# Prebuilt `ferric` binaries (sprint 128, INT-0016).
+#
+# A `v*` tag builds every target, then publishes one GitHub release whose
+# assets have stable names (`ferric-<target>.tar.gz` / `.zip`, each with a
+# `.sha256`), so `install.sh` and `install.ps1` can always fetch
+# `releases/latest/download/<asset>`. A manual run builds the same assets as
+# workflow artifacts and publishes nothing.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-apple-darwin, os: macos-14 }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: add target
+        run: rustup target add ${{ matrix.target }}
+      - name: build
+        run: cargo build --release --locked -p ferric-cli --target ${{ matrix.target }}
+      - name: package (tar.gz)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          name="ferric-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/ferric" "dist/$name/"
+          cp README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          cd dist
+          if command -v sha256sum >/dev/null; then sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"; else shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"; fi
+      - name: package (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "ferric-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force "dist/$name" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/ferric.exe" "dist/$name/"
+          Copy-Item README.md "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -NoNewline -Encoding ascii "dist/$name.zip.sha256" "$hash  $name.zip"
+      - name: smoke
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          exe="target/${{ matrix.target }}/release/ferric"
+          [ -f "$exe.exe" ] && exe="$exe.exe"
+          "$exe" --version
+          "$exe" secure demo
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ferric-${{ matrix.target }}
+          path: dist/ferric-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        run: cd dist && cat *.sha256 > SHA256SUMS && cat SHA256SUMS
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Ferric $GITHUB_REF_NAME" \
+            --generate-notes

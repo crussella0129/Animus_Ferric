@@ -128,7 +128,11 @@ fn primary_help_is_compact() {
         .lines()
         .filter_map(|line| line.split_whitespace().next())
         .collect();
-    assert_eq!(names, ["run", "status", "explain", "advanced"]);
+    if cfg!(feature = "backend-openai") {
+        assert_eq!(names, ["run", "setup", "status", "explain", "advanced"]);
+    } else {
+        assert_eq!(names, ["run", "status", "explain", "advanced"]);
+    }
     assert!(!help.contains("--params-b"));
     assert!(!help.contains("--gpu-layers"));
 }

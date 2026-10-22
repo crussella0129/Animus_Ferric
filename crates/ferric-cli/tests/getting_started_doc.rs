@@ -31,6 +31,11 @@ fn getting_started_describes_installed_flow() {
         "cargo install --path crates/ferric-cli",
         "FERRIC_MODELS_DIR",
         "just run `ferric`",
+        // Sprint 128 (INT-0016): the two-step install leads.
+        "install.sh | sh",
+        "install.ps1 | iex",
+        "ferric setup",
+        "SHA-256",
     ] {
         assert!(
             text.contains(needle),

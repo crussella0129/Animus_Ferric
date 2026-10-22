@@ -12,7 +12,7 @@ pub(crate) struct RunArgs {
     #[arg(long)]
     pub workspace: Option<PathBuf>,
     /// Folder to look for GGUF models in. Overrides FERRIC_MODELS_DIR and config;
-    /// defaults to the workspace's `models/` folder.
+    /// defaults to ./models if it exists, else the folder `ferric setup` downloads into.
     #[arg(long)]
     pub models_dir: Option<PathBuf>,
     /// Permit controlled file changes in this folder, for this session only.
@@ -571,10 +571,43 @@ mod enabled {
             cancel: Arc<AtomicBool>,
             progress: &mut dyn FnMut(&str),
         ) -> Result<PreparedSession, crate::startup::StartupError>;
+        /// First-run setup: offer to fetch a missing engine or model
+        /// (sprint 128). `Ok(false)` means the person declined. Fixtures keep
+        /// this default, which changes nothing.
+        fn ensure_ready(
+            &self,
+            _models_dir: &Path,
+            _skip: bool,
+            _interactive: bool,
+            _io: &dyn HumanIo,
+            _runtime: &tokio::runtime::Runtime,
+            _cancel: &AtomicBool,
+        ) -> Result<bool, String> {
+            Ok(true)
+        }
     }
 
     struct SystemPreparation;
     impl Preparation for SystemPreparation {
+        fn ensure_ready(
+            &self,
+            models_dir: &Path,
+            skip: bool,
+            interactive: bool,
+            io: &dyn HumanIo,
+            runtime: &tokio::runtime::Runtime,
+            cancel: &AtomicBool,
+        ) -> Result<bool, String> {
+            crate::setup_cmd::offer_if_needed(
+                models_dir,
+                skip,
+                interactive,
+                &|text| io.say(text),
+                &|prompt| io.read(prompt),
+                runtime,
+                cancel,
+            )
+        }
         fn begin(
             &self,
             root: &Path,
@@ -621,6 +654,11 @@ mod enabled {
             cfg.models_dir.as_deref(),
             workspace.root(),
         );
+        // An explicit model file or a configured endpoint needs no download.
+        let skip_setup = args.model.is_some() || cfg.api_base.is_some();
+        if !preparation.ensure_ready(&models_dir, skip_setup, interactive, io, runtime, &cancel)? {
+            return Ok(());
+        }
         let start = match preparation.begin(
             workspace.root(),
             cfg,
