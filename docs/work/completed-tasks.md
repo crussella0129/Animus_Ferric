@@ -2293,7 +2293,7 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0015](../intents/INT-0015-localhost-is-not-a-trust-boundary.md) (AC-1 to AC-6)
 - **Completed:** 2026-10-22
 - **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-gate/{Cargo.toml,src/lib.rs,src/token.rs,src/guard.rs,src/layer.rs,src/bind.rs,tests/layer.rs}
-- **Commit:** pending
+- **Commit:** `d7ead56b62c10590b304cc86e50fb69489f7b14a`
 
 ## T-12702 (sprint 127)
 - **Description:** Serve the valve and the API through the gate (INT-0015, INT-0012).
@@ -2303,7 +2303,7 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0015](../intents/INT-0015-localhost-is-not-a-trust-boundary.md) (AC-1, AC-4); [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md)
 - **Completed:** 2026-10-22
 - **Files modified:** crates/ferric-valve/{Cargo.toml,src/lib.rs,src/server.rs,src/main.rs,tests/gate.rs}, crates/ferric-cli/{Cargo.toml,src/api.rs}
-- **Commit:** pending
+- **Commit:** `d7ead56b62c10590b304cc86e50fb69489f7b14a`
 
 ## T-12703 (sprint 127)
 - **Description:** `ferric secure` (INT-0015 AC-7).
@@ -2313,7 +2313,7 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0015](../intents/INT-0015-localhost-is-not-a-trust-boundary.md) (AC-7)
 - **Completed:** 2026-10-22
 - **Files modified:** crates/ferric-cli/src/{secure_cmd.rs,lib.rs}
-- **Commit:** pending
+- **Commit:** `d7ead56b62c10590b304cc86e50fb69489f7b14a`
 
 ## T-12704 (sprint 127)
 - **Description:** `ferric tunnel` on GotaTun (INT-0015 AC-8).
@@ -2325,5 +2325,5 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0015](../intents/INT-0015-localhost-is-not-a-trust-boundary.md) (AC-8)
 - **Completed:** 2026-10-22
 - **Files modified:** crates/ferric-gate/src/tunnel.rs, crates/ferric-cli/src/tunnel_cmd.rs, crates/ferric-cli/src/lib.rs
-- **Commit:** pending
+- **Commit:** `d7ead56b62c10590b304cc86e50fb69489f7b14a`
 
