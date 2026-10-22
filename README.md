@@ -34,30 +34,55 @@ is being measured
 ([INT-0013](docs/intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md)),
 not assumed.
 
-## The standalone assistant (maintenance)
+## Install and run
 
-Ferric's original standalone coding assistant still builds and works. It is in
-maintenance: fixes are accepted, new features are not
-([INT-0010](docs/intents/INT-0010-ferric-is-the-iron-of-amalgam.md)).
+Linux and macOS:
 
 ```sh
-cargo r
+curl -fsSL https://raw.githubusercontent.com/crussella0129/Animus_Ferric/main/install.sh | sh
 ```
 
-From this repository, that opens a session in the current folder. Ferric asks
-which model to use only when needed, then whether you want to ask questions or
-allow file work. Type your question or task; `/quit` ends the session.
+Windows (PowerShell):
 
-You need Rust and either an already configured model server, or an installed
-`llama-server` plus an existing GGUF file in the workspace's `models` directory.
-Ferric prepares the session and remembers the selected model. It does not
-download engines or models. If resources are missing, it explains what to add.
+```powershell
+irm https://raw.githubusercontent.com/crussella0129/Animus_Ferric/main/install.ps1 | iex
+```
+
+Then, in any project folder:
+
+```sh
+ferric
+```
+
+The first run checks for an engine and a model. If either is missing, Ferric
+says exactly what it would download: llama.cpp's engine from its GitHub
+release, and a Qwen2.5-Coder model sized for your RAM from Hugging Face, with
+size and license. It asks once. Every file is pinned and checked against its
+SHA-256 before use. After that, `ferric` opens a session straight away. It
+asks whether you want to ask questions or allow file work; type your question
+or task, and `/quit` ends the session. To fetch ahead of time, or pick another
+size, run `ferric setup` (`--list` shows the choices; `--yes` skips the
+prompt).
+
+The installer puts a prebuilt, checksum-verified `ferric` in `~/.local/bin`
+(Windows: `%LOCALAPPDATA%\Programs\ferric`, added to your PATH). Until the
+first release is published, it builds from source with `cargo` instead. An
+existing `llama-server` on your PATH, or GGUF files in `./models` or
+`FERRIC_MODELS_DIR`, are used as they are, and nothing is downloaded. See
+[Getting started](docs/getting-started.md).
+
+The standalone assistant is otherwise in maintenance: fixes are accepted, new
+features are not
+([INT-0010](docs/intents/INT-0010-ferric-is-the-iron-of-amalgam.md)). The
+install and first-run flow is the exception, active under
+[INT-0016](docs/intents/INT-0016-install-run-done.md).
 
 ## Everyday commands
 
 | Command | What it does |
 |---|---|
 | `ferric run` | Open the same interactive session as `ferric` with no arguments. |
+| `ferric setup` | Download the engine and a model that fit this machine (one prompt, verified). `--list` shows the choices; `--model 1.5b` picks one; `--yes` skips the prompt. |
 | `ferric status` | Describe configuration and available local resources. |
 | `ferric explain` | Describe intended setup and ownership without probes or changes. |
 | `ferric advanced` | Find the existing expert commands. |
@@ -147,8 +172,9 @@ this limitation remains open. Session traces stay in `.ferric/trace`.
 
 ## Install and configure
 
-Normal builds include the OpenAI-compatible backend. To install the current
-source on your PATH:
+The one-line installers above are the normal route. To install the current
+source on your PATH instead (normal builds include the OpenAI-compatible
+backend):
 
 ```sh
 cargo install --path crates/ferric-cli --force

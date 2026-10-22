@@ -17,6 +17,12 @@ owner's fork of Hermes Agent.
   door, server lifecycle and Tailscale, ICM, cron, Ornstein, skills, MCP,
   Animus Launch and the autonomy runner. They get fixes, not features.
   Retiring any of them needs its own owner-approved intent.
+- **Exception: install and first run (INT-0016).** On 2026-10-22 the owner
+  made "install, run, done" the goal: a one-line install, then `ferric`
+  fetches a pinned, SHA-256-verified engine and model after one prompt. The
+  installers, the release workflow, `ferric setup` and the first-run offer
+  are active work under INT-0016. The rest of the standalone surface stays
+  maintenance-only.
 - **Amalgam's Book is Amalgam's.** Hermes integration and session-level
   qualification belong to its own Book. Do not edit it from a Ferric sprint.
 
