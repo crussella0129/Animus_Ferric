@@ -14,6 +14,7 @@ path = "src/main.rs"
 axum = { workspace = true }
 clap = { workspace = true }
 ferric-core = { workspace = true }
+ferric-gate = { workspace = true }
 ferric-iron = { workspace = true }
 hex = { workspace = true }
 reqwest = { workspace = true }

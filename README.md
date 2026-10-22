@@ -88,14 +88,46 @@ With a llama.cpp server already listening on port 8080:
 cargo run -p ferric-valve -- --upstream http://127.0.0.1:8080 --receipts receipts.jsonl
 ```
 
-Then point Hermes's custom provider at `http://127.0.0.1:8090/v1`.
+Then point Hermes's custom provider at `http://127.0.0.1:8090/v1`, and set
+its `api_key` to the contents of the token file the valve prints at startup
+(`~/.local/state/ferric/gate/valve.token` by default).
 
 - The valve refuses to start unless the upstream demonstrably enforces a JSON
   schema.
-- It binds loopback only.
+- It binds loopback only, and every request passes the network gate (see
+  [Security](#security-localhost-is-not-a-trust-boundary)).
+- `--upstream-key-file` presents llama.cpp's own `--api-key-file` key
+  upstream. Hermes's credential is never forwarded.
 - It writes one content-free receipt per request.
 - `--record-only` forwards every request unchanged while writing the same
   receipts, for a native comparison arm.
+
+## Security: localhost is not a trust boundary
+
+Every process on a machine, and every web page in its browser, can reach
+`127.0.0.1`. In 2026 that turned local agent servers into remote code
+execution (the opencode advisories). Ferric's HTTP services, `ferric-valve`
+and `ferric api`, serve every request through `ferric-gate`. It runs four
+checks in a fixed order, none of which can be configured away:
+
+1. The `Host` header must name this listener, which defeats DNS rebinding.
+2. Browsers are refused: any `Origin` or `Sec-Fetch-*` header is rejected.
+3. The service's 256-bit bearer token is required. It is stored mode 0600
+   outside every workspace.
+4. Request bodies must be JSON.
+
+No CORS header is ever sent, and nothing binds `0.0.0.0`.
+
+```sh
+ferric secure demo                       # offline: naive server 8/8 attacks land, gate 0/8
+ferric secure probe http://127.0.0.1:3581 --token-file ~/.local/state/ferric/gate/api.token
+```
+
+For remote access without a coordination server, `ferric tunnel` writes a
+self-hosted, two-peer WireGuard plan and brings it up on Mullvad's GotaTun.
+The client can reach only Ferric's tunnel address, and the token is still
+required. See [docs/security.md](docs/security.md) for the threat model, the
+demo script and the stated limits.
 
 ## What preparation guarantees
 
