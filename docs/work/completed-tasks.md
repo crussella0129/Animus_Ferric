@@ -2337,7 +2337,7 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md) (AC-4, AC-5, AC-6)
 - **Completed:** 2026-10-22
 - **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-setup/{Cargo.toml,src/lib.rs,src/catalog.rs,src/hardware.rs,src/fetch.rs,src/engine.rs,src/paths.rs,tests/mirror.rs}
-- **Commit:** pending
+- **Commit:** `6230721d3db5fc50d6ff029e0a1b447de6555f15`
 
 ## T-12802 (sprint 128)
 - **Description:** `ferric setup` and the first-run offer (INT-0016 AC-3, AC-6, AC-7).
@@ -2349,7 +2349,7 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md) (AC-3, AC-6, AC-7)
 - **Completed:** 2026-10-22
 - **Files modified:** crates/ferric-cli/{Cargo.toml,src/setup_cmd.rs,src/startup.rs,src/startup/tests.rs,src/human.rs,src/lib.rs,tests/human_cli.rs,tests/human_docs.rs,tests/budget_docs.rs}, docs/commands.md
-- **Commit:** pending
+- **Commit:** `6230721d3db5fc50d6ff029e0a1b447de6555f15`
 
 ## T-12803 (sprint 128)
 - **Description:** Release workflow and one-line installers (INT-0016 AC-1, AC-2).
@@ -2360,7 +2360,7 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md) (AC-1, AC-2)
 - **Completed:** 2026-10-22
 - **Files modified:** .github/workflows/release.yml, .github/workflows/ci.yml, install.sh, install.ps1
-- **Commit:** pending
+- **Commit:** `6230721d3db5fc50d6ff029e0a1b447de6555f15`
 
 ## T-12804 (sprint 128)
 - **Description:** Fresh-machine proof, docs and records (INT-0016 AC-8).
@@ -2373,5 +2373,5 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md) (AC-8, AC-9)
 - **Completed:** 2026-10-22
 - **Files modified:** README.md, CLAUDE.md, AGENTS.md, docs/getting-started.md, docs/configuration.md, docs/intents/{INT-0016-install-run-done.md,README.md}, docs/SUMMARY.md, docs/work/{tasks.md,completed-tasks.md}, docs/sprints/s128/, crates/ferric-cli/tests/{getting_started_doc.rs,charter_docs.rs}
-- **Commit:** pending
+- **Commit:** `6230721d3db5fc50d6ff029e0a1b447de6555f15`
 
