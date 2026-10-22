@@ -17,9 +17,11 @@ const COMPLETED: &str = include_str!("../../../docs/work/completed-tasks.md");
 const LEDGER_BASELINE: usize = 122 + 215;
 
 fn live_intent(line: &str) -> bool {
-    ["INT-0010", "INT-0011", "INT-0012", "INT-0013", "INT-0014"]
-        .iter()
-        .any(|id| line.contains(id))
+    [
+        "INT-0010", "INT-0011", "INT-0012", "INT-0013", "INT-0014", "INT-0015",
+    ]
+    .iter()
+    .any(|id| line.contains(id))
 }
 
 #[test]

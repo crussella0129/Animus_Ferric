@@ -2282,3 +2282,48 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-09-26T15:54:17Z
 - **Files modified:** crates/ferric-valve/src/pilot.rs, crates/ferric-valve/examples/hermes_pilot.rs, crates/ferric-valve/examples/pilot_report.rs, docs/sprints/s126/sprint-tests/pilot/, docs/sprints/s126/sprint-tests/e2e-tests.md, docs/intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md
 - **Commit:** `a77b4983d17602c7211db895b3e634888b046380`
+
+## T-12701 (sprint 127)
+- **Description:** New `ferric-gate` crate, the network boundary for Ferric's HTTP services (INT-0015).
+  - **Tokens.** `Token::generate` draws 32 bytes from the OS CSPRNG and writes them as `ferric_` plus 64 hex digits. `load_or_create` writes the file mode 0600 in a mode-0700 directory and refuses a group- or other-readable file. `default_token_path` resolves `$FERRIC_STATE_DIR` > `$XDG_STATE_HOME/ferric` > `~/.local/state/ferric` (`%LOCALAPPDATA%\ferric` on Windows), outside every workspace. `Debug` redacts the secret.
+  - **Guard.** `Gate::check` runs four checks in a fixed order: `Host` names this listener (`127.0.0.1`/`localhost`/`[::1]` at the bound port, plus explicit tunnel authorities); any `Origin`/`Sec-Fetch-*` is refused; `Authorization: Bearer` is compared as SHA-256 digests without early exit (open paths skip only this, `GET` only); `POST`/`PUT`/`PATCH` must be `application/json`.
+  - **Layer.** `protect` applies the guard to a router, its fallback included. It strips `Authorization` from admitted requests and answers refusals with a JSON error, `x-ferric-gate: <code>`, `Cache-Control: no-store` and no CORS header.
+  - **Bind.** `check_bind` admits loopback, or the plan's tunnel address when that address is private, and refuses wildcards and public addresses.
+  - **Tests.** 25 in-crate: 21 unit (token shape, uniqueness, redaction, file modes, refusal of open files; each check independently, including rebinding and browser rows holding the valid token; open paths; bind policy; tunnel plan) and 4 layer integration (credential stripped, denials marked without CORS, fallback gated, health still host-checked).
+- **Intent:** [INT-0015](../intents/INT-0015-localhost-is-not-a-trust-boundary.md) (AC-1 to AC-6)
+- **Completed:** 2026-10-22
+- **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-gate/{Cargo.toml,src/lib.rs,src/token.rs,src/guard.rs,src/layer.rs,src/bind.rs,tests/layer.rs}
+- **Commit:** pending
+
+## T-12702 (sprint 127)
+- **Description:** Serve the valve and the API through the gate (INT-0015, INT-0012).
+  - **`ferric-valve`.** The binary always serves `gated_router`. `--token-file` defaults to `valve.token`. `--upstream-key-file` sets the llama.cpp key as a default header on the upstream client (`upstream_client_with_key`), so the probe, chat and pass-through paths all present it. The client's credential is stripped by the gate and never forwarded. The ungated `router` stays for in-process harnesses.
+  - **`ferric api`.** It binds, then builds the gate from the bound port. `GET /health` is open. `--token-file`, `--tunnel` and `--tunnel-dir` bind the plan's tunnel address through `check_bind`, and `0.0.0.0` is refused before binding.
+  - **Tests.** 3 valve integration tests (`tests/gate.rs`): refusals, including the gated fallback and a drive-by POST, never reach the upstream; the upstream sees only its own key; without a key nothing is forwarded. The existing API unit tests now use a temp token path.
+- **Intent:** [INT-0015](../intents/INT-0015-localhost-is-not-a-trust-boundary.md) (AC-1, AC-4); [INT-0012](../intents/INT-0012-constrained-valve-at-hermes-boundary.md)
+- **Completed:** 2026-10-22
+- **Files modified:** crates/ferric-valve/{Cargo.toml,src/lib.rs,src/server.rs,src/main.rs,tests/gate.rs}, crates/ferric-cli/{Cargo.toml,src/api.rs}
+- **Commit:** pending
+
+## T-12703 (sprint 127)
+- **Description:** `ferric secure` (INT-0015 AC-7).
+  - **`probe <url> [--token-file] [--json]`.** Replays eight attacks: local process with no token or a guessed token; cross-site form POST; `no-cors` `text/plain` fetch; DNS rebinding; rebinding holding the real token; a browser holding the real token; a non-JSON body with the token. A legitimate-client control runs last. The probe classifies by the `x-ferric-gate` header or the 401/403/415/421 statuses, flags any CORS header, and exits 1 when any attack reaches the application or the control is blocked.
+  - **`demo`.** Serves one agent endpoint naively (no credential, `Access-Control-Allow-Origin: *`) and behind the gate, then prints both columns side by side: naive 8/8 reached, gate 0/8, control admitted.
+  - **Tests.** 3 unit tests: the demo exits 0; every attack reaches a naive server; and each attack against the gate is refused by its expected check (missing-token, bad-token, browser-origin, foreign-host, not-json), while the control passes.
+- **Intent:** [INT-0015](../intents/INT-0015-localhost-is-not-a-trust-boundary.md) (AC-7)
+- **Completed:** 2026-10-22
+- **Files modified:** crates/ferric-cli/src/{secure_cmd.rs,lib.rs}
+- **Commit:** pending
+
+## T-12704 (sprint 127)
+- **Description:** `ferric tunnel` on GotaTun (INT-0015 AC-8).
+  - **Plan.** `TunnelPlan` generates clamped X25519 key pairs (`x25519-dalek`) and a preshared key. `host.conf` gives the host 10.77.0.1/24 with the peer at 10.77.0.2/32. `client-1.conf` limits `AllowedIPs` to 10.77.0.1/32 and sets keepalive 25. `tunnel.json` holds the non-secret facts. Every file is mode 0600, and an existing plan is never overwritten.
+  - **UAPI.** `uapi_set_request` converts a wg-quick config to the UAPI `set` protocol (hex keys). `uapi_exchange` talks to `/var/run/wireguard/<if>.sock` and requires `errno=0`. `parse_status` reads `get`.
+  - **CLI.** `init`. `up` (Linux) starts `gotatun <if>`, adding `--disable-drop-privileges` only for plain root without `SUDO_UID`; it then waits for the socket, applies the config, and sets the address, link and AllowedIPs routes. `status` shows peers, handshake age and bytes. `down` removes the interface.
+  - **Tests.** 7 unit tests: the RFC 7748 §6.1 public-key vector, clamping, client reach limited to the host, config-to-UAPI round trip, private never-overwritten plan files, status parsing, and AllowedIPs collection.
+  - **End to end.** Two network namespaces joined by a veth pair, with GotaTun 0.10.2 on both sides. The handshake completed. `ferric api --tunnel` listened on 10.77.0.1 only. From the client namespace, health and an authenticated query succeeded across the tunnel, the LAN address was unreachable, and `ferric secure probe` passed 9/9. Recorded in the sprint 127 e2e report.
+- **Intent:** [INT-0015](../intents/INT-0015-localhost-is-not-a-trust-boundary.md) (AC-8)
+- **Completed:** 2026-10-22
+- **Files modified:** crates/ferric-gate/src/tunnel.rs, crates/ferric-cli/src/tunnel_cmd.rs, crates/ferric-cli/src/lib.rs
+- **Commit:** pending
+

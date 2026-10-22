@@ -38,6 +38,7 @@
 # Reference
 
 - [Command Reference](commands.md)
+- [Security: localhost is not a trust boundary](security.md)
 - [Configuration Reference](configuration.md)
 - [Environment Variables](environment.md)
 - [Credits & Citations](credits.md)
@@ -61,6 +62,7 @@
   - [INT-0012 — The constrained valve at Hermes's provider boundary](intents/INT-0012-constrained-valve-at-hermes-boundary.md)
   - [INT-0013 — Where constrained decoding pays, across local model sizes](intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md)
   - [INT-0014 — Adaptive constraint policy in the valve](intents/INT-0014-adaptive-constraint-policy.md)
+  - [INT-0015 — Localhost is not a trust boundary](intents/INT-0015-localhost-is-not-a-trust-boundary.md)
 - [Tasks](work/tasks.md)
 - [Completed tasks](work/completed-tasks.md)
 - [Legacy decision archive](history/decisions-legacy.md)
@@ -187,3 +189,4 @@
 - [Sprint 124](sprints/s124/sprint-meta.md)
 - [Sprint 125](sprints/s125/sprint-meta.md)
 - [Sprint 126](sprints/s126/sprint-meta.md)
+- [Sprint 127](sprints/s127/sprint-meta.md)

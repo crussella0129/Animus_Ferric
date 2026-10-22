@@ -6,6 +6,23 @@ and a **llama.cpp** backend. Hermes keeps its loop, tool validation,
 authorization, execution and history. The valve changes only how the next
 action is decoded. It is stateless per request (INT-0012).
 
+## Network gate (sprint 127, INT-0015)
+
+The binary always serves `gated_router`. Every request needs:
+
+- a `Host` that names the listener,
+- no `Origin` or `Sec-Fetch-*` header,
+- `Authorization: Bearer <valve token>`, and
+- a JSON body.
+
+This covers the pass-through fallback (`/slots`, `/props`, `/v1/models`)
+too. Set Hermes's `api_key` to the token file's contents. The default file
+is `<state dir>/ferric/gate/valve.token`; `--token-file` overrides it. The
+gate strips the client's credential before forwarding. With
+`--upstream-key-file`, the valve presents llama.cpp's own key instead. The
+ungated `router` remains for in-process harnesses that own their listener.
+See [docs/security.md](../../docs/security.md).
+
 ## Request contract (Hermes to upstream)
 
 **Mode selection.** A request is **constrained** when it has a non-empty
