@@ -76,15 +76,58 @@ pub fn check_loopback(addr: &SocketAddr) -> Result<(), String> {
 
 /// An HTTP client for the (loopback) upstream: no proxies, no redirects.
 pub fn upstream_client() -> Result<reqwest::Client, reqwest::Error> {
+    upstream_client_with_key(None)
+}
+
+/// [`upstream_client`] that presents `key` as the upstream's bearer token
+/// (llama.cpp `--api-key-file`) on every request (sprint 127, INT-0015).
+pub fn upstream_client_with_key(key: Option<&str>) -> Result<reqwest::Client, reqwest::Error> {
+    let mut headers = HeaderMap::new();
+    if let Some(mut value) =
+        key.and_then(|key| HeaderValue::from_str(&format!("Bearer {key}")).ok())
+    {
+        value.set_sensitive(true);
+        headers.insert(header::AUTHORIZATION, value);
+    }
     reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
+        .default_headers(headers)
         .build()
 }
 
+/// The ungated router. The `ferric-valve` binary always serves
+/// [`gated_router`]; this one is for in-process harnesses that own the
+/// listener (tests, the pilot runner).
 pub fn router(config: ValveConfig, receipts: ReceiptSink) -> Result<Router, reqwest::Error> {
+    Ok(router_with_client(config, receipts, upstream_client()?))
+}
+
+/// The router behind the network gate (sprint 127, INT-0015): every request,
+/// the pass-through fallback included, needs this listener's `Host`, no
+/// browser fingerprint, the valve's bearer token, and a JSON body. The gate
+/// strips the client's credential, so the upstream only ever sees
+/// `upstream_key`.
+pub fn gated_router(
+    config: ValveConfig,
+    receipts: ReceiptSink,
+    gate: ferric_gate::Gate,
+    upstream_key: Option<&str>,
+) -> Result<Router, reqwest::Error> {
+    let client = upstream_client_with_key(upstream_key)?;
+    Ok(ferric_gate::protect(
+        router_with_client(config, receipts, client),
+        gate,
+    ))
+}
+
+fn router_with_client(
+    config: ValveConfig,
+    receipts: ReceiptSink,
+    client: reqwest::Client,
+) -> Router {
     let state = AppState {
-        client: upstream_client()?,
+        client,
         config: Arc::new(ValveConfig {
             upstream: config.upstream.trim_end_matches('/').to_string(),
             ..config
@@ -92,11 +135,11 @@ pub fn router(config: ValveConfig, receipts: ReceiptSink) -> Result<Router, reqw
         receipts: Arc::new(receipts),
         counter: Arc::default(),
     };
-    Ok(Router::new()
+    Router::new()
         .route("/v1/chat/completions", post(chat))
         .route("/chat/completions", post(chat))
         .fallback(proxy)
-        .with_state(state))
+        .with_state(state)
 }
 
 /// Serve `router` on `listener` until the process ends.

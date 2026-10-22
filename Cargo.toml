@@ -20,6 +20,7 @@ members = [
     "crates/ferric-vcs",
     "crates/ferric-skills",
     "crates/ferric-valve",
+    "crates/ferric-gate",
 ]
 
 [workspace.package]
@@ -90,7 +91,16 @@ windows-sys = "0.61"
 # allowlist addition; used only by `ferric-cron`.
 chrono = "0.4"
 
+# Network boundary (sprint 127, INT-0015). `x25519-dalek` derives WireGuard
+# public keys for the self-hosted GotaTun tunnel plan; it is the curve
+# implementation BoringTun/GotaTun themselves use, pure Rust, and ring (already
+# in-tree via rustls) cannot export a static X25519 secret. `base64` is the
+# WireGuard key encoding and is already in the tree transitively.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+base64 = "0.22"
+
 ferric-core = { path = "crates/ferric-core" }
+ferric-gate = { path = "crates/ferric-gate" }
 ferric-iron = { path = "crates/ferric-iron" }
 ferric-process = { path = "crates/ferric-process" }
 ferric-trace = { path = "crates/ferric-trace" }

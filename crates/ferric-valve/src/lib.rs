@@ -16,7 +16,7 @@ pub mod transform;
 pub mod translate;
 pub mod upstream;
 
-pub use server::{ValveConfig, ValveMode, router, serve};
+pub use server::{ValveConfig, ValveMode, gated_router, router, serve};
 pub use transform::{
     CONSTRAINED_TEACHING, Constrained, TransformError, Transformed, final_answer_descriptor,
     message_hashes, prefix_hash, sha256_hex, transform,

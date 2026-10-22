@@ -35,6 +35,8 @@ mod logging;
 mod mcp;
 mod query;
 mod revert_cmd;
+#[cfg(feature = "backend-openai")]
+mod secure_cmd;
 mod server;
 mod server_process;
 mod server_registration;
@@ -51,6 +53,8 @@ mod test_process_containment_tests;
 mod toolbench_cmd;
 mod trace_cmd;
 mod trace_verify;
+#[cfg(feature = "backend-openai")]
+mod tunnel_cmd;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -118,6 +122,14 @@ enum Command {
     #[cfg(feature = "backend-openai")]
     #[command(hide = true)]
     Api(Box<api::server::ApiArgs>),
+    /// Replay the 2026 localhost-agent attacks against a service (`probe`) or offline (`demo`)
+    #[cfg(feature = "backend-openai")]
+    #[command(hide = true)]
+    Secure(Box<secure_cmd::SecureArgs>),
+    /// Self-hosted WireGuard (GotaTun) access to Ferric: no coordination server
+    #[cfg(feature = "backend-openai")]
+    #[command(hide = true)]
+    Tunnel(Box<tunnel_cmd::TunnelArgs>),
     /// Revert the workspace and trace to a specific turn snapshot
     #[command(hide = true)]
     Revert(Box<revert_cmd::RevertArgs>),
@@ -208,6 +220,10 @@ fn dispatch(command: Option<Command>) -> ExitCode {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             rt.block_on(api::server::run_api(*args))
         }
+        #[cfg(feature = "backend-openai")]
+        Command::Secure(args) => secure_cmd::run_secure(*args),
+        #[cfg(feature = "backend-openai")]
+        Command::Tunnel(args) => tunnel_cmd::run_tunnel(*args),
         Command::Server { command } => {
             let workspace = std::env::current_dir().unwrap_or_default();
             server::run_server(&workspace, command)

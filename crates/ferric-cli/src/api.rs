@@ -5,7 +5,13 @@
 //! constrained loop, same guard, same trace — just an HTTP surface.
 //!
 //! Binds to `127.0.0.1:3581` by default (ADR-005 parity). Override with
-//! `--host` and `--port`.
+//! `--host` and `--port`, or `--tunnel` to listen on the Ferric WireGuard
+//! tunnel's host address instead.
+//!
+//! Every request passes the network gate (sprint 127, INT-0015): this
+//! listener's `Host` (no DNS rebinding), no browser `Origin`/`Sec-Fetch-*`,
+//! the API's bearer token, and JSON bodies. `GET /health` skips only the
+//! token.
 
 #[cfg(feature = "backend-openai")]
 pub mod server {
@@ -103,6 +109,20 @@ pub mod server {
         /// Run against a built-in scripted mock.
         #[arg(long)]
         pub mock: bool,
+
+        /// The API's bearer-token file (created mode 0600 when missing).
+        /// Default: `<state dir>/ferric/gate/api.token`.
+        #[arg(long)]
+        pub token_file: Option<PathBuf>,
+
+        /// Listen on the Ferric tunnel's host address (from `ferric tunnel
+        /// init`) instead of `--host`. The bearer token is still required.
+        #[arg(long)]
+        pub tunnel: bool,
+
+        /// Tunnel plan directory. Default: `<state dir>/ferric/tunnel`.
+        #[arg(long)]
+        pub tunnel_dir: Option<PathBuf>,
     }
 
     /// Shared application state passed to every handler.
@@ -458,12 +478,35 @@ pub mod server {
 
     /// Entry point for `ferric api`.
     pub async fn run_api(args: ApiArgs) -> std::process::ExitCode {
-        if !is_loopback_host(&args.host) {
-            eprintln!(
-                "refusing unauthenticated API bind to '{}'; use 127.0.0.1, localhost, or ::1",
-                args.host
-            );
-            return std::process::ExitCode::FAILURE;
+        let tunnel_ip = if args.tunnel {
+            let dir = args
+                .tunnel_dir
+                .clone()
+                .or_else(ferric_gate::tunnel::default_tunnel_dir);
+            match dir.map(|dir| ferric_gate::tunnel::TunnelInfo::load(&dir)) {
+                Some(Ok(info)) => Some(info.host_address),
+                Some(Err(error)) => {
+                    eprintln!("api: {error} (run `ferric tunnel init` first)");
+                    return std::process::ExitCode::FAILURE;
+                }
+                None => {
+                    eprintln!("api: no state directory; pass --tunnel-dir");
+                    return std::process::ExitCode::FAILURE;
+                }
+            }
+        } else {
+            None
+        };
+        let bind_host = tunnel_ip.map_or_else(|| args.host.clone(), |ip| ip.to_string());
+        if !is_loopback_host(&bind_host) {
+            let refusal = bind_host
+                .parse::<std::net::IpAddr>()
+                .map_err(|_| format!("refusing API bind to '{bind_host}'; use 127.0.0.1, localhost, ::1, or --tunnel"))
+                .and_then(|ip| ferric_gate::check_bind(ip, tunnel_ip));
+            if let Err(message) = refusal {
+                eprintln!("api: {message}");
+                return std::process::ExitCode::FAILURE;
+            }
         }
 
         let workspace_root = args
@@ -508,24 +551,29 @@ pub mod server {
             return std::process::ExitCode::FAILURE;
         }
 
-        let bind_addr = if args.host.contains(':') {
-            format!("[{}]:{}", args.host, args.port)
+        let Some(token_path) = args
+            .token_file
+            .clone()
+            .or_else(|| ferric_gate::default_token_path("api"))
+        else {
+            eprintln!("api: no state directory; pass --token-file");
+            return std::process::ExitCode::FAILURE;
+        };
+        let (token, token_created) = match ferric_gate::Token::load_or_create(&token_path) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                eprintln!("api: {error}");
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+
+        let bind_addr = if bind_host.contains(':') {
+            format!("[{}]:{}", bind_host, args.port)
         } else {
-            format!("{}:{}", args.host, args.port)
+            format!("{}:{}", bind_host, args.port)
         };
 
         let state = Arc::new(AppState { workspace, args });
-
-        let app = Router::new()
-            .route("/health", get(health))
-            .route("/v1/query", post(query_handler))
-            .route("/v1/query/stream", post(query_stream_handler))
-            .with_state(state);
-
-        eprintln!("Ferric API listening on http://{bind_addr}");
-        eprintln!("  GET  /health          — health check");
-        eprintln!("  POST /v1/query        — run agentic query (JSON response)");
-        eprintln!("  POST /v1/query/stream  — run agentic query (SSE stream)");
 
         let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
             Ok(l) => l,
@@ -534,6 +582,41 @@ pub mod server {
                 return std::process::ExitCode::FAILURE;
             }
         };
+        let local = match listener.local_addr() {
+            Ok(local) => local,
+            Err(e) => {
+                eprintln!("bind failed: {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+        // The gate admits this listener's own authority plus the loopback
+        // names for its port, and nothing else.
+        let gate = ferric_gate::Gate::new(&token, local.port())
+            .allow_host(&local.to_string())
+            .open_path("/health");
+
+        let app = ferric_gate::protect(
+            Router::new()
+                .route("/health", get(health))
+                .route("/v1/query", post(query_handler))
+                .route("/v1/query/stream", post(query_stream_handler))
+                .with_state(state),
+            gate,
+        );
+
+        eprintln!("Ferric API listening on http://{local}");
+        eprintln!("  GET  /health          — health check (no token)");
+        eprintln!("  POST /v1/query        — run agentic query (JSON response)");
+        eprintln!("  POST /v1/query/stream  — run agentic query (SSE stream)");
+        eprintln!(
+            "  bearer token {} {}",
+            if token_created {
+                "minted at"
+            } else {
+                "read from"
+            },
+            token_path.display()
+        );
 
         if let Err(e) = axum::serve(listener, app).await {
             eprintln!("server error: {e}");
@@ -577,6 +660,9 @@ pub mod server {
                 profile_dir: None,
                 modality: None,
                 mock: true,
+                token_file: Some(workspace.join("api-test.token")),
+                tunnel: false,
+                tunnel_dir: None,
             }
         }
 

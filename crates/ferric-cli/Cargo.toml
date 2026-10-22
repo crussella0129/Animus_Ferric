@@ -33,6 +33,7 @@ lifecycle-fixture = []
 backend-openai = [
     "ferric-provider/backend-openai",
     "dep:axum",
+    "dep:ferric-gate",
     "dep:reqwest",
     "dep:tokio-stream",
 ]
@@ -43,6 +44,7 @@ ferric-bench = { workspace = true }
 ferric-icm = { workspace = true }
 ferric-core = { workspace = true }
 ferric-cron = { workspace = true }
+ferric-gate = { workspace = true, optional = true }
 ferric-guard = { workspace = true }
 ferric-loop = { workspace = true }
 ferric-prompt = { workspace = true }
