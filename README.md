@@ -36,6 +36,10 @@ not assumed.
 
 ## Install and run
 
+Two steps: install `ferric`, then run it in a project folder.
+
+### 1. Install
+
 Linux and macOS:
 
 ```sh
@@ -48,28 +52,83 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/crussella0129/Animus_Ferric/main/install.ps1 | iex
 ```
 
-Then, in any project folder:
+The installer downloads the prebuilt `ferric` for your OS and CPU from the
+latest GitHub release, checks its SHA-256, and installs it:
+
+- **Linux and macOS:** into `~/.local/bin`. If that folder is not on your
+  PATH, the installer prints the line to add.
+- **Windows:** into `%LOCALAPPDATA%\Programs\ferric`, which it adds to your
+  user PATH. Open a new terminal if `ferric` is not found.
+
+> **Before the first release is published**, the installer builds Ferric
+> from source with `cargo` instead. Install Rust from <https://rustup.rs>
+> first; the build takes a few minutes.
+
+### 2. Run
 
 ```sh
+cd /path/to/your/project
 ferric
 ```
 
-The first run checks for an engine and a model. If either is missing, Ferric
-says exactly what it would download: llama.cpp's engine from its GitHub
-release, and a Qwen2.5-Coder model sized for your RAM from Hugging Face, with
-size and license. It asks once. Every file is pinned and checked against its
-SHA-256 before use. After that, `ferric` opens a session straight away. It
-asks whether you want to ask questions or allow file work; type your question
-or task, and `/quit` ends the session. To fetch ahead of time, or pick another
-size, run `ferric setup` (`--list` shows the choices; `--yes` skips the
-prompt).
+On a machine with no engine or model yet, the first run shows what it needs
+before downloading anything:
 
-The installer puts a prebuilt, checksum-verified `ferric` in `~/.local/bin`
-(Windows: `%LOCALAPPDATA%\Programs\ferric`, added to your PATH). Until the
-first release is published, it builds from source with `cargo` instead. An
-existing `llama-server` on your PATH, or GGUF files in `./models` or
-`FERRIC_MODELS_DIR`, are used as they are, and nothing is downloaded. See
-[Getting started](docs/getting-started.md).
+```text
+To run a model on this machine, Ferric needs:
+  • the llama.cpp engine, release b11780 (llama-b11780-bin-ubuntu-x64.tar.gz), from github.com/ggml-org/llama.cpp
+  • Qwen2.5-Coder 7B Instruct (Q4_K_M, 4.7 GB, Apache-2.0), from huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF
+    chosen for this machine (16 GiB RAM); others: ferric setup --model 0.5b | 1.5b | 7b | 14b
+Each file is pinned and checked against its SHA-256 before use.
+Engine → ~/.local/share/ferric/engine   Model → ~/.local/share/ferric/models
+Download now? [Y/n]
+```
+
+Press Enter. Both files download with progress and are verified, then the
+session opens: choose whether to ask questions or allow file work, and type.
+`/quit` ends the session. Later runs open the session straight away. An
+interrupted download resumes where it stopped, including after Ctrl-C.
+
+### What gets downloaded, and where
+
+- **The engine.** The pinned llama.cpp release, as a CPU build for your
+  platform. It is verified against the SHA-256 that GitHub records for that
+  release asset.
+- **The model.** Qwen2.5-Coder Instruct at Q4_K_M, Apache-2.0, pinned to a
+  Hugging Face revision and checked against its SHA-256. Machines under 12
+  GiB of RAM get the 1.5B model (1.1 GB); others get the 7B (4.7 GB).
+- **The location.** Both go in Ferric's data folder: `~/.local/share/ferric`,
+  or `%LOCALAPPDATA%\ferric` on Windows (`FERRIC_DATA_DIR` overrides it).
+  One download serves every project.
+- **What you already have.** A `llama-server` on your PATH, and GGUF files
+  in `./models` or `FERRIC_MODELS_DIR`, are used as they are, and nothing is
+  downloaded.
+- **Scripts and CI.** Without a terminal, Ferric never downloads. It prints
+  what is missing and the command to fetch it.
+- **CPU only, for now.** Engines run on the CPU; GPU offload is planned.
+  For the quickest answers on a laptop, choose the 1.5B model.
+
+To fetch ahead of time, or choose another size:
+
+```sh
+ferric setup --list          # this machine, the engine, and every model with its size
+ferric setup --model 1.5b    # 0.5b, 1.5b, 7b or 14b
+ferric setup --yes           # no prompt (for scripts)
+```
+
+### Update and uninstall
+
+- **To update,** run the install line again. It replaces `ferric` with the
+  latest release, verified the same way. Your engine and models stay.
+- **To uninstall,** delete the `ferric` binary, then Ferric's data folder
+  (above). On Linux and macOS, also delete `~/.local/state/ferric` (service
+  tokens and the tunnel plan) and `~/.config/ferric` (saved settings). On
+  Windows, the data folder also holds those, and settings are in
+  `%APPDATA%\ferric`. Each project keeps its own session traces in
+  `.ferric/`.
+
+See [Getting started](docs/getting-started.md) for building from source, the
+manual engine route, and the no-model `--mock` mode.
 
 The standalone assistant is otherwise in maintenance: fixes are accepted, new
 features are not
@@ -87,8 +146,6 @@ install and first-run flow is the exception, active under
 | `ferric explain` | Describe intended setup and ownership without probes or changes. |
 | `ferric advanced` | Find the existing expert commands. |
 
-For source execution, put arguments after `cargo r --`. For example,
-`cargo r -- run --workspace ../my-project` selects another folder.
 Without a terminal, no-argument launch prints a short welcome and exits without
 starting anything.
 
@@ -170,19 +227,21 @@ Cancellation is bounded during startup and provider requests. During file work,
 an existing Git snapshot operation can delay cancellation until Git returns;
 this limitation remains open. Session traces stay in `.ferric/trace`.
 
-## Install and configure
+## Build from source and configure
 
-The one-line installers above are the normal route. To install the current
-source on your PATH instead (normal builds include the OpenAI-compatible
-backend):
+The one-line installers above are the normal route. To build and install the
+current source instead (Rust required; normal builds include the
+OpenAI-compatible backend):
 
 ```sh
 cargo install --path crates/ferric-cli --force
 ```
 
-Reinstall after source changes; the installed copy is a snapshot. For a build
-without a real backend, use `--no-default-features`; expert mock commands remain
-available.
+Reinstall after source changes; the installed copy is a snapshot. From a
+checkout you can also run without installing: `cargo r` opens a session, and
+arguments go after `cargo r --` (for example, `cargo r -- run --workspace
+../my-project`). For a build without a real backend, use
+`--no-default-features`; expert mock commands remain available.
 
 [Configuration](docs/configuration.md) explains saved defaults and their
 validation. [Command reference](docs/commands.md) covers the full expert
