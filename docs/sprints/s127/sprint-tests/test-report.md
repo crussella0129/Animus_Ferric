@@ -25,5 +25,11 @@
   naive 8/8 against gate 0/8. Over the GotaTun tunnel, the probe passes 9/9
   from the client namespace, and the underlying network address is
   unreachable.
+- **CI fix (Windows):** the first CI run failed Windows clippy on an
+  unused-variable warning in a `ferric-gate` tunnel test (the variable was
+  used only inside a `cfg(unix)` block). The test now uses it on every
+  platform. `cargo clippy -p ferric-cli -p ferric-valve -p ferric-gate
+  --all-targets --target x86_64-pc-windows-gnu -- -D warnings` is clean
+  locally.
 - **Verdict:** proceed. Every new check is independently tested, and the
   remote path is proven on real WireGuard.

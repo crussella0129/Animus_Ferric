@@ -461,6 +461,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let plan = TunnelPlan::generate(None).unwrap();
         let files = plan.write(dir.path()).unwrap();
+        for path in [&files.host_conf, &files.client_conf, &files.info] {
+            assert!(path.exists(), "{}", path.display());
+        }
         let info = TunnelInfo::load(dir.path()).unwrap();
         assert_eq!(info.host_address, IpAddr::V4(HOST_ADDRESS));
         assert_eq!(info.interface, "ferric0");
