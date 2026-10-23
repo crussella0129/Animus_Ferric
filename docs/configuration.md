@@ -11,8 +11,13 @@ Existing expert configuration supplies model/endpoint choices and applicable
 defaults; setup does not rewrite `.ferric/config.toml`. A missing configuration
 does not require a settings questionnaire.
 
-With an installed `llama-server`, setup can select a regular GGUF already in
-the workspace's `models` directory. Local launch defaults to CPU, zero GPU
+Setup uses a `llama-server` on PATH, or the engine `ferric setup` installed.
+It selects a regular GGUF from the models folder: `--models-dir`, then
+`FERRIC_MODELS_DIR`, then `models_dir` in config, then `./models` if it
+exists, else Ferric's data folder (`ferric setup` downloads there). When the
+engine or every model is missing, an interactive first run offers once to
+download a pinned, SHA-256-verified engine and model (sprint 128,
+INT-0016). Local launch defaults to CPU, zero GPU
 layers, and a 4096-token context unless context is explicitly configured.
 These settings are unqualified: model metadata does not establish memory fit,
 speed, grammar support, or coding capability. No model/engine downloads or

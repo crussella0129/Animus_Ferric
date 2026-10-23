@@ -23,9 +23,10 @@ shipped behavior truthfully; they are not the project's direction.
 
 ## Start here
 
-1. **[Getting Started](getting-started.md)** — prerequisites, build, and the
-   external steps (installing an engine, bringing up a server) before your first
-   run. Includes a no-model `--mock` quickstart.
+1. **[Getting Started](getting-started.md)** — the two-step install (one
+   install line, then `ferric`, which offers once to fetch a verified engine
+   and model), plus building from source and the manual engine route.
+   Includes a no-model `--mock` quickstart.
 2. **[Demo Guide](demo-guide.md)** — a copy-paste walkthrough of **every** feature,
    each marked *offline* or *needs a model*, so you can demo the whole product.
 3. **[Command Reference](commands.md)** — every command and flag.

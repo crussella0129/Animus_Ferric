@@ -63,6 +63,7 @@
   - [INT-0013 — Where constrained decoding pays, across local model sizes](intents/INT-0013-constrained-decoding-on-midsize-quantized-target.md)
   - [INT-0014 — Adaptive constraint policy in the valve](intents/INT-0014-adaptive-constraint-policy.md)
   - [INT-0015 — Localhost is not a trust boundary](intents/INT-0015-localhost-is-not-a-trust-boundary.md)
+  - [INT-0016 — Install, run, done](intents/INT-0016-install-run-done.md)
 - [Tasks](work/tasks.md)
 - [Completed tasks](work/completed-tasks.md)
 - [Legacy decision archive](history/decisions-legacy.md)
@@ -190,3 +191,4 @@
 - [Sprint 125](sprints/s125/sprint-meta.md)
 - [Sprint 126](sprints/s126/sprint-meta.md)
 - [Sprint 127](sprints/s127/sprint-meta.md)
+- [Sprint 128](sprints/s128/sprint-meta.md)

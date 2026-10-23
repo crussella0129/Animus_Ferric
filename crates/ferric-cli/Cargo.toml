@@ -34,6 +34,7 @@ backend-openai = [
     "ferric-provider/backend-openai",
     "dep:axum",
     "dep:ferric-gate",
+    "dep:ferric-setup",
     "dep:reqwest",
     "dep:tokio-stream",
 ]
@@ -46,6 +47,7 @@ ferric-core = { workspace = true }
 ferric-cron = { workspace = true }
 ferric-gate = { workspace = true, optional = true }
 ferric-guard = { workspace = true }
+ferric-setup = { workspace = true, optional = true }
 ferric-loop = { workspace = true }
 ferric-prompt = { workspace = true }
 ferric-provider = { workspace = true }

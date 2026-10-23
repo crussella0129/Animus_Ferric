@@ -2327,3 +2327,51 @@ qualification below after final PR checks reopened Test.**
 - **Files modified:** crates/ferric-gate/src/tunnel.rs, crates/ferric-cli/src/tunnel_cmd.rs, crates/ferric-cli/src/lib.rs
 - **Commit:** `d7ead56b62c10590b304cc86e50fb69489f7b14a`
 
+## T-12801 (sprint 128)
+- **Description:** New `ferric-setup` crate (INT-0016 AC-4 to AC-6).
+  - **Catalog.** llama.cpp `b11780`. Qwen2.5-Coder Instruct Q4_K_M at 0.5B, 1.5B, 7B and 14B, each pinned to a Hugging Face revision with SHA-256, size and license (all Apache-2.0) from the Hub's LFS metadata.
+  - **Hardware.** `Hardware::detect` reads OS, architecture and total RAM (via `ferric-process`). The recommendation is 1.5B under 12 GiB, otherwise 7B (including unknown memory); 14B is never a CPU default.
+  - **Fetch.** `download_verified` streams into `<dest>.part` with a running SHA-256 and renames only on a match. It resumes with a `Range` request after re-hashing the existing bytes, keeps an already-verified file, and refuses oversize bodies. `check_source_url` and the redirect policy allow only `https`, or loopback `http`.
+  - **Engine.** `asset_name` maps OS and architecture to llama.cpp's CPU asset (ubuntu/macos `.tar.gz`, win-cpu `.zip`). `find_asset` requires GitHub's `sha256:` digest. `install` downloads, verifies, extracts with the system `tar` (System32 `tar.exe` on Windows), locates `llama-server`, smoke-runs `--version`, and records `engine.json`. `managed_engine` reads the record back.
+  - **Tests.** 11 unit and 6 local-mirror integration tests. The integration tests cover: a verified download landing; a mismatch discarded with no final file; resume via `bytes=N-`; an existing verified file not re-fetched; an engine installed from a verified release and recorded; and an engine with a wrong digest refused. Also clippy-clean for `x86_64-pc-windows-gnu`.
+- **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md) (AC-4, AC-5, AC-6)
+- **Completed:** 2026-10-22
+- **Files modified:** Cargo.toml, Cargo.lock, crates/ferric-setup/{Cargo.toml,src/lib.rs,src/catalog.rs,src/hardware.rs,src/fetch.rs,src/engine.rs,src/paths.rs,tests/mirror.rs}
+- **Commit:** `6230721d3db5fc50d6ff029e0a1b447de6555f15`
+
+## T-12802 (sprint 128)
+- **Description:** `ferric setup` and the first-run offer (INT-0016 AC-3, AC-6, AC-7).
+  - **`setup_cmd`.** `plan` works out what is missing: a requested model unless it is present, otherwise a model only when the folder has no GGUF, and the engine unless it is on PATH or managed. `describe` names the source, size, license and destination, and says everything is SHA-256-verified. `execute` downloads with a one-line progress bar. `offer_if_needed` asks once (Enter or y accepts). A non-interactive run returns the description plus `ferric setup --yes`. `run_setup` supports `--list`, `--model`, `--models-dir` and `--yes`, and refuses to prompt without a terminal. Ctrl-C during a first-run download (the session's cancellation flag) stops it and keeps the part file for resume. A requested model is described "as requested".
+  - **Startup.** `find_engine` checks PATH, then the managed engine; its refusal names `ferric setup`. `resolve_models_dir` now defaults to `./models` when it exists, else the managed models folder (via the same env lookup, so it stays testable).
+  - **Human flow.** `Preparation::ensure_ready` has a no-op default, so journey fixtures are unchanged. `SystemPreparation` makes the offer before model discovery, skipping it for an explicit model or a configured endpoint.
+  - **CLI.** `setup` joins the primary help. The front-door guards (`human_cli`, `human_docs`, `budget_docs`) are updated deliberately: the first documented example is the one-line install, and `setup` is a primary action with its flags. They are feature-aware for the no-backend lane.
+  - **Tests.** 3 `setup_cmd` unit tests and 1 startup fallback test; `human_cli`, `charter_docs`, `getting_started_doc` and `template_hygiene` pass.
+- **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md) (AC-3, AC-6, AC-7)
+- **Completed:** 2026-10-22
+- **Files modified:** crates/ferric-cli/{Cargo.toml,src/setup_cmd.rs,src/startup.rs,src/startup/tests.rs,src/human.rs,src/lib.rs,tests/human_cli.rs,tests/human_docs.rs,tests/budget_docs.rs}, docs/commands.md
+- **Commit:** `6230721d3db5fc50d6ff029e0a1b447de6555f15`
+
+## T-12803 (sprint 128)
+- **Description:** Release workflow and one-line installers (INT-0016 AC-1, AC-2).
+  - **Workflow.** `.github/workflows/release.yml` builds on a `v*` tag for x86_64/aarch64 Linux (ubuntu-22.04 / -arm), aarch64 and x86_64 macOS (macos-14, the x64 build cross-compiled) and x86_64 Windows. It packages stable-named `ferric-<target>.tar.gz` / `.zip` with `.sha256` files, smoke-runs `--version` and `secure demo` where native, and a publish job creates the release with SHA256SUMS. A manual run builds only.
+  - **`install.sh`.** Detects the platform, fetches the asset and its `.sha256`, verifies them (refusing a mismatch before writing anything), installs to `~/.local/bin` atomically, and prints a PATH hint. With no release, it falls back to `cargo install --locked --git … ferric-cli`.
+  - **`install.ps1`.** The same for Windows: `%LOCALAPPDATA%\Programs\ferric`, plus the user PATH.
+  - **Tests.** Against a local mirror, `install.sh` installed into an empty home and refused a tampered checksum, leaving no binary.
+- **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md) (AC-1, AC-2)
+- **Completed:** 2026-10-22
+- **Files modified:** .github/workflows/release.yml, .github/workflows/ci.yml, install.sh, install.ps1
+- **Commit:** `6230721d3db5fc50d6ff029e0a1b447de6555f15`
+
+## T-12804 (sprint 128)
+- **Description:** Fresh-machine proof, docs and records (INT-0016 AC-8).
+  - **Fresh machine.** An empty `HOME`, no `llama-server` on PATH. The run went: `install.sh` from a release mirror; `ferric run` non-interactively, which refused and named `ferric setup --yes`; `ferric setup --yes --model 1.5b`; and a second `ferric setup`, which reported ready.
+    - **Engine.** It came from a mirror of the `b11780` release API, a static `llama-server` built from llama.cpp source, because this sandbox cannot reach github.com release downloads. It was verified in 1 s.
+    - **Model.** The real 1.1 GB Qwen2.5-Coder-1.5B came from Hugging Face and was verified in 41 s.
+  - **A real answer.** The installed engine served the downloaded model, and `ferric run "In one sentence, what does the Rust borrow checker do?"` answered through it as a configured endpoint.
+  - **Not proven here.** The managed launch, where Ferric starts the engine itself, is refused in this sandbox by the pre-existing port-ownership check. It fails the same way on the untouched pre-sprint tree, while CI on GitHub passes those lifecycle tests. Recorded as T-12810.
+  - **Docs.** README "Install and run", getting-started §0 (with the guard extended to require the one-liners, `ferric setup` and SHA-256), the configuration models-folder order, INT-0016, the exception noted in the CLAUDE.md and AGENTS.md direction sections, and the s128 records.
+- **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md) (AC-8, AC-9)
+- **Completed:** 2026-10-22
+- **Files modified:** README.md, CLAUDE.md, AGENTS.md, docs/getting-started.md, docs/configuration.md, docs/intents/{INT-0016-install-run-done.md,README.md}, docs/SUMMARY.md, docs/work/{tasks.md,completed-tasks.md}, docs/sprints/s128/, crates/ferric-cli/tests/{getting_started_doc.rs,charter_docs.rs}
+- **Commit:** `6230721d3db5fc50d6ff029e0a1b447de6555f15`
+

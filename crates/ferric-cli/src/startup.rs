@@ -191,7 +191,19 @@ pub(crate) fn resolve_models_dir(
     match configured {
         Some(dir) if dir.is_absolute() => dir,
         Some(dir) => workspace.join(dir),
-        None => workspace.join("models"),
+        // A project's own models/ folder wins when it exists; otherwise the
+        // folder `ferric setup` downloads into, so one download serves every
+        // project (sprint 128, INT-0016).
+        None => {
+            let local = workspace.join("models");
+            if local.is_dir() {
+                local
+            } else {
+                ferric_setup::paths::data_dir_from(env)
+                    .map(|dir| dir.join("models"))
+                    .unwrap_or(local)
+            }
+        }
     }
 }
 
@@ -582,7 +594,7 @@ fn native_launch(
             "Owned startup requires native process/listener verification on Windows or Linux. Configure an existing endpoint on this host.",
         ));
     }
-    let executable = engine_on_path()?;
+    let executable = find_engine()?;
     let mut version_command = Command::new(&executable);
     version_command.arg("--version");
     let version = runtime::version(version_command, cancel, deadline)?;
@@ -615,6 +627,17 @@ fn native_launch(
     Ok((command, format!("{} — {version}", executable.display())))
 }
 
+/// The engine to launch: `llama-server` on PATH, else the one `ferric setup`
+/// installed (sprint 128, INT-0016).
+pub(crate) fn find_engine() -> Result<PathBuf, StartupError> {
+    match engine_on_path() {
+        Ok(path) => Ok(path),
+        Err(error) => ferric_setup::paths::engine_root()
+            .and_then(|root| ferric_setup::engine::managed_engine(&root))
+            .ok_or(error),
+    }
+}
+
 fn engine_on_path() -> Result<PathBuf, StartupError> {
     let paths = std::env::var_os("PATH").ok_or_else(|| StartupError::actionable("The engine search path is unavailable. Configure an existing endpoint for the selected folder."))?;
     let name = if cfg!(windows) {
@@ -639,7 +662,7 @@ fn engine_on_path() -> Result<PathBuf, StartupError> {
         }
     }
     Err(StartupError::actionable(
-        "llama-server is not installed on PATH. Configure an existing endpoint for the selected folder; setup will not download or execute an unselected installer.",
+        "llama-server is not installed. Run `ferric setup` to install it (one prompt, verified download), put llama-server on PATH, or configure an existing endpoint for the selected folder.",
     ))
 }
 

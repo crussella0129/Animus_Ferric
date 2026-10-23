@@ -4,6 +4,29 @@ Every `ferric` command and its key flags. Run `ferric <command> --help` for the
 authoritative, always-current list. Global flag: `-v`/`-vv`/`-vvv` (verbosity, see
 [Observability](#observability)).
 
+## Install and set up
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/crussella0129/Animus_Ferric/main/install.sh | sh
+```
+
+On Windows: `irm https://raw.githubusercontent.com/crussella0129/Animus_Ferric/main/install.ps1 | iex`.
+Then run `ferric` in a project, or `ferric setup [--list] [--model
+0.5b|1.5b|7b|14b] [--models-dir DIR] [--yes]` to fetch ahead of time.
+
+`ferric setup` installs what is missing: the pinned llama.cpp engine
+(verified against GitHub's release digest) and a Qwen2.5-Coder model sized to
+your RAM (pinned Hugging Face revision and SHA-256). It asks once unless you
+pass `--yes`, and downloads nothing for a `llama-server` already on PATH or
+GGUFs already present. A first `ferric` run makes the same offer.
+
+| Variable | Effect |
+|---|---|
+| `FERRIC_DATA_DIR` | Ferric's data folder (engine and models). Default: `~/.local/share/ferric`; `%LOCALAPPDATA%\ferric` on Windows |
+| `FERRIC_MODELS_DIR` | Models folder (beats config and the defaults) |
+| `FERRIC_INSTALL_BASE_URL` | Installer asset source (a mirror). Default: the latest GitHub release |
+| `FERRIC_ENGINE_API_BASE`, `FERRIC_MODEL_BASE_URL` | Mirrors for the engine release API and the model host (`https`, or loopback `http`) |
+
 ## Start here
 
 ```sh
@@ -19,6 +42,7 @@ state changes or resource preparation.
 | Primary action | Meaning |
 |---|---|
 | `ferric run [PROMPT] [--workspace DIR] [--allow-edits]` | Open a session, or ask one question; file work requires this session's consent or `--allow-edits`. |
+| `ferric setup [--list] [--model ID] [--models-dir DIR] [--yes]` | Download what is missing, the engine and a model that fit this machine, after one prompt, each pinned and SHA-256-verified. |
 | `ferric status [--workspace DIR] [--json]` | Describe configuration and local model choices without health probes. |
 | `ferric explain [--workspace DIR] [--json]` | Describe intended settings, ownership, and setup effects without network, processes, writes, or locks. |
 | `ferric advanced` | Show expert commands; `ferric advanced query ...` and the original `ferric query ...` spelling both work. |
@@ -32,10 +56,12 @@ shows the question and stops; start a new task that includes your answer.
 Ordinary sessions do not resume paused tasks.
 
 Preparation uses an explicitly configured server, an identity-verified Ready
-managed server, or an installed `llama-server` with a local GGUF in `models`.
-An owned engine is stopped and reaped on session exit; a borrowed server is
-left running. Missing or ambiguous resources are reported without downloads
-or automatic registration repair. Local defaults are CPU and 4096 context
+managed server, or an installed `llama-server` (on PATH, or the one `ferric
+setup` installed) with a local GGUF in the models folder. An owned engine is
+stopped and reaped on session exit; a borrowed server is left running. A
+missing engine or model is offered for download once, interactively, and is
+verified before use; ambiguous resources are reported without automatic
+registration repair. Local defaults are CPU and 4096 context
 tokens, with no hardware-fit or capability claim. See [Configuration](configuration.md).
 
 Status and explain describe setup, not completed workflow checkpoints or

@@ -1,13 +1,74 @@
 # Getting Started
 
-This guide takes you from a fresh clone to a working `ferric` binary and your
-first agent run — including the **external steps** (installing an inference
-engine, bringing up a server) you need before Ferric can drive a real model.
+Two steps: install `ferric`, then run it in a project folder. The first run
+offers, once, to download an engine and a model that fit your machine. Every
+file is pinned and verified.
 
-> **In a hurry / no model yet?** Every command has a `--mock` path that runs a
-> built-in scripted model and needs **no external engine at all**. Jump to
-> [Try it with no model (`--mock`)](#4-try-it-with-no-model---mock) and come back
-> for the real-model setup when you're ready.
+> **No model yet and just looking?** Every command has a `--mock` path that
+> runs a built-in scripted model and needs **no engine at all**. See
+> [Try it with no model (`--mock`)](#4-try-it-with-no-model---mock).
+
+---
+
+## 0. Install and run (the normal way)
+
+**Install.** On Linux or macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/crussella0129/Animus_Ferric/main/install.sh | sh
+```
+
+On Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/crussella0129/Animus_Ferric/main/install.ps1 | iex
+```
+
+The installer downloads the prebuilt `ferric` for your OS and CPU from the
+latest GitHub release and checks its SHA-256. It installs to `~/.local/bin`;
+on Windows it uses `%LOCALAPPDATA%\Programs\ferric` and adds that folder to
+your user PATH. If no release has been published yet, it builds from source
+with `cargo` instead; install Rust from <https://rustup.rs> first.
+
+**Run.**
+
+```sh
+cd /path/to/your/project
+ferric
+```
+
+On a machine with nothing set up yet, the first run shows exactly what it
+needs before touching the network:
+
+```
+To run a model on this machine, Ferric needs:
+  • the llama.cpp engine, release b11780 (llama-b11780-bin-ubuntu-x64.tar.gz), from github.com/ggml-org/llama.cpp
+  • Qwen2.5-Coder 7B Instruct (Q4_K_M, 4.7 GB, Apache-2.0), from huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF
+    chosen for this machine (16 GiB RAM); others: ferric setup --model 0.5b | 1.5b | 7b | 14b
+Each file is pinned and checked against its SHA-256 before use.
+Download now? [Y/n]
+```
+
+Press Enter. The engine and the model download with progress and are
+verified. The session opens in your project folder: choose to ask questions
+or allow file work, then type. Later runs skip all of this. A download that
+is interrupted resumes where it stopped.
+
+- **The model choice.** Machines under 12 GiB of RAM are offered the 1.5B
+  model; others the 7B. Engines run on the CPU by default.
+- **Fetch ahead of time, or pick a size.** `ferric setup` (add `--model
+  1.5b`, `--list` to see the choices, or `--yes` to skip the prompt).
+- **What you already have is used as it is.** That means a `llama-server` on
+  your PATH, and GGUF files in `./models`, in `FERRIC_MODELS_DIR`, or in a
+  configured `models_dir`. Nothing is downloaded for them.
+- **Where downloads go.** Ferric's data folder: `~/.local/share/ferric`, or
+  `%LOCALAPPDATA%\ferric` on Windows, or `FERRIC_DATA_DIR`. The engine goes in
+  `engine/` and models in `models/`, so one download serves every project.
+- **Nothing downloads without a yes.** A non-interactive run (a script, CI)
+  never downloads. It prints what is missing and tells you to run `ferric
+  setup --yes`.
+
+The rest of this guide covers building from source and the manual route.
 
 ---
 
@@ -69,6 +130,10 @@ ferric --help           # lists every command
 ---
 
 ## 3. External: run a real model
+
+> `ferric setup` (or the first `ferric` run) does 3a and 3b for you, with
+> verified downloads. This section is the manual route: pinning your own
+> engine build, a model outside the catalog, or a remote server.
 
 This is the part that happens **outside Ferric**: you install an inference engine
 and hand Ferric a model. Ferric manages the engine's lifecycle for you, but the
