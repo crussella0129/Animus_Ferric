@@ -4,7 +4,7 @@
 - **Intent ID:** INT-0017
 - **State:** active
 - **Work evidence:** [Sprint 129 build plan](../sprints/s129/sprint-plans/build-plan.md); [T-12901–T-12905](../work/tasks.md#minimal-code-int-0017)
-- **Completion evidence:** none
+- **Completion evidence:** [T-12901–T-12905](../work/completed-tasks.md#t-12901-sprint-129) (AC-1 to AC-5); AC-6 open items are T-12906 to T-12908
 - **Code evidence:** the workspace, folded from 20 crates to 14
 - **Test evidence:** [Sprint 129 test report](../sprints/s129/sprint-tests/test-report.md)
 - **Documentation evidence:** [Sprint 129 research report](../sprints/s129/sprint-research/research-report.md)

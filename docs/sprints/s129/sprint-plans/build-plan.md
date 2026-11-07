@@ -101,3 +101,29 @@ Status: **done** = landed in this sprint; **open** = carried as a task in
 3. C, area by area. Each area is one commit, verified on its own.
 4. D, area by area.
 5. Records, LOC measurement and the PR. Present §E to the owner.
+
+## Outcome
+
+| Group | Result | Commits |
+|---|---|---|
+| A. Mechanical removals and crate folds | Done: A-1 to A-10, 20 → 14 crates | `301608d`, `06a33be`, `2a77cac` |
+| B. Defects | Done: D-1 to D-9 with regression tests; D-10 by deletion; D-11 (CI zombie, below) | `ff403d3`, `06a33be`, `f3cbf89`, `bb04540`, `31c57b5` |
+| C. Consolidations | Done per area: C-1 to C-6 and C-8 to C-15, with the items in T-12908 deferred for recorded reasons; C-7 deferred | `bb04540`, `491b7df`, `68ca8ed`, `80de775`, `eb3afe9`, `63bc20b`, `31c57b5` |
+| D. Test consolidation | Done per area (T-1 to T-5), each removal named with its covering test | same commits |
+| E. Retirements | Not done; presented to the owner (T-12906) | — |
+
+- **Size:** 140,082 → 131,421 lines of Rust (−8,661, −6.2%), 20 → 14
+  crates, 1,478 → 1,414 tests.
+- **Why the reduction is smaller than the analysts' total estimate:** the
+  retirements in §E hold about 18K of the removable lines, and several
+  consolidations were deferred because they would have changed behaviour.
+
+**D-11.** CI on Linux failed from the crate fold onwards:
+
+- The folded launch tests left a zombie (git's detached maintenance), and
+  that zombie was adopted by the subreaper test process.
+- An unprivileged caller cannot list a zombie's descriptors, so the
+  engine-ownership check refused every later engine.
+- Fixed by treating a zombie as holding no sockets.
+- The same investigation found that the check refuses for any non-root
+  Linux user outside a PID namespace (T-12907).

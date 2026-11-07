@@ -75,6 +75,8 @@ the build plan:
 | D-8 | After a truncated turn, live and resumed runs disagree on whether the next empty completion is nudged | `ferric-loop/src/run.rs`, `projector.rs` |
 | D-9 | `icm init` checks clobber safety with `exists()` and `is_dir()`, which follow symlinks; `animus-launch` does not | `ferric-icm/src/lib.rs` |
 | D-10 | `MIN_TAINT_SEGMENT_CHARS` is documented as a minimum but nothing enforces it | `ferric-guard/src/sink.rs` |
+| D-11 | Found by CI after the crate fold: a zombie (left by git 2.56's detached maintenance) made the Linux engine-ownership check refuse every later engine, because an unprivileged caller cannot list a zombie's descriptors | `ferric-cli/src/server_process.rs` |
+| D-12 | Open (T-12907): the same check scans every process and refuses when any is uninspectable, which is always true for a non-root Linux user outside a PID namespace | `ferric-cli/src/server_process.rs` |
 
 ## Source reports
 

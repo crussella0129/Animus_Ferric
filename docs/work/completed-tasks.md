@@ -2375,3 +2375,57 @@ qualification below after final PR checks reopened Test.**
 - **Files modified:** README.md, CLAUDE.md, AGENTS.md, docs/getting-started.md, docs/configuration.md, docs/intents/{INT-0016-install-run-done.md,README.md}, docs/SUMMARY.md, docs/work/{tasks.md,completed-tasks.md}, docs/sprints/s128/, crates/ferric-cli/tests/{getting_started_doc.rs,charter_docs.rs}
 - **Commit:** `6230721d3db5fc50d6ff029e0a1b447de6555f15`
 
+
+## T-12901 (sprint 129)
+- **Description:** Eight read-only analysts (architecture, server lifecycle, engine and processes, CLI, bench, loop, tools/guard/gate, model I/O) analysed the 140,082-line, 20-crate workspace under one brief: six redundancy kinds, file:line evidence, whole-workspace confirmation, and retirements labelled for the owner. 117 findings, consolidated into one build plan: mechanical removals (A), defects (B/D), consolidations (C), test consolidation (T) and owner-gated retirements (E). INT-0017 records the direction.
+- **Intent:** [INT-0017](../intents/INT-0017-minimal-code.md) (AC-1, AC-2)
+- **Completed:** 2026-11-07
+- **Files modified:** docs/intents/INT-0017-minimal-code.md, docs/sprints/s129/{sprint-meta.md,sprint-plans/build-plan.md,sprint-research/research-report.md}
+- **Commit:** `301608d`, `2212b87`
+
+## T-12902 (sprint 129)
+- **Description:** Iron re-export shims removed from ferric-loop and ferric-provider; the sprint-0 provider loop test and its dev-dependencies; manifest hygiene; the redundant `backend-check` CI job; dead public items; six single-consumer crates folded (ferric-vcs into `ferric_loop::vcs`; ferric-prompt, ferric-cron, ferric-skills, ferric-icm and animus-launch into ferric-cli modules), 20 → 14 crates; stale Docker scaffolding and the e2e mock mode.
+- **Intent:** [INT-0017](../intents/INT-0017-minimal-code.md) (AC-4)
+- **Completed:** 2026-11-07
+- **Files modified:** Cargo.toml, Cargo.lock, .github/workflows/ci.yml, crates/*/Cargo.toml, crates/ferric-loop/src/{lib.rs,grammar.rs,vcs.rs}, crates/ferric-cli/src/{prompt.rs,skills.rs,cron/schedule.rs,icm/workspace.rs,icm/workspace_tests.rs,launch/scaffold.rs,launch/scaffold_tests.rs}, docker/{Dockerfile,docker-compose.yml}, tools/e2e_test.ps1, docs (crate references)
+- **Commit:** `301608d`, `06a33be`, `2a77cac`
+
+## T-12903 (sprint 129)
+- **Description:** Defects, each with a regression test or guard rule:
+  - **D-1 (Windows):** a transient `STATUS_PARTIAL_COPY` while reading a live engine's command line failed startup; now retried.
+  - **D-2 (security):** `git_read` admitted `git branch <name>` and `--output` under Read permission.
+  - **D-3:** `ferric server up`/`doctor` could not find the engine `ferric setup` installs.
+  - **D-4:** the provider ignored an in-band SSE error event.
+  - **D-5:** broken line continuations in model-facing and error text.
+  - **D-6:** a concrete tailnet address in tasks.md; template_hygiene gains a 100.64.0.0/10 rule.
+  - **D-7:** `ferric explain` listed models from the wrong folder.
+  - **D-8:** a resumed run spent the empty-completion nudge after a truncated constrained turn where the live run did not (legacy checkpoints still resume).
+  - **D-9:** `icm init` followed symlinks in its clobber check.
+  - **D-11 (found by CI):** after the crate fold, a zombie left by git 2.56's detached maintenance made every later Linux engine-ownership check fail; a zombie now counts as holding no sockets.
+- **Intent:** [INT-0017](../intents/INT-0017-minimal-code.md), [INT-0016](../intents/INT-0016-install-run-done.md), [INT-0015](../intents/INT-0015-localhost-is-not-a-trust-boundary.md)
+- **Completed:** 2026-11-07
+- **Files modified:** crates/ferric-cli/src/{server_process.rs,server/mod.rs,startup.rs,startup/models.rs,startup/tests.rs,icm/workspace_tests.rs}, crates/ferric-cli/tests/template_hygiene.rs, crates/ferric-tools/src/builtin/git_read.rs, crates/ferric-provider/src/openai.rs, crates/ferric-loop/src/{projector.rs,replay.rs}, crates/ferric-loop/tests/clarification_tests.rs, docs/work/tasks.md
+- **Commit:** `ff403d3`, `06a33be`, `f3cbf89`, `bb04540`, `31c57b5`
+
+## T-12904 (sprint 129)
+- **Description:** Behaviour-preserving consolidation, one verified commit per area:
+  - **Loop:** one write path and guard helper; trace output identical across 4,416 test events.
+  - **Tools:** one navigation core, shared arguments, `ferric_tools::nofollow`.
+  - **Bench:** one ledger I/O and prefix rule; JSON keys unchanged.
+  - **CLI:** one run-flag group and resolver, `ResolvedBackend` everywhere, trace verify reduced to what TraceStructure does not check.
+  - **Model I/O:** `ferric_iron::wire` shared by the provider and valve.
+  - **Server lifecycle:** shared doubles, one registration store and renderer.
+  - **Engine and process:** `ferric_process::{exact, testing}`, libc/windows-sys instead of hand-written FFI.
+  
+  Every removed test is named with the test that still covers it in the sprint 129 test report. Deferred items are T-12908.
+- **Intent:** [INT-0017](../intents/INT-0017-minimal-code.md) (AC-3, AC-5)
+- **Completed:** 2026-11-07
+- **Files modified:** all crates except ferric-gate's public surface (see the sprint 129 commits)
+- **Commit:** `bb04540`, `491b7df`, `68ca8ed`, `80de775`, `eb3afe9`, `63bc20b`, `31c57b5`
+
+## T-12905 (sprint 129)
+- **Description:** Applied the six open Dependabot updates on `dev`: clap 4.6.7, toml 1.1.6, serde 1.0.229, regex 1.13.1, futures-executor 0.3.34, and actions/download-artifact v8. Verified by fmt, clippy and the full suites on Ubuntu and Windows; the PRs were closed with a pointer to the commit.
+- **Intent:** [INT-0017](../intents/INT-0017-minimal-code.md)
+- **Completed:** 2026-11-07
+- **Files modified:** Cargo.lock, .github/workflows/release.yml
+- **Commit:** `f256538`
