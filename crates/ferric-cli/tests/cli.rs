@@ -1889,7 +1889,16 @@ fn present_invalid_config_blocks_all_consumers() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let ws = tmp.path().join("icm");
-    ferric_icm::scaffold_workspace(&ws).unwrap();
+    let init = ferric()
+        .args(["icm", "init"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
     write_project_config(&ws, "params_b = nan");
     let out = ferric()
         .args(["icm", "run"])
@@ -1909,7 +1918,16 @@ fn selected_workspace_drives_real_provider_chat_icm() {
     let selected_parent = tempfile::tempdir().unwrap();
     let selected = selected_parent.path().join("selected-workspace");
     let user = tempfile::tempdir().unwrap();
-    ferric_icm::scaffold_workspace(&selected).unwrap();
+    let init = ferric()
+        .args(["icm", "init"])
+        .arg(&selected)
+        .output_bounded()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
     // Match the provider's canonical path spelling, including Windows runner
     // temp aliases. The positive B / negative A assertions remain independent.
     let selected = selected.canonicalize().unwrap();

@@ -118,9 +118,6 @@ impl AuthorizedSkill {
     pub fn authority(&self) -> Authority {
         self.authority
     }
-    pub fn path(&self) -> &Path {
-        &self.skill.path
-    }
 }
 
 /// Is `name` a legal skill name? Lowercase alphanumerics, `-`, `_`.

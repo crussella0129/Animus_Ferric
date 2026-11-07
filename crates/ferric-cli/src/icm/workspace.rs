@@ -336,7 +336,7 @@ pub struct Provenance {
 }
 
 /// A stage's composed, scoped context: the prompt an agent would receive, plus
-/// the genealogy of every layer that built it (mirrors `ferric-prompt`'s
+/// the genealogy of every layer that built it (mirrors the prompt composer's
 /// text-plus-lineage shape).
 #[derive(Debug, Clone)]
 pub struct ComposedStage {
@@ -364,12 +364,6 @@ pub enum ComposeMode {
     /// (Layer 4) inputs and references *outside* the stage folder are still
     /// folded: a stage-contained tool cannot reach them.
     FetchReferences,
-}
-
-/// Compose the scoped context for a single stage, folding references
-/// ([`ComposeMode::FoldReferences`]).
-pub fn compose_stage(ws: &IcmWorkspace, index: usize) -> Result<ComposedStage, IcmError> {
-    compose_stage_with_mode(ws, index, ComposeMode::FoldReferences)
 }
 
 /// Compose the scoped context for a single stage (0-based `index`) under `mode`.
@@ -640,12 +634,17 @@ pub struct ScaffoldReport {
 }
 
 /// Scaffold a new ICM workspace skeleton at `root` — LLM-free and
-/// **refuse-to-clobber** (the sole safety property, mirroring `animus-launch`,
-/// ADR-053): proceeds only if `root` does not exist, or is an empty directory.
+/// **refuse-to-clobber** (the sole safety property, shared with `ferric launch`,
+/// ADR-053): proceeds only if `root` does not exist, or is an empty directory
+/// that is not a symlink.
 /// Creates Layer 0/1 files and a three-stage `research → script → production`
 /// pipeline whose `CONTEXT.md` contracts round-trip through [`parse_contract`].
 pub fn scaffold_workspace(root: &Path) -> Result<ScaffoldReport, IcmError> {
-    if !clobber_safe(root)? {
+    let safe = crate::launch::target_is_clobber_safe(root).map_err(|source| IcmError::Io {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    if !safe {
         return Err(IcmError::TargetNotEmpty(root.to_path_buf()));
     }
 
@@ -690,19 +689,6 @@ pub fn scaffold_workspace(root: &Path) -> Result<ScaffoldReport, IcmError> {
         dirs_created: dirs,
         files_created: files,
     })
-}
-
-/// Refuse-to-clobber: safe if the target does not exist, or is an empty
-/// directory (hidden entries count as non-empty). A non-directory is unsafe.
-fn clobber_safe(path: &Path) -> Result<bool, IcmError> {
-    if !path.exists() {
-        return Ok(true);
-    }
-    if !path.is_dir() {
-        return Ok(false);
-    }
-    let mut entries = read_dir(path)?;
-    Ok(entries.next().is_none())
 }
 
 const LAYER0_TEMPLATE: &str = "# Workspace identity (Layer 0)\n\n\

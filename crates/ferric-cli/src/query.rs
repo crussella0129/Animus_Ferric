@@ -511,8 +511,8 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::co
         .or_else(|| std::env::var_os("FERRIC_PROMPTS_DIR").map(PathBuf::from));
     let mut prompt_composition_error = None;
     let composed = prompts_dir.and_then(|dir| {
-        match ferric_prompt::load_library(&dir)
-            .and_then(|lib| ferric_prompt::compose_system_prompt(&lib, policy.tier, protocol))
+        match crate::prompt::load_library(&dir)
+            .and_then(|lib| crate::prompt::compose_system_prompt(&lib, policy.tier, protocol))
         {
             Ok(c) => Some(c),
             Err(e) => {
@@ -537,16 +537,16 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::co
     // could clear a skill for itself. An unknown name is surfaced rather than
     // silently ignored: a typo that quietly runs nothing is the failure shape
     // this codebase keeps finding (ADR-090).
-    let (discovered, skill_errors) = ferric_skills::discover(&a.workspace_root);
+    let (discovered, skill_errors) = crate::skills::discover(&a.workspace_root);
     for e in &skill_errors {
         eprintln!("skill: {e}");
     }
     let (authorized, unknown) =
-        ferric_skills::authorize(&discovered, &a.requested_skills, &a.allowed_skills);
+        crate::skills::authorize(&discovered, &a.requested_skills, &a.allowed_skills);
     for name in &unknown {
         eprintln!("skill: no skill named `{name}` is installed in .ferric/skills/");
     }
-    let system_prompt = match ferric_skills::compose(&authorized) {
+    let system_prompt = match crate::skills::compose(&authorized) {
         None => base_system_prompt,
         Some(section) => {
             for sk in &authorized {

@@ -50,7 +50,7 @@ pub fn load_library(dir: &Path) -> Result<Library, PromptError> {
 /// chosen to match `protocol` (mutually exclusive). Tier currently selects
 /// the same atoms across the band; per-tier wording variants slot in here
 /// without changing callers.
-pub fn recipe_for(_tier: Tier, protocol: ActionProtocol) -> Vec<(String, Option<String>)> {
+pub fn recipe_for(protocol: ActionProtocol) -> Vec<(String, Option<String>)> {
     let (protocol_atom, protocol_version) = match protocol {
         ActionProtocol::NativeTools => ("protocol-native-tools", "1.0.0"),
         ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
@@ -75,7 +75,7 @@ pub fn compose_system_prompt(
     tier: Tier,
     protocol: ActionProtocol,
 ) -> Result<ComposedPrompt, PromptError> {
-    let recipe = recipe_for(tier, protocol);
+    let recipe = recipe_for(protocol);
 
     let mut elements = Vec::with_capacity(recipe.len());
     let mut composed_of = Vec::with_capacity(recipe.len());
@@ -165,10 +165,8 @@ mod tests {
                 let composed = compose_system_prompt(&lib, tier, protocol).expect("compose");
                 assert!(!composed.text.is_empty());
                 // Lineage matches the recipe (id + resolved version).
-                let recipe_ids: Vec<String> = recipe_for(tier, protocol)
-                    .into_iter()
-                    .map(|(id, _)| id)
-                    .collect();
+                let recipe_ids: Vec<String> =
+                    recipe_for(protocol).into_iter().map(|(id, _)| id).collect();
                 let lineage_ids: Vec<String> = composed
                     .composed_of
                     .iter()
@@ -176,7 +174,7 @@ mod tests {
                     .collect();
                 assert_eq!(lineage_ids, recipe_ids);
                 // Each element's version matches its recipe pin.
-                let recipe_versions: Vec<String> = recipe_for(tier, protocol)
+                let recipe_versions: Vec<String> = recipe_for(protocol)
                     .into_iter()
                     .map(|(_, v)| v.unwrap())
                     .collect();
@@ -219,29 +217,5 @@ mod tests {
     fn missing_library_is_typed_err() {
         let err = load_library(Path::new("/no/such/prompts/dir")).unwrap_err();
         assert!(matches!(err, PromptError::Load(_)));
-    }
-
-    #[test]
-    fn version_mismatch_is_typed_err() {
-        let lib = load_library(&prompts_dir()).unwrap();
-        // A recipe pinning a wrong version surfaces VersionMismatch.
-        let recipe = vec![("role-declaration".to_string(), Some("9.9.9".to_string()))];
-        let mut elements = Vec::new();
-        for (id, pin) in &recipe {
-            let element = lib.get(id).unwrap();
-            if let Some(pinned) = pin
-                && &element.header.version != pinned
-            {
-                let err = PromptError::VersionMismatch {
-                    id: id.clone(),
-                    pinned: pinned.clone(),
-                    actual: element.header.version.clone(),
-                };
-                assert!(matches!(err, PromptError::VersionMismatch { .. }));
-                return;
-            }
-            elements.push(element);
-        }
-        panic!("expected a version mismatch");
     }
 }

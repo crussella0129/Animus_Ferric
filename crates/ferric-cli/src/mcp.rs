@@ -400,7 +400,7 @@ impl McpServer {
     /// its directory — so a skill installed as `helpful/` could answer to
     /// `deploy`. Names are now required to match their directory.
     fn handle_prompts_list(&self, id: Value) -> RpcResponse {
-        let (skills, _errors) = ferric_skills::discover(self.workspace.root());
+        let (skills, _errors) = crate::skills::discover(self.workspace.root());
         let prompts: Vec<Value> = skills
             .into_iter()
             .map(|s| {
@@ -416,7 +416,7 @@ impl McpServer {
 
     fn handle_prompts_get(&self, id: Value, params: &Value) -> RpcResponse {
         let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-        let (skills, _errors) = ferric_skills::discover(self.workspace.root());
+        let (skills, _errors) = crate::skills::discover(self.workspace.root());
 
         if let Some(skill) = skills.into_iter().find(|s| s.name == name) {
             RpcResponse::success(

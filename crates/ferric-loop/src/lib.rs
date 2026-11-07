@@ -25,6 +25,7 @@ mod repetition;
 mod replay;
 mod run;
 mod trace_structure;
+pub mod vcs;
 
 pub use controller::ControllerState;
 pub use grammar::parse_action;

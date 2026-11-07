@@ -1,5 +1,4 @@
-//! `ferric-cron` — agentic cron: schedule periodic *agent* tasks (ADR-066,
-//! sprint 75).
+//! The pure core of agentic cron (ADR-066, sprint 75).
 //!
 //! A workspace's `.ferric/cron/` directory holds one TOML file per job. Each job
 //! names a **schedule** (an interval) and a **command** — one of Ferric's own
@@ -8,13 +7,12 @@
 //! timestamps live in `.ferric/cron/.state.json`, kept out of the user-authored
 //! job files.
 //!
-//! This crate is the **pure** core: parsing schedules and jobs, computing which
-//! jobs are due against an injected "now", and reading/writing state. It runs no
-//! processes and reads no clock itself, so it is fully unit-testable. The CLI
-//! (`ferric cron`) drives it and performs the actual execution by shelling out to
-//! the `ferric` binary — so a scheduled task is always a Ferric subcommand, never
-//! an arbitrary shell command (the containment boundary, deliberately narrower
-//! than the hooks system's arbitrary scripts).
+//! This module parses schedules and jobs, computes which jobs are due against an
+//! injected "now", and reads and writes state. It runs no processes and reads no
+//! clock itself, so it is fully unit-testable. The parent module drives it and
+//! performs execution by shelling out to the `ferric` binary, so a scheduled task
+//! is always a Ferric subcommand, never an arbitrary shell command (a boundary
+//! deliberately narrower than the hooks system's arbitrary scripts).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -58,13 +56,6 @@ pub enum Schedule {
 }
 
 impl Schedule {
-    /// The interval in ms for an interval schedule, or `None` for a cron one.
-    pub fn interval_ms(&self) -> Option<u64> {
-        match self {
-            Schedule::Interval(ms) => Some(*ms),
-            Schedule::Cron(_) => None,
-        }
-    }
     /// A compact, round-trippable description (`12h`, or `cron(0 2 * * *)`).
     pub fn describe(&self) -> String {
         match self {
@@ -508,30 +499,22 @@ mod tests {
         }
     }
 
+    fn interval_ms(input: &str) -> Option<u64> {
+        match parse_schedule(input).unwrap() {
+            Schedule::Interval(ms) => Some(ms),
+            Schedule::Cron(_) => None,
+        }
+    }
+
     #[test]
     fn schedule_units_and_aliases() {
-        assert_eq!(parse_schedule("30s").unwrap().interval_ms(), Some(30_000));
-        assert_eq!(parse_schedule("15m").unwrap().interval_ms(), Some(900_000));
-        assert_eq!(
-            parse_schedule("12h").unwrap().interval_ms(),
-            Some(43_200_000)
-        );
-        assert_eq!(
-            parse_schedule("2d").unwrap().interval_ms(),
-            Some(172_800_000)
-        );
-        assert_eq!(
-            parse_schedule("hourly").unwrap().interval_ms(),
-            Some(3_600_000)
-        );
-        assert_eq!(
-            parse_schedule("DAILY").unwrap().interval_ms(),
-            Some(86_400_000)
-        );
-        assert_eq!(
-            parse_schedule("weekly").unwrap().interval_ms(),
-            Some(604_800_000)
-        );
+        assert_eq!(interval_ms("30s"), Some(30_000));
+        assert_eq!(interval_ms("15m"), Some(900_000));
+        assert_eq!(interval_ms("12h"), Some(43_200_000));
+        assert_eq!(interval_ms("2d"), Some(172_800_000));
+        assert_eq!(interval_ms("hourly"), Some(3_600_000));
+        assert_eq!(interval_ms("DAILY"), Some(86_400_000));
+        assert_eq!(interval_ms("weekly"), Some(604_800_000));
     }
 
     #[test]
@@ -591,7 +574,6 @@ mod tests {
     fn cron_expression_is_detected_and_described() {
         let s = parse_schedule("0 2 * * *").unwrap();
         assert!(matches!(s, Schedule::Cron(_)));
-        assert_eq!(s.interval_ms(), None);
         assert_eq!(s.describe(), "cron(0 2 * * *)");
     }
 

@@ -393,7 +393,7 @@ impl<'a> LoopState<'a> {
         self.sink.write_event(turn_end.clone())?;
         self.projector.step(&turn_end);
 
-        let vcs = ferric_vcs::Vcs::new(self.args.workspace.root());
+        let vcs = crate::vcs::Vcs::new(self.args.workspace.root());
         let snapshot_commit = match vcs.snapshot(self.sink.session(), turn) {
             Ok(commit) => Some(commit),
             Err(e) => {

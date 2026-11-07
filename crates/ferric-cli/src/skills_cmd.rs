@@ -32,7 +32,7 @@ pub fn run(command: SkillsCommand) -> ExitCode {
 fn list(args: SkillsListArgs) -> ExitCode {
     let root = args.workspace.unwrap_or_else(|| PathBuf::from("."));
 
-    let (skills, errors) = ferric_skills::discover(&root);
+    let (skills, errors) = crate::skills::discover(&root);
     let loaded = match crate::config::load_layered(&root) {
         Ok(config) => config,
         Err(error) => {
@@ -42,7 +42,7 @@ fn list(args: SkillsListArgs) -> ExitCode {
     };
     let allowed = loaded.config.allowed_skills.unwrap_or_default();
 
-    let dir = ferric_skills::skills_dir(&root);
+    let dir = crate::skills::skills_dir(&root);
     if skills.is_empty() && errors.is_empty() {
         println!("No skills installed in {}", dir.display());
         println!(

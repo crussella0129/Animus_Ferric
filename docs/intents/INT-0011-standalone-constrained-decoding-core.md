@@ -76,7 +76,7 @@ Boundaries:
 1. The core builds and its tests pass with a dependency tree limited to
    serialization and error crates (plus shared domain types if those move with
    it). It does not depend on `ferric-loop`, `ferric-tools`, `ferric-guard`,
-   `ferric-trace`, `ferric-vcs`, `ferric-cli`, tokio or reqwest. A test or CI
+   `ferric-trace`, `ferric-cli`, tokio or reqwest. A test or CI
    check pins that boundary so a regression fails the build.
 2. `ferric-loop` and `ferric-bench` use the core for schema authoring,
    parsing, protocol selection, policy and guards, and the old in-crate

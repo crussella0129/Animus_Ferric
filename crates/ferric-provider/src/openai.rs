@@ -154,7 +154,7 @@ impl OpenAiProvider {
     /// OpenAI structured outputs); this is where "the harness owns decoding"
     /// is actually true for the HTTP valve. The schema is NOT injected into the
     /// prompt by the server, so callers must still describe the tools in the
-    /// system prompt (the loop's `ConstrainedJson` path does, via ferric-prompt).
+    /// system prompt (the loop's `ConstrainedJson` path does, via the CLI's prompt composer).
     ///
     /// A constraint kind this backend cannot transmit is an error, never a
     /// silently unconstrained request (INT-0011 AC-4, T-12603).

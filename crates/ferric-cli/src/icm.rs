@@ -24,14 +24,18 @@
 //! output in as Layer 4) and the human review gate — never through unrestricted
 //! filesystem access.
 
+mod workspace;
+#[cfg(test)]
+mod workspace_tests;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use ferric_guard::Workspace;
-use ferric_icm::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_workspace};
 use ferric_trace::JsonlSink;
+use workspace::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_workspace};
 
 use crate::backend::BackendOpts;
 use crate::query::{

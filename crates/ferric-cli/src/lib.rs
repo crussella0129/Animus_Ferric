@@ -33,6 +33,7 @@ mod launch;
 mod live_budget_tests;
 mod logging;
 mod mcp;
+mod prompt;
 mod query;
 mod revert_cmd;
 #[cfg(feature = "backend-openai")]
@@ -43,6 +44,7 @@ mod server_registration;
 mod server_resolution;
 #[cfg(feature = "backend-openai")]
 mod setup_cmd;
+mod skills;
 mod skills_cmd;
 #[cfg(feature = "backend-openai")]
 mod startup;

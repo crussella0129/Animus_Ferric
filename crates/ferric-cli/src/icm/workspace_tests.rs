@@ -4,8 +4,15 @@
 
 use std::fs;
 
-use ferric_icm::{IcmWorkspace, Layer, compose_stage, plan, scaffold_workspace};
+use super::workspace::{
+    ComposeMode, ComposedStage, IcmError, IcmWorkspace, Layer, compose_stage_with_mode, plan,
+    scaffold_workspace,
+};
 use tempfile::TempDir;
+
+fn compose_stage(ws: &IcmWorkspace, index: usize) -> Result<ComposedStage, IcmError> {
+    compose_stage_with_mode(ws, index, ComposeMode::FoldReferences)
+}
 
 /// Scaffold into a fresh subdir of a tempdir and return (tempdir, root).
 fn scaffolded() -> (TempDir, std::path::PathBuf) {
@@ -134,9 +141,24 @@ fn a_contract_cannot_pull_context_from_outside_the_workspace() {
     let ws = IcmWorkspace::discover(&root).unwrap();
     let err = compose_stage(&ws, 0).unwrap_err();
     assert!(
-        matches!(err, ferric_icm::IcmError::Boundary(_)),
+        matches!(err, IcmError::Boundary(_)),
         "an escaping input path must be refused at the workspace boundary, got {err:?}"
     );
+}
+
+/// D-9 (sprint 129): an empty directory reached through a symlink is not a
+/// safe target, the same rule `ferric launch` applies.
+#[cfg(unix)]
+#[test]
+fn scaffold_refuses_a_symlinked_target() {
+    let tmp = TempDir::new().unwrap();
+    let real = tmp.path().join("real");
+    fs::create_dir(&real).unwrap();
+    let link = tmp.path().join("ws");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let err = scaffold_workspace(&link).unwrap_err();
+    assert!(matches!(err, IcmError::TargetNotEmpty(_)), "{err:?}");
+    assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
 }
 
 #[test]
@@ -147,7 +169,7 @@ fn scaffold_refuses_to_clobber_a_nonempty_dir() {
     fs::write(root.join("keep.txt"), "important").unwrap();
 
     let err = scaffold_workspace(&root).unwrap_err();
-    assert!(matches!(err, ferric_icm::IcmError::TargetNotEmpty(_)));
+    assert!(matches!(err, IcmError::TargetNotEmpty(_)));
     // The pre-existing file is untouched.
     assert_eq!(
         fs::read_to_string(root.join("keep.txt")).unwrap(),
@@ -159,7 +181,7 @@ fn scaffold_refuses_to_clobber_a_nonempty_dir() {
 fn discover_rejects_a_non_workspace() {
     let tmp = TempDir::new().unwrap();
     let err = IcmWorkspace::discover(tmp.path()).unwrap_err();
-    assert!(matches!(err, ferric_icm::IcmError::NotAWorkspace(_)));
+    assert!(matches!(err, IcmError::NotAWorkspace(_)));
 }
 
 #[test]

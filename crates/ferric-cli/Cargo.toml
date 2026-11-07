@@ -40,24 +40,20 @@ backend-openai = [
 ]
 
 [dependencies]
-animus-launch = { workspace = true }
 ferric-bench = { workspace = true }
-ferric-icm = { workspace = true }
 ferric-core = { workspace = true }
-ferric-cron = { workspace = true }
 ferric-gate = { workspace = true, optional = true }
 ferric-guard = { workspace = true }
 ferric-iron = { workspace = true }
 ferric-setup = { workspace = true, optional = true }
 ferric-loop = { workspace = true }
-ferric-prompt = { workspace = true }
 ferric-provider = { workspace = true }
 ferric-process = { workspace = true }
+oovra = { workspace = true }
 ferric-research = { workspace = true }
 ferric-tools = { workspace = true }
-ferric-skills = { workspace = true }
 ferric-trace = { workspace = true }
-ferric-vcs = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 cap-std = { workspace = true }
 cap-fs-ext = { workspace = true }
@@ -65,6 +61,7 @@ tokio = { workspace = true }
 futures-executor = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 getrandom = { workspace = true }

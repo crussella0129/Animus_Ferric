@@ -1,4 +1,4 @@
-use ferric_vcs::Vcs;
+use ferric_loop::vcs::Vcs;
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
@@ -168,14 +168,17 @@ fn refuses_to_operate_on_an_ancestor_repo() {
         .snapshot("s", 1)
         .expect_err("snapshot must refuse a workspace that is not the repo root");
     assert!(
-        matches!(err, ferric_vcs::VcsError::NotWorkspaceRoot { .. }),
+        matches!(err, ferric_loop::vcs::VcsError::NotWorkspaceRoot { .. }),
         "expected NotWorkspaceRoot, got: {err:?}"
     );
 
     let err = vcs
         .revert("s", 1)
         .expect_err("revert must refuse too — it runs `git clean -fd`");
-    assert!(matches!(err, ferric_vcs::VcsError::NotWorkspaceRoot { .. }));
+    assert!(matches!(
+        err,
+        ferric_loop::vcs::VcsError::NotWorkspaceRoot { .. }
+    ));
 
     // And the ancestor repo's index was never touched.
     let staged = Command::new("git")

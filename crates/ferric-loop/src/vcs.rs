@@ -1,6 +1,5 @@
-//! `ferric-vcs` provides lightweight git wrapping for `Animus_Ferric`.
-//! It manages orphan snapshot commits tied to `TurnEnd` events in the trace,
-//! enabling time-travel via the `ferric revert` CLI command.
+//! Lightweight git wrapping: orphan snapshot commits tied to `TurnEnd` events
+//! in the trace, which `ferric revert` uses to restore a workspace.
 
 use std::path::Path;
 use std::process::Command;

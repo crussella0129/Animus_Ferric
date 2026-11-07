@@ -2,7 +2,12 @@
 //! LLM-free project bootstrapper. Supplied flags skip the matching interview
 //! question; anything missing is asked on stdin (prompts to STDERR so stdout
 //! stays the final report). The answer→spec logic (`spec_from_answers`) is pure
-//! and unit-tested; `animus_launch::scaffold` does the actual git+skeleton work.
+//! and unit-tested; [`scaffold`] does the actual git+skeleton work.
+
+mod scaffold;
+pub(crate) use scaffold::target_is_clobber_safe;
+#[cfg(test)]
+mod scaffold_tests;
 
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -10,7 +15,7 @@ use std::process::ExitCode;
 
 use clap::Args;
 
-use animus_launch::{LaunchSpec, ProjectType, scaffold, validate_goal, validate_project_name};
+use scaffold::{LaunchSpec, ProjectType, scaffold, validate_goal, validate_project_name};
 
 /// `ferric launch`'s CLI surface. All fields are optional — any not supplied is
 /// asked interactively (in the fixed order name → path → goal).

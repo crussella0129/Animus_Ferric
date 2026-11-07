@@ -39,7 +39,7 @@ ARG TARGETARCH
 # OpenAI valve talks HTTPS to remote servers when not using the local one).
 # libgomp1 is llama.cpp's OpenMP runtime dependency.
 #
-# git is here because `ferric-vcs` shells out to it for the per-turn workspace
+# git is here because the loop's snapshot module (`ferric_loop::vcs`) shells out to it for the per-turn workspace
 # snapshots that `ferric revert` restores. Without it the snapshot **fails
 # quietly** — the loop records `note: vcs snapshot failed: … No such file or
 # directory` in the trace and carries on, so every in-container run silently had

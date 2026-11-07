@@ -243,7 +243,7 @@ pub fn derive_initial_tasks(goal: &str) -> Vec<String> {
 /// as a directory that is empty (hidden entries like `.git`/`.DS_Store` COUNT
 /// as non-empty — the stricter, safer rule). A path that exists but is not a
 /// directory is NOT safe.
-fn target_is_clobber_safe(path: &Path) -> Result<bool, std::io::Error> {
+pub(crate) fn target_is_clobber_safe(path: &Path) -> Result<bool, std::io::Error> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),

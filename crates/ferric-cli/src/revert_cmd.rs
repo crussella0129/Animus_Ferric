@@ -72,7 +72,7 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
 
     let workspace_root = trace_workspace
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let vcs = ferric_vcs::Vcs::new(workspace_root);
+    let vcs = ferric_loop::vcs::Vcs::new(workspace_root);
 
     // `revert` is destructive in two ways the user cannot undo: it deletes
     // untracked files (`git clean -fd`) and it truncates the trace. Name both,

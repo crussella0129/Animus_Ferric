@@ -12,7 +12,7 @@
 //! - `ferric cron run [--dry-run]`       — run all currently-due jobs once
 //! - `ferric cron watch [--interval 60s]`— loop, running due jobs until Ctrl-C
 //!
-//! Pure scheduling/parsing lives in `ferric-cron`; this module drives it and
+//! Pure scheduling and parsing live in [`schedule`]; this module drives it and
 //! performs execution. Last-run state is `.ferric/cron/.state.json`.
 
 use std::path::{Path, PathBuf};
@@ -20,7 +20,9 @@ use std::process::{Command, ExitCode};
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
-use ferric_cron::{
+mod schedule;
+
+use schedule::{
     CronState, JobCommand, due_jobs, job_toml, load_jobs, next_due_ms, parse_interval_ms,
     parse_schedule,
 };

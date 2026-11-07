@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 
-use animus_launch::{LaunchError, LaunchSpec, ProjectType, ScaffoldReport, scaffold};
+use super::scaffold::{LaunchError, LaunchSpec, ProjectType, ScaffoldReport, scaffold};
 
 static GIT_ENV_LOCK: Mutex<()> = Mutex::new(());
 
