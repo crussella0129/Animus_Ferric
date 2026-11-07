@@ -41,7 +41,6 @@ pub(crate) enum EndpointSelection {
     Managed {
         scope: ManagedDiscoveryScope,
         server: Box<ManagedServer>,
-        explicit_base_url: Option<String>,
     },
     Default {
         base_url: String,
@@ -71,7 +70,6 @@ pub(crate) enum EndpointSelectionError {
     StaleOnly(Box<ManagedServerDiscovery>),
     Conflict(Box<ManagedServerDiscovery>),
     Unverifiable(Box<ManagedServerDiscovery>),
-    ExplicitManagedMismatch { explicit: String, managed: String },
 }
 
 impl fmt::Display for EndpointSelectionError {
@@ -106,10 +104,6 @@ impl fmt::Display for EndpointSelectionError {
                 "managed server registrations are unverifiable: {}",
                 issues(discovery)
             ),
-            Self::ExplicitManagedMismatch { explicit, managed } => write!(
-                formatter,
-                "explicit endpoint {explicit} does not match the ready managed endpoint {managed}"
-            ),
         }
     }
 }
@@ -125,7 +119,6 @@ pub(crate) fn automatic_endpoint_from_discovery(
         ManagedServerState::Ready(server) => Ok(EndpointSelection::Managed {
             scope,
             server: Box::new(server.clone()),
-            explicit_base_url: None,
         }),
         ManagedServerState::Degraded { .. } => {
             Err(EndpointSelectionError::Degraded(Box::new(discovery)))
@@ -156,39 +149,6 @@ where
     }
     let (scope, discovery) = discover().map_err(EndpointSelectionError::Setup)?;
     automatic_endpoint_from_discovery(scope, discovery)
-}
-
-pub(crate) fn require_managed_endpoint(
-    scope: ManagedDiscoveryScope,
-    discovery: ManagedServerDiscovery,
-    explicit: Option<&str>,
-) -> Result<EndpointSelection, EndpointSelectionError> {
-    let mut selection = automatic_endpoint_from_discovery(scope, discovery)?;
-    let EndpointSelection::Managed {
-        server,
-        explicit_base_url,
-        ..
-    } = &mut selection
-    else {
-        return Err(EndpointSelectionError::Setup(
-            "strict managed mode requires a ready `ferric server`; built-in default selection is not permitted"
-                .to_string(),
-        ));
-    };
-    if let Some(explicit) = explicit {
-        if normalized_endpoint(explicit) != normalized_endpoint(&server.runfile.base_url) {
-            return Err(EndpointSelectionError::ExplicitManagedMismatch {
-                explicit: explicit.to_string(),
-                managed: server.runfile.base_url.clone(),
-            });
-        }
-        *explicit_base_url = Some(explicit.to_string());
-    }
-    Ok(selection)
-}
-
-fn normalized_endpoint(value: &str) -> &str {
-    value.trim_end_matches('/')
 }
 
 /// Resolve the endpoint exactly once for commands that launch multiple query

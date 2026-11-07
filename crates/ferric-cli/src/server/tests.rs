@@ -1265,8 +1265,6 @@ fn registration_consumers_propagate_typed_ambiguity() {
             doctor_report_after_discovery(&doctor_fixture_args(), &discovery, &mut effects);
         let automatic =
             crate::backend::automatic_endpoint_from_discovery(scope.clone(), discovery.clone());
-        let strict =
-            crate::backend::require_managed_endpoint(scope.clone(), discovery.clone(), None);
         let down_blocker = down_mutation_blocker(&discovery.state);
         match &discovery.state {
             ManagedServerState::Empty => {
@@ -1274,38 +1272,14 @@ fn registration_consumers_propagate_typed_ambiguity() {
                     automatic,
                     Ok(crate::backend::EndpointSelection::Default { .. })
                 ));
-                assert!(strict.is_err());
                 assert!(doctor.success);
                 assert!(!effects.events.is_empty());
                 assert!(down_blocker.is_none());
             }
-            ManagedServerState::Ready(server) => {
+            ManagedServerState::Ready(_) => {
                 assert!(matches!(
                     automatic,
                     Ok(crate::backend::EndpointSelection::Managed { .. })
-                ));
-                assert!(strict.is_ok());
-                let explicit_match = format!("{}/", server.runfile.base_url);
-                let matching = crate::backend::require_managed_endpoint(
-                    scope.clone(),
-                    discovery.clone(),
-                    Some(&explicit_match),
-                )
-                .unwrap();
-                assert!(matches!(
-                    matching,
-                    crate::backend::EndpointSelection::Managed {
-                        explicit_base_url: Some(_),
-                        ..
-                    }
-                ));
-                assert!(matches!(
-                    crate::backend::require_managed_endpoint(
-                        scope.clone(),
-                        discovery.clone(),
-                        Some("http://127.0.0.1:65535/v1"),
-                    ),
-                    Err(crate::backend::EndpointSelectionError::ExplicitManagedMismatch { .. })
                 ));
                 assert!(doctor.success);
                 assert!(!effects.events.is_empty());
@@ -1314,10 +1288,6 @@ fn registration_consumers_propagate_typed_ambiguity() {
             ManagedServerState::Degraded { .. } => {
                 assert!(matches!(
                     automatic,
-                    Err(crate::backend::EndpointSelectionError::Degraded(_))
-                ));
-                assert!(matches!(
-                    strict,
                     Err(crate::backend::EndpointSelectionError::Degraded(_))
                 ));
                 assert!(!doctor.success);
@@ -1329,10 +1299,6 @@ fn registration_consumers_propagate_typed_ambiguity() {
                     automatic,
                     Err(crate::backend::EndpointSelectionError::StaleOnly(_))
                 ));
-                assert!(matches!(
-                    strict,
-                    Err(crate::backend::EndpointSelectionError::StaleOnly(_))
-                ));
                 assert!(!doctor.success);
                 assert!(effects.events.is_empty());
                 assert!(down_blocker.is_none());
@@ -1340,10 +1306,6 @@ fn registration_consumers_propagate_typed_ambiguity() {
             ManagedServerState::Conflict { .. } => {
                 assert!(matches!(
                     automatic,
-                    Err(crate::backend::EndpointSelectionError::Conflict(_))
-                ));
-                assert!(matches!(
-                    strict,
                     Err(crate::backend::EndpointSelectionError::Conflict(_))
                 ));
                 assert!(!doctor.success);
@@ -1355,138 +1317,11 @@ fn registration_consumers_propagate_typed_ambiguity() {
                     automatic,
                     Err(crate::backend::EndpointSelectionError::Unverifiable(_))
                 ));
-                assert!(matches!(
-                    strict,
-                    Err(crate::backend::EndpointSelectionError::Unverifiable(_))
-                ));
                 assert!(!doctor.success);
                 assert!(effects.events.is_empty());
                 assert!(down_blocker.is_some());
             }
         }
-    }
-}
-
-#[test]
-fn strict_autonomy_requires_fresh_managed_discovery_before_http() {
-    fn mirrored_inventory() -> RegistrationInventory {
-        let local = discovery_fixture_coordinate(RegistrationScope::Local, "strict-local");
-        let global = discovery_fixture_coordinate(RegistrationScope::Global, "strict-global");
-        let runfile = discovery_fixture_runfile(4101, "strict-local");
-        let raw = serde_json::to_vec(&runfile).unwrap();
-        RegistrationInventory {
-            local: RegistrationSlot::Captured(Box::new(CapturedRegistration {
-                scope: local.scope,
-                path: local.path,
-                raw: raw.clone(),
-                runfile: runfile.clone(),
-            })),
-            global: Some(RegistrationSlot::Captured(Box::new(CapturedRegistration {
-                scope: global.scope,
-                path: global.path,
-                raw,
-                runfile,
-            }))),
-            promised_origins: Vec::new(),
-        }
-    }
-
-    fn observe_exact(capture: CapturedRegistration) -> LifecycleObservation {
-        let identity = capture.runfile.process_identity.clone().unwrap();
-        LifecycleObservation {
-            candidate: Candidate {
-                coordinate: capture.coordinate(),
-                runfile: Some(capture.runfile.clone()),
-                state: CandidateState::Verified {
-                    identity,
-                    listener: ListenerState::OwnedByTarget,
-                    health: HealthState::NotProbed,
-                },
-            },
-            capture: Some(capture),
-            process: None,
-        }
-    }
-
-    let inventory = mirrored_inventory();
-    let initial = discover_inventory_before_health_with(inventory.clone(), observe_exact);
-    let expected = match &initial.managed.state {
-        ManagedServerState::Degraded { server, .. } => server.fingerprint.clone(),
-        state => panic!("pre-health exact owner must be typed Degraded, got {state:?}"),
-    };
-    require_matching_pre_health_discovery(&initial.managed, &expected).unwrap();
-    let ledger = Rc::new(RefCell::new(Vec::new()));
-    let mut health = ScriptedHealth {
-        results: VecDeque::from([true]),
-        ledger: ledger.clone(),
-    };
-    let ready = complete_lifecycle_health_with(initial, &mut health, |_| Ok(()));
-    assert!(matches!(ready.managed.state, ManagedServerState::Ready(_)));
-    assert_eq!(ledger.borrow().as_slice(), &[LifecycleEvent::Health(7101)]);
-    let ready_server = match &ready.managed.state {
-        ManagedServerState::Ready(server) => server,
-        _ => unreachable!(),
-    };
-    let facts = ProcessFacts {
-        identity: ready_server.identity.clone(),
-        listener: ListenerState::OwnedByTarget,
-    };
-    ledger.borrow_mut().clear();
-    let process = ScriptedProcess::new(
-        ready_server.runfile.pid,
-        "strict-generation",
-        ledger.clone(),
-    )
-    .with_inspection(Ok(facts.clone()))
-    .with_inspection(Ok(facts));
-    let runtime = ScriptedRuntime::new(Ok(process), ledger.clone());
-    bracket_registered_effect_with(&runtime, &ready_server.runfile, || {
-        ledger.borrow_mut().push(LifecycleEvent::ConsumerHttp);
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(
-        ledger.borrow().as_slice(),
-        &[
-            LifecycleEvent::Acquire(4101),
-            LifecycleEvent::Inspect("strict-generation", 7101),
-            LifecycleEvent::ConsumerHttp,
-            LifecycleEvent::Inspect("strict-generation", 7101),
-        ]
-    );
-
-    let mut changed_revision = inventory.clone();
-    let Some(RegistrationSlot::Captured(global)) = &mut changed_revision.global else {
-        unreachable!()
-    };
-    global.raw.push(b' ');
-
-    let mut missing_alias = inventory.clone();
-    let global_path = match missing_alias.global.take().unwrap() {
-        RegistrationSlot::Captured(global) => global.path,
-        _ => unreachable!(),
-    };
-    missing_alias.global = Some(RegistrationSlot::Absent {
-        scope: RegistrationScope::Global,
-        path: global_path,
-    });
-
-    let mut conflicting_peer = inventory;
-    let Some(RegistrationSlot::Captured(global)) = &mut conflicting_peer.global else {
-        unreachable!()
-    };
-    global.runfile.pid = 4102;
-    global.runfile.process_identity = Some(process_identity(4102));
-    global.raw = serde_json::to_vec(&global.runfile).unwrap();
-
-    for changed in [changed_revision, missing_alias, conflicting_peer] {
-        ledger.borrow_mut().clear();
-        let before_health = discover_inventory_before_health_with(changed, observe_exact);
-        assert!(require_matching_pre_health_discovery(&before_health.managed, &expected,).is_err());
-        assert!(
-            ledger.borrow().is_empty(),
-            "fingerprint or conflict rejection must precede HTTP health"
-        );
     }
 }
 
@@ -1503,7 +1338,6 @@ enum LifecycleEvent {
     RetainedWait(&'static str),
     Listener(u32, u16),
     Health(u16),
-    ConsumerHttp,
     ClockNow,
     Sleep,
     Publish,
@@ -1666,6 +1500,15 @@ impl ScriptedRuntime {
             ledger,
         }
     }
+
+    fn acquire(&self, pid: u32) -> Result<ScriptedProcess, ProcessError> {
+        self.ledger.borrow_mut().push(LifecycleEvent::Acquire(pid));
+        self.acquisitions
+            .borrow_mut()
+            .pop_front()
+            .expect("scripted process acquisition")
+            .map_err(ProcessError::Operation)
+    }
 }
 
 impl SpawnedProcessRuntime<ScriptedChild> for ScriptedRuntime {
@@ -1679,19 +1522,6 @@ impl SpawnedProcessRuntime<ScriptedChild> for ScriptedRuntime {
             .borrow_mut()
             .pop_front()
             .expect("scripted process acquisition")
-    }
-}
-
-impl ProcessRuntime for ScriptedRuntime {
-    type Process = ScriptedProcess;
-
-    fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
-        self.ledger.borrow_mut().push(LifecycleEvent::Acquire(pid));
-        self.acquisitions
-            .borrow_mut()
-            .pop_front()
-            .expect("scripted process acquisition")
-            .map_err(ProcessError::Operation)
     }
 }
 
@@ -1714,12 +1544,8 @@ impl ScriptedPidMapRuntime {
             .push(LifecycleEvent::PidMapReplace(pid, generation));
         self.processes.borrow_mut().insert(pid, process);
     }
-}
 
-impl ProcessRuntime for ScriptedPidMapRuntime {
-    type Process = ScriptedProcess;
-
-    fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
+    fn acquire(&self, pid: u32) -> Result<ScriptedProcess, ProcessError> {
         self.ledger.borrow_mut().push(LifecycleEvent::Acquire(pid));
         self.processes
             .borrow()
@@ -2775,86 +2601,6 @@ fn ambiguous_or_unverifiable_down_is_non_mutating() {
     }
 }
 
-#[test]
-fn registered_consumer_effect_revalidates_retained_generation_on_every_outcome() {
-    let runfile = discovery_fixture_runfile(4101, "consumer-effect");
-
-    // Discovery hands consumers only identity-bearing records; anything else
-    // fails closed before any process is acquired.
-    let mut identity_less = runfile.clone();
-    identity_less.process_identity = None;
-    let ledger = Rc::new(RefCell::new(Vec::new()));
-    let runtime = ScriptedRuntime::new(Err("must not acquire".to_string()), ledger.clone());
-    let error = bracket_registered_effect_with(&runtime, &identity_less, || Ok(())).unwrap_err();
-    assert_eq!(
-        error,
-        "registered server PID 4101 has no recorded process identity"
-    );
-    assert!(ledger.borrow().is_empty());
-
-    let before = ProcessFacts {
-        identity: runfile.process_identity.clone().unwrap(),
-        listener: ListenerState::OwnedByTarget,
-    };
-
-    let ledger = Rc::new(RefCell::new(Vec::new()));
-    let process = ScriptedProcess::new(4101, "effect-error", ledger.clone())
-        .with_inspection(Ok(before.clone()))
-        .with_inspection(Ok(before.clone()));
-    let runtime = ScriptedRuntime::new(Ok(process), ledger.clone());
-    let error = bracket_registered_effect_with(&runtime, &runfile, || {
-        ledger.borrow_mut().push(LifecycleEvent::ConsumerHttp);
-        Err::<(), _>("scripted HTTP failure".to_string())
-    })
-    .unwrap_err();
-    assert_eq!(error, "scripted HTTP failure");
-    assert_eq!(
-        ledger.borrow().as_slice(),
-        &[
-            LifecycleEvent::Acquire(4101),
-            LifecycleEvent::Inspect("effect-error", 7101),
-            LifecycleEvent::ConsumerHttp,
-            LifecycleEvent::Inspect("effect-error", 7101),
-        ]
-    );
-
-    for (label, after, expected_error) in [
-        (
-            "identity-change",
-            ProcessFacts {
-                identity: process_identity(4102),
-                listener: ListenerState::OwnedByTarget,
-            },
-            "changed process identity",
-        ),
-        (
-            "listener-change",
-            ProcessFacts {
-                identity: before.identity.clone(),
-                listener: ListenerState::OwnedByTargetWildcard,
-            },
-            "wildcard/public listener",
-        ),
-    ] {
-        let ledger = Rc::new(RefCell::new(Vec::new()));
-        let process = ScriptedProcess::new(4101, label, ledger.clone())
-            .with_inspection(Ok(before.clone()))
-            .with_inspection(Ok(after));
-        let runtime = ScriptedRuntime::new(Ok(process), ledger.clone());
-        let error = bracket_registered_effect_with(&runtime, &runfile, || {
-            ledger.borrow_mut().push(LifecycleEvent::ConsumerHttp);
-            Ok(())
-        })
-        .unwrap_err();
-        assert!(error.contains(expected_error), "{label}: {error}");
-        assert_eq!(ledger.borrow()[2], LifecycleEvent::ConsumerHttp);
-        assert!(matches!(
-            ledger.borrow()[3],
-            LifecycleEvent::Inspect(_, 7101)
-        ));
-    }
-}
-
 struct ScriptedListener {
     states: RefCell<VecDeque<ListenerState>>,
     ledger: EventLedger,
@@ -3747,14 +3493,6 @@ fn status_and_discovery_two_scope_matrix() {
         crate::backend::automatic_endpoint_from_discovery(scope.clone(), managed.clone()),
         Ok(crate::backend::EndpointSelection::Managed { .. })
     ));
-    assert!(crate::backend::require_managed_endpoint(scope.clone(), managed.clone(), None).is_ok());
-    assert_eq!(
-        require_matching_pre_health_discovery(&managed, &server.fingerprint,)
-            .unwrap()
-            .fingerprint,
-        server.fingerprint,
-        "strict autonomy must consume the same typed two-scope discovery"
-    );
     let mut doctor_effects = RecordingDoctorEffects::default();
     let doctor =
         doctor_report_after_discovery(&doctor_fixture_args(), &managed, &mut doctor_effects);
@@ -5989,72 +5727,5 @@ mod native {
             helper_remained_live,
             "a live same-creation metadata mismatch must never be signalled"
         );
-    }
-
-    #[test]
-    fn live_registration_inspection_binds_pid_listener_and_health() {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let (release, released) = std::sync::mpsc::channel();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 512];
-            let read = stream.read(&mut request).unwrap();
-            assert!(String::from_utf8_lossy(&request[..read]).starts_with("GET /health "));
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
-                .unwrap();
-            released.recv_timeout(Duration::from_secs(15)).unwrap();
-        });
-        let identity = LiveProcess::acquire(std::process::id())
-            .and_then(|process| process.inspect(port))
-            .expect("inspect the test process's own identity")
-            .identity;
-        let runfile = ServerRunfile {
-            schema_version: RUNFILE_SCHEMA_V2,
-            engine: Engine::LlamaServer,
-            pid: std::process::id(),
-            port,
-            base_url: format!("http://127.0.0.1:{port}/v1"),
-            tailscale: false,
-            tailscale_serve: None,
-            model: Some("model.gguf".to_string()),
-            context_size: Some(8192),
-            sampling_seed: Some(42),
-            parallel_slots: Some(1),
-            process_identity: Some(identity),
-            origin_local_runfile: None,
-        };
-        let inspected = inspect_registered_server(&runfile);
-        if inspected.is_err() {
-            // A restricted Linux /proc can reject before the HTTP request.
-            // Wake the server thread with a valid probe so this native smoke
-            // still exits cleanly while reporting the visibility limitation.
-            if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
-                let _ = stream.write_all(
-                format!(
-                    "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-                )
-                .as_bytes(),
-            );
-            }
-        }
-        release.send(()).unwrap();
-        server.join().unwrap();
-        match inspected {
-            Ok(inspected) => {
-                assert_eq!(inspected.pid, std::process::id());
-                assert_eq!(inspected.listener_owner_pid, std::process::id());
-                assert!(!inspected.argv.is_empty());
-                assert!(inspected.executable.is_file());
-            }
-            #[cfg(target_os = "linux")]
-            Err(error) => assert!(
-                is_documented_linux_listener_visibility_error(&error),
-                "unexpected Linux registered-server inspection failure: {error}"
-            ),
-            #[cfg(windows)]
-            Err(error) => panic!("registered-server inspection failed: {error}"),
-        }
     }
 }

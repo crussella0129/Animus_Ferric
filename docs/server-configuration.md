@@ -118,12 +118,7 @@ selected workspace rather than from the launcher process's current directory.
 Without an explicit endpoint, only an empty inventory selects the built-in
 default and only a Ready inventory selects the managed endpoint. Degraded,
 stale-only, conflicting, malformed, missing-origin, or ownership-uninspectable
-state never falls through to the built-in endpoint. Strict autonomy always
-requires Ready managed discovery even when `--api-base` is supplied, and final
-validation repeats static and process discovery and requires the same process,
-metadata, aliases, origins, and exact registration revisions before its final
-discovery health probe. Only after that check may the consumer issue its own
-HTTP request.
+state never falls through to the built-in endpoint.
 
 Registration publication is no-clobber and atomic per path, not one
 cross-filesystem transaction and not simultaneous visibility across scopes. A

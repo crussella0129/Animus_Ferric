@@ -20,9 +20,8 @@ use clap::{Args, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 
 use crate::server_process::{
-    ListenerState, LiveProcess, NativeProcessRuntime, ProcessError, ProcessFacts, ProcessIdentity,
-    ProcessRuntime, RetainedProcess as RetainedProcessHandle, acquire_matching_process,
-    loopback_listener_state,
+    ListenerState, LiveProcess, ProcessError, ProcessFacts, ProcessIdentity,
+    RetainedProcess as RetainedProcessHandle, loopback_listener_state,
 };
 use crate::server_registration::{
     CapturedRegistration, PublicationAttempt, PublicationStage, PublishError,
@@ -312,128 +311,6 @@ fn http_status_ok(host: &str, port: u16, path: &str) -> bool {
     }
     let mut fields = first_line.split_whitespace();
     matches!(fields.next(), Some("HTTP/1.0") | Some("HTTP/1.1")) && fields.next() == Some("200")
-}
-
-/// Live process/listener facts used by strict autonomy evidence.  The runfile
-/// is only a registration hint; callers must bind it back to the process and
-/// socket which exist now before treating it as provenance.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RegisteredServerSnapshot {
-    pub pid: u32,
-    pub executable: PathBuf,
-    pub argv: Vec<String>,
-    pub listener_owner_pid: u32,
-}
-
-/// Fail-closed live validation for a registered managed server.
-///
-/// This deliberately does not infer process identity from HTTP health alone:
-/// an unrelated service can answer on the registered port.  Platform process
-/// inspection must prove the executable/argv and that the registered PID owns
-/// the listening socket.  Unsupported or unavailable inspection is an error.
-pub(crate) fn inspect_registered_server(
-    runfile: &ServerRunfile,
-) -> Result<RegisteredServerSnapshot, String> {
-    with_registered_server_effect(runfile, || {
-        if http_status_ok("127.0.0.1", runfile.port, health_path(runfile.engine)) {
-            Ok(())
-        } else {
-            Err(format!(
-                "registered server PID {} does not have a healthy engine endpoint on loopback port {}",
-                runfile.pid, runfile.port
-            ))
-        }
-    })
-    .map(|(snapshot, ())| snapshot)
-}
-
-/// Execute one synchronous consumer effect while retaining and revalidating
-/// the exact registered process generation on both sides of the effect.
-pub(crate) fn with_registered_server_effect<T, F>(
-    runfile: &ServerRunfile,
-    effect: F,
-) -> Result<(RegisteredServerSnapshot, T), String>
-where
-    F: FnOnce() -> Result<T, String>,
-{
-    bracket_registered_effect_with(&NativeProcessRuntime, runfile, effect)
-}
-
-fn bracket_registered_effect_with<R, T, F>(
-    runtime: &R,
-    runfile: &ServerRunfile,
-    effect: F,
-) -> Result<(RegisteredServerSnapshot, T), String>
-where
-    R: ProcessRuntime,
-    F: FnOnce() -> Result<T, String>,
-{
-    // Discovery hands consumers only schema-2 records, which always carry an
-    // identity; anything else fails closed.
-    let expected = runfile.process_identity.as_ref().ok_or_else(|| {
-        format!(
-            "registered server PID {} has no recorded process identity",
-            runfile.pid
-        )
-    })?;
-    let inspection = acquire_matching_process(runtime, runfile.pid, runfile.port, expected)
-        .map_err(|error| format!("bind registered process identity: {error}"))?;
-    let (retained_process, facts) = (inspection.process, inspection.facts);
-    require_exclusive_registered_listener(runfile, &facts.listener)?;
-    let effect_result = effect();
-
-    // Consumer I/O creates a scheduling window. Reinspect even when the
-    // effect fails so a replacement listener cannot hide the lost authority.
-    let post_probe = retained_process
-        .inspect(runfile.port)
-        .map_err(|error| format!("revalidate registered process after consumer effect: {error}"))?;
-    if post_probe.identity != facts.identity {
-        return Err(format!(
-            "registered server PID {} changed process identity during consumer effect",
-            runfile.pid
-        ));
-    }
-    require_exclusive_registered_listener(runfile, &post_probe.listener)?;
-    let effect_value = effect_result?;
-
-    Ok((
-        RegisteredServerSnapshot {
-            pid: runfile.pid,
-            executable: post_probe.identity.executable,
-            argv: post_probe.identity.argv,
-            listener_owner_pid: runfile.pid,
-        },
-        effect_value,
-    ))
-}
-
-fn require_exclusive_registered_listener(
-    runfile: &ServerRunfile,
-    listener: &ListenerState,
-) -> Result<(), String> {
-    match listener {
-        ListenerState::OwnedByTarget => {}
-        ListenerState::OwnedByTargetWildcard => {
-            return Err(format!(
-                "registered server PID {} owns a wildcard/public listener on port {}; only an exclusive loopback listener is healthy managed state",
-                runfile.pid, runfile.port
-            ));
-        }
-        ListenerState::Absent => {
-            return Err(format!(
-                "registered server PID {} owns no loopback listener on port {}",
-                runfile.pid, runfile.port
-            ));
-        }
-        ListenerState::OwnedByOther(owners) => {
-            return Err(format!(
-                "loopback port {} is owned by other PIDs {owners:?}, not registered PID {}",
-                runfile.port, runfile.pid
-            ));
-        }
-        ListenerState::Uninspectable(error) => return Err(error.clone()),
-    }
-    Ok(())
 }
 
 /// Narrow lifecycle interfaces keep the spawn/bind/readiness windows
@@ -971,23 +848,6 @@ pub(crate) struct ManagedServer {
     pub aliases: Vec<RegistrationCoordinate>,
     pub stale: Vec<RegistrationCoordinate>,
     pub fingerprint: DiscoveryFingerprint,
-}
-
-impl ManagedServer {
-    pub(crate) fn ready_snapshot(&self) -> Result<RegisteredServerSnapshot, String> {
-        if self.listener != ListenerState::OwnedByTarget || self.health != HealthState::Healthy {
-            return Err(
-                "managed process snapshot requires exclusive loopback ownership and healthy HTTP"
-                    .to_string(),
-            );
-        }
-        Ok(RegisteredServerSnapshot {
-            pid: self.runfile.pid,
-            executable: self.identity.executable.clone(),
-            argv: self.identity.argv.clone(),
-            listener_owner_pid: self.runfile.pid,
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1864,73 +1724,14 @@ fn discover_lifecycle_before_health_in(scope: &ManagedDiscoveryScope) -> Lifecyc
     discover_inventory_before_health_with(inventory, observe_registration)
 }
 
-pub(crate) struct PendingManagedDiscovery {
-    lifecycle: LifecycleDiscovery,
-}
-
-impl PendingManagedDiscovery {
-    pub(crate) fn discovery(&self) -> &ManagedServerDiscovery {
-        &self.lifecycle.managed
-    }
-
-    pub(crate) fn finish(self) -> ManagedServerDiscovery {
-        let mut health = NativeHealthProbe;
-        complete_lifecycle_health_with(
-            self.lifecycle,
-            &mut health,
-            revalidate_registration_after_health,
-        )
-        .managed
-    }
-}
-
-/// The pending discovery's server, provided it still carries the strict
-/// binding's fingerprint; the loopback owner not yet health-probed counts.
-pub(crate) fn require_matching_pre_health_discovery<'a>(
-    discovery: &'a ManagedServerDiscovery,
-    expected: &DiscoveryFingerprint,
-) -> Result<&'a ManagedServer, String> {
-    let server = match &discovery.state {
-        ManagedServerState::Degraded { server, .. }
-            if server.listener == ListenerState::OwnedByTarget
-                && server.health == HealthState::NotProbed =>
-        {
-            server
-        }
-        ManagedServerState::Ready(server) => server,
-        ManagedServerState::Empty => {
-            return Err("managed registration disappeared before final HTTP health".to_string());
-        }
-        state @ (ManagedServerState::Degraded { .. }
-        | ManagedServerState::Conflict { .. }
-        | ManagedServerState::Unverifiable { .. }) => {
-            return Err(format!(
-                "fresh managed discovery is blocked before final HTTP health: {}",
-                state.issue_summary()
-            ));
-        }
-        ManagedServerState::StaleOnly { .. } => {
-            return Err("managed registration became stale before final HTTP health".to_string());
-        }
-    };
-    if &server.fingerprint != expected {
-        return Err(
-            "managed registration/process fingerprint changed before final HTTP health".to_string(),
-        );
-    }
-    Ok(server)
-}
-
-pub(crate) fn begin_managed_server_discovery_in(
-    scope: &ManagedDiscoveryScope,
-) -> PendingManagedDiscovery {
-    PendingManagedDiscovery {
-        lifecycle: discover_lifecycle_before_health_in(scope),
-    }
-}
-
 pub(crate) fn discover_managed_server_in(scope: &ManagedDiscoveryScope) -> ManagedServerDiscovery {
-    begin_managed_server_discovery_in(scope).finish()
+    let mut health = NativeHealthProbe;
+    complete_lifecycle_health_with(
+        discover_lifecycle_before_health_in(scope),
+        &mut health,
+        revalidate_registration_after_health,
+    )
+    .managed
 }
 
 trait DoctorProbeEffects {
