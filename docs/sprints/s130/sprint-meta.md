@@ -30,4 +30,4 @@
     are the 19 known lifecycle tests.
   - **Open:** T-13006 and T-12907. See the
     [test report](sprint-tests/test-report.md).
-- **Checkpoint:** (the sprint PR)
+- **Checkpoint:** https://github.com/crussella0129/Animus_Ferric/pull/127
