@@ -105,9 +105,6 @@ copies the binary into `~/.cargo/bin` (rustup already adds that to your `PATH`):
 
 ```sh
 cargo install --path crates/ferric-cli --features backend-openai --force
-# wrappers that do exactly this:
-#   Linux/macOS:  ./tools/install.sh
-#   Windows:      .\tools\install.ps1
 ```
 
 Re-run that **after every `git pull` or source change**: a plain `cargo build`
