@@ -304,6 +304,12 @@ mod platform {
     const DUPLICATE_SAME_ACCESS: u32 = 0x0000_0002;
     const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC000_0004_u32 as i32;
     const STATUS_BUFFER_TOO_SMALL: i32 = 0xC000_0023_u32 as i32;
+    /// Windows reports `STATUS_PARTIAL_COPY` transiently while a process's
+    /// address space is changing (for example while it is still starting),
+    /// so a command-line read that hits it is retried briefly before it
+    /// counts as a failure.
+    const STATUS_PARTIAL_COPY: i32 = 0x8000_000D_u32 as i32;
+    const PARTIAL_COPY_RETRIES: usize = 20;
 
     const AF_INET: u32 = 2;
     const AF_INET6: u32 = 23;
@@ -678,6 +684,23 @@ mod platform {
     unsafe impl Sync for LiveProcess {}
 
     fn query_process_command_line(handle: Handle) -> Result<String, String> {
+        let mut attempts = 0;
+        loop {
+            match query_process_command_line_once(handle) {
+                Err((STATUS_PARTIAL_COPY, _)) if attempts < PARTIAL_COPY_RETRIES => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err((_, detail)) => return Err(detail),
+                Ok(command_line) => return Ok(command_line),
+            }
+        }
+    }
+
+    /// One command-line read. An error carries the NTSTATUS that caused it
+    /// (0 when the failure is not an NTSTATUS) so the caller can retry a
+    /// transient `STATUS_PARTIAL_COPY`.
+    fn query_process_command_line_once(handle: Handle) -> Result<String, (i32, String)> {
         let mut required = 0_u32;
         let status = unsafe {
             NtQueryInformationProcess(
@@ -694,14 +717,20 @@ mod platform {
                 STATUS_INFO_LENGTH_MISMATCH | STATUS_BUFFER_TOO_SMALL
             )
         {
-            return Err(format!(
-                "NtQueryInformationProcess sizing failed with NTSTATUS 0x{:08X}",
-                status as u32
+            return Err((
+                status,
+                format!(
+                    "NtQueryInformationProcess sizing failed with NTSTATUS 0x{:08X}",
+                    status as u32
+                ),
             ));
         }
         if required < size_of::<UnicodeString>() as u32 {
-            return Err(format!(
-                "NtQueryInformationProcess reported an invalid command-line buffer size {required}"
+            return Err((
+                0,
+                format!(
+                    "NtQueryInformationProcess reported an invalid command-line buffer size {required}"
+                ),
             ));
         }
 
@@ -709,15 +738,19 @@ mod platform {
             let word_size = size_of::<usize>();
             let word_count = (required as usize)
                 .checked_add(word_size - 1)
-                .ok_or_else(|| "command-line buffer size overflow".to_string())?
+                .ok_or_else(|| (0, "command-line buffer size overflow".to_string()))?
                 / word_size;
             let mut buffer = vec![0_usize; word_count];
             let byte_capacity = buffer
                 .len()
                 .checked_mul(word_size)
-                .ok_or_else(|| "command-line buffer capacity overflow".to_string())?;
-            let byte_capacity = u32::try_from(byte_capacity)
-                .map_err(|_| "command-line buffer exceeds the Windows API limit".to_string())?;
+                .ok_or_else(|| (0, "command-line buffer capacity overflow".to_string()))?;
+            let byte_capacity = u32::try_from(byte_capacity).map_err(|_| {
+                (
+                    0,
+                    "command-line buffer exceeds the Windows API limit".to_string(),
+                )
+            })?;
             let mut returned = byte_capacity;
             let status = unsafe {
                 NtQueryInformationProcess(
@@ -735,11 +768,15 @@ mod platform {
                     returned
                 };
                 if valid_length > byte_capacity {
-                    return Err(format!(
-                        "NtQueryInformationProcess returned {valid_length} bytes into a {byte_capacity}-byte buffer"
+                    return Err((
+                        0,
+                        format!(
+                            "NtQueryInformationProcess returned {valid_length} bytes into a {byte_capacity}-byte buffer"
+                        ),
                     ));
                 }
-                return parse_process_command_line_buffer(&buffer, valid_length as usize);
+                return parse_process_command_line_buffer(&buffer, valid_length as usize)
+                    .map_err(|detail| (0, detail));
             }
             if matches!(
                 status,
@@ -749,12 +786,18 @@ mod platform {
                 required = returned;
                 continue;
             }
-            return Err(format!(
-                "NtQueryInformationProcess failed with NTSTATUS 0x{:08X}",
-                status as u32
+            return Err((
+                status,
+                format!(
+                    "NtQueryInformationProcess failed with NTSTATUS 0x{:08X}",
+                    status as u32
+                ),
             ));
         }
-        Err("NtQueryInformationProcess command-line size changed repeatedly".to_string())
+        Err((
+            0,
+            "NtQueryInformationProcess command-line size changed repeatedly".to_string(),
+        ))
     }
 
     fn parse_process_command_line_buffer(
