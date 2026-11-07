@@ -11,8 +11,6 @@ fn source_quality_and_feature_matrix() {
         "cargo clippy --workspace --all-targets --locked -- -D warnings",
         "cargo test --workspace --locked",
         "bash tools/test-lifecycle-linux.sh workspace",
-        "cargo clippy -p ferric-cli --no-default-features --all-targets --locked -- -D warnings",
-        "cargo test -p ferric-cli --no-default-features --locked",
     ] {
         assert!(
             workflow.contains(required),
@@ -23,7 +21,7 @@ fn source_quality_and_feature_matrix() {
         .split_once("\n  test:\n")
         .expect("workspace job")
         .1
-        .split("\n  no-default-features:\n")
+        .split("\n  lifecycle-fixture:\n")
         .next()
         .unwrap();
     let windows_gate = workspace_gate
@@ -46,31 +44,26 @@ fn source_quality_and_feature_matrix() {
         "if: runner.os == 'Linux'\n        shell: bash\n        run: bash tools/test-lifecycle-linux.sh workspace"
     ));
 
-    // Backend-free CI cannot accidentally include the positive startup/human
-    // fixtures that require native listener visibility on Linux.
-    // The command surface (including the feature-gated module declarations) now
-    // lives in the library; the binaries are thin shims over it.
-    let lib = include_str!("../src/lib.rs").replace("\r\n", "\n");
-    assert!(lib.contains("#[cfg(feature = \"backend-openai\")]\nmod startup;"));
-    let human = include_str!("../src/human.rs").replace("\r\n", "\n");
-    assert!(human.contains("#[cfg(feature = \"backend-openai\")]\nmod enabled {"));
-    let backend_free_gate = workflow
-        .split_once("\n  no-default-features:\n")
-        .expect("backend-free job")
-        .1
-        .split("\n  lifecycle-fixture:\n")
-        .next()
-        .unwrap();
-    for line in backend_free_gate
-        .lines()
-        .filter(|line| line.contains("run:"))
-    {
-        assert!(line.contains("--no-default-features"), "{line}");
-        assert!(!line.contains("--features"), "{line}");
-        assert!(!line.contains("test-lifecycle-linux.sh"), "{line}");
+    // The HTTP backend is always compiled (INT-0018): there is no backend-free
+    // lane, so the startup and positive human-session fixtures always run, on
+    // Linux inside the namespace workspace gate above that gives them native
+    // listener visibility. No feature can drop them from the library (the
+    // binaries are thin shims over it).
+    assert!(
+        !workflow.contains("--no-default-features"),
+        "the backend-free CLI lane was retired"
+    );
+    for (name, source) in [
+        ("src/lib.rs", include_str!("../src/lib.rs")),
+        ("src/human.rs", include_str!("../src/human.rs")),
+    ] {
+        assert!(
+            !source.contains("feature = \""),
+            "{name}: a feature gates the command surface"
+        );
     }
 
-    // The default HTTP backend includes ring's C build. Cross checks need the
+    // The HTTP backend includes ring's C build. Cross checks need the
     // target C compiler and libc headers even though cargo check does not link
     // Ferric itself. Install headers explicitly, not through apt recommendations.
     let cross_gate = workflow
@@ -92,10 +85,6 @@ fn source_quality_and_feature_matrix() {
         );
     }
     assert!(cross_gate.find(install).unwrap() < cross_gate.find("run: cargo check").unwrap());
-    assert!(
-        !cross_gate.contains("--no-default-features"),
-        "the real default backend must remain covered by portability checks"
-    );
 }
 
 #[test]

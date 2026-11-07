@@ -1,5 +1,4 @@
 //! T-12101: actual Cargo-built query requests, not policy-only propagation.
-#![cfg(feature = "backend-openai")]
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

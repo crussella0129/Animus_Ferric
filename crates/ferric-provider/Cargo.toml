@@ -6,11 +6,6 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[features]
-default = []
-
-backend-openai = ["dep:reqwest", "dep:tokio", "dep:tracing"]
-
 [dependencies]
 ferric-core = { workspace = true }
 ferric-iron = { workspace = true }
@@ -18,11 +13,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-# The HTTP backend is the only user of reqwest, tokio and tracing, so all three
-# ride `backend-openai`.
-tracing = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true, features = ["json"] }
-tokio = { workspace = true, optional = true, features = ["time"] }
+tracing = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 futures-executor = { workspace = true }

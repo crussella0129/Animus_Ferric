@@ -16,7 +16,6 @@
 //!   (Sprint 64).
 //! - `ferric trace cat <file>` — derived view of a JSONL trace.
 
-#[cfg(feature = "backend-openai")]
 mod api;
 mod autonomy_cmd;
 mod backend;
@@ -28,7 +27,7 @@ mod dream_cmd;
 mod human;
 mod icm;
 mod launch;
-#[cfg(all(test, feature = "backend-openai", any(windows, target_os = "linux")))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 mod live_budget_tests;
 mod logging;
 mod mcp;
@@ -36,22 +35,18 @@ mod media;
 mod prompt;
 mod query;
 mod revert_cmd;
-#[cfg(feature = "backend-openai")]
 mod secure_cmd;
 mod server;
 mod server_process;
 mod server_registration;
 mod server_resolution;
-#[cfg(feature = "backend-openai")]
 mod setup_cmd;
 mod skills;
 mod skills_cmd;
-#[cfg(feature = "backend-openai")]
 mod startup;
 mod toolbench_cmd;
 mod trace_cmd;
 mod trace_verify;
-#[cfg(feature = "backend-openai")]
 mod tunnel_cmd;
 
 use std::path::PathBuf;
@@ -83,7 +78,6 @@ enum Command {
     /// Open a session, ask a question, or work on files with permission
     Run(Box<human::RunArgs>),
     /// Download the engine and a model that fit this machine (one prompt, verified)
-    #[cfg(feature = "backend-openai")]
     Setup(Box<setup_cmd::SetupArgs>),
     /// Describe this folder's setup without probes or changes
     Status(human::DescribeArgs),
@@ -120,15 +114,12 @@ enum Command {
     #[command(hide = true)]
     Cron(Box<cron::CronArgs>),
     /// Start the HTTP API server for IDE/web/mobile integration (Sprint 64)
-    #[cfg(feature = "backend-openai")]
     #[command(hide = true)]
     Api(Box<api::ApiArgs>),
     /// Replay the 2026 localhost-agent attacks against a service (`probe`) or offline (`demo`)
-    #[cfg(feature = "backend-openai")]
     #[command(hide = true)]
     Secure(Box<secure_cmd::SecureArgs>),
     /// Self-hosted WireGuard (GotaTun) access to Ferric: no coordination server
-    #[cfg(feature = "backend-openai")]
     #[command(hide = true)]
     Tunnel(Box<tunnel_cmd::TunnelArgs>),
     /// Revert the workspace and trace to a specific turn snapshot
@@ -197,7 +188,6 @@ fn dispatch(command: Option<Command>) -> ExitCode {
     };
     match command {
         Command::Run(args) => human::run(*args),
-        #[cfg(feature = "backend-openai")]
         Command::Setup(args) => setup_cmd::run_setup(*args),
         Command::Status(args) | Command::Explain(args) => human::describe(args),
         Command::Advanced { .. } => advanced_help(),
@@ -215,14 +205,11 @@ fn dispatch(command: Option<Command>) -> ExitCode {
         Command::Launch(args) => launch::run_launch(*args),
         Command::Icm(args) => icm::run_icm(*args),
         Command::Cron(args) => cron::run_cron(*args),
-        #[cfg(feature = "backend-openai")]
         Command::Api(args) => {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             rt.block_on(api::run_api(*args))
         }
-        #[cfg(feature = "backend-openai")]
         Command::Secure(args) => secure_cmd::run_secure(*args),
-        #[cfg(feature = "backend-openai")]
         Command::Tunnel(args) => tunnel_cmd::run_tunnel(*args),
         Command::Server { command } => {
             let workspace = std::env::current_dir().unwrap_or_default();

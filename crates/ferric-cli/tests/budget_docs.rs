@@ -54,11 +54,7 @@ fn budget_docs_preserve_human_front_door() {
         .lines()
         .filter_map(|line| line.split_whitespace().next())
         .collect();
-    if cfg!(feature = "backend-openai") {
-        assert_eq!(actions, ["run", "setup", "status", "explain", "advanced"]);
-    } else {
-        assert_eq!(actions, ["run", "status", "explain", "advanced"]);
-    }
+    assert_eq!(actions, ["run", "setup", "status", "explain", "advanced"]);
     for human_help in [&primary, &run] {
         for expert_flag in ["--max-output-tokens", "--timeout-scale"] {
             assert!(

@@ -1040,7 +1040,6 @@ fn preflight_autonomy_checks(tasks: &[&AutonomyTask], python: &Path) -> Result<(
     preflight_command_checks(&specs, python)
 }
 
-#[cfg(feature = "backend-openai")]
 fn preflight_openai_server(api_base: &str, model: &str) -> Result<(), String> {
     const RESPONSE_LIMIT: usize = 1024 * 1024;
     let url = format!("{}/models", api_base.trim_end_matches('/'));
@@ -1093,12 +1092,6 @@ fn preflight_openai_server(api_base: &str, model: &str) -> Result<(), String> {
     })
 }
 
-#[cfg(not(feature = "backend-openai"))]
-fn preflight_openai_server(_api_base: &str, _model: &str) -> Result<(), String> {
-    Err(crate::backend::BACKEND_FEATURE_MISSING.to_string())
-}
-
-#[cfg(any(feature = "backend-openai", test))]
 fn model_ids(value: &serde_json::Value) -> Vec<String> {
     let mut ids = BTreeSet::new();
     if let Some(models) = value.get("data").and_then(serde_json::Value::as_array) {

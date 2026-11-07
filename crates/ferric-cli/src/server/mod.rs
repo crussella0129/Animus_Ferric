@@ -67,7 +67,6 @@ impl Engine {
     /// engine `ferric setup` installed. `ferric run` searches in the same
     /// order (sprint 128, INT-0016).
     fn executable(self) -> std::ffi::OsString {
-        #[cfg(feature = "backend-openai")]
         if self == Engine::LlamaServer
             && !matches!(ferric_setup::engine::on_path(), Some(Ok(_)))
             && let Some(managed) = ferric_setup::engine::installed()

@@ -34,7 +34,7 @@ ferric trace cat .ferric/trace/q-*.jsonl
 
 ## 2. A real query against a served model
 
-*Needs: `--features backend-openai`, `llama-server`, a GGUF.*
+*Needs: `llama-server`, a GGUF.*
 
 ```sh
 ferric server up --engine llama-server --model ./model.gguf

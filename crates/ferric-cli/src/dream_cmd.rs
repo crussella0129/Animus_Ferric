@@ -1,15 +1,11 @@
 use clap::Args;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::backend::BackendOpts;
-#[cfg(feature = "backend-openai")]
-use {
-    crate::backend::create_provider,
-    ferric_provider::CompletionRequest,
-    ferric_trace::TraceReader,
-    std::{fs, path::Path},
-};
+use crate::backend::{BackendOpts, create_provider};
+use ferric_provider::CompletionRequest;
+use ferric_trace::TraceReader;
 
 #[derive(Args, Clone)]
 pub struct DreamArgs {
@@ -26,46 +22,36 @@ pub struct DreamArgs {
 }
 
 pub fn run_dream(args: DreamArgs) -> ExitCode {
-    #[cfg(feature = "backend-openai")]
-    {
-        // A real Tokio runtime, not `futures_executor::block_on`.
-        //
-        // Dream always drives a live provider, and the HTTP stack underneath it
-        // needs a Tokio reactor — without one it panics with "there is no
-        // reactor running" the moment it touches the network. `chat` and `cron`
-        // already reach for a runtime when the backend is real and only use
-        // `futures_executor` for mocks; dream used the mock path for everything.
-        //
-        // This never surfaced because the directory bug above it meant dream
-        // returned "no traces" before it ever reached a network call. Two
-        // defects stacked so the outer one hid the inner one, and the feature
-        // has not worked once (sprint 99).
-        let runtime = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt,
+    // A real Tokio runtime, not `futures_executor::block_on`.
+    //
+    // Dream always drives a live provider, and the HTTP stack underneath it
+    // needs a Tokio reactor — without one it panics with "there is no
+    // reactor running" the moment it touches the network. `chat` and `cron`
+    // already reach for a runtime when the backend is real and only use
+    // `futures_executor` for mocks; dream used the mock path for everything.
+    //
+    // This never surfaced because the directory bug above it meant dream
+    // returned "no traces" before it ever reached a network call. Two
+    // defects stacked so the outer one hid the inner one, and the feature
+    // has not worked once (sprint 99).
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("dream: tokio runtime: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    runtime.block_on(async {
+        match dream_inner(args).await {
+            Ok(_) => ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("dream: tokio runtime: {e}");
-                return ExitCode::FAILURE;
+                eprintln!("dream failed: {}", e);
+                ExitCode::FAILURE
             }
-        };
-        runtime.block_on(async {
-            match dream_inner(args).await {
-                Ok(_) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("dream failed: {}", e);
-                    ExitCode::FAILURE
-                }
-            }
-        })
-    }
-    #[cfg(not(feature = "backend-openai"))]
-    {
-        let _ = args;
-        eprintln!("Error: 'ferric dream' requires the 'backend-openai' feature to be enabled.");
-        ExitCode::FAILURE
-    }
+        }
+    })
 }
 
-#[cfg(feature = "backend-openai")]
 async fn dream_inner(args: DreamArgs) -> Result<(), String> {
     // 1. Setup provider
     let provider = create_provider(&args.backend_opts).await?;

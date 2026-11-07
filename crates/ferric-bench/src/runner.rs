@@ -28,8 +28,7 @@ pub struct Invocation {
     pub protocol: ActionProtocol,
     /// OpenAI-compatible backend (ollama / llama-server — the constrained
     /// workhorse), or `None` for `--mock`. The only real backend since the
-    /// in-process mistral.rs GGUF path was removed (ADR-027); `requires
-    /// backend-openai` in the spawned binary.
+    /// in-process mistral.rs GGUF path was removed (ADR-027).
     pub openai: Option<OpenAiArgs>,
     /// Prompt library dir passed through as `--prompts-dir`.
     pub prompts_dir: Option<PathBuf>,

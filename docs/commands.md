@@ -343,7 +343,7 @@ and `--modality`; the query-only `--trace-dir` is not an MCP option.
 ferric api [--host 127.0.0.1] [--port 3581] [OPTIONS]
 ```
 
-Bound to loopback by default. Requires the `backend-openai` build. Routes:
+Bound to loopback by default. Routes:
 `GET /health`, `POST /v1/query` (one JSON response), and `POST /v1/query/stream`
 (SSE stream of `StreamDelta`s). Body: `{"prompt": "..."}`. Other options mirror
 `query`'s model/run controls; the query-only `--trace-dir` is not an API
@@ -358,7 +358,7 @@ ferric dream [--recent-traces <N>] [--memory-file <PATH>] [--model <NAME>] [--ap
 ```
 
 Parses recent `.ferric/trace` files into a synthesized `MEMORY.md` (default
-`.ferric/MEMORY.md`, 5 traces). Requires the `backend-openai` build + a model.
+`.ferric/MEMORY.md`, 5 traces). Requires a model.
 
 ---
 

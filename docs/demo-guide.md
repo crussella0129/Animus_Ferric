@@ -32,7 +32,7 @@ In the repository root, build the backend-enabled release and preflight the
 exact engine/model pair. Replace `$Model` with the GGUF path on the demo host:
 
 ```powershell
-cargo build --release -p ferric-cli --features backend-openai
+cargo build --release -p ferric-cli
 $FerricExe = (Resolve-Path .\target\release\ferric.exe).Path
 $Model = 'C:\Models\qwen2.5-coder-7b-instruct-q4_k_m.gguf'
 

@@ -88,14 +88,14 @@ machine unless you explicitly point it at a remote server.
 
 ## 2. Build
 
-Inference backends are **feature-gated**. Pick the OpenAI-compatible valve
-(`backend-openai`) — it's the default, reliable, constrained-decoding path:
+Every build includes the OpenAI-compatible valve, the reliable,
+constrained-decoding path; `--mock` covers offline use without a model:
 
 ```sh
 git clone https://github.com/crussella0129/Animus_Ferric.git
 cd Animus_Ferric
 
-cargo build --release -p ferric-cli --features backend-openai
+cargo build --release -p ferric-cli
 ```
 
 The binary lands at `target/release/ferric` (`ferric.exe` on Windows) — call it
@@ -104,18 +104,13 @@ Windows, Linux, and macOS, use `cargo install`, which builds in release and
 copies the binary into `~/.cargo/bin` (rustup already adds that to your `PATH`):
 
 ```sh
-cargo install --path crates/ferric-cli --features backend-openai --force
+cargo install --path crates/ferric-cli --force
 ```
 
 Re-run that **after every `git pull` or source change**: a plain `cargo build`
 updates `target/release/` but *not* the copy on your `PATH`, so an installed
 `ferric` can silently lag the code. `--force` re-installs despite the unchanged
 `0.1.0` version. The examples below assume `ferric` is on `PATH`.
-
-> **Built with no backend feature** (`cargo build -p ferric-cli`), only the
-> offline tooling works — `trace`, `launch`, `icm init`/`plan`, `cron add`/`list`,
-> and every `--mock` path. `query`/`bench`/`dream` against a real model, and the
-> `api` command, need `--features backend-openai`.
 
 Confirm it runs:
 

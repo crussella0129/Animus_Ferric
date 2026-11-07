@@ -17,28 +17,17 @@ path = "src/bin/ferric_lifecycle_fixture.rs"
 required-features = ["lifecycle-fixture"]
 
 [features]
-default = ["backend-openai"]
-
 # Test-only model-free stand-in for llama-server. The required-feature binary
 # target keeps it out of normal/release Ferric builds.
 lifecycle-fixture = ["ferric-process/testing"]
 
-backend-openai = [
-    "ferric-provider/backend-openai",
-    "dep:axum",
-    "dep:ferric-gate",
-    "dep:ferric-setup",
-    "dep:reqwest",
-    "dep:tokio-stream",
-]
-
 [dependencies]
 ferric-bench = { workspace = true }
 ferric-core = { workspace = true }
-ferric-gate = { workspace = true, optional = true }
+ferric-gate = { workspace = true }
 ferric-guard = { workspace = true }
 ferric-iron = { workspace = true }
-ferric-setup = { workspace = true, optional = true }
+ferric-setup = { workspace = true }
 ferric-loop = { workspace = true }
 ferric-provider = { workspace = true }
 ferric-process = { workspace = true }
@@ -61,9 +50,9 @@ getrandom = { workspace = true }
 toml = { workspace = true }
 tempfile = { workspace = true }
 rustyline = { workspace = true }
-reqwest = { workspace = true, optional = true }
-axum = { workspace = true, optional = true }
-tokio-stream = { workspace = true, optional = true }
+reqwest = { workspace = true }
+axum = { workspace = true }
+tokio-stream = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

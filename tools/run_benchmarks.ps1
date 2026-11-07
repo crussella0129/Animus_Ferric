@@ -15,10 +15,9 @@ param (
 )
 
 $ErrorActionPreference = "Continue"
-$Features = "backend-openai"
 
-Write-Host "Building ferric ($Features)..." -ForegroundColor Cyan
-cargo build --release -p ferric-cli --features $Features
+Write-Host "Building ferric..." -ForegroundColor Cyan
+cargo build --release -p ferric-cli
 $Ferric = ".\target\release\ferric.exe"
 
 

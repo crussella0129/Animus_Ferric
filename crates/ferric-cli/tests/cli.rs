@@ -471,7 +471,6 @@ fn assert_platform_reparse_trace_root_is_rejected() {
 }
 
 /// A provider whose one answer is a native `request_user_input` call.
-#[cfg(feature = "backend-openai")]
 fn clarification_server() -> support::FakeOpenAi {
     support::FakeOpenAi::new(|_, _| {
         let arguments = serde_json::json!({
@@ -931,7 +930,6 @@ fn query_resume_changed_reserve_rejects_before_effects() {
     );
 }
 
-#[cfg(feature = "backend-openai")]
 #[test]
 fn resume_hint_round_trips_in_documented_shell() {
     let root = tempfile::tempdir().unwrap();
@@ -1024,26 +1022,6 @@ fn assert_platform_reparse_trace_root_is_rejected() {
         String::from_utf8_lossy(&junction.stderr)
     );
     assert_precreate_trace_root_rejected(&workspace, &alias.join("tail"));
-}
-
-#[test]
-fn query_without_backend_errors() {
-    // A build without backend-openai: a non-mock query must fail with a
-    // message naming the missing feature.
-    #[cfg(not(feature = "backend-openai"))]
-    {
-        let dir = tempfile::tempdir().unwrap();
-        let out = ferric()
-            .args(["query", "real task"])
-            .arg("--workspace")
-            .arg(dir.path())
-            .output_bounded()
-            .unwrap();
-        assert!(!out.status.success());
-        let stderr = String::from_utf8(out.stderr).unwrap();
-        // Names the missing backend.
-        assert!(stderr.contains("backend-openai"));
-    }
 }
 
 #[test]
@@ -1574,15 +1552,13 @@ fn config_only_stream_disables_live_output() {
 
 #[test]
 fn present_invalid_config_blocks_all_consumers() {
-    let mut surfaces: Vec<Vec<&str>> = vec![
+    let surfaces: Vec<Vec<&str>> = vec![
         vec!["query", "--mock", "--params-b", "7", "do a task"],
         vec!["chat", "--mock"],
         vec!["mcp", "--mock"],
         vec!["skills", "list"],
+        vec!["api", "--mock", "--port", "0"],
     ];
-    if cfg!(feature = "backend-openai") {
-        surfaces.push(vec!["api", "--mock", "--port", "0"]);
-    }
     for invalid in [
         Some("api_key = 'private-fixture-token' malformed"),
         Some("harness_policy = 'private-fixture-token'"),
@@ -1650,7 +1626,6 @@ fn present_invalid_config_blocks_all_consumers() {
     assert!(!ws.join(".ferric/trace").exists());
 }
 
-#[cfg(feature = "backend-openai")]
 #[test]
 fn selected_workspace_drives_real_provider_chat_icm() {
     let invocation = tempfile::tempdir().unwrap();
@@ -1721,17 +1696,15 @@ fn selected_workspace_drives_real_provider_chat_icm() {
 #[test]
 fn invalid_effective_numbers_rejected_by_cli_surfaces() {
     let root = tempfile::tempdir().unwrap();
-    let mut surfaces = vec![
+    let surfaces = vec![
         vec!["query", "--mock", "do a task"],
         vec!["chat", "--mock"],
         vec!["mcp", "--mock"],
         vec!["bench", "full", "--mock"],
         vec!["bench", "autonomy"],
+        vec!["bench", "ltd"],
+        vec!["api", "--mock", "--port", "0"],
     ];
-    if cfg!(feature = "backend-openai") {
-        surfaces.push(vec!["bench", "ltd"]);
-        surfaces.push(vec!["api", "--mock", "--port", "0"]);
-    }
     for surface in surfaces {
         let mut command = ferric();
         command

@@ -85,8 +85,8 @@ function Add-Pass {
 try {
     Set-Location -LiteralPath $RepoRoot
     if (-not $SkipBuild) {
-        Write-Host "> cargo build --release -p ferric-cli --features backend-openai" -ForegroundColor Cyan
-        & cargo build --release -p ferric-cli --features backend-openai
+        Write-Host "> cargo build --release -p ferric-cli" -ForegroundColor Cyan
+        & cargo build --release -p ferric-cli
         if ($LASTEXITCODE -ne 0) {
             throw "release build failed"
         }
