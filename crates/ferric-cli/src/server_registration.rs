@@ -63,6 +63,10 @@ pub(crate) enum RegistrationBlock {
     NonRegular,
     Malformed(String),
     InvalidSchema(String),
+    /// A readable record only a retired surface could manage (any schema but
+    /// 2, or a Tailscale Serve publication). The detail names the manual
+    /// cleanup.
+    Retired(String),
 }
 
 impl fmt::Display for RegistrationBlock {
@@ -73,6 +77,7 @@ impl fmt::Display for RegistrationBlock {
             Self::NonRegular => formatter.write_str("is not a regular file"),
             Self::Malformed(detail) => write!(formatter, "contains malformed JSON: {detail}"),
             Self::InvalidSchema(detail) => write!(formatter, "has invalid schema: {detail}"),
+            Self::Retired(detail) => formatter.write_str(detail),
         }
     }
 }
@@ -155,9 +160,7 @@ pub(crate) fn inventory_runfiles(
     let promised_origins = global
         .iter()
         .filter_map(|slot| match slot {
-            RegistrationSlot::Captured(captured)
-                if captured.runfile.schema_version == RUNFILE_SCHEMA_V2 =>
-            {
+            RegistrationSlot::Captured(captured) => {
                 let origin = captured
                     .runfile
                     .origin_local_runfile
@@ -276,6 +279,13 @@ pub(crate) fn capture_registration_path(scope: RegistrationScope, path: &Path) -
             };
         }
     };
+    if let Some(detail) = retired_registration(&path, &runfile) {
+        return RegistrationSlot::Blocked {
+            scope,
+            path,
+            reason: RegistrationBlock::Retired(detail),
+        };
+    }
     if let Err(detail) = validate_runfile(scope, &path, &runfile) {
         return RegistrationSlot::Blocked {
             scope,
@@ -310,7 +320,7 @@ struct WideRunfileEnvelope {
     #[serde(default, rename = "tailscale")]
     _tailscale: bool,
     #[serde(default, rename = "tailscale_serve")]
-    _tailscale_serve: Option<crate::tailscale_serve::TailscaleServeOwnership>,
+    _tailscale_serve: Option<serde_json::Value>,
     #[serde(default, rename = "model")]
     _model: Option<String>,
     #[serde(default, rename = "context_size")]
@@ -358,88 +368,81 @@ fn schema_envelope_invalidity(raw: &[u8]) -> Option<String> {
     None
 }
 
+/// The manual cleanup for a parsed record that only a retired surface could
+/// manage: a Tailscale Serve publication, or any schema other than 2. Such a
+/// record is never authority, so Ferric neither signals its PID nor deletes it.
+fn retired_registration(path: &Path, runfile: &ServerRunfile) -> Option<String> {
+    let cleanup = format!("stop PID {} and delete {}", runfile.pid, path.display());
+    if runfile.tailscale || runfile.tailscale_serve.is_some() {
+        Some(format!(
+            "records a Tailscale Serve publication, which Ferric no longer manages; turn that serve off by hand (for example `tailscale serve --https=443 off`), then {cleanup}"
+        ))
+    } else if runfile.schema_version != RUNFILE_SCHEMA_V2 {
+        Some(format!(
+            "has schema version {}; only schema 2 is managed, so {cleanup}",
+            runfile.schema_version
+        ))
+    } else {
+        None
+    }
+}
+
 pub(crate) fn validate_runfile(
     scope: RegistrationScope,
     capture_path: &Path,
     runfile: &ServerRunfile,
 ) -> Result<(), String> {
-    match runfile.schema_version {
-        RUNFILE_SCHEMA_V1 => {
-            if runfile.process_identity.is_some()
-                || runfile.origin_local_runfile.is_some()
-                || runfile.tailscale_serve.is_some()
-            {
-                return Err(
-                    "schema 1 must not carry process_identity, origin_local_runfile, or tailscale_serve"
-                        .to_string(),
-                );
-            }
-        }
-        RUNFILE_SCHEMA_V2 => {
-            if runfile.pid == 0 {
-                return Err("schema 2 requires a nonzero pid".to_string());
-            }
-            if runfile.port == 0 {
-                return Err("schema 2 requires a nonzero port".to_string());
-            }
-            let expected_base_url = format!("http://127.0.0.1:{}/v1", runfile.port);
-            if runfile.base_url != expected_base_url {
-                return Err(format!(
-                    "schema 2 base_url must remain the local endpoint {expected_base_url}"
-                ));
-            }
-            if !runfile.tailscale && runfile.tailscale_serve.is_some() {
-                return Err(
-                    "schema 2 non-Tailscale registration must not carry tailscale_serve ownership"
-                        .to_string(),
-                );
-            }
-            if let Some(ownership) = &runfile.tailscale_serve {
-                ownership
-                    .validate_for_port(runfile.port)
-                    .map_err(|error| format!("schema 2 tailscale_serve is invalid: {error}"))?;
-            }
-            let identity = runfile
-                .process_identity
-                .as_ref()
-                .ok_or_else(|| "schema 2 requires process_identity".to_string())?;
-            crate::server_process::validate_start_token(&identity.start_token).map_err(
-                |detail| format!("schema 2 process_identity has invalid start_token: {detail}"),
-            )?;
-            if !identity.executable.is_absolute() {
-                return Err(
-                    "schema 2 process_identity executable must be an absolute path".to_string(),
-                );
-            }
-            if identity.argv.is_empty() {
-                return Err("schema 2 process_identity requires observed argv".to_string());
-            }
-            if identity.argv.iter().any(|argument| argument.is_empty()) {
-                return Err("schema 2 process_identity argv elements must not be empty".to_string());
-            }
-            let origin = runfile
-                .origin_local_runfile
-                .as_deref()
-                .ok_or_else(|| "schema 2 requires origin_local_runfile".to_string())?;
-            if !origin.is_absolute() {
-                return Err("schema 2 origin_local_runfile must be absolute".to_string());
-            }
-            if !has_local_runfile_suffix(origin) {
-                return Err(
-                    "schema 2 origin_local_runfile must end in .ferric/server.json".to_string(),
-                );
-            }
-            if matches!(scope, RegistrationScope::Local | RegistrationScope::Origin)
-                && !paths_match(origin, capture_path)
-            {
-                return Err(format!(
-                    "schema 2 local origin {} does not name its own registration {}",
-                    origin.display(),
-                    capture_path.display()
-                ));
-            }
-        }
-        version => return Err(format!("unsupported schema version {version}")),
+    if runfile.schema_version != RUNFILE_SCHEMA_V2 {
+        return Err(format!(
+            "unsupported schema version {}",
+            runfile.schema_version
+        ));
+    }
+    if runfile.pid == 0 {
+        return Err("schema 2 requires a nonzero pid".to_string());
+    }
+    if runfile.port == 0 {
+        return Err("schema 2 requires a nonzero port".to_string());
+    }
+    let expected_base_url = format!("http://127.0.0.1:{}/v1", runfile.port);
+    if runfile.base_url != expected_base_url {
+        return Err(format!(
+            "schema 2 base_url must remain the local endpoint {expected_base_url}"
+        ));
+    }
+    let identity = runfile
+        .process_identity
+        .as_ref()
+        .ok_or_else(|| "schema 2 requires process_identity".to_string())?;
+    crate::server_process::validate_start_token(&identity.start_token)
+        .map_err(|detail| format!("schema 2 process_identity has invalid start_token: {detail}"))?;
+    if !identity.executable.is_absolute() {
+        return Err("schema 2 process_identity executable must be an absolute path".to_string());
+    }
+    if identity.argv.is_empty() {
+        return Err("schema 2 process_identity requires observed argv".to_string());
+    }
+    if identity.argv.iter().any(|argument| argument.is_empty()) {
+        return Err("schema 2 process_identity argv elements must not be empty".to_string());
+    }
+    let origin = runfile
+        .origin_local_runfile
+        .as_deref()
+        .ok_or_else(|| "schema 2 requires origin_local_runfile".to_string())?;
+    if !origin.is_absolute() {
+        return Err("schema 2 origin_local_runfile must be absolute".to_string());
+    }
+    if !has_local_runfile_suffix(origin) {
+        return Err("schema 2 origin_local_runfile must end in .ferric/server.json".to_string());
+    }
+    if matches!(scope, RegistrationScope::Local | RegistrationScope::Origin)
+        && !paths_match(origin, capture_path)
+    {
+        return Err(format!(
+            "schema 2 local origin {} does not name its own registration {}",
+            origin.display(),
+            capture_path.display()
+        ));
     }
     Ok(())
 }
@@ -1281,187 +1284,6 @@ pub(crate) enum RemovalOutcome {
     },
 }
 
-/// Result of replacing one captured registration without ever overwriting a
-/// concurrent entry at the original name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ReplacementOutcome {
-    Replaced,
-    Absent,
-    /// The entry moved for comparison did not match the capture. Its bytes are
-    /// retained at `path` and, when the name remained free, restored there too.
-    ReplacementPreserved {
-        path: PathBuf,
-        detail: String,
-    },
-}
-
-/// Conditional-replacement failure. `preserved_at`, when present, retains the
-/// atomically isolated entry so an I/O failure cannot destroy recovery state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReplacementError {
-    pub(crate) path: PathBuf,
-    pub(crate) detail: String,
-    pub(crate) preserved_at: Option<PathBuf>,
-    /// True only when the replacement reached the final name before a later
-    /// durability operation failed.
-    pub(crate) replacement_committed: bool,
-}
-
-impl fmt::Display for ReplacementError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "replace registration at {} only if unchanged: {}",
-            self.path.display(),
-            self.detail
-        )?;
-        if let Some(preserved) = &self.preserved_at {
-            write!(
-                formatter,
-                "; isolated entry retained at {}",
-                preserved.display()
-            )?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for ReplacementError {}
-
-/// Replace a captured registration only when the entry atomically moved out
-/// of its name still has the exact captured bytes. The replacement is
-/// published with the same no-clobber primitive as a new registration, so an
-/// entry created after isolation is never overwritten.
-pub(crate) fn replace_if_unchanged(
-    captured: &CapturedRegistration,
-    replacement: &[u8],
-) -> Result<ReplacementOutcome, ReplacementError> {
-    replace_if_unchanged_impl(
-        captured,
-        replacement,
-        |_| {},
-        persist_bytes_noclobber,
-        persist_bytes_noclobber,
-    )
-}
-
-fn replace_if_unchanged_impl<F, P, R>(
-    captured: &CapturedRegistration,
-    replacement: &[u8],
-    after_rename: F,
-    publish_replacement: P,
-    restore_original: R,
-) -> Result<ReplacementOutcome, ReplacementError>
-where
-    F: FnOnce(&Path),
-    P: FnOnce(&Path, &[u8]) -> Result<(), PersistFailure>,
-    R: FnOnce(&Path, &[u8]) -> Result<(), PersistFailure>,
-{
-    let original = &captured.path;
-    let (holding_dir, moved) =
-        match isolate_regular_entry(original, ".server-registration-replace-", after_rename) {
-            Ok(Isolation::Absent) => return Ok(ReplacementOutcome::Absent),
-            Ok(Isolation::NonRegular(path)) => {
-                return Ok(ReplacementOutcome::ReplacementPreserved {
-                    path,
-                    detail: MOVED_ENTRY_NOT_REGULAR.to_string(),
-                });
-            }
-            Ok(Isolation::Isolated { holding_dir, moved }) => (holding_dir, moved),
-            Err(IsolationFailure {
-                detail,
-                preserved_at,
-            }) => {
-                return Err(ReplacementError {
-                    path: original.clone(),
-                    detail,
-                    preserved_at,
-                    replacement_committed: false,
-                });
-            }
-        };
-    let moved_raw = match fs::read(&moved) {
-        Ok(raw) => raw,
-        Err(error) => {
-            let preserved = keep_holding_dir(holding_dir, "registration");
-            return Err(ReplacementError {
-                path: original.clone(),
-                detail: format!("read atomically moved entry: {error}"),
-                preserved_at: Some(preserved),
-                replacement_committed: false,
-            });
-        }
-    };
-
-    if moved_raw != captured.raw {
-        let detail = match restore_original(original, &moved_raw) {
-            Ok(()) => {
-                "changed entry was restored without clobbering and retained in the holding directory"
-                    .to_string()
-            }
-            Err(error) if error.kind == io::ErrorKind::AlreadyExists => format!(
-                "a concurrent entry occupies the original name; moved replacement retained: {error}"
-            ),
-            Err(error) => {
-                let preserved = keep_holding_dir(holding_dir, "registration");
-                return Err(ReplacementError {
-                    path: original.clone(),
-                    detail: format!("could not restore changed entry: {error}"),
-                    preserved_at: Some(preserved),
-                    replacement_committed: false,
-                });
-            }
-        };
-        let preserved = keep_holding_dir(holding_dir, "registration");
-        return Ok(ReplacementOutcome::ReplacementPreserved {
-            path: preserved,
-            detail,
-        });
-    }
-
-    if let Err(error) = publish_replacement(original, replacement) {
-        let committed = error.committed;
-        let restore_detail = if committed {
-            String::new()
-        } else {
-            match restore_original(original, &moved_raw) {
-                Ok(()) => "; original bytes restored".to_string(),
-                Err(restore_error) => {
-                    format!("; original restore was not completed: {restore_error}")
-                }
-            }
-        };
-        let preserved = keep_holding_dir(holding_dir, "registration");
-        return Err(ReplacementError {
-            path: original.clone(),
-            detail: format!("publish replacement: {error}{restore_detail}"),
-            preserved_at: Some(preserved),
-            replacement_committed: committed,
-        });
-    }
-
-    if let Err(error) = fs::remove_file(&moved) {
-        let preserved = keep_holding_dir(holding_dir, "registration");
-        return Err(ReplacementError {
-            path: original.clone(),
-            detail: format!(
-                "replacement committed but old isolated entry could not be removed: {error}"
-            ),
-            preserved_at: Some(preserved),
-            replacement_committed: true,
-        });
-    }
-    holding_dir.close().map_err(|error| ReplacementError {
-        path: original.clone(),
-        detail: format!(
-            "replacement committed but empty holding directory could not be removed: {error}"
-        ),
-        preserved_at: None,
-        replacement_committed: true,
-    })?;
-    Ok(ReplacementOutcome::Replaced)
-}
-
 /// Conditional-removal failure. `preserved_at`, when present, is an isolated
 /// same-parent location retaining the entry which was moved for inspection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1841,11 +1663,8 @@ fn keep_holding_dir(directory: tempfile::TempDir, file_name: &str) -> PathBuf {
 mod tests {
     use super::*;
     use crate::server::Engine;
-    use crate::server::fixtures::{ScriptedPersistenceEffects, tailscale_ownership};
-    use crate::server_process::{
-        ListenerState, ProcessError, ProcessFacts, ProcessIdentity, ProcessRuntime,
-        RetainedProcess, canonical_test_start_token,
-    };
+    use crate::server::fixtures::{ScriptedPersistenceEffects, retired_tailscale_serve};
+    use crate::server_process::{ProcessIdentity, canonical_test_start_token};
 
     fn legacy_runfile(pid: u32) -> ServerRunfile {
         ServerRunfile {
@@ -2004,112 +1823,6 @@ mod tests {
     struct ProcessClientOutcome {
         kind: String,
         preserved_at: Option<PathBuf>,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    enum FullAdoptionEvent {
-        Acquire(u32),
-        Inspect(u32),
-        Wait(u32),
-        Terminate(u32),
-    }
-
-    #[derive(Clone)]
-    struct FullAdoptionProcess {
-        pid: u32,
-        facts: ProcessFacts,
-        events: std::sync::Arc<std::sync::Mutex<Vec<FullAdoptionEvent>>>,
-    }
-
-    impl RetainedProcess for FullAdoptionProcess {
-        fn pid(&self) -> u32 {
-            self.pid
-        }
-
-        fn inspect(&self, _port: u16) -> Result<ProcessFacts, ProcessError> {
-            self.events
-                .lock()
-                .unwrap()
-                .push(FullAdoptionEvent::Inspect(self.pid));
-            Ok(self.facts.clone())
-        }
-
-        fn terminate(&self) -> Result<bool, ProcessError> {
-            self.events
-                .lock()
-                .unwrap()
-                .push(FullAdoptionEvent::Terminate(self.pid));
-            Err(ProcessError::Operation(
-                "legacy adoption must never signal".to_string(),
-            ))
-        }
-
-        fn wait(&self, _timeout: std::time::Duration) -> Result<bool, ProcessError> {
-            self.events
-                .lock()
-                .unwrap()
-                .push(FullAdoptionEvent::Wait(self.pid));
-            Ok(false)
-        }
-    }
-
-    struct FullAdoptionRuntime {
-        process: FullAdoptionProcess,
-    }
-
-    impl ProcessRuntime for FullAdoptionRuntime {
-        type Process = FullAdoptionProcess;
-
-        fn acquire(&self, pid: u32) -> Result<Self::Process, ProcessError> {
-            assert_eq!(pid, self.process.pid);
-            self.process
-                .events
-                .lock()
-                .unwrap()
-                .push(FullAdoptionEvent::Acquire(pid));
-            Ok(self.process.clone())
-        }
-    }
-
-    fn full_adoption_runtime(
-        runfile: &ServerRunfile,
-    ) -> (
-        FullAdoptionRuntime,
-        std::sync::Arc<std::sync::Mutex<Vec<FullAdoptionEvent>>>,
-    ) {
-        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let facts = ProcessFacts {
-            identity: ProcessIdentity {
-                start_token: canonical_test_start_token(501),
-                executable: absolute_path(Path::new("llama-server")).unwrap(),
-                argv: vec![
-                    "llama-server".to_string(),
-                    "--host".to_string(),
-                    "127.0.0.1".to_string(),
-                    "--port".to_string(),
-                    runfile.port.to_string(),
-                    "--model".to_string(),
-                    runfile.model.clone().unwrap(),
-                    "--ctx-size".to_string(),
-                    runfile.context_size.unwrap().to_string(),
-                    "--seed".to_string(),
-                    runfile.sampling_seed.unwrap().to_string(),
-                    "--parallel".to_string(),
-                    runfile.parallel_slots.unwrap().to_string(),
-                ],
-            },
-            listener: ListenerState::OwnedByTarget,
-        };
-        (
-            FullAdoptionRuntime {
-                process: FullAdoptionProcess {
-                    pid: runfile.pid,
-                    facts,
-                    events: std::sync::Arc::clone(&events),
-                },
-            },
-            events,
-        )
     }
 
     fn process_client_coordinate(root: &Path, phase: &str, id: &str, state: &str) -> PathBuf {
@@ -2512,88 +2225,6 @@ mod tests {
                     },
                 );
             }
-            "adopt-full" => {
-                let path = process_client_path(PROCESS_CLIENT_PATH);
-                let capture = captured_path(&path);
-                let pid = capture.runfile.pid;
-                let (runtime, events) = full_adoption_runtime(&capture.runfile);
-                process_client_barrier(&root, "adopt-full-start", &id).unwrap();
-                let summary =
-                    crate::server::execute_legacy_adoption_for_test(vec![capture], pid, &runtime);
-                assert!(summary.identity_validated);
-                assert!(summary.listener_validated);
-                let events = events.lock().unwrap().clone();
-                assert!(
-                    events
-                        .iter()
-                        .all(|event| !matches!(event, FullAdoptionEvent::Terminate(_))),
-                    "legacy adoption signalled unexpectedly: {events:?}"
-                );
-                let (kind, preserved_at) = if summary.success {
-                    assert!(summary.final_generation_revalidated);
-                    assert_eq!(
-                        events,
-                        vec![
-                            FullAdoptionEvent::Acquire(pid),
-                            FullAdoptionEvent::Inspect(pid),
-                            FullAdoptionEvent::Wait(pid),
-                            FullAdoptionEvent::Inspect(pid),
-                        ]
-                    );
-                    assert!(summary.replacement_preserved_at.is_none());
-                    ("adopted", None)
-                } else {
-                    assert!(!summary.final_generation_revalidated);
-                    assert_eq!(
-                        events,
-                        vec![
-                            FullAdoptionEvent::Acquire(pid),
-                            FullAdoptionEvent::Inspect(pid),
-                            FullAdoptionEvent::Wait(pid),
-                        ]
-                    );
-                    (
-                        "adoption-replacement-preserved",
-                        Some(
-                            summary
-                                .replacement_preserved_at
-                                .expect("losing full adoption must preserve the winner"),
-                        ),
-                    )
-                };
-                write_process_client_outcome(
-                    &root,
-                    &id,
-                    ProcessClientOutcome {
-                        kind: kind.to_string(),
-                        preserved_at,
-                    },
-                );
-            }
-            "replace" => {
-                let path = process_client_path(PROCESS_CLIENT_PATH);
-                let capture = captured_path(&path);
-                let replacement =
-                    serde_json::to_vec_pretty(&v2_runfile(&path, process_client_discriminator()))
-                        .unwrap();
-                process_client_barrier(&root, "replace-start", &id).unwrap();
-                let outcome = replace_if_unchanged(&capture, &replacement).unwrap();
-                let (kind, preserved_at) = match outcome {
-                    ReplacementOutcome::Replaced => ("replaced", None),
-                    ReplacementOutcome::Absent => ("absent", None),
-                    ReplacementOutcome::ReplacementPreserved { path, .. } => {
-                        ("replacement-preserved", Some(path))
-                    }
-                };
-                write_process_client_outcome(
-                    &root,
-                    &id,
-                    ProcessClientOutcome {
-                        kind: kind.to_string(),
-                        preserved_at,
-                    },
-                );
-            }
             other => panic!("unknown registration process-client mode {other}"),
         }
     }
@@ -2822,138 +2453,6 @@ mod tests {
             v2_runfile(&operation_path, 302)
         );
 
-        // Two explicit adoption clients capture one live v1 record before
-        // either replaces it. The first wins; the second preserves the winner
-        // because its captured bytes are stale. This registration-only path
-        // has no process signal operation at all.
-        write_runfile(&operation_path, &legacy_runfile(1234));
-        let adopter_a = ProcessClientGuard::spawn(
-            "adopter A",
-            "replace",
-            &coordinates,
-            "adopter-a",
-            &[
-                (
-                    PROCESS_CLIENT_PATH,
-                    operation_path.to_string_lossy().into_owned(),
-                ),
-                (PROCESS_CLIENT_DISCRIMINATOR, "401".to_string()),
-            ],
-        );
-        let adopter_b = ProcessClientGuard::spawn(
-            "adopter B",
-            "replace",
-            &coordinates,
-            "adopter-b",
-            &[
-                (
-                    PROCESS_CLIENT_PATH,
-                    operation_path.to_string_lossy().into_owned(),
-                ),
-                (PROCESS_CLIENT_DISCRIMINATOR, "402".to_string()),
-            ],
-        );
-        await_process_client(&coordinates, "replace-start", "adopter-a");
-        await_process_client(&coordinates, "replace-start", "adopter-b");
-        assert_eq!(
-            captured(&inventory_runfiles(&operation_workspace, None).local)
-                .runfile
-                .schema_version,
-            RUNFILE_SCHEMA_V1
-        );
-        release_process_client(&coordinates, "replace-start", "adopter-a");
-        adopter_a.finish();
-        assert_eq!(
-            captured(&inventory_runfiles(&operation_workspace, None).local).runfile,
-            v2_runfile(&operation_path, 401)
-        );
-        release_process_client(&coordinates, "replace-start", "adopter-b");
-        adopter_b.finish();
-        let adopter_a = read_process_client_outcome(&coordinates, "adopter-a");
-        let adopter_b = read_process_client_outcome(&coordinates, "adopter-b");
-        assert_eq!(adopter_a.kind, "replaced");
-        assert_eq!(adopter_b.kind, "replacement-preserved");
-        assert_eq!(
-            captured_path(&operation_path).runfile,
-            v2_runfile(&operation_path, 401)
-        );
-        let held_winner = adopter_b
-            .preserved_at
-            .expect("losing adopter retains the concurrently published winner");
-        assert_eq!(
-            fs::read(&held_winner).unwrap(),
-            fs::read(&operation_path).unwrap()
-        );
-        fs::remove_file(&held_winner).unwrap();
-        fs::remove_dir(held_winner.parent().unwrap()).unwrap();
-
-        // Repeat the race through the complete adoption orchestration, not
-        // just its compare-and-replace primitive. Both child processes capture
-        // schema v1 before either acquires and inspects its retained process;
-        // the winner validates identity/listener/argv and revalidates the same
-        // generation after publication, while the loser preserves that winner.
-        write_runfile(&operation_path, &legacy_runfile(1234));
-        let full_adopter_a = ProcessClientGuard::spawn(
-            "full adopter A",
-            "adopt-full",
-            &coordinates,
-            "full-adopter-a",
-            &[(
-                PROCESS_CLIENT_PATH,
-                operation_path.to_string_lossy().into_owned(),
-            )],
-        );
-        let full_adopter_b = ProcessClientGuard::spawn(
-            "full adopter B",
-            "adopt-full",
-            &coordinates,
-            "full-adopter-b",
-            &[(
-                PROCESS_CLIENT_PATH,
-                operation_path.to_string_lossy().into_owned(),
-            )],
-        );
-        await_process_client(&coordinates, "adopt-full-start", "full-adopter-a");
-        await_process_client(&coordinates, "adopt-full-start", "full-adopter-b");
-        assert_eq!(
-            captured(&inventory_runfiles(&operation_workspace, None).local)
-                .runfile
-                .schema_version,
-            RUNFILE_SCHEMA_V1
-        );
-        release_process_client(&coordinates, "adopt-full-start", "full-adopter-a");
-        full_adopter_a.finish();
-        let adopted = captured_path(&operation_path);
-        assert_eq!(adopted.runfile.schema_version, RUNFILE_SCHEMA_V2);
-        assert_eq!(
-            adopted.runfile.origin_local_runfile,
-            Some(operation_path.clone())
-        );
-        assert_eq!(
-            adopted
-                .runfile
-                .process_identity
-                .as_ref()
-                .unwrap()
-                .start_token,
-            canonical_test_start_token(501)
-        );
-        release_process_client(&coordinates, "adopt-full-start", "full-adopter-b");
-        full_adopter_b.finish();
-        let full_adopter_a = read_process_client_outcome(&coordinates, "full-adopter-a");
-        let full_adopter_b = read_process_client_outcome(&coordinates, "full-adopter-b");
-        assert_eq!(full_adopter_a.kind, "adopted");
-        assert_eq!(full_adopter_b.kind, "adoption-replacement-preserved");
-        let held_full_winner = full_adopter_b
-            .preserved_at
-            .expect("losing full adoption retains the concurrently adopted winner");
-        assert_eq!(
-            fs::read(&held_full_winner).unwrap(),
-            fs::read(&operation_path).unwrap()
-        );
-        fs::remove_file(&held_full_winner).unwrap();
-        fs::remove_dir(held_full_winner.parent().unwrap()).unwrap();
-
         // Both remover processes capture the same final before either runs.
         // One exact-byte removal succeeds and the other observes absence.
         let remover_a = ProcessClientGuard::spawn(
@@ -3055,9 +2554,7 @@ mod tests {
             }
             InventorySlotCase::NonRegular => fs::create_dir_all(&target).unwrap(),
             InventorySlotCase::V1 => {
-                let runfile = legacy_runfile(101);
-                let raw = write_runfile(&target, &runfile);
-                expected_capture = Some((raw, runfile));
+                write_runfile(&target, &legacy_runfile(101));
             }
             InventorySlotCase::V2 => {
                 let origin = if scope == RegistrationScope::Local {
@@ -3109,7 +2606,17 @@ mod tests {
                     reason: RegistrationBlock::NonRegular,
                 } if *actual_scope == scope && path == &expected_path
             )),
-            InventorySlotCase::V1 | InventorySlotCase::V2 => {
+            InventorySlotCase::V1 => assert!(matches!(
+                slot,
+                RegistrationSlot::Blocked {
+                    scope: actual_scope,
+                    path,
+                    reason: RegistrationBlock::Retired(detail),
+                } if *actual_scope == scope
+                    && path == &expected_path
+                    && detail.contains("has schema version 1")
+            )),
+            InventorySlotCase::V2 => {
                 let (raw, runfile) = expected_capture.as_ref().unwrap();
                 let capture = captured(slot);
                 assert_eq!(capture.scope, scope);
@@ -3287,27 +2794,103 @@ mod tests {
     }
 
     #[test]
-    fn capture_retains_exact_bytes_and_legacy_defaults() {
+    fn capture_reports_retired_records_for_manual_cleanup() {
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join(".ferric").join("server.json");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let raw = br#"{
+        let path = absolute_path(&root.path().join("workspace/.ferric/server.json")).unwrap();
+        let schema_cleanup = |version: u8, pid: u32| {
+            format!(
+                "has schema version {version}; only schema 2 is managed, so stop PID {pid} and delete {}",
+                path.display()
+            )
+        };
+        let tailscale_cleanup = |pid: u32| {
+            format!(
+                "records a Tailscale Serve publication, which Ferric no longer manages; turn that serve off by hand (for example `tailscale serve --https=443 off`), then stop PID {pid} and delete {}",
+                path.display()
+            )
+        };
+
+        let missing_version = br#"{
   "engine": "llama-server",
   "pid": 9,
   "port": 8080,
   "base_url": "http://127.0.0.1:8080/v1"
 }"#;
-        fs::write(&path, raw).unwrap();
+        let mut with_identity = legacy_runfile(10);
+        with_identity.process_identity = Some(identity(1));
+        let mut unknown_version = v2_runfile(&path, 2);
+        unknown_version.schema_version = 99;
+        unknown_version.pid = 11;
+        let mut boolean_only = v2_runfile(&path, 3);
+        boolean_only.tailscale = true;
+        let mut owned = boolean_only.clone();
+        owned.tailscale_serve = Some(retired_tailscale_serve());
+        let mut ownership_only = v2_runfile(&path, 4);
+        ownership_only.tailscale_serve = Some(retired_tailscale_serve());
+        let mut legacy_tailscale = legacy_runfile(12);
+        legacy_tailscale.tailscale = true;
 
-        let slot = capture_registration_path(RegistrationScope::Local, &path);
-        let capture = captured(&slot);
-        assert_eq!(capture.raw, raw);
-        assert_eq!(capture.runfile.schema_version, RUNFILE_SCHEMA_V1);
-        assert!(capture.runfile.process_identity.is_none());
-        assert!(capture.runfile.model.is_none());
-        assert!(capture.runfile.context_size.is_none());
-        assert!(capture.runfile.sampling_seed.is_none());
-        assert!(capture.runfile.parallel_slots.is_none());
+        let rows = [
+            (missing_version.to_vec(), schema_cleanup(1, 9)),
+            (
+                serde_json::to_vec_pretty(&with_identity).unwrap(),
+                schema_cleanup(1, 10),
+            ),
+            (
+                serde_json::to_vec_pretty(&unknown_version).unwrap(),
+                schema_cleanup(99, 11),
+            ),
+            (
+                serde_json::to_vec_pretty(&boolean_only).unwrap(),
+                tailscale_cleanup(1234),
+            ),
+            (
+                serde_json::to_vec_pretty(&owned).unwrap(),
+                tailscale_cleanup(1234),
+            ),
+            (
+                serde_json::to_vec_pretty(&ownership_only).unwrap(),
+                tailscale_cleanup(1234),
+            ),
+            (
+                serde_json::to_vec_pretty(&legacy_tailscale).unwrap(),
+                tailscale_cleanup(12),
+            ),
+        ];
+        for scope in [
+            RegistrationScope::Local,
+            RegistrationScope::Global,
+            RegistrationScope::Origin,
+        ] {
+            for (raw, expected) in &rows {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(&path, raw).unwrap();
+                assert_eq!(
+                    capture_registration_path(scope, &path),
+                    RegistrationSlot::Blocked {
+                        scope,
+                        path: path.clone(),
+                        reason: RegistrationBlock::Retired(expected.clone()),
+                    }
+                );
+                // Capture is read-only: the retired record stays byte-identical.
+                assert_eq!(fs::read(&path).unwrap(), *raw);
+            }
+        }
+
+        // A blocked global record promises no origin, so nothing beyond it is
+        // captured either.
+        let global = root.path().join("config/server.json");
+        write_runfile(&global, &owned);
+        let inventory = inventory_runfiles(&root.path().join("workspace"), Some(global));
+        assert!(matches!(
+            inventory.global,
+            Some(RegistrationSlot::Blocked {
+                reason: RegistrationBlock::Retired(_),
+                ..
+            })
+        ));
+        assert!(inventory.promised_origins.is_empty());
     }
 
     #[test]
@@ -3345,18 +2928,6 @@ mod tests {
             }
         ));
 
-        let unknown = root.path().join("unknown.json");
-        let mut unknown_runfile = legacy_runfile(1);
-        unknown_runfile.schema_version = 99;
-        write_runfile(&unknown, &unknown_runfile);
-        assert!(matches!(
-            capture_registration_path(RegistrationScope::Global, &unknown),
-            RegistrationSlot::Blocked {
-                reason: RegistrationBlock::InvalidSchema(detail),
-                ..
-            } if detail.contains("unsupported schema version 99")
-        ));
-
         let incomplete = root.path().join("incomplete.json");
         let mut incomplete_runfile = legacy_runfile(2);
         incomplete_runfile.schema_version = RUNFILE_SCHEMA_V2;
@@ -3369,18 +2940,6 @@ mod tests {
                 reason: RegistrationBlock::InvalidSchema(detail),
                 ..
             } if detail.contains("requires process_identity")
-        ));
-
-        let v1_with_identity = root.path().join("v1-with-identity.json");
-        let mut downgraded = legacy_runfile(3);
-        downgraded.process_identity = Some(identity(1));
-        write_runfile(&v1_with_identity, &downgraded);
-        assert!(matches!(
-            capture_registration_path(RegistrationScope::Global, &v1_with_identity),
-            RegistrationSlot::Blocked {
-                reason: RegistrationBlock::InvalidSchema(detail),
-                ..
-            } if detail.contains("schema 1 must not carry")
         ));
     }
 
@@ -3487,16 +3046,6 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let global = root.path().join("global.json");
         let origin = absolute_path(&root.path().join("workspace/.ferric/server.json")).unwrap();
-
-        let legacy_raw = write_runfile(&global, &legacy_runfile(1));
-        let legacy = captured(&capture_registration_path(
-            RegistrationScope::Global,
-            &global,
-        ))
-        .clone();
-        assert_eq!(legacy.raw, legacy_raw);
-        assert_eq!(legacy.runfile.schema_version, RUNFILE_SCHEMA_V1);
-        assert!(legacy.runfile.process_identity.is_none());
 
         let valid_v2 = v2_runfile(&origin, 5);
         write_runfile(&global, &valid_v2);
@@ -3631,9 +3180,6 @@ mod tests {
             divergent_base_url.base_url = base_url.to_string();
             cases.push((divergent_base_url, "base_url must remain"));
         }
-        let mut unknown_version = v2_runfile(&origin, 30);
-        unknown_version.schema_version = 99;
-        cases.push((unknown_version, "unsupported schema version"));
 
         #[cfg(any(windows, target_os = "linux"))]
         for (index, token) in invalid_schema_start_tokens().iter().enumerate() {
@@ -3660,69 +3206,12 @@ mod tests {
 
     #[test]
     fn runfile_schema_is_additive_and_validated() {
-        let root = tempfile::tempdir().unwrap();
-        let global = root.path().join("global.json");
-        let origin = absolute_path(&root.path().join("workspace/.ferric/server.json")).unwrap();
-
         let old_false = br#"{"schema_version":2,"engine":"llama-server","pid":1234,"port":8080,"base_url":"http://127.0.0.1:8080/v1","tailscale":false,"process_identity":{"start_token":"linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:987005","executable":"/fixture/llama-server","argv":["llama-server"]},"origin_local_runfile":"/fixture/.ferric/server.json"}"#;
         let decoded = serde_json::from_slice::<ServerRunfile>(old_false).unwrap();
         assert!(decoded.tailscale_serve.is_none());
-
-        let mut owned = v2_runfile(&origin, 100);
-        owned.tailscale = true;
-        owned.tailscale_serve = Some(tailscale_ownership(8080, true));
-        let raw = write_runfile(&global, &owned);
-        let slot = capture_registration_path(RegistrationScope::Global, &global);
-        let captured = captured(&slot);
-        assert_eq!(captured.runfile, owned);
-        assert_eq!(captured.raw, raw);
-
-        let mut boolean_only = owned.clone();
-        boolean_only.tailscale_serve = None;
-        validate_runfile(RegistrationScope::Global, &global, &boolean_only)
-            .expect("historical boolean-only records remain structurally readable");
-
-        let mut cases = Vec::new();
-        let mut invalid_token = owned.clone();
-        invalid_token.tailscale_serve.as_mut().unwrap().token = "0".repeat(31);
-        cases.push(invalid_token);
-        let mut invalid_path = owned.clone();
-        invalid_path.tailscale_serve.as_mut().unwrap().mount_path = "/_ferric/wrong".to_string();
-        cases.push(invalid_path);
-        let mut invalid_target = owned.clone();
-        invalid_target
-            .tailscale_serve
-            .as_mut()
-            .unwrap()
-            .proxy_target = "http://127.0.0.1:9090".to_string();
-        cases.push(invalid_target);
-        let mut invalid_port = owned.clone();
-        invalid_port.tailscale_serve.as_mut().unwrap().https_port = 8443;
-        cases.push(invalid_port);
-        let mut invalid_digest = owned.clone();
-        invalid_digest
-            .tailscale_serve
-            .as_mut()
-            .unwrap()
-            .before_status_sha256 = "not-a-digest".to_string();
-        cases.push(invalid_digest);
-        let mut invalid_remote = owned.clone();
-        invalid_remote
-            .tailscale_serve
-            .as_mut()
-            .unwrap()
-            .remote_base_url = "https://example.invalid/v1".to_string();
-        cases.push(invalid_remote);
-        let mut metadata_disagreement = owned.clone();
-        metadata_disagreement.tailscale = false;
-        cases.push(metadata_disagreement);
-
-        for invalid in cases {
-            assert!(
-                validate_runfile(RegistrationScope::Global, &global, &invalid).is_err(),
-                "invalid ownership shape authorized schema-v2 registration: {invalid:?}"
-            );
-        }
+        // Ferric still writes `"tailscale":false` and omits every absent
+        // optional field, so a published record is byte-stable.
+        assert_eq!(serde_json::to_vec(&decoded).unwrap(), old_false);
     }
 
     #[cfg(any(windows, target_os = "linux"))]
@@ -3746,7 +3235,7 @@ mod tests {
         let local = absolute_path(&runfile_path(&workspace)).unwrap();
         let global = root.path().join("config").join("server.json");
 
-        write_runfile(&local, &legacy_runfile(1));
+        write_runfile(&local, &v2_runfile(&local, 1));
         let inventory = inventory_runfiles(&workspace, Some(global.clone()));
         assert_eq!(captured(&inventory.local).scope, RegistrationScope::Local);
         assert!(matches!(
@@ -3797,15 +3286,15 @@ mod tests {
         let workspace = root.path().join("workspace");
         let local = runfile_path(&workspace);
         let global = root.path().join("config").join("server.json");
-        write_runfile(&local, &legacy_runfile(1));
-        write_runfile(&global, &legacy_runfile(2));
+        let local_path = absolute_path(&local).unwrap();
+        write_runfile(&local, &v2_runfile(&local_path, 1));
+        write_runfile(&global, &v2_runfile(&local_path, 2));
         let inventory = inventory_runfiles(&workspace, Some(global.clone()));
         assert_ne!(
             captured(&inventory.local).runfile,
             captured(inventory.global.as_ref().unwrap()).runfile
         );
 
-        let local_path = absolute_path(&local).unwrap();
         let local_v2 = v2_runfile(&local_path, 13);
         let mut contradictory_global = local_v2.clone();
         contradictory_global.port = 9090;
@@ -4357,7 +3846,7 @@ mod tests {
         // isolated entry. It must observe typed absence; the first remains the
         // sole remover. Real simultaneous process races remain for T-11706.
         let cleanup_path = root.path().join("cleanup/.ferric/server.json");
-        write_runfile(&cleanup_path, &legacy_runfile(90));
+        write_runfile(&cleanup_path, &v2_runfile(&cleanup_path, 90));
         let cleanup_capture = captured(&capture_registration_path(
             RegistrationScope::Local,
             &cleanup_path,
@@ -4384,9 +3873,9 @@ mod tests {
     fn changed_entry_is_restored_or_retained_with_exact_bytes() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
+        write_runfile(&path, &v2_runfile(&path, 1));
         let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let replacement = write_runfile(&path, &legacy_runfile(2));
+        let replacement = write_runfile(&path, &v2_runfile(&path, 2));
 
         let preserved = match remove_if_unchanged(&capture).unwrap() {
             RemovalOutcome::ReplacementPreserved { path, detail } => {
@@ -4403,9 +3892,9 @@ mod tests {
     fn replacement_created_after_atomic_move_is_never_deleted() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
+        write_runfile(&path, &v2_runfile(&path, 1));
         let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let replacement = serde_json::to_vec_pretty(&legacy_runfile(2)).unwrap();
+        let replacement = serde_json::to_vec_pretty(&v2_runfile(&path, 2)).unwrap();
 
         let outcome = remove_if_unchanged_impl(
             &capture,
@@ -4428,9 +3917,9 @@ mod tests {
     fn assert_occupied_original_preserves_both_entries() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
+        write_runfile(&path, &v2_runfile(&path, 1));
         let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let changed = write_runfile(&path, &legacy_runfile(2));
+        let changed = write_runfile(&path, &v2_runfile(&path, 2));
         let concurrent = b"concurrent-original-winner".to_vec();
 
         let preserved = match remove_if_unchanged_impl(
@@ -4456,9 +3945,9 @@ mod tests {
     fn changed_entry_restore_io_failure_is_error_with_preserved_bytes() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
+        write_runfile(&path, &v2_runfile(&path, 1));
         let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let replacement = write_runfile(&path, &legacy_runfile(2));
+        let replacement = write_runfile(&path, &v2_runfile(&path, 2));
 
         let error = remove_if_unchanged_impl(
             &capture,
@@ -4487,7 +3976,7 @@ mod tests {
     fn atomic_conditional_removal_matrix() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
+        write_runfile(&path, &v2_runfile(&path, 1));
         let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
 
         assert_eq!(
@@ -4501,7 +3990,7 @@ mod tests {
         );
 
         let parse_equal = root.path().join("parse-equal/.ferric/server.json");
-        let record = legacy_runfile(2);
+        let record = v2_runfile(&parse_equal, 2);
         write_runfile(&parse_equal, &record);
         let capture = captured(&capture_registration_path(
             RegistrationScope::Local,
@@ -4518,7 +4007,7 @@ mod tests {
         assert_eq!(fs::read(preserved).unwrap(), compact);
 
         let nonregular = root.path().join("nonregular/.ferric/server.json");
-        write_runfile(&nonregular, &legacy_runfile(3));
+        write_runfile(&nonregular, &v2_runfile(&nonregular, 3));
         let capture = captured(&capture_registration_path(
             RegistrationScope::Local,
             &nonregular,
@@ -4554,7 +4043,7 @@ mod tests {
             let path = root
                 .path()
                 .join(format!("{label}-failure/.ferric/server.json"));
-            write_runfile(&path, &legacy_runfile(3));
+            write_runfile(&path, &v2_runfile(&path, 3));
             let capture =
                 captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
             let result = if fail_read {
@@ -4606,91 +4095,5 @@ mod tests {
         }
 
         assert_occupied_original_preserves_both_entries();
-    }
-
-    #[test]
-    fn replace_if_unchanged_commits_only_over_exact_capture() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
-        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let replacement = b"replacement-v2";
-
-        assert_eq!(
-            replace_if_unchanged(&capture, replacement).unwrap(),
-            ReplacementOutcome::Replaced
-        );
-        assert_eq!(fs::read(&path).unwrap(), replacement);
-    }
-
-    #[test]
-    fn conditional_replace_restores_and_preserves_changed_entry() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
-        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let changed = write_runfile(&path, &legacy_runfile(2));
-
-        let preserved = match replace_if_unchanged(&capture, b"replacement-v2").unwrap() {
-            ReplacementOutcome::ReplacementPreserved { path, .. } => path,
-            outcome => panic!("changed bytes must be preserved, got {outcome:?}"),
-        };
-        assert_eq!(fs::read(&path).unwrap(), changed);
-        assert_eq!(fs::read(preserved).unwrap(), changed);
-    }
-
-    #[test]
-    fn conditional_replace_never_clobbers_entry_created_after_isolation() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
-        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-        let concurrent = b"concurrent-registration".to_vec();
-
-        let error = replace_if_unchanged_impl(
-            &capture,
-            b"replacement-v2",
-            |original| fs::write(original, &concurrent).unwrap(),
-            persist_bytes_noclobber,
-            persist_bytes_noclobber,
-        )
-        .unwrap_err();
-        assert!(!error.replacement_committed);
-        assert_eq!(fs::read(&path).unwrap(), concurrent);
-        assert_eq!(
-            fs::read(error.preserved_at.expect("isolated capture retained")).unwrap(),
-            capture.raw
-        );
-    }
-
-    #[test]
-    fn conditional_replace_publish_failure_restores_original_bytes() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join(".ferric").join("server.json");
-        write_runfile(&path, &legacy_runfile(1));
-        let capture = captured(&capture_registration_path(RegistrationScope::Local, &path)).clone();
-
-        let error = replace_if_unchanged_impl(
-            &capture,
-            b"replacement-v2",
-            |_| {},
-            |_, _| {
-                Err(PersistFailure {
-                    kind: io::ErrorKind::PermissionDenied,
-                    detail: "injected replacement failure".to_string(),
-                    committed: false,
-                    phase: PersistencePhase::PersistNoClobber,
-                    stage: None,
-                })
-            },
-            persist_bytes_noclobber,
-        )
-        .unwrap_err();
-        assert!(!error.replacement_committed);
-        assert_eq!(fs::read(&path).unwrap(), capture.raw);
-        assert_eq!(
-            fs::read(error.preserved_at.expect("isolated capture retained")).unwrap(),
-            capture.raw
-        );
     }
 }

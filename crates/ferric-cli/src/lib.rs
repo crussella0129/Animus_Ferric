@@ -1,5 +1,5 @@
 //! The `ferric_cli` library: the command surface and every subcommand module,
-//! behind the thin `ferric` / `ferric-lifecycle-test` binaries. Surfaces
+//! behind the thin `ferric` binary. Surfaces
 //! (ADR-011 — no chat catch-all; revised 2026-06-29 to add both `ferric mcp`
 //! and a raw chat mode, both now built):
 //! - `ferric query "<prompt>"` — one-shot, workspace-scoped, policy-scaled,
@@ -21,7 +21,6 @@ mod api;
 mod autonomy_cmd;
 mod backend;
 mod bench_cmd;
-mod bin_identity;
 mod chat;
 mod config;
 mod cron;
@@ -49,8 +48,6 @@ mod skills;
 mod skills_cmd;
 #[cfg(feature = "backend-openai")]
 mod startup;
-mod tailscale_localapi;
-mod tailscale_serve;
 mod toolbench_cmd;
 mod trace_cmd;
 mod trace_verify;
@@ -178,11 +175,8 @@ enum TraceCommand {
     Verify { golden: PathBuf },
 }
 
-/// Parse argv and dispatch. `bin_name` is the running binary's name (each
-/// binary shim passes its own `env!("CARGO_BIN_NAME")`), recorded once so the
-/// lifecycle-fixture transport gate can read it from this library.
-pub fn run(bin_name: &str) -> ExitCode {
-    bin_identity::set_binary_name(bin_name);
+/// Parse argv and dispatch.
+pub fn run() -> ExitCode {
     let cli = match resolve_cli(Cli::parse()) {
         Ok(cli) => cli,
         Err(error) => {

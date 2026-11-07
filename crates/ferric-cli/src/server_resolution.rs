@@ -223,30 +223,17 @@ pub(crate) fn resolve(candidates: &[Candidate]) -> Resolution {
                     "runtime observation has no captured registration metadata",
                 ));
             }
-            (Some(record), _) if record.tailscale && record.tailscale_serve.is_none() => coherence_issues.push(issue(
-                ResolutionIssueKind::Unverifiable,
-                [candidate.coordinate.clone()],
-                "registration owns durable Tailscale Serve state without endpoint-scoped ownership metadata",
-            )),
             (
                 Some(record),
                 CandidateState::Verified {
                     identity: observed, ..
                 },
-            ) => {
-                if record.schema_version != 2 {
-                    coherence_issues.push(issue(
-                        ResolutionIssueKind::Unverifiable,
-                        [candidate.coordinate.clone()],
-                        "a live legacy registration has no authoritative process generation",
-                    ));
-                } else if record.process_identity.as_ref() != Some(observed) {
-                    coherence_issues.push(issue(
-                        ResolutionIssueKind::Unverifiable,
-                        [candidate.coordinate.clone()],
-                        "observed process identity does not match captured registration authority",
-                    ));
-                }
+            ) if record.process_identity.as_ref() != Some(observed) => {
+                coherence_issues.push(issue(
+                    ResolutionIssueKind::Unverifiable,
+                    [candidate.coordinate.clone()],
+                    "observed process identity does not match captured registration authority",
+                ));
             }
             _ => {}
         }
@@ -332,7 +319,7 @@ pub(crate) fn resolve(candidates: &[Candidate]) -> Resolution {
             && candidate
                 .runfile
                 .as_ref()
-                .is_some_and(|runfile| runfile.same_lifecycle_authority(target_runfile))
+                .is_some_and(|runfile| runfile == target_runfile)
     });
     if !coherent_live_group {
         let mut coordinates = verified
@@ -430,7 +417,7 @@ pub(crate) fn resolve(candidates: &[Candidate]) -> Resolution {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::fixtures::{process_identity, tailscale_ownership};
+    use crate::server::fixtures::process_identity;
     use crate::server::{Engine, RUNFILE_SCHEMA_V2};
     use crate::server_registration::RegistrationScope;
     use std::path::PathBuf;
@@ -625,36 +612,6 @@ mod tests {
                 Resolution::Conflict { .. }
             ));
         }
-
-        let mut legacy_live = baseline.clone();
-        legacy_live.schema_version = 1;
-        assert!(matches!(
-            resolve(&[verified(
-                RegistrationScope::Local,
-                "legacy-live",
-                legacy_live
-            )]),
-            Resolution::Unverifiable { .. }
-        ));
-        let mut tailscale = baseline.clone();
-        tailscale.tailscale = true;
-        assert!(matches!(
-            resolve(&[verified(
-                RegistrationScope::Global,
-                "tailscale",
-                tailscale.clone()
-            )]),
-            Resolution::Unverifiable { .. }
-        ));
-        tailscale.tailscale_serve = Some(tailscale_ownership(tailscale.port, true));
-        assert!(matches!(
-            resolve(&[verified(
-                RegistrationScope::Global,
-                "owned-tailscale",
-                tailscale
-            )]),
-            Resolution::Ready { .. }
-        ));
 
         for reason in [
             "malformed registration",

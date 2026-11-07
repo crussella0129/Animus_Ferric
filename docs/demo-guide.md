@@ -45,11 +45,9 @@ $Model = 'C:\Models\qwen2.5-coder-7b-instruct-q4_k_m.gguf'
 after the spawned process remains alive, owns the expected listener, and
 `/health` returns HTTP 200. If preflight reports an existing registration,
 inspect it with `server status`; do not overwrite the record. Conflicting,
-legacy-live, or unverifiable state fails closed.
-
-For a live legacy record, follow the printed
-`ferric server adopt --pid <PID>` command from its originating workspace.
-Adoption records exact process identity without stopping the server.
+retired, or unverifiable state fails closed. A retired record (schema v1, or
+one left by `server up --tailscale`) prints its manual cleanup: stop the
+recorded PID and delete the record.
 
 Leave that terminal open for engine logs. In a second terminal, verify the
 registered server, independently check its HTTP surface, and run the asserted
@@ -449,12 +447,8 @@ ferric server down
 ```
 
 Edge tuning knobs for Jetson/RPi: `--threads`, `--gpu-layers`, `--batch-size`.
-Add `--tailscale` to `server doctor` and `server up` to validate the local
-Tailscale daemon API and expose the loopback engine through one high-entropy,
-Ferric-owned Serve path. `server status` reports that exact coordinate and
-`server down` removes only the recorded path before stopping the engine. Never
-use a node-wide `tailscale serve reset` as Ferric recovery; see [Tailscale
-Serve exposure](server-configuration.md#tailscale-serve-exposure).
+The engine stays on loopback; for remote access use `ferric tunnel` (Linux; see
+[security](security.md#remote-access-without-a-coordination-server)).
 
 ---
 

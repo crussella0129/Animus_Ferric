@@ -1,5 +1,5 @@
-//! Fixtures shared by the server lifecycle, registration, resolution and
-//! Tailscale Serve test modules.
+//! Fixtures shared by the server lifecycle, registration and resolution test
+//! modules.
 
 use std::fs;
 use std::io::{self, Write};
@@ -12,12 +12,6 @@ use crate::server_process::{ProcessIdentity, canonical_test_start_token};
 use crate::server_registration::{
     NativePersistenceEffects, PersistenceEffects, PersistencePhase, StagePersistError,
 };
-use crate::tailscale_serve::{
-    HTTPS_PORT, OWNERSHIP_VERSION, TailscaleIdentity, TailscaleServeOwnership,
-};
-
-pub(crate) const TAILSCALE_FQDN: &str = "example-host.tailnet-example.ts.net";
-pub(crate) const TAILSCALE_TOKEN: &str = "00112233445566778899aabbccddeeff";
 
 pub(crate) fn fixture_executable() -> PathBuf {
     #[cfg(windows)]
@@ -38,36 +32,14 @@ pub(crate) fn process_identity(seed: u64) -> ProcessIdentity {
     }
 }
 
-pub(crate) fn tailscale_identity() -> TailscaleIdentity {
-    TailscaleIdentity {
-        stable_node_id: "node-fixture".to_string(),
-        fqdn: TAILSCALE_FQDN.to_string(),
-        backend_running: true,
-        https_capable: true,
-        certificate_domain: true,
-    }
-}
-
-/// Ownership of the fixture token's mount on the fixture node, proxying the
-/// loopback `port`.
-pub(crate) fn tailscale_ownership(port: u16, apply_confirmed: bool) -> TailscaleServeOwnership {
-    let mount_path = format!("/_ferric/{TAILSCALE_TOKEN}");
-    TailscaleServeOwnership {
-        version: OWNERSHIP_VERSION,
-        token: TAILSCALE_TOKEN.to_string(),
-        stable_node_id: "node-fixture".to_string(),
-        fqdn: TAILSCALE_FQDN.to_string(),
-        https_port: HTTPS_PORT,
-        remote_base_url: format!("https://{TAILSCALE_FQDN}{mount_path}/v1"),
-        mount_path,
-        proxy_target: format!("http://127.0.0.1:{port}"),
-        before_status_sha256: "a".repeat(64),
-        tcp_map_preexisting: false,
-        tcp_https_preexisting: false,
-        web_map_preexisting: false,
-        web_host_preexisting: false,
-        apply_confirmed,
-    }
+/// The opaque `tailscale_serve` object a record written by the retired
+/// `server up --tailscale` carried; only its presence matters now.
+pub(crate) fn retired_tailscale_serve() -> serde_json::Value {
+    serde_json::json!({
+        "mount_path": "/_ferric/00112233445566778899aabbccddeeff",
+        "remote_base_url": "https://example-host.tailnet-example.ts.net/_ferric/00112233445566778899aabbccddeeff/v1",
+        "apply_confirmed": true
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

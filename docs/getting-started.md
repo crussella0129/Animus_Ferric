@@ -173,7 +173,7 @@ note for your RAM, so an over-large model can't start unnoticed). It then starts
 not run `server up` yourself. This is the normal way in.
 
 The rest of this section is the **manual / expert** route — for pinning an exact
-engine, attaching a remote server, or Tailscale exposure.
+engine or attaching a remote server.
 
 ### 3d. Manual server management (expert)
 
@@ -213,22 +213,18 @@ port, and returns only after the spawned process is still alive and the
 engine-specific HTTP health endpoint returns 200.
 
 Lifecycle resolution inventories both local and global registrations instead
-of silently preferring one. Malformed, conflicting, legacy-live, or
-uninspectable state fails closed; HTTP health alone never authorizes teardown.
-Stale-only records can be cleaned by `server down` without signalling a
-process. See [Registration and teardown
-safety](server-configuration.md#registration-and-teardown-safety) for legacy
-recovery. `server up --tailscale` requires the supported local tailscaled API
-and journals an exact high-entropy Serve coordinate before mutation. Historical
-`tailscale: true` records without typed ownership still require targeted manual
-cleanup, never a node-wide Serve reset; see [Tailscale Serve
-exposure](server-configuration.md#tailscale-serve-exposure).
+of silently preferring one. Malformed, conflicting, retired, or uninspectable
+state fails closed; HTTP health alone never authorizes teardown. Stale-only
+records can be cleaned by `server down` without signalling a process. See
+[Registration and teardown
+safety](server-configuration.md#registration-and-teardown-safety).
 
-If `status` finds a live historical schema-v1 record, it prints the explicit
-non-destructive recovery command `ferric server adopt --pid <PID>`. Run that
-from the workspace containing the local registration; Ferric upgrades only
-unchanged records after verifying the closed engine executable, recorded
-arguments, exact process generation, and exclusive IPv4-loopback listener.
+A record from an older Ferric (schema v1, or one written by the retired
+`server up --tailscale`) is reported as unverifiable, and its diagnostic names
+the manual cleanup: stop the recorded PID and delete the record, after turning
+any Tailscale serve it set up off by hand. See [Retired
+registrations](server-configuration.md#retired-registrations). For remote
+access, use `ferric tunnel` ([security](security.md#remote-access-without-a-coordination-server)).
 
 > **Already running your own server?** (an existing Ollama, LM Studio, vLLM, or a
 > remote llama-server) — skip `ferric server` entirely and pass

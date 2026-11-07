@@ -246,7 +246,7 @@ arguments go after `cargo r --` (for example, `cargo r -- run --workspace
 [Configuration](docs/configuration.md) explains saved defaults and their
 validation. [Command reference](docs/commands.md) covers the full expert
 surface. [Server configuration](docs/server-configuration.md) covers manually
-managed engines and Tailscale. [Testbench](docs/testbench.md) covers measured
+managed engines. [Testbench](docs/testbench.md) covers measured
 capability. See the [documentation index](docs/README.md) for architecture and
 contributing details.
 

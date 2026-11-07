@@ -13,7 +13,6 @@ follow the links for the authoritative text.
 | [Ollama](https://github.com/ollama/ollama) | pluggable alternative engine (`--engine ollama`) | [MIT](https://github.com/ollama/ollama/blob/main/LICENSE) |
 | [gVisor](https://github.com/google/gvisor) (`runsc`) | microVM-class sandbox runtime for Ornstein's airlock | [Apache-2.0](https://github.com/google/gvisor/blob/master/LICENSE) |
 | [Docker](https://www.docker.com/) | container topology for the platform (see [Swarming](swarming-k8s.md)) | [Apache-2.0 / proprietary components](https://www.docker.com/legal/) |
-| [Tailscale](https://tailscale.com/) | optional secure remote exposure (`--tailscale`) | [BSD-3-Clause (core)](https://github.com/tailscale/tailscale/blob/main/LICENSE) |
 | [mdBook](https://github.com/rust-lang/mdBook) | builds this book from `docs/` | [MPL-2.0](https://github.com/rust-lang/mdBook/blob/master/LICENSE) |
 
 ## Rust dependencies
