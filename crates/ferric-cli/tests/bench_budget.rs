@@ -8,8 +8,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-#[path = "../src/test_process_containment.rs"]
-mod test_process_containment;
+mod support;
 
 fn bench(root: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ferric"));
@@ -26,8 +25,7 @@ fn bench(root: &Path) -> Command {
 }
 
 fn output(command: &mut Command) -> Output {
-    test_process_containment::output_bounded(command, Duration::from_secs(45))
-        .expect("benchmark finished within its fixture budget and every child was reaped")
+    support::output(command, Duration::from_secs(45))
 }
 
 fn read_rows(root: &Path, output: &Output) -> Vec<Value> {
@@ -256,11 +254,7 @@ fn bench_no_controls_preserve_legacy_mock_defaults() {
 #[cfg(feature = "backend-openai")]
 mod http {
     use super::*;
-    use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
-    use std::sync::{Arc, Mutex, mpsc};
-    use std::thread::JoinHandle;
-    use std::time::Instant;
+    use support::FakeOpenAi as Server;
 
     #[derive(Clone, Copy)]
     enum Reply {
@@ -270,150 +264,31 @@ mod http {
         Stall,
     }
 
-    struct Server {
-        endpoint: String,
-        requests: Arc<Mutex<Vec<Value>>>,
-        stop: Option<mpsc::Sender<()>>,
-        worker: Option<JoinHandle<()>>,
-    }
-
-    impl Server {
-        fn new(reply: Reply) -> Self {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.set_nonblocking(true).unwrap();
-            let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
-            let requests = Arc::new(Mutex::new(Vec::new()));
-            let captured = requests.clone();
-            let (stop, stopped) = mpsc::channel();
-            let worker = std::thread::spawn(move || {
-                let deadline = Instant::now() + Duration::from_secs(40);
-                while Instant::now() < deadline {
-                    if stopped.try_recv().is_ok() {
-                        return;
-                    }
-                    match listener.accept() {
-                        Ok((mut stream, _)) => {
-                            // Winsock accepts inherit the listener's mode.
-                            stream.set_nonblocking(false).unwrap();
-                            stream
-                                .set_read_timeout(Some(Duration::from_secs(2)))
-                                .unwrap();
-                            stream
-                                .set_write_timeout(Some(Duration::from_secs(2)))
-                                .unwrap();
-                            let request = read_request(&mut stream);
-                            let index = {
-                                let mut requests = captured.lock().unwrap();
-                                let index = requests.len();
-                                requests.push(request);
-                                index
-                            };
-                            if matches!(reply, Reply::Stall) {
-                                // A finite request fixture, released promptly by
-                                // its owner after the benchmark checked reaping.
-                                let _ = stopped.recv_timeout(Duration::from_secs(20));
-                                return;
-                            }
-                            let (status, body) = if matches!(reply, Reply::ProviderError) {
-                                ("500 Internal Server Error", json!({"error":{"message":"scripted provider failure","type":"fixture"}}).to_string())
-                            } else {
-                                let action = if matches!(reply, Reply::Complete) && index == 0 {
-                                    json!({"thought":"inspect","tool":"list_dir","args":{"path":"."}})
-                                } else {
-                                    json!({"thought":"complete","tool":"task_complete","args":{"summary":"listed the fixture files"}})
-                                };
-                                let finish = if matches!(reply, Reply::OutputLimit) {
-                                    "length"
-                                } else {
-                                    "stop"
-                                };
-                                ("200 OK", json!({
-                                    "choices":[{"index":0,"message":{"role":"assistant","content":action.to_string()},"finish_reason":finish}],
-                                    "usage":{"prompt_tokens":20,"completion_tokens":10}
-                                }).to_string())
-                            };
-                            let response = format!(
-                                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                                body.len()
-                            );
-                            stream.write_all(response.as_bytes()).unwrap();
-                        }
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            if stopped.recv_timeout(Duration::from_millis(5)).is_ok() {
-                                return;
-                            }
-                        }
-                        Err(error) => panic!("benchmark fixture accept: {error}"),
-                    }
-                }
-            });
-            Self {
-                endpoint,
-                requests,
-                stop: Some(stop),
-                worker: Some(worker),
-            }
-        }
-
-        fn finish(&mut self) {
-            if let Some(stop) = self.stop.take() {
-                let _ = stop.send(());
-            }
-            if let Some(worker) = self.worker.take() {
-                let deadline = Instant::now() + Duration::from_secs(6);
-                while !worker.is_finished() {
-                    if Instant::now() >= deadline {
-                        test_process_containment::abort_on_cleanup_failure(
-                            "benchmark HTTP fixture",
-                            "join deadline exceeded",
-                        );
-                    }
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                if let Err(payload) = worker.join()
-                    && !std::thread::panicking()
-                {
-                    std::panic::resume_unwind(payload);
-                }
-            }
-        }
-    }
-
-    impl Drop for Server {
-        fn drop(&mut self) {
-            self.finish();
-        }
-    }
-
-    fn read_request(stream: &mut TcpStream) -> Value {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut bytes = Vec::new();
-        let mut buffer = [0; 4096];
-        loop {
-            assert!(Instant::now() < deadline, "bounded HTTP framing deadline");
-            assert!(bytes.len() <= 512 * 1024, "bounded HTTP request size");
-            let read = stream
-                .read(&mut buffer)
-                .expect("HTTP fixture request bytes");
-            assert!(read > 0, "request ended before body");
-            bytes.extend_from_slice(&buffer[..read]);
-            if let Some(split) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                let header = std::str::from_utf8(&bytes[..split]).unwrap();
-                assert!(header.starts_with("POST /v1/chat/completions "));
-                let length: usize = header
-                    .lines()
-                    .find_map(|line| {
-                        let (key, value) = line.split_once(':')?;
-                        key.eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse().unwrap())
-                    })
-                    .expect("content length");
-                assert!(length <= 512 * 1024);
-                if bytes.len() >= split + 4 + length {
-                    return serde_json::from_slice(&bytes[split + 4..split + 4 + length]).unwrap();
-                }
-            }
-        }
+    /// A scripted provider: `Complete` lists the fixture then completes,
+    /// `OutputLimit` answers at the length limit, `ProviderError` fails and
+    /// `Stall` never answers.
+    fn server(reply: Reply) -> Server {
+        Server::new(move |index, _| match reply {
+            Reply::Stall => None,
+            Reply::ProviderError => Some((
+                "500 Internal Server Error",
+                "application/json",
+                json!({"error":{"message":"scripted provider failure","type":"fixture"}})
+                    .to_string(),
+            )),
+            Reply::Complete if index == 0 => support::completion(
+                &json!({"thought":"inspect","tool":"list_dir","args":{"path":"."}}),
+                "stop",
+            ),
+            Reply::Complete | Reply::OutputLimit => support::completion(
+                &json!({"thought":"complete","tool":"task_complete","args":{"summary":"listed the fixture files"}}),
+                if matches!(reply, Reply::OutputLimit) {
+                    "length"
+                } else {
+                    "stop"
+                },
+            ),
+        })
     }
 
     fn real_bench(root: &Path, server: &Server) -> Command {
@@ -481,7 +356,7 @@ mod http {
             let profile_path = results_dir.join("model_profiles.json");
             std::fs::create_dir(&results_dir).unwrap();
             std::fs::write(&profile_path, &before).unwrap();
-            let mut server = Server::new(Reply::ProviderError);
+            let mut server = server(Reply::ProviderError);
             let mut command = bench(root.path());
             // The Cargo-built Ferric child accepts --version for the
             // preflight, then rejects Python's -m check argv. This proves
@@ -585,7 +460,7 @@ mod http {
 
     #[test]
     fn diagnostic_budget_operator_output() {
-        let mut server = Server::new(Reply::Complete);
+        let mut server = server(Reply::Complete);
         let root = tempfile::tempdir().unwrap();
         let result = output(&mut real_bench(root.path(), &server));
         server.finish();
@@ -613,7 +488,7 @@ mod http {
 
     #[test]
     fn bench_budget_trace_sidecar_roundtrip() {
-        let mut server = Server::new(Reply::Complete);
+        let mut server = server(Reply::Complete);
         let root = tempfile::tempdir().unwrap();
         let result = output(real_bench(root.path(), &server).args(["--timeout-scale", "0.625"]));
         server.finish();
@@ -665,7 +540,7 @@ mod http {
             (Reply::ProviderError, "provider_error", 1),
             (Reply::OutputLimit, "truncated_action", 2),
         ] {
-            let mut server = Server::new(reply);
+            let mut server = server(reply);
             let root = tempfile::tempdir().unwrap();
             let result = output(&mut real_bench(root.path(), &server));
             server.finish();
@@ -698,7 +573,7 @@ mod http {
 
     #[test]
     fn bench_parent_timeout_retains_partial_request_evidence() {
-        let mut server = Server::new(Reply::Stall);
+        let mut server = server(Reply::Stall);
         let root = tempfile::tempdir().unwrap();
         let result = output(real_bench(root.path(), &server).args(["--timeout-scale", "0.1"]));
         server.finish();
@@ -744,7 +619,7 @@ mod http {
 
     #[test]
     fn bench_budget_recording_failure_is_infrastructure() {
-        let mut server = Server::new(Reply::Complete);
+        let mut server = server(Reply::Complete);
         let root = tempfile::tempdir().unwrap();
         let results = root.path().join("results");
         std::fs::create_dir(&results).unwrap();
@@ -787,7 +662,7 @@ mod http {
 
     #[test]
     fn bench_budget_row_append_failure_is_infrastructure() {
-        let mut server = Server::new(Reply::Complete);
+        let mut server = server(Reply::Complete);
         let root = tempfile::tempdir().unwrap();
         let results = root.path().join("results");
         std::fs::create_dir_all(results.join("results.jsonl")).unwrap();

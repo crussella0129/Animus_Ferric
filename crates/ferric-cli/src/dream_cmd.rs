@@ -1,16 +1,15 @@
-#![allow(unused_imports)]
 use clap::Args;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::backend::BackendOpts;
-use ferric_trace::TraceReader;
-
 #[cfg(feature = "backend-openai")]
-use crate::backend::create_provider;
-#[cfg(feature = "backend-openai")]
-use ferric_provider::CompletionRequest;
+use {
+    crate::backend::create_provider,
+    ferric_provider::CompletionRequest,
+    ferric_trace::TraceReader,
+    std::{fs, path::Path},
+};
 
 #[derive(Args, Clone)]
 pub struct DreamArgs {
@@ -171,25 +170,11 @@ async fn dream_inner(args: DreamArgs) -> Result<(), String> {
     // 6. Call LLM
     println!("Dreaming about {} traces...", to_process.len());
 
-    let messages = vec![
-        ferric_core::Message {
-            role: ferric_core::Role::System,
-            text: Some(system_prompt.to_string()),
-            media: vec![],
-            tool_call_id: None,
-            tool_calls: vec![],
-        },
-        ferric_core::Message {
-            role: ferric_core::Role::User,
-            text: Some(user_prompt),
-            media: vec![],
-            tool_call_id: None,
-            tool_calls: vec![],
-        },
-    ];
-
     let request = CompletionRequest {
-        messages,
+        messages: vec![
+            ferric_core::Message::system(system_prompt),
+            ferric_core::Message::user(user_prompt),
+        ],
         tools: vec![],
         constraint: None,
         sampling: ferric_provider::SamplingParams::default(),

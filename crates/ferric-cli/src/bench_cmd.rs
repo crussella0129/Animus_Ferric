@@ -18,7 +18,7 @@ use ferric_bench::{
 };
 use ferric_core::{ActionProtocol, tier_for_params};
 
-use crate::query::ProtocolArg;
+use crate::config::ProtocolArg;
 
 #[derive(Args)]
 pub struct BenchArgs {

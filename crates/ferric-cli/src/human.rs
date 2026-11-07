@@ -1010,31 +1010,17 @@ mod enabled {
                 let progress = |delta| render_progress(io, delta);
                 let sink: Option<&(dyn Fn(StreamDelta) + Sync)> =
                     if stream { Some(&progress) } else { None };
-                let setup = crate::query::LoopSetup {
-                    registry: &config.registry,
-                    workspace,
-                    policy: &config.policy,
-                    protocol: config.protocol,
-                    harness_policy: Some(HarnessPolicy::Evidence),
-                    sampling: config.sampling.clone(),
-                    system_prompt: None,
-                    lineage: None,
-                    media: Vec::new(),
-                    stream_sink: sink,
-                    resume: None,
-                    answer: None,
-                    provenance: ferric_guard::Provenance::Clean,
-                    sink_policy: ferric_guard::SinkPolicy::deny(),
-                    hooks: None,
-                    edit_approver: None,
-                };
                 let recovery = format!(
                     "ferric advanced trace cat {}",
                     crate::query::documented_shell_quote(&trace_path.to_string_lossy())
                 );
                 let outcome = runtime
                     .block_on(crate::query::run_with_provider(
-                        setup.into_run_args(provider, Some(cancel.clone())),
+                        ferric_loop::RunArgs {
+                            stream_sink: sink,
+                            cancel_flag: Some(cancel.clone()),
+                            ..config.run_args(workspace, provider)
+                        },
                         &mut trace,
                         Some(prompt),
                     ))
@@ -1272,7 +1258,7 @@ mod enabled {
             let cfg = Config {
                 params_b: Some(200.0),
                 max_ring: Some(3),
-                tier: Some(crate::query::TierArg::Ultra),
+                tier: Some(crate::config::TierArg::Ultra),
                 ..Config::default()
             };
             let provider = ferric_provider::MockProvider::new(vec![]);

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::backend::BackendOpts;
-use crate::query::ProtocolArg;
+use crate::config::ProtocolArg;
 
 // Used by `extract_action` (and its tests); excluded from the backend-free,
 // non-test bin build so it stays unused-import-clean under `-D warnings`.

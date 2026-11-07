@@ -1,29 +1,13 @@
 //! Cargo-driven process-level front-door checks. Every command uses the shared
 //! bounded source owner, which proves child cleanup before returning output.
-use std::path::Path;
 use std::process::{Command, Output};
 use std::time::Duration;
 
-#[path = "../src/test_process_containment.rs"]
-mod test_process_containment;
-
-fn command(workspace: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ferric"));
-    command
-        .current_dir(workspace)
-        .env("APPDATA", workspace.join("unused-user-config"))
-        .env("XDG_CONFIG_HOME", workspace.join("unused-user-config"))
-        .env("HOME", workspace.join("unused-user-config"))
-        .env_remove("OPENAI_API_KEY")
-        .env_remove("FERRIC_PROMPTS_DIR")
-        .env_remove("FERRIC_LOG")
-        .env_remove("RUST_LOG");
-    command
-}
+mod support;
+use support::isolated_ferric as command;
 
 fn output(command: &mut Command) -> Output {
-    test_process_containment::output_bounded(command, Duration::from_secs(30))
-        .expect("bounded command finished and all owned children were reaped")
+    support::output(command, Duration::from_secs(30))
 }
 
 #[cfg(feature = "backend-openai")]
@@ -107,6 +91,8 @@ fn malformed_explicit_commands_remain_usage_errors() {
     ] {
         let result = output(command(root.path()).args(arguments));
         assert_eq!(result.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("Usage:"), "{stderr}");
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

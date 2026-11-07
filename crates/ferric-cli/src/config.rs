@@ -7,9 +7,228 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use clap::{Args, ValueEnum};
+use ferric_core::{ActionProtocol, HarnessPolicy};
 use serde::Deserialize;
 
 use crate::backend::BackendOpts;
+use crate::query::RunConfigArgs;
+
+/// CLI spelling of `ActionProtocol`. `grammar` is the server-enforced
+/// constrained-JSON path (the thesis); `xml` is the unconstrained
+/// regex-scraped fallback.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ProtocolArg {
+    Native,
+    Grammar,
+    Xml,
+}
+
+impl From<ProtocolArg> for ActionProtocol {
+    fn from(p: ProtocolArg) -> Self {
+        match p {
+            ProtocolArg::Native => ActionProtocol::NativeTools,
+            ProtocolArg::Grammar => ActionProtocol::ConstrainedJson,
+            ProtocolArg::Xml => ActionProtocol::TextXml,
+        }
+    }
+}
+
+/// CLI spelling of the autonomous harness policy. Clap exposes the compound
+/// variant as `evidence-planner`; persistent config uses the core type's
+/// stable `evidence_planner` wire spelling.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum HarnessPolicyArg {
+    Legacy,
+    Evidence,
+    EvidencePlanner,
+}
+
+impl From<HarnessPolicyArg> for HarnessPolicy {
+    fn from(policy: HarnessPolicyArg) -> Self {
+        match policy {
+            HarnessPolicyArg::Legacy => HarnessPolicy::Legacy,
+            HarnessPolicyArg::Evidence => HarnessPolicy::Evidence,
+            HarnessPolicyArg::EvidencePlanner => HarnessPolicy::EvidencePlanner,
+        }
+    }
+}
+
+/// CLI spelling of `Tier` for `--tier` (ADR-098). Kebab-case via `ValueEnum`,
+/// and `Deserialize` so `.ferric/config.toml` can spell it the same way.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TierArg {
+    Nano,
+    Small,
+    Medium,
+    Large,
+    Xl,
+    Ultra,
+}
+
+impl From<TierArg> for ferric_core::Tier {
+    fn from(t: TierArg) -> Self {
+        match t {
+            TierArg::Nano => ferric_core::Tier::Nano,
+            TierArg::Small => ferric_core::Tier::Small,
+            TierArg::Medium => ferric_core::Tier::Medium,
+            TierArg::Large => ferric_core::Tier::Large,
+            TierArg::Xl => ferric_core::Tier::Xl,
+            TierArg::Ultra => ferric_core::Tier::Ultra,
+        }
+    }
+}
+
+/// Today's hardcoded defaults: the last layer of the precedence rule, used
+/// when neither a flag nor a config file sets the tunable (T-3803).
+pub const DEFAULT_PARAMS_B: f32 = 1.2;
+pub const DEFAULT_QUANT: &str = "Q4_K_M";
+pub const DEFAULT_FAMILY: &str = "unknown";
+pub const DEFAULT_CTX: u32 = 4096;
+pub const DEFAULT_TEMPERATURE: f32 = 0.0;
+pub const DEFAULT_PROFILE_DIR: &str = "benchmarks";
+
+/// The run-shaping flags `ferric query`, `chat`, `mcp` and `api` share. Each
+/// tunable resolves through [`RunFlags::resolve`]; `ferric icm run` exposes a
+/// subset and resolves it the same way.
+#[derive(Args, Clone, Default)]
+pub struct RunFlags {
+    /// Workspace root (containment boundary). Default: current directory.
+    #[arg(long)]
+    pub workspace: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub backend_opts: BackendOpts,
+
+    /// Parameter count in billions. Default 1.2 when neither this flag nor a
+    /// config file's `params_b` is set (T-3803).
+    ///
+    /// This is a **fact about the model**, not a way to pick a tier — use
+    /// `--tier` for that (ADR-098). Misstating it to reach a tier also
+    /// corrupts the profile store and the trace, and leaves no way to tell an
+    /// earned tier from a claimed one.
+    #[arg(long)]
+    pub params_b: Option<f32>,
+
+    /// Run at this tier regardless of size or measured level (ADR-098).
+    ///
+    /// Overrides both the `measured_level` read-back and the parameter-count
+    /// prior, in **either** direction — you can hold a capable model down as
+    /// well as lift a small one up. The run says so on stderr and the trace
+    /// records `tier_source: "override"`, so an asked-for tier is never
+    /// mistaken later for one the model earned on the ladder.
+    ///
+    /// Raising the tier widens turn/tool budgets and the tool-ring ceiling; a
+    /// model that cannot use them just fails more expensively (the loop guards
+    /// bound the waste, ADR-037/038/077). `ferric bench` is how a tier gets
+    /// *earned*.
+    #[arg(long, value_enum)]
+    pub tier: Option<TierArg>,
+
+    /// Quantization label. Default "Q4_K_M" when neither this flag nor a
+    /// config file's `quant` is set (T-3803).
+    #[arg(long)]
+    pub quant: Option<String>,
+
+    /// Model family label. Default "unknown" when neither this flag nor a
+    /// config file's `family` is set (T-3803).
+    #[arg(long)]
+    pub family: Option<String>,
+
+    /// Context window in tokens (ModelProfile is config-supplied, ADR-006).
+    /// Default 4096 when neither this flag nor a config file's `ctx` is set
+    /// (T-3803).
+    #[arg(long)]
+    pub ctx: Option<u32>,
+
+    /// Sampling temperature (0.0 selects the deterministic sampler). Default
+    /// 0.0 when neither this flag nor a config file's `temperature` is set
+    /// (T-3803).
+    #[arg(long)]
+    pub temperature: Option<f32>,
+
+    /// Action protocol override (default: chosen from policy + backend caps)
+    #[arg(long, value_enum)]
+    pub protocol: Option<ProtocolArg>,
+
+    /// Autonomous harness policy. Omitted fresh runs use `legacy`; omitted
+    /// resumes inherit the policy recorded in their source trace.
+    #[arg(long, value_enum)]
+    pub harness_policy: Option<HarnessPolicyArg>,
+
+    /// Directory of prompt elements to compose the system prompt from.
+    /// Falls back to the built-in default prompt when absent or unloadable.
+    /// Also read from FERRIC_PROMPTS_DIR.
+    #[arg(long)]
+    pub prompts_dir: Option<PathBuf>,
+
+    /// Cap the active tool ring (ADR-028). `0` pins the model to the Ring-0
+    /// navigate/mutate core — the smallest, surest grammar — regardless of its
+    /// size. Restrict-only: it cannot raise the ceiling above what the model's
+    /// tier/`measured_level` allows.
+    #[arg(long)]
+    pub max_ring: Option<u8>,
+
+    /// Directory holding `model_profiles.json` (written by `ferric bench` and
+    /// `toolbench --calibrate-rings`). When a record exists for this model, its
+    /// `measured_level` sets the tier and its `calibrated_ring` defaults
+    /// `--max-ring` — the durable promotion (ADR-029). A missing file is a no-op.
+    /// Read once per run (once at launch for a server, ADR-046). Default
+    /// "benchmarks" when neither this flag nor a config file's `profile_dir`
+    /// is set (T-3803).
+    #[arg(long)]
+    pub profile_dir: Option<PathBuf>,
+
+    /// Run against a built-in scripted mock instead of a real model
+    #[arg(long)]
+    pub mock: bool,
+}
+
+impl RunFlags {
+    /// The precedence rule (ADR-048), in one place: each tunable is this flag,
+    /// else the merged project-over-user `cfg`, else today's default. Hooks and
+    /// skills are left off; each surface opts in to the ones it honors.
+    pub(crate) fn resolve(&self, cfg: &Config, workspace_root: &Path) -> RunConfigArgs {
+        RunConfigArgs {
+            mock: self.mock,
+            // The POST-merge model keys the ADR-029 profile lookup, so a
+            // config-only `model` still finds its profile (C-001).
+            backend: merge_backend_opts(self.backend_opts.clone(), cfg),
+            params_b: self.params_b.or(cfg.params_b).unwrap_or(DEFAULT_PARAMS_B),
+            quant: self
+                .quant
+                .clone()
+                .or_else(|| cfg.quant.clone())
+                .unwrap_or_else(|| DEFAULT_QUANT.to_string()),
+            family: self
+                .family
+                .clone()
+                .or_else(|| cfg.family.clone())
+                .unwrap_or_else(|| DEFAULT_FAMILY.to_string()),
+            ctx: self.ctx.or(cfg.ctx).unwrap_or(DEFAULT_CTX),
+            temperature: self
+                .temperature
+                .or(cfg.temperature)
+                .unwrap_or(DEFAULT_TEMPERATURE),
+            protocol_override: self.protocol,
+            harness_policy: self.harness_policy.map(Into::into).or(cfg.harness_policy),
+            // Not a config field: flag or `FERRIC_PROMPTS_DIR` only.
+            prompts_dir: self.prompts_dir.clone(),
+            max_ring: self.max_ring.or(cfg.max_ring),
+            tier_override: self.tier.or(cfg.tier).map(Into::into),
+            profile_dir: self
+                .profile_dir
+                .clone()
+                .or_else(|| cfg.profile_dir.clone())
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_PROFILE_DIR)),
+            hooks: None,
+            workspace_root: workspace_root.to_path_buf(),
+            requested_skills: Vec::new(),
+            allowed_skills: Vec::new(),
+        }
+    }
+}
 
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct Config {
@@ -24,10 +243,10 @@ pub struct Config {
     pub max_ring: Option<u8>,
     /// Autonomous harness policy. CLI selection wins; an omitted resume
     /// inherits its source trace rather than this field being defaulted early.
-    pub harness_policy: Option<ferric_core::HarnessPolicy>,
+    pub harness_policy: Option<HarnessPolicy>,
     /// Persistent operator tier override (ADR-098) — the config spelling of
     /// `--tier`. Separate from `params_b`, which stays a fact about the model.
-    pub tier: Option<crate::query::TierArg>,
+    pub tier: Option<TierArg>,
     pub profile_dir: Option<PathBuf>,
     /// Where to discover GGUF models, decoupled from the working folder so an
     /// installed `ferric` run in any project finds them. Resolved as
@@ -397,12 +616,9 @@ pub fn load_layered(workspace: &Path) -> Result<LoadedConfig, ConfigError> {
 }
 
 /// Merge CLI-supplied `BackendOpts` with config-resolved fallbacks: each
-/// field keeps its CLI value if set, else falls back to `cfg`'s. Shared by
-/// `run_query` (mutates `args.backend_opts` in place) and `McpServer::launch`
-/// (mutates a local clone, since `McpArgs` is `&`) so the merge can't drift
-/// between the two surfaces — and, per the test-critic's C-001/C-003, so it
-/// has ONE call site that's directly unit-testable in isolation, rather than
-/// being inlined at each of the two (previously duplicated) launch sites.
+/// field keeps its CLI value if set, else falls back to `cfg`'s. The backend
+/// half of [`RunFlags::resolve`], kept separate so it is directly
+/// unit-testable (C-001/C-003).
 pub fn merge_backend_opts(mut opts: BackendOpts, cfg: &Config) -> BackendOpts {
     opts.model = opts.model.take().or_else(|| cfg.model.clone());
     opts.api_base = opts.api_base.take().or_else(|| cfg.api_base.clone());
@@ -489,11 +705,16 @@ mod tests {
         let loaded = load_layered_from(&project, Some(&user)).unwrap();
         assert_eq!(loaded.config.model.as_deref(), Some("user"));
         std::fs::write(&project, "backend = 'openai'\nfuture_legacy_option = true\nmodel = 'project'\nallowed_skills = []\n").unwrap();
+        // A legacy `backend` key (removed with the single-backend
+        // simplification) and unknown keys are ignored, not an error.
         let loaded = load_layered_from(&project, Some(&user)).unwrap();
+        assert_eq!(loaded.config.model.as_deref(), Some("project"));
         assert_eq!(loaded.config.params_b, Some(7.0));
         assert_eq!(loaded.config.allowed_skills, Some(Vec::new()));
-        let mut cli = no_backend_opts();
-        cli.model = Some("cli".to_string());
+        let cli = BackendOpts {
+            model: Some("cli".to_string()),
+            ..BackendOpts::default()
+        };
         assert_eq!(
             merge_backend_opts(cli, &loaded.config).model.as_deref(),
             Some("cli")
@@ -632,24 +853,6 @@ mod tests {
         }
     }
 
-    /// Backward-compat: a legacy `backend = "openai"` key (written before the
-    /// single-backend simplification removed the field) must still parse — the
-    /// now-unknown key is ignored, not a hard error — so old
-    /// `.ferric/config.toml` files keep working.
-    #[test]
-    fn legacy_backend_key_is_ignored_not_an_error() {
-        let cfg: Config = toml::from_str("backend = \"openai\"\nmodel = \"m\"\n").unwrap();
-        assert_eq!(cfg.model, Some("m".to_string()));
-    }
-
-    fn no_backend_opts() -> BackendOpts {
-        BackendOpts {
-            model: None,
-            api_base: None,
-            api_key: None,
-        }
-    }
-
     /// The `BackendOpts` fields get config-only
     /// precedence, in one pass — closing the rest of the C-001-class gap the
     /// critic flagged (not just `backend`).
@@ -661,22 +864,10 @@ mod tests {
             api_key: Some("key123".to_string()),
             ..Config::default()
         };
-        let merged = merge_backend_opts(no_backend_opts(), &cfg);
+        let merged = merge_backend_opts(BackendOpts::default(), &cfg);
         assert_eq!(merged.model, Some("mockmodel".to_string()));
         assert_eq!(merged.api_base, Some("http://example/v1".to_string()));
         assert_eq!(merged.api_key, Some("key123".to_string()));
-    }
-
-    #[test]
-    fn merge_backend_opts_cli_model_wins_over_config_model() {
-        let cfg = Config {
-            model: Some("config-model".to_string()),
-            ..Config::default()
-        };
-        let mut opts = no_backend_opts();
-        opts.model = Some("cli-model".to_string());
-        let merged = merge_backend_opts(opts, &cfg);
-        assert_eq!(merged.model, Some("cli-model".to_string()));
     }
 
     // --- ADR-097: the env-selected config layer that reaches a shell ---

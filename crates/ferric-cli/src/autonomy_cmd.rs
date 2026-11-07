@@ -32,7 +32,7 @@ use ferric_trace::{
     VerificationOutcome,
 };
 
-use crate::query::ProtocolArg;
+use crate::config::ProtocolArg;
 
 const PROVIDER_FAILURE_ENDPOINT: &str = "http://127.0.0.1:0/v1";
 

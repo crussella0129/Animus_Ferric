@@ -29,7 +29,6 @@ struct TurnState {
 struct RecordedCall {
     name: String,
     has_result: bool,
-    is_error: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,13 +66,10 @@ struct VerificationState {
     saw_policy: bool,
     protocol: Option<ActionProtocol>,
     current_turn: Option<TurnState>,
-    last_turn: Option<u32>,
+    saw_turn: bool,
     saw_task_complete: bool,
     saw_submit_plan: bool,
     expected_stop: Option<&'static str>,
-    saw_modern_turn: bool,
-    paused_reason: Option<String>,
-    checkpoint_after_stop: bool,
     mutation_epoch: u64,
     summary: VerificationSummary,
 }
@@ -162,25 +158,17 @@ fn verify_trace(path: &Path) -> Result<VerificationSummary, String> {
     Ok(state.summary)
 }
 
+/// Validate one known event. `TraceStructure` owns the recovery protocol —
+/// nothing after `session_end` but its allowed suffix, one `policy_selected`
+/// before session state, consecutive turn numbers, the `turn_end`/
+/// `actions_proposed`/`tool_call`/`tool_result` identities, mutation and check
+/// epochs, commit counts, guard stops and pause rules — and it sees every
+/// event first. The rules below are the ones it does not make.
 fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> Result<(), String> {
     state
         .structure
         .observe(&event)
         .map_err(|error| format!("record {index} recovery structure: {error}"))?;
-
-    if state.summary.stop_reason.is_some()
-        && !matches!(
-            event,
-            Event::Note { .. }
-                | Event::RecoveryCheckpoint { .. }
-                | Event::ControllerCheckpoint { .. }
-                | Event::SessionPaused { .. }
-        )
-    {
-        return Err(format!(
-            "record {index} contains an event after session_end: {event:?}"
-        ));
-    }
 
     match event {
         Event::SessionStart { .. } => {
@@ -196,12 +184,6 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
         }
         Event::PolicySelected { protocol, .. } => {
             require_started(index, state)?;
-            if state.saw_policy {
-                return Err("trace contains more than one policy_selected".to_string());
-            }
-            if state.current_turn.is_some() {
-                return Err("policy_selected appears after turns began".to_string());
-            }
             state.saw_policy = true;
             state.protocol = Some(protocol);
         }
@@ -216,14 +198,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
         Event::TurnStart { turn } => {
             require_policy(index, state)?;
             finish_turn(state, false)?;
-            if let Some(previous) = state.last_turn
-                && turn <= previous
-            {
-                return Err(format!(
-                    "record {index} starts turn {turn} after turn {previous}"
-                ));
-            }
-            state.last_turn = Some(turn);
+            state.saw_turn = true;
             state.current_turn = Some(TurnState {
                 number: turn,
                 ended: false,
@@ -249,20 +224,9 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
             }
         }
         Event::TurnEnd {
-            turn,
-            tool_call_count,
-            ..
+            tool_call_count, ..
         } => {
             let current = current_turn_mut(index, state)?;
-            if current.number != turn {
-                return Err(format!(
-                    "record {index} names turn {turn}, but active turn is {}",
-                    current.number
-                ));
-            }
-            if current.ended {
-                return Err(format!("turn {turn} has more than one turn_end"));
-            }
             current.pre_response_only = false;
             current.ended = true;
             current.declared_calls = tool_call_count;
@@ -270,11 +234,6 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
         Event::ActionsProposed { turn, calls } => {
             let is_native = state.protocol == Some(ActionProtocol::NativeTools);
             let current = current_turn_mut(index, state)?;
-            if current.number != turn || !current.ended {
-                return Err(format!(
-                    "record {index} proposes actions outside ended turn {turn}"
-                ));
-            }
             if is_native && calls.len() != current.declared_calls as usize {
                 return Err(format!(
                     "turn {turn} proposed {} actions but declared {}",
@@ -283,141 +242,34 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
                 ));
             }
             current.modern = true;
-            state.saw_modern_turn = true;
         }
         Event::ToolCall { id, name, .. } => {
-            let current = current_turn_mut(index, state)?;
-            if !current.ended {
-                return Err(format!(
-                    "record {index} dispatches tool {name:?} before turn_end"
-                ));
-            }
-            if current
-                .calls
-                .insert(
-                    id.clone(),
-                    RecordedCall {
-                        name,
-                        has_result: false,
-                        is_error: false,
-                    },
-                )
-                .is_some()
-            {
-                return Err(format!("record {index} repeats tool-call id {id:?}"));
-            }
+            current_turn_mut(index, state)?.calls.insert(
+                id,
+                RecordedCall {
+                    name,
+                    has_result: false,
+                },
+            );
             state.summary.tool_calls += 1;
         }
-        Event::ToolResult {
-            id, name, is_error, ..
-        } => {
-            let current = current_turn_mut(index, state)?;
-            let call = current.calls.get_mut(&id).ok_or_else(|| {
-                format!("record {index} has a result for unknown tool-call id {id:?}")
-            })?;
-            if call.name != name {
-                return Err(format!(
-                    "record {index} result name {name:?} does not match call {:?}",
-                    call.name
-                ));
+        Event::ToolResult { id, .. } => {
+            if let Some(call) = current_turn_mut(index, state)?.calls.get_mut(&id) {
+                call.has_result = true;
             }
-            if call.has_result {
-                return Err(format!(
-                    "record {index} repeats the result for tool-call id {id:?}"
-                ));
-            }
-            call.has_result = true;
-            call.is_error = is_error;
         }
-        Event::WorkspaceMutation {
-            turn,
-            mutation_epoch,
-            ..
-        } => {
-            let current = current_turn_mut(index, state)?;
-            if current.number != turn || !current.ended {
-                return Err(format!(
-                    "record {index} records a mutation outside ended turn {turn}"
-                ));
-            }
-            if mutation_epoch != state.mutation_epoch.saturating_add(1) {
-                return Err(format!(
-                    "record {index} advances mutation epoch from {} to {mutation_epoch}",
-                    state.mutation_epoch
-                ));
-            }
-            state.mutation_epoch = mutation_epoch;
-        }
-        Event::VerificationCheckPassed {
-            turn,
-            mutation_epoch,
-            ..
-        } => {
-            let current = current_turn_mut(index, state)?;
-            if current.number != turn || !current.ended {
-                return Err(format!(
-                    "record {index} records check evidence outside ended turn {turn}"
-                ));
-            }
+        Event::WorkspaceMutation { mutation_epoch, .. } => state.mutation_epoch = mutation_epoch,
+        Event::CompletionGate { mutation_epoch, .. } => {
+            // TraceStructure compares the gate with its own epoch, which an
+            // evidence effect advances before its `workspace_mutation` mirror
+            // lands; this verifier's epoch advances only with the mirror.
             if mutation_epoch != state.mutation_epoch {
-                return Err(format!(
-                    "record {index} records check evidence at epoch {mutation_epoch}, current epoch is {}",
-                    state.mutation_epoch
-                ));
-            }
-        }
-        Event::CompletionGate {
-            mutation_epoch,
-            required_checks,
-            fresh_checks,
-            decision,
-        } => {
-            let current = current_turn_mut(index, state)?;
-            if !current.ended || mutation_epoch != state.mutation_epoch {
                 return Err(format!(
                     "record {index} has an out-of-state completion gate"
                 ));
             }
-            if !matches!(decision.as_str(), "passed" | "blocked")
-                || fresh_checks
-                    .iter()
-                    .any(|check| !required_checks.contains(check))
-                || (decision == "passed" && fresh_checks.len() != required_checks.len())
-                || (decision == "blocked" && fresh_checks.len() == required_checks.len())
-            {
-                return Err(format!(
-                    "record {index} has inconsistent completion evidence"
-                ));
-            }
         }
-        Event::TurnCommitted {
-            turn,
-            dispatched,
-            errored,
-            ..
-        } => {
-            let current = current_turn_mut(index, state)?;
-            if current.number != turn || !current.ended {
-                return Err(format!("record {index} commits outside ended turn {turn}"));
-            }
-            let result_count = current
-                .calls
-                .values()
-                .filter(|call| call.has_result)
-                .count() as u32;
-            let error_count = current
-                .calls
-                .values()
-                .filter(|call| call.has_result && call.is_error)
-                .count() as u32;
-            if dispatched != result_count || errored != error_count {
-                return Err(format!(
-                    "turn {turn} commit reports {dispatched}/{errored} dispatched/errors, recorded {result_count}/{error_count}"
-                ));
-            }
-            state.saw_modern_turn = true;
-            finish_turn(state, false)?;
-        }
+        Event::TurnCommitted { .. } => finish_turn(state, false)?,
         Event::SessionEnd { reason } => {
             require_policy(index, state)?;
             state.summary.stop_reason = Some(reason);
@@ -431,44 +283,13 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
                     checkpoint.version
                 ));
             }
-            if checkpoint.head_len > checkpoint.messages.len() {
-                return Err(format!("record {index} checkpoint head exceeds messages"));
-            }
-            if checkpoint
-                .passed_checks
-                .values()
-                .any(|epoch| *epoch > checkpoint.mutation_epoch)
-            {
-                return Err(format!(
-                    "record {index} checkpoint contains future check evidence"
-                ));
-            }
-            if state.last_turn.is_some() && checkpoint.mutation_epoch != state.mutation_epoch {
+            if state.saw_turn && checkpoint.mutation_epoch != state.mutation_epoch {
                 return Err(format!(
                     "record {index} checkpoint mutation epoch {} differs from projected {}",
                     checkpoint.mutation_epoch, state.mutation_epoch
                 ));
             }
             state.mutation_epoch = checkpoint.mutation_epoch;
-            if state.summary.stop_reason.is_some() {
-                state.checkpoint_after_stop = true;
-            }
-        }
-        Event::SessionPaused { reason } => {
-            let ended = state.summary.stop_reason.as_deref().ok_or_else(|| {
-                format!("record {index} pauses before session_end established a reason")
-            })?;
-            if ended != reason {
-                return Err(format!(
-                    "record {index} pause reason {reason:?} differs from session_end {ended:?}"
-                ));
-            }
-            if !state.checkpoint_after_stop {
-                return Err(format!(
-                    "record {index} pauses without a recovery checkpoint"
-                ));
-            }
-            state.paused_reason = Some(reason);
         }
         Event::RepetitionGuard { action } => {
             record_pre_dispatch_stop(index, state, &action, PreDispatchStop::Repetition)?
@@ -482,6 +303,7 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
         Event::ConstraintApplied { .. } | Event::HistoryCompacted { .. } => {
             require_started(index, state)?;
         }
+        Event::VerificationCheckPassed { .. } | Event::SessionPaused { .. } => {}
         Event::FailureGuard { .. }
         | Event::PermissionCheck { .. }
         | Event::ObservationRecorded { .. }
@@ -546,13 +368,6 @@ fn record_pre_dispatch_stop(
     match action {
         "warned" => Ok(()),
         "stopped" => {
-            if let Some(previous) = current.pre_dispatch_stop {
-                return Err(format!(
-                    "record {index} contains guard stop {} after {} already stopped the turn",
-                    stop.reason(),
-                    previous.reason()
-                ));
-            }
             current.pre_dispatch_stop = Some(stop);
             Ok(())
         }

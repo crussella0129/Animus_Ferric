@@ -19,21 +19,20 @@
 //! (mirroring `ferric mcp`, since `run()` emits a whole `SessionStart..SessionEnd`
 //! envelope per call and cannot be nested).
 
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Args;
 
 use ferric_core::{HarnessPolicy, Message};
 use ferric_guard::Workspace;
-use ferric_loop::ReplayedState;
-use ferric_provider::{Completion, CompletionRequest, MockProvider, Provider, SamplingParams};
+use ferric_loop::{ReplayedState, RunArgs};
+use ferric_provider::{Completion, CompletionRequest, MockProvider, SamplingParams};
 use ferric_trace::{Event, JsonlSink, RECOVERY_CHECKPOINT_VERSION, RecoveryCheckpointV1};
 
-use crate::backend::BackendOpts;
+use crate::config::RunFlags;
 use crate::query::{
-    HarnessPolicyArg, ProtocolArg, RunConfig, RunConfigArgs, build_run_config,
-    ensure_supported_harness_policy, mock_provider, now_ms, run_with_provider,
+    RunConfig, RunConfigArgs, build_run_config, create_trace_sink, mock_provider, open_workspace,
+    run_with_provider,
 };
 
 /// How chat drives the provider, shared with `ferric icm` since sprint 103
@@ -48,66 +47,12 @@ use crate::backend::ResolvedBackend as ChatBackend;
 /// fixed for the session (ADR-046/ADR-052).
 #[derive(Args)]
 pub struct ChatArgs {
-    /// Workspace root (containment boundary). Default: current directory.
-    #[arg(long)]
-    pub workspace: Option<PathBuf>,
-
     /// Disable token-streaming to stdout. (By default, streaming is ON in chat mode).
     #[arg(long)]
     pub no_stream: bool,
 
     #[command(flatten)]
-    pub backend_opts: BackendOpts,
-
-    /// Parameter count in billions. Default 1.2 when unset (config/flag).
-    #[arg(long)]
-    pub params_b: Option<f32>,
-
-    /// Quantization label. Default "Q4_K_M" when unset.
-    #[arg(long)]
-    pub quant: Option<String>,
-
-    /// Model family label. Default "unknown" when unset.
-    #[arg(long)]
-    pub family: Option<String>,
-
-    /// Context window in tokens (ModelProfile is config-supplied, ADR-006).
-    #[arg(long)]
-    pub ctx: Option<u32>,
-
-    /// Sampling temperature (0.0 = the deterministic sampler). Default 0.0.
-    #[arg(long)]
-    pub temperature: Option<f32>,
-
-    /// Action protocol override for escalated (`/do`) turns.
-    #[arg(long, value_enum)]
-    pub protocol: Option<ProtocolArg>,
-
-    /// Harness policy for escalated (`/do`) turns.
-    #[arg(long, value_enum)]
-    pub harness_policy: Option<HarnessPolicyArg>,
-
-    /// Directory of prompt elements to compose the system prompt from.
-    #[arg(long)]
-    pub prompts_dir: Option<PathBuf>,
-
-    /// Cap the active tool ring (ADR-028) for escalated turns.
-    /// Run at this tier regardless of size or measured level (ADR-098).
-    /// Recorded as `tier_source: "override"` so an asked-for tier is never
-    /// mistaken for one earned on the benchmark ladder.
-    #[arg(long, value_enum)]
-    pub tier: Option<crate::query::TierArg>,
-
-    #[arg(long)]
-    pub max_ring: Option<u8>,
-
-    /// Directory holding `model_profiles.json` (ADR-029). Default "benchmarks".
-    #[arg(long)]
-    pub profile_dir: Option<PathBuf>,
-
-    /// Run against a built-in scripted mock instead of a real model.
-    #[arg(long)]
-    pub mock: bool,
+    pub run: RunFlags,
 }
 
 /// One parsed REPL line. `parse_chat_input` maps a raw line to this; the REPL
@@ -253,37 +198,20 @@ impl ChatBackend {
             }
             _ => {}
         };
-        let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
-            if stream { Some(&sink_fn) } else { None };
-
-        match self {
-            ChatBackend::Mock => {
-                let provider = MockProvider::new(vec![mock_talk_completion()]);
-                if let Some(sink) = stream_sink {
-                    futures_executor::block_on(provider.complete_streaming(request, sink, None))
-                        .map_err(|e| format!("talk completion failed: {e}"))
+        self.with_provider(
+            || MockProvider::new(vec![mock_talk_completion()]),
+            |provider| {
+                if stream {
+                    self.block_on(provider.complete_streaming(request, &sink_fn, None))
                 } else {
-                    futures_executor::block_on(provider.complete(request, None))
-                        .map_err(|e| format!("talk completion failed: {e}"))
+                    self.block_on(provider.complete(request, None))
                 }
-            }
-            #[cfg(feature = "backend-openai")]
-            ChatBackend::Real { provider, runtime } => {
-                if let Some(sink) = stream_sink {
-                    runtime
-                        .block_on(provider.complete_streaming(request, sink, None))
-                        .map_err(|e| format!("talk completion failed: {e}"))
-                } else {
-                    runtime
-                        .block_on(provider.complete(request, None))
-                        .map_err(|e| format!("talk completion failed: {e}"))
-                }
-            }
-        }
+            },
+        )
+        .map_err(|e| format!("talk completion failed: {e}"))
     }
 
     /// Escalate one turn into the constrained agentic loop.
-    #[allow(clippy::too_many_arguments)]
     fn escalate(
         &self,
         config: &RunConfig,
@@ -311,43 +239,20 @@ impl ChatBackend {
         };
         let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
             if stream { Some(&sink_fn) } else { None };
-
-        // One setup for both backends; only the provider and the executor differ.
-        let setup = || crate::query::LoopSetup {
-            registry: &config.registry,
-            workspace,
-            policy: &config.policy,
-            protocol: config.protocol,
-            harness_policy: config.harness_policy,
-            sampling: config.sampling.clone(),
-            system_prompt: config.system_prompt.as_deref(),
-            lineage: config.lineage.clone(),
-            media: Vec::new(),
-            stream_sink,
-            resume: Some(seed.clone()),
-            answer: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
-        };
-
-        match self {
-            ChatBackend::Mock => {
-                let provider = mock_provider(config.protocol);
-                futures_executor::block_on(run_with_provider(
-                    setup().into_run_args(&provider, None),
+        self.with_provider(
+            || mock_provider(config.protocol),
+            |provider| {
+                self.block_on(run_with_provider(
+                    RunArgs {
+                        stream_sink,
+                        resume: Some(seed),
+                        ..config.run_args(workspace, provider)
+                    },
                     sink,
                     Some(prompt),
                 ))
-            }
-            #[cfg(feature = "backend-openai")]
-            ChatBackend::Real { provider, runtime } => runtime.block_on(run_with_provider(
-                setup().into_run_args(provider.as_ref(), None),
-                sink,
-                Some(prompt),
-            )),
-        }
+            },
+        )
     }
 }
 
@@ -365,12 +270,12 @@ Commands:
 
 /// Write a chat-session trace event, reporting a failure instead of discarding it.
 ///
-/// `run_chat` returns `ExitCode`, so `?` is not available here — but silently
-/// dropping the result is the wrong answer (ADR-079). `JsonlSink::write_event`
-/// can genuinely fail on I/O, `run.rs` propagates it at 21 sites, and this file
-/// was dropping it at all 6 — so a full disk or a locked file left a chat trace
-/// silently incomplete, in a harness whose premise is "if it isn't in the trace,
-/// it didn't happen".
+/// Silently dropping the result is the wrong answer (ADR-079).
+/// `JsonlSink::write_event` can genuinely fail on I/O, `run.rs` propagates it
+/// at 21 sites, and this file was dropping it at all 6 — so a full disk or a
+/// locked file left a chat trace silently incomplete, in a harness whose
+/// premise is "if it isn't in the trace, it didn't happen". A write failure
+/// does not end the session, so this warns instead of returning an error.
 ///
 /// Latched to one warning per session: the failure is visible without a
 /// per-event flood when the underlying cause is persistent.
@@ -384,80 +289,25 @@ fn log_event(log: &mut JsonlSink, warned: &mut bool, event: Event) {
 }
 
 pub fn run_chat(args: ChatArgs) -> ExitCode {
-    let workspace_root = match &args.workspace {
-        Some(path) => path.clone(),
-        None => match std::env::current_dir() {
-            Ok(dir) => dir,
-            Err(e) => {
-                eprintln!("cannot determine current directory: {e}");
-                return ExitCode::FAILURE;
-            }
-        },
-    };
-    let workspace = match Workspace::new(&workspace_root) {
-        Ok(ws) => ws,
-        Err(e) => {
-            eprintln!("workspace: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    crate::exit_with(chat(&args))
+}
+
+fn chat(args: &ChatArgs) -> Result<ExitCode, String> {
+    let (workspace_root, workspace) = open_workspace(args.run.workspace.as_deref())?;
 
     // Layered config (CLI > project > user > default), same as `ferric query`.
-    let loaded_config = match crate::config::load_layered(&workspace_root) {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let cfg = loaded_config.config;
+    let cfg = crate::config::load_layered(&workspace_root)
+        .map_err(|error| error.to_string())?
+        .config;
     let stream = crate::config::effective_stream(args.no_stream, cfg.stream);
-    let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
-    let config = build_run_config(&RunConfigArgs {
+    let run = RunConfigArgs {
         // Chat is the workspace owner at their own terminal, so their standing
         // allowlist applies. There is no per-message `--skill` surface yet; a
         // `/skill` REPL verb is the natural home for that and is deferred.
-        workspace_root: workspace_root.clone(),
-        requested_skills: Vec::new(),
         allowed_skills: cfg.allowed_skills.clone().unwrap_or_default(),
-        mock: args.mock,
-        params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
-        quant: args
-            .quant
-            .clone()
-            .or(cfg.quant)
-            .unwrap_or_else(|| "Q4_K_M".to_string()),
-        family: args
-            .family
-            .clone()
-            .or(cfg.family)
-            .unwrap_or_else(|| "unknown".to_string()),
-        ctx: args.ctx.or(cfg.ctx).unwrap_or(4096),
-        temperature: args.temperature.or(cfg.temperature).unwrap_or(0.0),
-        protocol_override: args.protocol,
-        harness_policy: args.harness_policy.map(Into::into).or(cfg.harness_policy),
-        prompts_dir: args.prompts_dir.clone(),
-        max_ring: args.max_ring.or(cfg.max_ring),
-        tier_override: args.tier.or(cfg.tier).map(Into::into),
-        profile_dir: args
-            .profile_dir
-            .clone()
-            .or(cfg.profile_dir)
-            .unwrap_or_else(|| PathBuf::from("benchmarks")),
-        model_key: backend_opts.model.clone(),
-        hooks: None,
-    });
-    let config = match config {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
+        ..args.run.resolve(&cfg, &workspace_root)
     };
-    if let Err(error) = ensure_supported_harness_policy(config.harness_policy) {
-        eprintln!("{error}");
-        return ExitCode::FAILURE;
-    }
+    let config = build_run_config(&run).map_err(|error| error.to_string())?;
     let mut human_registry =
         ferric_tools::Registry::with_truncation_limit(config.registry.truncation_limit());
     ferric_tools::register_human_tools(&mut human_registry);
@@ -465,36 +315,17 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
         eprintln!("{err}");
     }
 
-    let backend = match if args.mock {
-        Ok(ChatBackend::Mock)
-    } else {
-        ChatBackend::real_in(&backend_opts, workspace.root())
-    } {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("{e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let backend = ChatBackend::resolve(run.mock, &run.backend, workspace.root())?;
 
     let trace_dir = ferric_trace::trace_dir(&workspace_root);
-    if let Err(e) = std::fs::create_dir_all(&trace_dir) {
-        eprintln!("cannot create trace dir {}: {e}", trace_dir.display());
-        return ExitCode::FAILURE;
-    }
+    std::fs::create_dir_all(&trace_dir)
+        .map_err(|e| format!("cannot create trace dir {}: {e}", trace_dir.display()))?;
     // The chat-session log: one file, a chat-level SessionStart..SessionEnd
     // envelope holding a Note per talk turn + a Note per escalation (which
     // itself writes a separate agentic trace file). No run() envelope is ever
     // nested here (ADR-052).
-    let chat_session = format!("chat-{}", now_ms());
-    let log_path = trace_dir.join(format!("{chat_session}.jsonl"));
-    let mut log = match JsonlSink::open(&log_path, &chat_session) {
-        Ok(sink) => sink,
-        Err(e) => {
-            eprintln!("cannot open chat trace: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let (chat_session, _, mut log) = create_trace_sink(&trace_dir, "chat")
+        .map_err(|e| format!("cannot open chat trace: {e}"))?;
     let mut trace_warned = false;
     log_event(
         &mut log,
@@ -512,21 +343,11 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
     }
 
     println!("Ferric chat — /help for commands, /exit to quit.");
-    let mut editor = match rustyline::DefaultEditor::new() {
-        Ok(ed) => ed,
-        Err(e) => {
-            eprintln!("failed to initialize rustyline: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let mut editor = rustyline::DefaultEditor::new()
+        .map_err(|e| format!("failed to initialize rustyline: {e}"))?;
     let history_path = workspace_root.join(".ferric").join("chat_history.txt");
     let _ = editor.load_history(&history_path);
 
-    // Per-session monotonic counter for escalation trace filenames — `now_ms()`
-    // alone can collide when two `/do` turns land in the same millisecond
-    // (implausible for human typing, but real for scripted/piped chat;
-    // test-critic C-001).
-    let mut esc_count: u32 = 0;
     // `shell_exec` runs on tokio (sprint 67); the sync REPL has no ambient
     // runtime, so `!cmd` passthrough gets its own, created on first use.
     let mut shell_rt: Option<tokio::runtime::Runtime> = None;
@@ -574,11 +395,9 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
                     continue;
                 }
                 let seed = escalation_seed(&history, &config, &chat_session, workspace.root());
-                esc_count += 1;
-                let esc_session = format!("chat-esc-{}-{esc_count}", now_ms());
-                let esc_path = trace_dir.join(format!("{esc_session}.jsonl"));
-                let mut esc_sink = match JsonlSink::open(&esc_path, &esc_session) {
-                    Ok(s) => s,
+                let (esc_session, _, mut esc_sink) = match create_trace_sink(&trace_dir, "chat-esc")
+                {
+                    Ok(trace) => trace,
                     Err(e) => {
                         eprintln!("cannot open escalation trace: {e}");
                         continue;
@@ -665,14 +484,14 @@ pub fn run_chat(args: ChatArgs) -> ExitCode {
             reason: "chat session ended".to_string(),
         },
     );
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ferric_core::ActionProtocol;
-    use ferric_provider::Constraint;
+    use ferric_provider::{Constraint, Provider};
 
     #[test]
     fn parse_chat_input_do_is_escalate() {
@@ -769,23 +588,9 @@ mod tests {
             Message::assistant("earlier answer"),
         ];
         let config = build_run_config(&RunConfigArgs {
-            workspace_root: std::path::PathBuf::from("."),
-            requested_skills: Vec::new(),
-            allowed_skills: Vec::new(),
-            mock: true,
             params_b: 1.0,
-            quant: "Q4_K_M".to_string(),
             family: "test".to_string(),
-            ctx: 4096,
-            temperature: 0.0,
-            protocol_override: None,
-            harness_policy: None,
-            prompts_dir: None,
-            max_ring: None,
-            tier_override: None,
-            profile_dir: PathBuf::from("benchmarks"),
-            model_key: None,
-            hooks: None,
+            ..RunConfigArgs::mock()
         })
         .unwrap();
         let workspace = tempfile::tempdir().unwrap();
@@ -809,7 +614,9 @@ mod tests {
 
     #[test]
     fn evidence_talk_is_allowed_but_do_escalation_fails_explicitly() {
-        assert!(ensure_supported_harness_policy(Some(HarnessPolicy::Evidence)).is_ok());
+        assert!(
+            crate::query::ensure_supported_harness_policy(Some(HarnessPolicy::Evidence)).is_ok()
+        );
         let error = escalation_policy_error(Some(HarnessPolicy::Evidence))
             .expect("evidence /do must not silently become legacy");
         assert!(error.contains("truthful synthetic evidence continuation"));
@@ -817,7 +624,6 @@ mod tests {
         assert_eq!(escalation_policy_error(Some(HarnessPolicy::Legacy)), None);
     }
 
-    #[cfg(feature = "backend-openai")]
     #[test]
     fn chat_effective_stream_matrix() {
         use std::sync::{Arc, Mutex};
@@ -888,23 +694,10 @@ mod tests {
                 runtime: tokio::runtime::Runtime::new().unwrap(),
             };
             let config = build_run_config(&RunConfigArgs {
-                mock: true,
-                params_b: 1.2,
-                ctx: 4096,
-                temperature: 0.0,
-                quant: "Q4_K_M".to_string(),
                 family: "test".to_string(),
-                protocol_override: None,
-                harness_policy: None,
-                prompts_dir: None,
-                max_ring: None,
-                tier_override: None,
                 profile_dir: dir.path().to_path_buf(),
-                model_key: None,
-                hooks: None,
                 workspace_root: dir.path().to_path_buf(),
-                requested_skills: Vec::new(),
-                allowed_skills: Vec::new(),
+                ..RunConfigArgs::mock()
             })
             .unwrap();
             let stream = crate::config::effective_stream(no_stream, configured);

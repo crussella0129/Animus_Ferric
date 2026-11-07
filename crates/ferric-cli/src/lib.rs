@@ -15,8 +15,8 @@
 //! - `ferric api` — HTTP API server for IDE/web/mobile integration
 //!   (Sprint 64).
 //! - `ferric trace cat <file>` — derived view of a JSONL trace.
-//! - `ferric dev` — reserved for the Development Engine (s4–s7).
 
+#[cfg(feature = "backend-openai")]
 mod api;
 mod autonomy_cmd;
 mod backend;
@@ -128,7 +128,7 @@ enum Command {
     /// Start the HTTP API server for IDE/web/mobile integration (Sprint 64)
     #[cfg(feature = "backend-openai")]
     #[command(hide = true)]
-    Api(Box<api::server::ApiArgs>),
+    Api(Box<api::ApiArgs>),
     /// Replay the 2026 localhost-agent attacks against a service (`probe`) or offline (`demo`)
     #[cfg(feature = "backend-openai")]
     #[command(hide = true)]
@@ -227,7 +227,7 @@ fn dispatch(command: Option<Command>) -> ExitCode {
         #[cfg(feature = "backend-openai")]
         Command::Api(args) => {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            rt.block_on(api::server::run_api(*args))
+            rt.block_on(api::run_api(*args))
         }
         #[cfg(feature = "backend-openai")]
         Command::Secure(args) => secure_cmd::run_secure(*args),
@@ -244,6 +244,15 @@ fn dispatch(command: Option<Command>) -> ExitCode {
             command: TraceCommand::Verify { golden },
         } => trace_verify::trace_verify(&golden),
     }
+}
+
+/// The one printing boundary for a command body: an error message is printed
+/// to stderr as-is and fails the command.
+pub(crate) fn exit_with(result: Result<ExitCode, String>) -> ExitCode {
+    result.unwrap_or_else(|message| {
+        eprintln!("{message}");
+        ExitCode::FAILURE
+    })
 }
 
 // Resolve the expert doorway before installing logging, so forwarded global

@@ -16,24 +16,16 @@ pub struct RevertArgs {
 }
 
 pub fn run_revert(args: RevertArgs) -> ExitCode {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("failed to build tokio runtime");
-
-    rt.block_on(async {
-        match revert_inner(args).await {
-            Ok(_) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("revert failed: {}", e);
-                ExitCode::FAILURE
-            }
+    match revert_inner(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("revert failed: {}", e);
+            ExitCode::FAILURE
         }
-    })
+    }
 }
 
-#[allow(clippy::collapsible_if)]
-async fn revert_inner(args: RevertArgs) -> Result<(), String> {
+fn revert_inner(args: RevertArgs) -> Result<(), String> {
     let reader = TraceReader::open(&args.trace).map_err(|e| format!("cannot open trace: {e}"))?;
     let mut session_id = String::new();
     let mut trace_workspace: Option<PathBuf> = None;
@@ -46,23 +38,20 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
         }
 
         if let ferric_trace::ParsedEvent::Known(ferric_trace::Event::SessionStart {
-            workspace,
-            ..
+            workspace, ..
         }) = &record.event
+            && trace_workspace.is_none()
         {
-            if trace_workspace.is_none() {
-                let clean_ws = workspace.strip_prefix(r"\\?\").unwrap_or(workspace);
-                let clean_ws = clean_ws.strip_prefix(r"//?/").unwrap_or(clean_ws);
-                trace_workspace = Some(PathBuf::from(clean_ws));
-            }
+            let clean_ws = workspace.strip_prefix(r"\\?\").unwrap_or(workspace);
+            let clean_ws = clean_ws.strip_prefix(r"//?/").unwrap_or(clean_ws);
+            trace_workspace = Some(PathBuf::from(clean_ws));
         }
 
         if let ferric_trace::ParsedEvent::Known(ferric_trace::Event::TurnEnd { turn, .. }) =
             record.event
+            && turn == args.turn
         {
-            if turn == args.turn {
-                target_turn_found = true;
-            }
+            target_turn_found = true;
         }
     }
 
@@ -131,7 +120,6 @@ async fn revert_inner(args: RevertArgs) -> Result<(), String> {
     Ok(())
 }
 
-#[allow(clippy::collapsible_if)]
 fn truncate_trace(path: &std::path::Path, target_turn: u32) -> Result<(), String> {
     let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
     let mut kept_lines = Vec::new();
@@ -139,17 +127,14 @@ fn truncate_trace(path: &std::path::Path, target_turn: u32) -> Result<(), String
 
     for line in content.lines() {
         kept_lines.push(line);
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) {
-            if let Some(event) = parsed.get("event") {
-                if event.get("type").and_then(|t| t.as_str()) == Some("turn_end") {
-                    if let Some(turn) = event.get("turn").and_then(|t| t.as_u64()) {
-                        if turn as u32 == target_turn {
-                            hit_target = true;
-                            break;
-                        }
-                    }
-                }
-            }
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line)
+            && let Some(event) = parsed.get("event")
+            && event.get("type").and_then(|t| t.as_str()) == Some("turn_end")
+            && let Some(turn) = event.get("turn").and_then(|t| t.as_u64())
+            && turn as u32 == target_turn
+        {
+            hit_target = true;
+            break;
         }
     }
 
