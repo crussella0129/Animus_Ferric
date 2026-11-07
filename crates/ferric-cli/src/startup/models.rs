@@ -171,16 +171,6 @@ impl LocalModel {
     }
 }
 
-/// Discover GGUFs in the workspace's conventional `models/` subdirectory — the
-/// historical entry point, unchanged. The configured, decoupled models
-/// directory goes through [`scan_dir`].
-pub(super) fn scan(
-    workspace: &Path,
-    explicit: Option<&Path>,
-) -> Result<Vec<LocalModel>, StartupError> {
-    scan_dir(&workspace.join("models"), explicit)
-}
-
 /// Discover GGUFs in an explicit models directory, decoupled from the working
 /// folder so an installed `ferric` run in any project can find them.
 pub(super) fn scan_dir(
@@ -518,8 +508,8 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         let selected = gguf(outside.path(), 99);
         symlink_directory(outside.path(), &workspace.path().join("models"));
-        assert!(scan(workspace.path(), None).is_err());
-        let models = scan(workspace.path(), Some(&selected)).unwrap();
+        assert!(scan_dir(&workspace.path().join("models"), None).is_err());
+        let models = scan_dir(&workspace.path().join("models"), Some(&selected)).unwrap();
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].choice.bytes, Some(123));
         models[0].validate().unwrap();
@@ -532,7 +522,7 @@ mod tests {
         let models_path = workspace.path().join("models");
         gguf(&models_path, 0);
         gguf(outside.path(), 777);
-        let models = scan(workspace.path(), None).unwrap();
+        let models = scan_dir(&workspace.path().join("models"), None).unwrap();
         let replacement = std::fs::rename(&models_path, workspace.path().join("old-models"));
         match replacement {
             Ok(()) => {
@@ -564,9 +554,13 @@ mod tests {
         for index in 0..ENTRY_LIMIT {
             std::fs::write(directory.join(format!("entry-{index}.txt")), b"").unwrap();
         }
-        assert!(scan(workspace.path(), None).unwrap().is_empty());
+        assert!(
+            scan_dir(&workspace.path().join("models"), None)
+                .unwrap()
+                .is_empty()
+        );
         std::fs::write(directory.join("one-too-many.txt"), b"").unwrap();
-        let error = match scan(workspace.path(), None) {
+        let error = match scan_dir(&workspace.path().join("models"), None) {
             Err(error) => error,
             Ok(_) => panic!("directory entry cap was not enforced"),
         };
@@ -578,11 +572,11 @@ mod tests {
         for index in 1..MODEL_LIMIT {
             std::fs::copy(&model, directory.join(format!("choice-{index}.gguf"))).unwrap();
         }
-        let admitted = scan(workspace.path(), None).unwrap();
+        let admitted = scan_dir(&workspace.path().join("models"), None).unwrap();
         assert_eq!(admitted.len(), MODEL_LIMIT);
         drop(admitted);
         std::fs::copy(&model, directory.join("one-too-many.gguf")).unwrap();
-        let error = match scan(workspace.path(), None) {
+        let error = match scan_dir(&workspace.path().join("models"), None) {
             Err(error) => error,
             Ok(_) => panic!("model count cap was not enforced"),
         };

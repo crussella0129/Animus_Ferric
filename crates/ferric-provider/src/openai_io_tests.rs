@@ -42,7 +42,7 @@ fn decode_chunks(
     for chunk in chunks {
         for line in decoder.push(chunk)? {
             if let SseLine::Data(data) = line {
-                acc.feed_line(&data);
+                acc.feed_line(&data).unwrap();
             }
         }
     }

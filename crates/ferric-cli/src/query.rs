@@ -3113,7 +3113,8 @@ mod tests {
         assert_eq!(
             url_host("http://example.com@evil.test/x").as_deref(),
             Ok("evil.test"),
-            "the host is what follows '@' — allowlisting example.com here would              have opened evil.test"
+            "the host is what follows '@' — allowlisting example.com here would \
+             have opened evil.test"
         );
     }
 

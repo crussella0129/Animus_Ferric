@@ -638,7 +638,7 @@ pub(crate) fn find_engine() -> Result<PathBuf, StartupError> {
     }
 }
 
-fn engine_on_path() -> Result<PathBuf, StartupError> {
+pub(crate) fn engine_on_path() -> Result<PathBuf, StartupError> {
     let paths = std::env::var_os("PATH").ok_or_else(|| StartupError::actionable("The engine search path is unavailable. Configure an existing endpoint for the selected folder."))?;
     let name = if cfg!(windows) {
         "llama-server.exe"
@@ -775,7 +775,15 @@ pub(crate) fn describe(
             path.extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf"))
         });
-        models::scan(workspace, explicit_model.or(configured))?
+        // The same folder `ferric run` resolves, so explain lists the models
+        // a session would offer (sprint 129, D-7).
+        let models_dir = resolve_models_dir(
+            None,
+            &|key| std::env::var(key).ok(),
+            config.models_dir.as_deref(),
+            workspace,
+        );
+        models::scan_dir(&models_dir, explicit_model.or(configured))?
             .into_iter()
             .map(|model| model.choice)
             .collect()

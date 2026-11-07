@@ -189,7 +189,8 @@ impl OpenAiProvider {
             // saw, so refuse before any network I/O (INT-0011 AC-4).
             Some(Constraint::Regex(_)) => {
                 return Err(ProviderError::InvalidRequest(
-                    "a regex constraint cannot be transmitted to an OpenAI-compatible                      backend; refusing to send an unconstrained request"
+                    "a regex constraint cannot be transmitted to an OpenAI-compatible \
+                     backend; refusing to send an unconstrained request"
                         .to_string(),
                 ));
             }
@@ -412,7 +413,7 @@ impl Provider for OpenAiProvider {
             {
                 for line in decoder.push(&bytes)? {
                     match line {
-                        SseLine::Data(data) => acc.feed_line(&data),
+                        SseLine::Data(data) => acc.feed_line(&data)?,
                         SseLine::Done => return Ok(acc.finish()),
                         SseLine::Ignored => {}
                     }
@@ -541,10 +542,17 @@ impl<'a> StreamAccumulator<'a> {
 
     /// Feed one SSE `data:` line's JSON payload (the text after `data:`, not
     /// including the `[DONE]` sentinel, which the caller handles separately).
-    fn feed_line(&mut self, line: &str) {
+    /// An in-band `{"error": …}` event ends the stream as a backend error, as
+    /// the valve also treats it.
+    fn feed_line(&mut self, line: &str) -> Result<(), ProviderError> {
         let Ok(chunk) = serde_json::from_str::<serde_json::Value>(line) else {
-            return; // malformed/ignorable line
+            return Ok(()); // malformed/ignorable line
         };
+        if let Some(error) = chunk.get("error") {
+            return Err(ProviderError::Backend(format!(
+                "stream error event: {error}"
+            )));
+        }
         let choice = &chunk["choices"][0];
         let delta = &choice["delta"];
 
@@ -589,6 +597,7 @@ impl<'a> StreamAccumulator<'a> {
                 self.output_tokens = Some(v as u32);
             }
         }
+        Ok(())
     }
 
     /// Finalize accumulation into the same `Completion` shape `complete()`
@@ -976,9 +985,24 @@ mod tests {
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
         let mut acc = StreamAccumulator::new(constrained, &sink);
         for line in lines {
-            acc.feed_line(line);
+            acc.feed_line(line).unwrap();
         }
         (acc.finish(), deltas.into_inner().unwrap())
+    }
+
+    /// D-4 (sprint 129): an in-band SSE error event is a backend error, not
+    /// a silently empty completion.
+    #[test]
+    fn stream_error_event_is_a_backend_error() {
+        let sink = |_: StreamDelta| {};
+        let mut acc = StreamAccumulator::new(false, &sink);
+        acc.feed_line(r#"{"choices":[{"delta":{"content":"par"}}]}"#)
+            .unwrap();
+        let error = acc
+            .feed_line(r#"{"error":{"message":"context exceeded"}}"#)
+            .unwrap_err();
+        assert!(!error.is_retryable());
+        assert!(error.to_string().contains("context exceeded"), "{error}");
     }
 
     /// T-3703: `delta.content`-only SSE lines (`NativeTools`/`TextXml` shape)

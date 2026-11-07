@@ -40,7 +40,10 @@ pub(crate) fn no_progress_warn_message(repeated: &[&str]) -> Message {
 
 pub(crate) fn oscillation_warn_message() -> Message {
     Message::user(
-        "You are cycling between the same few tool calls without making          progress. Their results will not change if you repeat them. Use what          you already have to take a DIFFERENT next step, or call task_complete          if the task is done.",
+        "You are cycling between the same few tool calls without making \
+         progress. Their results will not change if you repeat them. Use what \
+         you already have to take a DIFFERENT next step, or call task_complete \
+         if the task is done.",
     )
 }
 
@@ -491,7 +494,13 @@ impl TraceProjector {
                 if truncated {
                     self.truncated_once = true;
                 }
-                if proposed.is_empty() && stop_reason.is_none() && !completion_was_blocked {
+                // A truncated turn gets the truncation nudge; the live loop
+                // does not spend the empty-completion nudge on it.
+                if proposed.is_empty()
+                    && stop_reason.is_none()
+                    && !completion_was_blocked
+                    && !truncated
+                {
                     self.nudged_for_no_action = true;
                 }
                 if !proposed.is_empty() && stop_reason != Some("needs_input") {

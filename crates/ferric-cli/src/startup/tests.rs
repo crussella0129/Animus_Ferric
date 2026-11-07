@@ -542,6 +542,25 @@ fn startup_explain_is_read_only() {
     );
 }
 
+/// D-7 (sprint 129): explain lists the models in the folder `ferric run`
+/// resolves, here a configured `models_dir` outside the workspace.
+#[test]
+fn startup_explain_lists_the_resolved_models_folder() {
+    let workspace = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let models = model_fixture(external.path())
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let config = Config {
+        models_dir: Some(models),
+        ..Config::default()
+    };
+    let description = describe(workspace.path(), &config, None).unwrap();
+    assert_eq!(description.local_models.len(), 1);
+    assert!(!workspace.path().join(".ferric").exists());
+}
+
 #[test]
 fn metadata_does_not_promote_authority() {
     let parsed = probe::parse_models(

@@ -352,3 +352,59 @@ fn mixed_clarification_turn_executes_no_sibling_mutation() {
         .count();
     assert_eq!(error_results, 2);
 }
+
+/// D-8 (sprint 129): a truncated turn is nudged as a truncation, not as an
+/// empty completion. Live runs never mark the empty-completion nudge as used
+/// after it, so a resumed run must not either, or its next unparseable reply
+/// would stop where the live run would still nudge once.
+#[test]
+fn a_truncated_turn_does_not_spend_the_empty_completion_nudge_on_resume() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new(dir.path()).unwrap();
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+    let policy = nano_policy();
+    let trace = dir.path().join("truncated.jsonl");
+    let mut sink = JsonlSink::open(&trace, "truncated-1").unwrap();
+    let provider = MockProvider::new(vec![
+        truncated_completion(),
+        json_completion(json!({
+            "thought": "ask",
+            "tool": ferric_iron::terminator::REQUEST_USER_INPUT,
+            "args": request_args(),
+        })),
+    ]);
+    let sleeper = RecordingSleeper::new();
+    let outcome = futures_executor::block_on(run(
+        RunArgs {
+            provider: &provider,
+            registry: &registry,
+            workspace: &workspace,
+            policy: &policy,
+            protocol: ActionProtocol::ConstrainedJson,
+            harness_policy: None,
+            sampling: SamplingParams::default(),
+            sleeper: &sleeper,
+            system_prompt: None,
+            prompt_lineage: None,
+            media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+            answer: None,
+            cancel_flag: None,
+            provenance: ferric_guard::Provenance::Clean,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: None,
+            edit_approver: None,
+        },
+        &mut sink,
+        Some("Pick a database."),
+    ))
+    .unwrap();
+    drop(sink);
+    assert_eq!(outcome.stop, StopReason::NeedsInput);
+
+    let resumed = replay(&trace).unwrap();
+    assert!(resumed.truncated_once);
+    assert!(!resumed.nudged_for_no_action);
+}

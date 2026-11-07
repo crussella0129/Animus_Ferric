@@ -66,6 +66,21 @@ impl Engine {
             Engine::Ollama => "ollama",
         }
     }
+
+    /// What to execute: the program on PATH, else, for llama-server, the
+    /// engine `ferric setup` installed. `ferric run` searches in the same
+    /// order (sprint 128, INT-0016).
+    fn executable(self) -> std::ffi::OsString {
+        #[cfg(feature = "backend-openai")]
+        if self == Engine::LlamaServer
+            && crate::startup::engine_on_path().is_err()
+            && let Some(managed) = ferric_setup::paths::engine_root()
+                .and_then(|root| ferric_setup::engine::managed_engine(&root))
+        {
+            return managed.into_os_string();
+        }
+        self.program().into()
+    }
 }
 
 #[derive(Subcommand)]
@@ -2133,7 +2148,7 @@ struct NativeDoctorProbeEffects {
 impl DoctorProbeEffects for NativeDoctorProbeEffects {
     fn binary_present(&mut self, engine: Engine) -> bool {
         matches!(
-            Command::new(engine.program())
+            Command::new(engine.executable())
                 .arg("--version")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -3726,7 +3741,7 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         &serve,
         || generate_token().map_err(|error| error.to_string()),
         |tailscale_serve| {
-            let mut proc = Command::new(&launch.program);
+            let mut proc = Command::new(cfg.engine.executable());
             proc.args(&launch.args);
             for (k, v) in &launch.env {
                 proc.env(k, v);
