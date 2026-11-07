@@ -64,6 +64,7 @@
   - [INT-0014 — Adaptive constraint policy in the valve](intents/INT-0014-adaptive-constraint-policy.md)
   - [INT-0015 — Localhost is not a trust boundary](intents/INT-0015-localhost-is-not-a-trust-boundary.md)
   - [INT-0016 — Install, run, done](intents/INT-0016-install-run-done.md)
+  - [INT-0017 — Minimal code](intents/INT-0017-minimal-code.md)
 - [Tasks](work/tasks.md)
 - [Completed tasks](work/completed-tasks.md)
 - [Legacy decision archive](history/decisions-legacy.md)
@@ -192,3 +193,4 @@
 - [Sprint 126](sprints/s126/sprint-meta.md)
 - [Sprint 127](sprints/s127/sprint-meta.md)
 - [Sprint 128](sprints/s128/sprint-meta.md)
+- [Sprint 129](sprints/s129/sprint-meta.md)
