@@ -135,7 +135,7 @@ async fn summarize_transcript(
         tools: Vec::new(),
         constraint: None,
     };
-    let completion = complete_with_backoff(provider, request, sleeper, cancel_flag)
+    let completion = complete_with_backoff(provider, request, sleeper, None, cancel_flag)
         .await
         .map_err(|e| FerricError::Other(e.to_string()))?;
     completion
@@ -172,10 +172,9 @@ mod tests {
 
     fn summary_completion(text: &str) -> Completion {
         Completion {
-            message: Message::assistant(text),
             input_tokens: Some(20),
             output_tokens: Some(10),
-            truncated: false,
+            ..Completion::assistant_text(text)
         }
     }
 

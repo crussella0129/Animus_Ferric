@@ -21,7 +21,6 @@ pub enum TaskStatus {
     Running,
     Completed { exit_code: i32 },
     Terminated,
-    Error(String),
 }
 
 impl TaskStatus {
@@ -32,7 +31,6 @@ impl TaskStatus {
             TaskStatus::Running => "Running".to_string(),
             TaskStatus::Completed { exit_code } => format!("Completed (Exit {exit_code})"),
             TaskStatus::Terminated => "Terminated".to_string(),
-            TaskStatus::Error(e) => format!("Error: {e}"),
         }
     }
 }
@@ -172,9 +170,5 @@ mod tests {
             "Completed (Exit 3)"
         );
         assert_eq!(TaskStatus::Terminated.label(), "Terminated");
-        assert_eq!(
-            TaskStatus::Error("boom".into()).label(),
-            "Error: boom".to_string()
-        );
     }
 }

@@ -87,10 +87,7 @@ impl Tool for FetchReference {
             );
         }
 
-        let ref_root = ctx
-            .workspace
-            .resolve(REF_DIR)
-            .map_err(|e| format!("boundary: {e}"))?;
+        let ref_root = ctx.resolve(REF_DIR)?;
         if !ref_root.is_dir() {
             return Ok(format!(
                 "No reference vault for this stage (no `{REF_DIR}/` directory). Proceed without fetched references."

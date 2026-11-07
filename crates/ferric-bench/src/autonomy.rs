@@ -35,18 +35,7 @@ pub fn autonomy_bench_spec(task: &AutonomyTask, version: u32) -> BenchSpec {
         expected_tools: vec!["task_complete".to_string()],
         any_of_tools: Vec::new(),
         forbidden_tools: Vec::new(),
-        checks: task
-            .checks
-            .iter()
-            .map(|check| CommandCheck {
-                name: check.name.clone(),
-                argv: check.argv.clone(),
-                expected_exit: check.expected_exit,
-                stdout_regex: check.stdout_regex.clone(),
-                stderr_regex: check.stderr_regex.clone(),
-                timeout_s: check.timeout_s,
-            })
-            .collect(),
+        checks: task.checks.clone(),
         max_turns: task.max_turns,
         timeout_s: task.timeout_s,
     }
@@ -78,6 +67,17 @@ pub enum PolicyVariant {
     RepositoryBrief,
 }
 
+impl PolicyVariant {
+    /// The serialized (snake_case) name recorded in result rows.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Recovery => "recovery",
+            Self::RepositoryBrief => "repository_brief",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AutonomyTask {
@@ -94,7 +94,7 @@ pub struct AutonomyTask {
     pub clarification: Option<ClarificationContract>,
     #[serde(default)]
     pub recovery: Option<RecoveryContract>,
-    pub checks: Vec<AutonomyCheck>,
+    pub checks: Vec<CommandCheck>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,6 +103,17 @@ pub enum AutonomyCategory {
     Ambiguity,
     Recovery,
     LongHorizon,
+}
+
+impl AutonomyCategory {
+    /// The serialized (snake_case) name recorded in result rows.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ambiguity => "ambiguity",
+            Self::Recovery => "recovery",
+            Self::LongHorizon => "long_horizon",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -129,6 +140,18 @@ pub enum TerminalOutcome {
     NeedsInput,
     Paused,
     ResumeRejected,
+}
+
+impl TerminalOutcome {
+    /// The serialized (snake_case) name recorded in result rows.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::NeedsInput => "needs_input",
+            Self::Paused => "paused",
+            Self::ResumeRejected => "resume_rejected",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -180,63 +203,26 @@ pub struct RecoveryInjection {
     /// One-based process segment in which the harness injects the stop.
     pub segment: u32,
     pub kind: RecoveryInjectionKind,
-    /// Required only for `process_crash`; absent for logical pause injection.
-    #[serde(default)]
-    pub point: Option<CrashPoint>,
 }
 
+/// Deterministic logical stops the runner can inject into a segment.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RecoveryInjectionKind {
-    ProcessCrash,
     ProviderFailure,
     BudgetExhaustion,
-    GuardPause,
     ClarificationPause,
 }
 
 impl RecoveryInjectionKind {
-    /// Exact trace stop reason required for a logical injection. A true
-    /// process crash has no terminal trace event, so its reason is `None`.
-    pub const fn expected_stop_reason(self) -> Option<&'static str> {
+    /// Exact trace stop reason required for this injection.
+    pub const fn expected_stop_reason(self) -> &'static str {
         match self {
-            Self::ProcessCrash => None,
-            Self::ProviderFailure => Some("provider_error"),
-            Self::BudgetExhaustion => Some("max_turns"),
-            Self::GuardPause => Some("repetition_guard"),
-            Self::ClarificationPause => Some("needs_input"),
+            Self::ProviderFailure => "provider_error",
+            Self::BudgetExhaustion => "max_turns",
+            Self::ClarificationPause => "needs_input",
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CrashPoint {
-    BeforeDispatch,
-    AfterMutation,
-    AfterToolResult,
-    AfterTurnCommitted,
-}
-
-/// A trusted check launched directly without a shell. `argv[0]` is a literal
-/// executable or the sole supported executable placeholder, `{python}`.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct AutonomyCheck {
-    pub name: String,
-    pub argv: Vec<String>,
-    #[serde(default)]
-    pub expected_exit: i32,
-    #[serde(default)]
-    pub stdout_regex: Option<String>,
-    #[serde(default)]
-    pub stderr_regex: Option<String>,
-    #[serde(default = "default_check_timeout_s")]
-    pub timeout_s: u64,
-}
-
-const fn default_check_timeout_s() -> u64 {
-    30
 }
 
 #[derive(Debug)]
@@ -523,25 +509,11 @@ fn validate_recovery_task(task: &AutonomyTask) -> Result<(), AutonomySuiteError>
                 task.id, injection.segment
             ));
         }
-        match injection.kind {
-            RecoveryInjectionKind::ProcessCrash if injection.point.is_none() => {
-                return invalid(format!(
-                    "{} process_crash injection requires a crash point",
-                    task.id
-                ));
-            }
-            RecoveryInjectionKind::ProcessCrash => {}
-            _ if injection.point.is_some() => {
-                return invalid(format!(
-                    "{} non-crash injection cannot declare a crash point",
-                    task.id
-                ));
-            }
-            RecoveryInjectionKind::ClarificationPause => needs_answer = true,
-            _ => {}
-        }
         let expected = match injection.kind {
-            RecoveryInjectionKind::ClarificationPause => TerminalOutcome::NeedsInput,
+            RecoveryInjectionKind::ClarificationPause => {
+                needs_answer = true;
+                TerminalOutcome::NeedsInput
+            }
             _ => TerminalOutcome::Paused,
         };
         if task.terminal.resumable_outcomes[(injection.segment - 1) as usize] != expected {
@@ -843,48 +815,20 @@ mod tests {
                 .refusal_modes
                 .contains(&ResumeRefusalMode::CompletedSession)
         }));
-        assert!(
-            recovery
-                .iter()
-                .flat_map(|contract| &contract.injections)
-                .all(|injection| {
-                    !matches!(
-                        injection.kind,
-                        RecoveryInjectionKind::ProcessCrash | RecoveryInjectionKind::GuardPause
-                    ) && injection.kind.expected_stop_reason().is_some()
-                })
-        );
     }
 
     #[test]
     fn every_untouched_repository_fails_its_authoritative_grade() {
-        let python = std::env::var_os("FERRIC_TEST_PYTHON")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("python"));
-        let mut command = std::process::Command::new(&python);
-        command.arg("--version").stdin(std::process::Stdio::null());
-        let available = crate::process::run_bounded(
-            &mut command,
-            std::time::Duration::from_secs(10),
-            crate::process::CapturePlan::discard(),
-        )
-        .is_ok_and(|outcome| !outcome.timed_out && outcome.exit_code == Some(0));
-        if !available {
+        let Some(python) = crate::verify::available_python() else {
             eprintln!("python is unavailable; autonomy discrimination test skipped");
             return;
-        }
+        };
 
         let suite = embedded_autonomy_suite().unwrap();
         let mut unexpected_passes = Vec::new();
         for task in &suite.tasks {
             let workspace = tempfile::tempdir().unwrap();
-            for (relative, content) in &task.setup_files {
-                let path = workspace.path().join(relative);
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).unwrap();
-                }
-                std::fs::write(path, content).unwrap();
-            }
+            crate::runner::materialize_setup_files(workspace.path(), &task.setup_files).unwrap();
             let spec = autonomy_bench_spec(task, suite.schema_version);
             let results = crate::verify::verify_command_checks(workspace.path(), &spec, &python);
             assert_eq!(results.len(), 1, "{} did not execute one grade", task.id);
@@ -969,9 +913,8 @@ mod tests {
 
         let mut suite = embedded_autonomy_suite().unwrap();
         let recovery = suite.tasks[8].recovery.as_mut().unwrap();
-        recovery.injections[0].kind = RecoveryInjectionKind::ProcessCrash;
-        recovery.injections[0].point = None;
-        assert!(validation_message(&suite).contains("requires a crash point"));
+        recovery.injections[0].kind = RecoveryInjectionKind::ClarificationPause;
+        assert!(validation_message(&suite).contains("does not match its injection"));
 
         let mut suite = embedded_autonomy_suite().unwrap();
         suite.tasks[14]

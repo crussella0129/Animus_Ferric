@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Source-test containment and helpers for dependent crates' tests.
+testing = []
+
 [dependencies]
 tempfile = { workspace = true }
 

@@ -14,10 +14,7 @@ fn model_fixture(workspace: &Path) -> PathBuf {
     let directory = workspace.join("models");
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join("fixture.gguf");
-    let mut header = [0_u8; 24];
-    header[..4].copy_from_slice(b"GGUF");
-    header[4..8].copy_from_slice(&3_u32.to_le_bytes());
-    std::fs::write(&path, header).unwrap();
+    test_support::write_gguf(&path, 0);
     path
 }
 
@@ -87,14 +84,8 @@ fn default_models_dir_prefers_the_project_then_ferrics_data_folder() {
 }
 
 fn fixture_command(mode: &str, port: u16) -> Command {
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = ferric_process::testing::harness_command("startup::tests::fixture_engine");
     command
-        .args([
-            "--exact",
-            "startup::tests::fixture_engine",
-            "--nocapture",
-            "--test-threads=1",
-        ])
         .env("FERRIC_STARTUP_FIXTURE", mode)
         .env("FERRIC_STARTUP_FIXTURE_PORT", port.to_string());
     command
@@ -542,6 +533,25 @@ fn startup_explain_is_read_only() {
     );
 }
 
+/// D-7 (sprint 129): explain lists the models in the folder `ferric run`
+/// resolves, here a configured `models_dir` outside the workspace.
+#[test]
+fn startup_explain_lists_the_resolved_models_folder() {
+    let workspace = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let models = model_fixture(external.path())
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let config = Config {
+        models_dir: Some(models),
+        ..Config::default()
+    };
+    let description = describe(workspace.path(), &config, None).unwrap();
+    assert_eq!(description.local_models.len(), 1);
+    assert!(!workspace.path().join(".ferric").exists());
+}
+
 #[test]
 fn metadata_does_not_promote_authority() {
     let parsed = probe::parse_models(
@@ -644,7 +654,7 @@ fn startup_concurrent_invocations_serialize() {
         }
     }
 
-    crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
+    ferric_process::testing::contain_current_process().unwrap();
     let workspace = tempfile::tempdir().unwrap();
     model_fixture(workspace.path());
     std::fs::create_dir(workspace.path().join(".ferric")).unwrap();

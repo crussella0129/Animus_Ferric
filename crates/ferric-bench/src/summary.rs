@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::budget::{AttemptBudgetReference, AttemptIdentity, BudgetControls, RunBudgetEvidence};
-use crate::results::ResultRow;
+use crate::provenance::{sha256_file, system_time_unix_ms};
+use crate::results::{ResultRow, write_pretty};
 use crate::verify::CommandCheckStatus;
 
 pub const SUMMARY_SCHEMA_VERSION: u32 = 1;
@@ -130,7 +131,7 @@ pub struct LevelSummary {
     pub failure_counts: BTreeMap<String, u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BinaryProvenance {
     pub path: String,
     pub size_bytes: Option<u64>,
@@ -139,7 +140,25 @@ pub struct BinaryProvenance {
     pub sha256: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+impl BinaryProvenance {
+    /// Best-effort identity of the binary at `path`, canonicalized when it
+    /// resolves; unreadable facts are recorded as unknown.
+    pub fn inspect(path: &Path) -> Self {
+        let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let metadata = std::fs::metadata(&path).ok();
+        Self {
+            path: path.display().to_string(),
+            size_bytes: metadata.as_ref().map(std::fs::Metadata::len),
+            modified_at_unix_ms: metadata
+                .as_ref()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(system_time_unix_ms),
+            sha256: sha256_file(&path).ok(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ModelProvenance {
     pub backend: String,
     pub model: Option<String>,
@@ -153,7 +172,7 @@ pub struct ModelProvenance {
     pub sha256: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct RunProvenance {
     pub ferric_version: String,
     /// Populated only when the build supplies a commit environment variable.
@@ -320,7 +339,7 @@ pub fn summarize_run(
         .collect();
     let eligible = full_ladder && complete && infrastructure_clean;
     let measured_level = eligible
-        .then(|| contiguous_prefix(&qualified_levels))
+        .then(|| longest_prefix(|level| qualified_levels.contains(&level)))
         .flatten();
     let ineligible_reason = if !full_ladder {
         Some("partial ladder".to_string())
@@ -400,11 +419,7 @@ pub fn summarize_run(
 }
 
 pub fn write_summary(dir: &Path, summary: &RunSummary) -> std::io::Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
-    let path = dir.join(&summary.calibration.summary_file);
-    let text = serde_json::to_string_pretty(summary).map_err(std::io::Error::other)?;
-    std::fs::write(&path, text)?;
-    Ok(path)
+    write_pretty(dir, &summary.calibration.summary_file, summary)
 }
 
 pub fn required_passes(trials: u32, min_pass_rate: f64) -> u32 {
@@ -518,19 +533,13 @@ fn complete_trial_count(run_id: &str, expected_levels: &[u8], rows: &[&ResultRow
         .count() as u32
 }
 
-fn contiguous_prefix(qualified_levels: &[u8]) -> Option<u8> {
-    let qualified: BTreeSet<u8> = qualified_levels.iter().copied().collect();
-    let mut level = 0_u8;
-    while qualified.contains(&level) {
-        if level == u8::MAX {
-            return Some(level);
-        }
-        level += 1;
-    }
-    level.checked_sub(1)
+/// The highest level `L` such that every level `0..=L` qualifies, or `None`
+/// when level 0 does not. A pass above a failed or absent rung never counts.
+pub fn longest_prefix(qualified: impl Fn(u8) -> bool) -> Option<u8> {
+    (0..=u8::MAX).take_while(|level| qualified(*level)).last()
 }
 
-fn increment(counts: &mut BTreeMap<String, u32>, key: &str) {
+pub(crate) fn increment(counts: &mut BTreeMap<String, u32>, key: &str) {
     *counts.entry(key.to_string()).or_default() += 1;
 }
 
@@ -544,9 +553,6 @@ mod tests {
             trial_id: Some(trial.to_string()),
             started_at_unix_ms: Some(1),
             finished_at_unix_ms: Some(2),
-            trace_path: None,
-            budget: None,
-            infrastructure_error: None,
             level,
             spec_version: 1,
             level_name: format!("L{level}"),
@@ -554,49 +560,36 @@ mod tests {
             protocol: "ConstrainedJson".to_string(),
             model: Some("model".to_string()),
             completed,
-            timed_out: false,
             exit_code: Some(0),
             turns: 1,
             input_tokens: 2,
             output_tokens: 3,
             wall_ms,
             terminator: Some("task_complete".to_string()),
-            tier_observed: None,
-            protocol_observed: None,
-            repetition_guard_fires: 0,
-            tools_called: Vec::new(),
-            task_complete_summary: None,
-            failure_admission: None,
-            plan_steps: None,
             expectations_ok: true,
             tools_ok: true,
-            command_checks: Vec::new(),
             tier_from_params: "Nano".to_string(),
-            stderr_tail: String::new(),
+            ..Default::default()
         }
     }
 
     fn provenance() -> RunProvenance {
         RunProvenance {
             ferric_version: "0.1.0".to_string(),
-            git_commit: None,
             binary: BinaryProvenance {
                 path: "ferric".to_string(),
-                size_bytes: None,
-                modified_at_unix_ms: None,
-                sha256: None,
+                ..Default::default()
             },
             model: ModelProvenance {
                 backend: "mock".to_string(),
-                model: None,
-                api_base: None,
                 params_b: 1.2,
                 ctx: 4096,
-                sha256: None,
+                ..Default::default()
             },
             protocol: "ConstrainedJson".to_string(),
             variant: "test".to_string(),
             python_bin: "python".to_string(),
+            ..Default::default()
         }
     }
 
@@ -729,15 +722,6 @@ mod tests {
                 crate::calibrate_from_evidence("model", 1.2, "ConstrainedJson", &altered).is_none(),
                 "an explicit diagnostic flag remains restrictive when coordinates are unavailable"
             );
-
-            let legacy_entry = crate::calibrate("model", 1.2, "ConstrainedJson", &rows);
-            assert_eq!(legacy_entry.measured_level, None);
-            assert_eq!(legacy_entry.tier_from_measured, None);
-            assert_eq!(
-                crate::highest_completed_level(&rows),
-                Some(6),
-                "raw observed outcomes remain available"
-            );
         }
     }
 
@@ -761,10 +745,6 @@ mod tests {
             assert_eq!(
                 record.tier_from_measured,
                 Some(format!("{:?}", ferric_core::tier_for_level(6)))
-            );
-            assert_eq!(
-                crate::calibrate("model", 1.2, "ConstrainedJson", &rows).measured_level,
-                Some(6)
             );
             if controls.is_none() {
                 assert!(summary.calibration.budget_controls.is_none());
@@ -883,6 +863,16 @@ mod tests {
         assert_eq!(budget.attempts.len(), 1);
         assert_eq!(budget.attempts[0].identity, reference.identity);
         assert_eq!(budget.attempts[0].retained.as_ref(), Some(&reference));
+    }
+
+    #[test]
+    fn longest_prefix_stops_at_the_first_failed_or_missing_level() {
+        let prefix = |levels: &[u8]| longest_prefix(|level| levels.contains(&level));
+        assert_eq!(prefix(&[]), None);
+        assert_eq!(prefix(&[1, 2]), None, "a failed L0 has no measured level");
+        assert_eq!(prefix(&[0, 1, 3]), Some(1));
+        assert_eq!(prefix(&[0, 1, 2, 3, 4]), Some(4));
+        assert_eq!(longest_prefix(|_| true), Some(u8::MAX));
     }
 
     #[test]

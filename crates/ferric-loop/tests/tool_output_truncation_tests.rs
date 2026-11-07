@@ -18,7 +18,7 @@ use common::*;
 use ferric_core::{ActionProtocol, Message, ModelProfile, Role, RunPolicy, policy_for};
 use ferric_guard::Workspace;
 use ferric_loop::{RunArgs, replay, run};
-use ferric_provider::{MockProvider, SamplingParams};
+use ferric_provider::MockProvider;
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::JsonlSink;
 use serde_json::json;
@@ -158,25 +158,8 @@ fn context_window_from_run_and_from_replay(cap: usize) -> (Vec<Message>, Vec<Mes
     let sleeper = RecordingSleeper::new();
     futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &large_policy(),
             protocol: ActionProtocol::ConstrainedJson,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &large_policy(), &sleeper)
         },
         &mut sink,
         Some("do the task"),
@@ -199,7 +182,7 @@ fn context_window_from_run_and_from_replay(cap: usize) -> (Vec<Message>, Vec<Mes
     );
     std::fs::write(&trace_path, lines.join("\n") + "\n").unwrap();
 
-    let from_replay = replay(&trace_path).unwrap().messages;
+    let from_replay = replay(&trace_path).unwrap().core.messages;
     (from_run, from_replay)
 }
 

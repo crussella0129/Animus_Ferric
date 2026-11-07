@@ -13,10 +13,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::{Builder, NamedTempFile};
 
-use crate::server::{ServerRunfile, runfile_path};
-
-const LEGACY_SCHEMA_VERSION: u8 = 1;
-const IDENTITY_SCHEMA_VERSION: u8 = 2;
+use crate::server::{RUNFILE_SCHEMA_V1, RUNFILE_SCHEMA_V2, ServerRunfile, runfile_path};
 
 /// The role a registration path plays in lifecycle resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +31,18 @@ pub(crate) enum RegistrationScope {
 pub(crate) struct RegistrationCoordinate {
     pub(crate) scope: RegistrationScope,
     pub(crate) path: PathBuf,
+}
+
+/// `<scope> registration <path>`, the label every diagnostic uses.
+impl fmt::Display for RegistrationCoordinate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} registration {}",
+            self.scope,
+            self.path.display()
+        )
+    }
 }
 
 impl fmt::Display for RegistrationScope {
@@ -76,6 +85,24 @@ pub(crate) struct CapturedRegistration {
     pub(crate) path: PathBuf,
     pub(crate) raw: Vec<u8>,
     pub(crate) runfile: ServerRunfile,
+}
+
+/// Order coordinates by path, then scope name, for stable diagnostics.
+pub(crate) fn sort_coordinates(coordinates: &mut [RegistrationCoordinate]) {
+    coordinates.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then_with(|| left.scope.to_string().cmp(&right.scope.to_string()))
+    });
+}
+
+impl CapturedRegistration {
+    pub(crate) fn coordinate(&self) -> RegistrationCoordinate {
+        RegistrationCoordinate {
+            scope: self.scope,
+            path: self.path.clone(),
+        }
+    }
 }
 
 /// State of one configured registration slot.
@@ -129,7 +156,7 @@ pub(crate) fn inventory_runfiles(
         .iter()
         .filter_map(|slot| match slot {
             RegistrationSlot::Captured(captured)
-                if captured.runfile.schema_version == IDENTITY_SCHEMA_VERSION =>
+                if captured.runfile.schema_version == RUNFILE_SCHEMA_V2 =>
             {
                 let origin = captured
                     .runfile
@@ -137,10 +164,7 @@ pub(crate) fn inventory_runfiles(
                     .as_deref()
                     .expect("validated schema-v2 registration has an origin");
                 Some(PromisedOriginRegistration {
-                    source: RegistrationCoordinate {
-                        scope: captured.scope,
-                        path: captured.path.clone(),
-                    },
+                    source: captured.coordinate(),
                     expected_runfile: captured.runfile.clone(),
                     slot: capture_registration_path(RegistrationScope::Origin, origin),
                 })
@@ -302,7 +326,7 @@ struct WideRunfileEnvelope {
 }
 
 const fn legacy_schema_version_u64() -> u64 {
-    LEGACY_SCHEMA_VERSION as u64
+    RUNFILE_SCHEMA_V1 as u64
 }
 
 /// Recover schema-level numeric range violations from an otherwise
@@ -318,7 +342,7 @@ fn schema_envelope_invalidity(raw: &[u8]) -> Option<String> {
     if version > u64::from(u8::MAX) {
         return Some(format!("unsupported schema version {version}"));
     }
-    if version != u64::from(IDENTITY_SCHEMA_VERSION) {
+    if version != u64::from(RUNFILE_SCHEMA_V2) {
         return None;
     }
     for (field, coordinate, maximum) in [
@@ -340,7 +364,7 @@ pub(crate) fn validate_runfile(
     runfile: &ServerRunfile,
 ) -> Result<(), String> {
     match runfile.schema_version {
-        LEGACY_SCHEMA_VERSION => {
+        RUNFILE_SCHEMA_V1 => {
             if runfile.process_identity.is_some()
                 || runfile.origin_local_runfile.is_some()
                 || runfile.tailscale_serve.is_some()
@@ -351,7 +375,7 @@ pub(crate) fn validate_runfile(
                 );
             }
         }
-        IDENTITY_SCHEMA_VERSION => {
+        RUNFILE_SCHEMA_V2 => {
             if runfile.pid == 0 {
                 return Err("schema 2 requires a nonzero pid".to_string());
             }
@@ -457,101 +481,6 @@ fn paths_match(left: &Path, right: &Path) -> bool {
     match (fs::canonicalize(left), fs::canonicalize(right)) {
         (Ok(left), Ok(right)) => left == right,
         _ => absolute_path(left).ok() == absolute_path(right).ok(),
-    }
-}
-
-/// Why the inventory cannot be reduced to one legacy-compatible record.
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SelectionError {
-    Blocked {
-        scope: RegistrationScope,
-        path: PathBuf,
-        reason: RegistrationBlock,
-    },
-    Conflict {
-        local: PathBuf,
-        global: PathBuf,
-    },
-}
-
-#[cfg(test)]
-impl fmt::Display for SelectionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Blocked {
-                scope,
-                path,
-                reason,
-            } => write!(
-                formatter,
-                "{scope} server registration at {} is blocked: {reason}",
-                path.display()
-            ),
-            Self::Conflict { local, global } => write!(
-                formatter,
-                "local registration {} conflicts with global registration {}",
-                local.display(),
-                global.display()
-            ),
-        }
-    }
-}
-
-#[cfg(test)]
-impl std::error::Error for SelectionError {}
-
-/// Select a unique record for non-destructive legacy consumers.
-///
-/// A blocked configured slot fails closed. Two captures are the same logical
-/// registration only when their exact bytes match or both are schema-v2 and
-/// parse to the same complete record. Identity equality alone is insufficient:
-/// different ports, URLs, or launch metadata remain a discovery conflict.
-#[cfg(test)]
-pub(crate) fn select_unique(
-    inventory: &RegistrationInventory,
-) -> Result<Option<&CapturedRegistration>, SelectionError> {
-    fn classify(slot: &RegistrationSlot) -> Result<Option<&CapturedRegistration>, SelectionError> {
-        match slot {
-            RegistrationSlot::Absent { .. } => Ok(None),
-            RegistrationSlot::Blocked {
-                scope,
-                path,
-                reason,
-            } => Err(SelectionError::Blocked {
-                scope: *scope,
-                path: path.clone(),
-                reason: reason.clone(),
-            }),
-            RegistrationSlot::Captured(captured) => Ok(Some(captured)),
-        }
-    }
-
-    let local = classify(&inventory.local)?;
-    let global = inventory
-        .global
-        .as_ref()
-        .map(classify)
-        .transpose()?
-        .flatten();
-    match (local, global) {
-        (None, None) => Ok(None),
-        (Some(captured), None) | (None, Some(captured)) => Ok(Some(captured)),
-        (Some(local), Some(global)) => {
-            let exact_duplicate = local.raw == global.raw;
-            let same_v2_record = local.runfile.schema_version == IDENTITY_SCHEMA_VERSION
-                && global.runfile.schema_version == IDENTITY_SCHEMA_VERSION
-                && local.runfile.process_identity.is_some()
-                && local.runfile == global.runfile;
-            if exact_duplicate || same_v2_record {
-                Ok(Some(local))
-            } else {
-                Err(SelectionError::Conflict {
-                    local: local.path.clone(),
-                    global: global.path.clone(),
-                })
-            }
-        }
     }
 }
 
@@ -772,44 +701,11 @@ pub(crate) fn publish_mirrored(
     )
 }
 
-/// Persistence boundary used by publication fault matrices. The production
-/// implementation below still performs every filesystem operation; scripted
+/// Persistence boundary used by publication fault matrices. The default
+/// methods perform every native filesystem operation; scripted
 /// implementations can fail one exact phase without replacing the atomic
 /// no-clobber algorithm with an in-memory imitation.
 pub(crate) trait PersistenceEffects {
-    fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>>;
-
-    fn create_stage(&mut self, final_path: &Path, parent: &Path) -> io::Result<NamedTempFile>;
-
-    fn write_all(
-        &mut self,
-        final_path: &Path,
-        stage: &mut NamedTempFile,
-        raw: &[u8],
-    ) -> io::Result<()>;
-
-    fn flush(&mut self, final_path: &Path, stage: &mut NamedTempFile) -> io::Result<()>;
-
-    fn sync_file(&mut self, final_path: &Path, stage: &NamedTempFile) -> io::Result<()>;
-
-    fn persist_noclobber(
-        &mut self,
-        final_path: &Path,
-        stage: NamedTempFile,
-    ) -> Result<(), StagePersistError>;
-
-    fn sync_parent(&mut self, final_path: &Path, parent: &Path) -> io::Result<()>;
-}
-
-#[derive(Debug)]
-pub(crate) struct StagePersistError {
-    pub(crate) error: io::Error,
-    pub(crate) stage: NamedTempFile,
-}
-
-struct NativePersistenceEffects;
-
-impl PersistenceEffects for NativePersistenceEffects {
     fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>> {
         serde_json::to_vec_pretty(runfile)
     }
@@ -855,6 +751,16 @@ impl PersistenceEffects for NativePersistenceEffects {
         sync_parent_directory(parent)
     }
 }
+
+#[derive(Debug)]
+pub(crate) struct StagePersistError {
+    pub(crate) error: io::Error,
+    pub(crate) stage: NamedTempFile,
+}
+
+pub(crate) struct NativePersistenceEffects;
+
+impl PersistenceEffects for NativePersistenceEffects {}
 
 /// Serialize once and publish through an injectable phase boundary. This is
 /// crate-visible so launch compensation tests can use the real publication
@@ -1452,81 +1358,28 @@ where
     R: FnOnce(&Path, &[u8]) -> Result<(), PersistFailure>,
 {
     let original = &captured.path;
-    let metadata = match fs::symlink_metadata(original) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(ReplacementOutcome::Absent);
-        }
-        Err(error) => {
-            return Err(ReplacementError {
-                path: original.clone(),
-                detail: format!("inspect current entry: {error}"),
-                preserved_at: None,
-                replacement_committed: false,
-            });
-        }
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(ReplacementError {
-            path: original.clone(),
-            detail: "current entry is not a regular non-symlink file".to_string(),
-            preserved_at: None,
-            replacement_committed: false,
-        });
-    }
-
-    let parent = original.parent().ok_or_else(|| ReplacementError {
-        path: original.clone(),
-        detail: "registration path has no parent".to_string(),
-        preserved_at: None,
-        replacement_committed: false,
-    })?;
-    let holding_dir = Builder::new()
-        .prefix(".server-registration-replace-")
-        .tempdir_in(parent)
-        .map_err(|error| ReplacementError {
-            path: original.clone(),
-            detail: format!("create same-parent holding directory: {error}"),
-            preserved_at: None,
-            replacement_committed: false,
-        })?;
-    let moved = holding_dir.path().join("registration");
-    match fs::rename(original, &moved) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(ReplacementOutcome::Absent);
-        }
-        Err(error) => {
-            return Err(ReplacementError {
-                path: original.clone(),
-                detail: format!("atomically move into holding directory: {error}"),
-                preserved_at: None,
-                replacement_committed: false,
-            });
-        }
-    }
-
-    after_rename(original);
-
-    let moved_metadata = match fs::symlink_metadata(&moved) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            let preserved = keep_holding_dir(holding_dir, "registration");
-            return Err(ReplacementError {
-                path: original.clone(),
-                detail: format!("inspect atomically moved entry: {error}"),
-                preserved_at: Some(preserved),
-                replacement_committed: false,
-            });
-        }
-    };
-    if moved_metadata.file_type().is_symlink() || !moved_metadata.is_file() {
-        let preserved = keep_holding_dir(holding_dir, "registration");
-        return Ok(ReplacementOutcome::ReplacementPreserved {
-            path: preserved,
-            detail: "atomically moved entry is not a regular non-symlink file".to_string(),
-        });
-    }
+    let (holding_dir, moved) =
+        match isolate_regular_entry(original, ".server-registration-replace-", after_rename) {
+            Ok(Isolation::Absent) => return Ok(ReplacementOutcome::Absent),
+            Ok(Isolation::NonRegular(path)) => {
+                return Ok(ReplacementOutcome::ReplacementPreserved {
+                    path,
+                    detail: MOVED_ENTRY_NOT_REGULAR.to_string(),
+                });
+            }
+            Ok(Isolation::Isolated { holding_dir, moved }) => (holding_dir, moved),
+            Err(IsolationFailure {
+                detail,
+                preserved_at,
+            }) => {
+                return Err(ReplacementError {
+                    path: original.clone(),
+                    detail,
+                    preserved_at,
+                    replacement_committed: false,
+                });
+            }
+        };
     let moved_raw = match fs::read(&moved) {
         Ok(raw) => raw,
         Err(error) => {
@@ -1767,81 +1620,28 @@ where
 {
     let original_path = original.to_path_buf();
     let original = &original_path;
-    let metadata = match fs::symlink_metadata(original) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(RemovalOutcome::Absent);
-        }
-        Err(error) => {
-            return Err(RemovalError {
-                path: original.clone(),
-                kind: RemovalFailureKind::Other,
-                detail: format!("inspect current entry: {error}"),
-                preserved_at: None,
-            });
-        }
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(RemovalError {
-            path: original.clone(),
-            kind: RemovalFailureKind::Other,
-            detail: "current entry is not a regular non-symlink file".to_string(),
-            preserved_at: None,
-        });
-    }
-
-    let parent = original.parent().ok_or_else(|| RemovalError {
-        path: original.clone(),
-        kind: RemovalFailureKind::Other,
-        detail: "registration path has no parent".to_string(),
-        preserved_at: None,
-    })?;
-    let holding_dir = Builder::new()
-        .prefix(".server-registration-remove-")
-        .tempdir_in(parent)
-        .map_err(|error| RemovalError {
-            path: original.clone(),
-            kind: RemovalFailureKind::Other,
-            detail: format!("create same-parent holding directory: {error}"),
-            preserved_at: None,
-        })?;
-    let moved = holding_dir.path().join("registration");
-    match fs::rename(original, &moved) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(RemovalOutcome::Absent);
-        }
-        Err(error) => {
-            return Err(RemovalError {
-                path: original.clone(),
-                kind: RemovalFailureKind::Other,
-                detail: format!("atomically move into holding directory: {error}"),
-                preserved_at: None,
-            });
-        }
-    }
-
-    after_rename(original);
-
-    let moved_metadata = match fs::symlink_metadata(&moved) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            let preserved = keep_holding_dir(holding_dir, "registration");
-            return Err(RemovalError {
-                path: original.clone(),
-                kind: RemovalFailureKind::Other,
-                detail: format!("inspect atomically moved entry: {error}"),
-                preserved_at: Some(preserved),
-            });
-        }
-    };
-    if moved_metadata.file_type().is_symlink() || !moved_metadata.is_file() {
-        let preserved = keep_holding_dir(holding_dir, "registration");
-        return Ok(RemovalOutcome::ReplacementPreserved {
-            path: preserved,
-            detail: "atomically moved entry is not a regular non-symlink file".to_string(),
-        });
-    }
+    let (holding_dir, moved) =
+        match isolate_regular_entry(original, ".server-registration-remove-", after_rename) {
+            Ok(Isolation::Absent) => return Ok(RemovalOutcome::Absent),
+            Ok(Isolation::NonRegular(path)) => {
+                return Ok(RemovalOutcome::ReplacementPreserved {
+                    path,
+                    detail: MOVED_ENTRY_NOT_REGULAR.to_string(),
+                });
+            }
+            Ok(Isolation::Isolated { holding_dir, moved }) => (holding_dir, moved),
+            Err(IsolationFailure {
+                detail,
+                preserved_at,
+            }) => {
+                return Err(RemovalError {
+                    path: original.clone(),
+                    kind: RemovalFailureKind::Other,
+                    detail,
+                    preserved_at,
+                });
+            }
+        };
     let identity_matches = if let Some(expected_identity) = expected_identity {
         let moved_identity =
             match fs::File::open(&moved).and_then(|file| publication_stage_identity(&file)) {
@@ -1947,6 +1747,92 @@ where
     }
 }
 
+const MOVED_ENTRY_NOT_REGULAR: &str = "atomically moved entry is not a regular non-symlink file";
+
+/// Where a conditional replace or remove found the entry it was asked to
+/// isolate.
+enum Isolation {
+    Absent,
+    /// The moved entry is not a regular file; it stays retained at this path.
+    NonRegular(PathBuf),
+    /// The regular entry now lives at `moved` inside `holding_dir`.
+    Isolated {
+        holding_dir: tempfile::TempDir,
+        moved: PathBuf,
+    },
+}
+
+struct IsolationFailure {
+    detail: String,
+    preserved_at: Option<PathBuf>,
+}
+
+impl IsolationFailure {
+    fn new(detail: String) -> Self {
+        Self {
+            detail,
+            preserved_at: None,
+        }
+    }
+}
+
+/// The shared prologue of conditional replace and remove: atomically move a
+/// regular, non-symlink entry out of its name into a same-parent holding
+/// directory, so its bytes can be compared without racing a new entry.
+fn isolate_regular_entry<F: FnOnce(&Path)>(
+    original: &Path,
+    holding_prefix: &str,
+    after_rename: F,
+) -> Result<Isolation, IsolationFailure> {
+    let metadata = match fs::symlink_metadata(original) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Isolation::Absent),
+        Err(error) => {
+            return Err(IsolationFailure::new(format!(
+                "inspect current entry: {error}"
+            )));
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(IsolationFailure::new(
+            "current entry is not a regular non-symlink file".to_string(),
+        ));
+    }
+
+    let parent = original
+        .parent()
+        .ok_or_else(|| IsolationFailure::new("registration path has no parent".to_string()))?;
+    let holding_dir = Builder::new()
+        .prefix(holding_prefix)
+        .tempdir_in(parent)
+        .map_err(|error| {
+            IsolationFailure::new(format!("create same-parent holding directory: {error}"))
+        })?;
+    let moved = holding_dir.path().join("registration");
+    match fs::rename(original, &moved) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Isolation::Absent),
+        Err(error) => {
+            return Err(IsolationFailure::new(format!(
+                "atomically move into holding directory: {error}"
+            )));
+        }
+    }
+
+    after_rename(original);
+
+    match fs::symlink_metadata(&moved) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Ok(
+            Isolation::NonRegular(keep_holding_dir(holding_dir, "registration")),
+        ),
+        Ok(_) => Ok(Isolation::Isolated { holding_dir, moved }),
+        Err(error) => Err(IsolationFailure {
+            detail: format!("inspect atomically moved entry: {error}"),
+            preserved_at: Some(keep_holding_dir(holding_dir, "registration")),
+        }),
+    }
+}
+
 fn keep_holding_dir(directory: tempfile::TempDir, file_name: &str) -> PathBuf {
     directory.keep().join(file_name)
 }
@@ -1955,13 +1841,15 @@ fn keep_holding_dir(directory: tempfile::TempDir, file_name: &str) -> PathBuf {
 mod tests {
     use super::*;
     use crate::server::Engine;
+    use crate::server::fixtures::{ScriptedPersistenceEffects, tailscale_ownership};
     use crate::server_process::{
-        ListenerState, ProcessError, ProcessFacts, ProcessIdentity, ProcessRuntime, RetainedProcess,
+        ListenerState, ProcessError, ProcessFacts, ProcessIdentity, ProcessRuntime,
+        RetainedProcess, canonical_test_start_token,
     };
 
     fn legacy_runfile(pid: u32) -> ServerRunfile {
         ServerRunfile {
-            schema_version: LEGACY_SCHEMA_VERSION,
+            schema_version: RUNFILE_SCHEMA_V1,
             engine: Engine::LlamaServer,
             pid,
             port: 8080,
@@ -1977,30 +1865,9 @@ mod tests {
         }
     }
 
-    fn canonical_start_token(discriminator: u64) -> String {
-        #[cfg(windows)]
-        {
-            format!(
-                "windows-filetime:{}",
-                133_999_123_456_789_000 + discriminator
-            )
-        }
-        #[cfg(target_os = "linux")]
-        {
-            format!(
-                "linux-boot-id:00000000-1111-4222-8333-444444444444;start-ticks:{}",
-                987_000 + discriminator
-            )
-        }
-        #[cfg(not(any(windows, target_os = "linux")))]
-        {
-            panic!("schema-v2 registration authority is supported only on Windows and Linux");
-        }
-    }
-
     fn identity(discriminator: u64) -> ProcessIdentity {
         ProcessIdentity {
-            start_token: canonical_start_token(discriminator),
+            start_token: canonical_test_start_token(discriminator),
             executable: absolute_path(Path::new("llama-server")).unwrap(),
             argv: vec![
                 "llama-server".to_string(),
@@ -2012,31 +1879,10 @@ mod tests {
 
     fn v2_runfile(origin: &Path, discriminator: u64) -> ServerRunfile {
         let mut runfile = legacy_runfile(1234);
-        runfile.schema_version = IDENTITY_SCHEMA_VERSION;
+        runfile.schema_version = RUNFILE_SCHEMA_V2;
         runfile.process_identity = Some(identity(discriminator));
         runfile.origin_local_runfile = Some(origin.to_path_buf());
         runfile
-    }
-
-    fn tailscale_ownership() -> crate::tailscale_serve::TailscaleServeOwnership {
-        let token = "00112233445566778899aabbccddeeff";
-        let fqdn = "example-host.tailnet-example.ts.net";
-        crate::tailscale_serve::TailscaleServeOwnership {
-            version: crate::tailscale_serve::OWNERSHIP_VERSION,
-            token: token.to_string(),
-            stable_node_id: "node-fixture".to_string(),
-            fqdn: fqdn.to_string(),
-            https_port: crate::tailscale_serve::HTTPS_PORT,
-            mount_path: format!("/_ferric/{token}"),
-            proxy_target: "http://127.0.0.1:8080".to_string(),
-            remote_base_url: format!("https://{fqdn}/_ferric/{token}/v1"),
-            before_status_sha256: "a".repeat(64),
-            tcp_map_preexisting: false,
-            tcp_https_preexisting: false,
-            web_map_preexisting: false,
-            web_host_preexisting: false,
-            apply_confirmed: true,
-        }
     }
 
     fn write_runfile(path: &Path, runfile: &ServerRunfile) -> Vec<u8> {
@@ -2146,175 +1992,6 @@ mod tests {
         ]
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    struct PersistenceEvent {
-        phase: PersistencePhase,
-        final_path: PathBuf,
-        stage_path: Option<PathBuf>,
-        byte_len: Option<usize>,
-    }
-
-    #[derive(Default)]
-    struct ScriptedPersistenceEffects {
-        events: Vec<PersistenceEvent>,
-        serializations: usize,
-        failure: Option<(PathBuf, PersistencePhase)>,
-        retain_stage_after_persist: Option<PathBuf>,
-    }
-
-    impl ScriptedPersistenceEffects {
-        fn failing(final_path: &Path, phase: PersistencePhase) -> Self {
-            Self {
-                failure: Some((final_path.to_path_buf(), phase)),
-                ..Self::default()
-            }
-        }
-
-        fn retaining_committed_stage(final_path: &Path) -> Self {
-            Self {
-                retain_stage_after_persist: Some(final_path.to_path_buf()),
-                ..Self::default()
-            }
-        }
-
-        fn fails(&self, final_path: &Path, phase: PersistencePhase) -> bool {
-            self.failure.as_ref().is_some_and(|(target, target_phase)| {
-                target == final_path && *target_phase == phase
-            })
-        }
-
-        fn record(
-            &mut self,
-            phase: PersistencePhase,
-            final_path: &Path,
-            stage_path: Option<&Path>,
-            byte_len: Option<usize>,
-        ) {
-            self.events.push(PersistenceEvent {
-                phase,
-                final_path: final_path.to_path_buf(),
-                stage_path: stage_path.map(Path::to_path_buf),
-                byte_len,
-            });
-        }
-
-        fn injected(phase: PersistencePhase) -> io::Error {
-            io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!("injected {phase:?} failure"),
-            )
-        }
-    }
-
-    impl PersistenceEffects for ScriptedPersistenceEffects {
-        fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>> {
-            self.serializations += 1;
-            serde_json::to_vec_pretty(runfile)
-        }
-
-        fn create_stage(&mut self, final_path: &Path, parent: &Path) -> io::Result<NamedTempFile> {
-            if self.fails(final_path, PersistencePhase::CreateStage) {
-                self.record(PersistencePhase::CreateStage, final_path, None, None);
-                return Err(Self::injected(PersistencePhase::CreateStage));
-            }
-            let stage = NativePersistenceEffects.create_stage(final_path, parent)?;
-            self.record(
-                PersistencePhase::CreateStage,
-                final_path,
-                Some(stage.path()),
-                None,
-            );
-            Ok(stage)
-        }
-
-        fn write_all(
-            &mut self,
-            final_path: &Path,
-            stage: &mut NamedTempFile,
-            raw: &[u8],
-        ) -> io::Result<()> {
-            self.record(
-                PersistencePhase::WriteAll,
-                final_path,
-                Some(stage.path()),
-                Some(raw.len()),
-            );
-            if self.fails(final_path, PersistencePhase::WriteAll) {
-                let short = raw.len().min(7);
-                stage.write_all(&raw[..short])?;
-                return Err(Self::injected(PersistencePhase::WriteAll));
-            }
-            NativePersistenceEffects.write_all(final_path, stage, raw)
-        }
-
-        fn flush(&mut self, final_path: &Path, stage: &mut NamedTempFile) -> io::Result<()> {
-            self.record(
-                PersistencePhase::Flush,
-                final_path,
-                Some(stage.path()),
-                None,
-            );
-            if self.fails(final_path, PersistencePhase::Flush) {
-                return Err(Self::injected(PersistencePhase::Flush));
-            }
-            NativePersistenceEffects.flush(final_path, stage)
-        }
-
-        fn sync_file(&mut self, final_path: &Path, stage: &NamedTempFile) -> io::Result<()> {
-            self.record(
-                PersistencePhase::FileSync,
-                final_path,
-                Some(stage.path()),
-                None,
-            );
-            if self.fails(final_path, PersistencePhase::FileSync) {
-                return Err(Self::injected(PersistencePhase::FileSync));
-            }
-            NativePersistenceEffects.sync_file(final_path, stage)
-        }
-
-        fn persist_noclobber(
-            &mut self,
-            final_path: &Path,
-            mut stage: NamedTempFile,
-        ) -> Result<(), StagePersistError> {
-            let stage_path = stage.path().to_path_buf();
-            self.record(
-                PersistencePhase::PersistNoClobber,
-                final_path,
-                Some(&stage_path),
-                None,
-            );
-            if self.fails(final_path, PersistencePhase::PersistNoClobber) {
-                return Err(StagePersistError {
-                    error: Self::injected(PersistencePhase::PersistNoClobber),
-                    stage,
-                });
-            }
-            if self
-                .retain_stage_after_persist
-                .as_ref()
-                .is_some_and(|target| target == final_path)
-            {
-                if let Err(error) = fs::hard_link(&stage_path, final_path) {
-                    return Err(StagePersistError { error, stage });
-                }
-                stage.disable_cleanup(true);
-                drop(stage);
-                return Ok(());
-            }
-            NativePersistenceEffects.persist_noclobber(final_path, stage)
-        }
-
-        fn sync_parent(&mut self, final_path: &Path, parent: &Path) -> io::Result<()> {
-            self.record(PersistencePhase::ParentSync, final_path, None, None);
-            if self.fails(final_path, PersistencePhase::ParentSync) {
-                return Err(Self::injected(PersistencePhase::ParentSync));
-            }
-            NativePersistenceEffects.sync_parent(final_path, parent)
-        }
-    }
-
     const PROCESS_CLIENT_MODE: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_MODE";
     const PROCESS_CLIENT_ROOT: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_ROOT";
     const PROCESS_CLIENT_ID: &str = "FERRIC_REGISTRATION_PROCESS_CLIENT_ID";
@@ -2403,7 +2080,7 @@ mod tests {
         let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let facts = ProcessFacts {
             identity: ProcessIdentity {
-                start_token: canonical_start_token(501),
+                start_token: canonical_test_start_token(501),
                 executable: absolute_path(Path::new("llama-server")).unwrap(),
                 argv: vec![
                     "llama-server".to_string(),
@@ -2476,14 +2153,6 @@ mod tests {
     }
 
     impl PersistenceEffects for ProcessBarrierPersistenceEffects {
-        fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>> {
-            NativePersistenceEffects.serialize(runfile)
-        }
-
-        fn create_stage(&mut self, final_path: &Path, parent: &Path) -> io::Result<NamedTempFile> {
-            NativePersistenceEffects.create_stage(final_path, parent)
-        }
-
         fn write_all(
             &mut self,
             final_path: &Path,
@@ -2501,22 +2170,6 @@ mod tests {
             NativePersistenceEffects.write_all(final_path, stage, raw)
         }
 
-        fn flush(&mut self, final_path: &Path, stage: &mut NamedTempFile) -> io::Result<()> {
-            NativePersistenceEffects.flush(final_path, stage)
-        }
-
-        fn sync_file(&mut self, final_path: &Path, stage: &NamedTempFile) -> io::Result<()> {
-            NativePersistenceEffects.sync_file(final_path, stage)
-        }
-
-        fn persist_noclobber(
-            &mut self,
-            final_path: &Path,
-            stage: NamedTempFile,
-        ) -> Result<(), StagePersistError> {
-            NativePersistenceEffects.persist_noclobber(final_path, stage)
-        }
-
         fn sync_parent(&mut self, final_path: &Path, parent: &Path) -> io::Result<()> {
             let phase = if paths_match(final_path, &self.local) {
                 "publish-local-committed"
@@ -2532,7 +2185,7 @@ mod tests {
 
     struct ProcessClientGuard {
         label: String,
-        child: crate::test_process_containment::ContainedChild,
+        child: ferric_process::ProcessTree,
         stdout: std::fs::File,
         stderr: std::fs::File,
     }
@@ -2548,14 +2201,10 @@ mod tests {
             let label = label.into();
             let stdout = tempfile::tempfile().expect("create process-client stdout capture");
             let stderr = tempfile::tempfile().expect("create process-client stderr capture");
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            let mut command = ferric_process::testing::harness_command(
+                "server_registration::tests::lifecycle_interleaving_process_client",
+            );
             command
-                .args([
-                    "--exact",
-                    "server_registration::tests::lifecycle_interleaving_process_client",
-                    "--nocapture",
-                    "--test-threads=1",
-                ])
                 .env(PROCESS_CLIENT_MODE, mode)
                 .env(PROCESS_CLIENT_ROOT, root)
                 .env(PROCESS_CLIENT_ID, id)
@@ -2565,7 +2214,7 @@ mod tests {
             for (name, value) in environment {
                 command.env(name, value);
             }
-            let child = crate::test_process_containment::ContainedChild::spawn(&mut command)
+            let child = ferric_process::testing::spawn(&mut command)
                 .unwrap_or_else(|error| panic!("spawn {label}: {error}"));
             Self {
                 label,
@@ -2578,7 +2227,7 @@ mod tests {
         fn finish(mut self) {
             let status = self
                 .child
-                .wait_for_exit_and_disarm(std::time::Duration::from_secs(20))
+                .wait_for_exit(std::time::Duration::from_secs(20))
                 .unwrap_or_else(|error| panic!("finish {} process client: {error}", self.label));
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
@@ -2949,7 +2598,8 @@ mod tests {
         }
     }
 
-    fn assert_two_process_lifecycle_interleaving_is_per_path_safe() {
+    #[test]
+    fn two_process_lifecycle_interleaving_is_per_path_safe() {
         let root = tempfile::tempdir().unwrap();
         let coordinates = root.path().join("coordinates");
         fs::create_dir_all(&coordinates).unwrap();
@@ -3050,7 +2700,10 @@ mod tests {
             winner_inventory.global,
             Some(RegistrationSlot::Captured(_))
         ));
-        assert!(select_unique(&winner_inventory).is_ok());
+        assert_eq!(
+            captured(&winner_inventory.local).runfile,
+            captured(winner_inventory.global.as_ref().unwrap()).runfile
+        );
 
         let loser_inventory = inventory_runfiles(loser_workspace, Some(global.clone()));
         assert!(matches!(
@@ -3061,10 +2714,10 @@ mod tests {
             loser_inventory.global,
             Some(RegistrationSlot::Captured(_))
         ));
-        assert!(matches!(
-            select_unique(&loser_inventory),
-            Err(SelectionError::Conflict { .. })
-        ));
+        assert_ne!(
+            captured(&loser_inventory.local).runfile,
+            captured(loser_inventory.global.as_ref().unwrap()).runfile
+        );
         assert_eq!(publication_stage_paths(root.path()).len(), 1);
 
         let concurrent_loser = v2_runfile(loser_local, 103);
@@ -3206,7 +2859,7 @@ mod tests {
             captured(&inventory_runfiles(&operation_workspace, None).local)
                 .runfile
                 .schema_version,
-            LEGACY_SCHEMA_VERSION
+            RUNFILE_SCHEMA_V1
         );
         release_process_client(&coordinates, "replace-start", "adopter-a");
         adopter_a.finish();
@@ -3266,12 +2919,12 @@ mod tests {
             captured(&inventory_runfiles(&operation_workspace, None).local)
                 .runfile
                 .schema_version,
-            LEGACY_SCHEMA_VERSION
+            RUNFILE_SCHEMA_V1
         );
         release_process_client(&coordinates, "adopt-full-start", "full-adopter-a");
         full_adopter_a.finish();
         let adopted = captured_path(&operation_path);
-        assert_eq!(adopted.runfile.schema_version, IDENTITY_SCHEMA_VERSION);
+        assert_eq!(adopted.runfile.schema_version, RUNFILE_SCHEMA_V2);
         assert_eq!(
             adopted.runfile.origin_local_runfile,
             Some(operation_path.clone())
@@ -3283,7 +2936,7 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .start_token,
-            canonical_start_token(501)
+            canonical_test_start_token(501)
         );
         release_process_client(&coordinates, "adopt-full-start", "full-adopter-b");
         full_adopter_b.finish();
@@ -3347,11 +3000,6 @@ mod tests {
         );
         assert!(!operation_path.exists());
         assert!(publication_stage_paths(root.path()).is_empty());
-    }
-
-    #[test]
-    fn two_process_lifecycle_interleaving_is_per_path_safe() {
-        assert_two_process_lifecycle_interleaving_is_per_path_safe();
     }
 
     fn clean_attempt_stages(attempt: &PublicationAttempt) {
@@ -3488,25 +3136,6 @@ mod tests {
             RegistrationSlot::Absent { scope, path }
                 if *scope == other_scope && path == &other_path
         ));
-
-        match case {
-            InventorySlotCase::Absent => assert_eq!(select_unique(&inventory).unwrap(), None),
-            InventorySlotCase::V1 | InventorySlotCase::V2 => {
-                let selected = select_unique(&inventory).unwrap().unwrap();
-                assert_eq!(selected.scope, scope);
-                assert_eq!(selected.path, expected_path);
-            }
-            InventorySlotCase::Unreadable
-            | InventorySlotCase::Malformed
-            | InventorySlotCase::NonRegular => assert!(matches!(
-                select_unique(&inventory),
-                Err(SelectionError::Blocked {
-                    scope: blocked_scope,
-                    path,
-                    ..
-                }) if blocked_scope == scope && path == expected_path
-            )),
-        }
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -3644,7 +3273,6 @@ mod tests {
         ));
         assert!(without_global.global.is_none());
         assert!(without_global.promised_origins.is_empty());
-        assert_eq!(select_unique(&without_global).unwrap(), None);
 
         for case in [
             PromisedOriginCase::Matching,
@@ -3674,8 +3302,12 @@ mod tests {
         let slot = capture_registration_path(RegistrationScope::Local, &path);
         let capture = captured(&slot);
         assert_eq!(capture.raw, raw);
-        assert_eq!(capture.runfile.schema_version, LEGACY_SCHEMA_VERSION);
+        assert_eq!(capture.runfile.schema_version, RUNFILE_SCHEMA_V1);
         assert!(capture.runfile.process_identity.is_none());
+        assert!(capture.runfile.model.is_none());
+        assert!(capture.runfile.context_size.is_none());
+        assert!(capture.runfile.sampling_seed.is_none());
+        assert!(capture.runfile.parallel_slots.is_none());
     }
 
     #[test]
@@ -3727,7 +3359,7 @@ mod tests {
 
         let incomplete = root.path().join("incomplete.json");
         let mut incomplete_runfile = legacy_runfile(2);
-        incomplete_runfile.schema_version = IDENTITY_SCHEMA_VERSION;
+        incomplete_runfile.schema_version = RUNFILE_SCHEMA_V2;
         incomplete_runfile.origin_local_runfile =
             Some(absolute_path(&root.path().join("workspace/.ferric/server.json")).unwrap());
         write_runfile(&incomplete, &incomplete_runfile);
@@ -3863,7 +3495,7 @@ mod tests {
         ))
         .clone();
         assert_eq!(legacy.raw, legacy_raw);
-        assert_eq!(legacy.runfile.schema_version, LEGACY_SCHEMA_VERSION);
+        assert_eq!(legacy.runfile.schema_version, RUNFILE_SCHEMA_V1);
         assert!(legacy.runfile.process_identity.is_none());
 
         let valid_v2 = v2_runfile(&origin, 5);
@@ -4038,7 +3670,7 @@ mod tests {
 
         let mut owned = v2_runfile(&origin, 100);
         owned.tailscale = true;
-        owned.tailscale_serve = Some(tailscale_ownership());
+        owned.tailscale_serve = Some(tailscale_ownership(8080, true));
         let raw = write_runfile(&global, &owned);
         let slot = capture_registration_path(RegistrationScope::Global, &global);
         let captured = captured(&slot);
@@ -4116,18 +3748,23 @@ mod tests {
 
         write_runfile(&local, &legacy_runfile(1));
         let inventory = inventory_runfiles(&workspace, Some(global.clone()));
-        assert_eq!(
-            select_unique(&inventory).unwrap().unwrap().scope,
-            RegistrationScope::Local
-        );
+        assert_eq!(captured(&inventory.local).scope, RegistrationScope::Local);
+        assert!(matches!(
+            inventory.global,
+            Some(RegistrationSlot::Absent {
+                scope: RegistrationScope::Global,
+                ..
+            })
+        ));
 
         let duplicate = fs::read(&local).unwrap();
         fs::create_dir_all(global.parent().unwrap()).unwrap();
         fs::write(&global, duplicate).unwrap();
         let inventory = inventory_runfiles(&workspace, Some(global.clone()));
+        assert_eq!(captured(&inventory.local).scope, RegistrationScope::Local);
         assert_eq!(
-            select_unique(&inventory).unwrap().unwrap().scope,
-            RegistrationScope::Local
+            captured(&inventory.local).raw,
+            captured(inventory.global.as_ref().unwrap()).raw
         );
 
         let local_v2 = v2_runfile(&local, 12);
@@ -4149,8 +3786,8 @@ mod tests {
         assert_eq!(origin_capture.raw, captured(&inventory.local).raw);
         assert_eq!(origin_capture.runfile, local_v2);
         assert_eq!(
-            select_unique(&inventory).unwrap().unwrap().scope,
-            RegistrationScope::Local
+            captured(&inventory.local).runfile,
+            captured(inventory.global.as_ref().unwrap()).runfile
         );
     }
 
@@ -4163,10 +3800,10 @@ mod tests {
         write_runfile(&local, &legacy_runfile(1));
         write_runfile(&global, &legacy_runfile(2));
         let inventory = inventory_runfiles(&workspace, Some(global.clone()));
-        assert!(matches!(
-            select_unique(&inventory),
-            Err(SelectionError::Conflict { .. })
-        ));
+        assert_ne!(
+            captured(&inventory.local).runfile,
+            captured(inventory.global.as_ref().unwrap()).runfile
+        );
 
         let local_path = absolute_path(&local).unwrap();
         let local_v2 = v2_runfile(&local_path, 13);
@@ -4176,16 +3813,16 @@ mod tests {
         write_runfile(&local, &local_v2);
         write_runfile(&global, &contradictory_global);
         let inventory = inventory_runfiles(&workspace, Some(global.clone()));
-        assert!(matches!(
-            select_unique(&inventory),
-            Err(SelectionError::Conflict { .. })
-        ));
+        assert_ne!(
+            captured(&inventory.local).runfile,
+            captured(inventory.global.as_ref().unwrap()).runfile
+        );
 
         fs::write(&global, b"malformed").unwrap();
         let inventory = inventory_runfiles(&workspace, Some(global));
         assert!(matches!(
-            select_unique(&inventory),
-            Err(SelectionError::Blocked {
+            inventory.global,
+            Some(RegistrationSlot::Blocked {
                 scope: RegistrationScope::Global,
                 reason: RegistrationBlock::Malformed(_),
                 ..
@@ -4705,10 +4342,10 @@ mod tests {
         let split = inventory_runfiles(&loser_workspace, Some(global.clone()));
         assert!(matches!(split.local, RegistrationSlot::Captured(_)));
         assert!(matches!(split.global, Some(RegistrationSlot::Captured(_))));
-        assert!(matches!(
-            select_unique(&split),
-            Err(SelectionError::Conflict { .. })
-        ));
+        assert_ne!(
+            captured(&split.local).runfile,
+            captured(split.global.as_ref().unwrap()).runfile
+        );
         assert_eq!(
             remove_if_unchanged(&loser_local).unwrap(),
             RemovalOutcome::Removed
@@ -4741,11 +4378,10 @@ mod tests {
             RemovalOutcome::Removed
         );
         assert_eq!(nested_outcome.into_inner(), Some(RemovalOutcome::Absent));
-
-        assert_two_process_lifecycle_interleaving_is_per_path_safe();
     }
 
-    fn assert_changed_entry_restore_success() {
+    #[test]
+    fn changed_entry_is_restored_or_retained_with_exact_bytes() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".ferric").join("server.json");
         write_runfile(&path, &legacy_runfile(1));
@@ -4763,7 +4399,8 @@ mod tests {
         assert_eq!(fs::read(preserved).unwrap(), replacement);
     }
 
-    fn assert_replacement_after_atomic_move_is_preserved() {
+    #[test]
+    fn replacement_created_after_atomic_move_is_never_deleted() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".ferric").join("server.json");
         write_runfile(&path, &legacy_runfile(1));
@@ -4815,7 +4452,8 @@ mod tests {
         assert_eq!(fs::read(preserved).unwrap(), changed);
     }
 
-    fn assert_changed_entry_restore_failure_is_preserved() {
+    #[test]
+    fn changed_entry_restore_io_failure_is_error_with_preserved_bytes() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".ferric").join("server.json");
         write_runfile(&path, &legacy_runfile(1));
@@ -4967,10 +4605,7 @@ mod tests {
             assert!(!path.exists());
         }
 
-        assert_replacement_after_atomic_move_is_preserved();
-        assert_changed_entry_restore_success();
         assert_occupied_original_preserves_both_entries();
-        assert_changed_entry_restore_failure_is_preserved();
     }
 
     #[test]
@@ -5057,20 +4692,5 @@ mod tests {
             fs::read(error.preserved_at.expect("isolated capture retained")).unwrap(),
             capture.raw
         );
-    }
-
-    #[test]
-    fn changed_entry_is_restored_or_retained_with_exact_bytes() {
-        assert_changed_entry_restore_success();
-    }
-
-    #[test]
-    fn replacement_created_after_atomic_move_is_never_deleted() {
-        assert_replacement_after_atomic_move_is_preserved();
-    }
-
-    #[test]
-    fn changed_entry_restore_io_failure_is_error_with_preserved_bytes() {
-        assert_changed_entry_restore_failure_is_preserved();
     }
 }

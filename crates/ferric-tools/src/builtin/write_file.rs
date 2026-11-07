@@ -2,13 +2,11 @@ use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
-use crate::control::{
-    ControlCapability, NoEffectKind, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
-};
+use crate::control::{ControlCapability, NoEffectKind, PrepareCtx, PrepareError, ToolPreparation};
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
+use super::args;
 use super::controlled_file::{compile_candidate, inspect_for_prepare};
-use super::path_arg;
 
 /// Write (create or overwrite) a UTF-8 text file inside the workspace. Legacy
 /// execution creates parent directories; controlled execution requires the
@@ -43,24 +41,8 @@ impl Tool for WriteFile {
         ctx: &PrepareCtx<'_>,
         args: &serde_json::Value,
     ) -> Result<ToolPreparation, PrepareError> {
-        let path = args
-            .get("path")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: path",
-                )
-            })?;
-        let content = args
-            .get("content")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: content",
-                )
-            })?;
+        let path = args::string(args, "path")?;
+        let content = args::string(args, "content")?;
         let target = inspect_for_prepare(ctx, path, true)?;
         compile_candidate(
             target,
@@ -71,15 +53,9 @@ impl Tool for WriteFile {
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let path = path_arg(args)?;
-        let content = args
-            .get("content")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required string argument: content".to_string())?;
-        let resolved = ctx
-            .workspace
-            .resolve(path)
-            .map_err(|e| format!("boundary: {e}"))?;
+        let path = args::string(args, "path")?;
+        let content = args::string(args, "content")?;
+        let resolved = ctx.resolve(path)?;
         if resolved.is_dir() {
             return Err(format!(
                 "write {path} failed: path is already a directory. If you intended to write a file here, you MUST use delete_path to remove the directory first, or choose a different file name."

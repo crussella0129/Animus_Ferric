@@ -9,19 +9,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use super::*;
-use crate::types::SamplingParams;
 
 const FIXTURE_DEADLINE: Duration = Duration::from_secs(4);
 const CANCELLATION_DEADLINE: Duration = Duration::from_secs(2);
-
-fn request() -> CompletionRequest {
-    CompletionRequest {
-        messages: vec![Message::user("hello")],
-        sampling: SamplingParams::default(),
-        tools: Vec::new(),
-        constraint: None,
-    }
-}
 
 fn provider(address: std::net::SocketAddr) -> OpenAiProvider {
     OpenAiProvider::new(OpenAiConfig {
@@ -40,13 +30,13 @@ fn decode_chunks(
     let mut acc = StreamAccumulator::new(constrained, &sink);
     let mut decoder = SseDecoder::default();
     for chunk in chunks {
-        for line in decoder.push(chunk)? {
+        for line in decoder.push(chunk).map_err(sse_utf8_error)? {
             if let SseLine::Data(data) = line {
-                acc.feed_line(&data);
+                acc.feed(&data).unwrap();
             }
         }
     }
-    decoder.finish()?;
+    decoder.finish().map_err(sse_utf8_error)?;
     Ok((acc.finish(), deltas.into_inner().unwrap()))
 }
 
@@ -237,10 +227,12 @@ async fn provider_cancellation_all_response_phases() {
             let sink = |_: StreamDelta| {};
             let result = if streaming {
                 provider
-                    .complete_streaming(request(), &sink, Some(cancel.clone()))
+                    .complete_streaming(CompletionRequest::fixture(), &sink, Some(cancel.clone()))
                     .await
             } else {
-                provider.complete(request(), Some(cancel.clone())).await
+                provider
+                    .complete(CompletionRequest::fixture(), Some(cancel.clone()))
+                    .await
             };
             let elapsed = cancelled_at.lock().unwrap().map(|at| at.elapsed());
             (result, elapsed)
@@ -331,7 +323,10 @@ async fn prepared_endpoint_keeps_loopback_direct_and_refuses_redirects() {
         };
         let (served, result) = tokio::join!(
             tokio::time::timeout(FIXTURE_DEADLINE, server),
-            tokio::time::timeout(FIXTURE_DEADLINE, provider.complete(request(), None))
+            tokio::time::timeout(
+                FIXTURE_DEADLINE,
+                provider.complete(CompletionRequest::fixture(), None)
+            )
         );
         let request = String::from_utf8(served.unwrap().unwrap()).unwrap();
         assert!(
@@ -399,12 +394,13 @@ async fn sse_unicode_and_invalid_bytes_over_tcp() {
             }
             socket.shutdown().await
         };
-        let sink = |_: StreamDelta| {};
+        let deltas = Mutex::new(Vec::new());
+        let sink = |delta| deltas.lock().unwrap().push(delta);
         let (served, completed) = tokio::join!(
             tokio::time::timeout(FIXTURE_DEADLINE, server),
             tokio::time::timeout(
                 FIXTURE_DEADLINE,
-                provider.complete_streaming(request(), &sink, None)
+                provider.complete_streaming(CompletionRequest::fixture(), &sink, None)
             ),
         );
         served
@@ -413,10 +409,52 @@ async fn sse_unicode_and_invalid_bytes_over_tcp() {
         let completed = completed.expect("provider fixture deadline");
         if let Some(expected) = expected {
             assert_eq!(completed.unwrap().message.text.as_deref(), Some(expected));
+            assert_eq!(
+                deltas.into_inner().unwrap(),
+                vec![StreamDelta::Text(expected.to_string())]
+            );
         } else {
             assert!(
                 matches!(completed, Err(ProviderError::Backend(ref message)) if message.contains("UTF-8"))
             );
         }
+    }
+}
+
+/// Test-critique C-003: a non-2xx HTTP status is surfaced as
+/// `ProviderError::Backend` carrying the status and body, not a hang or a
+/// panic, through `complete_streaming` over the real wire.
+#[tokio::test]
+async fn complete_streaming_surfaces_http_error_status() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let provider = provider(listener.local_addr().unwrap());
+    let server = async {
+        let (mut socket, _) = listener.accept().await?;
+        read_request(&mut socket).await?;
+        socket
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nmodel not found")
+            .await?;
+        socket.shutdown().await
+    };
+    let sink = |_: StreamDelta| panic!("no delta should fire on an HTTP error response");
+    let (served, result) = tokio::join!(
+        tokio::time::timeout(FIXTURE_DEADLINE, server),
+        tokio::time::timeout(
+            FIXTURE_DEADLINE,
+            provider.complete_streaming(CompletionRequest::fixture(), &sink, None)
+        ),
+    );
+    served
+        .expect("server fixture deadline")
+        .expect("wire fixture completed");
+    match result.expect("provider fixture deadline") {
+        Err(ProviderError::Backend(msg)) => {
+            assert!(msg.contains("404"), "error should name the status: {msg}");
+            assert!(
+                msg.contains("model not found"),
+                "error should carry the body: {msg}"
+            );
+        }
+        other => panic!("expected ProviderError::Backend, got {other:?}"),
     }
 }

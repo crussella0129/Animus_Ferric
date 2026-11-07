@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use ferric_guard::PermissionLevel;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -11,6 +11,8 @@ use crate::control::{
     ControlCapability, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
 };
 use crate::spec::{Tool, ToolCtx, ToolSpec};
+
+use super::args;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_OUTPUT_LIMIT: usize = 4_000;
@@ -27,7 +29,7 @@ fn default_output_limit() -> usize {
 
 /// One operator-authorized verification command. The model sees only `name`;
 /// `program` and `args` are fixed before the tool is registered.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NamedCheck {
     pub name: String,
@@ -162,15 +164,7 @@ impl Tool for RunCheck {
                 "run_check arguments must contain exactly one field: `name`",
             ));
         }
-        let name = object
-            .get("name")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: name",
-                )
-            })?;
+        let name = args::string(args, "name")?;
         if !self.checks.contains_key(name) {
             return Err(PrepareError::new(
                 PrepareErrorKind::InvalidArguments,
@@ -199,10 +193,7 @@ impl Tool for RunCheck {
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let name = args
-            .get("name")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| "missing required string argument: name".to_string())?;
+        let name = args::string(args, "name")?;
         let check = self
             .checks
             .get(name)

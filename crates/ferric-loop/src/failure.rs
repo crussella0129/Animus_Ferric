@@ -56,17 +56,12 @@ pub(crate) fn failure_observation(
     }
 }
 
+#[derive(Default)]
 pub struct FailureGuard {
     consecutive_failed_turns: u8,
 }
 
 impl FailureGuard {
-    pub fn new() -> Self {
-        Self {
-            consecutive_failed_turns: 0,
-        }
-    }
-
     /// Observe one turn's dispatch outcome. `dispatched` is the number of
     /// (non-terminator) tools the turn executed; `errored` how many returned an
     /// error. A turn is a "failure turn" iff it dispatched at least one tool and
@@ -89,19 +84,13 @@ impl FailureGuard {
     }
 }
 
-impl Default for FailureGuard {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn warns_then_stops_on_an_all_failed_streak() {
-        let mut g = FailureGuard::new();
+        let mut g = FailureGuard::default();
         assert_eq!(g.observe_turn(1, 1), Verdict::Proceed); // streak 1
         assert_eq!(g.observe_turn(1, 1), Verdict::Warn); // streak 2 == WARN_AT
         assert_eq!(g.observe_turn(1, 1), Verdict::Stop); // streak 3 == STOP_AT
@@ -109,7 +98,7 @@ mod tests {
 
     #[test]
     fn a_successful_call_resets_the_streak() {
-        let mut g = FailureGuard::new();
+        let mut g = FailureGuard::default();
         assert_eq!(g.observe_turn(1, 1), Verdict::Proceed); // streak 1
         assert_eq!(g.observe_turn(1, 1), Verdict::Warn); // streak 2
         // One of two calls succeeded → not an all-failed turn → reset.
@@ -121,7 +110,7 @@ mod tests {
 
     #[test]
     fn a_zero_dispatch_turn_never_trips() {
-        let mut g = FailureGuard::new();
+        let mut g = FailureGuard::default();
         // No result-bearing tool (e.g. a terminator-only or no-action turn).
         for _ in 0..5 {
             assert_eq!(g.observe_turn(0, 0), Verdict::Proceed);
@@ -130,7 +119,7 @@ mod tests {
 
     #[test]
     fn multi_call_turns_count_when_all_error() {
-        let mut g = FailureGuard::new();
+        let mut g = FailureGuard::default();
         assert_eq!(g.observe_turn(1, 1), Verdict::Proceed); // streak 1
         assert_eq!(g.observe_turn(3, 3), Verdict::Warn); // streak 2 — all 3 errored
         assert_eq!(g.observe_turn(2, 2), Verdict::Stop); // streak 3 — all 2 errored
@@ -146,7 +135,7 @@ mod tests {
 
     #[test]
     fn control_only_turn_breaks_a_consecutive_failure_streak() {
-        let mut g = FailureGuard::new();
+        let mut g = FailureGuard::default();
         assert_eq!(g.observe_turn(1, 1), Verdict::Proceed);
         assert_eq!(g.observe_turn(1, 1), Verdict::Warn);
         assert_eq!(g.observe_turn(0, 0), Verdict::Proceed);
@@ -155,7 +144,7 @@ mod tests {
 
     #[test]
     fn mixed_execution_error_and_blocked_completion_keeps_the_real_failure() {
-        let mut g = FailureGuard::new();
+        let mut g = FailureGuard::default();
         assert_eq!(g.observe_turn(1, 1), Verdict::Proceed);
         let (dispatched, errored) = failure_observation(2, 2, 0, true).unwrap();
         assert_eq!((dispatched, errored), (1, 1));
@@ -164,7 +153,7 @@ mod tests {
 
     #[test]
     fn controller_only_turn_preserves_the_existing_streak() {
-        let mut g = FailureGuard::new();
+        let mut g = FailureGuard::default();
         assert_eq!(g.observe_turn(1, 1), Verdict::Proceed);
         assert_eq!(failure_observation(1, 1, 1, false), None);
         let (dispatched, errored) = failure_observation(1, 1, 0, false).unwrap();

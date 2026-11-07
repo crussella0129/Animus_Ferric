@@ -15,8 +15,9 @@ use ferric_trace::{
     ObservationV1, RecoveryCheckpointV1, RecoveryPacketV1, VerificationOutcome, WorkspaceEffectV1,
 };
 
+use crate::StopReason;
 use crate::controller::ControllerState;
-use crate::terminator::{REQUEST_USER_INPUT, SUBMIT_PLAN, TASK_COMPLETE};
+use ferric_iron::terminator::{REQUEST_USER_INPUT, SUBMIT_PLAN, TASK_COMPLETE};
 
 pub(crate) fn validate_recovery_checkpoint_shape(
     state: &RecoveryCheckpointV1,
@@ -539,12 +540,9 @@ impl TraceStructure {
         {
             return Err("evidence trace ends without a controller base".to_string());
         }
-        if self.base == StateBase::Resumed && self.resume_prompt_seen && !self.answer_anchor_seen {
-            // Crash after ResumePrompt and before its anchor is intentional:
-            // the projector applies the answer and clears pending input when
-            // it sees ResumePrompt, making this prefix resume-of-resume safe.
-            return Ok(());
-        }
+        // A crash after ResumePrompt and before its anchor is valid too: the
+        // projector applies the answer and clears pending input when it sees
+        // ResumePrompt, making that prefix resume-of-resume safe.
         Ok(())
     }
 
@@ -1732,24 +1730,20 @@ fn is_unmeasured_read_only_or_control(name: &str) -> bool {
         || is_completion_control(name)
 }
 
-fn is_success_reason(reason: &str) -> bool {
-    matches!(
-        reason,
-        "final_text" | "task_complete" | "plan_submitted" | "done"
-    )
+/// A successful stop reason, including the legacy `done` alias older traces
+/// recorded.
+pub(crate) fn is_success_reason(reason: &str) -> bool {
+    reason == "done" || StopReason::parse(reason).is_some_and(StopReason::is_success)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::*;
     use serde_json::json;
 
     fn call(id: &str, name: &str) -> ToolCall {
-        ToolCall {
-            id: id.to_string(),
-            name: name.to_string(),
-            args: json!({"path": "a.txt"}),
-        }
+        tool_call(id, name, json!({"path": "a.txt"}))
     }
 
     fn prefix(validator: &mut TraceStructure) {
@@ -1774,17 +1768,11 @@ mod tests {
     }
 
     fn policy(harness_policy: HarnessPolicy) -> Event {
-        Event::PolicySelected {
-            tier: ferric_core::Tier::Nano,
-            protocol: ferric_core::ActionProtocol::NativeTools,
+        policy_event(
+            ferric_core::ActionProtocol::NativeTools,
             harness_policy,
-            max_turns: 15,
-            max_tools: 10,
-            prompt_budget_tokens: 2_800,
-            max_output_tokens: 512,
-            truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
-            tier_source: ferric_core::TierSource::Params.label().to_string(),
-        }
+            ferric_core::DEFAULT_TRUNCATION_LIMIT,
+        )
     }
 
     fn evidence_base(validator: &mut TraceStructure, required_checks: &[&str]) {
@@ -1824,31 +1812,11 @@ mod tests {
             .unwrap();
     }
 
-    fn tool_call_event(call: &ToolCall) -> Event {
-        Event::ToolCall {
-            id: call.id.clone(),
-            name: call.name.clone(),
-            args: call.args.clone(),
-        }
-    }
-
     fn full_file_observation(turn: u32, call_id: &str, path: &str, digest: char) -> Event {
         Event::ObservationRecorded {
             turn,
             call_id: call_id.to_string(),
-            observation: ferric_trace::ObservationV1 {
-                version: ferric_trace::CONTROLLER_RECORD_VERSION,
-                detail: ferric_trace::ObservationDetailV1::File(ferric_trace::FileObservationV1 {
-                    path: path.to_string(),
-                    sha256: digest.to_string().repeat(64),
-                    total_bytes: 4,
-                    total_lines: 2,
-                    requested_range: None,
-                    returned_range: Some(ferric_trace::LineRangeV1 { start: 1, end: 2 }),
-                    complete: true,
-                    model_truncated: false,
-                }),
-            },
+            observation: full_file(path, &sha(digest), 2),
         }
     }
 
@@ -1867,30 +1835,20 @@ mod tests {
     fn establish_prior_read(validator: &mut TraceStructure) {
         let read = call("read-1", "read_file");
         begin_turn(validator, 0, vec![read.clone()]);
-        validator.observe(&tool_call_event(&read)).unwrap();
+        validator.observe(&call_event(&read)).unwrap();
         validator
             .observe(&full_file_observation(0, "read-1", "a.txt", 'a'))
             .unwrap();
         validator
-            .observe(&Event::ToolResult {
-                id: "read-1".to_string(),
-                name: "read_file".to_string(),
-                output: "contents".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            })
+            .observe(&result_event("read-1", "read_file", "contents", false))
             .unwrap();
         commit(validator, 0, 1, 0);
     }
 
     fn record_passing_check(validator: &mut TraceStructure, turn: u32, name: &str) {
-        let check = ToolCall {
-            id: format!("check-{turn}"),
-            name: "run_check".to_string(),
-            args: json!({"name": name}),
-        };
+        let check = tool_call(&format!("check-{turn}"), "run_check", json!({"name": name}));
         begin_turn(validator, turn, vec![check.clone()]);
-        validator.observe(&tool_call_event(&check)).unwrap();
+        validator.observe(&call_event(&check)).unwrap();
         validator
             .observe(&Event::VerificationCheckRecorded {
                 turn,
@@ -1913,13 +1871,7 @@ mod tests {
             })
             .unwrap();
         validator
-            .observe(&Event::ToolResult {
-                id: check.id,
-                name: check.name,
-                output: "passed".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            })
+            .observe(&result_event(&check.id, &check.name, "passed", false))
             .unwrap();
         commit(validator, turn, 1, 0);
     }
@@ -1929,18 +1881,7 @@ mod tests {
             turn,
             call_id: call_id.to_string(),
             tool: "write_file".to_string(),
-            effect: ferric_trace::WorkspaceEffectV1 {
-                version: ferric_trace::CONTROLLER_RECORD_VERSION,
-                mutation_epoch: 1,
-                effects: vec![ferric_trace::PathEffectV1 {
-                    path: path.to_string(),
-                    kind: ferric_trace::PathEffectKind::Modified,
-                    before_sha256: Some("a".repeat(64)),
-                    after_sha256: Some("b".repeat(64)),
-                    after_bytes: Some(6),
-                    after_lines: Some(3),
-                }],
-            },
+            effect: modified(path, &sha('a'), &sha('b'), 1),
         }
     }
 
@@ -2082,18 +2023,12 @@ mod tests {
         evidence_base(&mut validator, &[]);
         let read = call("read-1", "read_file");
         begin_turn(&mut validator, 0, vec![read.clone()]);
-        validator.observe(&tool_call_event(&read)).unwrap();
+        validator.observe(&call_event(&read)).unwrap();
         validator
             .observe(&full_file_observation(0, "read-1", "a.txt", 'a'))
             .unwrap();
         validator
-            .observe(&Event::ToolResult {
-                id: "read-1".to_string(),
-                name: "read_file".to_string(),
-                output: "contents".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            })
+            .observe(&result_event("read-1", "read_file", "contents", false))
             .unwrap();
         commit(&mut validator, 0, 1, 0);
         validator.finish().unwrap();
@@ -2106,7 +2041,7 @@ mod tests {
         let mut unsupported_record = TraceStructure::new();
         evidence_base(&mut unsupported_record, &[]);
         begin_turn(&mut unsupported_record, 0, vec![read.clone()]);
-        unsupported_record.observe(&tool_call_event(&read)).unwrap();
+        unsupported_record.observe(&call_event(&read)).unwrap();
         let mut observation_event = full_file_observation(0, "read-1", "a.txt", 'a');
         let Event::ObservationRecorded { observation, .. } = &mut observation_event else {
             unreachable!();
@@ -2172,21 +2107,20 @@ mod tests {
     fn evidence_policy_does_not_treat_git_read_as_an_unmeasured_safe_read() {
         let mut validator = TraceStructure::new();
         evidence_base(&mut validator, &[]);
-        let call = ToolCall {
-            id: "git-1".to_string(),
-            name: "git_read".to_string(),
-            args: json!({"subcommand": "branch", "args": ["-D", "dev"]}),
-        };
+        let call = tool_call(
+            "git-1",
+            "git_read",
+            json!({"subcommand": "branch", "args": ["-D", "dev"]}),
+        );
         begin_turn(&mut validator, 0, vec![call.clone()]);
-        validator.observe(&tool_call_event(&call)).unwrap();
+        validator.observe(&call_event(&call)).unwrap();
         let error = validator
-            .observe(&Event::ToolResult {
-                id: call.id,
-                name: call.name,
-                output: "unexpected mutation-capable git invocation".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            })
+            .observe(&result_event(
+                &call.id,
+                &call.name,
+                "unexpected mutation-capable git invocation",
+                false,
+            ))
             .unwrap_err();
         assert!(error.contains("lacks a typed controller record"), "{error}");
     }
@@ -2206,7 +2140,7 @@ mod tests {
         evidence_base(&mut path_validator, &[]);
         let read = call("read-1", "read_file");
         begin_turn(&mut path_validator, 0, vec![read.clone()]);
-        path_validator.observe(&tool_call_event(&read)).unwrap();
+        path_validator.observe(&call_event(&read)).unwrap();
         let error = path_validator
             .observe(&full_file_observation(0, "read-1", "b.txt", 'a'))
             .unwrap_err();
@@ -2214,13 +2148,13 @@ mod tests {
 
         let mut range_validator = TraceStructure::new();
         evidence_base(&mut range_validator, &[]);
-        let ranged = ToolCall {
-            id: "read-2".to_string(),
-            name: "read_file".to_string(),
-            args: json!({"path":"a.txt","start_line":2}),
-        };
+        let ranged = tool_call(
+            "read-2",
+            "read_file",
+            json!({"path":"a.txt","start_line":2}),
+        );
         begin_turn(&mut range_validator, 0, vec![ranged.clone()]);
-        range_validator.observe(&tool_call_event(&ranged)).unwrap();
+        range_validator.observe(&call_event(&ranged)).unwrap();
         let error = range_validator
             .observe(&full_file_observation(0, "read-2", "a.txt", 'a'))
             .unwrap_err();
@@ -2232,13 +2166,13 @@ mod tests {
         fn forged_error(field: &str) -> String {
             let mut validator = TraceStructure::new();
             evidence_base(&mut validator, &[]);
-            let search = ToolCall {
-                id: "search-1".to_string(),
-                name: "search_files".to_string(),
-                args: json!({"query":"needle","path":"src","max_results":7}),
-            };
+            let search = tool_call(
+                "search-1",
+                "search_files",
+                json!({"query":"needle","path":"src","max_results":7}),
+            );
             begin_turn(&mut validator, 0, vec![search.clone()]);
-            validator.observe(&tool_call_event(&search)).unwrap();
+            validator.observe(&call_event(&search)).unwrap();
             let mut navigation = ferric_trace::NavigationObservationV1 {
                 root: "src".to_string(),
                 literal: "needle".to_string(),
@@ -2277,20 +2211,14 @@ mod tests {
         let read = call("read-1", "read_file");
         let write = call("write-1", "write_file");
         begin_turn(&mut validator, 0, vec![read.clone(), write.clone()]);
-        validator.observe(&tool_call_event(&read)).unwrap();
+        validator.observe(&call_event(&read)).unwrap();
         validator
             .observe(&full_file_observation(0, "read-1", "a.txt", 'a'))
             .unwrap();
         validator
-            .observe(&Event::ToolResult {
-                id: "read-1".to_string(),
-                name: "read_file".to_string(),
-                output: "contents".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            })
+            .observe(&result_event("read-1", "read_file", "contents", false))
             .unwrap();
-        validator.observe(&tool_call_event(&write)).unwrap();
+        validator.observe(&call_event(&write)).unwrap();
         let error = validator
             .observe(&modified_effect(0, "write-1", "a.txt"))
             .unwrap_err();
@@ -2304,7 +2232,7 @@ mod tests {
         establish_prior_read(&mut validator);
         let write = call("write-1", "write_file");
         begin_turn(&mut validator, 1, vec![write.clone()]);
-        validator.observe(&tool_call_event(&write)).unwrap();
+        validator.observe(&call_event(&write)).unwrap();
         validator
             .observe(&modified_effect(1, "write-1", "a.txt"))
             .unwrap();
@@ -2316,13 +2244,12 @@ mod tests {
             })
             .unwrap();
         validator
-            .observe(&Event::ToolResult {
-                id: "write-1".to_string(),
-                name: "write_file".to_string(),
-                output: "write failed after a partial effect".to_string(),
-                is_error: true,
-                duration_ms: 1,
-            })
+            .observe(&result_event(
+                "write-1",
+                "write_file",
+                "write failed after a partial effect",
+                true,
+            ))
             .unwrap();
         commit(&mut validator, 1, 1, 1);
     }
@@ -2334,18 +2261,12 @@ mod tests {
         establish_prior_read(&mut mirror_validator);
         let write = call("write-1", "write_file");
         begin_turn(&mut mirror_validator, 1, vec![write.clone()]);
-        mirror_validator.observe(&tool_call_event(&write)).unwrap();
+        mirror_validator.observe(&call_event(&write)).unwrap();
         mirror_validator
             .observe(&modified_effect(1, "write-1", "a.txt"))
             .unwrap();
         let error = mirror_validator
-            .observe(&Event::ToolResult {
-                id: "write-1".to_string(),
-                name: "write_file".to_string(),
-                output: "ok".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            })
+            .observe(&result_event("write-1", "write_file", "ok", false))
             .unwrap_err();
         assert!(
             error.contains("lacks its compatibility WorkspaceMutation"),
@@ -2357,7 +2278,7 @@ mod tests {
         establish_prior_read(&mut target_validator);
         let write = call("write-1", "write_file");
         begin_turn(&mut target_validator, 1, vec![write.clone()]);
-        target_validator.observe(&tool_call_event(&write)).unwrap();
+        target_validator.observe(&call_event(&write)).unwrap();
         let error = target_validator
             .observe(&modified_effect(1, "write-1", "b.txt"))
             .unwrap_err();
@@ -2369,7 +2290,7 @@ mod tests {
             establish_prior_read(&mut validator);
             let write = call("write-1", "write_file");
             begin_turn(&mut validator, 1, vec![write.clone()]);
-            validator.observe(&tool_call_event(&write)).unwrap();
+            validator.observe(&call_event(&write)).unwrap();
             let mut event = modified_effect(1, "write-1", "a.txt");
             let Event::WorkspaceEffectRecorded { effect, .. } = &mut event else {
                 unreachable!()
@@ -2395,13 +2316,9 @@ mod tests {
     fn unknown_tool_cannot_forge_a_typed_workspace_effect() {
         let mut validator = TraceStructure::new();
         evidence_base(&mut validator, &[]);
-        let call = ToolCall {
-            id: "opaque-1".to_string(),
-            name: "custom_mutator".to_string(),
-            args: json!({"path": "a.txt"}),
-        };
+        let call = tool_call("opaque-1", "custom_mutator", json!({"path": "a.txt"}));
         begin_turn(&mut validator, 0, vec![call.clone()]);
-        validator.observe(&tool_call_event(&call)).unwrap();
+        validator.observe(&call_event(&call)).unwrap();
         let error = validator
             .observe(&Event::WorkspaceEffectRecorded {
                 turn: 0,
@@ -2430,7 +2347,7 @@ mod tests {
         evidence_base(&mut target_validator, &[]);
         let write = call("write-1", "write_file");
         begin_turn(&mut target_validator, 0, vec![write.clone()]);
-        target_validator.observe(&tool_call_event(&write)).unwrap();
+        target_validator.observe(&call_event(&write)).unwrap();
         let error = target_validator
             .observe(&Event::ControllerBlocked {
                 turn: 0,
@@ -2452,7 +2369,7 @@ mod tests {
         evidence_base(&mut missing_validator, &[]);
         let write = call("write-1", "write_file");
         begin_turn(&mut missing_validator, 0, vec![write.clone()]);
-        missing_validator.observe(&tool_call_event(&write)).unwrap();
+        missing_validator.observe(&call_event(&write)).unwrap();
         let error = missing_validator
             .observe(&Event::ControllerBlocked {
                 turn: 0,
@@ -2475,7 +2392,7 @@ mod tests {
         establish_prior_read(&mut stale_validator);
         let write = call("write-1", "write_file");
         begin_turn(&mut stale_validator, 1, vec![write.clone()]);
-        stale_validator.observe(&tool_call_event(&write)).unwrap();
+        stale_validator.observe(&call_event(&write)).unwrap();
         let stale = Event::ControllerBlocked {
             turn: 1,
             call_id: "write-1".to_string(),
@@ -2505,9 +2422,7 @@ mod tests {
         establish_prior_read(&mut identical_validator);
         let write = call("write-1", "write_file");
         begin_turn(&mut identical_validator, 1, vec![write.clone()]);
-        identical_validator
-            .observe(&tool_call_event(&write))
-            .unwrap();
+        identical_validator.observe(&call_event(&write)).unwrap();
         let mut identical = stale;
         let Event::ControllerBlocked { block, .. } = &mut identical else {
             unreachable!()
@@ -2544,7 +2459,7 @@ mod tests {
                 args,
             };
             begin_turn(&mut validator, 0, vec![call.clone()]);
-            validator.observe(&tool_call_event(&call)).unwrap();
+            validator.observe(&call_event(&call)).unwrap();
             let error = validator
                 .observe(&Event::ControllerBlocked {
                     turn: 0,
@@ -2592,30 +2507,20 @@ mod tests {
             }
         }
 
-        let check_call = ToolCall {
-            id: "check-1".to_string(),
-            name: "run_check".to_string(),
-            args: json!({"name":"unknown"}),
-        };
+        let check_call = tool_call("check-1", "run_check", json!({"name":"unknown"}));
         let mut valid = TraceStructure::new();
         evidence_base(&mut valid, &["unit"]);
         begin_turn(&mut valid, 0, vec![check_call.clone()]);
-        valid.observe(&tool_call_event(&check_call)).unwrap();
+        valid.observe(&call_event(&check_call)).unwrap();
         valid.observe(&unsupported_check("unknown")).unwrap();
         valid
-            .observe(&Event::ToolResult {
-                id: "check-1".to_string(),
-                name: "run_check".to_string(),
-                output: "unknown check".to_string(),
-                is_error: true,
-                duration_ms: 1,
-            })
+            .observe(&result_event("check-1", "run_check", "unknown check", true))
             .unwrap();
 
         let mut forged = TraceStructure::new();
         evidence_base(&mut forged, &["unit"]);
         begin_turn(&mut forged, 0, vec![check_call.clone()]);
-        forged.observe(&tool_call_event(&check_call)).unwrap();
+        forged.observe(&call_event(&check_call)).unwrap();
         let error = forged.observe(&unsupported_check("other")).unwrap_err();
         assert!(error.contains("does not match ToolCall args"), "{error}");
     }
@@ -2657,7 +2562,7 @@ mod tests {
             evidence_base(&mut validator, &[]);
             let write = call("write-1", "write_file");
             begin_turn(&mut validator, 0, vec![write.clone()]);
-            validator.observe(&tool_call_event(&write)).unwrap();
+            validator.observe(&call_event(&write)).unwrap();
             validator
         }
 
@@ -2704,16 +2609,12 @@ mod tests {
 
     #[test]
     fn check_outcomes_attempts_and_same_epoch_uniqueness_are_causal() {
-        let check_call = |id: &str| ToolCall {
-            id: id.to_string(),
-            name: "run_check".to_string(),
-            args: json!({"name":"unit"}),
-        };
+        let check_call = |id: &str| tool_call(id, "run_check", json!({"name":"unit"}));
         let mut validator = TraceStructure::new();
         evidence_base(&mut validator, &["unit"]);
         let first = check_call("check-1");
         begin_turn(&mut validator, 0, vec![first.clone()]);
-        validator.observe(&tool_call_event(&first)).unwrap();
+        validator.observe(&call_event(&first)).unwrap();
         validator
             .observe(&Event::VerificationCheckRecorded {
                 turn: 0,
@@ -2729,19 +2630,13 @@ mod tests {
             })
             .unwrap();
         validator
-            .observe(&Event::ToolResult {
-                id: "check-1".to_string(),
-                name: "run_check".to_string(),
-                output: "failed".to_string(),
-                is_error: true,
-                duration_ms: 1,
-            })
+            .observe(&result_event("check-1", "run_check", "failed", true))
             .unwrap();
         commit(&mut validator, 0, 1, 1);
 
         let repeated = check_call("check-2");
         begin_turn(&mut validator, 1, vec![repeated.clone()]);
-        validator.observe(&tool_call_event(&repeated)).unwrap();
+        validator.observe(&call_event(&repeated)).unwrap();
         validator
             .observe(&Event::ControllerBlocked {
                 turn: 1,
@@ -2758,22 +2653,14 @@ mod tests {
             })
             .unwrap();
         validator
-            .observe(&Event::ToolResult {
-                id: "check-2".to_string(),
-                name: "run_check".to_string(),
-                output: "already ran".to_string(),
-                is_error: true,
-                duration_ms: 1,
-            })
+            .observe(&result_event("check-2", "run_check", "already ran", true))
             .unwrap();
 
         let mut pass_without_mirror = TraceStructure::new();
         evidence_base(&mut pass_without_mirror, &["unit"]);
         let passing = check_call("check-1");
         begin_turn(&mut pass_without_mirror, 0, vec![passing.clone()]);
-        pass_without_mirror
-            .observe(&tool_call_event(&passing))
-            .unwrap();
+        pass_without_mirror.observe(&call_event(&passing)).unwrap();
         pass_without_mirror
             .observe(&Event::VerificationCheckRecorded {
                 turn: 0,
@@ -2789,13 +2676,7 @@ mod tests {
             })
             .unwrap();
         let error = pass_without_mirror
-            .observe(&Event::ToolResult {
-                id: "check-1".to_string(),
-                name: "run_check".to_string(),
-                output: "passed".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            })
+            .observe(&result_event("check-1", "run_check", "passed", false))
             .unwrap_err();
         assert!(error.contains("lacks its compatibility"), "{error}");
     }
@@ -2804,13 +2685,9 @@ mod tests {
     fn global_repair_barrier_block_is_bound_to_the_new_attempted_target() {
         let mut validator = TraceStructure::new();
         evidence_base(&mut validator, &["unit"]);
-        let check = ToolCall {
-            id: "check-1".to_string(),
-            name: "run_check".to_string(),
-            args: json!({"name": "unit"}),
-        };
+        let check = tool_call("check-1", "run_check", json!({"name": "unit"}));
         begin_turn(&mut validator, 0, vec![check.clone()]);
-        validator.observe(&tool_call_event(&check)).unwrap();
+        validator.observe(&call_event(&check)).unwrap();
         validator
             .observe(&Event::VerificationCheckRecorded {
                 turn: 0,
@@ -2826,23 +2703,17 @@ mod tests {
             })
             .unwrap();
         validator
-            .observe(&Event::ToolResult {
-                id: check.id,
-                name: check.name,
-                output: "failed".to_string(),
-                is_error: true,
-                duration_ms: 1,
-            })
+            .observe(&result_event(&check.id, &check.name, "failed", true))
             .unwrap();
         commit(&mut validator, 0, 1, 1);
 
-        let write = ToolCall {
-            id: "write-1".to_string(),
-            name: "write_file".to_string(),
-            args: json!({"path": "new.txt", "content": "new"}),
-        };
+        let write = tool_call(
+            "write-1",
+            "write_file",
+            json!({"path": "new.txt", "content": "new"}),
+        );
         begin_turn(&mut validator, 1, vec![write.clone()]);
-        validator.observe(&tool_call_event(&write)).unwrap();
+        validator.observe(&call_event(&write)).unwrap();
         validator
             .observe(&Event::ControllerBlocked {
                 turn: 1,
@@ -2878,17 +2749,13 @@ mod tests {
 
     #[test]
     fn successful_evidence_completion_requires_a_current_active_turn_gate() {
-        let completion = ToolCall {
-            id: "complete-1".to_string(),
-            name: TASK_COMPLETE.to_string(),
-            args: json!({"summary": "done"}),
-        };
+        let completion = tool_call("complete-1", TASK_COMPLETE, json!({"summary": "done"}));
 
         let mut omitted = TraceStructure::new();
         evidence_base(&mut omitted, &["unit"]);
         record_passing_check(&mut omitted, 0, "unit");
         begin_turn(&mut omitted, 1, vec![completion.clone()]);
-        omitted.observe(&tool_call_event(&completion)).unwrap();
+        omitted.observe(&call_event(&completion)).unwrap();
         let error = omitted
             .observe(&Event::TurnCommitted {
                 turn: 1,
@@ -2919,7 +2786,7 @@ mod tests {
         evidence_base(&mut valid, &["unit"]);
         record_passing_check(&mut valid, 0, "unit");
         begin_turn(&mut valid, 1, vec![completion.clone()]);
-        valid.observe(&tool_call_event(&completion)).unwrap();
+        valid.observe(&call_event(&completion)).unwrap();
         valid
             .observe(&Event::CompletionGate {
                 mutation_epoch: 0,
@@ -2941,11 +2808,7 @@ mod tests {
 
     #[test]
     fn evidence_completion_gate_is_unique_and_cannot_precede_a_later_effect() {
-        let completion = ToolCall {
-            id: "complete-1".to_string(),
-            name: TASK_COMPLETE.to_string(),
-            args: json!({"summary": "done"}),
-        };
+        let completion = tool_call("complete-1", TASK_COMPLETE, json!({"summary": "done"}));
         let gate = Event::CompletionGate {
             mutation_epoch: 0,
             required_checks: vec!["unit".to_string()],
@@ -2957,23 +2820,23 @@ mod tests {
         evidence_base(&mut duplicate, &["unit"]);
         record_passing_check(&mut duplicate, 0, "unit");
         begin_turn(&mut duplicate, 1, vec![completion.clone()]);
-        duplicate.observe(&tool_call_event(&completion)).unwrap();
+        duplicate.observe(&call_event(&completion)).unwrap();
         duplicate.observe(&gate).unwrap();
         let error = duplicate.observe(&gate).unwrap_err();
         assert!(error.contains("more than one CompletionGate"), "{error}");
 
-        let write = ToolCall {
-            id: "write-1".to_string(),
-            name: "write_file".to_string(),
-            args: json!({"path": "new.txt", "content": "new"}),
-        };
+        let write = tool_call(
+            "write-1",
+            "write_file",
+            json!({"path": "new.txt", "content": "new"}),
+        );
         let mut stale = TraceStructure::new();
         evidence_base(&mut stale, &["unit"]);
         record_passing_check(&mut stale, 0, "unit");
         begin_turn(&mut stale, 1, vec![completion.clone(), write.clone()]);
-        stale.observe(&tool_call_event(&completion)).unwrap();
+        stale.observe(&call_event(&completion)).unwrap();
         stale.observe(&gate).unwrap();
-        stale.observe(&tool_call_event(&write)).unwrap();
+        stale.observe(&call_event(&write)).unwrap();
         stale
             .observe(&Event::WorkspaceEffectRecorded {
                 turn: 1,
@@ -3001,13 +2864,12 @@ mod tests {
             })
             .unwrap();
         stale
-            .observe(&Event::ToolResult {
-                id: write.id,
-                name: write.name,
-                output: "wrote new.txt".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            })
+            .observe(&result_event(
+                &write.id,
+                &write.name,
+                "wrote new.txt",
+                false,
+            ))
             .unwrap();
         let error = stale
             .observe(&Event::TurnCommitted {
@@ -3186,23 +3048,6 @@ mod tests {
     }
 
     #[test]
-    fn modern_turn_cannot_be_overwritten_without_commit() {
-        let mut validator = TraceStructure::new();
-        prefix(&mut validator);
-        validator
-            .observe(&Event::ActionsProposed {
-                turn: 0,
-                calls: vec![call("a", "write_file")],
-            })
-            .unwrap();
-
-        let error = validator
-            .observe(&Event::TurnStart { turn: 1 })
-            .unwrap_err();
-        assert!(error.contains("without TurnCommitted"), "{error}");
-    }
-
-    #[test]
     fn proposal_and_dispatch_must_match_exactly() {
         let mut validator = TraceStructure::new();
         prefix(&mut validator);
@@ -3214,38 +3059,12 @@ mod tests {
             .unwrap();
 
         let error = validator
-            .observe(&Event::ToolCall {
-                id: "b".to_string(),
-                name: "write_file".to_string(),
-                args: json!({"path": "a.txt"}),
-            })
+            .observe(&call_event(&tool_call(
+                "b",
+                "write_file",
+                json!({"path": "a.txt"}),
+            )))
             .unwrap_err();
         assert!(error.contains("dispatched call"), "{error}");
-    }
-
-    #[test]
-    fn checkpoint_cannot_erase_an_active_turn() {
-        let mut validator = TraceStructure::new();
-        prefix(&mut validator);
-        let checkpoint = RecoveryCheckpointV1 {
-            version: ferric_trace::RECOVERY_CHECKPOINT_VERSION,
-            messages: Vec::new(),
-            next_turn: 0,
-            last_text: None,
-            head_len: 0,
-            committed_turn_starts: Vec::new(),
-            guard_history: Vec::new(),
-            nudged_for_no_action: false,
-            truncated_once: false,
-            last_input_tokens: None,
-            pending_input: None,
-            mutation_epoch: 0,
-            passed_checks: BTreeMap::new(),
-        };
-
-        let error = validator
-            .observe(&Event::RecoveryCheckpoint { state: checkpoint })
-            .unwrap_err();
-        assert!(error.contains("inside an active turn"), "{error}");
     }
 }

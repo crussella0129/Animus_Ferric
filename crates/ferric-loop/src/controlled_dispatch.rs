@@ -23,8 +23,11 @@ use ferric_trace::{
 };
 
 use crate::controller::{ControllerState, MutationRequirement};
-use crate::projector::TraceProjector;
+use crate::projector::{TraceProjector, record_event};
 use crate::run::{EditApprover, EditPreview};
+
+/// The model-facing result of a mutation the human refused in accept-edits.
+pub(crate) const EDIT_REJECTED: &str = "edit rejected by user";
 
 pub(crate) struct DispatchResult {
     pub full: String,
@@ -113,21 +116,16 @@ pub(crate) fn dispatch(
         if approver(&edit_preview(call, provenance.is_untrusted())) {
             human_already_approved = true;
         } else {
-            return record_result(
-                call,
-                "edit rejected by user".to_string(),
-                true,
-                0,
-                sink,
-                projector,
-            );
+            return record_result(call, EDIT_REJECTED.to_string(), true, 0, sink, projector);
         }
     }
 
-    let carry_through = |_request: &ferric_tools::ApprovalRequest<'_>| true;
-    let sink_approver: Option<ferric_tools::SinkApprover<'_>> =
-        human_already_approved.then_some(&carry_through);
-    let outcome = registry.commit_admitted(prepared, provenance, sink_policy, sink_approver);
+    let outcome = registry.commit_admitted(
+        prepared,
+        provenance,
+        sink_policy,
+        sink_approver(human_already_approved),
+    );
     let (output, metadata, duration_ms) = match outcome {
         ControlledOutcome::Completed {
             output,
@@ -808,7 +806,7 @@ fn record_block(
     )
 }
 
-fn record_result(
+pub(crate) fn record_result(
     call: &ToolCall,
     full: String,
     is_error: bool,
@@ -847,7 +845,7 @@ fn record_blocked_result(
     Ok(result)
 }
 
-fn record_permission_checks(
+pub(crate) fn record_permission_checks(
     checks: &[CheckRecord],
     sink: &mut JsonlSink,
     projector: &mut TraceProjector,
@@ -855,16 +853,6 @@ fn record_permission_checks(
     for check in checks {
         record_event(permission_event(check), sink, projector)?;
     }
-    Ok(())
-}
-
-fn record_event(
-    event: Event,
-    sink: &mut JsonlSink,
-    projector: &mut TraceProjector,
-) -> Result<(), FerricError> {
-    sink.write_event(event.clone())?;
-    projector.step(&event);
     Ok(())
 }
 
@@ -938,15 +926,32 @@ fn controlled_target_paths(
             let resolved = workspace.resolve(value).map_err(|error| {
                 contract_error(&call.name, format!("cannot normalize target: {error}"))
             })?;
-            let relative = resolved.strip_prefix(workspace.root()).map_err(|_| {
+            workspace.relative(&resolved).ok_or_else(|| {
                 contract_error(&call.name, "normalized target escaped the workspace")
-            })?;
-            Ok(relative.to_string_lossy().replace('\\', "/"))
+            })
         })
         .collect()
 }
 
-fn edit_preview(call: &ToolCall, tainted: bool) -> EditPreview {
+/// The sink gate's approver for one call. ADR-074 wired the sink gate to a
+/// human; ADR-079 stops it asking twice: when accept-edits already previewed
+/// this exact call (taint disclosed), the human has answered, so the sink
+/// honours that answer rather than re-prompting. With no accept-edits approval
+/// there is nobody to ask, and `RequireApproval` still denies — the safe reading.
+pub(crate) fn sink_approver(
+    human_already_approved: bool,
+) -> Option<ferric_tools::SinkApprover<'static>> {
+    fn carry_through(_request: &ferric_tools::ApprovalRequest<'_>) -> bool {
+        true
+    }
+    human_already_approved.then_some(&carry_through)
+}
+
+/// Build an [`EditPreview`] from a pending call: the target path(s) it names,
+/// if any, and its arguments rendered for the human to inspect. `tainted`
+/// folds the sink policy's question into the one prompt the human already
+/// sees, instead of asking it separately afterwards (ADR-079).
+pub(crate) fn edit_preview(call: &ToolCall, tainted: bool) -> EditPreview {
     let mut detail = String::new();
     if tainted {
         detail.push_str(

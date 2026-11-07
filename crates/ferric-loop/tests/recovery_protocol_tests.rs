@@ -4,7 +4,7 @@ use common::*;
 use ferric_core::{ActionProtocol, Message, ToolCall};
 use ferric_guard::Workspace;
 use ferric_loop::{ReplayError, ReplayedState, RunArgs, StopReason, replay, run};
-use ferric_provider::{MockProvider, SamplingParams};
+use ferric_provider::MockProvider;
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink};
 use serde_json::json;
@@ -100,9 +100,8 @@ fn fully_resulted_tail_is_recovered_without_reexecuting_it() {
     write_modern_tail(&trace, dir.path(), true, true);
 
     let state = replay(&trace).unwrap();
-    assert_eq!(state.next_turn, 1);
-    assert_eq!(state.turns, 1);
-    assert!(state.messages.iter().any(|message| {
+    assert_eq!(state.core.next_turn, 1);
+    assert!(state.core.messages.iter().any(|message| {
         message
             .text
             .as_deref()
@@ -117,8 +116,8 @@ fn proposal_before_dispatch_is_safely_retried() {
     write_modern_tail(&trace, dir.path(), false, false);
 
     let state = replay(&trace).unwrap();
-    assert_eq!(state.next_turn, 0);
-    assert_eq!(state.messages.len(), 2);
+    assert_eq!(state.core.next_turn, 0);
+    assert_eq!(state.core.messages.len(), 2);
 }
 
 #[test]
@@ -184,7 +183,7 @@ fn successful_terminal_commit_is_not_resumable_if_session_end_was_not_written() 
     let trace = dir.path().join("success-before-session-end.jsonl");
     let done = ToolCall {
         id: "done-1".to_string(),
-        name: ferric_loop::TASK_COMPLETE.to_string(),
+        name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
         args: json!({"summary": "done"}),
     };
     let mut sink = JsonlSink::open(&trace, "terminal-crash").unwrap();
@@ -243,30 +242,16 @@ fn resume_uses_a_fresh_budget_but_keeps_absolute_turn_ids() {
     let mut registry = Registry::new();
     register_builtin_tools(&mut registry);
     let replayed = ReplayedState {
-        messages: vec![Message::system("system"), Message::user("task")],
-        turns: 15,
-        next_turn: 15,
-        last_text: None,
-        protocol: ActionProtocol::NativeTools,
-        harness_policy: ferric_core::HarnessPolicy::Legacy,
-        truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
-        source_session: "prior".to_string(),
-        workspace: dir.path().to_path_buf(),
-        head_len: 2,
-        committed_turn_starts: Vec::new(),
-        guard_history: Vec::new(),
-        nudged_for_no_action: false,
-        truncated_once: false,
-        last_input_tokens: None,
-        pending_input: None,
-        mutation_epoch: 0,
-        passed_checks: std::collections::BTreeMap::new(),
         pause_reason: Some("max_turns".to_string()),
-        controller_checkpoint: None,
+        ..legacy_seed(
+            vec![Message::system("system"), Message::user("task")],
+            15,
+            dir.path(),
+        )
     };
     let provider = MockProvider::new(vec![tool_completion(vec![(
         "done-15",
-        ferric_loop::TASK_COMPLETE,
+        ferric_iron::terminator::TASK_COMPLETE,
         json!({"summary": "finished after resume"}),
     )])]);
     let sleeper = RecordingSleeper::new();
@@ -274,25 +259,8 @@ fn resume_uses_a_fresh_budget_but_keeps_absolute_turn_ids() {
     let mut sink = JsonlSink::open(&trace, "resumed").unwrap();
     let outcome = futures_executor::block_on(run(
         RunArgs {
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            cancel_flag: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         None,

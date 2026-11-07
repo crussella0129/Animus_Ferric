@@ -42,14 +42,6 @@ enum Pattern {
 }
 
 impl IgnoreList {
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
-    }
-
     /// Parse `.ferricignore` text: one pattern per line; blank lines and `#`
     /// comments are skipped. A trailing `/` marks a directory (still matched as
     /// a component). Case-sensitive, matching gitignore/POSIX filesystems.
@@ -166,7 +158,7 @@ mod tests {
     #[test]
     fn parse_skips_comments_and_blanks() {
         let list = IgnoreList::parse("# a comment\n\nsecrets\n  \n*.pem\n");
-        assert!(!list.is_empty());
+        assert!(!list.rules.is_empty());
         // 2 real rules (secrets, *.pem).
         assert_eq!(list.rules.len(), 2);
     }
@@ -224,7 +216,7 @@ mod tests {
 
     #[test]
     fn empty_list_matches_nothing() {
-        let list = IgnoreList::empty();
+        let list = IgnoreList::default();
         assert!(list.matches(&root().join("secrets/x"), &root()).is_none());
     }
 

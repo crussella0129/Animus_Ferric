@@ -1,12 +1,11 @@
 mod common;
 
 use common::*;
-use ferric_core::ActionProtocol;
 use ferric_guard::Workspace;
-use ferric_loop::{RunArgs, StopReason, run};
-use ferric_provider::{MockProvider, SamplingParams};
+use ferric_loop::{StopReason, run};
+use ferric_provider::MockProvider;
 use ferric_tools::{NamedCheck, Registry, register_builtin_tools, register_run_checks};
-use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
+use ferric_trace::{Event, JsonlSink, ParsedEvent};
 use serde_json::json;
 
 fn passing_check(name: &str) -> NamedCheck {
@@ -39,36 +38,13 @@ fn run_script(
     let trace = dir.path().join("verification.jsonl");
     let mut sink = JsonlSink::open(&trace, "verification").unwrap();
     let outcome = futures_executor::block_on(run(
-        RunArgs {
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            cancel_flag: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
-        },
+        common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper),
         &mut sink,
         Some("make the requested change and verify it"),
     ))
     .unwrap();
     drop(sink);
-    let records = TraceReader::open(trace)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = read_records(trace);
     (outcome, records)
 }
 
@@ -80,13 +56,13 @@ fn completion_is_blocked_until_every_required_check_passes() {
         vec![
             tool_completion(vec![(
                 "done-too-soon",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "unverified"}),
             )]),
             tool_completion(vec![("check-1", "run_check", json!({"name": "unit"}))]),
             tool_completion(vec![(
                 "done-verified",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "verified"}),
             )]),
         ],
@@ -139,13 +115,13 @@ fn a_later_mutation_makes_prior_check_evidence_stale() {
             )]),
             tool_completion(vec![(
                 "done-stale",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "stale"}),
             )]),
             tool_completion(vec![("check-after", "run_check", json!({"name": "unit"}))]),
             tool_completion(vec![(
                 "done-fresh",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "fresh"}),
             )]),
         ],

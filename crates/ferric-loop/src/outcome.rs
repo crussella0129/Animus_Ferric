@@ -42,6 +42,28 @@ pub enum StopReason {
 }
 
 impl StopReason {
+    const ALL: [StopReason; 14] = [
+        StopReason::FinalText,
+        StopReason::TaskComplete,
+        StopReason::PlanSubmitted,
+        StopReason::MaxTurns,
+        StopReason::RepetitionGuard,
+        StopReason::NoProgress,
+        StopReason::RepeatedFailure,
+        StopReason::Oscillation,
+        StopReason::ProviderError,
+        StopReason::EmptyCompletion,
+        StopReason::TruncatedAction,
+        StopReason::Interrupted,
+        StopReason::HookFailed,
+        StopReason::NeedsInput,
+    ];
+
+    /// The stop a trace reason string names, or `None` for an unknown one.
+    pub fn parse(reason: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|stop| stop.as_str() == reason)
+    }
+
     /// Whether this stop represents a completed user request.
     ///
     /// Guard trips, exhausted budgets, interrupts, malformed output, hook
@@ -112,6 +134,15 @@ mod tests {
 
         assert!(!StopReason::NeedsInput.is_failure());
         assert!(StopReason::ProviderError.is_failure());
+
+        for stop in StopReason::ALL {
+            assert_eq!(StopReason::parse(stop.as_str()), Some(stop));
+        }
+        assert_eq!(
+            StopReason::parse("done"),
+            None,
+            "a legacy alias, not a stop"
+        );
     }
 }
 

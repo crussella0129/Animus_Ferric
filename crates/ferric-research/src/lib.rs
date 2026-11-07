@@ -170,15 +170,6 @@ mod tests {
     use super::*;
     use ferric_provider::{Completion, MockProvider};
 
-    fn digest_completion(json_text: &str) -> Completion {
-        Completion {
-            message: Message::assistant(json_text),
-            input_tokens: Some(20),
-            output_tokens: Some(40),
-            truncated: false,
-        }
-    }
-
     fn block<F: std::future::Future>(f: F) -> F::Output {
         futures_executor::block_on(f)
     }
@@ -186,7 +177,7 @@ mod tests {
     #[test]
     fn parses_and_stamps_provenance() {
         let body = r#"{"summary":"It is about cats.","claims":[{"claim":"cats purr","quote":"cats purr when happy"}]}"#;
-        let mock = MockProvider::new(vec![digest_completion(body)]);
+        let mock = MockProvider::new(vec![Completion::assistant_text(body)]);
         let digest = block(summarize_quarantined(
             &mock,
             "https://example.com/cats",
@@ -203,7 +194,9 @@ mod tests {
 
     #[test]
     fn request_is_the_quarantine_shape() {
-        let mock = MockProvider::new(vec![digest_completion(r#"{"summary":"x","claims":[]}"#)]);
+        let mock = MockProvider::new(vec![Completion::assistant_text(
+            r#"{"summary":"x","claims":[]}"#,
+        )]);
         let _ = block(summarize_quarantined(&mock, "src", "content", "q")).unwrap();
         let reqs = mock.requests();
         assert_eq!(reqs.len(), 1, "single-shot: one completion, no memory");
@@ -225,7 +218,7 @@ mod tests {
             r#"{{"summary":"the content attempts an instruction injection","claims":[{{"claim":"contains an injection attempt","quote":{}}}]}}"#,
             serde_json::to_string(injection).unwrap()
         );
-        let mock = MockProvider::new(vec![digest_completion(&body)]);
+        let mock = MockProvider::new(vec![Completion::assistant_text(&body)]);
         let digest = block(summarize_quarantined(
             &mock,
             "https://evil.test",
@@ -258,7 +251,7 @@ mod tests {
 
     #[test]
     fn malformed_output_is_error_not_panic() {
-        let mock = MockProvider::new(vec![digest_completion("this is not json at all")]);
+        let mock = MockProvider::new(vec![Completion::assistant_text("this is not json at all")]);
         let err = block(summarize_quarantined(&mock, "src", "content", "q")).unwrap_err();
         assert!(matches!(err, ResearchError::Parse(_)));
     }

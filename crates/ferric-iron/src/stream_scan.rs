@@ -12,9 +12,8 @@
 //! internally tracks what it has already emitted so repeated calls only
 //! return NEW deltas.
 
+use crate::terminator::TASK_COMPLETE;
 use crate::types::StreamDelta;
-
-const TASK_COMPLETE: &str = "task_complete";
 
 /// Stateful, pure (no I/O) scanner. One instance per streaming turn.
 #[derive(Debug, Default)]

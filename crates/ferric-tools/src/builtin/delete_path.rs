@@ -2,12 +2,11 @@ use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
-use crate::control::{
-    ControlCapability, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
-};
+use crate::control::{ControlCapability, PrepareCtx, PrepareError, ToolPreparation};
+
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
-use super::path_arg;
+use super::args;
 
 /// Delete a file or directory within the workspace. A non-empty directory is
 /// removed only when `recursive` is true, so a small model can't accidentally
@@ -44,21 +43,17 @@ impl Tool for DeletePath {
         ctx: &PrepareCtx<'_>,
         args: &serde_json::Value,
     ) -> Result<ToolPreparation, PrepareError> {
-        let path = path_arg(args)
-            .map_err(|message| PrepareError::new(PrepareErrorKind::InvalidArguments, message))?;
+        let path = args::string(args, "path")?;
         super::controlled_file::prepare_delete(ctx, path)
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let path = path_arg(args)?;
+        let path = args::string(args, "path")?;
         let recursive = args
             .get("recursive")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let resolved = ctx
-            .workspace
-            .resolve(path)
-            .map_err(|e| format!("boundary: {e}"))?;
+        let resolved = ctx.resolve(path)?;
         // `symlink_metadata` so a symlink is classified as a file (we remove the
         // link, never follow it to delete its target's contents).
         let meta =

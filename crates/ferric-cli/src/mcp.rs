@@ -12,19 +12,16 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use ferric_core::Modality;
+use crate::media::Modality;
 use ferric_guard::Workspace;
-use ferric_provider::Provider;
+use ferric_loop::RunArgs;
 use ferric_trace::JsonlSink;
 
-use crate::backend::BackendOpts;
+use crate::backend::ResolvedBackend;
+use crate::config::RunFlags;
 use crate::query::{
-    HarnessPolicyArg, ProtocolArg, RunConfig, RunConfigArgs, build_run_config,
-    ensure_supported_harness_policy, mock_provider, route_files, run_with_provider,
+    RunConfig, build_run_config, mock_provider, open_workspace, route_files, run_with_provider,
 };
-
-#[cfg(feature = "backend-openai")]
-use tokio::runtime::Runtime;
 
 /// One incoming line, parsed. A request expects a response (`id` present,
 /// even if `null`); a notification has no `id` field at all and expects none.
@@ -201,77 +198,13 @@ pub fn handle_tools_list(id: Value) -> RpcResponse {
 /// here is launch-time-fixed for the server's lifetime (ADR-046).
 #[derive(Args)]
 pub struct McpArgs {
-    /// Workspace root (containment boundary). Default: current directory.
-    #[arg(long)]
-    pub workspace: Option<PathBuf>,
-
     #[command(flatten)]
-    pub backend_opts: BackendOpts,
-
-    /// Parameter count in billions. Default 1.2 when neither this flag nor a
-    /// config file's `params_b` is set (T-3805).
-    #[arg(long)]
-    pub params_b: Option<f32>,
-
-    /// Quantization label. Default "Q4_K_M" when neither this flag nor a
-    /// config file's `quant` is set (T-3805).
-    #[arg(long)]
-    pub quant: Option<String>,
-
-    /// Model family label. Default "unknown" when neither this flag nor a
-    /// config file's `family` is set (T-3805).
-    #[arg(long)]
-    pub family: Option<String>,
-
-    /// Context window in tokens (ModelProfile is config-supplied, ADR-006).
-    /// Default 4096 when neither this flag nor a config file's `ctx` is set
-    /// (T-3805).
-    #[arg(long)]
-    pub ctx: Option<u32>,
-
-    /// Sampling temperature (0.0 selects the deterministic sampler). Default
-    /// 0.0 when neither this flag nor a config file's `temperature` is set
-    /// (T-3805).
-    #[arg(long)]
-    pub temperature: Option<f32>,
-
-    /// Action protocol override (default: chosen from policy + backend caps)
-    #[arg(long, value_enum)]
-    pub protocol: Option<ProtocolArg>,
-
-    /// Autonomous harness policy fixed for the server lifetime.
-    #[arg(long, value_enum)]
-    pub harness_policy: Option<HarnessPolicyArg>,
-
-    /// Directory of prompt elements to compose the system prompt from.
-    #[arg(long)]
-    pub prompts_dir: Option<PathBuf>,
-
-    /// Run against a built-in scripted mock instead of a real model
-    #[arg(long)]
-    pub mock: bool,
+    pub run: RunFlags,
 
     /// Declare the model's accepted non-text modalities (comma list:
     /// `image,audio,video`). Applies to every `tools/call`'s `files`.
     #[arg(long)]
     pub modality: Option<String>,
-
-    /// Cap the active tool ring (ADR-028).
-    /// Run at this tier regardless of size or measured level (ADR-098).
-    /// Recorded as `tier_source: "override"` so an asked-for tier is never
-    /// mistaken for one earned on the benchmark ladder.
-    #[arg(long, value_enum)]
-    pub tier: Option<crate::query::TierArg>,
-
-    #[arg(long)]
-    pub max_ring: Option<u8>,
-
-    /// Directory holding `model_profiles.json` (ADR-029). Read once at
-    /// launch — a later `ferric bench --calibrate-rings` run is picked up
-    /// only on restart (ADR-046). Default "benchmarks" when neither this flag
-    /// nor a config file's `profile_dir` is set (T-3805).
-    #[arg(long)]
-    pub profile_dir: Option<PathBuf>,
 
     /// Resume an interrupted, still-incomplete session by replaying its
     /// trace (sprint 55). Same semantics as `ferric query --resume`: the
@@ -280,33 +213,14 @@ pub struct McpArgs {
     pub resume: Option<PathBuf>,
 }
 
-/// How `McpServer` drives a loop turn. `Blocking` needs no ambient async runtime
-/// (`futures_executor::block_on`, mirroring `drive_mock`); `Real` holds the ONE
-/// `tokio::runtime::Runtime` built at launch and reused for every subsequent
-/// `tools/call` (T-3601's reusable-provider shape, applied to the executor
-/// too — see `run_with_provider`'s doc comment).
-pub(crate) enum Executor {
-    Blocking,
-    #[cfg(feature = "backend-openai")]
-    Real(Runtime),
-}
-
-/// Where each MCP request gets its provider. Real providers are intentionally
-/// shared for the lifetime of the server. The built-in mock is a finite script,
-/// so each independent `tools/call` must receive a fresh instance.
-pub(crate) enum ProviderSource {
-    FreshMock,
-    Shared(Box<dyn Provider + Send + Sync>),
-}
-
 /// The long-lived state one `ferric mcp` process holds: workspace/backend/
-/// model/protocol are fixed at launch (`RunConfig` and `Workspace`). Real
-/// providers are also fixed; mock scripts are reset at request boundaries.
+/// model/protocol are fixed at launch (`RunConfig` and `Workspace`). A real
+/// provider and its ONE runtime are built at launch and reused for every
+/// `tools/call` (T-3601); the finite scripted mock is reset per request.
 pub(crate) struct McpServer {
     pub workspace: Workspace,
     pub config: RunConfig,
-    pub provider: ProviderSource,
-    pub executor: Executor,
+    pub backend: ResolvedBackend,
     pub declared: Vec<Modality>,
     pub trace_dir: PathBuf,
     pub resume: std::sync::Mutex<Option<ferric_loop::ReplayedState>>,
@@ -400,7 +314,7 @@ impl McpServer {
     /// its directory — so a skill installed as `helpful/` could answer to
     /// `deploy`. Names are now required to match their directory.
     fn handle_prompts_list(&self, id: Value) -> RpcResponse {
-        let (skills, _errors) = ferric_skills::discover(self.workspace.root());
+        let (skills, _errors) = crate::skills::discover(self.workspace.root());
         let prompts: Vec<Value> = skills
             .into_iter()
             .map(|s| {
@@ -416,7 +330,7 @@ impl McpServer {
 
     fn handle_prompts_get(&self, id: Value, params: &Value) -> RpcResponse {
         let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-        let (skills, _errors) = ferric_skills::discover(self.workspace.root());
+        let (skills, _errors) = crate::skills::discover(self.workspace.root());
 
         if let Some(skill) = skills.into_iter().find(|s| s.name == name) {
             RpcResponse::success(
@@ -507,7 +421,7 @@ impl McpServer {
                     );
                 }
             }
-            Some(state) if state.pending_input.is_some() => {
+            Some(state) if state.core.pending_input.is_some() => {
                 if prompt.is_some()
                     || !files.is_empty()
                     || answer
@@ -555,13 +469,10 @@ impl McpServer {
                     return RpcResponse::success(id, tool_content(format!("files: {e}"), true));
                 }
             };
-            let effective = match (prompt, prompt_suffix.is_empty()) {
-                (Some(prompt), true) => Some(prompt),
-                (Some(prompt), false) => Some(format!("{prompt}{prompt_suffix}")),
-                (None, true) => None,
-                (None, false) => Some(prompt_suffix),
-            };
-            (media_parts, effective)
+            (
+                media_parts,
+                crate::query::with_attachments(prompt, prompt_suffix),
+            )
         };
 
         let (session, trace_path, mut sink) =
@@ -642,133 +553,51 @@ impl McpServer {
             _ => {}
         };
 
-        let setup = crate::query::LoopSetup {
-            registry: &self.config.registry,
-            workspace: &self.workspace,
-            policy: &self.config.policy,
-            protocol: self.config.protocol,
-            harness_policy: self.config.harness_policy,
-            sampling: self.config.sampling.clone(),
-            system_prompt: self.config.system_prompt.as_deref(),
-            lineage: self.config.lineage.clone(),
-            media,
-            stream_sink: Some(&sink_fn),
-            resume,
-            answer,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: self.config.hooks.clone(),
-            edit_approver: None,
-        };
-        match &self.provider {
-            ProviderSource::FreshMock => {
-                let provider = mock_provider(self.config.protocol);
-                let fut = run_with_provider(setup.into_run_args(&provider, None), sink, prompt);
-                futures_executor::block_on(fut)
-            }
-            ProviderSource::Shared(provider) => {
-                let fut =
-                    run_with_provider(setup.into_run_args(provider.as_ref(), None), sink, prompt);
-                match &self.executor {
-                    Executor::Blocking => futures_executor::block_on(fut),
-                    #[cfg(feature = "backend-openai")]
-                    Executor::Real(rt) => rt.block_on(fut),
-                }
-            }
-        }
+        self.backend.with_provider(
+            || mock_provider(self.config.protocol),
+            |provider| {
+                self.backend.block_on(run_with_provider(
+                    RunArgs {
+                        media,
+                        stream_sink: Some(&sink_fn),
+                        resume,
+                        answer,
+                        ..self.config.run_args(&self.workspace, provider)
+                    },
+                    sink,
+                    prompt,
+                ))
+            },
+        )
     }
 
     /// Build the server: workspace + launch-time-fixed run config. A real
     /// backend and its `tokio::runtime::Runtime` are constructed exactly once;
     /// the finite scripted mock is reconstructed for each `tools/call`.
     pub fn launch(args: &McpArgs) -> Result<Self, String> {
-        let workspace_root = match &args.workspace {
-            Some(path) => path.clone(),
-            None => std::env::current_dir()
-                .map_err(|e| format!("cannot determine current directory: {e}"))?,
-        };
-        let workspace = Workspace::new(&workspace_root).map_err(|e| format!("workspace: {e}"))?;
+        let (workspace_root, workspace) = open_workspace(args.run.workspace.as_deref())?;
 
         // T-3805: layered config (CLI flag > project `.ferric/config.toml` >
-        // user config > today's hardcoded default). `McpArgs` is `&`, not
-        // owned, so the merge happens on a local clone of `backend_opts`
-        // rather than in place (mirrors `run_query`'s T-3803 treatment) —
-        // that clone is what both `RunConfigArgs` and `build_real_provider`
-        // use below, so the config-resolved model/backend actually reaches
-        // the real provider, not just protocol/tier selection.
-        let loaded_config =
-            crate::config::load_layered(&workspace_root).map_err(|error| error.to_string())?;
-        let cfg = loaded_config.config;
-        let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
-        let resolved_params_b = args.params_b.or(cfg.params_b).unwrap_or(1.2);
-        let resolved_quant = args
-            .quant
-            .clone()
-            .or(cfg.quant)
-            .unwrap_or_else(|| "Q4_K_M".to_string());
-        let resolved_family = args
-            .family
-            .clone()
-            .or(cfg.family)
-            .unwrap_or_else(|| "unknown".to_string());
-        let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
-        let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
-        let resolved_harness_policy = args.harness_policy.map(Into::into).or(cfg.harness_policy);
-        let resolved_max_ring = args.max_ring.or(cfg.max_ring);
-        let resolved_tier = args.tier.or(cfg.tier);
-        let resolved_profile_dir = args
-            .profile_dir
-            .clone()
-            .or(cfg.profile_dir)
-            .unwrap_or_else(|| PathBuf::from("benchmarks"));
-
-        let mut config = build_run_config(&RunConfigArgs {
-            // `ferric_query` over MCP does not fold skills. The MCP client
-            // already reaches skills the right way — as *prompts* it pulls
-            // deliberately (`prompts/get`). Injecting them into the tool call
-            // as well would run a skill the client never asked for, which is
-            // exactly the automatic invocation ADR-091 rules out.
-            workspace_root: workspace_root.clone(),
-            requested_skills: Vec::new(),
-            allowed_skills: Vec::new(),
-            mock: args.mock,
-            params_b: resolved_params_b,
-            quant: resolved_quant,
-            family: resolved_family,
-            ctx: resolved_ctx,
-            temperature: resolved_temperature,
-            protocol_override: args.protocol,
-            harness_policy: resolved_harness_policy,
-            prompts_dir: args.prompts_dir.clone(),
-            max_ring: resolved_max_ring,
-            tier_override: resolved_tier.map(Into::into),
-            profile_dir: resolved_profile_dir,
-            // C-001 (plan-critic): derived from the POST-merge, config-
-            // resolved `model`/`model_file` (already merged above into
-            // `backend_opts`).
-            model_key: backend_opts.model.clone(),
-            hooks: None,
-        })
-        .map_err(|error| error.to_string())?;
+        // user config > today's hardcoded default). The merged backend options
+        // are what reach the real provider below, not just protocol/tier
+        // selection.
+        let cfg = crate::config::load_layered(&workspace_root)
+            .map_err(|error| error.to_string())?
+            .config;
+        // `ferric_query` over MCP does not fold skills. The MCP client already
+        // reaches skills the right way — as *prompts* it pulls deliberately
+        // (`prompts/get`). Injecting them into the tool call as well would run
+        // a skill the client never asked for, which is exactly the automatic
+        // invocation ADR-091 rules out.
+        let run = args.run.resolve(&cfg, &workspace_root);
+        let mut config = build_run_config(&run).map_err(|error| error.to_string())?;
         // T-3905 (sprint 39 / 55): `--resume <path>` replays an interrupted, still-
         // incomplete session. Resolved here and passed to the first `ferric_query` call.
-        let resume_state = match &args.resume {
-            Some(path) => match ferric_loop::replay(path) {
-                Ok(replayed) => {
-                    ferric_loop::validate_resume_target(
-                        &replayed,
-                        workspace.root(),
-                        config.protocol,
-                        config.harness_policy,
-                    )
-                    .map_err(|error| format!("cannot resume {}: {error}", path.display()))?;
-                    Some(replayed)
-                }
-                Err(e) => return Err(format!("cannot resume {}: {e}", path.display())),
-            },
-            None => None,
-        };
-        ensure_supported_harness_policy(config.harness_policy)?;
+        let resume_state = args
+            .resume
+            .as_deref()
+            .map(|path| crate::query::load_resume(path, workspace.root(), &config))
+            .transpose()?;
 
         // No trace sink exists yet at launch (each tools/call opens its own),
         // so a composition failure is surfaced once here rather than dropped, or (unlike
@@ -777,47 +606,28 @@ impl McpServer {
             eprintln!("{err}");
         }
 
-        // T-3806: `Animus.md` — same fold as `run_query`. No sink exists yet
-        // at launch (each `tools/call` opens its own), so its presence is
-        // surfaced via `eprintln!` here rather than a per-call `Note` (same
-        // treatment as the prompt-composition diagnostics above).
-        let animus_md = std::fs::read_to_string(workspace_root.join("Animus.md")).ok();
-        if let Some(content) = &animus_md {
-            config.system_prompt = Some(crate::query::fold_animus_md(
-                config.system_prompt.as_deref(),
-                content,
-            ));
-            eprintln!("Animus.md applied ({} chars)", content.len());
+        // T-3806: `Animus.md` — same fold as `run_query`, its presence
+        // surfaced here for the same reason as the diagnostic above.
+        let animus_md = crate::query::fold_workspace_animus_md(&mut config, &workspace_root);
+        if let Some(chars) = animus_md {
+            eprintln!("Animus.md applied ({chars} chars)");
         }
-
-        if resume_state.is_some()
-            && (config.lineage.is_some()
-                || config.prompt_composition_error.is_some()
-                || animus_md.is_some())
-        {
-            eprintln!(
-                "note: --resume ignores --prompts-dir/Animus.md for the system message \
-                 (frozen from the replayed session)"
-            );
-        }
+        crate::query::note_frozen_system_prompt(
+            &config,
+            resume_state.is_some(),
+            animus_md.is_some(),
+        );
 
         let trace_dir = ferric_trace::trace_dir(&workspace_root);
         std::fs::create_dir_all(&trace_dir)
             .map_err(|e| format!("cannot create trace dir {}: {e}", trace_dir.display()))?;
-        let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
-
-        let (provider, executor) = if args.mock {
-            (ProviderSource::FreshMock, Executor::Blocking)
-        } else {
-            let (provider, executor) = build_real_provider(&backend_opts, workspace.root())?;
-            (ProviderSource::Shared(provider), executor)
-        };
+        let declared = crate::media::parse_modalities(args.modality.as_deref().unwrap_or(""));
+        let backend = ResolvedBackend::resolve(run.mock, &run.backend, workspace.root())?;
 
         Ok(McpServer {
             workspace,
             config,
-            provider,
-            executor,
+            backend,
             declared,
             trace_dir,
             resume: std::sync::Mutex::new(resume_state),
@@ -849,24 +659,6 @@ impl McpServer {
     }
 }
 
-#[cfg(feature = "backend-openai")]
-fn build_real_provider(
-    backend_opts: &BackendOpts,
-    workspace: &std::path::Path,
-) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
-    let (provider, runtime) =
-        crate::backend::create_provider_with_runtime_in(backend_opts, workspace)?;
-    Ok((provider, Executor::Real(runtime)))
-}
-
-#[cfg(not(feature = "backend-openai"))]
-fn build_real_provider(
-    _backend_opts: &BackendOpts,
-    _workspace: &std::path::Path,
-) -> Result<(Box<dyn Provider + Send + Sync>, Executor), String> {
-    Err(crate::backend::BACKEND_FEATURE_MISSING.to_string())
-}
-
 /// `ferric mcp` entrypoint.
 pub fn run_mcp(args: McpArgs) -> std::process::ExitCode {
     match McpServer::launch(&args) {
@@ -884,79 +676,27 @@ pub fn run_mcp(args: McpArgs) -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::HarnessPolicyArg;
+    use ferric_provider::Provider;
 
-    /// T-3804: same regression as `cli::query_defaults_unchanged_after_clap_
-    /// type_change`, scoped to `ferric mcp`. `McpArgs` built with every
-    /// formerly-clap-defaulted field `None` and no config file involved yet
-    /// (T-3805) — `McpServer::launch`'s resolved tier must land at
-    /// `Tier::Nano` (default `--params-b` 1.2), matching pre-refactor
-    /// behavior exactly.
-    #[test]
-    fn launch_defaults_unchanged_after_clap_type_change() {
-        let dir = tempfile::tempdir().unwrap();
-        let args = base_mcp_args(dir.path());
-        let server = McpServer::launch(&args).unwrap();
-        assert_eq!(server.config.policy.tier, ferric_core::Tier::Nano);
-        assert_eq!(server.config.policy.max_output_tokens, 512);
-    }
-
-    /// All-`None`/`mock: true` `McpArgs` for a given workspace — the shared
-    /// base the T-3805 config-precedence tests below start from.
+    /// All-`None`/`mock: true` `McpArgs` for a given workspace.
     fn base_mcp_args(ws: &std::path::Path) -> McpArgs {
         McpArgs {
-            workspace: Some(ws.to_path_buf()),
-            backend_opts: crate::backend::BackendOpts {
-                model: None,
-                api_base: None,
-                api_key: None,
+            run: RunFlags {
+                workspace: Some(ws.to_path_buf()),
+                mock: true,
+                ..RunFlags::default()
             },
-            params_b: None,
-            quant: None,
-            family: None,
-            ctx: None,
-            temperature: None,
-            protocol: None,
-            harness_policy: None,
-            prompts_dir: None,
-            mock: true,
             modality: None,
-            max_ring: None,
-            tier: None,
-            profile_dir: None,
             resume: None,
         }
-    }
-
-    fn write_project_config(ws: &std::path::Path, toml: &str) {
-        std::fs::create_dir_all(ws.join(".ferric")).unwrap();
-        std::fs::write(ws.join(".ferric").join("config.toml"), toml).unwrap();
-    }
-
-    /// T-3805: same shape as `cli::config_file_sets_default_without_flag`.
-    #[test]
-    fn launch_config_file_sets_default_without_flag() {
-        let dir = tempfile::tempdir().unwrap();
-        write_project_config(dir.path(), "params_b = 8.0\n");
-        let server = McpServer::launch(&base_mcp_args(dir.path())).unwrap();
-        assert_eq!(server.config.policy.tier, ferric_core::Tier::Small);
-    }
-
-    /// T-3805: same shape as `cli::cli_flag_overrides_config_file`.
-    #[test]
-    fn launch_cli_flag_overrides_config_file() {
-        let dir = tempfile::tempdir().unwrap();
-        write_project_config(dir.path(), "params_b = 8.0\n");
-        let mut args = base_mcp_args(dir.path());
-        args.params_b = Some(1.2);
-        let server = McpServer::launch(&args).unwrap();
-        assert_eq!(server.config.policy.tier, ferric_core::Tier::Nano);
     }
 
     #[test]
     fn bounded_mcp_request_preserves_explicit_evidence_policy() {
         let dir = tempfile::tempdir().unwrap();
         let mut args = base_mcp_args(dir.path());
-        args.harness_policy = Some(HarnessPolicyArg::Evidence);
+        args.run.harness_policy = Some(HarnessPolicyArg::Evidence);
         let server = McpServer::launch(&args).unwrap();
         assert_eq!(
             server.config.harness_policy,
@@ -994,39 +734,13 @@ mod tests {
     fn unsupported_planner_fails_before_mcp_trace_or_provider() {
         let dir = tempfile::tempdir().unwrap();
         let mut args = base_mcp_args(dir.path());
-        args.harness_policy = Some(HarnessPolicyArg::EvidencePlanner);
+        args.run.harness_policy = Some(HarnessPolicyArg::EvidencePlanner);
 
         let error = McpServer::launch(&args)
             .err()
             .expect("planner is unavailable");
         assert!(error.contains("evidence_planner"), "{error}");
         assert!(!dir.path().join(".ferric/trace").exists());
-    }
-
-    /// C-001 (plan-critic): same shape as `cli::config_only_model_still_
-    /// resolves_profile`, scoped to `ferric mcp` — `model` set ONLY via
-    /// config.toml must still hit the persisted `calibrated_ring` lookup.
-    #[test]
-    fn launch_config_only_model_still_resolves_profile() {
-        let pdir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            pdir.path().join("model_profiles.json"),
-            r#"[{"model":"mockmodel","params_b":8.0,"protocol":"ConstrainedJson","measured_level":null,"tier_from_params":"Small","tier_from_measured":null,"calibrated_ring":0}]"#,
-        )
-        .unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        write_project_config(
-            dir.path(),
-            &format!(
-                "model = \"mockmodel\"\nprofile_dir = '{}'\n",
-                pdir.path().display()
-            ),
-        );
-        let mut args = base_mcp_args(dir.path());
-        args.params_b = Some(8.0);
-        args.protocol = Some(ProtocolArg::Grammar);
-        let server = McpServer::launch(&args).unwrap();
-        assert_eq!(server.config.policy.max_ring, Some(0));
     }
 
     #[test]
@@ -1114,34 +828,15 @@ mod tests {
     }
 
     fn test_server(dir: &std::path::Path, provider: Box<dyn Provider + Send + Sync>) -> McpServer {
-        let workspace = Workspace::new(dir).unwrap();
-        let config = crate::query::build_run_config(&crate::query::RunConfigArgs {
-            workspace_root: std::path::PathBuf::from("."),
-            requested_skills: Vec::new(),
-            allowed_skills: Vec::new(),
-            tier_override: None,
-            mock: true,
-            params_b: 1.2,
-            quant: "Q4_K_M".to_string(),
-            family: "unknown".to_string(),
-            ctx: 4096,
-            temperature: 0.0,
-            protocol_override: None,
-            harness_policy: None,
-            prompts_dir: None,
-            max_ring: None,
-            profile_dir: PathBuf::from("benchmarks"),
-            model_key: None,
-            hooks: None,
-        })
-        .unwrap();
         let trace_dir = dir.join(".ferric").join("trace");
         std::fs::create_dir_all(&trace_dir).unwrap();
         McpServer {
-            workspace,
-            config,
-            provider: ProviderSource::Shared(provider),
-            executor: Executor::Blocking,
+            workspace: Workspace::new(dir).unwrap(),
+            config: build_run_config(&crate::query::RunConfigArgs::mock()).unwrap(),
+            backend: ResolvedBackend::Real {
+                provider,
+                runtime: tokio::runtime::Runtime::new().unwrap(),
+            },
             declared: Vec::new(),
             trace_dir,
             resume: std::sync::Mutex::new(None),
@@ -1234,7 +929,7 @@ mod tests {
         let provider = ferric_provider::MockProvider::new(vec![
             native_completion(
                 "ask-1",
-                ferric_loop::REQUEST_USER_INPUT,
+                ferric_iron::terminator::REQUEST_USER_INPUT,
                 serde_json::json!({
                     "question": "Which database?",
                     "context": "Both adapters exist and no default is documented.",
@@ -1243,7 +938,7 @@ mod tests {
             ),
             native_completion(
                 "done-1",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 serde_json::json!({"summary": "used SQLite"}),
             ),
         ]);
@@ -1439,52 +1134,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tools_call_file_sensitive_and_ignored_paths_are_rejected() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".env"), "TOKEN=must-not-leak").unwrap();
-        std::fs::write(dir.path().join("private.md"), "private notes").unwrap();
-        std::fs::write(dir.path().join(".ferricignore"), "private.md\n").unwrap();
-        let server = test_server(
-            dir.path(),
-            Box::new(crate::query::mock_provider(
-                ferric_core::ActionProtocol::NativeTools,
-            )),
-        );
-
-        let sensitive = server
-            .dispatch(call_request(
-                1,
-                serde_json::json!({"prompt": "summarize", "files": [".env"]}),
-            ))
-            .unwrap()
-            .result
-            .unwrap();
-        assert_eq!(sensitive["isError"], true);
-        assert!(
-            sensitive["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("denied_read_file")
-        );
-
-        let ignored = server
-            .dispatch(call_request(
-                2,
-                serde_json::json!({"prompt": "summarize", "files": ["private.md"]}),
-            ))
-            .unwrap()
-            .result
-            .unwrap();
-        assert_eq!(ignored["isError"], true);
-        assert!(
-            ignored["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("ferricignore")
-        );
-    }
-
     struct CapturesMediaProvider {
         seen_media: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     }
@@ -1499,7 +1148,6 @@ mod tests {
             ferric_provider::Capabilities {
                 supports_native_tool_calls: true,
                 supports_constraint: false,
-                exposes_logits: false,
                 supports_media: true,
             }
         }
@@ -1520,7 +1168,7 @@ mod tests {
                     text: None,
                     tool_calls: vec![ToolCall {
                         id: "media-0".to_string(),
-                        name: ferric_loop::TASK_COMPLETE.to_string(),
+                        name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
                         args: serde_json::json!({"summary": "media received"}),
                     }],
                     tool_call_id: None,
@@ -1546,7 +1194,7 @@ mod tests {
             }),
         );
         server.config.caps.supports_media = true;
-        server.declared = vec![ferric_core::Modality::Image];
+        server.declared = vec![crate::media::Modality::Image];
 
         let result = server
             .dispatch(call_request(
@@ -1562,37 +1210,6 @@ mod tests {
             1,
             "the provider must receive the routed image"
         );
-    }
-
-    /// `Skip` branch (test-critique C-001: the locked test plan required all
-    /// three `Attachment` branches; only `AppendText` shipped). A media file
-    /// with no declared modality is dropped non-fatally — the
-    /// security-relevant path (an undeclared attachment must never silently
-    /// attach). Mirrors `cli.rs`'s `query_file_media_skipped_with_reason`.
-    /// (The `Media`-attaches case is not separately testable here: `--mock`
-    /// hardcodes `caps.supports_media = false`, so `decide_attachment` always
-    /// routes media to `Skip` regardless of `declared` — the same is true of
-    /// the existing CLI test suite, which likewise has no "media attaches"
-    /// case; this is parity with, not a regression from, prior coverage.)
-    #[test]
-    fn tools_call_file_media_skipped_with_reason() {
-        let dir = tempfile::tempdir().unwrap();
-        let photo = dir.path().join("photo.png");
-        std::fs::write(&photo, [0u8; 16]).unwrap();
-        let server = test_server(
-            dir.path(),
-            Box::new(crate::query::mock_provider(
-                ferric_core::ActionProtocol::NativeTools,
-            )),
-        );
-        let resp = server
-            .dispatch(call_request(
-                1,
-                serde_json::json!({"prompt": "describe", "files": [photo.to_str().unwrap()]}),
-            ))
-            .unwrap();
-        // Skip is non-fatal: the call still succeeds, just without the media.
-        assert_eq!(resp.result.unwrap()["isError"], false);
     }
 
     /// A provider that fails its FIRST `complete()` call (non-retryable, so
@@ -1614,7 +1231,6 @@ mod tests {
             ferric_provider::Capabilities {
                 supports_native_tool_calls: true,
                 supports_constraint: false,
-                exposes_logits: false,
                 supports_media: false,
             }
         }
@@ -1636,7 +1252,7 @@ mod tests {
                         text: None,
                         tool_calls: vec![ToolCall {
                             id: "flaky-0".to_string(),
-                            name: ferric_loop::TASK_COMPLETE.to_string(),
+                            name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
                             args: serde_json::json!({"summary": "recovered"}),
                         }],
                         tool_call_id: None,

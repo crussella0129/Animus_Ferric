@@ -19,6 +19,7 @@ const LEDGER_BASELINE: usize = 122 + 215;
 fn live_intent(line: &str) -> bool {
     [
         "INT-0010", "INT-0011", "INT-0012", "INT-0013", "INT-0014", "INT-0015", "INT-0016",
+        "INT-0017",
     ]
     .iter()
     .any(|id| line.contains(id))

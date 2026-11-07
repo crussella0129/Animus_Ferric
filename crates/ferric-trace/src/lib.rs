@@ -53,9 +53,12 @@ mod tests {
                     source: ferric_core::OutputBudgetSource::Explicit,
                 },
             },
+            // Optional and defaulted fields carry non-default values throughout,
+            // so the round-trip proves they are written, not merely defaulted
+            // back in on read.
             Event::SessionStart {
                 workspace: "/tmp/ws".to_string(),
-                resumed_from: None,
+                resumed_from: Some("q-1720000000000".to_string()),
             },
             Event::PolicySelected {
                 tier: ferric_core::Tier::Nano,
@@ -89,7 +92,10 @@ mod tests {
             Event::SessionPrompt {
                 system: "You are Ferric.".to_string(),
                 user: "read a.txt".to_string(),
-                media: Vec::new(),
+                media: vec![ferric_core::MediaPart {
+                    mime: "image/png".to_string(),
+                    data: "aGVsbG8=".to_string(),
+                }],
             },
             Event::RecoveryCheckpoint {
                 state: RecoveryCheckpointV1 {
@@ -149,7 +155,7 @@ mod tests {
                 tool_call_count: 1,
                 input_tokens: Some(50),
                 output_tokens: Some(12),
-                truncated: false,
+                truncated: true,
             },
             Event::ActionsProposed {
                 turn: 0,
@@ -705,35 +711,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn turn_end_carries_completion() {
-        let event = Event::TurnEnd {
-            turn: 3,
-            text: Some("the answer".to_string()),
-            tool_call_count: 0,
-            input_tokens: Some(120),
-            output_tokens: Some(8),
-            truncated: false,
-        };
-        let encoded = serde_json::to_string(&event).unwrap();
-        let decoded: Event = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(event, decoded);
-        assert!(encoded.contains("the answer"));
-    }
-
-    /// T-3901 (sprint 39): `SessionStart.resumed_from` round-trips when set.
-    #[test]
-    fn session_start_resumed_from_roundtrip() {
-        let event = Event::SessionStart {
-            workspace: "/tmp/ws".to_string(),
-            resumed_from: Some("q-1720000000000".to_string()),
-        };
-        let encoded = serde_json::to_string(&event).unwrap();
-        let decoded: Event = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(event, decoded);
-        assert!(encoded.contains("q-1720000000000"));
-    }
-
     /// T-3901 (sprint 39): a pre-sprint-39 `session_start` line (no
     /// `resumed_from` key at all) still parses as `Known`, defaulting to
     /// `None` — additive backward compat (ADR-002).
@@ -751,23 +728,6 @@ mod tests {
                 resumed_from: None,
             })
         );
-    }
-
-    /// T-3902 (sprint 39): `TurnEnd.truncated` round-trips when `true`.
-    #[test]
-    fn turn_end_truncated_roundtrip() {
-        let event = Event::TurnEnd {
-            turn: 1,
-            text: Some("cut off".to_string()),
-            tool_call_count: 0,
-            input_tokens: Some(50),
-            output_tokens: Some(512),
-            truncated: true,
-        };
-        let encoded = serde_json::to_string(&event).unwrap();
-        let decoded: Event = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(event, decoded);
-        assert!(encoded.contains("\"truncated\":true"));
     }
 
     /// T-3902 (sprint 39): a pre-sprint-39 `turn_end` line (no `truncated`
@@ -790,37 +750,6 @@ mod tests {
                 truncated: false,
             })
         );
-    }
-
-    /// T-3901 (sprint 39): `Event::SessionPrompt` round-trips, including
-    /// attached media.
-    #[test]
-    fn session_prompt_roundtrip_with_media() {
-        let event = Event::SessionPrompt {
-            system: "You are Ferric.".to_string(),
-            user: "describe this image".to_string(),
-            media: vec![ferric_core::MediaPart {
-                mime: "image/png".to_string(),
-                data: "aGVsbG8=".to_string(),
-            }],
-        };
-        let encoded = serde_json::to_string(&event).unwrap();
-        let decoded: Event = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(event, decoded);
-    }
-
-    /// T-4001 (sprint 40): `Event::HistoryCompacted` round-trips exactly.
-    #[test]
-    fn history_compacted_roundtrip() {
-        let event = Event::HistoryCompacted {
-            through_turn: 6,
-            dropped_turns: 7,
-            summary: "wrote out.txt then read config.json".to_string(),
-        };
-        let encoded = serde_json::to_string(&event).unwrap();
-        let decoded: Event = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(event, decoded);
-        assert!(encoded.contains("wrote out.txt then read config.json"));
     }
 
     #[test]

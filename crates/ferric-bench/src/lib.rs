@@ -4,66 +4,55 @@
 //! calibration (T-214). Drives the `ferric` binary as a subprocess against
 //! TOML level specs and derives metrics from the JSONL trace.
 
-pub mod autonomy;
-pub mod autonomy_results;
-pub mod budget;
-pub mod budget_trace;
-pub mod calibrate;
-mod process;
-pub mod provenance;
-pub mod repository_brief;
-pub mod results;
-pub mod runner;
-pub mod spec;
-pub mod summary;
-pub mod verify;
+mod autonomy;
+mod autonomy_results;
+mod budget;
+mod budget_trace;
+mod calibrate;
+mod provenance;
+mod repository_brief;
+mod results;
+mod runner;
+mod spec;
+mod summary;
+mod verify;
 
 pub use autonomy::{
-    AUTONOMY_SCHEMA_VERSION, AUTONOMY_TASK_COUNT, AutonomyCategory, AutonomyCheck, AutonomySuite,
-    AutonomySuiteError, AutonomyTask, BenchmarkScope, ClarificationContract, CrashPoint,
-    EMBEDDED_AUTONOMY_V1, PolicyVariant, RecoveryContract, RecoveryInjection,
-    RecoveryInjectionKind, ResumeRefusalMode, TerminalExpectation, TerminalOutcome,
-    autonomy_bench_spec, embedded_autonomy_suite, parse_autonomy_suite, validate_autonomy_suite,
+    AutonomyCategory, AutonomyTask, EMBEDDED_AUTONOMY_V1, PolicyVariant, RecoveryInjection,
+    RecoveryInjectionKind, ResumeRefusalMode, TerminalOutcome, autonomy_bench_spec,
+    embedded_autonomy_suite,
 };
 pub use autonomy_results::{
     AUTONOMY_RESULTS_SCHEMA_VERSION, AutonomyArm, AutonomyEvaluationCoordinate,
-    AutonomyEvaluationProvenance, AutonomyRateSummary, AutonomyResultRow, AutonomyRunIssue,
-    AutonomyRunSummary, AutonomySegmentResult, AutonomyToolSummary, AutonomyTraceMetrics,
-    ClarificationSummary, CoordinateProvenanceSummary, ManagedServerProvenance,
-    PairedObjectiveSummary, PassPowerSummary, PolicyMechanismSummary, PolicyPassPowerSummary,
-    PolicyRepositoryBriefComparison, RecoverySummary, RepositoryBriefComparison, ResumeProbeResult,
-    RetainedTraceValidation, append_autonomy_row, read_autonomy_rows, summarize_autonomy_run,
-    summarize_autonomy_run_with_coordinates, write_autonomy_summary,
+    AutonomyEvaluationProvenance, AutonomyResultRow, AutonomyRunIssue, AutonomySegmentResult,
+    AutonomyTraceMetrics, ManagedServerProvenance, MechanismCounts, ResumeProbeResult,
+    RetainedTraceValidation, STRICT_EVIDENCE_CONTEXT_SIZE, append_autonomy_row,
+    executable_is_llama_server, summarize_autonomy_run_with_coordinates, write_autonomy_summary,
 };
 pub use budget::{
-    AttemptBudgetEvidence, AttemptBudgetReference, AttemptIdentity, BudgetControls, ExactDuration,
-    ObservedMainActionBudget, ParentTermination, ResolvedAgentBudget, RetainedBudgetEvidence,
-    RunBudgetEvidence, TraceBudgetObservation, TraceEvidenceState, WarmupState,
+    AttemptIdentity, BudgetControls, ResolvedAgentBudget, RunBudgetEvidence, TraceEvidenceState,
 };
-pub use budget_trace::{
-    BUDGET_SIDECAR_VERSION, BudgetSidecarV1, retain_budget_trace, verify_budget_trace,
-};
+pub use budget_trace::retain_budget_trace;
 pub use calibrate::{
-    ModelProfileRecord, calibrate, calibrate_from_evidence, highest_completed_level,
-    longest_completed_prefix, non_monotonic_failures, read_profile, write_calibrated_ring,
-    write_profile,
+    ModelProfileRecord, calibrate_from_evidence, read_profile, write_calibrated_ring, write_profile,
 };
-pub use provenance::{sha256_bytes, sha256_file};
-
-pub use repository_brief::{RepositoryBrief, RepositoryBriefLimits, generate_repository_brief};
-pub use results::{ResultRow, append_row, read_rows};
+pub use provenance::{
+    git_commit, new_run_id, now_unix_ms, parse_sha256, sha256_bytes, sha256_file,
+    system_time_unix_ms,
+};
+pub use repository_brief::generate_repository_brief;
+pub use results::{ResultRow, append_row};
 pub use runner::{
-    Invocation, OpenAiArgs, QuerySegmentRecord, QuerySegmentRequest, RunRecord, WorkspaceHandle,
-    run_query_segment, run_spec, run_spec_with_budget,
+    Invocation, OpenAiArgs, QuerySegmentRecord, QuerySegmentRequest, STDERR_TAIL_BYTES,
+    materialize_setup_files, run_query_segment, run_spec_with_budget,
 };
-pub use spec::{BenchSpec, CommandCheck, ExpectKind, Expectation, embedded_specs};
+pub use spec::{BenchSpec, CommandCheck, embedded_specs};
 pub use summary::{
-    BinaryProvenance, CalibrationEvidence, LevelSummary, ModelProvenance, RunIssue, RunProvenance,
-    RunSummary, SampleStats, Wilson95, required_passes, summarize_run, write_summary,
+    BinaryProvenance, CalibrationEvidence, ModelProvenance, RunIssue, RunProvenance, RunSummary,
+    longest_prefix, summarize_run, write_summary,
 };
 pub use verify::{
-    CommandCheckResult, CommandCheckStatus, ToolVerdict, TraceMetrics, completed,
-    failure_admission, parse_trace, preflight_command_checks, verify_command_checks,
+    completed, failure_admission, parse_trace, preflight_command_checks, verify_command_checks,
     verify_command_checks_with_deadline, verify_expectations, verify_tools,
 };
 

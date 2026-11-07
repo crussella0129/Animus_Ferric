@@ -24,28 +24,24 @@
 //! output in as Layer 4) and the human review gate — never through unrestricted
 //! filesystem access.
 
+mod workspace;
+#[cfg(test)]
+mod workspace_tests;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use ferric_guard::Workspace;
-use ferric_icm::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_workspace};
-use ferric_trace::JsonlSink;
+use workspace::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_workspace};
 
-use crate::backend::BackendOpts;
+use crate::backend::{BackendOpts, ResolvedBackend};
+use crate::config::{HarnessPolicyArg, RunFlags, TierArg};
 use crate::query::{
-    HarnessPolicyArg, RunConfigArgs, build_run_config, ensure_supported_harness_policy,
-    mock_provider, now_ms, run_with_provider,
+    RunConfigArgs, RunConfigError, build_run_config, create_trace_sink, mock_provider,
+    run_with_provider,
 };
-
-/// The pipeline's backend, shared with `ferric chat` since sprint 103
-/// (ADR-094) — both had declared this enum and its constructor identically.
-/// The scripted mock is single-use, so a **fresh** one is built per stage (each
-/// stage is its own agent session). A real backend is stateless per request, so
-/// its provider and the one tokio runtime are built once and reused across
-/// every stage.
-use crate::backend::ResolvedBackend as Backend;
 
 #[derive(Args)]
 pub struct IcmArgs {
@@ -105,11 +101,11 @@ pub struct IcmRunArgs {
     #[arg(long)]
     ctx: Option<u32>,
 
-    /// Cap the active tool ring (ADR-028). Restrict-only.
     /// Run at this tier regardless of size or measured level (ADR-098).
     #[arg(long, value_enum)]
-    tier: Option<crate::query::TierArg>,
+    tier: Option<TierArg>,
 
+    /// Cap the active tool ring (ADR-028). Restrict-only.
     #[arg(long)]
     max_ring: Option<u8>,
 
@@ -125,55 +121,35 @@ pub struct IcmRunArgs {
 }
 
 pub fn run_icm(args: IcmArgs) -> ExitCode {
-    match args.command {
+    crate::exit_with(match args.command {
         IcmCommand::Init { path } => run_init(&path),
         IcmCommand::Plan {
             workspace,
             show_context,
         } => run_plan(&workspace, show_context),
-        IcmCommand::Run(args) => run_pipeline(*args),
-    }
+        IcmCommand::Run(args) => run_pipeline(&args),
+    })
 }
 
-fn run_init(path: &Path) -> ExitCode {
-    match scaffold_workspace(path) {
-        Ok(report) => {
-            println!("Scaffolded ICM workspace at {}", report.root.display());
-            println!(
-                "  {} directories, {} files",
-                report.dirs_created.len(),
-                report.files_created.len()
-            );
-            println!("Stages: 01_research -> 02_script -> 03_production");
-            println!(
-                "Next: edit the stage CONTEXT.md contracts, then `ferric icm plan {}`.",
-                path.display()
-            );
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("icm init failed: {e}");
-            ExitCode::FAILURE
-        }
-    }
+fn run_init(path: &Path) -> Result<ExitCode, String> {
+    let report = scaffold_workspace(path).map_err(|e| format!("icm init failed: {e}"))?;
+    println!("Scaffolded ICM workspace at {}", report.root.display());
+    println!(
+        "  {} directories, {} files",
+        report.dirs_created.len(),
+        report.files_created.len()
+    );
+    println!("Stages: 01_research -> 02_script -> 03_production");
+    println!(
+        "Next: edit the stage CONTEXT.md contracts, then `ferric icm plan {}`.",
+        path.display()
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
-fn run_plan(workspace: &Path, show_context: bool) -> ExitCode {
-    let ws = match IcmWorkspace::discover(workspace) {
-        Ok(ws) => ws,
-        Err(e) => {
-            eprintln!("icm plan failed: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let plan = match plan(&ws) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("icm plan failed: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+fn run_plan(workspace: &Path, show_context: bool) -> Result<ExitCode, String> {
+    let ws = IcmWorkspace::discover(workspace).map_err(|e| format!("icm plan failed: {e}"))?;
+    let plan = plan(&ws).map_err(|e| format!("icm plan failed: {e}"))?;
 
     println!("ICM orchestration plan for {}", ws.root.display());
     println!(
@@ -207,88 +183,57 @@ fn run_plan(workspace: &Path, show_context: bool) -> ExitCode {
 
     // A '!' marker means a declared input is absent (e.g. an upstream stage has
     // not run yet). That is expected pre-run, not an error.
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }
 
-fn run_pipeline(args: IcmRunArgs) -> ExitCode {
-    let ws = match IcmWorkspace::discover(&args.workspace) {
-        Ok(ws) => ws,
-        Err(e) => {
-            eprintln!("icm run failed: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+fn run_pipeline(args: &IcmRunArgs) -> Result<ExitCode, String> {
+    let ws = IcmWorkspace::discover(&args.workspace).map_err(|e| format!("icm run failed: {e}"))?;
     let mode = if args.fetch_references {
         ComposeMode::FetchReferences
     } else {
         ComposeMode::FoldReferences
     };
-    let plan = match plan_with_mode(&ws, mode) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("icm run failed: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let plan = plan_with_mode(&ws, mode).map_err(|e| format!("icm run failed: {e}"))?;
 
     // Resolve the 1-based stage range against the discovered stage count.
     let total = plan.stages.len();
     let from = args.from.unwrap_or(1).max(1);
     let to = args.to.unwrap_or(total).min(total);
     if from > to {
-        eprintln!("icm run: empty stage range (--from {from} > --to {to})");
-        return ExitCode::FAILURE;
+        return Err(format!(
+            "icm run: empty stage range (--from {from} > --to {to})"
+        ));
     }
 
     // Build the run config + provider ONCE, reused for every stage (the model is
     // fixed across the pipeline; only the workspace changes per stage). Config is
-    // resolved from the ICM root, exactly like `ferric query`/`ferric mcp`.
-    let loaded = match crate::config::load_layered(&ws.root) {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let cfg = loaded.config;
-    let backend_opts = crate::config::merge_backend_opts(args.backend_opts.clone(), &cfg);
-    let config = build_run_config(&RunConfigArgs {
-        // ICM composes each stage's context from its OWN declared layers
-        // (L0-L4, ADR-064) and reports that composition as provenance. Folding
-        // skills in here would inject text no layer accounts for, so ICM opts
-        // out deliberately rather than by omission.
-        workspace_root: ws.root.clone(),
-        requested_skills: Vec::new(),
-        allowed_skills: Vec::new(),
+    // resolved from the ICM root, exactly like `ferric query`/`ferric mcp`, for
+    // the subset of run flags ICM exposes.
+    let cfg = crate::config::load_layered(&ws.root)
+        .map_err(|error| error.to_string())?
+        .config;
+    let flags = RunFlags {
+        backend_opts: args.backend_opts.clone(),
         mock: args.mock,
-        params_b: args.params_b.or(cfg.params_b).unwrap_or(1.2),
-        quant: cfg.quant.clone().unwrap_or_else(|| "Q4_K_M".to_string()),
-        family: cfg.family.clone().unwrap_or_else(|| "unknown".to_string()),
-        ctx: args.ctx.or(cfg.ctx).unwrap_or(4096),
-        temperature: cfg.temperature.unwrap_or(0.0),
-        protocol_override: None,
-        harness_policy: args.harness_policy.map(Into::into).or(cfg.harness_policy),
-        prompts_dir: None,
-        max_ring: args.max_ring.or(cfg.max_ring),
-        tier_override: args.tier.or(cfg.tier).map(Into::into),
-        profile_dir: cfg
-            .profile_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("benchmarks")),
-        model_key: backend_opts.model.clone(),
-        hooks: cfg.hooks.clone(),
-    });
-    let mut config = match config {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
+        params_b: args.params_b,
+        ctx: args.ctx,
+        tier: args.tier,
+        max_ring: args.max_ring,
+        harness_policy: args.harness_policy,
+        ..RunFlags::default()
     };
-    if let Err(error) = ensure_supported_harness_policy(config.harness_policy) {
-        eprintln!("icm run: {error}");
-        return ExitCode::FAILURE;
-    }
+    // ICM composes each stage's context from its OWN declared layers (L0-L4,
+    // ADR-064) and reports that composition as provenance. Folding skills in
+    // here would inject text no layer accounts for, so ICM opts out
+    // deliberately rather than by omission.
+    let run = RunConfigArgs {
+        hooks: cfg.hooks.clone(),
+        ..flags.resolve(&cfg, &ws.root)
+    };
+    let mut config = build_run_config(&run).map_err(|error| match error {
+        RunConfigError::UnsupportedPolicy(_) => format!("icm run: {error}"),
+        RunConfigError::Config(_) => error.to_string(),
+    })?;
 
     // ICM-only: `fetch_reference` is not part of the global builtin set, so it
     // never costs a normal `ferric query` run a tool-budget slot. It joins the
@@ -299,28 +244,21 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
             .register(Box::new(ferric_tools::builtin::FetchReference));
     }
 
-    let backend = if args.mock {
-        Backend::Mock
-    } else {
-        match Backend::real_in(&backend_opts, &ws.root) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("icm run failed: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-    };
+    // A real backend is stateless per request, so its provider and the one
+    // runtime are built once and reused across every stage; the single-use
+    // scripted mock is rebuilt per stage (each stage is its own session).
+    let backend = ResolvedBackend::resolve(run.mock, &run.backend, &ws.root)
+        .map_err(|e| format!("icm run failed: {e}"))?;
 
     // Traces centralize at the ICM root (harness-written, not agent-written, so
     // not subject to the per-stage workspace boundary) — one file per stage.
     let trace_dir = ferric_trace::trace_dir(&ws.root);
-    if let Err(e) = std::fs::create_dir_all(&trace_dir) {
-        eprintln!(
+    std::fs::create_dir_all(&trace_dir).map_err(|e| {
+        format!(
             "icm run: cannot create trace dir {}: {e}",
             trace_dir.display()
-        );
-        return ExitCode::FAILURE;
-    }
+        )
+    })?;
 
     println!(
         "Running ICM pipeline: stages {from}–{to} of {total} in {}",
@@ -334,64 +272,23 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         }
 
         let stage_dir = ws.root.join("stages").join(&stage.name);
-        let stage_ws = match Workspace::new(&stage_dir) {
-            Ok(w) => w,
-            Err(e) => {
-                eprintln!("✖ Stage {:02} · {}: workspace {e}", stage.index, stage.name);
-                return ExitCode::FAILURE;
-            }
-        };
-
-        let session = format!("icm-{}-{}", stage.name, now_ms());
-        let trace_path = trace_dir.join(format!("{session}.jsonl"));
-        let mut sink = match JsonlSink::open(&trace_path, &session) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("✖ Stage {:02}: cannot open trace: {e}", stage.index);
-                return ExitCode::FAILURE;
-            }
-        };
+        let stage_ws = Workspace::new(&stage_dir)
+            .map_err(|e| format!("✖ Stage {:02} · {}: workspace {e}", stage.index, stage.name))?;
+        let (_, _, mut sink) = create_trace_sink(&trace_dir, &format!("icm-{}", stage.name))
+            .map_err(|e| format!("✖ Stage {:02}: cannot open trace: {e}", stage.index))?;
 
         eprintln!("▶ Stage {:02} · {} — running…", stage.index, stage.name);
 
-        // Same run for either backend — only the provider ref and the executor
-        // differ. This used to need a macro purely to avoid writing the same 18
-        // positional arguments twice; `LoopSetup` makes the macro unnecessary.
-        let setup = || crate::query::LoopSetup {
-            registry: &config.registry,
-            workspace: &stage_ws,
-            policy: &config.policy,
-            protocol: config.protocol,
-            harness_policy: config.harness_policy,
-            sampling: config.sampling.clone(),
-            system_prompt: config.system_prompt.as_deref(),
-            lineage: config.lineage.clone(),
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: config.hooks.clone(),
-            edit_approver: None,
-        };
-
-        let outcome = match &backend {
-            Backend::Mock => {
-                let provider = mock_provider(config.protocol);
-                futures_executor::block_on(run_with_provider(
-                    setup().into_run_args(&provider, None),
+        let outcome = backend.with_provider(
+            || mock_provider(config.protocol),
+            |provider| {
+                backend.block_on(run_with_provider(
+                    config.run_args(&stage_ws, provider),
                     &mut sink,
                     Some(&stage.prompt),
                 ))
-            }
-            #[cfg(feature = "backend-openai")]
-            Backend::Real { provider, runtime } => runtime.block_on(run_with_provider(
-                setup().into_run_args(provider.as_ref(), None),
-                &mut sink,
-                Some(&stage.prompt),
-            )),
-        };
+            },
+        );
 
         match outcome {
             Ok(o) if o.stop.is_success() => {
@@ -408,17 +305,18 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
                 }
             }
             Ok(o) => {
-                eprintln!(
+                return Err(format!(
                     "✖ Stage {:02} · {} did not complete ({}); halting pipeline.",
                     stage.index,
                     stage.name,
                     o.stop.as_str()
-                );
-                return ExitCode::FAILURE;
+                ));
             }
             Err(message) => {
-                eprintln!("✖ Stage {:02} · {}: {message}", stage.index, stage.name);
-                return ExitCode::FAILURE;
+                return Err(format!(
+                    "✖ Stage {:02} · {}: {message}",
+                    stage.index, stage.name
+                ));
             }
         }
 
@@ -426,12 +324,12 @@ fn run_pipeline(args: IcmRunArgs) -> ExitCode {
         // unless --auto or this is the last stage in the range.
         if !args.auto && n < to && !review_gate(stage.index) {
             eprintln!("Pipeline stopped at stage {:02} by user.", stage.index);
-            return ExitCode::SUCCESS;
+            return Ok(ExitCode::SUCCESS);
         }
     }
 
     println!("ICM pipeline finished.");
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Prompt on stderr and read a line from stdin. Returns `true` to continue,
@@ -460,11 +358,7 @@ mod tests {
             auto: true,
             from: Some(1),
             to: Some(1),
-            backend_opts: BackendOpts {
-                model: None,
-                api_base: None,
-                api_key: None,
-            },
+            backend_opts: BackendOpts::default(),
             mock: true,
             params_b: None,
             ctx: None,
@@ -482,8 +376,8 @@ mod tests {
         scaffold_workspace(&root).unwrap();
 
         assert_eq!(
-            run_pipeline(mock_run_args(&root, HarnessPolicyArg::Evidence)),
-            ExitCode::SUCCESS
+            run_pipeline(&mock_run_args(&root, HarnessPolicyArg::Evidence)),
+            Ok(ExitCode::SUCCESS)
         );
 
         let trace_dir = ferric_trace::trace_dir(&root);
@@ -512,8 +406,8 @@ mod tests {
         scaffold_workspace(&root).unwrap();
 
         assert_eq!(
-            run_pipeline(mock_run_args(&root, HarnessPolicyArg::EvidencePlanner)),
-            ExitCode::FAILURE
+            run_pipeline(&mock_run_args(&root, HarnessPolicyArg::EvidencePlanner)),
+            Err("icm run: harness policy evidence_planner is not implemented yet".to_string())
         );
         assert!(!ferric_trace::trace_dir(&root).exists());
         assert_eq!(

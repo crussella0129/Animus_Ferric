@@ -7,7 +7,7 @@
 use std::process::Command;
 
 /// Host variables removed before any named or post-run check starts.
-pub const CHECK_ENV_REMOVE: &[&str] = &[
+const CHECK_ENV_REMOVE: &[&str] = &[
     "PYTHONBREAKPOINT",
     "PYTHONHOME",
     "PYTHONINSPECT",
@@ -21,7 +21,7 @@ pub const CHECK_ENV_REMOVE: &[&str] = &[
 ];
 
 /// Deterministic, isolated defaults supplied to every check process.
-pub const CHECK_ENV_SET: &[(&str, &str)] = &[("PYTHONHASHSEED", "0"), ("PYTHONNOUSERSITE", "1")];
+const CHECK_ENV_SET: &[(&str, &str)] = &[("PYTHONHASHSEED", "0"), ("PYTHONNOUSERSITE", "1")];
 
 /// Apply the shared hermetic environment contract to a check command.
 pub fn configure_check_environment(command: &mut Command) {

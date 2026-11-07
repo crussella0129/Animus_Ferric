@@ -34,7 +34,7 @@ pub(crate) struct DescribeArgs {
 }
 
 #[cfg(feature = "backend-openai")]
-fn safe_text(text: &str) -> String {
+pub(crate) fn safe_text(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
         .collect()
@@ -142,11 +142,12 @@ mod enabled {
     use std::time::Duration;
 
     use crate::config::Config;
-    use crate::startup::{MemoryProbe, NativeMemoryProbe, PreparedSession, Startup, SystemMemory};
+    use crate::startup::{PreparedSession, Startup};
     use ferric_core::{
         Fit, HarnessPolicy, Message, ModelProfile, Tier, classify_fit, estimate_model_memory,
     };
     use ferric_guard::Workspace;
+    use ferric_process::memory::SystemMemory;
     use ferric_provider::{Completion, CompletionRequest, Provider, SamplingParams, StreamDelta};
     use ferric_trace::{Event, JsonlSink};
 
@@ -283,7 +284,7 @@ mod enabled {
                 for (index, model) in start.models.iter().enumerate() {
                     let size = model
                         .bytes
-                        .map(|bytes| format!(" ({:.1} GiB file)", bytes as f64 / 1_073_741_824.0))
+                        .map(|bytes| format!(" ({} file)", gib(bytes)))
                         .unwrap_or_default();
                     let remembered = if start.preferred_index == Some(index) {
                         " (last used)"
@@ -673,7 +674,7 @@ mod enabled {
             }
             Err(error) => return Err(render_startup_error(&error)),
         };
-        let memory = NativeMemoryProbe.probe();
+        let memory = ferric_process::memory::system_memory();
         let Some(index) = choose_model(&start, interactive, io, memory, &models_dir)? else {
             io.say("Cancelled. No session started.");
             return Ok(());
@@ -693,10 +694,7 @@ mod enabled {
                     "This folder is Ferric's own source tree:\n  {}\nFolder work here can modify Ferric itself. Work here anyway? [y/N] ",
                     safe_text(&root.display().to_string())
                 ))?;
-                if !matches!(
-                    answer.as_deref().map(str::trim),
-                    Some("y" | "Y" | "yes" | "Yes")
-                ) {
+                if !confirmed_yes(answer.as_deref()) {
                     io.say(
                         "Cancelled. Re-run from your project folder, or pass --workspace <dir>.",
                     );
@@ -716,10 +714,7 @@ mod enabled {
             ));
             if interactive {
                 let answer = io.read("Start the local model? [y/N] ")?;
-                if !matches!(
-                    answer.as_deref().map(str::trim),
-                    Some("y" | "Y" | "yes" | "Yes")
-                ) {
+                if !confirmed_yes(answer.as_deref()) {
                     io.say("Cancelled. No engine started.");
                     return Ok(());
                 }
@@ -859,7 +854,7 @@ mod enabled {
         policy.tier_source = ferric_core::TierSource::Conservative;
         policy.max_ring = Some(0);
         let caps = provider.capabilities();
-        let protocol = ferric_loop::select_protocol(&policy, &caps, None);
+        let protocol = ferric_iron::select_protocol(&caps, None);
         let mut registry = ferric_tools::Registry::new();
         ferric_tools::register_builtin_tools(&mut registry);
         let sampling = SamplingParams {
@@ -1010,31 +1005,17 @@ mod enabled {
                 let progress = |delta| render_progress(io, delta);
                 let sink: Option<&(dyn Fn(StreamDelta) + Sync)> =
                     if stream { Some(&progress) } else { None };
-                let setup = crate::query::LoopSetup {
-                    registry: &config.registry,
-                    workspace,
-                    policy: &config.policy,
-                    protocol: config.protocol,
-                    harness_policy: Some(HarnessPolicy::Evidence),
-                    sampling: config.sampling.clone(),
-                    system_prompt: None,
-                    lineage: None,
-                    media: Vec::new(),
-                    stream_sink: sink,
-                    resume: None,
-                    answer: None,
-                    provenance: ferric_guard::Provenance::Clean,
-                    sink_policy: ferric_guard::SinkPolicy::deny(),
-                    hooks: None,
-                    edit_approver: None,
-                };
                 let recovery = format!(
                     "ferric advanced trace cat {}",
                     crate::query::documented_shell_quote(&trace_path.to_string_lossy())
                 );
                 let outcome = runtime
                     .block_on(crate::query::run_with_provider(
-                        setup.into_run_args(provider, Some(cancel.clone())),
+                        ferric_loop::RunArgs {
+                            stream_sink: sink,
+                            cancel_flag: Some(cancel.clone()),
+                            ..config.run_args(workspace, provider)
+                        },
                         &mut trace,
                         Some(prompt),
                     ))
@@ -1272,7 +1253,7 @@ mod enabled {
             let cfg = Config {
                 params_b: Some(200.0),
                 max_ring: Some(3),
-                tier: Some(crate::query::TierArg::Ultra),
+                tier: Some(crate::config::TierArg::Ultra),
                 ..Config::default()
             };
             let provider = ferric_provider::MockProvider::new(vec![]);

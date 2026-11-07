@@ -2,58 +2,11 @@
 
 mod common;
 
-use std::collections::VecDeque;
-use std::sync::Mutex;
-
-use async_trait::async_trait;
 use common::*;
 use ferric_guard::Workspace;
-use ferric_loop::{RunArgs, StopReason, run};
-use ferric_provider::{
-    Capabilities, Completion, CompletionRequest, Provider, ProviderError, SamplingParams,
-};
+use ferric_loop::{StopReason, run};
+use ferric_provider::{Completion, ProviderError};
 use ferric_tools::{Registry, register_builtin_tools};
-
-/// Scripted provider that can fail: replays Results instead of Completions.
-struct FlakyProvider {
-    script: Mutex<VecDeque<Result<Completion, ProviderError>>>,
-}
-
-impl FlakyProvider {
-    fn new(script: Vec<Result<Completion, ProviderError>>) -> Self {
-        Self {
-            script: Mutex::new(script.into()),
-        }
-    }
-}
-
-#[async_trait]
-impl Provider for FlakyProvider {
-    fn id(&self) -> &str {
-        "flaky"
-    }
-
-    fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            supports_native_tool_calls: true,
-            supports_constraint: false,
-            exposes_logits: false,
-            supports_media: false,
-        }
-    }
-
-    async fn complete(
-        &self,
-        _request: CompletionRequest,
-        _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    ) -> Result<Completion, ProviderError> {
-        self.script
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or_else(|| Err(ProviderError::ScriptExhausted(0)))
-    }
-}
 
 fn retryable() -> Result<Completion, ProviderError> {
     Err(ProviderError::RetryableBackend("timeout".to_string()))
@@ -73,38 +26,15 @@ fn run_flaky(script: Vec<Result<Completion, ProviderError>>) -> FlakyRun {
     let trace_path = dir.path().join("trace.jsonl");
     let mut sink = ferric_trace::JsonlSink::open(&trace_path, "b-1").unwrap();
 
-    let provider = FlakyProvider::new(script);
+    let provider = ScriptedProvider::new(script.into_iter().map(|r| (Vec::new(), r)).collect());
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
-        RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ferric_core::ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
-        },
+        common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper),
         &mut sink,
         Some("do the task"),
     ))
     .unwrap();
-    let records: Vec<_> = ferric_trace::TraceReader::open(&trace_path)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = read_records(&trace_path);
     FlakyRun {
         outcome,
         delays_ms: sleeper.delays_ms(),

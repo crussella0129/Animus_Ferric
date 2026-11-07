@@ -7,7 +7,7 @@
 
 use crate::server::ServerRunfile;
 use crate::server_process::{ListenerState, ProcessIdentity};
-use crate::server_registration::RegistrationCoordinate;
+use crate::server_registration::{RegistrationCoordinate, sort_coordinates};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HealthState {
@@ -96,14 +96,6 @@ fn issue(
         kind,
         detail: detail.into(),
     }
-}
-
-fn coordinate_label(coordinate: &RegistrationCoordinate) -> String {
-    format!(
-        "{} registration {}",
-        coordinate.scope,
-        coordinate.path.display()
-    )
 }
 
 fn listener_and_health(
@@ -271,7 +263,7 @@ pub(crate) fn resolve(candidates: &[Candidate]) -> Resolution {
             CandidateState::Unverifiable { reason, .. } => Some(issue(
                 ResolutionIssueKind::Unverifiable,
                 [candidate.coordinate.clone()],
-                format!("{}: {reason}", coordinate_label(&candidate.coordinate)),
+                format!("{}: {reason}", candidate.coordinate),
             )),
             _ => None,
         })
@@ -347,11 +339,7 @@ pub(crate) fn resolve(candidates: &[Candidate]) -> Resolution {
             .iter()
             .map(|index| candidates[*index].coordinate.clone())
             .collect::<Vec<_>>();
-        coordinates.sort_by(|left, right| {
-            left.path
-                .cmp(&right.path)
-                .then_with(|| left.scope.to_string().cmp(&right.scope.to_string()))
-        });
+        sort_coordinates(&mut coordinates);
         return Resolution::Conflict {
             issues: vec![issue(
                 ResolutionIssueKind::Conflict,
@@ -442,8 +430,8 @@ pub(crate) fn resolve(candidates: &[Candidate]) -> Resolution {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::fixtures::{process_identity, tailscale_ownership};
     use crate::server::{Engine, RUNFILE_SCHEMA_V2};
-    use crate::server_process::canonical_test_start_token;
     use crate::server_registration::RegistrationScope;
     use std::path::PathBuf;
 
@@ -451,14 +439,6 @@ mod tests {
         RegistrationCoordinate {
             scope,
             path: PathBuf::from(format!("/fixture/{name}/server.json")),
-        }
-    }
-
-    fn identity(value: u64) -> ProcessIdentity {
-        ProcessIdentity {
-            start_token: canonical_test_start_token(value),
-            executable: PathBuf::from("/fixture/llama-server"),
-            argv: vec!["llama-server".to_string(), "--serve".to_string()],
         }
     }
 
@@ -475,7 +455,7 @@ mod tests {
             context_size: Some(8192),
             sampling_seed: Some(42),
             parallel_slots: Some(1),
-            process_identity: Some(identity(value)),
+            process_identity: Some(process_identity(value)),
             origin_local_runfile: Some(PathBuf::from("/fixture/workspace/.ferric/server.json")),
         }
     }
@@ -666,24 +646,7 @@ mod tests {
             )]),
             Resolution::Unverifiable { .. }
         ));
-        let token = "00112233445566778899aabbccddeeff";
-        let fqdn = "example-host.tailnet-example.ts.net";
-        tailscale.tailscale_serve = Some(crate::tailscale_serve::TailscaleServeOwnership {
-            version: crate::tailscale_serve::OWNERSHIP_VERSION,
-            token: token.to_string(),
-            stable_node_id: "node-fixture".to_string(),
-            fqdn: fqdn.to_string(),
-            https_port: crate::tailscale_serve::HTTPS_PORT,
-            mount_path: format!("/_ferric/{token}"),
-            proxy_target: format!("http://127.0.0.1:{}", tailscale.port),
-            remote_base_url: format!("https://{fqdn}/_ferric/{token}/v1"),
-            before_status_sha256: "a".repeat(64),
-            tcp_map_preexisting: false,
-            tcp_https_preexisting: false,
-            web_map_preexisting: false,
-            web_host_preexisting: false,
-            apply_confirmed: true,
-        });
+        tailscale.tailscale_serve = Some(tailscale_ownership(tailscale.port, true));
         assert!(matches!(
             resolve(&[verified(
                 RegistrationScope::Global,
@@ -857,13 +820,6 @@ mod tests {
             first, second,
             "live conflicts must precede target selection"
         );
-
-        // These inventory-level blockers are part of E03-A as well. Calling
-        // their shared rows here keeps the frozen exact-name command honest:
-        // it must prove both present/absent Tailscale PIDs make zero process
-        // calls and missing/changed origins block before acquisition.
-        crate::server::tests::legacy_tailscale_registration_remains_unowned();
-        crate::server::tests::promised_origin_static_matrix_precedes_process_inspection();
     }
 
     #[test]

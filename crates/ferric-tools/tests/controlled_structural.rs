@@ -2,21 +2,15 @@
 //! copy_file) under the evidence-controlled registry path: typed intent, CAS on
 //! the prepared precondition, and measured, directory-aware effects.
 
-use ferric_guard::{Provenance, SinkPolicy, Workspace};
+mod common;
+
+use common::{commit, controlled_call, prepare, rejected, setup};
+use ferric_guard::Workspace;
 use ferric_tools::{
-    ControlledOutcome, MutationKind, PrepareError, PrepareErrorKind, PrepareOutcome,
-    PreparedIntent, Registry, WorkspaceEffect, WorkspaceEffectKind, WorkspaceEffectReport,
-    register_builtin_tools,
+    ControlledOutcome, MutationKind, PrepareErrorKind, PreparedIntent, Registry, WorkspaceEffect,
+    WorkspaceEffectKind, WorkspaceEffectReport,
 };
 use serde_json::{Value, json};
-
-fn setup() -> (tempfile::TempDir, Workspace, Registry) {
-    let directory = tempfile::tempdir().unwrap();
-    let workspace = Workspace::new(directory.path()).unwrap();
-    let mut registry = Registry::new();
-    register_builtin_tools(&mut registry);
-    (directory, workspace, registry)
-}
 
 fn prepared(
     registry: &Registry,
@@ -24,34 +18,12 @@ fn prepared(
     name: &str,
     args: &Value,
 ) -> PreparedIntent {
-    let (intent, outcome) = commit(registry, workspace, name, args);
+    let (intent, outcome) = controlled_call(registry, workspace, name, args);
     assert!(
         !errored(&outcome),
         "{name} unexpectedly errored: {outcome:?}"
     );
     intent
-}
-
-fn commit(
-    registry: &Registry,
-    workspace: &Workspace,
-    name: &str,
-    args: &Value,
-) -> (PreparedIntent, ControlledOutcome) {
-    let prepared = match registry.prepare_controlled(workspace, name, args) {
-        PrepareOutcome::Prepared(prepared) => prepared,
-        other => panic!("expected controlled preparation for {name}, got {other:?}"),
-    };
-    let intent = prepared.intent().clone();
-    let outcome = registry.commit_admitted(prepared, Provenance::Clean, &SinkPolicy::deny(), None);
-    (intent, outcome)
-}
-
-fn reject(registry: &Registry, workspace: &Workspace, name: &str, args: &Value) -> PrepareError {
-    match registry.prepare_controlled(workspace, name, args) {
-        PrepareOutcome::Rejected { error, .. } => error,
-        other => panic!("expected {name} preparation to be rejected, got {other:?}"),
-    }
 }
 
 fn mutation_kind(intent: &PreparedIntent) -> MutationKind {
@@ -91,7 +63,8 @@ fn is_stale(outcome: &ControlledOutcome) -> bool {
 #[test]
 fn make_dir_creates_a_directory_with_a_measured_effect() {
     let (dir, workspace, registry) = setup();
-    let (intent, outcome) = commit(&registry, &workspace, "make_dir", &json!({"path": "proj"}));
+    let (intent, outcome) =
+        controlled_call(&registry, &workspace, "make_dir", &json!({"path": "proj"}));
     assert_eq!(mutation_kind(&intent), MutationKind::CreateDirectory);
     assert!(!errored(&outcome));
     assert!(dir.path().join("proj").is_dir());
@@ -105,7 +78,7 @@ fn make_dir_creates_a_directory_with_a_measured_effect() {
 #[test]
 fn make_dir_into_a_missing_parent_is_rejected() {
     let (_dir, workspace, registry) = setup();
-    let error = reject(
+    let error = rejected(
         &registry,
         &workspace,
         "make_dir",
@@ -122,7 +95,7 @@ fn make_dir_into_a_missing_parent_is_rejected() {
 fn make_dir_on_an_existing_directory_is_a_no_effect() {
     let (dir, workspace, registry) = setup();
     std::fs::create_dir(dir.path().join("proj")).unwrap();
-    let error = reject(&registry, &workspace, "make_dir", &json!({"path": "proj"}));
+    let error = rejected(&registry, &workspace, "make_dir", &json!({"path": "proj"}));
     assert_eq!(error.kind, PrepareErrorKind::NoEffect);
 }
 
@@ -130,7 +103,7 @@ fn make_dir_on_an_existing_directory_is_a_no_effect() {
 fn make_dir_over_an_existing_file_is_unsupported() {
     let (dir, workspace, registry) = setup();
     std::fs::write(dir.path().join("proj"), b"i am a file").unwrap();
-    let error = reject(&registry, &workspace, "make_dir", &json!({"path": "proj"}));
+    let error = rejected(&registry, &workspace, "make_dir", &json!({"path": "proj"}));
     assert_eq!(error.kind, PrepareErrorKind::UnsupportedOperation);
 }
 
@@ -138,7 +111,7 @@ fn make_dir_over_an_existing_file_is_unsupported() {
 fn delete_removes_a_file_with_a_deleted_effect() {
     let (dir, workspace, registry) = setup();
     std::fs::write(dir.path().join("junk.txt"), b"bye").unwrap();
-    let (intent, outcome) = commit(
+    let (intent, outcome) = controlled_call(
         &registry,
         &workspace,
         "delete_path",
@@ -156,7 +129,7 @@ fn delete_removes_a_file_with_a_deleted_effect() {
 fn delete_removes_an_empty_directory_with_a_directory_effect() {
     let (dir, workspace, registry) = setup();
     std::fs::create_dir(dir.path().join("temp")).unwrap();
-    let (intent, outcome) = commit(
+    let (intent, outcome) = controlled_call(
         &registry,
         &workspace,
         "delete_path",
@@ -175,7 +148,7 @@ fn delete_of_a_non_empty_directory_is_unsupported() {
     let (dir, workspace, registry) = setup();
     std::fs::create_dir(dir.path().join("full")).unwrap();
     std::fs::write(dir.path().join("full/keep.txt"), b"x").unwrap();
-    let error = reject(
+    let error = rejected(
         &registry,
         &workspace,
         "delete_path",
@@ -188,7 +161,7 @@ fn delete_of_a_non_empty_directory_is_unsupported() {
 #[test]
 fn delete_of_an_absent_path_is_a_no_effect() {
     let (_dir, workspace, registry) = setup();
-    let error = reject(
+    let error = rejected(
         &registry,
         &workspace,
         "delete_path",
@@ -202,7 +175,7 @@ fn move_file_renames_and_reports_a_deletion_and_a_creation() {
     let (dir, workspace, registry) = setup();
     std::fs::create_dir(dir.path().join("dest")).unwrap();
     std::fs::write(dir.path().join("a.txt"), b"payload").unwrap();
-    let (intent, outcome) = commit(
+    let (intent, outcome) = controlled_call(
         &registry,
         &workspace,
         "move_path",
@@ -234,7 +207,7 @@ fn move_file_renames_and_reports_a_deletion_and_a_creation() {
 fn move_directory_reports_directory_effects() {
     let (dir, workspace, registry) = setup();
     std::fs::create_dir(dir.path().join("old")).unwrap();
-    let (_intent, outcome) = commit(
+    let (_intent, outcome) = controlled_call(
         &registry,
         &workspace,
         "move_path",
@@ -256,7 +229,7 @@ fn move_onto_an_existing_destination_is_unsupported() {
     let (dir, workspace, registry) = setup();
     std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
     std::fs::write(dir.path().join("b.txt"), b"b").unwrap();
-    let error = reject(
+    let error = rejected(
         &registry,
         &workspace,
         "move_path",
@@ -294,7 +267,7 @@ fn copy_file_publishes_source_bytes_at_a_new_destination() {
 fn copy_of_a_directory_source_is_unsupported() {
     let (dir, workspace, registry) = setup();
     std::fs::create_dir(dir.path().join("adir")).unwrap();
-    let error = reject(
+    let error = rejected(
         &registry,
         &workspace,
         "copy_file",
@@ -307,14 +280,10 @@ fn copy_of_a_directory_source_is_unsupported() {
 fn a_state_change_between_preparation_and_commit_is_a_stale_precondition() {
     let (dir, workspace, registry) = setup();
     // Prepare a make_dir whose precondition is "target is absent".
-    let prepared =
-        match registry.prepare_controlled(&workspace, "make_dir", &json!({"path": "race"})) {
-            PrepareOutcome::Prepared(prepared) => prepared,
-            other => panic!("expected preparation, got {other:?}"),
-        };
+    let prepared = prepare(&registry, &workspace, "make_dir", &json!({"path": "race"}));
     // The workspace changes underneath the sealed preparation.
     std::fs::create_dir(dir.path().join("race")).unwrap();
-    let outcome = registry.commit_admitted(prepared, Provenance::Clean, &SinkPolicy::deny(), None);
+    let outcome = commit(&registry, prepared);
     assert!(errored(&outcome), "a stale commit must not report success");
     assert!(
         is_stale(&outcome),

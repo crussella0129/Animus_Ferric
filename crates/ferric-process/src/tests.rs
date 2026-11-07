@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::exact::{Access, ExactProcess, ProcessState};
 use crate::{CLEANUP_TIMEOUT, CapturePlan, ProcessTree, enable_subreaper, run_bounded};
 
 const FIXTURE_LIMIT: Duration = Duration::from_secs(45);
@@ -32,20 +33,14 @@ pub(crate) fn cleanup_deadline_precedes_success() {
 }
 
 fn fixture_command(mode: &str, directory: &Path) -> Command {
-    let mut command = Command::new(std::env::current_exe().expect("locate source test harness"));
+    let mut command = crate::testing::harness_command("tests::process_fixture");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
     }
     command
-        .args([
-            "--exact",
-            "tests::process_fixture",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ])
+        .arg("--ignored")
         .env("FERRIC_PROCESS_FIXTURE_MODE", mode)
         .env("FERRIC_PROCESS_FIXTURE_DIRECTORY", directory)
         .stdin(Stdio::null());
@@ -201,127 +196,133 @@ fn process_fixture() {
             ));
             std::thread::sleep(FIXTURE_LIMIT);
         }
+        "listener" => {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind listener");
+            let port = listener.local_addr().expect("listener address").port();
+            let pid = std::process::id();
+            publish(
+                &directory,
+                "listener",
+                &format!("{pid} {} {port}", generation(pid)),
+            );
+            std::thread::sleep(FIXTURE_LIMIT);
+        }
+        "tree-parent" => {
+            let _listener = InheritedChild(Some(
+                fixture_command("listener", &directory)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .expect("spawn inherited listener"),
+            ));
+            std::thread::sleep(FIXTURE_LIMIT);
+        }
+        "supervisor" => {
+            let mut command = fixture_command("watched-harness", &directory);
+            command
+                .env(
+                    "FERRIC_PROCESS_FIXTURE_PARENT",
+                    std::process::id().to_string(),
+                )
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let watched = InheritedChild(Some(command.spawn().expect("spawn watched harness")));
+            let pid = watched.0.as_ref().expect("watched harness").id();
+            publish(&directory, "watched", &format!("{pid} {}", generation(pid)));
+            std::thread::sleep(FIXTURE_LIMIT);
+        }
+        "watched-harness" => {
+            // Watching a parent that already died would watch the subreaper
+            // instead, so a harness that lost its supervisor leaves at once.
+            #[cfg(target_os = "linux")]
+            let supervised = || {
+                std::env::var("FERRIC_PROCESS_FIXTURE_PARENT").ok()
+                    == Some(unsafe { libc::getppid() }.to_string())
+            };
+            #[cfg(target_os = "linux")]
+            if !supervised() {
+                return;
+            }
+            crate::testing::contain_current_process().expect("watch the exact supervisor");
+            // The supervisor publishes this harness's coordinate before it may
+            // create a nested scope, so failure cleanup can let this retained
+            // watcher drain that scope before touching the outer one.
+            let pid = std::process::id();
+            assert_eq!(
+                await_file(&directory.join("watched"), READY_LIMIT),
+                format!("{pid} {}", generation(pid)),
+                "supervisor did not acknowledge watched harness ownership"
+            );
+            #[cfg(target_os = "linux")]
+            if !supervised() {
+                return;
+            }
+            let mut command = fixture_command("listener", &directory);
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            let _listener = crate::testing::spawn(&mut command).expect("own nested listener");
+            await_file(&directory.join("listener"), READY_LIMIT);
+            publish(&directory, "watched-ready", "nested listener owned");
+            std::thread::sleep(FIXTURE_LIMIT);
+        }
+        #[cfg(target_os = "linux")]
+        "pdeath-supervisor" => {
+            let mut command = fixture_command("listener", &directory);
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            crate::testing::parent_death_signal(&mut command);
+            let _listener = InheritedChild(Some(command.spawn().expect("spawn pdeath listener")));
+            std::thread::sleep(FIXTURE_LIMIT);
+        }
         other => panic!("unknown source fixture mode: {other}"),
     }
 }
 
-#[cfg(windows)]
-struct ExactProcess(windows_sys::Win32::Foundation::HANDLE);
-
-#[cfg(windows)]
-impl ExactProcess {
-    fn acquire(pid: u32) -> Self {
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
-        };
-        let handle = unsafe {
-            OpenProcess(
-                PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-                0,
-                pid,
-            )
-        };
-        assert!(
-            !handle.is_null(),
-            "retain exact fixture process: {}",
-            io::Error::last_os_error()
-        );
-        Self(handle)
-    }
-
-    fn assert_running(&self) {
-        assert_eq!(
-            unsafe { windows_sys::Win32::System::Threading::WaitForSingleObject(self.0, 0) },
-            windows_sys::Win32::Foundation::WAIT_TIMEOUT
-        );
-    }
-
-    fn assert_reaped(&self, role: &str) {
-        // Windows has no POSIX zombie wait state. The retained process object
-        // proves termination; ProcessTree additionally proves Job Active=0.
-        assert_eq!(
-            unsafe { windows_sys::Win32::System::Threading::WaitForSingleObject(self.0, 0) },
-            windows_sys::Win32::Foundation::WAIT_OBJECT_0,
-            "exact retained {role} remained live after scope cleanup returned"
-        );
-    }
-
-    fn wait_exit_code(&self, timeout: Duration) -> io::Result<u32> {
-        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
-        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
-        let wait = unsafe {
-            WaitForSingleObject(
-                self.0,
-                timeout.as_millis().try_into().unwrap_or(u32::MAX - 1),
-            )
-        };
-        if wait != WAIT_OBJECT_0 {
-            return Err(io::Error::other(format!(
-                "exact fixture exit was not observed within deadline: {wait}"
-            )));
-        }
-        let mut code = 0;
-        if unsafe { GetExitCodeProcess(self.0, &mut code) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(code)
-    }
+fn generation(pid: u32) -> u64 {
+    observe(pid)
+        .generation()
+        .expect("read exact process generation")
 }
 
-#[cfg(windows)]
-impl Drop for ExactProcess {
-    fn drop(&mut self) {
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(self.0);
-        }
-    }
+/// Retain a published fixture process, refusing a replacement whose start
+/// generation differs from the published one.
+fn observe_published(coordinates: &str) -> ExactProcess {
+    let mut fields = coordinates.split_whitespace();
+    let pid = fields
+        .next()
+        .and_then(|pid| pid.parse().ok())
+        .expect("published PID");
+    let published = fields
+        .next()
+        .and_then(|generation| generation.parse().ok())
+        .expect("published generation");
+    let process = observe(pid);
+    assert_eq!(
+        process.generation().expect("read retained generation"),
+        published,
+        "fixture process generation changed"
+    );
+    process
 }
 
-#[cfg(target_os = "linux")]
-struct ExactProcess(std::os::fd::OwnedFd);
+/// Retain `pid`'s exact process object for observation only.
+fn observe(pid: u32) -> ExactProcess {
+    ExactProcess::open(pid, Access::Observe).expect("retain exact fixture process")
+}
 
-#[cfg(target_os = "linux")]
-impl ExactProcess {
-    fn acquire(pid: u32) -> Self {
-        use std::os::fd::FromRawFd;
-        let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0_u32) };
-        assert!(
-            descriptor >= 0,
-            "retain exact fixture pidfd: {}",
-            io::Error::last_os_error()
-        );
-        Self(unsafe { std::os::fd::OwnedFd::from_raw_fd(descriptor as libc::c_int) })
-    }
+fn assert_running(process: &ExactProcess) {
+    assert_eq!(
+        process.state(Duration::ZERO).unwrap(),
+        ProcessState::Running
+    );
+}
 
-    fn state(&self) -> crate::LinuxProcessState {
-        use std::os::fd::AsRawFd;
-        let mut descriptor = libc::pollfd {
-            fd: self.0.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        loop {
-            if unsafe { libc::poll(&mut descriptor, 1, 0) } >= 0 {
-                return crate::decode_pidfd_events(descriptor.revents)
-                    .expect("valid exact fixture pidfd events");
-            }
-            assert_eq!(
-                io::Error::last_os_error().kind(),
-                io::ErrorKind::Interrupted
-            );
-        }
-    }
-
-    fn assert_running(&self) {
-        assert_eq!(self.state(), crate::LinuxProcessState::Running);
-    }
-    fn assert_reaped(&self, role: &str) {
-        assert_eq!(
-            self.state(),
-            crate::LinuxProcessState::Reaped,
-            "{role}: exit-only POLLIN is not reaping evidence"
-        );
-    }
+/// On Linux an exit-only (zombie) observation is not reaping evidence. Windows
+/// has no zombie state; ProcessTree additionally proves Job Active=0.
+fn assert_reaped(process: &ExactProcess, role: &str) {
+    assert_eq!(
+        process.state(Duration::ZERO).unwrap(),
+        ProcessState::Reaped,
+        "exact retained {role} was not reaped when scope cleanup returned"
+    );
 }
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -333,8 +334,8 @@ fn holding_tree(directory: &Path) -> (ProcessTree, ExactProcess) {
         .parse()
         .unwrap();
     assert_eq!(published_pid, tree.child().id());
-    let exact = ExactProcess::acquire(published_pid);
-    exact.assert_running();
+    let exact = observe(published_pid);
+    assert_running(&exact);
     (tree, exact)
 }
 
@@ -348,7 +349,7 @@ fn scope_cleanup_success_timeout_unwind() {
     let start = Instant::now();
     assert!(tree.wait_for_exit(READY_LIMIT).unwrap().success());
     assert!(start.elapsed() < READY_LIMIT + CLEANUP_TIMEOUT + Duration::from_secs(1));
-    exact.assert_reaped("successful leader");
+    assert_reaped(&exact, "successful leader");
 
     let timeout = tempfile::tempdir().unwrap();
     let (mut tree, exact) = holding_tree(timeout.path());
@@ -359,7 +360,7 @@ fn scope_cleanup_success_timeout_unwind() {
         io::ErrorKind::TimedOut
     );
     assert!(start.elapsed() < execution_limit + CLEANUP_TIMEOUT + Duration::from_secs(1));
-    exact.assert_reaped("timed-out leader");
+    assert_reaped(&exact, "timed-out leader");
 
     let unwinding = tempfile::tempdir().unwrap();
     let (tree, exact) = holding_tree(unwinding.path());
@@ -370,7 +371,7 @@ fn scope_cleanup_success_timeout_unwind() {
     }));
     assert!(panic.is_err());
     assert!(start.elapsed() < CLEANUP_TIMEOUT + Duration::from_secs(1));
-    exact.assert_reaped("unwound leader");
+    assert_reaped(&exact, "unwound leader");
 }
 
 #[test]
@@ -391,10 +392,10 @@ fn leader_exit_reaps_descendants() {
         let leader_pid = await_file(&directory.path().join("leader-ready"), READY_LIMIT)
             .parse()
             .unwrap();
-        let descendant = ExactProcess::acquire(descendant_pid);
-        let leader = ExactProcess::acquire(leader_pid);
-        descendant.assert_running();
-        leader.assert_running();
+        let descendant = observe(descendant_pid);
+        let leader = observe(leader_pid);
+        assert_running(&descendant);
+        assert_running(&leader);
         let start = Instant::now();
         publish(
             directory.path(),
@@ -411,8 +412,8 @@ fn leader_exit_reaps_descendants() {
         assert!(start.elapsed() < READY_LIMIT + CLEANUP_TIMEOUT + Duration::from_secs(1));
         assert!(String::from_utf8_lossy(&outcome.stdout).contains("descendant_stdout_open"));
         assert!(String::from_utf8_lossy(&outcome.stderr).contains("descendant_stderr_open"));
-        leader.assert_reaped("successful leader with a descendant");
-        descendant.assert_reaped("inherited-writer descendant");
+        assert_reaped(&leader, "successful leader with a descendant");
+        assert_reaped(&descendant, "inherited-writer descendant");
     });
 }
 
@@ -423,18 +424,18 @@ fn windows_cleanup_rejects_post_snapshot_admission() {
     let mut command = fixture_command("late-admission-owner", directory.path());
     command.stdout(Stdio::null()).stderr(Stdio::null());
     let mut outer = ProcessTree::spawn(&mut command).expect("own admission-race fixture tree");
-    let owner = ExactProcess::acquire(outer.child().id());
+    let owner = observe(outer.child().id());
     let leader_pid = await_file(&directory.path().join("late-leader-ready"), READY_LIMIT)
         .parse()
         .unwrap();
     let descendant_pid = await_file(&directory.path().join("descendant-ready"), READY_LIMIT)
         .parse()
         .unwrap();
-    let leader = ExactProcess::acquire(leader_pid);
-    let descendant = ExactProcess::acquire(descendant_pid);
-    owner.assert_running();
-    leader.assert_running();
-    descendant.assert_running();
+    let leader = observe(leader_pid);
+    let descendant = observe(descendant_pid);
+    assert_running(&owner);
+    assert_running(&leader);
+    assert_running(&descendant);
     let started = Instant::now();
     let mut owner_code = None;
     outer
@@ -451,15 +452,16 @@ fn windows_cleanup_rejects_post_snapshot_admission() {
                 "late-admission-retained",
                 "outer snapshot owns every admitted fixture",
             );
-            owner_code = Some(owner.wait_exit_code(CLEANUP_TIMEOUT)?);
+            owner.reap(CLEANUP_TIMEOUT)?;
+            owner_code = Some(owner.exit_code()?);
             Ok(())
         })
         .expect("outer scope proves admission-race fixture cleanup");
     assert_eq!(owner_code, Some(125), "inner cleanup must fail closed");
     assert!(started.elapsed() < CLEANUP_TIMEOUT + Duration::from_secs(1));
-    owner.assert_reaped("fail-closed cleanup owner");
-    leader.assert_reaped("post-snapshot admission leader");
-    descendant.assert_reaped("post-snapshot admitted descendant");
+    assert_reaped(&owner, "fail-closed cleanup owner");
+    assert_reaped(&leader, "post-snapshot admission leader");
+    assert_reaped(&descendant, "post-snapshot admitted descendant");
 }
 
 #[test]
@@ -496,4 +498,110 @@ fn bounded_capture_head_tail_and_noisy_child() {
     assert!(timeout.status.is_none());
     assert!(timeout.stdout.is_empty() && timeout.stderr.is_empty());
     assert!(timeout.wall < deadline + Duration::from_secs(1));
+}
+
+/// Observe the published listener, prove it accepts, run `terminate`, then
+/// prove the exact listener was reaped and its port closed.
+#[cfg(any(windows, target_os = "linux"))]
+fn assert_listener_closes(directory: &Path, terminate: impl FnOnce()) {
+    let coordinates = await_file(&directory.join("listener"), READY_LIMIT);
+    let listener = observe_published(&coordinates);
+    let port: u16 = coordinates
+        .split_whitespace()
+        .nth(2)
+        .and_then(|port| port.parse().ok())
+        .expect("published listener port");
+    assert!(
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok(),
+        "coordinates preceded listener readiness"
+    );
+    terminate();
+    listener.reap(READY_LIMIT).expect("exact listener reaped");
+    let deadline = Instant::now() + READY_LIMIT;
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "listener remained open after exact process exit"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+#[cfg(any(windows, target_os = "linux"))]
+fn scope_cleanup_closes_descendant_listener() {
+    crate::testing::contain_current_process().expect("contain source harness");
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = fixture_command("tree-parent", directory.path());
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let mut parent = ProcessTree::spawn(&mut command).expect("own tree parent");
+    assert_listener_closes(directory.path(), || {
+        parent
+            .terminate_and_reap()
+            .expect("terminate and reap the complete child tree")
+    });
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn parent_death_signal_kills_a_leaf_child() {
+    crate::testing::contain_current_process().expect("contain source harness");
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = fixture_command("pdeath-supervisor", directory.path());
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let mut supervisor = ProcessTree::spawn(&mut command).expect("own pdeath supervisor");
+    assert_listener_closes(directory.path(), || {
+        supervisor
+            .terminate_leader()
+            .expect("terminate only the supervisor")
+    });
+    supervisor
+        .terminate_and_reap()
+        .expect("reap the parent-death supervisor scope");
+}
+
+/// Kills only the upstream owner on failure too, so the watched harness can
+/// drain its nested scope before the outer scope is cleaned.
+#[cfg(any(windows, target_os = "linux"))]
+struct UpstreamOwner(ProcessTree, Option<ExactProcess>);
+
+#[cfg(any(windows, target_os = "linux"))]
+impl Drop for UpstreamOwner {
+    fn drop(&mut self) {
+        let _ = self.0.terminate_leader();
+        if let Some(watched) = &self.1 {
+            let _ = watched.reap(READY_LIMIT);
+        }
+        if let Err(error) = self.0.terminate_and_reap() {
+            crate::abort_on_cleanup_failure("upstream owner scope did not drain", error);
+        }
+    }
+}
+
+#[test]
+#[cfg(any(windows, target_os = "linux"))]
+fn upstream_owner_death_drains_watched_scopes() {
+    crate::testing::contain_current_process().expect("contain source harness");
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = fixture_command("supervisor", directory.path());
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let mut owner = UpstreamOwner(
+        ProcessTree::spawn(&mut command).expect("own upstream supervisor"),
+        None,
+    );
+    let watched = await_file(&directory.path().join("watched"), READY_LIMIT);
+    owner.1 = Some(observe_published(&watched));
+    await_file(&directory.path().join("watched-ready"), READY_LIMIT);
+    assert_listener_closes(directory.path(), || {
+        owner
+            .0
+            .terminate_leader()
+            .expect("terminate only the owner")
+    });
+    owner
+        .1
+        .as_ref()
+        .expect("retained watched harness")
+        .reap(READY_LIMIT)
+        .expect("watched harness exited and was reaped");
 }

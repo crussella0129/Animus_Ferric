@@ -3,7 +3,8 @@
 mod common;
 
 use common::*;
-use ferric_loop::{StopReason, TASK_COMPLETE};
+use ferric_iron::terminator::TASK_COMPLETE;
+use ferric_loop::StopReason;
 use serde_json::json;
 
 #[test]
@@ -26,9 +27,9 @@ fn task_complete_terminates() {
     // Never DISPATCHED (no tool_result for the terminator), even though it IS
     // now traced as a ToolCall (T-3902, sprint 39 — closes the NativeTools
     // summary-visibility gap needed for replay).
-    assert!(kinds(&result.records).contains(&"tool_call"));
+    assert!(kinds(&result.records).contains(&"tool_call".into()));
     assert!(
-        !kinds(&result.records).contains(&"tool_result"),
+        !kinds(&result.records).contains(&"tool_result".into()),
         "task_complete must not be dispatched through the registry"
     );
 }
@@ -52,7 +53,7 @@ fn task_complete_mixed_turn() {
     assert_eq!(result.outcome.final_text.as_deref(), Some("wrote out.txt"));
     let kind_list = kinds(&result.records);
     assert!(
-        kind_list.contains(&"tool_call") && kind_list.contains(&"tool_result"),
+        kind_list.contains(&"tool_call".into()) && kind_list.contains(&"tool_result".into()),
         "the non-terminator call must have executed: {kind_list:?}"
     );
 }

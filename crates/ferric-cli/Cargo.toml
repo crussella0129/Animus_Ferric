@@ -28,7 +28,7 @@ default = ["backend-openai"]
 
 # Test-only model-free stand-in for llama-server. The required-feature binary
 # target keeps it out of normal/release Ferric builds.
-lifecycle-fixture = []
+lifecycle-fixture = ["ferric-process/testing"]
 
 backend-openai = [
     "ferric-provider/backend-openai",
@@ -40,30 +40,29 @@ backend-openai = [
 ]
 
 [dependencies]
-animus-launch = { workspace = true }
 ferric-bench = { workspace = true }
-ferric-icm = { workspace = true }
 ferric-core = { workspace = true }
-ferric-cron = { workspace = true }
 ferric-gate = { workspace = true, optional = true }
 ferric-guard = { workspace = true }
+ferric-iron = { workspace = true }
 ferric-setup = { workspace = true, optional = true }
 ferric-loop = { workspace = true }
-ferric-prompt = { workspace = true }
 ferric-provider = { workspace = true }
 ferric-process = { workspace = true }
+oovra = { workspace = true }
 ferric-research = { workspace = true }
 ferric-tools = { workspace = true }
-ferric-skills = { workspace = true }
 ferric-trace = { workspace = true }
-ferric-vcs = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
-cap-std = "4"
-cap-fs-ext = "4"
+cap-std = { workspace = true }
+cap-fs-ext = { workspace = true }
 tokio = { workspace = true }
 futures-executor = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 getrandom = { workspace = true }
@@ -79,15 +78,15 @@ tracing-subscriber = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
-[target.'cfg(windows)'.dev-dependencies]
+[target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
+    "Wdk_System_Threading",
     "Win32_Foundation",
-    "Win32_Security",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_JobObjects",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
     "Win32_System_Threading",
 ] }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 async-trait = { workspace = true }
+ferric-process = { workspace = true, features = ["testing"] }

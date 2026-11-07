@@ -2,15 +2,11 @@ use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
-use crate::control::{
-    ControlCapability, NoEffectKind, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
-};
+use crate::control::{ControlCapability, NoEffectKind, PrepareCtx, PrepareError, ToolPreparation};
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
-use super::controlled_file::{
-    compile_candidate, inspect_for_prepare, reject_unchanged, utf8_preimage,
-};
-use super::path_arg;
+use super::args::{self, ArgError};
+use super::controlled_file::{EditFailure, compile_candidate, inspect_for_prepare, utf8_preimage};
 
 /// Apply an ordered batch of first-occurrence replacements to one file,
 /// as one candidate: every edit is validated and applied to an in-memory
@@ -63,114 +59,69 @@ impl Tool for MultiEdit {
         ctx: &PrepareCtx<'_>,
         args: &serde_json::Value,
     ) -> Result<ToolPreparation, PrepareError> {
-        let path = args
-            .get("path")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: path",
-                )
-            })?;
-        let edits = args
-            .get("edits")
-            .and_then(|value| value.as_array())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required array argument: edits",
-                )
-            })?;
-        if edits.is_empty() {
-            return Err(PrepareError::new(
-                PrepareErrorKind::InvalidArguments,
-                "edits must not be empty",
-            ));
-        }
-
+        let (path, edits) = multi_edit_args(args)?;
         let target = inspect_for_prepare(ctx, path, false)?;
-        let mut working = utf8_preimage(&target, "multi_edit")?.to_string();
-        for (index, edit) in edits.iter().enumerate() {
-            let old_string = edit
-                .get("old_string")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| {
-                    PrepareError::new(
-                        PrepareErrorKind::InvalidArguments,
-                        format!("edit {index}: missing string field old_string"),
-                    )
-                })?;
-            let new_string = edit
-                .get("new_string")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| {
-                    PrepareError::new(
-                        PrepareErrorKind::InvalidArguments,
-                        format!("edit {index}: missing string field new_string"),
-                    )
-                })?;
-            if old_string.is_empty() {
-                return Err(PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    format!("edit {index}: old_string must not be empty"),
-                ));
-            }
-            if !working.contains(old_string) {
-                return Err(reject_unchanged(
-                    &target,
-                    NoEffectKind::MatchNotFound,
-                    format!("edit {index}: old_string not found in {path}"),
-                ));
-            }
-            working = working.replacen(old_string, new_string, 1);
-        }
-
+        let content = utf8_preimage(&target, "multi_edit")?;
+        let edited =
+            apply_edits(content, edits, path).map_err(|failure| failure.rejected(&target))?;
         compile_candidate(
             target,
-            working.into_bytes(),
+            edited.into_bytes(),
             NoEffectKind::NetZeroBatch,
             format!("applied {} edits to {path}", edits.len()),
         )
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let path = path_arg(args)?;
-        let edits = args
-            .get("edits")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| "missing required array argument: edits".to_string())?;
-        if edits.is_empty() {
-            return Err("edits must not be empty".to_string());
-        }
-
-        let resolved = ctx
-            .workspace
-            .resolve(path)
-            .map_err(|e| format!("boundary: {e}"))?;
-        let mut working =
+        let (path, edits) = multi_edit_args(args)?;
+        let resolved = ctx.resolve(path)?;
+        let content =
             std::fs::read_to_string(&resolved).map_err(|e| format!("read {path}: {e}"))?;
-
-        // Validate + apply every edit to the working copy BEFORE any write, so a
-        // failure leaves the file untouched.
-        for (i, edit) in edits.iter().enumerate() {
-            let old_string = edit
-                .get("old_string")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("edit {i}: missing string field old_string"))?;
-            let new_string = edit
-                .get("new_string")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("edit {i}: missing string field new_string"))?;
-            if old_string.is_empty() {
-                return Err(format!("edit {i}: old_string must not be empty"));
-            }
-            if !working.contains(old_string) {
-                return Err(format!("edit {i}: old_string not found in {path}"));
-            }
-            working = working.replacen(old_string, new_string, 1);
-        }
-
-        std::fs::write(&resolved, &working).map_err(|e| format!("write {path}: {e}"))?;
+        let edited = apply_edits(&content, edits, path)?;
+        std::fs::write(&resolved, &edited).map_err(|e| format!("write {path}: {e}"))?;
         Ok(format!("applied {} edits to {path}", edits.len()))
     }
+}
+
+/// `(path, edits)`, with at least one edit.
+fn multi_edit_args(args: &serde_json::Value) -> Result<(&str, &Vec<serde_json::Value>), ArgError> {
+    let path = args::string(args, "path")?;
+    let edits = args::array(args, "edits")?;
+    if edits.is_empty() {
+        return Err(args::invalid("edits must not be empty"));
+    }
+    Ok((path, edits))
+}
+
+/// Validate and apply every edit, in order, to a working copy of `content`,
+/// so a failure leaves the file untouched.
+fn apply_edits(
+    content: &str,
+    edits: &[serde_json::Value],
+    path: &str,
+) -> Result<String, EditFailure> {
+    let mut working = content.to_string();
+    for (index, edit) in edits.iter().enumerate() {
+        let field = |key: &str| {
+            edit.get(key)
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    EditFailure::Invalid(format!("edit {index}: missing string field {key}"))
+                })
+        };
+        let old_string = field("old_string")?;
+        let new_string = field("new_string")?;
+        if old_string.is_empty() {
+            return Err(EditFailure::Invalid(format!(
+                "edit {index}: old_string must not be empty"
+            )));
+        }
+        if !working.contains(old_string) {
+            return Err(EditFailure::NotFound(format!(
+                "edit {index}: old_string not found in {path}"
+            )));
+        }
+        working = working.replacen(old_string, new_string, 1);
+    }
+    Ok(working)
 }

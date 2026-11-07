@@ -17,16 +17,6 @@ fn failing_turn(name: &str, path: &str) -> ferric_provider::Completion {
     tool_completion(vec![("c", name, json!({ "path": path }))])
 }
 
-fn failure_actions(records: &[ferric_trace::TraceRecord]) -> Vec<String> {
-    records
-        .iter()
-        .filter_map(|r| match &r.event {
-            ParsedEvent::Known(Event::FailureGuard { action }) => Some(action.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 fn other_guards_fired(records: &[ferric_trace::TraceRecord]) -> bool {
     records.iter().any(|r| {
         matches!(
@@ -63,7 +53,10 @@ fn all_failing_turns_warn_then_stop_with_repeated_failure() {
         },
     );
     assert_eq!(result.outcome.stop, StopReason::RepeatedFailure);
-    assert_eq!(failure_actions(&result.records), vec!["warned", "stopped"]);
+    assert_eq!(
+        guard_actions(&result.records, "failure_guard"),
+        vec!["warned", "stopped"]
+    );
     assert_eq!(session_end_reason(&result.records), "repeated_failure");
     assert!(
         !other_guards_fired(&result.records),
@@ -86,5 +79,8 @@ fn a_success_resets_and_avoids_the_stop() {
         |_| {},
     );
     assert_eq!(result.outcome.stop, StopReason::FinalText);
-    assert_eq!(failure_actions(&result.records), vec!["warned"]);
+    assert_eq!(
+        guard_actions(&result.records, "failure_guard"),
+        vec!["warned"]
+    );
 }

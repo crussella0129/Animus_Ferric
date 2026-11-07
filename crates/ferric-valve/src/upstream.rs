@@ -16,17 +16,18 @@
 use std::future::Future;
 use std::time::{Duration, Instant};
 
+use ferric_iron::wire::{SseDecoder, SseLine};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::sse::{ChunkIdentity, SseLine, SseLineBuffer, chunk, classify, done_frame, frame};
+use crate::sse::{ChunkIdentity, chunk, done_frame, frame};
 use crate::translate::{ActionAssembler, ActionError, Resolution};
 
 /// Bytes of an upstream error body quoted back to the client.
 const ERROR_EXCERPT_BYTES: usize = 2_048;
 
-/// Why an exchange failed.
-#[derive(Debug, Clone, thiserror::Error)]
+/// Why an exchange, or the startup enforcement probe, failed.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ValveError {
     #[error("upstream unreachable: {0}")]
     UpstreamUnreachable(String),
@@ -36,6 +37,9 @@ pub enum ValveError {
     UpstreamStream(String),
     #[error(transparent)]
     Action(#[from] ActionError),
+    /// The probe's constrained request came back unconstrained.
+    #[error("upstream did not enforce the probe schema; it replied {0:?}")]
+    NotEnforced(String),
 }
 
 impl ValveError {
@@ -46,6 +50,7 @@ impl ValveError {
             ValveError::UpstreamHttp { .. } => "upstream_http",
             ValveError::UpstreamStream(_) => "upstream_stream",
             ValveError::Action(error) => error.class(),
+            ValveError::NotEnforced(_) => "not_enforced",
         }
     }
 
@@ -254,7 +259,7 @@ where
         (heartbeat / 4).clamp(Duration::from_millis(5), Duration::from_millis(250)),
     );
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut lines = SseLineBuffer::new();
+    let mut decoder = SseDecoder::default();
     let mut finish_reason: Option<String> = None;
     let mut done = false;
     let mut last_emit = Instant::now();
@@ -277,9 +282,16 @@ where
                     }
                 };
                 progressed = true;
+                let lines = match decoder.push(&bytes) {
+                    Ok(lines) => lines,
+                    Err(error) => {
+                        outcome.error = Some(ValveError::UpstreamStream(format!("malformed UTF-8: {error}")));
+                        break 'read;
+                    }
+                };
                 let mut deltas = Vec::new();
-                for line in lines.push(&bytes) {
-                    match classify(&line) {
+                for line in lines {
+                    match line {
                         SseLine::Data(value) => {
                             if let Some(error) = value.get("error") {
                                 outcome.error = Some(ValveError::UpstreamStream(error.to_string()));

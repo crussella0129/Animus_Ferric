@@ -38,7 +38,7 @@ impl Preparation for FixturePreparation {
         cancel: &Arc<AtomicBool>,
         models_dir: Option<&Path>,
     ) -> Result<Startup, crate::startup::StartupError> {
-        crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
+        ferric_process::testing::contain_current_process().unwrap();
         crate::startup::test_support::begin(root, cfg, model, cancel, models_dir)
     }
     fn prepare(
@@ -52,14 +52,10 @@ impl Preparation for FixturePreparation {
         let result =
             crate::startup::test_support::prepare(start, index, cancel, progress, |port| {
                 self.port.store(port, Ordering::Release);
-                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                let mut command = ferric_process::testing::harness_command(
+                    "human::enabled::tests::fixture_human_engine",
+                );
                 command
-                    .args([
-                        "--exact",
-                        "human::enabled::tests::fixture_human_engine",
-                        "--nocapture",
-                        "--test-threads=1",
-                    ])
                     .env("FERRIC_HUMAN_FIXTURE", self.mode)
                     .env("FERRIC_HUMAN_FIXTURE_PORT", port.to_string());
                 if let Some(marker) = &self.accept_fault_marker {
@@ -86,14 +82,10 @@ impl Preparation for FixturePreparation {
 fn fixture_models(root: &Path, count: usize) {
     std::fs::create_dir(root.join("models")).unwrap();
     for index in 0..count {
-        let mut header = [0_u8; 24];
-        header[..4].copy_from_slice(b"GGUF");
-        header[4..8].copy_from_slice(&3_u32.to_le_bytes());
-        std::fs::write(
-            root.join("models").join(format!("fixture-{index}.gguf")),
-            header,
-        )
-        .unwrap();
+        crate::startup::test_support::write_gguf(
+            &root.join("models").join(format!("fixture-{index}.gguf")),
+            0,
+        );
     }
 }
 
@@ -636,97 +628,6 @@ fn human_first_run_fatal_accept_error_refuses_and_reaps() {
     .unwrap();
 }
 
-#[cfg(windows)]
-#[test]
-#[ignore = "opt-in diagnostic series, not acceptance; 32 journeys under a 60s Windows Job owner"]
-fn human_first_run_diagnostic_series() {
-    crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-    command
-        .args([
-            "--ignored",
-            "--exact",
-            "human::enabled::tests::human_first_run_diagnostic_series_child",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .env("FERRIC_HUMAN_DIAGNOSTIC_SERIES_CHILD", "1");
-    // Windows nested Jobs own every journey engine even if this source child
-    // is synchronously stalled. This is not a Unix nested-group parity claim.
-    let outcome = ferric_process::run_bounded(
-        &mut command,
-        Duration::from_secs(60),
-        ferric_process::CapturePlan::head(64 * 1024, 128 * 1024),
-    )
-    .expect("diagnostic parent execution and checked process-scope cleanup must return");
-    let stdout = String::from_utf8_lossy(&outcome.stdout);
-    let completed: Vec<u32> = stdout
-        .lines()
-        .filter_map(|line| line.strip_prefix("HUMAN_DIAGNOSTIC_ITERATION_COMPLETE="))
-        .map(|value| {
-            value
-                .parse()
-                .expect("source completion marker must be an integer")
-        })
-        .collect();
-    println!(
-        "HUMAN_DIAGNOSTIC_SERIES_EVIDENCE={}",
-        serde_json::json!({
-            "requested_iterations":32,"completed_iterations":completed.len(),
-            "completion_sequence":completed,"parent_execution_budget_ms":60000,
-            "parent_cleanup_budget_ms":ferric_process::CLEANUP_TIMEOUT.as_millis(),
-            "parent_execution_timeout":outcome.timed_out,"parent_exit_code":outcome.exit_code,
-            "parent_spawn_ms":outcome.spawn_wall.as_millis(),"parent_execution_ms":outcome.wall.as_millis(),
-            "parent_checked_process_scope_cleanup":true,
-            "stdout":stdout,"stderr":String::from_utf8_lossy(&outcome.stderr),
-            "qualification":"one fixed diagnostic sample; not acceptance or a repair of the original CI failure",
-        })
-    );
-    assert!(
-        !outcome.timed_out,
-        "diagnostic series exceeded its fixed 60s execution budget"
-    );
-    assert_eq!(
-        outcome.exit_code,
-        Some(0),
-        "diagnostic child failed; no retry or deadline reset"
-    );
-    assert_eq!(completed, (1..=32).collect::<Vec<_>>());
-}
-
-#[cfg(windows)]
-#[test]
-#[ignore = "source child entered only by the opt-in diagnostic series Cargo parent"]
-fn human_first_run_diagnostic_series_child() {
-    assert_eq!(
-        std::env::var("FERRIC_HUMAN_DIAGNOSTIC_SERIES_CHILD").as_deref(),
-        Ok("1"),
-        "diagnostic source mode requires its supervising Cargo parent"
-    );
-    crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
-    let started = std::time::Instant::now();
-    let deadline = started + Duration::from_secs(60);
-    for iteration in 1..=32 {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "fixed diagnostic series deadline reached"
-        );
-        println!("HUMAN_DIAGNOSTIC_ITERATION_START={iteration}");
-        // Call the actual original test: all decisions, answer, authority and
-        // checked-cleanup assertions remain identical. A panic stops the series.
-        human_first_run_decision_budget();
-        println!("HUMAN_DIAGNOSTIC_ITERATION_COMPLETE={iteration}");
-    }
-    assert!(
-        std::time::Instant::now() < deadline,
-        "fixed diagnostic series deadline reached"
-    );
-    println!(
-        "HUMAN_DIAGNOSTIC_SERIES_CHILD_ELAPSED_MS={}",
-        started.elapsed().as_millis()
-    );
-}
-
 #[test]
 fn human_repeat_with_multiple_models_always_reasks() {
     let root = tempfile::tempdir().unwrap();
@@ -803,10 +704,7 @@ fn human_external_models_dir_end_to_end() {
     // discovery scanned the current folder's `models/`).
     let run = tempfile::tempdir().unwrap();
     let external = tempfile::tempdir().unwrap();
-    let mut header = [0_u8; 24];
-    header[..4].copy_from_slice(b"GGUF");
-    header[4..8].copy_from_slice(&3_u32.to_le_bytes());
-    std::fs::write(external.path().join("only.gguf"), header).unwrap();
+    crate::startup::test_support::write_gguf(&external.path().join("only.gguf"), 0);
 
     let args = RunArgs {
         models_dir: Some(external.path().to_path_buf()),
@@ -943,7 +841,7 @@ fn human_cancel_during_request_reaps_owned_engine() {
 #[test]
 #[ignore = "explicit live local-model acceptance; set FERRIC_LIVE_MODEL to an existing GGUF"]
 fn real_model_prepared_host_journey() {
-    crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
+    ferric_process::testing::contain_current_process().unwrap();
     let model = std::path::PathBuf::from(
         std::env::var_os("FERRIC_LIVE_MODEL").expect("explicit existing local model"),
     );

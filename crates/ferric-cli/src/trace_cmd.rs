@@ -52,13 +52,10 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             duration_ms,
         }) => {
             let status = if *is_error { "ERROR" } else { "ok" };
-            let preview: String = output.chars().take(120).collect();
-            let ellipsis = if output.chars().count() > 120 {
-                "…"
-            } else {
-                ""
-            };
-            format!("tool result {name} [{id}] {status} {duration_ms}ms: {preview}{ellipsis}")
+            format!(
+                "tool result {name} [{id}] {status} {duration_ms}ms: {}",
+                preview(output, 120)
+            )
         }
         ParsedEvent::Known(Event::ObservationRecorded {
             turn,
@@ -225,14 +222,9 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             output_tokens,
             truncated,
         }) => {
-            let preview = match text {
-                Some(t) => {
-                    let p: String = t.chars().take(80).collect();
-                    let ellipsis = if t.chars().count() > 80 { "…" } else { "" };
-                    format!(" text: {p}{ellipsis}")
-                }
-                None => String::new(),
-            };
+            let preview = text
+                .as_deref()
+                .map_or_else(String::new, |t| format!(" text: {}", preview(t, 80)));
             let truncated_note = if *truncated { " TRUNCATED" } else { "" };
             format!(
                 "turn {turn} end ({tool_call_count} tool calls, tokens in/out {}/{}){truncated_note}{preview}",
@@ -302,17 +294,10 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
             through_turn,
             dropped_turns,
             summary,
-        }) => {
-            let preview: String = summary.chars().take(120).collect();
-            let ellipsis = if summary.chars().count() > 120 {
-                "…"
-            } else {
-                ""
-            };
-            format!(
-                "history compacted: folded {dropped_turns} turns (through turn {through_turn}): {preview}{ellipsis}"
-            )
-        }
+        }) => format!(
+            "history compacted: folded {dropped_turns} turns (through turn {through_turn}): {}",
+            preview(summary, 120)
+        ),
         ParsedEvent::Unknown(raw) => {
             let kind = raw
                 .get("type")
@@ -322,4 +307,13 @@ fn render(session: &str, seq: u64, event: &ParsedEvent) -> String {
         }
     };
     format!("{session}#{seq:<4} {body}")
+}
+
+/// The first `limit` chars of `text`, with an ellipsis when it was cut.
+fn preview(text: &str, limit: usize) -> String {
+    let mut preview: String = text.chars().take(limit).collect();
+    if text.chars().count() > limit {
+        preview.push('…');
+    }
+    preview
 }

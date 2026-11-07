@@ -41,7 +41,7 @@ async fn enforce(State(gate): State<Arc<Gate>>, mut request: Request, next: Next
 }
 
 /// The refusal: a JSON error, the denial header, no CORS headers, no caching.
-pub fn denial_response(denial: &Denial) -> Response {
+fn denial_response(denial: &Denial) -> Response {
     let body = json!({
         "error": {
             "type": "ferric_gate",

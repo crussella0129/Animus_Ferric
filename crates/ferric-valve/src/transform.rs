@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 
 use ferric_iron::terminator::TASK_COMPLETE;
+use ferric_iron::wire::response_format;
 use ferric_iron::{ToolDescriptor, action_schema, render_tool_listing, tool_result_text};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -183,10 +184,7 @@ pub fn transform(request: &Value) -> Result<Transformed, TransformError> {
     upstream.insert("stream".to_string(), Value::Bool(true));
     upstream.insert(
         "response_format".to_string(),
-        json!({
-            "type": "json_schema",
-            "json_schema": { "name": "ferric_action", "schema": schema, "strict": true }
-        }),
+        response_format("ferric_action", &schema),
     );
 
     Ok(Transformed::Constrained(Box::new(Constrained {

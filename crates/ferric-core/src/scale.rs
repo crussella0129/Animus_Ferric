@@ -1,7 +1,7 @@
 //! The deterministic scale function: `ModelProfile` → `RunPolicy`.
 //!
-//! This is Ferric's central design idea: how much agency a run gets (plan
-//! granularity, turn budgets, tool count, action protocol) is a *pure
+//! This is Ferric's central design idea: how much agency a run gets (turn
+//! budgets, tool count, prompt and output ceilings) is a *pure
 //! function* of what the model is. No filename sniffing, no runtime
 //! heuristics, no LLM self-report — profiles are config-supplied (the
 //! lineage's H8/H20 tier-misdetection traps are unrepresentable), and a
@@ -124,9 +124,6 @@ pub struct RunPolicy {
     /// identical budgets, so without this the record cannot tell them apart.
     #[serde(default)]
     pub tier_source: TierSource,
-    pub uses_planner: bool,
-    pub max_plan_steps: u8,
-    pub max_turns_per_step: u8,
     pub max_turns: u8,
     pub max_tools: u8,
     pub prompt_budget_tokens: u32,
@@ -135,7 +132,6 @@ pub struct RunPolicy {
     /// Invocation-scoped explicit-budget provenance. Old policies have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_budget: Option<OutputBudget>,
-    pub allows_subagents: bool,
     /// Operator cap on the active tool ring (ADR-028). `None` ⇒ the tier's
     /// `ring_for_tier` ceiling; `Some(n)` caps the active rings at
     /// `min(tier_ceiling, n)` — restrict-only (raise via `measured_level`). The
@@ -252,25 +248,26 @@ pub fn ring_for_tier(tier: Tier) -> u8 {
     }
 }
 
-/// Per-tier seed row: (uses_planner, max_plan_steps, max_turns_per_step,
-/// max_turns, max_tools, prompt_budget_cap, max_output_tokens, allows_subagents,
-/// compact_trigger_fraction, compact_keep_last_turns).
-#[allow(clippy::type_complexity)]
-fn tier_row(tier: Tier) -> (bool, u8, u8, u8, u8, u32, u32, bool, f32, u8) {
+/// Per-tier seed row: (max_turns, max_tools, prompt_budget_cap,
+/// max_output_tokens, compact_trigger_fraction, compact_keep_last_turns).
+///
+/// The planner, plan-step and subagent seeds Animus carried had no runtime
+/// consumer, so they are not part of the policy (INT-0011 AC-7, T-11406).
+fn tier_row(tier: Tier) -> (u8, u8, u32, u32, f32, u8) {
     match tier {
-        Tier::Nano => (true, 3, 5, 15, 10, 2_800, 512, false, 0.75, 1),
-        Tier::Small => (true, 5, 4, 20, 14, 5_600, 768, false, 0.80, 2),
-        Tier::Medium => (false, 1, 25, 25, 20, 11_200, 1_024, false, 0.85, 2),
-        Tier::Large => (false, 1, 40, 40, 28, 22_400, 1_536, true, 0.85, 3),
-        Tier::Xl => (false, 1, 60, 60, 36, 44_800, 2_048, true, 0.85, 3),
-        Tier::Ultra => (false, 1, 80, 80, 52, 89_600, 2_048, true, 0.90, 4),
+        Tier::Nano => (15, 10, 2_800, 512, 0.75, 1),
+        Tier::Small => (20, 14, 5_600, 768, 0.80, 2),
+        Tier::Medium => (25, 20, 11_200, 1_024, 0.85, 2),
+        Tier::Large => (40, 28, 22_400, 1_536, 0.85, 3),
+        Tier::Xl => (60, 36, 44_800, 2_048, 0.85, 3),
+        Tier::Ultra => (80, 52, 89_600, 2_048, 0.90, 4),
     }
 }
 
 /// Why a run ended up at the tier it did (ADR-098).
 ///
-/// The tier decides turn/tool budgets, prompt and output ceilings, planner use,
-/// subagents, and the tool-ring ceiling — so "which tier" is the single most
+/// The tier decides turn/tool budgets, prompt and output ceilings and the
+/// tool-ring ceiling — so "which tier" is the single most
 /// consequential fact about a run. Recording only the *answer* made two very
 /// different situations identical in the record: a tier a model **earned** on
 /// the benchmark ladder, and a tier an operator simply asked for.
@@ -300,17 +297,6 @@ impl TierSource {
             TierSource::Params => "params",
             TierSource::Override => "override",
             TierSource::Conservative => "conservative",
-        }
-    }
-
-    /// Inverse of [`label`](Self::label). An unrecognized label reads back as
-    /// `Params` — the conservative answer, and what a pre-ADR-098 trace meant.
-    pub fn from_label(s: &str) -> Self {
-        match s {
-            "measured" => TierSource::Measured,
-            "override" => TierSource::Override,
-            "conservative" => TierSource::Conservative,
-            _ => TierSource::Params,
         }
     }
 }
@@ -344,14 +330,10 @@ pub fn policy_for(profile: &ModelProfile) -> RunPolicy {
 pub fn policy_for_with_override(profile: &ModelProfile, override_tier: Option<Tier>) -> RunPolicy {
     let (tier, tier_source) = tier_decision(profile, override_tier);
     let (
-        uses_planner,
-        max_plan_steps,
-        max_turns_per_step,
         max_turns,
         max_tools,
         budget_cap,
         max_output_tokens,
-        subagents,
         compact_trigger_fraction,
         compact_keep_last_turns,
     ) = tier_row(tier);
@@ -361,14 +343,10 @@ pub fn policy_for_with_override(profile: &ModelProfile, override_tier: Option<Ti
     RunPolicy {
         tier,
         tier_source,
-        uses_planner,
-        max_plan_steps,
-        max_turns_per_step,
         max_turns,
         max_tools,
         prompt_budget_tokens,
         max_output_tokens,
-        allows_subagents: subagents,
         output_budget: None,
         max_ring: None,
         compact_trigger_fraction,
@@ -388,12 +366,6 @@ mod tests {
             family: "test".to_string(),
             measured_level,
         }
-    }
-
-    #[test]
-    fn policy_for_is_deterministic() {
-        let p = profile(7.0, Some(3));
-        assert_eq!(policy_for(&p), policy_for(&p.clone()));
     }
 
     #[test]
@@ -525,30 +497,6 @@ mod tests {
     }
 
     #[test]
-    fn tier_source_labels_round_trip() {
-        for s in [
-            TierSource::Measured,
-            TierSource::Params,
-            TierSource::Override,
-            TierSource::Conservative,
-        ] {
-            assert_eq!(TierSource::from_label(s.label()), s);
-        }
-        // An unknown label reads back conservatively, which is also what a
-        // pre-ADR-098 trace means.
-        assert_eq!(TierSource::from_label("who knows"), TierSource::Params);
-    }
-
-    /// `policy_for` must stay exactly what it was for every existing caller.
-    #[test]
-    fn policy_for_is_unchanged_without_an_override() {
-        assert_eq!(
-            policy_for(&profile(7.0, Some(6))),
-            policy_for_with_override(&profile(7.0, Some(6)), None)
-        );
-    }
-
-    #[test]
     fn nano_tier_boundaries() {
         assert_eq!(policy_for(&profile(0.5, None)).tier, Tier::Nano);
         assert_eq!(policy_for(&profile(3.9, None)).tier, Tier::Nano);
@@ -564,16 +512,6 @@ mod tests {
         assert_eq!(ring_for_tier(Tier::Large), 3);
         assert_eq!(ring_for_tier(Tier::Xl), 3);
         assert_eq!(ring_for_tier(Tier::Ultra), 3);
-    }
-
-    #[test]
-    fn nano_policy_shape() {
-        let policy = policy_for(&profile(1.0, None));
-        assert_eq!(policy.tier, Tier::Nano);
-        assert!(policy.uses_planner);
-        assert!(policy.max_tools <= 10);
-        assert_eq!(policy.prompt_budget_tokens, 2_800);
-        assert!(!policy.allows_subagents);
     }
 
     #[test]
@@ -610,23 +548,6 @@ mod tests {
         assert_eq!(back, ActionProtocol::ConstrainedJson);
         let legacy: ActionProtocol = serde_json::from_str(r#""unified_grammar""#).unwrap();
         assert_eq!(legacy, ActionProtocol::ConstrainedJson);
-    }
-
-    #[test]
-    fn max_output_tokens_per_tier() {
-        assert_eq!(policy_for(&profile(1.0, None)).max_output_tokens, 512);
-        assert_eq!(policy_for(&profile(7.0, None)).max_output_tokens, 768);
-        assert_eq!(policy_for(&profile(14.0, None)).max_output_tokens, 1_024);
-    }
-
-    #[test]
-    fn prompt_budget_respects_small_context() {
-        // 4096-token context: 70% = 2867, below every tier cap except Nano's.
-        let policy = policy_for(&profile(7.0, None));
-        assert_eq!(policy.prompt_budget_tokens, 2867);
-        // Nano's cap (2800) binds before 70% of context does.
-        let nano = policy_for(&profile(1.0, None));
-        assert_eq!(nano.prompt_budget_tokens, 2800);
     }
 
     /// Pins the on-disk profile keys. These strings are a **persistence

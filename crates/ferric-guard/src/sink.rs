@@ -104,10 +104,6 @@ impl SinkPolicy {
     }
 }
 
-/// Shortest prose fragment worth tainting. Below this, a needle matches so much
-/// ordinary text that the policy degenerates into denying every write.
-pub const MIN_TAINT_SEGMENT_CHARS: usize = 12;
-
 /// Whether this run has ingested untrusted content.
 ///
 /// Harness-stamped, like `ResearchDigest.untrusted` — the model has no way to

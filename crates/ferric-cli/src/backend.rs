@@ -1,20 +1,20 @@
 use clap::Args;
 use std::fmt;
+use std::future::Future;
 use std::path::Path;
+
+use ferric_provider::{MockProvider, Provider};
 
 use crate::server::{
     ManagedDiscoveryScope, ManagedServer, ManagedServerDiscovery, ManagedServerState,
 };
-
-#[cfg(feature = "backend-openai")]
-use ferric_provider::Provider;
 
 /// Connection options for the sole backend — the OpenAI-compatible HTTP valve
 /// (llama.cpp / Ollama), which enforces a `response_format` constraint
 /// server-side → `ConstrainedJson`. The in-process mistral.rs path (ADR-027)
 /// and the `--backend` selector it needed were removed once the valve became
 /// the only backend; a second variant re-enters here trivially if one lands.
-#[derive(Args, Clone)]
+#[derive(Args, Clone, Default)]
 pub struct BackendOpts {
     /// The model string identifier (required for openai backend)
     #[arg(long)]
@@ -77,19 +77,12 @@ pub(crate) enum EndpointSelectionError {
 impl fmt::Display for EndpointSelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let issues = |discovery: &ManagedServerDiscovery| match &discovery.state {
-            ManagedServerState::Degraded { issues, .. }
-            | ManagedServerState::Conflict { issues }
-            | ManagedServerState::Unverifiable { issues } => issues
-                .iter()
-                .map(|issue| issue.detail.as_str())
-                .collect::<Vec<_>>()
-                .join("; "),
             ManagedServerState::StaleOnly { stale } => stale
                 .iter()
                 .map(|coordinate| coordinate.path.display().to_string())
                 .collect::<Vec<_>>()
                 .join("; "),
-            ManagedServerState::Empty | ManagedServerState::Ready(_) => String::new(),
+            state => state.issue_summary(),
         };
         match self {
             Self::Setup(detail) => formatter.write_str(detail),
@@ -216,19 +209,11 @@ pub(crate) fn resolved_endpoint_in(
     explicit: Option<&str>,
     workspace: &Path,
 ) -> Result<EndpointSelection, EndpointSelectionError> {
-    resolved_endpoint_in_with(explicit, workspace, |workspace| {
+    select_endpoint_with(explicit, || {
         let scope = ManagedDiscoveryScope::for_workspace(workspace)?;
         let discovery = crate::server::discover_managed_server_in(&scope);
         Ok((scope, discovery))
     })
-}
-
-fn resolved_endpoint_in_with(
-    explicit: Option<&str>,
-    workspace: &Path,
-    discover: impl FnOnce(&Path) -> Result<(ManagedDiscoveryScope, ManagedServerDiscovery), String>,
-) -> Result<EndpointSelection, EndpointSelectionError> {
-    select_endpoint_with(explicit, || discover(workspace))
 }
 
 #[cfg(feature = "backend-openai")]
@@ -263,48 +248,21 @@ pub(crate) async fn create_provider_in(
     Ok(Box::new(OpenAiProvider::new(config)))
 }
 
-// No `create_provider` stub for the backend-free build: the callers carry
-// their own `cfg(not(...))` stubs that surface `BACKEND_FEATURE_MISSING`
-// directly, so a stub here would be unreachable dead code.
-//
-// There used to be a `#[cfg(not(feature = "backend-openai"))]` arm inside
-// `create_provider` returning "binary built without openai backend". The whole
-// function is already gated on that feature, so the arm could never compile in
-// and that message could never be produced — it read as a handled case while
-// contradicting the comment above. Removed sprint 103 (ADR-094).
-
 /// What a caller is told when the binary has no backend compiled in. One
-/// definition: this text lived in three byte-identical copies (`chat.rs`,
-/// `icm.rs`, `mcp.rs`), each unreachable in a normally-built binary and so
-/// each free to drift unnoticed. `ferric dream` deliberately keeps its own
-/// wording — it has no `--mock`, so pointing at one would be wrong.
-// Referenced only from `cfg(not(feature = "backend-openai"))` paths and the
-// test below, so a normal feature-on build sees no use of it. That is the
-// point — this is the message for the build that cannot reach those paths.
-#[allow(dead_code)]
+/// definition: this text lived in four byte-identical copies, each
+/// unreachable in a normally-built binary and so each free to drift
+/// unnoticed. `ferric dream` deliberately keeps its own wording — it has no
+/// `--mock`, so pointing at one would be wrong.
+#[cfg_attr(feature = "backend-openai", allow(dead_code))]
 pub(crate) const BACKEND_FEATURE_MISSING: &str = "this binary was built without backend features; \
      rebuild with `cargo build --features backend-openai`, or use --mock";
 
-/// A provider and its runtime bound to the same selected workspace as config.
-#[cfg(feature = "backend-openai")]
-pub(crate) fn create_provider_with_runtime_in(
-    opts: &BackendOpts,
-    workspace: &Path,
-) -> Result<(Box<dyn Provider + Send + Sync>, tokio::runtime::Runtime), String> {
-    let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    let provider = runtime.block_on(create_provider_in(opts, workspace))?;
-    Ok((provider, runtime))
-}
-
 /// A backend a command has finished resolving: either the scripted mock, or a
 /// real provider owning the ONE runtime it will be driven on.
-///
-/// `chat.rs` and `icm.rs` each declared this enum and its constructor
-/// identically before sprint 103 (ADR-094). `mcp.rs` keeps a shape of its own
-/// on purpose — see `mcp::Executor`.
 pub(crate) enum ResolvedBackend {
     Mock,
-    #[cfg(feature = "backend-openai")]
+    // Constructed only where a backend is compiled in (and by tests).
+    #[cfg_attr(not(feature = "backend-openai"), allow(dead_code))]
     Real {
         provider: Box<dyn Provider + Send + Sync>,
         runtime: tokio::runtime::Runtime,
@@ -312,16 +270,52 @@ pub(crate) enum ResolvedBackend {
 }
 
 impl ResolvedBackend {
-    /// Resolve a real backend, or explain why this binary cannot.
-    #[cfg(feature = "backend-openai")]
-    pub(crate) fn real_in(opts: &BackendOpts, workspace: &Path) -> Result<Self, String> {
-        let (provider, runtime) = create_provider_with_runtime_in(opts, workspace)?;
-        Ok(ResolvedBackend::Real { provider, runtime })
+    /// The backend a run asked for: the mock, or a real provider bound to the
+    /// same selected workspace as config — or why this binary cannot have one.
+    pub(crate) fn resolve(
+        mock: bool,
+        opts: &BackendOpts,
+        workspace: &Path,
+    ) -> Result<Self, String> {
+        if mock {
+            return Ok(Self::Mock);
+        }
+        #[cfg(feature = "backend-openai")]
+        {
+            let runtime =
+                tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
+            let provider = runtime.block_on(create_provider_in(opts, workspace))?;
+            Ok(Self::Real { provider, runtime })
+        }
+        #[cfg(not(feature = "backend-openai"))]
+        {
+            let _ = (opts, workspace);
+            Err(BACKEND_FEATURE_MISSING.to_string())
+        }
     }
 
-    #[cfg(not(feature = "backend-openai"))]
-    pub(crate) fn real_in(_opts: &BackendOpts, _workspace: &Path) -> Result<Self, String> {
-        Err(BACKEND_FEATURE_MISSING.to_string())
+    /// Drive `future` to completion: the mock has no ambient runtime by
+    /// design (ADR-010 keeps the loop executor-agnostic), a real provider runs
+    /// on its own.
+    pub(crate) fn block_on<F: Future>(&self, future: F) -> F::Output {
+        match self {
+            Self::Mock => futures_executor::block_on(future),
+            Self::Real { runtime, .. } => runtime.block_on(future),
+        }
+    }
+
+    /// Call `f` with this backend's provider. A real provider is shared for
+    /// the backend's lifetime; the scripted mock is a finite script, so every
+    /// call gets a fresh one from `mock`.
+    pub(crate) fn with_provider<T>(
+        &self,
+        mock: impl FnOnce() -> MockProvider,
+        f: impl FnOnce(&dyn Provider) -> T,
+    ) -> T {
+        match self {
+            Self::Mock => f(&mock()),
+            Self::Real { provider, .. } => f(provider.as_ref()),
+        }
     }
 }
 
@@ -371,11 +365,11 @@ mod tests {
             Ok((scope, discovery))
         };
         assert!(matches!(
-            resolved_endpoint_in_with(None, invocation.path(), discover),
+            select_endpoint_with(None, || discover(invocation.path())),
             Ok(EndpointSelection::Default { .. })
         ));
         assert!(
-            resolved_endpoint_in_with(None, selected.path(), discover).is_err(),
+            select_endpoint_with(None, || discover(selected.path())).is_err(),
             "the selected blocked registration must not become the invocation default"
         );
         assert!(selected.path().join(".ferric/server.json").exists());
@@ -384,7 +378,7 @@ mod tests {
     #[test]
     fn explicit_endpoint_and_ambiguous_discovery_matrix() {
         let dir = tempfile::tempdir().unwrap();
-        let explicit = resolved_endpoint_in_with(Some("http://explicit/v1"), dir.path(), |_| {
+        let explicit = select_endpoint_with(Some("http://explicit/v1"), || {
             panic!("explicit endpoint must not discover another workspace or server")
         })
         .unwrap();
@@ -400,9 +394,7 @@ mod tests {
             };
             let mut discovery = crate::server::discover_managed_server_in(&scope);
             discovery.state = state;
-            assert!(
-                resolved_endpoint_in_with(None, dir.path(), |_| Ok((scope, discovery))).is_err()
-            );
+            assert!(select_endpoint_with(None, || Ok((scope, discovery))).is_err());
         }
     }
 }

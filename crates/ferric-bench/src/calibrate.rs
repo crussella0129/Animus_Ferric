@@ -8,8 +8,8 @@ use std::path::Path;
 use ferric_core::{tier_for_level, tier_for_params};
 use serde::{Deserialize, Serialize};
 
-use crate::results::ResultRow;
-use crate::summary::{CalibrationEvidence, required_passes};
+use crate::results::write_pretty;
+use crate::summary::{CalibrationEvidence, longest_prefix, required_passes};
 
 /// A model's calibration record, keyed by model file in `model_profiles.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,68 +32,19 @@ pub struct ModelProfileRecord {
     pub calibration_evidence: Option<CalibrationEvidence>,
 }
 
-/// The highest level with `completed == true` across a model's rows.
-pub fn highest_completed_level(rows: &[ResultRow]) -> Option<u8> {
-    rows.iter().filter(|r| r.completed).map(|r| r.level).max()
-}
-
-/// Longest completed contiguous prefix beginning at L0.
-///
-/// A pass above a failed or absent lower rung cannot raise capability. This is
-/// intentionally stricter than the historical `max(passed)` calibration.
-pub fn longest_completed_prefix(rows: &[ResultRow]) -> Option<u8> {
-    let mut level = 0_u8;
-    while rows.iter().any(|row| row.level == level && row.completed) {
-        if level == u8::MAX {
-            return Some(level);
+impl ModelProfileRecord {
+    /// A record whose tiers derive from `params_b` and `measured_level`.
+    fn new(model: &str, params_b: f32, protocol: &str, measured_level: Option<u8>) -> Self {
+        Self {
+            model: model.to_string(),
+            params_b,
+            protocol: protocol.to_string(),
+            measured_level,
+            tier_from_params: format!("{:?}", tier_for_params(params_b)),
+            tier_from_measured: measured_level.map(|level| format!("{:?}", tier_for_level(level))),
+            calibrated_ring: None,
+            calibration_evidence: None,
         }
-        level += 1;
-    }
-    level.checked_sub(1)
-}
-
-/// Levels that FAILED while some higher level passed — i.e. the ladder did not
-/// behave monotonically.
-///
-/// This remains useful diagnostic evidence even though calibration now stops
-/// at the first unqualified rung instead of flattening the ladder to max(pass).
-pub fn non_monotonic_failures(rows: &[ResultRow]) -> Vec<u8> {
-    let Some(top) = highest_completed_level(rows) else {
-        return Vec::new();
-    };
-    let mut out: Vec<u8> = rows
-        .iter()
-        .filter(|r| !r.completed && r.level < top)
-        .map(|r| r.level)
-        .collect();
-    out.sort_unstable();
-    out.dedup();
-    out
-}
-
-/// Build a calibration record from a sweep's rows for one model.
-pub fn calibrate(
-    model: &str,
-    params_b: f32,
-    protocol: &str,
-    rows: &[ResultRow],
-) -> ModelProfileRecord {
-    let diagnostic = rows
-        .iter()
-        .filter_map(|row| row.budget.as_ref())
-        .any(|budget| budget.controls.is_diagnostic());
-    let measured_level = (!diagnostic)
-        .then(|| longest_completed_prefix(rows))
-        .flatten();
-    ModelProfileRecord {
-        model: model.to_string(),
-        params_b,
-        protocol: protocol.to_string(),
-        measured_level,
-        tier_from_params: format!("{:?}", tier_for_params(params_b)),
-        tier_from_measured: measured_level.map(|l| format!("{:?}", tier_for_level(l))),
-        calibrated_ring: None,
-        calibration_evidence: None,
     }
 }
 
@@ -105,7 +56,7 @@ pub fn calibrate_from_evidence(
     protocol: &str,
     evidence: &CalibrationEvidence,
 ) -> Option<ModelProfileRecord> {
-    let derived_level = longest_level_prefix(&evidence.qualified_levels);
+    let derived_level = longest_prefix(|level| evidence.qualified_levels.contains(&level));
     let unique_levels: std::collections::BTreeSet<u8> =
         evidence.qualified_levels.iter().copied().collect();
     let numeric_evidence_valid = (1..=100).contains(&evidence.trials)
@@ -129,27 +80,9 @@ pub fn calibrate_from_evidence(
         return None;
     }
     Some(ModelProfileRecord {
-        model: model.to_string(),
-        params_b,
-        protocol: protocol.to_string(),
-        measured_level: derived_level,
-        tier_from_params: format!("{:?}", tier_for_params(params_b)),
-        tier_from_measured: derived_level.map(|level| format!("{:?}", tier_for_level(level))),
-        calibrated_ring: None,
         calibration_evidence: Some(evidence.clone()),
+        ..ModelProfileRecord::new(model, params_b, protocol, derived_level)
     })
-}
-
-fn longest_level_prefix(levels: &[u8]) -> Option<u8> {
-    let levels: std::collections::BTreeSet<u8> = levels.iter().copied().collect();
-    let mut level = 0_u8;
-    while levels.contains(&level) {
-        if level == u8::MAX {
-            return Some(level);
-        }
-        level += 1;
-    }
-    level.checked_sub(1)
 }
 
 /// Read this model+protocol's record from `<dir>/model_profiles.json`, or `None`
@@ -175,16 +108,8 @@ pub fn write_calibrated_ring(
     params_b: f32,
     ring: u8,
 ) -> std::io::Result<()> {
-    let mut record = read_profile(dir, model, protocol).unwrap_or_else(|| ModelProfileRecord {
-        model: model.to_string(),
-        params_b,
-        protocol: protocol.to_string(),
-        measured_level: None,
-        tier_from_params: format!("{:?}", tier_for_params(params_b)),
-        tier_from_measured: None,
-        calibrated_ring: None,
-        calibration_evidence: None,
-    });
+    let mut record = read_profile(dir, model, protocol)
+        .unwrap_or_else(|| ModelProfileRecord::new(model, params_b, protocol, None));
     record.calibrated_ring = Some(ring);
     write_profile(dir, &record)
 }
@@ -192,106 +117,43 @@ pub fn write_calibrated_ring(
 /// Write/replace this model+protocol's record in `<dir>/model_profiles.json`
 /// (a JSON array; existing records for other model/protocol keys are kept).
 pub fn write_profile(dir: &Path, record: &ModelProfileRecord) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let path = dir.join("model_profiles.json");
-    let mut records: Vec<ModelProfileRecord> = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
+    let mut records: Vec<ModelProfileRecord> =
+        std::fs::read_to_string(dir.join("model_profiles.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
     records.retain(|r| !(r.model == record.model && r.protocol == record.protocol));
     records.push(record.clone());
-    let text = serde_json::to_string_pretty(&records).map_err(std::io::Error::other)?;
-    std::fs::write(path, text)
+    write_pretty(dir, "model_profiles.json", &records).map(drop)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn row(level: u8, completed: bool) -> ResultRow {
-        ResultRow {
-            run_id: None,
-            trial_id: None,
-            started_at_unix_ms: None,
-            finished_at_unix_ms: None,
-            trace_path: None,
-            budget: None,
-            infrastructure_error: None,
-            level,
-            spec_version: 1,
-            level_name: format!("l{level}"),
-            variant: "v".to_string(),
-            protocol: "unified_grammar".to_string(),
-            model: Some("llama-1b".to_string()),
-            completed,
-            timed_out: false,
-            exit_code: Some(0),
-            turns: 1,
-            input_tokens: 0,
-            output_tokens: 0,
-            wall_ms: 0,
-            terminator: Some("task_complete".to_string()),
-            tier_observed: None,
-            protocol_observed: None,
-            repetition_guard_fires: 0,
-            tools_called: vec![],
-            task_complete_summary: None,
-            failure_admission: None,
-            plan_steps: None,
-            expectations_ok: true,
-            tools_ok: true,
-            command_checks: Vec::new(),
-            tier_from_params: "Nano".to_string(),
-            stderr_tail: String::new(),
-        }
-    }
-
-    #[test]
-    fn highest_completed_is_measured_level() {
-        let rows = vec![row(0, true), row(1, true), row(2, false), row(3, false)];
-        assert_eq!(highest_completed_level(&rows), Some(1));
-    }
-
     #[test]
     fn calibrate_records_both_tiers() {
         // A 1B that completes L4 → measured_level 4 → tier_for_level(4)=Small,
         // even though params (1.0) → Nano. This is the override in action.
-        let rows = (0..=4).map(|level| row(level, true)).collect::<Vec<_>>();
-        let rec = calibrate("llama-1b", 1.0, "unified_grammar", &rows);
+        let rec = ModelProfileRecord::new("llama-1b", 1.0, "unified_grammar", Some(4));
         assert_eq!(rec.measured_level, Some(4));
         assert_eq!(rec.tier_from_params, "Nano");
         assert_eq!(rec.tier_from_measured.as_deref(), Some("Small"));
+        let failed = ModelProfileRecord::new("weak", 1.0, "native_tools", None);
+        assert_eq!(failed.tier_from_measured, None);
     }
 
     #[test]
     fn write_profile_replaces_same_key_keeps_others() {
         let dir = tempfile::tempdir().unwrap();
-        write_profile(
-            dir.path(),
-            &calibrate("llama-1b", 1.0, "unified_grammar", &[row(0, true)]),
-        )
-        .unwrap();
-        write_profile(
-            dir.path(),
-            &calibrate(
-                "qwen-7b",
-                7.0,
-                "unified_grammar",
-                &[row(0, true), row(3, true)],
-            ),
-        )
-        .unwrap();
-        // Re-calibrate llama under the same protocol → replaces, not appends.
-        write_profile(
-            dir.path(),
-            &calibrate(
-                "llama-1b",
-                1.0,
-                "unified_grammar",
-                &[row(0, true), row(1, true)],
-            ),
-        )
-        .unwrap();
+        for (model, params_b, level) in [
+            ("llama-1b", 1.0, 0),
+            ("qwen-7b", 7.0, 0),
+            ("llama-1b", 1.0, 1),
+        ] {
+            let record = ModelProfileRecord::new(model, params_b, "unified_grammar", Some(level));
+            write_profile(dir.path(), &record).unwrap();
+        }
 
         let text = std::fs::read_to_string(dir.path().join("model_profiles.json")).unwrap();
         let recs: Vec<ModelProfileRecord> = serde_json::from_str(&text).unwrap();
@@ -305,23 +167,11 @@ mod tests {
     }
 
     #[test]
-    fn failed_l0_has_no_measured_level() {
-        let rec = calibrate("weak", 1.0, "native_tools", &[row(0, false)]);
-        assert_eq!(rec.measured_level, None);
-        assert_eq!(rec.tier_from_measured, None);
-    }
-
-    #[test]
     fn read_profile_round_trips_and_misses_are_none() {
         let dir = tempfile::tempdir().unwrap();
         // Missing file → None.
         assert_eq!(read_profile(dir.path(), "m", "ConstrainedJson"), None);
-        let rec = calibrate(
-            "qwen-7b",
-            7.0,
-            "ConstrainedJson",
-            &[row(0, true), row(3, true)],
-        );
+        let rec = ModelProfileRecord::new("qwen-7b", 7.0, "ConstrainedJson", Some(0));
         write_profile(dir.path(), &rec).unwrap();
         // Exact key round-trips; a wrong key → None.
         assert_eq!(
@@ -336,13 +186,7 @@ mod tests {
     fn write_calibrated_ring_preserves_measured_level() {
         let dir = tempfile::tempdir().unwrap();
         // A model the L0–L6 bench measured to level 4.
-        let rec = calibrate(
-            "llama-1b",
-            1.0,
-            "ConstrainedJson",
-            &(0..=4).map(|level| row(level, true)).collect::<Vec<_>>(),
-        );
-        assert_eq!(rec.measured_level, Some(4));
+        let rec = ModelProfileRecord::new("llama-1b", 1.0, "ConstrainedJson", Some(4));
         write_profile(dir.path(), &rec).unwrap();
         // Now the ring calibration writes ring 1 — it must NOT clobber the level.
         write_calibrated_ring(dir.path(), "llama-1b", "ConstrainedJson", 1.0, 1).unwrap();
@@ -350,7 +194,6 @@ mod tests {
         assert_eq!(back.measured_level, Some(4), "level preserved");
         assert_eq!(back.calibrated_ring, Some(1), "ring set");
     }
-
     #[test]
     fn write_calibrated_ring_creates_record_when_absent() {
         let dir = tempfile::tempdir().unwrap();
@@ -412,55 +255,5 @@ mod tests {
             calibrate_from_evidence("model", 7.0, "ConstrainedJson", &inconsistent).is_none(),
             "profile calibration must reject inconsistent numeric evidence"
         );
-    }
-
-    // --- ADR-086: the ladder is not always monotonic, and a partial sweep is
-    // not a calibration ---
-
-    /// The measured case: qwen2.5-coder-7b failed L5 and passed L6 in one full
-    /// sweep, then passed L5 twice on repeat. The old `max(passed)` score hid
-    /// that contradiction; the diagnostic remains useful after fixing it.
-    #[test]
-    fn a_failure_below_the_highest_pass_is_reported() {
-        let rows = vec![row(0, true), row(4, true), row(5, false), row(6, true)];
-        assert_eq!(highest_completed_level(&rows), Some(6));
-        assert_eq!(
-            non_monotonic_failures(&rows),
-            vec![5],
-            "L5 failed below the highest pass and must be surfaced"
-        );
-    }
-
-    #[test]
-    fn a_clean_ladder_reports_nothing() {
-        let rows = vec![row(0, true), row(1, true), row(2, true)];
-        assert!(non_monotonic_failures(&rows).is_empty());
-    }
-
-    /// Failures ABOVE the highest pass are the normal shape of a ceiling, not an
-    /// inconsistency — they must not be reported as one.
-    #[test]
-    fn failures_above_the_ceiling_are_not_inconsistent() {
-        let rows = vec![row(0, true), row(4, true), row(5, false), row(6, false)];
-        assert_eq!(highest_completed_level(&rows), Some(4));
-        assert!(
-            non_monotonic_failures(&rows).is_empty(),
-            "a plain ceiling at L4 is expected, not a contradiction"
-        );
-    }
-
-    #[test]
-    fn nothing_passed_means_nothing_to_report() {
-        let rows = vec![row(0, false), row(1, false)];
-        assert_eq!(highest_completed_level(&rows), None);
-        assert!(non_monotonic_failures(&rows).is_empty());
-    }
-
-    #[test]
-    fn calibration_stops_at_the_first_failed_or_missing_level() {
-        let rows = vec![row(0, true), row(1, true), row(2, false), row(3, true)];
-        let rec = calibrate("model", 1.0, "ConstrainedJson", &rows);
-        assert_eq!(rec.measured_level, Some(1));
-        assert_eq!(highest_completed_level(&rows), Some(3));
     }
 }

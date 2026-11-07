@@ -28,27 +28,6 @@ impl WebRetriever {
         self
     }
 
-    /// Route egress through an allowlist gateway on an **isolated** docker
-    /// network (ADR-082). Both arguments are required because both are load
-    /// bearing: the network is what *enforces* the airlock, and the URL only
-    /// tells cooperative clients where the gateway is.
-    ///
-    /// Without this the retriever has **no network at all** (ADR-074), which is
-    /// deliberate — a web retriever that silently gets unrestricted egress by
-    /// default is the failure that guards against. To opt out entirely, see
-    /// [`Self::with_network`].
-    pub fn with_airlock(
-        mut self,
-        network: impl Into<String>,
-        proxy_url: impl Into<String>,
-    ) -> Self {
-        self.config.network = NetworkPolicy::Airlock {
-            network: network.into(),
-            proxy_url: proxy_url.into(),
-        };
-        self
-    }
-
     /// Set the network policy directly, including
     /// [`NetworkPolicy::Unrestricted`].
     pub fn with_network(mut self, network: NetworkPolicy) -> Self {

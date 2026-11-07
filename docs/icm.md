@@ -158,7 +158,7 @@ the composed context and the review gate.
 ## Increments
 
 - **Increment 1 (sprint 73, ADR-064) — the model + inspection + scaffold.** The
-  `ferric-icm` crate: discover a workspace, parse contracts, compose each stage's
+  `ferric-cli/src/icm/workspace.rs` module: discover a workspace, parse contracts, compose each stage's
   scoped context (guard-checked) into an `OrchestrationPlan`, and scaffold a new
   workspace skeleton. Surfaced via `ferric icm init` / `ferric icm plan`.
 - **Increment 2 (sprint 74, ADR-065) — live execution.** `ferric icm run`

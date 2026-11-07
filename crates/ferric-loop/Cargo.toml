@@ -13,7 +13,6 @@ ferric-provider = { workspace = true }
 ferric-guard = { workspace = true }
 ferric-tools = { workspace = true }
 ferric-trace = { workspace = true }
-ferric-vcs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -1,7 +1,6 @@
 //! Foreground startup owns only the process scope it creates. Saved choices
 //! are hints, never model qualification, consent, or managed-server authority.
 
-mod memory;
 mod models;
 mod probe;
 mod runtime;
@@ -24,7 +23,6 @@ use crate::backend::BackendOpts;
 use crate::config::Config;
 use crate::server::{self, ManagedDiscoveryScope, ManagedServer, ManagedServerState};
 use crate::server_process::{ListenerState, LiveProcess};
-pub(crate) use memory::{MemoryProbe, NativeMemoryProbe, SystemMemory};
 use models::LocalModel;
 use runtime::OwnedEngine;
 use storage::{Preference, WorkspaceState};
@@ -598,7 +596,7 @@ fn native_launch(
     let mut version_command = Command::new(&executable);
     version_command.arg("--version");
     let version = runtime::version(version_command, cancel, deadline)?;
-    let config = server::ServerConfig {
+    let config = server::ServerUpArgs {
         engine: server::Engine::LlamaServer,
         model: Some(
             model
@@ -612,7 +610,6 @@ fn native_launch(
         ),
         mmproj: None,
         ctx: context,
-        host: "127.0.0.1".into(),
         port,
         threads: None,
         gpu_layers: Some(0),
@@ -628,42 +625,20 @@ fn native_launch(
 }
 
 /// The engine to launch: `llama-server` on PATH, else the one `ferric setup`
-/// installed (sprint 128, INT-0016).
-pub(crate) fn find_engine() -> Result<PathBuf, StartupError> {
-    match engine_on_path() {
-        Ok(path) => Ok(path),
-        Err(error) => ferric_setup::paths::engine_root()
-            .and_then(|root| ferric_setup::engine::managed_engine(&root))
-            .ok_or(error),
-    }
-}
-
-fn engine_on_path() -> Result<PathBuf, StartupError> {
-    let paths = std::env::var_os("PATH").ok_or_else(|| StartupError::actionable("The engine search path is unavailable. Configure an existing endpoint for the selected folder."))?;
-    let name = if cfg!(windows) {
-        "llama-server.exe"
-    } else {
-        "llama-server"
+/// installed (sprint 128, INT-0016). Without either, the error names why the
+/// PATH search found nothing usable.
+fn find_engine() -> Result<PathBuf, StartupError> {
+    let error = match ferric_setup::engine::on_path() {
+        Some(Ok(path)) => return Ok(path),
+        Some(Err(_)) => StartupError::cause("The installed engine path cannot be resolved."),
+        None if std::env::var_os("PATH").is_none() => StartupError::actionable(
+            "The engine search path is unavailable. Configure an existing endpoint for the selected folder.",
+        ),
+        None => StartupError::actionable(
+            "llama-server is not installed. Run `ferric setup` to install it (one prompt, verified download), put llama-server on PATH, or configure an existing endpoint for the selected folder.",
+        ),
     };
-    for (index, directory) in std::env::split_paths(&paths).enumerate() {
-        if index >= 256 {
-            break;
-        }
-        // Never inherit Windows executable search through the current working
-        // directory, nor relative/empty PATH entries supplied by the workspace.
-        if !directory.is_absolute() {
-            continue;
-        }
-        let candidate = directory.join(name);
-        if candidate.is_file() {
-            return candidate
-                .canonicalize()
-                .map_err(|_| StartupError::cause("The installed engine path cannot be resolved."));
-        }
-    }
-    Err(StartupError::actionable(
-        "llama-server is not installed. Run `ferric setup` to install it (one prompt, verified download), put llama-server on PATH, or configure an existing endpoint for the selected folder.",
-    ))
+    ferric_setup::engine::installed().ok_or(error)
 }
 
 enum Ownership {
@@ -775,7 +750,15 @@ pub(crate) fn describe(
             path.extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf"))
         });
-        models::scan(workspace, explicit_model.or(configured))?
+        // The same folder `ferric run` resolves, so explain lists the models
+        // a session would offer (sprint 129, D-7).
+        let models_dir = resolve_models_dir(
+            None,
+            &|key| std::env::var(key).ok(),
+            config.models_dir.as_deref(),
+            workspace,
+        );
+        models::scan_dir(&models_dir, explicit_model.or(configured))?
             .into_iter()
             .map(|model| model.choice)
             .collect()
@@ -798,6 +781,14 @@ pub(crate) fn describe(
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
+
+    /// Write a minimal GGUF v3 header, plus `extra_bytes` zeros, at `path`.
+    pub(crate) fn write_gguf(path: &Path, extra_bytes: usize) {
+        let mut bytes = vec![0_u8; 24 + extra_bytes];
+        bytes[..4].copy_from_slice(b"GGUF");
+        bytes[4..8].copy_from_slice(&3_u32.to_le_bytes());
+        std::fs::write(path, bytes).unwrap();
+    }
 
     pub(crate) fn begin(
         workspace: &Path,

@@ -25,8 +25,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use clap::{Parser, ValueEnum};
 use ferric_process::ProcessTree;
 use ferric_valve::pilot::{
-    DriverResult, Rates, Task, admit, check, check_lab_root, prefixes_extend, receipt_hash_lists,
-    session_deadline, tool_calls_valid,
+    DriverResult, Rates, Task, admit, check, check_lab_root, prefixes_extend, read_jsonl,
+    receipt_hash_lists, session_deadline, tool_calls_valid,
 };
 use ferric_valve::probe::probe_enforcement;
 use ferric_valve::receipt::ReceiptSink;
@@ -169,14 +169,6 @@ fn append_jsonl(path: &Path, value: &Value) {
     writeln!(file, "{value}").expect("append jsonl");
 }
 
-fn read_receipts(path: &Path) -> Vec<Value> {
-    fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
-}
-
 struct Upstream {
     base: String,
     tree: ProcessTree,
@@ -224,7 +216,7 @@ fn run(args: &Args) -> i32 {
         .enable_all()
         .build()
         .expect("tokio runtime");
-    let client = upstream_client().expect("http client");
+    let client = upstream_client(None).expect("http client");
 
     eprintln!("hermes_pilot: hashing model and server binaries");
     let manifest_base = json!({
@@ -746,7 +738,7 @@ fn run_session(
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default();
-    let receipts = read_receipts(&receipts);
+    let receipts = read_jsonl(&receipts)?;
     let chat: Vec<&Value> = receipts
         .iter()
         .filter(|r| r["mode"] == "constrained" || r["mode"] == "record-only")

@@ -364,6 +364,21 @@ pub fn tool_calls_valid(result: &DriverResult) -> bool {
         .all(|call| call.arguments_valid && call.known_tool)
 }
 
+/// Every record of a JSON-lines file (receipts, a session ledger, cleanup
+/// proofs). A missing file has none. A line that is not JSON is an error
+/// naming its line number, never silently dropped: every record counts.
+pub fn read_jsonl(path: &Path) -> Result<Vec<Value>, String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .enumerate()
+        .map(|(index, line)| {
+            serde_json::from_str(line)
+                .map_err(|error| format!("{} line {}: {error}", path.display(), index + 1))
+        })
+        .collect()
+}
+
 /// Pull `message_hashes` lists, in order, from receipts of the given mode.
 pub fn receipt_hash_lists(receipts: &[Value], mode: &str) -> Vec<Vec<String>> {
     receipts
@@ -631,6 +646,18 @@ mod tests {
             "no completion, no ratio"
         );
         assert_eq!(valve.metrics_incomplete, 1);
+    }
+
+    #[test]
+    fn jsonl_reader_names_a_malformed_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ledger.jsonl");
+        assert_eq!(read_jsonl(&path).unwrap(), Vec::<Value>::new());
+        std::fs::write(&path, "{\"a\":1}\n{\"b\":2}\n").unwrap();
+        assert_eq!(read_jsonl(&path).unwrap().len(), 2);
+        std::fs::write(&path, "{\"a\":1}\n{\"b\":\n").unwrap();
+        let error = read_jsonl(&path).unwrap_err();
+        assert!(error.contains("line 2"), "{error}");
     }
 
     #[test]

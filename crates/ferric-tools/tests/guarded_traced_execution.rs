@@ -4,36 +4,14 @@
 //! every call, then asserts the trace tells the whole story — including a
 //! denial, which must be traced AND leave the target untouched.
 
+mod common;
+
+use common::RegistryTestExt;
 use ferric_guard::Workspace;
 use ferric_tools::{ExecuteOutcome, Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
 use serde_json::json;
 
-trait RegistryTestExt {
-    fn execute_test(
-        &self,
-        ws: &ferric_guard::Workspace,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> ferric_tools::ExecuteOutcome;
-}
-impl RegistryTestExt for ferric_tools::Registry {
-    fn execute_test(
-        &self,
-        ws: &ferric_guard::Workspace,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> ferric_tools::ExecuteOutcome {
-        self.execute(
-            ws,
-            name,
-            args,
-            ferric_guard::Provenance::Clean,
-            &ferric_guard::SinkPolicy::deny(),
-            None,
-        )
-    }
-}
 #[test]
 fn guarded_traced_execution() {
     let ws_dir = tempfile::tempdir().unwrap();

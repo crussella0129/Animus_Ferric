@@ -19,6 +19,7 @@ use axum::http::{StatusCode, header};
 use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
+use ferric_valve::sse::{done_frame, frame};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -27,6 +28,8 @@ use tokio_stream::wrappers::ReceiverStream;
 pub enum Reply {
     /// SSE frames, each sent after its delay.
     Sse(Vec<(Duration, String)>),
+    /// One SSE body of arbitrary bytes, which need not be UTF-8.
+    Raw(Vec<u8>),
     Status(u16, String),
     Json(Value),
 }
@@ -108,6 +111,11 @@ async fn handle(State(shared): State<Shared>, Json(body): Json<Value>) -> Respon
             .status(StatusCode::from_u16(status).unwrap())
             .body(Body::from(text))
             .unwrap(),
+        Reply::Raw(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(bytes))
+            .unwrap(),
         Reply::Json(value) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")
@@ -143,16 +151,15 @@ async fn handle(State(shared): State<Shared>, Json(body): Json<Value>) -> Respon
 }
 
 pub fn content_frame(text: &str) -> String {
-    let value = json!({
+    frame(&json!({
         "model": "fake-model",
         "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": null}]
-    });
-    format!("data: {value}\n\n")
+    }))
 }
 
 /// The closing frame, carrying llama.cpp-style `timings`.
 pub fn finish_frame(reason: &str) -> String {
-    let value = json!({
+    frame(&json!({
         "model": "fake-model",
         "choices": [{"index": 0, "delta": {}, "finish_reason": reason}],
         "timings": {
@@ -160,12 +167,7 @@ pub fn finish_frame(reason: &str) -> String {
             "predicted_n": 20, "predicted_ms": 400.0,
             "cache_n": 90
         }
-    });
-    format!("data: {value}\n\n")
-}
-
-pub fn done_frame() -> String {
-    "data: [DONE]\n\n".to_string()
+    }))
 }
 
 /// `text` split into `piece`-char content frames `delay` apart, then finish and

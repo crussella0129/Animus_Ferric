@@ -1,42 +1,12 @@
 //! Unit tests for the builtin file tools, driven through the registry
 //! chokepoint exactly as the agent loop will drive them.
 
+mod common;
+
+use common::{RegistryTestExt, setup};
 use ferric_guard::Workspace;
 use ferric_tools::{ExecuteOutcome, Registry, register_builtin_tools};
 use serde_json::json;
-
-trait RegistryTestExt {
-    fn execute_test(
-        &self,
-        ws: &ferric_guard::Workspace,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> ferric_tools::ExecuteOutcome;
-}
-impl RegistryTestExt for ferric_tools::Registry {
-    fn execute_test(
-        &self,
-        ws: &ferric_guard::Workspace,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> ferric_tools::ExecuteOutcome {
-        self.execute(
-            ws,
-            name,
-            args,
-            ferric_guard::Provenance::Clean,
-            &ferric_guard::SinkPolicy::deny(),
-            None,
-        )
-    }
-}
-fn setup() -> (tempfile::TempDir, Workspace, Registry) {
-    let dir = tempfile::tempdir().unwrap();
-    let ws = Workspace::new(dir.path()).unwrap();
-    let mut registry = Registry::new();
-    register_builtin_tools(&mut registry);
-    (dir, ws, registry)
-}
 
 fn expect_completed(outcome: ExecuteOutcome) -> (String, bool) {
     match outcome {
@@ -115,6 +85,11 @@ fn tools_refuse_outside_workspace() {
         ),
         ("read_file", json!({"path": "../escape.txt"})),
         ("list_dir", json!({"path": ".."})),
+        ("search_files", json!({"query": "x", "path": ".."})),
+        (
+            "edit_file",
+            json!({"path": "../escape.txt", "old_string": "a", "new_string": "b"}),
+        ),
     ] {
         let outcome = registry.execute_test(&ws, tool, &args);
         assert!(
@@ -350,16 +325,6 @@ fn search_files_skips_binary_and_noise_dirs() {
 }
 
 #[test]
-fn search_files_refuses_outside_workspace() {
-    let (_dir, ws, registry) = setup();
-    let outcome = registry.execute_test(&ws, "search_files", &json!({"query": "x", "path": ".."}));
-    assert!(
-        matches!(outcome, ExecuteOutcome::Denied { .. }),
-        "search outside the workspace must be denied, got {outcome:?}"
-    );
-}
-
-#[test]
 fn search_files_deterministic() {
     let (dir, ws, registry) = setup();
     for n in ["c.txt", "a.txt", "b.txt"] {
@@ -420,20 +385,6 @@ fn edit_file_empty_old_string_is_error() {
         &json!({"path": "f.txt", "old_string": "", "new_string": "y"}),
     ));
     assert!(is_error, "empty old_string must error");
-}
-
-#[test]
-fn edit_file_outside_workspace_denied() {
-    let (_dir, ws, registry) = setup();
-    let outcome = registry.execute_test(
-        &ws,
-        "edit_file",
-        &json!({"path": "../escape.txt", "old_string": "a", "new_string": "b"}),
-    );
-    assert!(
-        matches!(outcome, ExecuteOutcome::Denied { .. }),
-        "edit outside the workspace must be denied, got {outcome:?}"
-    );
 }
 
 #[test]

@@ -502,8 +502,8 @@ pub enum Event {
         /// ladder), `"params"` (the parameter-count prior), or `"override"`
         /// (the operator asked for it). ADR-098.
         ///
-        /// The tier governs turn/tool budgets, prompt and output ceilings,
-        /// planner use, subagents and the tool-ring ceiling, so recording only
+        /// The tier governs turn/tool budgets, prompt and output ceilings and
+        /// the tool-ring ceiling, so recording only
         /// the answer left a tier a model *earned* and a tier someone *asked
         /// for* looking identical afterwards. Additive: a `policy_selected`
         /// line written before ADR-098 reads back as `"params"`, which is what

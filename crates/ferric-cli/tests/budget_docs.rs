@@ -1,42 +1,8 @@
 //! Expert budget guidance must not enlarge the ordinary human front door.
 //! Cargo drives each help child through the shared checked process owner.
 
-use std::path::Path;
-use std::process::Command;
-use std::time::Duration;
-
-#[path = "../src/test_process_containment.rs"]
-mod test_process_containment;
-
-fn help(workspace: &Path, arguments: &[&str]) -> String {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ferric"));
-    command
-        .current_dir(workspace)
-        .env("APPDATA", workspace.join("unused-user-config"))
-        .env("XDG_CONFIG_HOME", workspace.join("unused-user-config"))
-        .env("HOME", workspace.join("unused-user-config"))
-        .env_remove("OPENAI_API_KEY")
-        .env_remove("FERRIC_PROMPTS_DIR")
-        .env_remove("FERRIC_LOG")
-        .env_remove("RUST_LOG")
-        .args(arguments)
-        .arg("--help");
-    let output = test_process_containment::output_bounded(&mut command, Duration::from_secs(30))
-        .expect("help completed and every owned child was reaped");
-    assert!(
-        output.status.success(),
-        "help for {arguments:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        std::fs::read_dir(workspace).unwrap().count(),
-        0,
-        "help is not resource preparation"
-    );
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .replace("\r\n", "\n")
-}
+mod support;
+use support::help;
 
 fn normalized(text: &str) -> String {
     text.replace("//!", " ")

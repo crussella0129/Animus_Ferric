@@ -24,7 +24,6 @@ pub struct ModelEntry {
     pub bytes: u64,
     pub sha256: &'static str,
     pub license: &'static str,
-    pub params_b: f32,
 }
 
 impl ModelEntry {
@@ -56,7 +55,6 @@ pub const MODELS: &[ModelEntry] = &[
         bytes: 491_400_064,
         sha256: "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32",
         license: "Apache-2.0",
-        params_b: 0.5,
     },
     ModelEntry {
         id: "1.5b",
@@ -67,7 +65,6 @@ pub const MODELS: &[ModelEntry] = &[
         bytes: 1_117_320_768,
         sha256: "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
         license: "Apache-2.0",
-        params_b: 1.5,
     },
     ModelEntry {
         id: "7b",
@@ -78,7 +75,6 @@ pub const MODELS: &[ModelEntry] = &[
         bytes: 4_683_073_536,
         sha256: "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c",
         license: "Apache-2.0",
-        params_b: 7.0,
     },
     ModelEntry {
         id: "14b",
@@ -89,7 +85,6 @@ pub const MODELS: &[ModelEntry] = &[
         bytes: 8_988_110_272,
         sha256: "c1e659736d89ac1065fb495330fb824d94001974a4bfa78e7270e43476a8d940",
         license: "Apache-2.0",
-        params_b: 14.0,
     },
 ];
 

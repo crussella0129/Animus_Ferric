@@ -2,97 +2,28 @@
 //! traced surface (ADR-011: no chat catch-all).
 //!
 //! Executor boundary (plan C-009): `--mock` drives the loop on
-//! `futures_executor::block_on` (no tokio in the default build); the real
-//! backend constructs a tokio multi-thread runtime (the OpenAI HTTP client's
-//! async futures need ambient tokio).
+//! `futures_executor::block_on`; the real backend runs on its own tokio
+//! runtime (the OpenAI HTTP client's async futures need ambient tokio).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
 use clap::{Args, ValueEnum};
 
-use ferric_core::{
-    ActionProtocol, HarnessPolicy, MediaPart, Message, ModelProfile, RunPolicy, policy_for,
-};
-use ferric_guard::{Decision, PermissionLevel, Workspace, check_with_ignore};
-use ferric_loop::{
-    DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run, select_protocol,
-};
+use ferric_core::{ActionProtocol, HarnessPolicy, MediaPart, Message, ModelProfile, RunPolicy};
+use ferric_guard::{AdmitError, PermissionLevel, Workspace};
+use ferric_iron::select_protocol;
+use ferric_loop::{DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run};
 use ferric_provider::{Capabilities, Completion, MockProvider, Provider, SamplingParams};
+use ferric_tools::nofollow::is_reparse_point;
 use ferric_tools::{NamedCheck, Registry, register_builtin_tools, register_run_checks};
 use ferric_trace::{Event, JsonlSink};
 
-use crate::backend::BackendOpts;
-#[cfg(feature = "backend-openai")]
-use crate::backend::create_provider_in;
-
-/// CLI spelling of `ActionProtocol`. `grammar` is the server-enforced
-/// constrained-JSON path (the thesis); `xml` is the unconstrained
-/// regex-scraped fallback.
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ProtocolArg {
-    Native,
-    Grammar,
-    Xml,
-}
-
-impl From<ProtocolArg> for ActionProtocol {
-    fn from(p: ProtocolArg) -> Self {
-        match p {
-            ProtocolArg::Native => ActionProtocol::NativeTools,
-            ProtocolArg::Grammar => ActionProtocol::ConstrainedJson,
-            ProtocolArg::Xml => ActionProtocol::TextXml,
-        }
-    }
-}
-
-/// CLI spelling of the autonomous harness policy. Clap exposes the compound
-/// variant as `evidence-planner`; persistent config uses the core type's
-/// stable `evidence_planner` wire spelling.
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-pub enum HarnessPolicyArg {
-    Legacy,
-    Evidence,
-    EvidencePlanner,
-}
-
-impl From<HarnessPolicyArg> for HarnessPolicy {
-    fn from(policy: HarnessPolicyArg) -> Self {
-        match policy {
-            HarnessPolicyArg::Legacy => HarnessPolicy::Legacy,
-            HarnessPolicyArg::Evidence => HarnessPolicy::Evidence,
-            HarnessPolicyArg::EvidencePlanner => HarnessPolicy::EvidencePlanner,
-        }
-    }
-}
-
-/// CLI spelling of `Tier` for `--tier` (ADR-098). Kebab-case via `ValueEnum`,
-/// and `Deserialize` so `.ferric/config.toml` can spell it the same way.
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum TierArg {
-    Nano,
-    Small,
-    Medium,
-    Large,
-    Xl,
-    Ultra,
-}
-
-impl From<TierArg> for ferric_core::Tier {
-    fn from(t: TierArg) -> Self {
-        match t {
-            TierArg::Nano => ferric_core::Tier::Nano,
-            TierArg::Small => ferric_core::Tier::Small,
-            TierArg::Medium => ferric_core::Tier::Medium,
-            TierArg::Large => ferric_core::Tier::Large,
-            TierArg::Xl => ferric_core::Tier::Xl,
-            TierArg::Ultra => ferric_core::Tier::Ultra,
-        }
-    }
-}
+use crate::backend::{BackendOpts, ResolvedBackend};
+use crate::config::{ConfigError, ProtocolArg, RunFlags};
 
 /// CLI spelling of the CaMeL sink action (ADR-080). A `ValueEnum` rather than a
 /// free-form string so an unrecognized value is **rejected at parse time**
@@ -144,10 +75,6 @@ pub struct QueryArgs {
     #[arg(long, requires = "resume", conflicts_with = "prompt")]
     pub answer: Option<String>,
 
-    /// Workspace root (containment boundary). Default: current directory.
-    #[arg(long)]
-    pub workspace: Option<PathBuf>,
-
     /// Store this query's trace outside the workspace. The directory must be
     /// disjoint from the canonical workspace in both directions and must not
     /// contain a symbolic link or Windows reparse-point component. Default:
@@ -160,73 +87,7 @@ pub struct QueryArgs {
     pub trace_dir: Option<PathBuf>,
 
     #[command(flatten)]
-    pub backend_opts: BackendOpts,
-
-    /// Parameter count in billions. Default 1.2 when neither this flag nor a
-    /// config file's `params_b` is set (T-3803).
-    ///
-    /// This is a **fact about the model**, not a way to pick a tier — use
-    /// `--tier` for that (ADR-098). Misstating it to reach a tier also
-    /// corrupts the profile store and the trace, and leaves no way to tell an
-    /// earned tier from a claimed one.
-    #[arg(long)]
-    pub params_b: Option<f32>,
-
-    /// Run at this tier regardless of size or measured level (ADR-098).
-    ///
-    /// Overrides both the `measured_level` read-back and the parameter-count
-    /// prior, in **either** direction — you can hold a capable model down as
-    /// well as lift a small one up. The run says so on stderr and the trace
-    /// records `tier_source: "override"`, so an asked-for tier is never
-    /// mistaken later for one the model earned on the ladder.
-    ///
-    /// Raising the tier widens turn/tool budgets and the tool-ring ceiling; a
-    /// model that cannot use them just fails more expensively (the loop guards
-    /// bound the waste, ADR-037/038/077). `ferric bench` is how a tier gets
-    /// *earned*.
-    #[arg(long, value_enum)]
-    pub tier: Option<TierArg>,
-
-    /// Quantization label. Default "Q4_K_M" when neither this flag nor a
-    /// config file's `quant` is set (T-3803).
-    #[arg(long)]
-    pub quant: Option<String>,
-
-    /// Model family label. Default "unknown" when neither this flag nor a
-    /// config file's `family` is set (T-3803).
-    #[arg(long)]
-    pub family: Option<String>,
-
-    /// Context window in tokens (ModelProfile is config-supplied, ADR-006).
-    /// Default 4096 when neither this flag nor a config file's `ctx` is set
-    /// (T-3803).
-    #[arg(long)]
-    pub ctx: Option<u32>,
-
-    /// Sampling temperature (0.0 selects the deterministic sampler). Default
-    /// 0.0 when neither this flag nor a config file's `temperature` is set
-    /// (T-3803).
-    #[arg(long)]
-    pub temperature: Option<f32>,
-
-    /// Action protocol override (default: chosen from policy + backend caps)
-    #[arg(long, value_enum)]
-    pub protocol: Option<ProtocolArg>,
-
-    /// Autonomous harness policy. Omitted fresh runs use `legacy`; omitted
-    /// resumes inherit the policy recorded in their source trace.
-    #[arg(long, value_enum)]
-    pub harness_policy: Option<HarnessPolicyArg>,
-
-    /// Directory of prompt elements to compose the system prompt from.
-    /// Falls back to the built-in default prompt when absent or unloadable.
-    /// Also read from FERRIC_PROMPTS_DIR.
-    #[arg(long)]
-    pub prompts_dir: Option<PathBuf>,
-
-    /// Run against a built-in scripted mock instead of a real model
-    #[arg(long)]
-    pub mock: bool,
+    pub run: RunFlags,
 
     /// Attach a file to the prompt (repeatable). Text/code files fold into the
     /// prompt as text (works on any model); media files (image/audio/video)
@@ -241,13 +102,6 @@ pub struct QueryArgs {
     #[arg(long)]
     pub modality: Option<String>,
 
-    /// Cap the active tool ring (ADR-028). `0` pins the model to the Ring-0
-    /// navigate/mutate core — the smallest, surest grammar — regardless of its
-    /// size. Restrict-only: it cannot raise the ceiling above what the model's
-    /// tier/`measured_level` allows.
-    #[arg(long)]
-    pub max_ring: Option<u8>,
-
     /// Override the selected policy's turn budget for this invocation.
     /// Ordinary queries use the tier-derived budget when this is absent.
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..))]
@@ -258,15 +112,6 @@ pub struct QueryArgs {
     /// Invocation-scoped: repeat on resume; generated guidance repeats cap/ctx.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_output_tokens: Option<u32>,
-
-    /// Directory holding `model_profiles.json` (written by `ferric bench` and
-    /// `toolbench --calibrate-rings`). When a record exists for this model, its
-    /// `measured_level` sets the tier and its `calibrated_ring` defaults
-    /// `--max-ring` — the durable promotion (ADR-029). A missing file is a no-op.
-    /// Default "benchmarks" when neither this flag nor a config file's
-    /// `profile_dir` is set (T-3803).
-    #[arg(long)]
-    pub profile_dir: Option<PathBuf>,
 
     /// Explicit operator authorization for model-visible verification checks.
     /// The TOML file contains fixed program/argv definitions; the model can
@@ -335,12 +180,15 @@ pub struct QueryArgs {
     pub accept_edits: bool,
 }
 
-/// The shared subset of `QueryArgs` (everything except `prompt`/`files`) that
-/// determines a run's configuration. `ferric query` builds one of these per
-/// invocation; `ferric mcp` (T-3606) builds exactly one at server launch and
-/// reuses the resulting `RunConfig` across every subsequent `tools/call`.
+/// The resolved run inputs [`RunFlags::resolve`] produces from flags, config
+/// and defaults. `ferric query` builds one per invocation; `ferric mcp`
+/// (T-3606) builds exactly one at server launch and reuses the resulting
+/// `RunConfig` across every subsequent `tools/call`.
 pub(crate) struct RunConfigArgs {
     pub mock: bool,
+    /// Config-merged backend options. Its `model` keys the persisted profile
+    /// lookup (ADR-029); `None` skips the lookup entirely.
+    pub backend: BackendOpts,
     pub params_b: f32,
     pub quant: String,
     pub family: String,
@@ -356,9 +204,6 @@ pub(crate) struct RunConfigArgs {
     /// earned tier.
     pub tier_override: Option<ferric_core::Tier>,
     pub profile_dir: PathBuf,
-    /// used to look up a persisted profile record (ADR-029). `None` skips the
-    /// lookup entirely (matches today's behavior when neither flag is set).
-    pub model_key: Option<String>,
     pub hooks: Option<ferric_core::HooksConfig>,
     /// Workspace root, for locating `.ferric/skills/`.
     pub workspace_root: PathBuf,
@@ -366,6 +211,18 @@ pub(crate) struct RunConfigArgs {
     pub requested_skills: Vec<String>,
     /// Skills standing-authorized in `.ferric/config.toml`.
     pub allowed_skills: Vec<String>,
+}
+
+#[cfg(test)]
+impl RunConfigArgs {
+    /// `--mock` with every other tunable at its default and no config file.
+    pub(crate) fn mock() -> Self {
+        RunFlags {
+            mock: true,
+            ..RunFlags::default()
+        }
+        .resolve(&crate::config::Config::default(), Path::new("."))
+    }
 }
 
 /// Everything derived from `RunConfigArgs` that a loop execution needs, minus
@@ -388,11 +245,12 @@ pub(crate) struct RunConfig {
     pub hooks: Option<ferric_core::HooksConfig>,
 }
 
-#[derive(serde::Deserialize)]
+/// A `--checks-file` document: `[[check]]` tables of fixed-argv checks.
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
-struct NamedChecksFile {
+pub(crate) struct NamedChecksFile {
     #[serde(default, rename = "check")]
-    checks: Vec<NamedCheck>,
+    pub(crate) checks: Vec<NamedCheck>,
 }
 
 fn load_named_checks(path: &Path) -> Result<Vec<NamedCheck>, String> {
@@ -409,7 +267,30 @@ fn load_named_checks(path: &Path) -> Result<Vec<NamedCheck>, String> {
     Ok(parsed.checks)
 }
 
-pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::config::ConfigError> {
+/// Why `build_run_config` refused a run.
+#[derive(Debug)]
+pub(crate) enum RunConfigError {
+    Config(ConfigError),
+    /// A harness policy whose complete execution protocol is not available.
+    UnsupportedPolicy(&'static str),
+}
+
+impl std::fmt::Display for RunConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Config(error) => error.fmt(f),
+            Self::UnsupportedPolicy(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<ConfigError> for RunConfigError {
+    fn from(error: ConfigError) -> Self {
+        Self::Config(error)
+    }
+}
+
+pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, RunConfigError> {
     crate::config::validate_effective_numbers(a.params_b, a.ctx, a.temperature, a.max_ring)?;
     let mut registry = Registry::new();
     register_builtin_tools(&mut registry);
@@ -424,30 +305,18 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::co
         Capabilities {
             supports_native_tool_calls: true,
             supports_constraint: false,
-            exposes_logits: false,
             supports_media: false,
         }
     } else {
         Capabilities {
             supports_native_tool_calls: true,
             supports_constraint: true,
-            exposes_logits: false,
             supports_media: true,
         }
     };
-    // Protocol is caps/override-driven (`select_protocol` ignores the policy), so
-    // resolve it up-front — it keys the persisted profile lookup below.
-    let protocol = select_protocol(
-        &policy_for(&ModelProfile {
-            params_b: a.params_b,
-            quant: a.quant.clone(),
-            ctx: a.ctx,
-            family: a.family.clone(),
-            measured_level: None,
-        }),
-        &caps,
-        a.protocol_override.map(ActionProtocol::from),
-    );
+    // Protocol is caps/override-driven, so resolve it up-front — it keys the
+    // persisted profile lookup below.
+    let protocol = select_protocol(&caps, a.protocol_override.map(ActionProtocol::from));
 
     // Read-back of a persisted profile (ADR-029): a prior `ferric bench` /
     // `toolbench --calibrate-rings` may have recorded this model's
@@ -459,7 +328,7 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::co
     // --calibrate-rings` run while the server is already up is picked up only on
     // restart. Deliberate (ADR-046): matches the launch-time-fixed philosophy
     // already applied to workspace/backend/model.
-    let profile_record = a.model_key.as_ref().and_then(|model| {
+    let profile_record = a.backend.model.as_ref().and_then(|model| {
         ferric_bench::read_profile(&a.profile_dir, model, &ferric_core::protocol_key(protocol))
     });
     if let Some(rec) = &profile_record {
@@ -512,8 +381,8 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::co
         .or_else(|| std::env::var_os("FERRIC_PROMPTS_DIR").map(PathBuf::from));
     let mut prompt_composition_error = None;
     let composed = prompts_dir.and_then(|dir| {
-        match ferric_prompt::load_library(&dir)
-            .and_then(|lib| ferric_prompt::compose_system_prompt(&lib, policy.tier, protocol))
+        match crate::prompt::load_library(&dir)
+            .and_then(|lib| crate::prompt::compose_system_prompt(&lib, policy.tier, protocol))
         {
             Ok(c) => Some(c),
             Err(e) => {
@@ -538,16 +407,16 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::co
     // could clear a skill for itself. An unknown name is surfaced rather than
     // silently ignored: a typo that quietly runs nothing is the failure shape
     // this codebase keeps finding (ADR-090).
-    let (discovered, skill_errors) = ferric_skills::discover(&a.workspace_root);
+    let (discovered, skill_errors) = crate::skills::discover(&a.workspace_root);
     for e in &skill_errors {
         eprintln!("skill: {e}");
     }
     let (authorized, unknown) =
-        ferric_skills::authorize(&discovered, &a.requested_skills, &a.allowed_skills);
+        crate::skills::authorize(&discovered, &a.requested_skills, &a.allowed_skills);
     for name in &unknown {
         eprintln!("skill: no skill named `{name}` is installed in .ferric/skills/");
     }
-    let system_prompt = match ferric_skills::compose(&authorized) {
+    let system_prompt = match crate::skills::compose(&authorized) {
         None => base_system_prompt,
         Some(section) => {
             for sk in &authorized {
@@ -569,6 +438,8 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::co
         }
     };
 
+    // Last, so every surface refuses before it allocates a trace.
+    ensure_supported_harness_policy(a.harness_policy)?;
     Ok(RunConfig {
         registry,
         caps,
@@ -587,13 +458,78 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, crate::co
 /// execution protocol is not available.
 pub(crate) fn ensure_supported_harness_policy(
     harness_policy: Option<HarnessPolicy>,
-) -> Result<(), String> {
+) -> Result<(), RunConfigError> {
     match harness_policy {
         None | Some(HarnessPolicy::Legacy | HarnessPolicy::Evidence) => Ok(()),
-        Some(HarnessPolicy::EvidencePlanner) => {
-            Err("harness policy evidence_planner is not implemented yet".to_string())
+        Some(HarnessPolicy::EvidencePlanner) => Err(RunConfigError::UnsupportedPolicy(
+            "harness policy evidence_planner is not implemented yet",
+        )),
+    }
+}
+
+impl RunConfig {
+    /// The loop arguments every surface starts from: this configuration on
+    /// `workspace` and `provider`, with no media, stream, resume, answer,
+    /// cancellation or edit approver, a clean provenance and a denying sink
+    /// policy. Callers override what differs with struct update.
+    pub(crate) fn run_args<'a>(
+        &'a self,
+        workspace: &'a Workspace,
+        provider: &'a dyn Provider,
+    ) -> RunArgs<'a> {
+        RunArgs {
+            provider,
+            registry: &self.registry,
+            workspace,
+            policy: &self.policy,
+            protocol: self.protocol,
+            harness_policy: self.harness_policy,
+            sampling: self.sampling.clone(),
+            sleeper: &ThreadSleeper,
+            system_prompt: self.system_prompt.as_deref(),
+            prompt_lineage: self.lineage.clone(),
+            media: Vec::new(),
+            stream_sink: None,
+            resume: None,
+            answer: None,
+            cancel_flag: None,
+            provenance: ferric_guard::Provenance::Clean,
+            sink_policy: ferric_guard::SinkPolicy::deny(),
+            hooks: self.hooks.clone(),
+            edit_approver: None,
         }
     }
+}
+
+/// The selected workspace root (default: the current directory) and its
+/// containment boundary.
+pub(crate) fn open_workspace(requested: Option<&Path>) -> Result<(PathBuf, Workspace), String> {
+    let root = match requested {
+        Some(path) => path.to_path_buf(),
+        None => std::env::current_dir()
+            .map_err(|e| format!("cannot determine current directory: {e}"))?,
+    };
+    let workspace = Workspace::new(&root).map_err(|e| format!("workspace: {e}"))?;
+    Ok((root, workspace))
+}
+
+/// Replay a `--resume` source and check it may continue under `config` in
+/// `workspace` (T-3905).
+pub(crate) fn load_resume(
+    path: &Path,
+    workspace: &Path,
+    config: &RunConfig,
+) -> Result<ferric_loop::ReplayedState, String> {
+    let replayed =
+        ferric_loop::replay(path).map_err(|e| format!("cannot resume {}: {e}", path.display()))?;
+    ferric_loop::validate_resume_target(
+        &replayed,
+        workspace,
+        config.protocol,
+        config.harness_policy,
+    )
+    .map_err(|error| format!("cannot resume {}: {error}", path.display()))?;
+    Ok(replayed)
 }
 
 /// `Animus.md` (T-3806): a project-root, freeform, user-authored instructions
@@ -606,6 +542,45 @@ pub(crate) fn ensure_supported_harness_policy(
 pub(crate) fn fold_animus_md(existing: Option<&str>, animus_md: &str) -> String {
     let base = existing.unwrap_or(DEFAULT_SYSTEM_PROMPT);
     format!("{base}\n\n--- Animus.md (project instructions) ---\n{animus_md}")
+}
+
+/// Fold the workspace's `Animus.md` (read-only, no parsing) into `config`'s
+/// system prompt; absence is a silent no-op. Returns the folded length for
+/// the caller to record.
+pub(crate) fn fold_workspace_animus_md(
+    config: &mut RunConfig,
+    workspace_root: &Path,
+) -> Option<usize> {
+    let content = std::fs::read_to_string(workspace_root.join("Animus.md")).ok()?;
+    config.system_prompt = Some(fold_animus_md(config.system_prompt.as_deref(), &content));
+    Some(content.len())
+}
+
+/// C-009 (plan-critic): a resumed run's system message is frozen from the
+/// replayed trace, so `--prompts-dir`/`Animus.md` are inert for it. Say so
+/// rather than let a user expect an edit to apply. Composition counts when it
+/// was attempted (lineage on success, the error on failure), since
+/// `FERRIC_PROMPTS_DIR` can select it too.
+pub(crate) fn note_frozen_system_prompt(config: &RunConfig, resuming: bool, animus_md: bool) {
+    if resuming
+        && (config.lineage.is_some() || config.prompt_composition_error.is_some() || animus_md)
+    {
+        eprintln!(
+            "note: --resume ignores --prompts-dir/Animus.md for the system message \
+             (frozen from the replayed session)"
+        );
+    }
+}
+
+/// The prompt with routed text attachments appended. `None` only when there
+/// is neither (a pure resume continuation).
+pub(crate) fn with_attachments(prompt: Option<String>, suffix: String) -> Option<String> {
+    match (prompt, suffix.is_empty()) {
+        (Some(prompt), true) => Some(prompt),
+        (Some(prompt), false) => Some(format!("{prompt}{suffix}")),
+        (None, true) => None,
+        (None, false) => Some(suffix),
+    }
 }
 
 /// A single externally supplied attachment is bounded before it is read. Eight
@@ -639,7 +614,7 @@ const ATTACHMENT_LIMITS: AttachmentLimits = AttachmentLimits {
 pub(crate) fn route_files(
     workspace: &Workspace,
     files: &[PathBuf],
-    declared: &[ferric_core::Modality],
+    declared: &[crate::media::Modality],
     supports_media: bool,
 ) -> Result<(Vec<MediaPart>, String), String> {
     route_files_with_limits(
@@ -654,7 +629,7 @@ pub(crate) fn route_files(
 fn route_files_with_limits(
     workspace: &Workspace,
     files: &[PathBuf],
-    declared: &[ferric_core::Modality],
+    declared: &[crate::media::Modality],
     supports_media: bool,
     limits: AttachmentLimits,
 ) -> Result<(Vec<MediaPart>, String), String> {
@@ -663,44 +638,39 @@ fn route_files_with_limits(
     let mut total_bytes = 0_u64;
 
     for requested in files {
-        let resolved = workspace.resolve(requested).map_err(|e| {
-            format!(
-                "attachment `{}` rejected by workspace containment: {e}",
-                requested.display()
-            )
-        })?;
-        if let Decision::Deny(reason) = check_with_ignore(
-            PermissionLevel::Read,
-            &resolved,
-            workspace.root(),
-            workspace.ignore(),
-        ) {
-            return Err(format!(
-                "attachment `{}` denied by read guard: {} matched {}",
-                requested.display(),
-                reason.rule,
-                reason.matched
-            ));
-        }
+        let resolved = workspace
+            .admit(PermissionLevel::Read, requested)
+            .map_err(|error| match error {
+                AdmitError::Boundary(e) => format!(
+                    "attachment `{}` rejected by workspace containment: {e}",
+                    requested.display()
+                ),
+                AdmitError::Denied { reason, .. } => format!(
+                    "attachment `{}` denied by read guard: {} matched {}",
+                    requested.display(),
+                    reason.rule,
+                    reason.matched
+                ),
+            })?;
 
         let label = workspace_relative_label(workspace, &resolved);
-        let kind = ferric_core::classify_path(&resolved);
-        match ferric_core::decide_attachment(&kind, declared, supports_media) {
-            ferric_core::Attachment::AppendText => {
+        let kind = crate::media::classify_path(&resolved);
+        match crate::media::decide_attachment(&kind, declared, supports_media) {
+            crate::media::Attachment::AppendText => {
                 let bytes = read_attachment(&resolved, &label, &mut total_bytes, limits)?;
                 let text = String::from_utf8(bytes).map_err(|e| {
                     format!("attachment `{label}` cannot be read as UTF-8 text: {e}")
                 })?;
                 prompt_suffix.push_str(&format!("\n\n--- file: {label} ---\n{text}"));
             }
-            ferric_core::Attachment::Media(_modality, mime) => {
+            crate::media::Attachment::Media(_modality, mime) => {
                 let bytes = read_attachment(&resolved, &label, &mut total_bytes, limits)?;
                 media_parts.push(MediaPart {
                     mime,
-                    data: ferric_core::base64_encode(&bytes),
+                    data: base64::engine::general_purpose::STANDARD.encode(&bytes),
                 });
             }
-            ferric_core::Attachment::Skip(reason) => {
+            crate::media::Attachment::Skip(reason) => {
                 eprintln!("skip {label}: {reason}")
             }
         }
@@ -887,21 +857,6 @@ fn absolutize_trace_path(path: &Path) -> Result<PathBuf, ExternalTraceError> {
     Ok(normalized)
 }
 
-#[cfg(windows)]
-fn metadata_is_reparse(metadata: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    // FILE_ATTRIBUTE_REPARSE_POINT. Rust exposes the raw attribute word but
-    // intentionally does not duplicate the Win32 constant in `std`.
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn metadata_is_reparse(_metadata: &std::fs::Metadata) -> bool {
-    false
-}
-
 /// Inspect every existing component without following its final component.
 /// This deliberately rejects links/reparse points even when they would resolve
 /// to a directory that is otherwise disjoint from the workspace.
@@ -914,7 +869,7 @@ fn validate_existing_trace_components(path: &Path) -> Result<(), ExternalTraceEr
         }
         match std::fs::symlink_metadata(component_path) {
             Ok(metadata) => {
-                if metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
+                if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
                     return Err(ExternalTraceError::new(
                         ExternalTraceErrorClass::LinkOrReparse,
                         format!(
@@ -1079,7 +1034,7 @@ fn validate_materialized_external_trace_root(
             ),
         )
     })?;
-    if metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
+    if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
         return Err(ExternalTraceError::new(
             ExternalTraceErrorClass::LinkOrReparse,
             format!("{} became a symbolic link or reparse point", root.display()),
@@ -1303,54 +1258,29 @@ fn format_resume_command(
     command
 }
 
-pub fn run_query(mut args: QueryArgs) -> ExitCode {
-    let workspace_root = match &args.workspace {
-        Some(path) => path.clone(),
-        None => match std::env::current_dir() {
-            Ok(dir) => dir,
-            Err(e) => {
-                eprintln!("cannot determine current directory: {e}");
-                return ExitCode::FAILURE;
-            }
-        },
-    };
-    let workspace = match Workspace::new(&workspace_root) {
-        Ok(ws) => ws,
-        Err(e) => {
-            eprintln!("workspace: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+pub fn run_query(args: QueryArgs) -> ExitCode {
+    crate::exit_with(query(&args))
+}
+
+fn query(args: &QueryArgs) -> Result<ExitCode, String> {
+    let (workspace_root, workspace) = open_workspace(args.run.workspace.as_deref())?;
     // Query-only external trace policy. Resolve and reject unsafe paths before
     // configuration, resume, trace, or provider code can create anything.
     // Actual directory creation remains delayed until every other read-only
     // query precondition has passed.
-    let prepared_external_trace_root = match args.trace_dir.as_deref() {
-        Some(requested) => match prepare_external_trace_root(requested, workspace.root()) {
-            Ok(prepared) => Some(prepared),
-            Err(error) => {
-                eprintln!("{error}");
-                return ExitCode::FAILURE;
-            }
-        },
-        None => None,
-    };
+    let prepared_external_trace_root = args
+        .trace_dir
+        .as_deref()
+        .map(|requested| prepare_external_trace_root(requested, workspace.root()))
+        .transpose()
+        .map_err(|error| error.to_string())?;
 
     // T-3803: layered config (CLI flag > project `.ferric/config.toml` > user
-    // config > today's hardcoded default). `BackendOpts`' fields are resolved
-    // IN PLACE on `args` so the same merged values reach `create_provider` in
-    // `drive_real` below, not just this function's own `RunConfigArgs` build.
+    // config > today's hardcoded default).
     let loaded_config = if args.no_config {
-        Ok(crate::config::LoadedConfig::default())
+        crate::config::LoadedConfig::default()
     } else {
-        crate::config::load_layered(&workspace_root)
-    };
-    let loaded_config = match loaded_config {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
+        crate::config::load_layered(&workspace_root).map_err(|error| error.to_string())?
     };
     // Hooks are the one config field that becomes arbitrary command execution
     // (`run_hook` -> `sh -c` with the full inherited environment), and the user
@@ -1362,71 +1292,18 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         eprintln!("hooks: loaded from {}", src.display());
     }
     let cfg = loaded_config.config;
-    args.backend_opts = crate::config::merge_backend_opts(args.backend_opts, &cfg);
-    let resolved_params_b = args.params_b.or(cfg.params_b).unwrap_or(1.2);
-    let resolved_quant = args
-        .quant
-        .clone()
-        .or(cfg.quant)
-        .unwrap_or_else(|| "Q4_K_M".to_string());
-    let resolved_family = args
-        .family
-        .clone()
-        .or(cfg.family)
-        .unwrap_or_else(|| "unknown".to_string());
-    let resolved_ctx = args.ctx.or(cfg.ctx).unwrap_or(4096);
-    let resolved_temperature = args.temperature.or(cfg.temperature).unwrap_or(0.0);
-    let resolved_harness_policy = args.harness_policy.map(Into::into).or(cfg.harness_policy);
-    let resolved_max_ring = args.max_ring.or(cfg.max_ring);
-    let resolved_tier = args.tier.or(cfg.tier);
-    let resolved_profile_dir = args
-        .profile_dir
-        .clone()
-        .or(cfg.profile_dir)
-        .unwrap_or_else(|| PathBuf::from("benchmarks"));
-    let resolved_stream = crate::config::effective_stream(args.no_stream, cfg.stream);
-
-    let config = build_run_config(&RunConfigArgs {
-        mock: args.mock,
-        params_b: resolved_params_b,
-        quant: resolved_quant,
-        family: resolved_family,
-        ctx: resolved_ctx,
-        temperature: resolved_temperature,
-        protocol_override: args.protocol,
-        harness_policy: resolved_harness_policy,
-        prompts_dir: args.prompts_dir.clone(),
-        max_ring: resolved_max_ring,
-        tier_override: resolved_tier.map(Into::into),
-        profile_dir: resolved_profile_dir,
-        // C-001 (plan-critic): derived from the POST-merge, config-resolved
-        // `model` (already merged above) — a config-only-set
-        // `model` must still hit the ADR-029 profile lookup, not silently
-        // skip it because `model_key` was built from raw CLI args.
-        model_key: args.backend_opts.model.clone(),
+    let run = RunConfigArgs {
         hooks: cfg.hooks.clone(),
-        workspace_root: workspace_root.clone(),
         requested_skills: args.skills.clone(),
         allowed_skills: cfg.allowed_skills.clone().unwrap_or_default(),
-    });
-    let mut config = match config {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
+        ..args.run.resolve(&cfg, &workspace_root)
     };
-    let output_budget = match ferric_core::resolve_output_budget(
-        &config.policy,
-        resolved_ctx,
-        args.max_output_tokens,
-    ) {
-        Ok(budget) => budget,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let stream = crate::config::effective_stream(args.no_stream, cfg.stream);
+
+    let mut config = build_run_config(&run).map_err(|error| error.to_string())?;
+    let output_budget =
+        ferric_core::resolve_output_budget(&config.policy, run.ctx, args.max_output_tokens)
+            .map_err(|error| error.to_string())?;
     config.policy.max_output_tokens = output_budget.effective;
     config.sampling.max_tokens = output_budget.effective;
     config.policy.output_budget = Some(output_budget);
@@ -1434,125 +1311,59 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         config.policy.max_turns = max_turns;
     }
     if let Some(path) = &args.checks_file {
-        let checks = match load_named_checks(path) {
-            Ok(checks) => checks,
-            Err(error) => {
-                eprintln!("{error}");
-                return ExitCode::FAILURE;
-            }
-        };
+        let checks = load_named_checks(path)?;
         let names = checks
             .iter()
             .map(|check| check.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        if let Err(error) = register_run_checks(&mut config.registry, checks) {
-            eprintln!("invalid checks file {}: {error}", path.display());
-            return ExitCode::FAILURE;
-        }
+        register_run_checks(&mut config.registry, checks)
+            .map_err(|error| format!("invalid checks file {}: {error}", path.display()))?;
         eprintln!("verification checks authorized: {names}");
     }
 
     // T-3905 (sprint 39): `--resume <path>` replays an interrupted, still-
     // incomplete session. Resolved here (needs `config.protocol` for the
     // match-validation) and threaded into `RunArgs.resume` below.
-    let resume = match &args.resume {
-        Some(path) => match ferric_loop::replay(path) {
-            Ok(replayed) => {
-                if let Err(error) = ferric_loop::validate_resume_target(
-                    &replayed,
-                    workspace.root(),
-                    config.protocol,
-                    config.harness_policy,
-                ) {
-                    eprintln!("cannot resume {}: {error}", path.display());
-                    return ExitCode::FAILURE;
-                }
-                Some(replayed)
-            }
-            Err(e) => {
-                eprintln!("cannot resume {}: {e}", path.display());
-                return ExitCode::FAILURE;
-            }
-        },
-        None => None,
-    };
-    if let Err(error) = validate_resume_trace_root(
+    let resume = args
+        .resume
+        .as_deref()
+        .map(|path| load_resume(path, workspace.root(), &config))
+        .transpose()?;
+    validate_resume_trace_root(
         args.resume.as_deref(),
         workspace.root(),
         prepared_external_trace_root.as_ref(),
-    ) {
-        eprintln!("{error}");
-        return ExitCode::FAILURE;
-    }
-    if let Err(error) = ensure_supported_harness_policy(config.harness_policy) {
-        eprintln!("{error}");
-        return ExitCode::FAILURE;
-    }
+    )
+    .map_err(|error| error.to_string())?;
 
-    // T-3806: `Animus.md` — read-only, no parsing. Presence folds its content
-    // into the system prompt as a distinct block; absence is a silent no-op
-    // (unchanged from today).
-    let animus_md = std::fs::read_to_string(workspace_root.join("Animus.md")).ok();
-    if let Some(content) = &animus_md {
-        config.system_prompt = Some(fold_animus_md(config.system_prompt.as_deref(), content));
-    }
-    // C-009 (plan-critic): a resumed run's system message is frozen from the
-    // replayed trace — `--prompts-dir`/`Animus.md` are silently inert for it.
-    // Surface this rather than let a user expect an edited `Animus.md` to
-    // apply to a continuation with no signal that it didn't. Checks whether
-    // prompts_dir composition was actually ATTEMPTED (lineage on success, the
-    // error field on failure), not just whether `--prompts-dir` was passed —
-    // `FERRIC_PROMPTS_DIR` can resolve it too.
-    if resume.is_some()
-        && (config.lineage.is_some()
-            || config.prompt_composition_error.is_some()
-            || animus_md.is_some())
-    {
-        eprintln!(
-            "note: --resume ignores --prompts-dir/Animus.md for the system message \
-             (frozen from the replayed session)"
-        );
-    }
+    let animus_md = fold_workspace_animus_md(&mut config, &workspace_root);
+    note_frozen_system_prompt(&config, resume.is_some(), animus_md.is_some());
 
-    let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
-    let (media_parts, prompt_suffix) = match route_files(
+    let declared = crate::media::parse_modalities(args.modality.as_deref().unwrap_or(""));
+    let (media_parts, prompt_suffix) = route_files(
         &workspace,
         &args.files,
         &declared,
         config.caps.supports_media,
-    ) {
-        Ok(routed) => routed,
-        Err(e) => {
-            eprintln!("files: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    )
+    .map_err(|e| format!("files: {e}"))?;
 
     let (trace_dir, external_trace_root) = match prepared_external_trace_root.as_ref() {
-        Some(prepared) => match materialize_external_trace_root(prepared, workspace.root()) {
-            Ok(canonical) => (canonical.clone(), Some(canonical)),
-            Err(error) => {
-                eprintln!("{error}");
-                return ExitCode::FAILURE;
-            }
-        },
+        Some(prepared) => {
+            let canonical = materialize_external_trace_root(prepared, workspace.root())
+                .map_err(|error| error.to_string())?;
+            (canonical.clone(), Some(canonical))
+        }
         None => {
-            let trace_dir = workspace_root.join(".ferric").join("trace");
-            if let Err(e) = std::fs::create_dir_all(&trace_dir) {
-                eprintln!("cannot create trace dir {}: {e}", trace_dir.display());
-                return ExitCode::FAILURE;
-            }
+            let trace_dir = ferric_trace::trace_dir(&workspace_root);
+            std::fs::create_dir_all(&trace_dir)
+                .map_err(|e| format!("cannot create trace dir {}: {e}", trace_dir.display()))?;
             (trace_dir, None)
         }
     };
-    let (_session, trace_path, mut sink) = match create_trace_sink(&trace_dir, "q") {
-        Ok(trace) => trace,
-        Err(e) => {
-            eprintln!("cannot allocate query trace: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let (_session, trace_path, mut sink) = create_trace_sink(&trace_dir, "q")
+        .map_err(|e| format!("cannot allocate query trace: {e}"))?;
 
     // A composition failure (if any) is recorded as a Note now that the sink
     // exists; the config itself already fell back to DEFAULT_SYSTEM_PROMPT.
@@ -1562,21 +1373,16 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
     // T-3806 (C-005, narrowed): `Animus.md`'s PRESENCE is traced as a Note —
     // its absence stays silent, matching the existing precedent that the
     // ordinary default path (e.g. no `prompts_dir` configured) is untraced.
-    if let Some(content) = &animus_md {
+    if let Some(chars) = animus_md {
         let _ = sink.write_event(Event::Note {
-            text: format!("Animus.md applied ({} chars)", content.len()),
+            text: format!("Animus.md applied ({chars} chars)"),
         });
     }
 
-    // `Option<String>`: `None` when resuming with no extra prompt/files given
-    // (a pure continuation) — `run()` only requires a prompt when NOT
-    // resuming, a precondition clap's `required_unless_present` guarantees.
-    let effective_prompt = match (&args.prompt, prompt_suffix.is_empty()) {
-        (Some(p), true) => Some(p.clone()),
-        (Some(p), false) => Some(format!("{p}{prompt_suffix}")),
-        (None, true) => None,
-        (None, false) => Some(prompt_suffix),
-    };
+    // `None` when resuming with no extra prompt/files given (a pure
+    // continuation) — `run()` only requires a prompt when NOT resuming, a
+    // precondition clap's `required_unless_present` guarantees.
+    let effective_prompt = with_attachments(args.prompt.clone(), prompt_suffix);
 
     // Live streaming (the default; ADR-047): print `Text` deltas to stdout,
     // flushed per
@@ -1604,11 +1410,8 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             streamed_anything.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     };
-    let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> = if resolved_stream {
-        Some(&sink_fn)
-    } else {
-        None
-    };
+    let stream_sink: Option<&(dyn Fn(ferric_provider::StreamDelta) + Sync)> =
+        if stream { Some(&sink_fn) } else { None };
 
     // Accept-edits (ADR-070): an interactive approver that previews each mutating
     // call and requires an explicit `y` (empty/`n`/EOF reject — conservative).
@@ -1638,47 +1441,31 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
         None
     };
 
-    // Built once and handed to whichever driver runs. Previously both branches
-    // repeated the same 16-odd positional arguments, including this `match`
-    // inline, twice.
-    let setup = LoopSetup {
-        registry: &config.registry,
-        workspace: &workspace,
-        policy: &config.policy,
-        protocol: config.protocol,
-        harness_policy: config.harness_policy,
-        sampling: config.sampling,
-        system_prompt: config.system_prompt.as_deref(),
-        lineage: config.lineage.clone(),
-        media: media_parts,
-        stream_sink,
-        resume,
-        answer: args.answer.as_deref(),
-        provenance: ferric_guard::Provenance::Clean,
-        sink_policy: args.sink_action.into_policy(),
-        hooks: config.hooks.clone(),
-        edit_approver: approver_ref,
-    };
-
-    let outcome = if args.mock {
-        let provider = mock_provider(config.protocol);
-        drive_mock(setup, &provider, &mut sink, effective_prompt.as_deref())
-    } else {
-        drive_real(
-            setup,
-            &args,
-            &mut sink,
-            effective_prompt.as_deref(),
-            args.research.clone(),
-        )
-    };
-
-    let outcome = match outcome {
-        Ok(outcome) => outcome,
-        Err(message) => {
-            eprintln!("{message}");
-            return ExitCode::FAILURE;
-        }
+    let outcome = {
+        let backend = ResolvedBackend::resolve(run.mock, &run.backend, workspace.root())?;
+        backend.with_provider(
+            || mock_provider(config.protocol),
+            |provider| {
+                let run_args = RunArgs {
+                    media: media_parts,
+                    stream_sink,
+                    resume,
+                    answer: args.answer.as_deref(),
+                    sink_policy: args.sink_action.into_policy(),
+                    edit_approver: approver_ref,
+                    ..config.run_args(&workspace, provider)
+                };
+                if run.mock {
+                    backend.block_on(run_with_provider(
+                        run_args,
+                        &mut sink,
+                        effective_prompt.as_deref(),
+                    ))
+                } else {
+                    backend.block_on(drive_real(run_args, args, &mut sink, effective_prompt))
+                }
+            },
+        )?
     };
 
     // Skip the final echo when streaming already displayed the text live —
@@ -1705,25 +1492,22 @@ pub fn run_query(mut args: QueryArgs) -> ExitCode {
             }
         }
     }
-    if !outcome.stop.is_success() {
-        let canonical_trace_path =
-            std::fs::canonicalize(&trace_path).unwrap_or_else(|_| trace_path.clone());
-        eprintln!(
-            "Resume: {}",
-            format_resume_command(
-                &canonical_trace_path,
-                workspace.root(),
-                external_trace_root.as_deref(),
-                outcome.needs_input.is_some(),
-                config.policy.output_budget.as_ref(),
-            )
-        );
-    }
     if outcome.stop.is_success() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
+        return Ok(ExitCode::SUCCESS);
     }
+    let canonical_trace_path =
+        std::fs::canonicalize(&trace_path).unwrap_or_else(|_| trace_path.clone());
+    eprintln!(
+        "Resume: {}",
+        format_resume_command(
+            &canonical_trace_path,
+            workspace.root(),
+            external_trace_root.as_deref(),
+            outcome.needs_input.is_some(),
+            config.policy.output_budget.as_ref(),
+        )
+    );
+    Ok(ExitCode::FAILURE)
 }
 
 pub(crate) fn now_ms() -> u128 {
@@ -1772,22 +1556,22 @@ pub(crate) fn mock_provider(protocol: ActionProtocol) -> MockProvider {
     let script = match protocol {
         ActionProtocol::NativeTools => vec![
             native_completion("mock-0", "write_file", write_args),
-            native_completion("mock-1", ferric_loop::TASK_COMPLETE, done_args),
+            native_completion("mock-1", ferric_iron::terminator::TASK_COMPLETE, done_args),
         ],
         ActionProtocol::ConstrainedJson => vec![
             json_completion("write_file", &write_args),
-            json_completion(ferric_loop::TASK_COMPLETE, &done_args),
+            json_completion(ferric_iron::terminator::TASK_COMPLETE, &done_args),
         ],
         ActionProtocol::Plan => vec![
             json_completion("grep_search", &json!({"query": "mock", "path": "."})),
             json_completion(
-                ferric_loop::SUBMIT_PLAN,
+                ferric_iron::terminator::SUBMIT_PLAN,
                 &json!({"plan": "mock plan complete"}),
             ),
         ],
         ActionProtocol::TextXml => vec![
             xml_completion("write_file", &write_args),
-            xml_completion(ferric_loop::TASK_COMPLETE, &done_args),
+            xml_completion(ferric_iron::terminator::TASK_COMPLETE, &done_args),
         ],
     };
     MockProvider::new(script)
@@ -1818,10 +1602,9 @@ fn native_completion(id: &str, name: &str, args: serde_json::Value) -> Completio
 fn json_completion(name: &str, args: &serde_json::Value) -> Completion {
     let json = serde_json::json!({ "tool": name, "args": args }).to_string();
     Completion {
-        message: Message::assistant(json),
         input_tokens: Some(40),
         output_tokens: Some(20),
-        truncated: false,
+        ..Completion::assistant_text(json)
     }
 }
 
@@ -1834,27 +1617,18 @@ fn xml_completion(name: &str, args: &serde_json::Value) -> Completion {
         name, args_str
     );
     Completion {
-        message: Message::assistant(xml),
         input_tokens: Some(40),
         output_tokens: Some(20),
-        truncated: false,
+        ..Completion::assistant_text(xml)
     }
 }
 
-/// Run one loop turn against an already-constructed provider. The reusable
-/// core both `drive_mock`/`drive_real` (one provider per CLI invocation) and
-/// `ferric mcp` (one provider built once, reused across many `tools/call`s)
-/// drive — provider construction and loop execution are deliberately kept
-/// separate so a caller can build a provider once and call this many times.
-/// Unconditionally compiled (no backend feature needed): it only requires a
-/// `&dyn Provider`, which `MockProvider` already satisfies.
-/// Drive the agent loop and map its error into the CLI's `String` error type.
-///
-/// Takes `RunArgs` directly. It used to take **18 positional parameters** and
-/// immediately re-pack them into this very struct, which meant six call sites
-/// each threading 18 unlabelled arguments past each other — the exact shape
-/// argument-order bugs live in — behind four
-/// `#[allow(clippy::too_many_arguments)]` suppressions (ADR-074).
+/// Drive the agent loop against an already-constructed provider and map its
+/// error into the CLI's `String` error type. Provider construction and loop
+/// execution stay separate so a caller can build a provider once and run
+/// many loops on it (`ferric mcp`, T-3601). It takes `RunArgs` directly
+/// rather than 18 positional parameters (ADR-074); callers build them with
+/// [`RunConfig::run_args`].
 pub(crate) async fn run_with_provider(
     args: RunArgs<'_>,
     sink: &mut JsonlSink,
@@ -1869,10 +1643,6 @@ pub(crate) async fn run_with_provider(
 ///
 /// Deliberately strict and dependency-free: a URL whose host we cannot read is a
 /// URL we cannot allowlist, and guessing would widen the airlock (ADR-085).
-// Only the backend-gated web-research path calls this, but its tests are
-// security tests (userinfo spoofing, injection-shaped hosts) and should run in
-// every build — so allow it to be unused rather than gating the tests away.
-#[cfg_attr(not(feature = "backend-openai"), allow(dead_code))]
 pub(crate) fn url_host(url: &str) -> Result<String, String> {
     let rest = url
         .strip_prefix("https://")
@@ -1895,250 +1665,131 @@ pub(crate) fn url_host(url: &str) -> Result<String, String> {
     Ok(host.to_string())
 }
 
-/// Everything the loop needs **except the provider**.
-///
-/// The provider is the one thing `drive_real` cannot supply up front — it has to
-/// build it with `create_provider` inside its own tokio runtime — which is why
-/// this exists as a separate struct rather than callers just constructing
-/// `RunArgs`. Everything else is named at the call site instead of riding along
-/// as the 11th positional argument.
-pub(crate) struct LoopSetup<'a> {
-    pub registry: &'a Registry,
-    pub workspace: &'a Workspace,
-    pub policy: &'a RunPolicy,
-    pub protocol: ActionProtocol,
-    pub harness_policy: Option<HarnessPolicy>,
-    pub sampling: SamplingParams,
-    pub system_prompt: Option<&'a str>,
-    pub lineage: Option<PromptLineage>,
-    pub media: Vec<MediaPart>,
-    pub stream_sink: Option<&'a (dyn Fn(ferric_provider::StreamDelta) + Sync)>,
-    pub resume: Option<ferric_loop::ReplayedState>,
-    pub answer: Option<&'a str>,
-    pub provenance: ferric_guard::Provenance,
-    pub sink_policy: ferric_guard::SinkPolicy,
-    pub hooks: Option<ferric_core::HooksConfig>,
-    pub edit_approver: Option<ferric_loop::EditApprover<'a>>,
-}
-
-impl<'a> LoopSetup<'a> {
-    /// Complete the setup with the provider (and, for the real path, the
-    /// interrupt flag) into the loop's own argument struct.
-    pub(crate) fn into_run_args(
-        self,
-        provider: &'a dyn Provider,
-        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    ) -> RunArgs<'a> {
-        RunArgs {
-            provider,
-            registry: self.registry,
-            workspace: self.workspace,
-            policy: self.policy,
-            protocol: self.protocol,
-            harness_policy: self.harness_policy,
-            sampling: self.sampling,
-            sleeper: &ThreadSleeper,
-            system_prompt: self.system_prompt,
-            prompt_lineage: self.lineage,
-            media: self.media,
-            stream_sink: self.stream_sink,
-            resume: self.resume,
-            answer: self.answer,
-            cancel_flag,
-            provenance: self.provenance,
-            sink_policy: self.sink_policy,
-            hooks: self.hooks,
-            edit_approver: self.edit_approver,
-        }
-    }
-}
-
-/// The mock path has no ambient runtime by design (ADR-010 keeps the loop
-/// executor-agnostic), so it drives the future on `futures_executor`.
-fn drive_mock(
-    setup: LoopSetup<'_>,
-    provider: &dyn Provider,
-    sink: &mut JsonlSink,
-    prompt: Option<&str>,
-) -> Result<LoopOutcome, String> {
-    futures_executor::block_on(run_with_provider(
-        setup.into_run_args(provider, None),
-        sink,
-        prompt,
-    ))
-}
-
-#[cfg(feature = "backend-openai")]
-fn drive_real(
-    mut setup: LoopSetup<'_>,
+/// The real backend's run: Ctrl-C interrupts it gracefully, and the research
+/// flags fold quarantined context into the prompt first.
+async fn drive_real(
+    mut run_args: RunArgs<'_>,
     args: &QueryArgs,
     sink: &mut JsonlSink,
-    prompt: Option<&str>,
-    research_query: Option<String>,
+    mut prompt: Option<String>,
 ) -> Result<LoopOutcome, String> {
-    let workspace = setup.workspace;
-    let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-    runtime.block_on(async move {
-        let provider_box = create_provider_in(&args.backend_opts, workspace.root()).await?;
-        let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cancel_flag_clone = cancel_flag.clone();
-        tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                cancel_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                eprintln!("\n[Received Ctrl-C, interrupting gracefully...]");
-            }
-        });
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancel_flag_clone = cancel_flag.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            cancel_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+            eprintln!("\n[Received Ctrl-C, interrupting gracefully...]");
+        }
+    });
+    run_args.cancel_flag = Some(cancel_flag);
+    let provider = run_args.provider;
 
-        let mut effective_prompt = prompt.map(|s| s.to_string());
-        // --- Web plane (ADR-085): fetch named URLs through the egress airlock ---
-        //
-        // One airlock per RUN, not per URL: standing one up costs ~15s (ADR-083),
-        // and every URL in this run shares the same allowlist anyway. RAII means
-        // it is torn down even if the run below panics.
-        if !args.research_urls.is_empty() {
-            let mut hosts: Vec<String> = Vec::new();
-            for url in &args.research_urls {
-                let host = url_host(url)?;
-                if !hosts.contains(&host) {
-                    hosts.push(host);
-                }
-            }
-            eprintln!(
-                "research: opening egress airlock for {} host(s): {}",
-                hosts.len(),
-                hosts.join(", ")
-            );
-
-            let lock = ferric_research::airlock::Airlock::start(&hosts)
-                .map_err(|e| format!("could not open the egress airlock: {e}"))?;
-
-            let mut web = ferric_research::WebRetriever::new().with_network(lock.policy());
-            if args.allow_standard_runtime {
-                web = web.with_runsc(false);
-            }
-
-            let mut cx = String::new();
-            let mut fetched = 0usize;
-            for url in &args.research_urls {
-                match ferric_research::research(&web, provider_box.as_ref(), url).await {
-                    Ok(digests) if digests.is_empty() => {
-                        eprintln!("research: {url} returned nothing");
-                    }
-                    Ok(digests) => {
-                        for d in digests {
-                            cx.push_str(&d.summary);
-                            cx.push_str(
-                                "
----
-",
-                            );
-                            fetched += 1;
-                        }
-                    }
-                    // Fail loud: a URL the user named that could not be fetched
-                    // must not vanish into a normal run (the ADR-078 lesson).
-                    Err(e) => return Err(format!("research: fetching {url} failed: {e}")),
-                }
-            }
-
-            if fetched > 0 {
-                // Untrusted content reached the prompt, so the run is
-                // contaminated and every later mutation is gated (ADR-080).
-                setup.provenance = ferric_guard::Provenance::UntrustedIngested;
-                let p = effective_prompt.unwrap_or_default();
-                effective_prompt = Some(format!(
-                    "{p}
-
-<research_context>
-{cx}</research_context>
-"
-                ));
+    // --- Web plane (ADR-085): fetch named URLs through the egress airlock ---
+    //
+    // One airlock per RUN, not per URL: standing one up costs ~15s (ADR-083),
+    // and every URL in this run shares the same allowlist anyway. RAII means
+    // it is torn down even if the run below panics.
+    if !args.research_urls.is_empty() {
+        let mut hosts: Vec<String> = Vec::new();
+        for url in &args.research_urls {
+            let host = url_host(url)?;
+            if !hosts.contains(&host) {
+                hosts.push(host);
             }
         }
+        eprintln!(
+            "research: opening egress airlock for {} host(s): {}",
+            hosts.len(),
+            hosts.join(", ")
+        );
 
-        if let Some(rq) = research_query {
-            // Perform research
-            let local_retriever = ferric_research::LocalFsRetriever::with_caps(
-                workspace.root().to_path_buf(),
-                50,
-                1024 * 1024,
-            );
-            let retrievers: Vec<&dyn ferric_research::Retriever> = vec![&local_retriever];
-            match ferric_research::research_all(&retrievers, provider_box.as_ref(), &rq).await {
-                Ok(multi) if multi.digests.is_empty() => {
-                    // A flag the user explicitly passed must not degrade into an
-                    // ordinary run in silence (ADR-078). This was invisible for
-                    // three sprints and hid a real retrieval bug behind it.
-                    let planes: Vec<String> = multi
-                        .planes
-                        .iter()
-                        .map(|p| {
-                            format!(
-                                "{} ({})",
-                                p.plane,
-                                if p.available {
-                                    "available, 0 matches"
-                                } else {
-                                    "unavailable"
-                                }
-                            )
-                        })
-                        .collect();
-                    eprintln!(
-                        "research: no sources matched {rq:?} — planes: {}. \
-                         Continuing without research context.",
-                        planes.join(", ")
-                    );
-                }
-                Ok(multi) => {
-                    {
-                        let mut cx = String::new();
-                        cx.push_str("\n\n<research_context>\n");
-                        // The run is now contaminated (ADR-080). That single
-                        // fact IS the gate — there is no per-argument taint to
-                        // track, because tracking it never worked: the digests
-                        // below are already a paraphrase of their sources, and
-                        // anything the model writes paraphrases again.
-                        //
-                        // Stamped here, inside the non-empty branch: if research
-                        // returned nothing, nothing untrusted reached the prompt
-                        // and the run stays Clean.
-                        setup.provenance = ferric_guard::Provenance::UntrustedIngested;
-                        for d in multi.digests {
-                            cx.push_str(&d.summary);
-                            cx.push_str("\n---\n");
-                        }
-                        cx.push_str("</research_context>\n");
-                        let p = effective_prompt.unwrap_or_default();
-                        effective_prompt = Some(format!("{}{}", p, cx));
-                    }
-                }
-                Err(e) => {
-                    eprintln!("research failed: {e}");
-                }
-            }
+        let lock = ferric_research::airlock::Airlock::start(&hosts)
+            .map_err(|e| format!("could not open the egress airlock: {e}"))?;
+
+        let mut web = ferric_research::WebRetriever::new().with_network(lock.policy());
+        if args.allow_standard_runtime {
+            web = web.with_runsc(false);
         }
 
-        run_with_provider(
-            setup.into_run_args(provider_box.as_ref(), Some(cancel_flag)),
-            sink,
-            effective_prompt.as_deref(),
-        )
-        .await
-    })
+        let mut summaries = Vec::new();
+        for url in &args.research_urls {
+            match ferric_research::research(&web, provider, url).await {
+                Ok(digests) if digests.is_empty() => {
+                    eprintln!("research: {url} returned nothing");
+                }
+                Ok(digests) => summaries.extend(digests.into_iter().map(|d| d.summary)),
+                // Fail loud: a URL the user named that could not be fetched
+                // must not vanish into a normal run (the ADR-078 lesson).
+                Err(e) => return Err(format!("research: fetching {url} failed: {e}")),
+            }
+        }
+        fold_research(&mut run_args, &mut prompt, summaries);
+    }
+
+    if let Some(rq) = &args.research {
+        let local_retriever = ferric_research::LocalFsRetriever::with_caps(
+            run_args.workspace.root().to_path_buf(),
+            50,
+            1024 * 1024,
+        );
+        let retrievers: Vec<&dyn ferric_research::Retriever> = vec![&local_retriever];
+        match ferric_research::research_all(&retrievers, provider, rq).await {
+            Ok(multi) if multi.digests.is_empty() => {
+                // A flag the user explicitly passed must not degrade into an
+                // ordinary run in silence (ADR-078). This was invisible for
+                // three sprints and hid a real retrieval bug behind it.
+                let planes: Vec<String> = multi
+                    .planes
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "{} ({})",
+                            p.plane,
+                            if p.available {
+                                "available, 0 matches"
+                            } else {
+                                "unavailable"
+                            }
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "research: no sources matched {rq:?} — planes: {}. \
+                     Continuing without research context.",
+                    planes.join(", ")
+                );
+            }
+            Ok(multi) => {
+                let summaries = multi.digests.into_iter().map(|d| d.summary).collect();
+                fold_research(&mut run_args, &mut prompt, summaries);
+            }
+            Err(e) => {
+                eprintln!("research failed: {e}");
+            }
+        }
+    }
+
+    run_with_provider(run_args, sink, prompt.as_deref()).await
 }
 
-#[cfg(not(feature = "backend-openai"))]
-fn drive_real(
-    _setup: LoopSetup<'_>,
-    _args: &QueryArgs,
-    _sink: &mut JsonlSink,
-    _prompt: Option<&str>,
-    _research_query: Option<String>,
-) -> Result<LoopOutcome, String> {
-    Err("this binary was built without backend features; \
-         rebuild with `cargo build --features backend-openai`, or use --mock"
-        .to_string())
+/// Fold quarantined research digests into the prompt. Untrusted content then
+/// reached the prompt, so the run is contaminated and every later mutation is
+/// gated (ADR-080). That single fact IS the gate — there is no per-argument
+/// taint to track, because the digests are already a paraphrase of their
+/// sources. Nothing folded leaves the run Clean.
+fn fold_research(run_args: &mut RunArgs<'_>, prompt: &mut Option<String>, summaries: Vec<String>) {
+    if summaries.is_empty() {
+        return;
+    }
+    run_args.provenance = ferric_guard::Provenance::UntrustedIngested;
+    let mut folded = prompt.take().unwrap_or_default();
+    folded.push_str("\n\n<research_context>\n");
+    for summary in summaries {
+        folded.push_str(&summary);
+        folded.push_str("\n---\n");
+    }
+    folded.push_str("</research_context>\n");
+    *prompt = Some(folded);
 }
 
 #[cfg(test)]
@@ -2186,31 +1837,6 @@ mod tests {
     }
 
     #[test]
-    fn external_trace_root_precreate_rejects_equal() {
-        let directory = tempfile::tempdir().unwrap();
-        let (_, workspace) = trace_test_workspace(&directory);
-        assert_external_trace_error(
-            prepare_external_trace_root(workspace.root(), workspace.root()),
-            ExternalTraceErrorClass::EqualWorkspace,
-        );
-        assert!(!workspace.root().join(".ferric").exists());
-    }
-
-    #[test]
-    fn external_trace_root_precreate_rejects_descendant() {
-        let directory = tempfile::tempdir().unwrap();
-        let (_, workspace) = trace_test_workspace(&directory);
-        let requested = workspace.root().join("sealed").join("traces");
-        assert_external_trace_error(
-            prepare_external_trace_root(&requested, workspace.root()),
-            ExternalTraceErrorClass::DescendantOfWorkspace,
-        );
-        assert!(!requested.exists());
-        assert!(!workspace.root().join(".ferric").exists());
-        assert!(!workspace.root().join("ferric-mock.txt").exists());
-    }
-
-    #[test]
     fn external_trace_root_precreate_rejects_dotdot_overlap_alias() {
         let directory = tempfile::tempdir().unwrap();
         let (_, workspace) = trace_test_workspace(&directory);
@@ -2232,34 +1858,6 @@ mod tests {
         );
         assert!(!workspace.root().join(".ferric").exists());
         assert!(!workspace.root().join("ferric-mock.txt").exists());
-    }
-
-    #[test]
-    fn external_trace_root_precreate_rejects_ancestor() {
-        let directory = tempfile::tempdir().unwrap();
-        let (_, workspace) = trace_test_workspace(&directory);
-        assert_external_trace_error(
-            prepare_external_trace_root(directory.path(), workspace.root()),
-            ExternalTraceErrorClass::AncestorOfWorkspace,
-        );
-        assert!(!workspace.root().join(".ferric").exists());
-    }
-
-    #[test]
-    fn external_trace_root_precreate_rejects_existing_file() {
-        let directory = tempfile::tempdir().unwrap();
-        let (_, workspace) = trace_test_workspace(&directory);
-        let requested = directory.path().join("trace-file");
-        std::fs::write(&requested, "not a directory").unwrap();
-        assert_external_trace_error(
-            prepare_external_trace_root(&requested, workspace.root()),
-            ExternalTraceErrorClass::NotDirectory,
-        );
-        assert_eq!(
-            std::fs::read_to_string(&requested).unwrap(),
-            "not a directory"
-        );
-        assert!(!workspace.root().join(".ferric").exists());
     }
 
     #[cfg(unix)]
@@ -2289,11 +1887,9 @@ mod tests {
             .arg("/J")
             .arg(link)
             .arg(target);
-        let output = crate::test_process_containment::output_bounded(
-            &mut command,
-            std::time::Duration::from_secs(10),
-        )
-        .unwrap();
+        let output =
+            ferric_process::testing::output(&mut command, std::time::Duration::from_secs(10))
+                .unwrap();
         assert!(
             output.status.success(),
             "junction creation failed: stdout={} stderr={}",
@@ -2372,76 +1968,6 @@ mod tests {
         name: &str,
     ) -> PreparedExternalTraceRoot {
         prepare_external_trace_root(&directory.path().join(name), workspace.root()).unwrap()
-    }
-
-    #[test]
-    fn external_trace_root_postcreate_rejects_non_directory() {
-        let directory = tempfile::tempdir().unwrap();
-        let (_, workspace) = trace_test_workspace(&directory);
-        let prepared = prepared_postcreate_root(&directory, &workspace, "post-file");
-        let _hook = install_external_trace_post_create_hook(|created| {
-            std::fs::remove_dir(created).unwrap();
-            std::fs::write(created, "replacement").unwrap();
-            created.to_path_buf()
-        });
-        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
-        assert_eq!(
-            error.class,
-            ExternalTraceErrorClass::NotDirectory,
-            "{error}"
-        );
-        assert!(!prepared.root.join("q-test.jsonl").exists());
-    }
-
-    #[test]
-    fn external_trace_root_postcreate_rejects_equal() {
-        let directory = tempfile::tempdir().unwrap();
-        let (_, workspace) = trace_test_workspace(&directory);
-        let prepared = prepared_postcreate_root(&directory, &workspace, "post-equal");
-        let workspace_substitute = workspace.root().to_path_buf();
-        let _hook = install_external_trace_post_create_hook(move |_| workspace_substitute);
-        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
-        assert_eq!(
-            error.class,
-            ExternalTraceErrorClass::EqualWorkspace,
-            "{error}"
-        );
-        assert!(std::fs::read_dir(&prepared.root).unwrap().next().is_none());
-    }
-
-    #[test]
-    fn external_trace_root_postcreate_rejects_descendant() {
-        let directory = tempfile::tempdir().unwrap();
-        let (_, workspace) = trace_test_workspace(&directory);
-        let prepared = prepared_postcreate_root(&directory, &workspace, "post-descendant");
-        let inside = workspace.root().join("substituted-traces");
-        let _hook = install_external_trace_post_create_hook(move |_| {
-            std::fs::create_dir(&inside).unwrap();
-            inside
-        });
-        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
-        assert_eq!(
-            error.class,
-            ExternalTraceErrorClass::DescendantOfWorkspace,
-            "{error}"
-        );
-        assert!(std::fs::read_dir(&prepared.root).unwrap().next().is_none());
-    }
-
-    #[test]
-    fn external_trace_root_postcreate_rejects_ancestor() {
-        let directory = tempfile::tempdir().unwrap();
-        let (_, workspace) = trace_test_workspace(&directory);
-        let prepared = prepared_postcreate_root(&directory, &workspace, "post-ancestor");
-        let ancestor = directory.path().to_path_buf();
-        let _hook = install_external_trace_post_create_hook(move |_| ancestor);
-        let error = materialize_external_trace_root(&prepared, workspace.root()).unwrap_err();
-        assert_eq!(
-            error.class,
-            ExternalTraceErrorClass::AncestorOfWorkspace,
-            "{error}"
-        );
-        assert!(std::fs::read_dir(&prepared.root).unwrap().next().is_none());
     }
 
     #[cfg(unix)]
@@ -2628,7 +2154,7 @@ mod tests {
         let script = format!(
             "[Console]::Error.WriteLine('{ENTERED}'); function ferric {{ foreach ($value in $args) {{ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value)) }} }}; {command}; [Console]::Error.WriteLine('{COMPLETE}')"
         );
-        crate::test_process_containment::ensure_current_process_tree_is_contained()
+        ferric_process::testing::contain_current_process()
             .expect("source harness containment before PowerShell admission");
         let mut command = std::process::Command::new("powershell.exe");
         command
@@ -2688,7 +2214,7 @@ mod tests {
         ];
         let expected: Vec<String> = expected
             .iter()
-            .map(|value| ferric_core::base64_encode(value.as_bytes()))
+            .map(|value| base64::engine::general_purpose::STANDARD.encode(value.as_bytes()))
             .collect();
         assert_eq!(observed, expected);
     }
@@ -2704,11 +2230,9 @@ mod tests {
             format!("ferric() {{ for value do printf '%s\\0' \"$value\"; done; }}; {command}");
         let mut command = std::process::Command::new("/bin/sh");
         command.arg("-c").arg(script);
-        let output = crate::test_process_containment::output_bounded(
-            &mut command,
-            std::time::Duration::from_secs(10),
-        )
-        .unwrap();
+        let output =
+            ferric_process::testing::output(&mut command, std::time::Duration::from_secs(10))
+                .unwrap();
         assert!(
             output.status.success(),
             "sh failed: {}",
@@ -2837,7 +2361,7 @@ mod tests {
         let (media, suffix) = route_files(
             &workspace,
             &[PathBuf::from("notes.md"), PathBuf::from("photo.png")],
-            &[ferric_core::Modality::Image],
+            &[crate::media::Modality::Image],
             true,
         )
         .unwrap();
@@ -2908,46 +2432,17 @@ mod tests {
     fn runs_loop_with_prebuilt_provider() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = Workspace::new(dir.path()).unwrap();
-        let mut registry = Registry::new();
-        register_builtin_tools(&mut registry);
-        let protocol = ActionProtocol::ConstrainedJson;
-        let provider = mock_provider(protocol);
-        let profile = ModelProfile {
-            params_b: 1.2,
-            quant: "Q4_K_M".to_string(),
-            ctx: 4096,
-            family: "unknown".to_string(),
-            measured_level: None,
-        };
-        let policy = policy_for(&profile);
-        let sampling = SamplingParams {
-            temperature: 0.0,
-            max_tokens: policy.max_output_tokens,
-            ..SamplingParams::default()
-        };
-        let trace_path = dir.path().join("trace.jsonl");
-        let mut sink = JsonlSink::open(&trace_path, "test").unwrap();
+        let config = build_run_config(&RunConfigArgs {
+            protocol_override: Some(ProtocolArg::Grammar),
+            ..RunConfigArgs::mock()
+        })
+        .unwrap();
+        assert_eq!(config.protocol, ActionProtocol::ConstrainedJson);
+        let provider = mock_provider(config.protocol);
+        let mut sink = JsonlSink::open(dir.path().join("trace.jsonl"), "test").unwrap();
 
-        let setup = LoopSetup {
-            registry: &registry,
-            workspace: &workspace,
-            policy: &policy,
-            protocol,
-            harness_policy: None,
-            sampling,
-            system_prompt: None,
-            lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
-        };
         let outcome = futures_executor::block_on(run_with_provider(
-            setup.into_run_args(&provider, None),
+            config.run_args(&workspace, &provider),
             &mut sink,
             Some("do a mock task"),
         ))
@@ -2962,26 +2457,12 @@ mod tests {
 
     fn base_run_config_args() -> RunConfigArgs {
         RunConfigArgs {
-            workspace_root: std::path::PathBuf::from("."),
-            requested_skills: Vec::new(),
-            allowed_skills: Vec::new(),
-            mock: true,
             params_b: 8.0,
-            quant: "Q4_K_M".to_string(),
-            family: "unknown".to_string(),
-            ctx: 4096,
             // Non-default on purpose (test-critique C-003): 0.0 is also
             // `SamplingParams::default()`'s value, so a mis-wired temperature
             // would pass a same-value assertion vacuously.
             temperature: 0.7,
-            protocol_override: None,
-            harness_policy: None,
-            prompts_dir: None,
-            max_ring: None,
-            tier_override: None,
-            profile_dir: PathBuf::from("benchmarks"),
-            model_key: None,
-            hooks: None,
+            ..RunConfigArgs::mock()
         }
     }
 
@@ -2996,20 +2477,9 @@ mod tests {
         let caps = Capabilities {
             supports_native_tool_calls: true,
             supports_constraint: false,
-            exposes_logits: false,
             supports_media: false,
         };
-        let expected_protocol = select_protocol(
-            &policy_for(&ModelProfile {
-                params_b: a.params_b,
-                quant: a.quant.clone(),
-                ctx: a.ctx,
-                family: a.family.clone(),
-                measured_level: None,
-            }),
-            &caps,
-            None,
-        );
+        let expected_protocol = select_protocol(&caps, None);
         let expected_policy = policy_for(&ModelProfile {
             params_b: a.params_b,
             quant: a.quant.clone(),
@@ -3031,18 +2501,6 @@ mod tests {
             config.sampling.max_tokens,
             expected_policy.max_output_tokens
         );
-    }
-
-    /// T-3602: the returned config is plain data, safely readable multiple
-    /// times without being consumed — the shape `ferric mcp` needs to reuse it
-    /// across many `tools/call`s.
-    #[test]
-    fn run_config_reused_across_calls() {
-        let config = build_run_config(&base_run_config_args()).unwrap();
-        let (protocol_1, max_ring_1) = (config.protocol, config.policy.max_ring);
-        let (protocol_2, max_ring_2) = (config.protocol, config.policy.max_ring);
-        assert_eq!(protocol_1, protocol_2);
-        assert_eq!(max_ring_1, max_ring_2);
     }
 
     #[test]
@@ -3114,7 +2572,8 @@ mod tests {
         assert_eq!(
             url_host("http://example.com@evil.test/x").as_deref(),
             Ok("evil.test"),
-            "the host is what follows '@' — allowlisting example.com here would              have opened evil.test"
+            "the host is what follows '@' — allowlisting example.com here would \
+             have opened evil.test"
         );
     }
 

@@ -20,6 +20,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+pub mod exact;
 pub mod memory;
 #[cfg(unix)]
 #[path = "unix.rs"]
@@ -30,9 +31,9 @@ mod platform;
 #[cfg(any(unix, test))]
 mod registry;
 mod supervision;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
-#[cfg(target_os = "linux")]
-pub use supervision::{LinuxProcessState, decode_pidfd_events};
 pub use supervision::{enable_subreaper, watch_current_parent};
 
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);

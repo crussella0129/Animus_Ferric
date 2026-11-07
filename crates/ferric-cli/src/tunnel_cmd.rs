@@ -117,7 +117,7 @@ fn init(endpoint: Option<String>, dir: Option<PathBuf>) -> Result<(), String> {
 fn load_conf(dir: &Path, conf: Option<PathBuf>) -> Result<(String, String), String> {
     let text = match conf {
         Some(path) => {
-            ferric_gate::token_file_private(&path).map_err(|e| e.to_string())?;
+            ferric_gate::token::check_private(&path).map_err(|e| e.to_string())?;
             std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?
         }
         None => ferric_gate::tunnel::read_host_conf(dir).map_err(|e| e.to_string())?,

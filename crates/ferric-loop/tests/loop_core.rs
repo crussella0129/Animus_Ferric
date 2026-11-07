@@ -121,7 +121,7 @@ fn denied_tool_feeds_back() {
     );
     assert_eq!(result.outcome.stop, StopReason::FinalText);
     // Deny traced via permission_check, and loop continued to a second turn.
-    assert!(kinds(&result.records).contains(&"permission_check"));
+    assert!(kinds(&result.records).contains(&"permission_check".into()));
     assert_eq!(session_end_reason(&result.records), "final_text");
 }
 

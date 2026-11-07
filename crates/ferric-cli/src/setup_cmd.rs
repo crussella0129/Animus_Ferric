@@ -48,11 +48,6 @@ impl Needs {
     }
 }
 
-/// Is an engine available: `llama-server` on PATH, or one Ferric installed?
-pub(crate) fn engine_available() -> bool {
-    crate::startup::find_engine().is_ok()
-}
-
 fn has_gguf(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|entries| {
         entries.flatten().any(|entry| {
@@ -80,7 +75,7 @@ pub(crate) fn plan(
         None => Some(hardware.recommended_model()),
     };
     Needs {
-        engine: !engine_available(),
+        engine: ferric_setup::engine::locate().is_none(),
         model,
         requested: requested.is_some(),
         models_dir: models_dir.to_path_buf(),

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::backend::BackendOpts;
-use crate::query::ProtocolArg;
+use crate::config::ProtocolArg;
 
 // Used by `extract_action` (and its tests); excluded from the backend-free,
 // non-test bin build so it stays unused-import-clean under `-D warnings`.
@@ -25,7 +25,7 @@ use ferric_provider::Completion;
 use {
     crate::backend::create_provider,
     ferric_core::{Message, ModelProfile, policy_for},
-    ferric_loop::{action_schema, select_protocol},
+    ferric_iron::{action_schema, select_protocol},
     ferric_provider::{CompletionRequest, Constraint, SamplingParams, ToolDescriptor},
     ferric_tools::Registry,
 };
@@ -131,7 +131,7 @@ pub fn classify(
             if text.trim().is_empty() {
                 Ok(None)
             } else {
-                ferric_loop::parse_json_action(0, text)
+                ferric_iron::parse_json_action(0, text)
                     .map(Some)
                     .map_err(|_| ())
             }
@@ -229,17 +229,7 @@ pub fn verdict(rate: f64) -> &'static str {
 /// is not solid — the model can't reliably drive the core (ADR-028/019).
 #[cfg(any(feature = "backend-openai", test))]
 pub fn recommend_max_ring(ring_solid: &[bool]) -> Option<u8> {
-    if ring_solid.first() != Some(&true) {
-        return None;
-    }
-    let mut r = 0u8;
-    for &solid in &ring_solid[1..] {
-        if !solid {
-            break;
-        }
-        r += 1;
-    }
-    Some(r)
+    ferric_bench::longest_prefix(|ring| ring_solid.get(usize::from(ring)) == Some(&true))
 }
 
 /// Render the human-facing Markdown report.
@@ -494,11 +484,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
         let all_tools: Vec<ToolDescriptor> = registry
             .tools_for_policy(&policy)
             .into_iter()
-            .map(|spec| ToolDescriptor {
-                name: spec.name,
-                description: spec.description,
-                input_schema: spec.input_schema,
-            })
+            .map(ToolDescriptor::from)
             .collect();
         let schema = action_schema(&all_tools);
 
@@ -525,11 +511,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             // Ring calibration: bench each model ring-by-ring and report the
             // highest ring it reliably drives (the recommended --max-ring).
             let model_list: Vec<String> = match &args.models {
-                Some(m) => m
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
+                Some(models) => crate::bench_cmd::split_models(models),
                 None => vec![
                     args.backend_opts
                         .model
@@ -562,17 +544,13 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                     let ring_tools: Vec<ToolDescriptor> = registry
                         .tools_for_policy(&p)
                         .into_iter()
-                        .map(|spec| ToolDescriptor {
-                            name: spec.name,
-                            description: spec.description,
-                            input_schema: spec.input_schema,
-                        })
+                        .map(ToolDescriptor::from)
                         .collect();
                     if ring_tools.len() == prev_len {
                         break; // this ring added no tools → max ring reached
                     }
                     let ring_schema = action_schema(&ring_tools);
-                    let proto = select_protocol(&p, &provider.capabilities(), protocol_override);
+                    let proto = select_protocol(&provider.capabilities(), protocol_override);
                     proto_label = format!("{proto:?}");
                     let summary = bench_model(
                         provider,
@@ -635,11 +613,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
 
         if let Some(models) = &args.models {
             // Fleet sweep: bench each model (same backend, model overridden) → leaderboard.
-            let model_list: Vec<String> = models
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let model_list = crate::bench_cmd::split_models(models);
             let mut summaries: Vec<BenchSummary> = Vec::new();
             for model in &model_list {
                 println!("\n=== {model} ===");
@@ -653,8 +627,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                     }
                 };
                 let provider = provider_box.as_ref();
-                let protocol =
-                    select_protocol(&policy, &provider.capabilities(), protocol_override);
+                let protocol = select_protocol(&provider.capabilities(), protocol_override);
                 summaries.push(
                     bench_model(
                         provider,
@@ -681,7 +654,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             // Single model (the per-tool diagnostic report).
             let provider_box = create_provider(&args.backend_opts).await?;
             let provider = provider_box.as_ref();
-            let protocol = select_protocol(&policy, &provider.capabilities(), protocol_override);
+            let protocol = select_protocol(&provider.capabilities(), protocol_override);
             let model_label = args
                 .backend_opts
                 .model
@@ -736,15 +709,6 @@ mod tests {
     use ferric_core::{Message, Role};
     use serde_json::json;
 
-    fn text_completion(text: &str) -> Completion {
-        Completion {
-            message: Message::assistant(text),
-            input_tokens: None,
-            output_tokens: None,
-            truncated: false,
-        }
-    }
-
     fn schema() -> serde_json::Value {
         json!({
             "type": "object",
@@ -790,7 +754,7 @@ mod tests {
 
     #[test]
     fn classify_success_constrained() {
-        let c = text_completion(r#"{"tool":"read_file","args":{"path":"x"}}"#);
+        let c = Completion::assistant_text(r#"{"tool":"read_file","args":{"path":"x"}}"#);
         assert_eq!(
             classify(ActionProtocol::ConstrainedJson, &c, "read_file", &schema()),
             Outcome::Success
@@ -819,7 +783,7 @@ mod tests {
     #[test]
     fn classify_no_action() {
         // Native: tool_calls empty (the model chatted instead of calling).
-        let c = text_completion("I cannot help with that.");
+        let c = Completion::assistant_text("I cannot help with that.");
         assert_eq!(
             classify(ActionProtocol::NativeTools, &c, "read_file", &schema()),
             Outcome::NoAction
@@ -829,7 +793,7 @@ mod tests {
     #[test]
     fn classify_parse_error() {
         // ConstrainedJson: non-empty text that is not a valid action object.
-        let bad_json = text_completion(r#"{"tool": "read_file", "args": {oops"#);
+        let bad_json = Completion::assistant_text(r#"{"tool": "read_file", "args": {oops"#);
         assert_eq!(
             classify(
                 ActionProtocol::ConstrainedJson,
@@ -840,7 +804,7 @@ mod tests {
             Outcome::ParseError
         );
         // TextXml: prose with no <tool_call> is a parse failure too.
-        let prose = text_completion("just some prose");
+        let prose = Completion::assistant_text("just some prose");
         assert_eq!(
             classify(ActionProtocol::TextXml, &prose, "read_file", &schema()),
             Outcome::ParseError

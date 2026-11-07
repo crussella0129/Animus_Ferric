@@ -26,11 +26,6 @@ pub fn data_dir() -> Option<PathBuf> {
     data_dir_from(&|name| std::env::var(name).ok())
 }
 
-/// Where Ferric keeps the models it downloads.
-pub fn managed_models_dir() -> Option<PathBuf> {
-    data_dir().map(|dir| dir.join("models"))
-}
-
 /// Where Ferric keeps the engines it installs.
 pub fn engine_root() -> Option<PathBuf> {
     data_dir().map(|dir| dir.join("engine"))

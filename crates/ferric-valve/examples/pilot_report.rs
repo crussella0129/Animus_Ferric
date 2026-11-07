@@ -13,16 +13,8 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use ferric_valve::pilot::{ArmSummary, summarize};
+use ferric_valve::pilot::{ArmSummary, read_jsonl, summarize};
 use serde_json::Value;
-
-fn read_jsonl(path: &Path) -> Vec<Value> {
-    fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
-}
 
 fn fmt(value: Option<f64>, digits: usize) -> String {
     value.map_or_else(|| "n/a".to_string(), |v| format!("{v:.digits$}"))
@@ -76,7 +68,9 @@ fn main() {
                 "start_index": read_json(&run.join("continuation.json"))["start_index"],
                 "rates": manifest["rates"],
                 "ferric_commit": manifest["ferric_commit"],
-                "sessions": read_jsonl(&run.join("sessions.jsonl")).len(),
+                "sessions": read_jsonl(&run.join("sessions.jsonl"))
+                    .expect("session ledger")
+                    .len(),
             })
         })
         .collect();
@@ -88,7 +82,7 @@ fn main() {
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let mut rows = read_jsonl(&run.join("sessions.jsonl"));
+            let mut rows = read_jsonl(&run.join("sessions.jsonl")).expect("session ledger");
             rows.sort_by_key(|session| session["index"].as_u64().unwrap_or(u64::MAX));
             rows.into_iter().map(move |mut session| {
                 session["run"] = Value::String(name.clone());
@@ -106,7 +100,7 @@ fn main() {
         .collect();
     let cleanup: Vec<Value> = runs
         .iter()
-        .flat_map(|run| read_jsonl(&run.join("cleanup.jsonl")))
+        .flat_map(|run| read_jsonl(&run.join("cleanup.jsonl")).expect("cleanup ledger"))
         .collect();
     let included: Vec<Value> = sessions
         .iter()

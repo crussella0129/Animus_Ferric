@@ -91,7 +91,7 @@ fn the_model_is_warned_before_being_stopped() {
     assert_eq!(result.outcome.stop, StopReason::Oscillation);
 
     assert!(
-        kinds(&result.records).contains(&"oscillation_guard"),
+        kinds(&result.records).contains(&"oscillation_guard".into()),
         "the guard decision must be in the trace"
     );
 }

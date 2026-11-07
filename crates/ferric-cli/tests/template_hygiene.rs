@@ -49,6 +49,10 @@ const RULES: &[Rule] = &[
         has_concrete_home,
     ),
     ("a private LAN address (192.168.x.y)", has_private_lan_ip),
+    (
+        "a concrete tailnet address (100.64.0.0/10 outside 100.64.0.x)",
+        has_concrete_tailnet_ip,
+    ),
 ];
 
 /// `tail` + at least four digits + `.ts.net` — a tailnet's unique id. The
@@ -95,6 +99,25 @@ fn has_private_lan_ip(line: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
+/// A Tailscale CGNAT address (100.64.0.0/10) outside the documentation subnet
+/// `100.64.0.x`: a real tailnet peer.
+fn has_concrete_tailnet_ip(line: &str) -> bool {
+    line.match_indices("100.").any(|(i, _)| {
+        if line[..i].ends_with(|c: char| c.is_ascii_digit() || c == '.') {
+            return false;
+        }
+        let octets: Vec<u32> = line[i..]
+            .split('.')
+            .take(4)
+            .map_while(|part| {
+                let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
+                digits.parse().ok()
+            })
+            .collect();
+        octets.len() == 4 && (64..=127).contains(&octets[1]) && (octets[1], octets[2]) != (64, 0)
     })
 }
 
@@ -220,4 +243,12 @@ fn each_rule_rejects_identity_and_accepts_the_documentation_value() {
 
     assert!(has_private_lan_ip("NAS at 192.168.86.27"));
     assert!(!has_private_lan_ip("tailnet peer at 100.64.0.2"));
+
+    assert!(has_concrete_tailnet_ip(
+        "NAS reachable at 100.95.3.7 over Tailscale"
+    ));
+    assert!(!has_concrete_tailnet_ip("tailnet peer at 100.64.0.2"));
+    assert!(!has_concrete_tailnet_ip(
+        "public 100.20.3.4 and version 1.100.64.5"
+    ));
 }

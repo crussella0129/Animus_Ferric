@@ -2,7 +2,7 @@
 //! Ferric tool names. Specs are embedded via `include_str!` and parsed at
 //! runtime; `deny_unknown_fields` rejects typos.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -40,7 +40,9 @@ pub(crate) const fn default_spec_version() -> u32 {
     1
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+/// A trusted check launched directly without a shell. `argv[0]` is a literal
+/// executable or the sole supported executable placeholder, `{python}`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CommandCheck {
     pub name: String,
@@ -82,10 +84,9 @@ pub enum ExpectKind {
     Missing,
 }
 
-/// The embedded ladder. L0/L3/L4 are runnable with the s2 toolset; L1/L2 use
-/// move_path/make_dir (added in T-205); L5/L6 need richer verification and are
-/// included as specs but flagged for later (they have no post-verify runner
-/// yet — they exercise file creation only).
+/// The embedded L0–L6 ladder, one TOML spec per level. L1/L2 use
+/// move_path/make_dir; L3–L6 (spec version 2) are graded by trusted
+/// fixed-argv `{python}` checks.
 pub const EMBEDDED_SPECS: &[&str] = &[
     include_str!("../specs/l0.toml"),
     include_str!("../specs/l1.toml"),

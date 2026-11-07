@@ -20,13 +20,14 @@ use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::Response;
 use axum::routing::post;
+use ferric_iron::wire::{SseDecoder, SseLine};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::receipt::{Receipt, ReceiptSink};
-use crate::sse::{ChunkIdentity, SseLine, SseLineBuffer, classify};
+use crate::sse::ChunkIdentity;
 use crate::transform::{
     Constrained, Transformed, message_hashes, prefix_hash, sha256_hex, transform,
 };
@@ -74,14 +75,10 @@ pub fn check_loopback(addr: &SocketAddr) -> Result<(), String> {
     }
 }
 
-/// An HTTP client for the (loopback) upstream: no proxies, no redirects.
-pub fn upstream_client() -> Result<reqwest::Client, reqwest::Error> {
-    upstream_client_with_key(None)
-}
-
-/// [`upstream_client`] that presents `key` as the upstream's bearer token
-/// (llama.cpp `--api-key-file`) on every request (sprint 127, INT-0015).
-pub fn upstream_client_with_key(key: Option<&str>) -> Result<reqwest::Client, reqwest::Error> {
+/// An HTTP client for the (loopback) upstream: no proxies, no redirects. With
+/// `key`, it presents the upstream's bearer token (llama.cpp
+/// `--api-key-file`) on every request (sprint 127, INT-0015).
+pub fn upstream_client(key: Option<&str>) -> Result<reqwest::Client, reqwest::Error> {
     let mut headers = HeaderMap::new();
     if let Some(mut value) =
         key.and_then(|key| HeaderValue::from_str(&format!("Bearer {key}")).ok())
@@ -100,7 +97,7 @@ pub fn upstream_client_with_key(key: Option<&str>) -> Result<reqwest::Client, re
 /// [`gated_router`]; this one is for in-process harnesses that own the
 /// listener (tests, the pilot runner).
 pub fn router(config: ValveConfig, receipts: ReceiptSink) -> Result<Router, reqwest::Error> {
-    Ok(router_with_client(config, receipts, upstream_client()?))
+    Ok(router_with_client(config, receipts, upstream_client(None)?))
 }
 
 /// The router behind the network gate (sprint 127, INT-0015): every request,
@@ -114,7 +111,7 @@ pub fn gated_router(
     gate: ferric_gate::Gate,
     upstream_key: Option<&str>,
 ) -> Result<Router, reqwest::Error> {
-    let client = upstream_client_with_key(upstream_key)?;
+    let client = upstream_client(upstream_key)?;
     Ok(ferric_gate::protect(
         router_with_client(config, receipts, client),
         gate,
@@ -286,6 +283,25 @@ struct Job {
 }
 
 impl Job {
+    /// The constrained exchange this job runs against the upstream.
+    fn exchange<'a>(
+        &'a self,
+        constrained: &'a Constrained,
+        call_id: String,
+        identity: ChunkIdentity,
+    ) -> Exchange<'a> {
+        Exchange {
+            client: &self.state.client,
+            url: self.url.clone(),
+            authorization: self.authorization.clone(),
+            body: &constrained.upstream_body,
+            admitted: constrained.admitted.clone(),
+            call_id,
+            identity,
+            heartbeat: self.state.config.heartbeat,
+        }
+    }
+
     fn finish(mut self, outcome: &str) {
         self.receipt.outcome = outcome.to_string();
         self.receipt.wall_ms = self.started.elapsed().as_millis() as u64;
@@ -326,16 +342,7 @@ async fn constrain(
                 let tx = tx.clone();
                 async move { tx.closed().await }
             };
-            let exchange = Exchange {
-                client: &job.state.client,
-                url: job.url.clone(),
-                authorization: job.authorization.clone(),
-                body: &constrained.upstream_body,
-                admitted: constrained.admitted.clone(),
-                call_id,
-                identity,
-                heartbeat: job.state.config.heartbeat,
-            };
+            let exchange = job.exchange(&constrained, call_id, identity);
             let outcome = run_constrained(exchange, Some(tx), Some(started_tx), closed).await;
             record_constrained(job, outcome);
         });
@@ -354,16 +361,7 @@ async fn constrain(
     let body_identity = identity.clone();
     tokio::spawn(async move {
         let closed = async move { alive_tx.closed().await };
-        let exchange = Exchange {
-            client: &job.state.client,
-            url: job.url.clone(),
-            authorization: job.authorization.clone(),
-            body: &constrained.upstream_body,
-            admitted: constrained.admitted.clone(),
-            call_id,
-            identity,
-            heartbeat: job.state.config.heartbeat,
-        };
+        let exchange = job.exchange(&constrained, call_id, identity);
         let outcome = run_constrained(exchange, None, None, closed).await;
         let reply = match (&outcome.resolution, &outcome.error) {
             (Some(resolution), _) => Ok(completion_object(
@@ -488,7 +486,9 @@ async fn forward(mut job: Job, body: Bytes, request: Option<Value>, mode: &str) 
             {
                 return job.finish("cancelled");
             }
-            let mut lines = SseLineBuffer::new();
+            // `None` once the upstream sent malformed UTF-8: the bytes are
+            // still forwarded unchanged, but the receipt stops reading them.
+            let mut decoder = Some(SseDecoder::default());
             let mut verdict = "completed";
             loop {
                 tokio::select! {
@@ -499,8 +499,17 @@ async fn forward(mut job: Job, body: Bytes, request: Option<Value>, mode: &str) 
                     }
                     read = response.chunk() => match read {
                         Ok(Some(bytes)) => {
-                            for line in lines.push(&bytes) {
-                                if let SseLine::Data(value) = classify(&line) {
+                            let lines = match decoder.as_mut().map(|decoder| decoder.push(&bytes)) {
+                                Some(Ok(lines)) => lines,
+                                Some(Err(_)) => {
+                                    decoder = None;
+                                    job.receipt.error_class = Some("upstream_stream".to_string());
+                                    Vec::new()
+                                }
+                                None => Vec::new(),
+                            };
+                            for line in lines {
+                                if let SseLine::Data(value) = line {
                                     stats.absorb(&value);
                                     if let Some(reason) = value.pointer("/choices/0/finish_reason").and_then(Value::as_str) {
                                         job.receipt.finish_reason = Some(reason.to_string());

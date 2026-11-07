@@ -21,16 +21,6 @@ fn make_dir_turn(i: usize) -> ferric_provider::Completion {
     )])
 }
 
-fn progress_actions(records: &[ferric_trace::TraceRecord]) -> Vec<String> {
-    records
-        .iter()
-        .filter_map(|r| match &r.event {
-            ParsedEvent::Known(Event::NoProgressGuard { action }) => Some(action.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
 fn repetition_fired(records: &[ferric_trace::TraceRecord]) -> bool {
     records
         .iter()
@@ -59,7 +49,10 @@ fn flail_warns_then_stops_with_no_progress() {
         },
     );
     assert_eq!(result.outcome.stop, StopReason::NoProgress);
-    assert_eq!(progress_actions(&result.records), vec!["warned", "stopped"]);
+    assert_eq!(
+        guard_actions(&result.records, "no_progress_guard"),
+        vec!["warned", "stopped"]
+    );
     assert_eq!(session_end_reason(&result.records), "no_progress");
     assert!(
         !repetition_fired(&result.records),
@@ -81,5 +74,8 @@ fn a_tool_change_resets_and_avoids_the_stop() {
     let result = run_scripted(script, &nano_policy(), |_| {});
     assert_eq!(result.outcome.stop, StopReason::FinalText);
     // Exactly one warn, never a stop.
-    assert_eq!(progress_actions(&result.records), vec!["warned"]);
+    assert_eq!(
+        guard_actions(&result.records, "no_progress_guard"),
+        vec!["warned"]
+    );
 }

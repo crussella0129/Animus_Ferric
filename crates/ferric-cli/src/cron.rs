@@ -12,7 +12,7 @@
 //! - `ferric cron run [--dry-run]`       — run all currently-due jobs once
 //! - `ferric cron watch [--interval 60s]`— loop, running due jobs until Ctrl-C
 //!
-//! Pure scheduling/parsing lives in `ferric-cron`; this module drives it and
+//! Pure scheduling and parsing live in [`schedule`]; this module drives it and
 //! performs execution. Last-run state is `.ferric/cron/.state.json`.
 
 use std::path::{Path, PathBuf};
@@ -20,7 +20,9 @@ use std::process::{Command, ExitCode};
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
-use ferric_cron::{
+mod schedule;
+
+use schedule::{
     CronState, JobCommand, due_jobs, job_toml, load_jobs, next_due_ms, parse_interval_ms,
     parse_schedule,
 };
@@ -80,7 +82,7 @@ pub fn run_cron(args: CronArgs) -> ExitCode {
     let cron_dir = workspace.join(".ferric").join("cron");
     let state_path = cron_dir.join(".state.json");
 
-    match args.command {
+    crate::exit_with(match args.command {
         CronCommand::Add {
             name,
             schedule,
@@ -89,17 +91,11 @@ pub fn run_cron(args: CronArgs) -> ExitCode {
             mock,
         } => run_add(&cron_dir, &name, &schedule, &command, prompt, mock),
         CronCommand::List => run_list(&cron_dir, &state_path),
-        CronCommand::Run { dry_run } => {
-            match run_due_once(&workspace, &cron_dir, &state_path, dry_run) {
-                Ok(_) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("cron run failed: {e}");
-                    ExitCode::FAILURE
-                }
-            }
-        }
+        CronCommand::Run { dry_run } => run_due_once(&workspace, &cron_dir, &state_path, dry_run)
+            .map(|_| ExitCode::SUCCESS)
+            .map_err(|e| format!("cron run failed: {e}")),
         CronCommand::Watch { interval } => run_watch(&workspace, &cron_dir, &state_path, &interval),
-    }
+    })
 }
 
 fn run_add(
@@ -109,62 +105,46 @@ fn run_add(
     command: &str,
     prompt: Option<String>,
     mock: bool,
-) -> ExitCode {
+) -> Result<ExitCode, String> {
     // Validate the schedule up front so a bad job file is never written.
-    if let Err(e) = parse_schedule(schedule) {
-        eprintln!("cron add: {e}");
-        return ExitCode::FAILURE;
-    }
+    parse_schedule(schedule).map_err(|e| format!("cron add: {e}"))?;
     let job_command = match command.trim().to_ascii_lowercase().as_str() {
         "dream" => JobCommand::Dream,
         "query" => match prompt {
             Some(p) if !p.trim().is_empty() => JobCommand::Query { prompt: p, mock },
-            _ => {
-                eprintln!("cron add: --command query requires a non-empty --prompt");
-                return ExitCode::FAILURE;
-            }
+            _ => return Err("cron add: --command query requires a non-empty --prompt".to_string()),
         },
         other => {
-            eprintln!("cron add: unknown command '{other}' (expected `dream` or `query`)");
-            return ExitCode::FAILURE;
+            return Err(format!(
+                "cron add: unknown command '{other}' (expected `dream` or `query`)"
+            ));
         }
     };
 
     let path = cron_dir.join(format!("{name}.toml"));
     if path.exists() {
-        eprintln!(
+        return Err(format!(
             "cron add: {} already exists (edit it directly)",
             path.display()
-        );
-        return ExitCode::FAILURE;
+        ));
     }
-    if let Err(e) = std::fs::create_dir_all(cron_dir) {
-        eprintln!("cron add: cannot create {}: {e}", cron_dir.display());
-        return ExitCode::FAILURE;
-    }
-    if let Err(e) = std::fs::write(&path, job_toml(schedule, &job_command)) {
-        eprintln!("cron add: cannot write {}: {e}", path.display());
-        return ExitCode::FAILURE;
-    }
+    std::fs::create_dir_all(cron_dir)
+        .map_err(|e| format!("cron add: cannot create {}: {e}", cron_dir.display()))?;
+    std::fs::write(&path, job_toml(schedule, &job_command))
+        .map_err(|e| format!("cron add: cannot write {}: {e}", path.display()))?;
     println!(
         "Added cron job '{name}' ({schedule}, {}) at {}",
         job_command.kind(),
         path.display()
     );
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }
 
-fn run_list(cron_dir: &Path, state_path: &Path) -> ExitCode {
-    let jobs = match load_jobs(cron_dir) {
-        Ok(j) => j,
-        Err(e) => {
-            eprintln!("cron list failed: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+fn run_list(cron_dir: &Path, state_path: &Path) -> Result<ExitCode, String> {
+    let jobs = load_jobs(cron_dir).map_err(|e| format!("cron list failed: {e}"))?;
     if jobs.is_empty() {
         println!("No cron jobs configured in {}", cron_dir.display());
-        return ExitCode::SUCCESS;
+        return Ok(ExitCode::SUCCESS);
     }
     let state = CronState::load(state_path);
     let now = now_ms() as u64;
@@ -191,7 +171,7 @@ fn run_list(cron_dir: &Path, state_path: &Path) -> ExitCode {
             next_str
         );
     }
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Run every due job once. Returns the number of jobs run. State is advanced per
@@ -239,28 +219,21 @@ fn run_due_once(
     Ok(ran)
 }
 
-fn run_watch(workspace: &Path, cron_dir: &Path, state_path: &Path, interval: &str) -> ExitCode {
-    let interval = match parse_interval_ms(interval) {
-        Ok(ms) => Duration::from_millis(ms),
-        Err(e) => {
-            eprintln!("cron watch: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let runtime = match tokio::runtime::Builder::new_current_thread()
+fn run_watch(
+    workspace: &Path,
+    cron_dir: &Path,
+    state_path: &Path,
+    interval: &str,
+) -> Result<ExitCode, String> {
+    let interval_ms = parse_interval_ms(interval).map_err(|e| format!("cron watch: {e}"))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-    {
-        Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("cron watch: tokio runtime: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+        .map_err(|e| format!("cron watch: tokio runtime: {e}"))?;
     println!(
         "Watching {} every {} (Ctrl-C to stop)…",
         cron_dir.display(),
-        interval_str(interval)
+        human_ms(interval_ms)
     );
     runtime.block_on(async {
         loop {
@@ -272,11 +245,11 @@ fn run_watch(workspace: &Path, cron_dir: &Path, state_path: &Path, interval: &st
                     println!("\nStopping cron watcher.");
                     break;
                 }
-                _ = tokio::time::sleep(interval) => {}
+                _ = tokio::time::sleep(Duration::from_millis(interval_ms)) => {}
             }
         }
     });
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Spawn one job as a `ferric` subprocess in `workspace`, blocking until it
@@ -310,10 +283,6 @@ fn spawn_job(workspace: &Path, command: &JobCommand) -> Result<bool, String> {
     }
     let status = cmd.status().map_err(|e| e.to_string())?;
     Ok(status.success())
-}
-
-fn interval_str(d: Duration) -> String {
-    human_ms(d.as_millis() as u64)
 }
 
 /// Compact human duration for `list`/`watch` output.

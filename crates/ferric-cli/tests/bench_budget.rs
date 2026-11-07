@@ -8,8 +8,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-#[path = "../src/test_process_containment.rs"]
-mod test_process_containment;
+mod support;
 
 fn bench(root: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ferric"));
@@ -26,8 +25,7 @@ fn bench(root: &Path) -> Command {
 }
 
 fn output(command: &mut Command) -> Output {
-    test_process_containment::output_bounded(command, Duration::from_secs(45))
-        .expect("benchmark finished within its fixture budget and every child was reaped")
+    support::output(command, Duration::from_secs(45))
 }
 
 fn read_rows(root: &Path, output: &Output) -> Vec<Value> {
@@ -256,11 +254,7 @@ fn bench_no_controls_preserve_legacy_mock_defaults() {
 #[cfg(feature = "backend-openai")]
 mod http {
     use super::*;
-    use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
-    use std::sync::{Arc, Mutex, mpsc};
-    use std::thread::JoinHandle;
-    use std::time::Instant;
+    use support::FakeOpenAi as Server;
 
     #[derive(Clone, Copy)]
     enum Reply {
@@ -270,150 +264,31 @@ mod http {
         Stall,
     }
 
-    struct Server {
-        endpoint: String,
-        requests: Arc<Mutex<Vec<Value>>>,
-        stop: Option<mpsc::Sender<()>>,
-        worker: Option<JoinHandle<()>>,
-    }
-
-    impl Server {
-        fn new(reply: Reply) -> Self {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.set_nonblocking(true).unwrap();
-            let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
-            let requests = Arc::new(Mutex::new(Vec::new()));
-            let captured = requests.clone();
-            let (stop, stopped) = mpsc::channel();
-            let worker = std::thread::spawn(move || {
-                let deadline = Instant::now() + Duration::from_secs(40);
-                while Instant::now() < deadline {
-                    if stopped.try_recv().is_ok() {
-                        return;
-                    }
-                    match listener.accept() {
-                        Ok((mut stream, _)) => {
-                            // Winsock accepts inherit the listener's mode.
-                            stream.set_nonblocking(false).unwrap();
-                            stream
-                                .set_read_timeout(Some(Duration::from_secs(2)))
-                                .unwrap();
-                            stream
-                                .set_write_timeout(Some(Duration::from_secs(2)))
-                                .unwrap();
-                            let request = read_request(&mut stream);
-                            let index = {
-                                let mut requests = captured.lock().unwrap();
-                                let index = requests.len();
-                                requests.push(request);
-                                index
-                            };
-                            if matches!(reply, Reply::Stall) {
-                                // A finite request fixture, released promptly by
-                                // its owner after the benchmark checked reaping.
-                                let _ = stopped.recv_timeout(Duration::from_secs(20));
-                                return;
-                            }
-                            let (status, body) = if matches!(reply, Reply::ProviderError) {
-                                ("500 Internal Server Error", json!({"error":{"message":"scripted provider failure","type":"fixture"}}).to_string())
-                            } else {
-                                let action = if matches!(reply, Reply::Complete) && index == 0 {
-                                    json!({"thought":"inspect","tool":"list_dir","args":{"path":"."}})
-                                } else {
-                                    json!({"thought":"complete","tool":"task_complete","args":{"summary":"listed the fixture files"}})
-                                };
-                                let finish = if matches!(reply, Reply::OutputLimit) {
-                                    "length"
-                                } else {
-                                    "stop"
-                                };
-                                ("200 OK", json!({
-                                    "choices":[{"index":0,"message":{"role":"assistant","content":action.to_string()},"finish_reason":finish}],
-                                    "usage":{"prompt_tokens":20,"completion_tokens":10}
-                                }).to_string())
-                            };
-                            let response = format!(
-                                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                                body.len()
-                            );
-                            stream.write_all(response.as_bytes()).unwrap();
-                        }
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            if stopped.recv_timeout(Duration::from_millis(5)).is_ok() {
-                                return;
-                            }
-                        }
-                        Err(error) => panic!("benchmark fixture accept: {error}"),
-                    }
-                }
-            });
-            Self {
-                endpoint,
-                requests,
-                stop: Some(stop),
-                worker: Some(worker),
-            }
-        }
-
-        fn finish(&mut self) {
-            if let Some(stop) = self.stop.take() {
-                let _ = stop.send(());
-            }
-            if let Some(worker) = self.worker.take() {
-                let deadline = Instant::now() + Duration::from_secs(6);
-                while !worker.is_finished() {
-                    if Instant::now() >= deadline {
-                        test_process_containment::abort_on_cleanup_failure(
-                            "benchmark HTTP fixture",
-                            "join deadline exceeded",
-                        );
-                    }
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-                if let Err(payload) = worker.join()
-                    && !std::thread::panicking()
-                {
-                    std::panic::resume_unwind(payload);
-                }
-            }
-        }
-    }
-
-    impl Drop for Server {
-        fn drop(&mut self) {
-            self.finish();
-        }
-    }
-
-    fn read_request(stream: &mut TcpStream) -> Value {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut bytes = Vec::new();
-        let mut buffer = [0; 4096];
-        loop {
-            assert!(Instant::now() < deadline, "bounded HTTP framing deadline");
-            assert!(bytes.len() <= 512 * 1024, "bounded HTTP request size");
-            let read = stream
-                .read(&mut buffer)
-                .expect("HTTP fixture request bytes");
-            assert!(read > 0, "request ended before body");
-            bytes.extend_from_slice(&buffer[..read]);
-            if let Some(split) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                let header = std::str::from_utf8(&bytes[..split]).unwrap();
-                assert!(header.starts_with("POST /v1/chat/completions "));
-                let length: usize = header
-                    .lines()
-                    .find_map(|line| {
-                        let (key, value) = line.split_once(':')?;
-                        key.eq_ignore_ascii_case("content-length")
-                            .then(|| value.trim().parse().unwrap())
-                    })
-                    .expect("content length");
-                assert!(length <= 512 * 1024);
-                if bytes.len() >= split + 4 + length {
-                    return serde_json::from_slice(&bytes[split + 4..split + 4 + length]).unwrap();
-                }
-            }
-        }
+    /// A scripted provider: `Complete` lists the fixture then completes,
+    /// `OutputLimit` answers at the length limit, `ProviderError` fails and
+    /// `Stall` never answers.
+    fn server(reply: Reply) -> Server {
+        Server::new(move |index, _| match reply {
+            Reply::Stall => None,
+            Reply::ProviderError => Some((
+                "500 Internal Server Error",
+                "application/json",
+                json!({"error":{"message":"scripted provider failure","type":"fixture"}})
+                    .to_string(),
+            )),
+            Reply::Complete if index == 0 => support::completion(
+                &json!({"thought":"inspect","tool":"list_dir","args":{"path":"."}}),
+                "stop",
+            ),
+            Reply::Complete | Reply::OutputLimit => support::completion(
+                &json!({"thought":"complete","tool":"task_complete","args":{"summary":"listed the fixture files"}}),
+                if matches!(reply, Reply::OutputLimit) {
+                    "length"
+                } else {
+                    "stop"
+                },
+            ),
+        })
     }
 
     fn real_bench(root: &Path, server: &Server) -> Command {
@@ -455,155 +330,137 @@ mod http {
                 "calibration_evidence":null
             })
         }
-        let states = [
-            ("absent", None, vec!["--max-output-tokens", "1024"]),
+        // One profile-store state per mode; the publication unit test covers
+        // the absent/valid/unrelated/malformed state matrix in both modes.
+        let cases = [
             (
+                false,
                 "valid-target",
-                Some(
-                    serde_json::to_vec_pretty(&json!([
-                        profile("budget-fixture-a"),
-                        profile("budget-fixture-b")
-                    ]))
-                    .unwrap(),
-                ),
+                serde_json::to_vec_pretty(&json!([
+                    profile("budget-fixture-a"),
+                    profile("budget-fixture-b")
+                ]))
+                .unwrap(),
                 vec!["--timeout-scale", "0.5"],
             ),
             (
-                "unrelated-multi-model",
-                Some(
-                    serde_json::to_vec_pretty(&json!([
-                        profile("unrelated-fixture-one"),
-                        profile("unrelated-fixture-two")
-                    ]))
-                    .unwrap(),
-                ),
-                vec!["--timeout-scale", "2"],
-            ),
-            (
+                true,
                 "malformed",
-                Some(b"[ deliberately incomplete profile data\r\n".to_vec()),
+                b"[ deliberately incomplete profile data\r\n".to_vec(),
                 vec!["--timeout-scale", "0.5", "--max-output-tokens", "1024"],
             ),
         ];
-        for (state, before, controls) in states {
-            for fleet in [false, true] {
-                let root = tempfile::tempdir().unwrap();
-                let results_dir = root.path().join("results");
-                let profile_path = results_dir.join("model_profiles.json");
-                if let Some(bytes) = &before {
-                    std::fs::create_dir(&results_dir).unwrap();
-                    std::fs::write(&profile_path, bytes).unwrap();
-                }
-                let mut server = Server::new(Reply::ProviderError);
-                let mut command = bench(root.path());
-                // The Cargo-built Ferric child accepts --version for the
-                // preflight, then rejects Python's -m check argv. This proves
-                // deterministic nonzero grading plumbing, not Python runtime
-                // availability or successful authoritative grader execution.
-                command
-                    .args([
-                        "--params-b",
-                        "7",
-                        "--ctx",
-                        "4096",
-                        "--api-base",
-                        &server.endpoint,
-                    ])
-                    .args(&controls)
-                    .arg("--python-bin")
-                    .arg(env!("CARGO_BIN_EXE_ferric"));
-                if fleet {
-                    command.args(["--models", "budget-fixture-a,budget-fixture-b"]);
-                } else {
-                    command.args(["--model", "budget-fixture-a"]);
-                }
-                let result = output(&mut command);
-                server.finish();
-                // Fleet compatibility: a complete, infrastructure-clean
-                // measurement returns success even when its raw tasks fail.
-                assert_eq!(
-                    result.status.success(),
-                    fleet,
-                    "state={state} fleet={fleet}\n{}",
-                    String::from_utf8_lossy(&result.stderr)
-                );
-                let after = match std::fs::read(&profile_path) {
-                    Ok(bytes) => Some(bytes),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => panic!("profile readback: {error}"),
-                };
-                assert_eq!(
-                    after, before,
-                    "profile bytes changed: state={state} fleet={fleet}"
-                );
-                let rows = read_rows(root.path(), &result);
-                let count = if fleet { 14 } else { 7 };
-                assert_eq!(rows.len(), count);
-                let requests = server.requests.lock().unwrap();
-                assert_eq!(requests.len(), count);
-                for model in if fleet {
-                    vec!["budget-fixture-a", "budget-fixture-b"]
-                } else {
-                    vec!["budget-fixture-a"]
-                } {
-                    assert_eq!(
-                        requests
-                            .iter()
-                            .filter(|request| request["model"] == model)
-                            .count(),
-                        7
-                    );
-                }
-                for row in &rows {
-                    assert_eq!(
-                        row["completed"], false,
-                        "scripted provider failure is not a successful ladder"
-                    );
-                    assert_eq!(row["terminator"], "provider_error");
-                    assert_eq!(row["timed_out"], false);
-                    assert_eq!(row["infrastructure_error"], Value::Null);
-                    let summary = summary(root.path(), row);
-                    assert_eq!(summary["complete"], true);
-                    assert_eq!(summary["infrastructure_clean"], true);
-                    assert_eq!(summary["observed_rows"], 7);
-                    assert_eq!(summary["calibration"]["full_ladder"], true);
-                    assert_eq!(summary["calibration"]["diagnostic"], true);
-                    assert_eq!(summary["calibration"]["eligible"], false);
-                    assert_eq!(summary["calibration"]["measured_level"], Value::Null);
-                    assert!(
-                        summary["calibration"]["ineligible_reason"]
-                            .as_str()
-                            .unwrap()
-                            .contains("diagnostic benchmark budgets")
-                    );
-                    assert!(
-                        summary["levels"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .all(|level| level["failures"] == 1)
-                    );
-                    assert_retained_pair(root.path(), row, &summary);
-                    assert_operator_evidence(&result, root.path(), row);
-                }
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                assert!(stdout.contains("diagnostic budgets — profile left unchanged"));
-                assert!(stdout.contains("observations only"));
-                assert!(stdout.contains("PROVIDER ERROR (provider_error)"));
-                assert!(stdout.contains("DIAGNOSTIC — PROVIDER ERROR (provider_error)"));
-                assert!(!stdout.contains("Agentic Capability Leaderboard"));
-                assert!(!stdout.contains("calibrated budget-fixture"));
-                assert!(!stdout.contains("INFRASTRUCTURE FAILURE"));
-                assert!(!stderr.contains("cannot write model profile"));
-                assert!(!stderr.contains("calibration evidence is not eligible"));
+        for (fleet, state, before, controls) in cases {
+            let root = tempfile::tempdir().unwrap();
+            let results_dir = root.path().join("results");
+            let profile_path = results_dir.join("model_profiles.json");
+            std::fs::create_dir(&results_dir).unwrap();
+            std::fs::write(&profile_path, &before).unwrap();
+            let mut server = server(Reply::ProviderError);
+            let mut command = bench(root.path());
+            // The Cargo-built Ferric child accepts --version for the
+            // preflight, then rejects Python's -m check argv. This proves
+            // deterministic nonzero grading plumbing, not Python runtime
+            // availability or successful authoritative grader execution.
+            command
+                .args([
+                    "--params-b",
+                    "7",
+                    "--ctx",
+                    "4096",
+                    "--api-base",
+                    &server.endpoint,
+                ])
+                .args(&controls)
+                .arg("--python-bin")
+                .arg(env!("CARGO_BIN_EXE_ferric"));
+            if fleet {
+                command.args(["--models", "budget-fixture-a,budget-fixture-b"]);
+            } else {
+                command.args(["--model", "budget-fixture-a"]);
             }
+            let result = output(&mut command);
+            server.finish();
+            // Fleet compatibility: a complete, infrastructure-clean
+            // measurement returns success even when its raw tasks fail.
+            assert_eq!(
+                result.status.success(),
+                fleet,
+                "state={state} fleet={fleet}\n{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(
+                std::fs::read(&profile_path).unwrap(),
+                before,
+                "profile bytes changed: state={state} fleet={fleet}"
+            );
+            let rows = read_rows(root.path(), &result);
+            let count = if fleet { 14 } else { 7 };
+            assert_eq!(rows.len(), count);
+            let requests = server.requests.lock().unwrap();
+            assert_eq!(requests.len(), count);
+            for model in if fleet {
+                vec!["budget-fixture-a", "budget-fixture-b"]
+            } else {
+                vec!["budget-fixture-a"]
+            } {
+                assert_eq!(
+                    requests
+                        .iter()
+                        .filter(|request| request["model"] == model)
+                        .count(),
+                    7
+                );
+            }
+            for row in &rows {
+                assert_eq!(
+                    row["completed"], false,
+                    "scripted provider failure is not a successful ladder"
+                );
+                assert_eq!(row["terminator"], "provider_error");
+                assert_eq!(row["timed_out"], false);
+                assert_eq!(row["infrastructure_error"], Value::Null);
+                let summary = summary(root.path(), row);
+                assert_eq!(summary["complete"], true);
+                assert_eq!(summary["infrastructure_clean"], true);
+                assert_eq!(summary["observed_rows"], 7);
+                assert_eq!(summary["calibration"]["full_ladder"], true);
+                assert_eq!(summary["calibration"]["diagnostic"], true);
+                assert_eq!(summary["calibration"]["eligible"], false);
+                assert_eq!(summary["calibration"]["measured_level"], Value::Null);
+                assert!(
+                    summary["calibration"]["ineligible_reason"]
+                        .as_str()
+                        .unwrap()
+                        .contains("diagnostic benchmark budgets")
+                );
+                assert!(
+                    summary["levels"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|level| level["failures"] == 1)
+                );
+                assert_retained_pair(root.path(), row, &summary);
+                assert_operator_evidence(&result, root.path(), row);
+            }
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(stdout.contains("diagnostic budgets — profile left unchanged"));
+            assert!(stdout.contains("observations only"));
+            assert!(stdout.contains("PROVIDER ERROR (provider_error)"));
+            assert!(stdout.contains("DIAGNOSTIC — PROVIDER ERROR (provider_error)"));
+            assert!(!stdout.contains("Agentic Capability Leaderboard"));
+            assert!(!stdout.contains("calibrated budget-fixture"));
+            assert!(!stdout.contains("INFRASTRUCTURE FAILURE"));
+            assert!(!stderr.contains("cannot write model profile"));
+            assert!(!stderr.contains("calibration evidence is not eligible"));
         }
     }
 
     #[test]
     fn diagnostic_budget_operator_output() {
-        let mut server = Server::new(Reply::Complete);
+        let mut server = server(Reply::Complete);
         let root = tempfile::tempdir().unwrap();
         let result = output(&mut real_bench(root.path(), &server));
         server.finish();
@@ -631,7 +488,7 @@ mod http {
 
     #[test]
     fn bench_budget_trace_sidecar_roundtrip() {
-        let mut server = Server::new(Reply::Complete);
+        let mut server = server(Reply::Complete);
         let root = tempfile::tempdir().unwrap();
         let result = output(real_bench(root.path(), &server).args(["--timeout-scale", "0.625"]));
         server.finish();
@@ -683,7 +540,7 @@ mod http {
             (Reply::ProviderError, "provider_error", 1),
             (Reply::OutputLimit, "truncated_action", 2),
         ] {
-            let mut server = Server::new(reply);
+            let mut server = server(reply);
             let root = tempfile::tempdir().unwrap();
             let result = output(&mut real_bench(root.path(), &server));
             server.finish();
@@ -716,7 +573,7 @@ mod http {
 
     #[test]
     fn bench_parent_timeout_retains_partial_request_evidence() {
-        let mut server = Server::new(Reply::Stall);
+        let mut server = server(Reply::Stall);
         let root = tempfile::tempdir().unwrap();
         let result = output(real_bench(root.path(), &server).args(["--timeout-scale", "0.1"]));
         server.finish();
@@ -762,7 +619,7 @@ mod http {
 
     #[test]
     fn bench_budget_recording_failure_is_infrastructure() {
-        let mut server = Server::new(Reply::Complete);
+        let mut server = server(Reply::Complete);
         let root = tempfile::tempdir().unwrap();
         let results = root.path().join("results");
         std::fs::create_dir(&results).unwrap();
@@ -805,7 +662,7 @@ mod http {
 
     #[test]
     fn bench_budget_row_append_failure_is_infrastructure() {
-        let mut server = Server::new(Reply::Complete);
+        let mut server = server(Reply::Complete);
         let root = tempfile::tempdir().unwrap();
         let results = root.path().join("results");
         std::fs::create_dir_all(results.join("results.jsonl")).unwrap();

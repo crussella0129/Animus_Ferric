@@ -230,6 +230,34 @@ pub fn managed_engine(root: &Path) -> Option<PathBuf> {
     (server.is_absolute() && server.is_file()).then_some(server)
 }
 
+/// The engine `ferric setup` installed under the per-user engine root.
+pub fn installed() -> Option<PathBuf> {
+    crate::paths::engine_root().and_then(|root| managed_engine(&root))
+}
+
+/// `llama-server` on PATH: the first absolute entry, among the first 256,
+/// that holds it, canonicalized. `None` when PATH is unset or no entry holds
+/// it. Relative and empty entries are skipped, so the search never reaches
+/// the current directory.
+pub fn on_path() -> Option<std::io::Result<PathBuf>> {
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths)
+        .take(256)
+        .filter(|directory| directory.is_absolute())
+        .map(|directory| directory.join(server_file_name()))
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.canonicalize())
+}
+
+/// The engine to launch: `llama-server` on PATH, else the one `ferric setup`
+/// installed (sprint 128, INT-0016).
+pub fn locate() -> Option<PathBuf> {
+    match on_path() {
+        Some(Ok(path)) => Some(path),
+        _ => installed(),
+    }
+}
+
 fn tar_program() -> PathBuf {
     if cfg!(windows) {
         // Never resolve tar through the current directory or PATH on

@@ -4,14 +4,16 @@
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use common::{FINAL_ACTION, FakeUpstream, Reply, TOOL_ACTION, content_frame, stream_of};
-use ferric_valve::probe::{ProbeError, probe_enforcement};
+use ferric_valve::pilot::read_jsonl;
+use ferric_valve::probe::probe_enforcement;
 use ferric_valve::receipt::ReceiptSink;
 use ferric_valve::server::upstream_client;
-use ferric_valve::{ValveConfig, ValveMode, router, serve};
+use ferric_valve::sse::done_frame;
+use ferric_valve::{ValveConfig, ValveError, ValveMode, router, serve};
 use serde_json::{Value, json};
 
 const LIMIT: Duration = Duration::from_secs(10);
@@ -28,16 +30,8 @@ impl Valve {
     }
 
     fn receipts(&self) -> Vec<Value> {
-        read_receipts(&self.receipts)
+        read_jsonl(&self.receipts).unwrap()
     }
-}
-
-fn read_receipts(path: &Path) -> Vec<Value> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect()
 }
 
 async fn start_valve(upstream: &str, mode: ValveMode) -> Valve {
@@ -181,6 +175,9 @@ async fn upstream_http_error_yields_502_with_status() {
                 .contains("unsupported schema")
         );
         assert_eq!(upstream.requests().len(), 1, "no retry");
+        let receipts = receipts_eventually(&valve, 1).await;
+        assert_eq!(receipts[0]["error_class"], "upstream_http");
+        assert_eq!(receipts[0]["http_status"], 502);
     }
 }
 
@@ -189,11 +186,15 @@ async fn upstream_unreachable_yields_502() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
-    let valve = start_valve(&format!("http://{addr}"), ValveMode::Constrained).await;
-    let response = post(&valve.url(), &chat_request(false)).await;
-    assert_eq!(response.status(), 502);
-    let body: Value = serde_json::from_str(&text(response).await).unwrap();
-    assert_eq!(body["error"]["code"], "upstream_unreachable");
+    for stream in [false, true] {
+        let valve = start_valve(&format!("http://{addr}"), ValveMode::Constrained).await;
+        let response = post(&valve.url(), &chat_request(stream)).await;
+        assert_eq!(response.status(), 502, "stream={stream}");
+        let body: Value = serde_json::from_str(&text(response).await).unwrap();
+        assert_eq!(body["error"]["code"], "upstream_unreachable");
+        let receipts = receipts_eventually(&valve, 1).await;
+        assert_eq!(receipts[0]["error_class"], "upstream_unreachable");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -308,7 +309,7 @@ async fn probe_accepts_enforcing_upstream() {
         "choices": [{"index": 0, "message": {"role": "assistant", "content": "{\"ok\": \"yes\"}"}, "finish_reason": "stop"}]
     }))])
     .await;
-    probe_enforcement(&upstream_client().unwrap(), &upstream.base())
+    probe_enforcement(&upstream_client(None).unwrap(), &upstream.base())
         .await
         .unwrap();
     let sent = &upstream.requests()[0];
@@ -331,15 +332,15 @@ async fn probe_refuses_non_enforcing_upstream() {
     }))])
     .await;
     assert_eq!(
-        probe_enforcement(&upstream_client().unwrap(), &upstream.base())
+        probe_enforcement(&upstream_client(None).unwrap(), &upstream.base())
             .await
             .unwrap_err(),
-        ProbeError::NotEnforced("hello".to_string())
+        ValveError::NotEnforced("hello".to_string())
     );
     let failing = FakeUpstream::start(vec![Reply::Status(500, "boom".to_string())]).await;
     assert!(matches!(
-        probe_enforcement(&upstream_client().unwrap(), &failing.base()).await,
-        Err(ProbeError::Http { status: 500, .. })
+        probe_enforcement(&upstream_client(None).unwrap(), &failing.base()).await,
+        Err(ValveError::UpstreamHttp { status: 500, .. })
     ));
 }
 
@@ -349,7 +350,7 @@ async fn record_only_is_byte_faithful_streaming() {
         (Duration::ZERO, "data: {\"model\":\"fake-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n".to_string()),
         (Duration::ZERO, "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a\\\"}\"}}]},\"finish_reason\":null}]}\n\n".to_string()),
         (Duration::ZERO, common::finish_frame("tool_calls")),
-        (Duration::ZERO, common::done_frame()),
+        (Duration::ZERO, done_frame()),
     ]);
     let upstream = FakeUpstream::start(vec![native]).await;
     let valve = start_valve(&upstream.base(), ValveMode::RecordOnly).await;
@@ -372,6 +373,21 @@ async fn record_only_is_byte_faithful_streaming() {
     assert_eq!(receipts[0]["tool"], "read_file");
     assert_eq!(receipts[0]["cached_tokens"], 90);
     assert_eq!(receipts[0]["finish_reason"], "tool_calls");
+}
+
+/// Malformed UTF-8 is still forwarded byte-for-byte; only the receipt, which
+/// can no longer read the stream, records it.
+#[tokio::test(flavor = "multi_thread")]
+async fn record_only_forwards_malformed_utf8_unchanged() {
+    let wire = b"data: {\"choices\":[{\"delta\":{\"content\":\"\xff\"}}]}\n\n".to_vec();
+    let upstream = FakeUpstream::start(vec![Reply::Raw(wire.clone())]).await;
+    let valve = start_valve(&upstream.base(), ValveMode::RecordOnly).await;
+    let response = post(&valve.url(), &chat_request(true)).await;
+    let through = tokio::time::timeout(LIMIT, response.bytes()).await.unwrap();
+    assert_eq!(through.unwrap(), wire);
+    let receipts = receipts_eventually(&valve, 1).await;
+    assert_eq!(receipts[0]["outcome"], "completed");
+    assert_eq!(receipts[0]["error_class"], "upstream_stream");
 }
 
 #[tokio::test(flavor = "multi_thread")]

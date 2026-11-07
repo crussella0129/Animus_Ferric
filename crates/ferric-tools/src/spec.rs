@@ -1,12 +1,11 @@
-use serde::Serialize;
-
 use ferric_guard::{PermissionLevel, Workspace};
+use ferric_iron::ToolDescriptor;
 
 use crate::control::{ControlCapability, PrepareCtx, PrepareError, ToolPreparation};
 
 /// Declarative description of a tool: what the model sees (name, description,
 /// schema) plus what the harness enforces (permission level, ring).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
@@ -18,11 +17,31 @@ pub struct ToolSpec {
     pub ring: u8,
 }
 
+/// The model-facing wire shape of a spec: what the model is told a tool is.
+impl From<ToolSpec> for ToolDescriptor {
+    fn from(spec: ToolSpec) -> Self {
+        ToolDescriptor {
+            name: spec.name,
+            description: spec.description,
+            input_schema: spec.input_schema,
+        }
+    }
+}
+
 /// Execution context handed to tools. Tools must resolve every path they
 /// touch through `workspace` (defense in depth — the registry has already
 /// checked declared targets, but tools own their own discipline too).
 pub struct ToolCtx<'a> {
     pub workspace: &'a Workspace,
+}
+
+impl ToolCtx<'_> {
+    /// Resolve `path` inside the workspace boundary, as a tool error.
+    pub(crate) fn resolve(&self, path: &str) -> Result<std::path::PathBuf, String> {
+        self.workspace
+            .resolve(path)
+            .map_err(|e| format!("boundary: {e}"))
+    }
 }
 
 /// A tool implementation.

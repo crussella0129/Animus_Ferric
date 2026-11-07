@@ -5,12 +5,13 @@
 //! an external benchmark score or a promotion signal.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::summary::{RunProvenance, SampleStats, Wilson95};
+use crate::provenance::is_sha256_hex;
+use crate::results::{append_jsonl, write_pretty};
+use crate::summary::{RunProvenance, SampleStats, Wilson95, increment};
 use crate::verify::{CommandCheckResult, CommandCheckStatus};
 use ferric_core::HarnessPolicy;
 
@@ -18,7 +19,8 @@ use ferric_core::HarnessPolicy;
 /// evidence. Every new field has a serde default so historical version-one
 /// rows and summaries remain readable as single-arm legacy evidence.
 pub const AUTONOMY_RESULTS_SCHEMA_VERSION: u32 = 2;
-const STRICT_EVIDENCE_CONTEXT_SIZE: u32 = 8192;
+/// The context size every strict (paired or evidence) managed run requires.
+pub const STRICT_EVIDENCE_CONTEXT_SIZE: u32 = 8192;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -70,10 +72,6 @@ impl AutonomyEvaluationCoordinate {
                 harness_policy: HarnessPolicy::Evidence,
             },
         ]
-    }
-
-    pub fn key(self) -> String {
-        format!("{}/{}", self.arm.label(), self.harness_policy.label())
     }
 }
 
@@ -198,54 +196,79 @@ pub struct AutonomyTraceMetrics {
     pub truncations: u32,
     pub provider_error_stops: u32,
     pub history_compactions: u32,
-    #[serde(default)]
-    pub observations_recorded: u32,
-    #[serde(default)]
-    pub file_observations: u32,
-    #[serde(default)]
-    pub search_observations: u32,
-    #[serde(default)]
-    pub find_observations: u32,
-    #[serde(default)]
-    pub controller_blocks: u32,
-    #[serde(default)]
-    pub blind_mutation_blocks: u32,
-    #[serde(default)]
-    pub same_turn_observation_blocks: u32,
-    #[serde(default)]
-    pub stale_observation_blocks: u32,
-    #[serde(default)]
-    pub unsupported_mutation_blocks: u32,
-    #[serde(default)]
-    pub repair_inspection_blocks: u32,
-    #[serde(default)]
-    pub no_effect_blocks: u32,
-    #[serde(default)]
-    pub syntax_regression_blocks: u32,
-    #[serde(default)]
-    pub repeated_check_blocks: u32,
-    #[serde(default)]
-    pub workspace_effects_recorded: u32,
-    #[serde(default)]
-    pub workspace_effect_paths: u32,
-    #[serde(default)]
-    pub verification_checks_recorded: u32,
-    #[serde(default)]
-    pub verification_checks_passed: u32,
-    #[serde(default)]
-    pub verification_checks_failed: u32,
-    #[serde(default)]
-    pub verification_repair_attempts: u32,
-    #[serde(default)]
-    pub distinct_failed_diagnostic_fingerprints: u32,
-    #[serde(default)]
-    pub controller_checkpoints: u32,
-    #[serde(default)]
-    pub recovery_packets_injected: u32,
+    #[serde(flatten)]
+    pub mechanisms: MechanismCounts,
     /// First absolute turn where at least 80% of this episode's tool calls had
     /// occurred. `None` when the episode made no tool calls.
     pub horizon_80_turn: Option<u32>,
     pub tools_called: Vec<String>,
+}
+
+/// Evidence-controller mechanism counters. Flattened into both per-episode
+/// metrics and per-policy summaries, so their JSON keys stay top-level.
+/// Every counter defaults to zero for rows written before it existed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MechanismCounts {
+    pub observations_recorded: u32,
+    pub file_observations: u32,
+    pub search_observations: u32,
+    pub find_observations: u32,
+    pub controller_blocks: u32,
+    pub blind_mutation_blocks: u32,
+    pub same_turn_observation_blocks: u32,
+    pub stale_observation_blocks: u32,
+    pub unsupported_mutation_blocks: u32,
+    pub repair_inspection_blocks: u32,
+    pub no_effect_blocks: u32,
+    pub syntax_regression_blocks: u32,
+    pub repeated_check_blocks: u32,
+    pub workspace_effects_recorded: u32,
+    pub workspace_effect_paths: u32,
+    pub verification_checks_recorded: u32,
+    pub verification_checks_passed: u32,
+    pub verification_checks_failed: u32,
+    pub verification_repair_attempts: u32,
+    /// Distinct failed-diagnostic fingerprints. A policy summary sums the
+    /// per-episode counts; digests are deliberately not copied into it.
+    pub distinct_failed_diagnostic_fingerprints: u32,
+    pub controller_checkpoints: u32,
+    pub recovery_packets_injected: u32,
+}
+
+impl MechanismCounts {
+    /// Saturating field-wise sum.
+    pub fn add(&mut self, other: &Self) {
+        macro_rules! add_fields {
+            ($($field:ident),* $(,)?) => {
+                $(self.$field = self.$field.saturating_add(other.$field);)*
+            };
+        }
+        add_fields!(
+            observations_recorded,
+            file_observations,
+            search_observations,
+            find_observations,
+            controller_blocks,
+            blind_mutation_blocks,
+            same_turn_observation_blocks,
+            stale_observation_blocks,
+            unsupported_mutation_blocks,
+            repair_inspection_blocks,
+            no_effect_blocks,
+            syntax_regression_blocks,
+            repeated_check_blocks,
+            workspace_effects_recorded,
+            workspace_effect_paths,
+            verification_checks_recorded,
+            verification_checks_passed,
+            verification_checks_failed,
+            verification_repair_attempts,
+            distinct_failed_diagnostic_fingerprints,
+            controller_checkpoints,
+            recovery_packets_injected,
+        );
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -335,30 +358,8 @@ pub struct AutonomyToolSummary {
 pub struct PolicyMechanismSummary {
     pub harness_policy: HarnessPolicy,
     pub scoreable_episodes: u32,
-    pub observations_recorded: u32,
-    pub file_observations: u32,
-    pub search_observations: u32,
-    pub find_observations: u32,
-    pub controller_blocks: u32,
-    pub blind_mutation_blocks: u32,
-    pub same_turn_observation_blocks: u32,
-    pub stale_observation_blocks: u32,
-    pub unsupported_mutation_blocks: u32,
-    pub repair_inspection_blocks: u32,
-    pub no_effect_blocks: u32,
-    pub syntax_regression_blocks: u32,
-    pub repeated_check_blocks: u32,
-    pub workspace_effects_recorded: u32,
-    pub workspace_effect_paths: u32,
-    pub verification_checks_recorded: u32,
-    pub verification_checks_passed: u32,
-    pub verification_checks_failed: u32,
-    pub verification_repair_attempts: u32,
-    /// Sum of per-episode distinct fingerprint counts. Digests are deliberately
-    /// not copied into aggregate output.
-    pub distinct_failed_diagnostic_fingerprints: u32,
-    pub controller_checkpoints: u32,
-    pub recovery_packets_injected: u32,
+    #[serde(flatten)]
+    pub mechanisms: MechanismCounts,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -522,62 +523,7 @@ pub struct AutonomyRunSummary {
 }
 
 pub fn append_autonomy_row(dir: &Path, row: &AutonomyResultRow) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("autonomy-results.jsonl"))?;
-    serde_json::to_writer(&mut file, row).map_err(std::io::Error::other)?;
-    file.write_all(b"\n")?;
-    Ok(())
-}
-
-pub fn read_autonomy_rows(dir: &Path) -> std::io::Result<Vec<AutonomyResultRow>> {
-    let text = std::fs::read_to_string(dir.join("autonomy-results.jsonl"))?;
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.trim().is_empty())
-        .map(|(index, line)| {
-            serde_json::from_str(line).map_err(|error| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("invalid autonomy-results.jsonl line {}: {error}", index + 1),
-                )
-            })
-        })
-        .collect()
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn summarize_autonomy_run(
-    run_id: &str,
-    suite_id: &str,
-    suite_schema_version: u32,
-    suite_sha256: &str,
-    started_at_unix_ms: u64,
-    finished_at_unix_ms: u64,
-    trials_requested: u32,
-    expected_tasks: &[String],
-    expected_task_categories: &BTreeMap<String, String>,
-    expected_variants: &[String],
-    rows: &[AutonomyResultRow],
-    issues: Vec<AutonomyRunIssue>,
-) -> AutonomyRunSummary {
-    summarize_autonomy_run_with_coordinates(
-        run_id,
-        suite_id,
-        suite_schema_version,
-        suite_sha256,
-        started_at_unix_ms,
-        finished_at_unix_ms,
-        trials_requested,
-        expected_tasks,
-        expected_task_categories,
-        expected_variants,
-        &[AutonomyEvaluationCoordinate::single_legacy()],
-        rows,
-        issues,
-    )
+    append_jsonl(dir, "autonomy-results.jsonl", row)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1045,11 +991,11 @@ pub fn write_autonomy_summary(
     dir: &Path,
     summary: &AutonomyRunSummary,
 ) -> std::io::Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("autonomy-summary-{}.json", summary.run_id));
-    let text = serde_json::to_string_pretty(summary).map_err(std::io::Error::other)?;
-    std::fs::write(&path, text)?;
-    Ok(path)
+    write_pretty(
+        dir,
+        &format!("autonomy-summary-{}.json", summary.run_id),
+        summary,
+    )
 }
 
 fn rate_summary(
@@ -1124,44 +1070,19 @@ fn summarize_policy_mechanisms(
     harness_policy: HarnessPolicy,
     rows: &[&AutonomyResultRow],
 ) -> PolicyMechanismSummary {
-    let rows = rows
-        .iter()
-        .copied()
-        .filter(|row| row.harness_policy == harness_policy && row_is_scoreable(row))
-        .collect::<Vec<_>>();
-    let sum = |value: fn(&AutonomyTraceMetrics) -> u32| {
-        rows.iter().fold(0_u32, |total, row| {
-            total.saturating_add(value(&row.metrics))
-        })
-    };
-    PolicyMechanismSummary {
+    let mut summary = PolicyMechanismSummary {
         harness_policy,
-        scoreable_episodes: rows.len() as u32,
-        observations_recorded: sum(|metrics| metrics.observations_recorded),
-        file_observations: sum(|metrics| metrics.file_observations),
-        search_observations: sum(|metrics| metrics.search_observations),
-        find_observations: sum(|metrics| metrics.find_observations),
-        controller_blocks: sum(|metrics| metrics.controller_blocks),
-        blind_mutation_blocks: sum(|metrics| metrics.blind_mutation_blocks),
-        same_turn_observation_blocks: sum(|metrics| metrics.same_turn_observation_blocks),
-        stale_observation_blocks: sum(|metrics| metrics.stale_observation_blocks),
-        unsupported_mutation_blocks: sum(|metrics| metrics.unsupported_mutation_blocks),
-        repair_inspection_blocks: sum(|metrics| metrics.repair_inspection_blocks),
-        no_effect_blocks: sum(|metrics| metrics.no_effect_blocks),
-        syntax_regression_blocks: sum(|metrics| metrics.syntax_regression_blocks),
-        repeated_check_blocks: sum(|metrics| metrics.repeated_check_blocks),
-        workspace_effects_recorded: sum(|metrics| metrics.workspace_effects_recorded),
-        workspace_effect_paths: sum(|metrics| metrics.workspace_effect_paths),
-        verification_checks_recorded: sum(|metrics| metrics.verification_checks_recorded),
-        verification_checks_passed: sum(|metrics| metrics.verification_checks_passed),
-        verification_checks_failed: sum(|metrics| metrics.verification_checks_failed),
-        verification_repair_attempts: sum(|metrics| metrics.verification_repair_attempts),
-        distinct_failed_diagnostic_fingerprints: sum(|metrics| {
-            metrics.distinct_failed_diagnostic_fingerprints
-        }),
-        controller_checkpoints: sum(|metrics| metrics.controller_checkpoints),
-        recovery_packets_injected: sum(|metrics| metrics.recovery_packets_injected),
+        scoreable_episodes: 0,
+        mechanisms: MechanismCounts::default(),
+    };
+    for row in rows
+        .iter()
+        .filter(|row| row.harness_policy == harness_policy && row_is_scoreable(row))
+    {
+        summary.scoreable_episodes += 1;
+        summary.mechanisms.add(&row.metrics.mechanisms);
     }
+    summary
 }
 
 fn pass_power_3(rows: &[&AutonomyResultRow]) -> PassPowerSummary {
@@ -1220,37 +1141,55 @@ fn repository_brief_comparison(rows: &[&AutonomyResultRow]) -> RepositoryBriefCo
             _ => {}
         }
     }
-    let mut recovery_wins = 0_u32;
-    let mut repository_brief_wins = 0_u32;
-    let mut both_completed = 0_u32;
-    let mut neither_completed = 0_u32;
+    let mut tally = PairTally::default();
     for (key, recovery_completed) in &recovery {
-        let Some(brief_completed) = brief.get(key) else {
-            continue;
-        };
-        match (*recovery_completed, *brief_completed) {
-            (true, false) => recovery_wins += 1,
-            (false, true) => repository_brief_wins += 1,
-            (true, true) => both_completed += 1,
-            (false, false) => neither_completed += 1,
+        if let Some(brief_completed) = brief.get(key) {
+            tally.record(*recovery_completed, *brief_completed);
         }
     }
-    let paired_episodes = recovery_wins
-        .saturating_add(repository_brief_wins)
-        .saturating_add(both_completed)
-        .saturating_add(neither_completed);
-    let recovery_completed = recovery_wins.saturating_add(both_completed);
-    let brief_completed = repository_brief_wins.saturating_add(both_completed);
     RepositoryBriefComparison {
-        paired_episodes,
-        recovery_wins,
-        repository_brief_wins,
-        both_completed,
-        neither_completed,
-        objective_rate_delta: (paired_episodes > 0).then(|| {
-            (f64::from(brief_completed) - f64::from(recovery_completed))
-                / f64::from(paired_episodes)
-        }),
+        paired_episodes: tally.pairs(),
+        recovery_wins: tally.first_wins,
+        repository_brief_wins: tally.second_wins,
+        both_completed: tally.both,
+        neither_completed: tally.neither,
+        objective_rate_delta: tally.second_minus_first_rate(),
+    }
+}
+
+/// Objective outcomes of paired episodes: (first arm, second arm).
+#[derive(Default)]
+struct PairTally {
+    first_wins: u32,
+    second_wins: u32,
+    both: u32,
+    neither: u32,
+}
+
+impl PairTally {
+    fn record(&mut self, first_completed: bool, second_completed: bool) {
+        let count = match (first_completed, second_completed) {
+            (true, false) => &mut self.first_wins,
+            (false, true) => &mut self.second_wins,
+            (true, true) => &mut self.both,
+            (false, false) => &mut self.neither,
+        };
+        *count = count.saturating_add(1);
+    }
+
+    fn pairs(&self) -> u32 {
+        self.first_wins
+            .saturating_add(self.second_wins)
+            .saturating_add(self.both)
+            .saturating_add(self.neither)
+    }
+
+    /// Second-arm objective rate minus first-arm rate over all pairs.
+    fn second_minus_first_rate(&self) -> Option<f64> {
+        let pairs = self.pairs();
+        let first = self.first_wins.saturating_add(self.both);
+        let second = self.second_wins.saturating_add(self.both);
+        (pairs > 0).then(|| (f64::from(second) - f64::from(first)) / f64::from(pairs))
     }
 }
 
@@ -1470,29 +1409,16 @@ fn summarize_paired_objective(
     expected_pairs: u32,
     pairs: &[EligiblePair<'_>],
 ) -> PairedObjectiveSummary {
-    let mut control_wins = 0_u32;
-    let mut candidate_wins = 0_u32;
-    let mut both_completed = 0_u32;
-    let mut neither_completed = 0_u32;
+    let mut tally = PairTally::default();
     let mut task_trials: BTreeMap<(&str, &str), BTreeMap<u32, bool>> = BTreeMap::new();
     for &(control, candidate) in pairs {
-        match (control.objective_completed, candidate.objective_completed) {
-            (true, false) => control_wins = control_wins.saturating_add(1),
-            (false, true) => candidate_wins = candidate_wins.saturating_add(1),
-            (true, true) => both_completed = both_completed.saturating_add(1),
-            (false, false) => neither_completed = neither_completed.saturating_add(1),
-        }
+        tally.record(control.objective_completed, candidate.objective_completed);
         task_trials
             .entry((candidate.task_id.as_str(), candidate.variant.as_str()))
             .or_default()
             .insert(candidate.trial, candidate.objective_completed);
     }
-    let eligible_pairs = control_wins
-        .saturating_add(candidate_wins)
-        .saturating_add(both_completed)
-        .saturating_add(neither_completed);
-    let control_completed = control_wins.saturating_add(both_completed);
-    let candidate_completed = candidate_wins.saturating_add(both_completed);
+    let eligible_pairs = tally.pairs();
     let candidate_task_variants_at_least_two_of_three = task_trials
         .into_iter()
         .filter_map(|((task, variant), trials)| {
@@ -1517,14 +1443,11 @@ fn summarize_paired_objective(
         expected_pairs,
         eligible_pairs,
         excluded_pairs: expected_pairs.saturating_sub(eligible_pairs),
-        control_wins,
-        candidate_wins,
-        both_completed,
-        neither_completed,
-        objective_rate_delta: (eligible_pairs > 0).then(|| {
-            (f64::from(candidate_completed) - f64::from(control_completed))
-                / f64::from(eligible_pairs)
-        }),
+        control_wins: tally.first_wins,
+        candidate_wins: tally.second_wins,
+        both_completed: tally.both,
+        neither_completed: tally.neither,
+        objective_rate_delta: tally.second_minus_first_rate(),
         task_evidence_threshold_met: !candidate_tasks_at_least_two_of_three.is_empty(),
         candidate_tasks_at_least_two_of_three,
         candidate_task_variants_at_least_two_of_three,
@@ -1705,9 +1628,7 @@ fn strict_managed_server_valid(server: &ManagedServerProvenance, row: &AutonomyR
     let seed = server.sampling_seed.unwrap_or_default().to_string();
     let port = server.listener_port.unwrap_or_default().to_string();
     executable_is_llama_server(server.engine_executable.as_deref().unwrap_or_default())
-        && argv
-            .first()
-            .is_some_and(|program| executable_is_llama_server(program))
+        && argv.first().is_some_and(executable_is_llama_server)
         && argv_value(argv, &["-m", "--model"]) == Some(model_argument)
         && argv_value(argv, &["-c", "--ctx-size"]) == Some(context.as_str())
         && argv_value(argv, &["--seed"]) == Some(seed.as_str())
@@ -1734,8 +1655,9 @@ fn canonical_absolute_path_text(value: &str) -> bool {
         })
 }
 
-fn executable_is_llama_server(value: &str) -> bool {
-    Path::new(value)
+/// Whether `path` names a llama-server executable (any extension or case).
+pub fn executable_is_llama_server(path: impl AsRef<Path>) -> bool {
+    path.as_ref()
         .file_stem()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.eq_ignore_ascii_case("llama-server"))
@@ -1746,17 +1668,11 @@ fn normalized_endpoint(value: &str) -> &str {
 }
 
 fn valid_sha256(value: Option<&str>) -> bool {
-    value.is_some_and(|value| {
-        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-    })
+    value.is_some_and(is_sha256_hex)
 }
 
 fn ratio(numerator: u32, denominator: u32) -> Option<f64> {
     (denominator > 0).then(|| f64::from(numerator) / f64::from(denominator))
-}
-
-fn increment(counts: &mut BTreeMap<String, u32>, key: &str) {
-    *counts.entry(key.to_string()).or_default() += 1;
 }
 
 #[cfg(test)]
@@ -1836,11 +1752,9 @@ mod tests {
                 },
                 model: ModelProvenance {
                     backend: "mock".to_string(),
-                    model: None,
-                    api_base: None,
                     params_b: 1.2,
                     ctx: 4096,
-                    sha256: None,
+                    ..Default::default()
                 },
                 protocol: "unified_grammar".to_string(),
                 variant: variant.to_string(),
@@ -1974,7 +1888,7 @@ mod tests {
         safe_pause.clarification_observed = true;
         safe_pause.clarification_correct = true;
         let foreign = row("other", "A01", "ambiguity", "current", 1);
-        let summary = summarize_autonomy_run(
+        let summary = summarize_autonomy_run_with_coordinates(
             "run",
             "autonomy-v1",
             1,
@@ -1985,6 +1899,7 @@ mod tests {
             &["A01".to_string()],
             &categories(&[("A01", "ambiguity")]),
             &["current".to_string()],
+            &[AutonomyEvaluationCoordinate::single_legacy()],
             &[safe_pause, foreign],
             Vec::new(),
         );
@@ -2015,7 +1930,7 @@ mod tests {
             row("run", "A01", "ambiguity", "current", 1),
             row("run", "A01", "ambiguity", "current", 1),
         ];
-        let summary = summarize_autonomy_run(
+        let summary = summarize_autonomy_run_with_coordinates(
             "run",
             "autonomy-v1",
             1,
@@ -2026,6 +1941,7 @@ mod tests {
             &["A01".to_string()],
             &categories(&[("A01", "ambiguity")]),
             &["current".to_string()],
+            &[AutonomyEvaluationCoordinate::single_legacy()],
             &rows,
             Vec::new(),
         );
@@ -2035,7 +1951,7 @@ mod tests {
     #[test]
     fn unknown_coordinate_cannot_replace_an_expected_row() {
         let rows = [row("run", "H99", "long_horizon", "current", 1)];
-        let summary = summarize_autonomy_run(
+        let summary = summarize_autonomy_run_with_coordinates(
             "run",
             "autonomy-v1",
             1,
@@ -2046,6 +1962,7 @@ mod tests {
             &["H01".to_string()],
             &categories(&[("H01", "long_horizon")]),
             &["current".to_string()],
+            &[AutonomyEvaluationCoordinate::single_legacy()],
             &rows,
             Vec::new(),
         );
@@ -2055,7 +1972,7 @@ mod tests {
     #[test]
     fn category_drift_cannot_complete_an_expected_coordinate() {
         let rows = [row("run", "H01", "ambiguity", "current", 1)];
-        let summary = summarize_autonomy_run(
+        let summary = summarize_autonomy_run_with_coordinates(
             "run",
             "autonomy-v1",
             1,
@@ -2066,6 +1983,7 @@ mod tests {
             &["H01".to_string()],
             &categories(&[("H01", "long_horizon")]),
             &["current".to_string()],
+            &[AutonomyEvaluationCoordinate::single_legacy()],
             &rows,
             Vec::new(),
         );
@@ -2104,7 +2022,7 @@ mod tests {
         infrastructure.clarification_correct = true;
         infrastructure.resumes_expected = 1;
         infrastructure.resumes_observed = 1;
-        let summary = summarize_autonomy_run(
+        let summary = summarize_autonomy_run_with_coordinates(
             "run",
             "autonomy-v1",
             1,
@@ -2115,6 +2033,7 @@ mod tests {
             &["R01".to_string()],
             &categories(&[("R01", "recovery")]),
             &["recovery".to_string()],
+            &[AutonomyEvaluationCoordinate::single_legacy()],
             &[infrastructure],
             Vec::new(),
         );
@@ -2147,8 +2066,8 @@ mod tests {
             .iter_mut()
             .filter(|row| row.harness_policy == HarnessPolicy::Evidence)
         {
-            row.metrics.observations_recorded = 1;
-            row.metrics.file_observations = 1;
+            row.metrics.mechanisms.observations_recorded = 1;
+            row.metrics.mechanisms.file_observations = 1;
         }
         let summary = summarize_autonomy_run_with_coordinates(
             "run",
@@ -2175,8 +2094,8 @@ mod tests {
             .find(|summary| summary.harness_policy == HarnessPolicy::Evidence)
             .unwrap();
         assert_eq!(evidence_mechanisms.scoreable_episodes, 3);
-        assert_eq!(evidence_mechanisms.observations_recorded, 3);
-        assert_eq!(evidence_mechanisms.file_observations, 3);
+        assert_eq!(evidence_mechanisms.mechanisms.observations_recorded, 3);
+        assert_eq!(evidence_mechanisms.mechanisms.file_observations, 3);
         let paired = summary.paired_objective.unwrap();
         assert_eq!(paired.expected_pairs, 3);
         assert_eq!(paired.eligible_pairs, 3);
@@ -2222,10 +2141,10 @@ mod tests {
                 stderr_excerpt: String::new(),
                 reason: Some("excluded pair".to_string()),
             });
-            rows[index].metrics.observations_recorded = 10;
+            rows[index].metrics.mechanisms.observations_recorded = 10;
             rows[index].metrics.tools_called = vec!["excluded_tool".to_string()];
         }
-        rows[3].metrics.observations_recorded = 1;
+        rows[3].metrics.mechanisms.observations_recorded = 1;
         rows[3].metrics.tools_called = vec!["eligible_tool".to_string()];
         let summary = summarize_autonomy_run_with_coordinates(
             "run",
@@ -2283,7 +2202,7 @@ mod tests {
             .find(|mechanisms| mechanisms.harness_policy == HarnessPolicy::Evidence)
             .unwrap();
         assert_eq!(evidence_mechanisms.scoreable_episodes, 1);
-        assert_eq!(evidence_mechanisms.observations_recorded, 1);
+        assert_eq!(evidence_mechanisms.mechanisms.observations_recorded, 1);
         assert!(
             summary
                 .by_tool
@@ -2625,7 +2544,7 @@ mod tests {
             decoded.evaluation_provenance,
             AutonomyEvaluationProvenance::default()
         );
-        let summary = summarize_autonomy_run(
+        let summary = summarize_autonomy_run_with_coordinates(
             "run",
             "autonomy-v1",
             1,
@@ -2636,6 +2555,7 @@ mod tests {
             &["A01".to_string()],
             &categories(&[("A01", "ambiguity")]),
             &["current".to_string()],
+            &[AutonomyEvaluationCoordinate::single_legacy()],
             &[decoded],
             Vec::new(),
         );
@@ -2653,8 +2573,31 @@ mod tests {
             format!("{valid}\n\n{{bad}}\n"),
         )
         .unwrap();
-        let error = read_autonomy_rows(dir.path()).unwrap_err();
+        let error = crate::results::read_jsonl::<AutonomyResultRow>(
+            &dir.path().join("autonomy-results.jsonl"),
+        )
+        .unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("line 3"));
+    }
+
+    /// The flattened mechanism counters keep every key, value and position
+    /// of the historical flat row and summary documents.
+    #[test]
+    fn mechanism_counts_serialize_byte_identically() {
+        let metrics = r#"{"turns":1,"input_tokens":2,"output_tokens":3,"tool_calls":4,"tool_errors":5,"mutations":6,"verification_passes":7,"completion_gates_passed":8,"completion_gates_blocked":9,"repetition_guard_stops":10,"no_progress_guard_stops":11,"failure_guard_stops":12,"oscillation_guard_stops":13,"truncations":14,"provider_error_stops":15,"history_compactions":16,"observations_recorded":17,"file_observations":18,"search_observations":19,"find_observations":20,"controller_blocks":21,"blind_mutation_blocks":22,"same_turn_observation_blocks":23,"stale_observation_blocks":24,"unsupported_mutation_blocks":25,"repair_inspection_blocks":26,"no_effect_blocks":27,"syntax_regression_blocks":28,"repeated_check_blocks":29,"workspace_effects_recorded":30,"workspace_effect_paths":31,"verification_checks_recorded":32,"verification_checks_passed":33,"verification_checks_failed":34,"verification_repair_attempts":35,"distinct_failed_diagnostic_fingerprints":36,"controller_checkpoints":37,"recovery_packets_injected":38,"horizon_80_turn":39,"tools_called":["read_file"]}"#;
+        let parsed: AutonomyTraceMetrics = serde_json::from_str(metrics).unwrap();
+        assert_eq!(parsed.mechanisms.observations_recorded, 17);
+        assert_eq!(parsed.mechanisms.recovery_packets_injected, 38);
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), metrics);
+
+        let policy = r#"{"harness_policy":"evidence","scoreable_episodes":102,"observations_recorded":103,"file_observations":104,"search_observations":105,"find_observations":106,"controller_blocks":107,"blind_mutation_blocks":108,"same_turn_observation_blocks":109,"stale_observation_blocks":110,"unsupported_mutation_blocks":111,"repair_inspection_blocks":112,"no_effect_blocks":113,"syntax_regression_blocks":114,"repeated_check_blocks":115,"workspace_effects_recorded":116,"workspace_effect_paths":117,"verification_checks_recorded":118,"verification_checks_passed":119,"verification_checks_failed":120,"verification_repair_attempts":121,"distinct_failed_diagnostic_fingerprints":122,"controller_checkpoints":123,"recovery_packets_injected":124}"#;
+        let parsed: PolicyMechanismSummary = serde_json::from_str(policy).unwrap();
+        assert_eq!(parsed.mechanisms.observations_recorded, 103);
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), policy);
+
+        // Rows written before the mechanism counters existed still read as zero.
+        let legacy: AutonomyTraceMetrics = serde_json::from_str(r#"{"turns":1,"input_tokens":2,"output_tokens":3,"tool_calls":4,"tool_errors":5,"mutations":6,"verification_passes":7,"completion_gates_passed":8,"completion_gates_blocked":9,"repetition_guard_stops":10,"no_progress_guard_stops":11,"failure_guard_stops":12,"oscillation_guard_stops":13,"truncations":14,"provider_error_stops":15,"history_compactions":16,"horizon_80_turn":null,"tools_called":[]}"#).unwrap();
+        assert_eq!(legacy.mechanisms, MechanismCounts::default());
     }
 }

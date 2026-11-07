@@ -30,9 +30,7 @@ impl fmt::Debug for Token {
 impl Token {
     /// Mint a fresh token from the OS CSPRNG.
     pub fn generate() -> Result<Self, GateError> {
-        let mut bytes = [0u8; 32];
-        getrandom::fill(&mut bytes).map_err(|error| GateError::Random(error.to_string()))?;
-        Ok(Token(format!("{TOKEN_PREFIX}{}", hex::encode(bytes))))
+        Ok(Token(format!("{TOKEN_PREFIX}{}", hex::encode(random32()?))))
     }
 
     /// Parse a token from text (surrounding whitespace is ignored).
@@ -49,7 +47,7 @@ impl Token {
 
     /// SHA-256 of the token. The gate keeps only this digest.
     pub fn digest(&self) -> [u8; 32] {
-        Sha256::digest(self.0.as_bytes()).into()
+        sha256(&self.0)
     }
 
     /// Read the token at `path`, or mint one and create the file (mode 0600,
@@ -71,6 +69,18 @@ impl Token {
             Err(error) => Err(GateError::io(path, error)),
         }
     }
+}
+
+/// SHA-256 of `text`, as the gate compares presented tokens.
+pub(crate) fn sha256(text: &str) -> [u8; 32] {
+    Sha256::digest(text.as_bytes()).into()
+}
+
+/// 32 bytes from the operating system's CSPRNG.
+pub(crate) fn random32() -> Result<[u8; 32], GateError> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|error| GateError::Random(error.to_string()))?;
+    Ok(bytes)
 }
 
 /// Where a service's token lives: `$FERRIC_STATE_DIR/gate/<service>.token`,
@@ -131,7 +141,7 @@ fn create_private_dir(dir: &Path) -> Result<(), GateError> {
 
 /// Refuse a secret file that group or others can read (Unix only; on
 /// Windows the per-user profile directory's ACL is the boundary).
-pub(crate) fn check_private(path: &Path) -> Result<(), GateError> {
+pub fn check_private(path: &Path) -> Result<(), GateError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;

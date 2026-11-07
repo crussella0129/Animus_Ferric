@@ -2,21 +2,11 @@ use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
-use crate::control::{
-    ControlCapability, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
-};
+use crate::control::{ControlCapability, PrepareCtx, PrepareError, ToolPreparation};
+
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
-fn required_str<'a>(args: &'a serde_json::Value, key: &str) -> Result<&'a str, PrepareError> {
-    args.get(key)
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| {
-            PrepareError::new(
-                PrepareErrorKind::InvalidArguments,
-                format!("missing required string argument: {key}"),
-            )
-        })
-}
+use super::args;
 
 /// Move/rename a file or directory within the workspace. BOTH endpoints are
 /// declared as target paths so the registry boundary-checks each before the
@@ -47,10 +37,7 @@ impl Tool for MovePath {
     /// Both endpoints are guarded (the registry resolves + permission-checks
     /// each before `run`).
     fn target_paths(&self, args: &serde_json::Value) -> Vec<String> {
-        ["from", "to"]
-            .iter()
-            .filter_map(|k| args.get(*k).and_then(|v| v.as_str()).map(String::from))
-            .collect()
+        args::endpoint_paths(args)
     }
 
     fn control_capability(&self) -> ControlCapability {
@@ -62,20 +49,14 @@ impl Tool for MovePath {
         ctx: &PrepareCtx<'_>,
         args: &serde_json::Value,
     ) -> Result<ToolPreparation, PrepareError> {
-        let from = required_str(args, "from")?;
-        let to = required_str(args, "to")?;
+        let from = args::string(args, "from")?;
+        let to = args::string(args, "to")?;
         super::controlled_file::prepare_move(ctx, from, to)
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let from = args
-            .get("from")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required string argument: from".to_string())?;
-        let to = args
-            .get("to")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required string argument: to".to_string())?;
+        let from = args::string(args, "from")?;
+        let to = args::string(args, "to")?;
         let from_resolved = ctx
             .workspace
             .resolve(from)

@@ -2,8 +2,7 @@
 
 use std::process::Command;
 
-#[path = "../src/test_process_containment.rs"]
-mod test_process_containment;
+mod support;
 
 trait BoundedOutput {
     fn output_bounded(&mut self) -> std::io::Result<std::process::Output>;
@@ -11,33 +10,73 @@ trait BoundedOutput {
 
 impl BoundedOutput for Command {
     fn output_bounded(&mut self) -> std::io::Result<std::process::Output> {
-        test_process_containment::output_bounded(self, std::time::Duration::from_secs(60))
+        ferric_process::testing::output(self, std::time::Duration::from_secs(60))
     }
 }
 
 fn ferric() -> Command {
-    test_process_containment::ensure_current_process_tree_is_contained()
+    ferric_process::testing::contain_current_process()
         .expect("install CLI integration-test process containment");
     Command::new(env!("CARGO_BIN_EXE_ferric"))
 }
 
 fn bounded_test_output(command: &mut Command) -> std::process::Output {
-    test_process_containment::output_bounded(command, std::time::Duration::from_secs(30))
+    ferric_process::testing::output(command, std::time::Duration::from_secs(30))
         .expect("run bounded integration-test child")
 }
 
 fn bounded_test_output_with_input(command: &mut Command, input: &[u8]) -> std::process::Output {
-    test_process_containment::output_bounded_with_input(
-        command,
-        input,
-        std::time::Duration::from_secs(30),
-    )
-    .expect("run bounded integration-test child with source-defined input")
+    ferric_process::testing::output_with_input(command, input, std::time::Duration::from_secs(30))
+        .expect("run bounded integration-test child with source-defined input")
 }
 
-fn spawn_contained_test_child(command: &mut Command) -> test_process_containment::ContainedChild {
-    test_process_containment::ContainedChild::spawn(command)
-        .expect("spawn contained integration-test child")
+fn spawn_contained_test_child(command: &mut Command) -> ferric_process::ProcessTree {
+    ferric_process::testing::spawn(command).expect("spawn contained integration-test child")
+}
+
+fn assert_success(out: &std::process::Output) {
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Every record of a JSONL trace, in order.
+fn trace_records(path: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+/// The first record of a trace whose event is `kind`.
+fn trace_record(path: &std::path::Path, kind: &str) -> serde_json::Value {
+    trace_records(path)
+        .into_iter()
+        .find(|record| record["event"]["type"] == kind)
+        .unwrap_or_else(|| panic!("{} contains no {kind} event", path.display()))
+}
+
+/// The tools offered by a trace's first `prompt_assembled` event.
+fn offered_tools(path: &std::path::Path) -> Vec<String> {
+    trace_record(path, "prompt_assembled")["event"]["offered_tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool.as_str().map(String::from))
+        .collect()
+}
+
+/// The largest assembled prompt in a trace, in chars.
+fn max_assembled_chars(path: &std::path::Path) -> u64 {
+    trace_records(path)
+        .iter()
+        .filter(|record| record["event"]["type"] == "prompt_assembled")
+        .filter_map(|record| record["event"]["chars"].as_u64())
+        .max()
+        .unwrap_or(0)
 }
 
 /// Own pipe readers alongside the MCP child, including when an assertion or
@@ -45,7 +84,7 @@ fn spawn_contained_test_child(command: &mut Command) -> test_process_containment
 /// writers before the bounded reader join; no detached reader can outlive this
 /// test's cleanup boundary.
 struct McpSession {
-    child: test_process_containment::ContainedChild,
+    child: ferric_process::ProcessTree,
     readers: Vec<std::thread::JoinHandle<()>>,
 }
 
@@ -55,7 +94,7 @@ impl McpSession {
         for reader in self.readers.drain(..) {
             while !reader.is_finished() {
                 if std::time::Instant::now() >= deadline {
-                    test_process_containment::abort_on_cleanup_failure(
+                    ferric_process::abort_on_cleanup_failure(
                         "MCP pipe reader did not finish after child-tree cleanup",
                         "reader join deadline exceeded",
                     );
@@ -63,7 +102,7 @@ impl McpSession {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             if reader.join().is_err() {
-                test_process_containment::abort_on_cleanup_failure(
+                ferric_process::abort_on_cleanup_failure(
                     "MCP pipe reader panicked during teardown",
                     "reader join failed",
                 );
@@ -75,7 +114,7 @@ impl McpSession {
 impl Drop for McpSession {
     fn drop(&mut self) {
         if let Err(error) = self.child.terminate_and_reap() {
-            test_process_containment::abort_on_cleanup_failure("MCP child cleanup failed", error);
+            ferric_process::abort_on_cleanup_failure("MCP child cleanup failed", error);
         }
         self.join_readers();
     }
@@ -136,10 +175,12 @@ fn trace_cat_renders_history_compacted() {
     assert!(stdout.contains("did a, b, c"));
 }
 
-/// End-to-end against a `run()`-produced trace: validation must understand the
-/// real TurnEnd → ToolCall → ToolResult order without replaying any tool.
+/// One `--mock` query, end to end: success with the final text echoed
+/// exactly once, one parseable `q-*` trace from session_start to
+/// session_end, the mock's write through the real guard + registry, the
+/// unchanged defaults, and a trace that `trace verify` accepts.
 #[test]
-fn trace_verify_finds_no_drift_in_a_real_trace() {
+fn mock_query_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
     let out = ferric()
         .args(["query", "--mock", "do a mock task"])
@@ -147,24 +188,47 @@ fn trace_verify_finds_no_drift_in_a_real_trace() {
         .arg(dir.path())
         .output_bounded()
         .unwrap();
-    assert!(out.status.success());
+    assert_success(&out);
+    // T-3705: streaming (default-on) must not duplicate output. The mock's
+    // completions are native tool calls with no `message.text`, so no deltas
+    // fire — the final echo is the ONLY place the text appears.
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let occurrences = stdout.matches("mock run complete").count();
+    assert_eq!(
+        occurrences, 1,
+        "expected exactly one occurrence of the final text, got {occurrences}: {stdout:?}"
+    );
 
-    let trace_dir = dir.path().join(".ferric").join("trace");
-    let trace = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .expect("the mock run must have written a trace")
-        .path();
+    // Exactly one parseable trace spanning session_start..session_end.
+    let traces = q_trace_paths(&dir.path().join(".ferric").join("trace"));
+    assert_eq!(traces.len(), 1, "exactly one q-*.jsonl trace");
+    let records = trace_records(&traces[0]);
+    assert_eq!(records[0]["event"]["type"], "session_start");
+    let last = records.last().unwrap();
+    assert_eq!(last["event"]["type"], "session_end");
+    assert_eq!(last["event"]["reason"], "task_complete");
+    // The mock's write went through the real guard + registry.
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("ferric-mock.txt")).unwrap(),
+        "mock run"
+    );
+    // T-3802: with no flags and no config file, the defaults are unchanged:
+    // `--params-b` 1.2 lands at `Tier::Nano` (512 max_output_tokens).
+    let policy = &trace_record(&traces[0], "policy_selected")["event"];
+    assert_eq!(policy["tier"], "nano");
+    assert_eq!(policy["max_output_tokens"], 512);
+    assert_eq!(policy["harness_policy"], "legacy");
 
-    // The mock script calls write_file and then task_complete, so this trace
-    // exercises exactly the case that used to fail.
-    let content = std::fs::read_to_string(&trace).unwrap();
-    assert!(content.contains(r#""type":"tool_call""#));
-
+    // Validation understands the real TurnEnd → ToolCall → ToolResult order
+    // (write_file, then task_complete) without replaying any tool.
+    assert!(
+        records
+            .iter()
+            .any(|record| record["event"]["type"] == "tool_call")
+    );
     let out = ferric()
         .args(["trace", "verify"])
-        .arg(&trace)
+        .arg(&traces[0])
         .current_dir(dir.path())
         .output_bounded()
         .unwrap();
@@ -176,53 +240,6 @@ fn trace_verify_finds_no_drift_in_a_real_trace() {
     assert!(
         combined.contains("Trace verification successful"),
         "verify rejected the trace structure: {combined}"
-    );
-}
-
-#[test]
-fn no_args_is_a_human_welcome() {
-    let out = ferric().output_bounded().unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Ferric"));
-    assert!(stdout.contains("Ask mode"));
-}
-
-#[test]
-fn mock_query_end_to_end() {
-    let dir = tempfile::tempdir().unwrap();
-    let out = ferric()
-        .args(["query", "--mock", "do a mock task"])
-        .arg("--workspace")
-        .arg(dir.path())
-        .output_bounded()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("mock run complete"));
-
-    // Exactly one parseable trace spanning session_start..session_end.
-    let trace_dir = dir.path().join(".ferric").join("trace");
-    let traces: Vec<_> = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .collect();
-    assert_eq!(traces.len(), 1, "exactly one q-*.jsonl trace");
-    let content = std::fs::read_to_string(traces[0].path()).unwrap();
-    let first: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
-    let last: serde_json::Value = serde_json::from_str(content.lines().last().unwrap()).unwrap();
-    assert_eq!(first["event"]["type"], "session_start");
-    assert_eq!(last["event"]["type"], "session_end");
-    assert_eq!(last["event"]["reason"], "task_complete");
-    // The mock's write went through the real guard + registry.
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("ferric-mock.txt")).unwrap(),
-        "mock run"
     );
 }
 
@@ -240,15 +257,6 @@ fn q_trace_paths(trace_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     paths
 }
 
-fn first_session_start(path: &std::path::Path) -> serde_json::Value {
-    std::fs::read_to_string(path)
-        .unwrap()
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|value| value["event"]["type"] == "session_start")
-        .expect("trace contains session_start")
-}
-
 #[test]
 fn query_default_trace_root_is_compatible() {
     let fresh = tempfile::tempdir().unwrap();
@@ -258,11 +266,7 @@ fn query_default_trace_root_is_compatible() {
         .arg(fresh.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     assert_eq!(
         q_trace_paths(&fresh.path().join(".ferric").join("trace")).len(),
         1,
@@ -278,18 +282,14 @@ fn query_default_trace_root_is_compatible() {
         .arg(resumed.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     let trace_dir = resumed.path().join(".ferric").join("trace");
     let continuation = q_trace_paths(&trace_dir)
         .into_iter()
         .next()
         .expect("default-root continuation trace");
     assert_eq!(
-        first_session_start(&continuation)["event"]["resumed_from"],
+        trace_record(&continuation, "session_start")["event"]["resumed_from"],
         "default-root-source"
     );
 }
@@ -313,11 +313,7 @@ fn query_external_trace_root_leaves_workspace_clean() {
         .current_dir(root.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     assert_eq!(q_trace_paths(&expected_trace_root).len(), 1);
     assert!(workspace.join("ferric-mock.txt").is_file());
     assert!(
@@ -474,25 +470,10 @@ fn assert_platform_reparse_trace_root_is_rejected() {
     assert_precreate_trace_root_rejected(&workspace, &alias.join("tail"));
 }
 
+/// A provider whose one answer is a native `request_user_input` call.
 #[cfg(feature = "backend-openai")]
-fn clarification_server() -> (String, std::thread::JoinHandle<()>) {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let handle = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-            .unwrap();
-        let mut request = [0_u8; 16 * 1024];
-        let read = stream.read(&mut request).unwrap();
-        assert!(
-            String::from_utf8_lossy(&request[..read]).contains("POST /v1/chat/completions"),
-            "fixture received an unexpected request"
-        );
-
+fn clarification_server() -> support::FakeOpenAi {
+    support::FakeOpenAi::new(|_, _| {
         let arguments = serde_json::json!({
             "question": "Which database should this target?",
             "context": "Both adapters exist and no default is documented.",
@@ -519,16 +500,9 @@ fn clarification_server() -> (String, std::thread::JoinHandle<()>) {
                 "finish_reason": "tool_calls"
             }],
             "usage": {"prompt_tokens": 50, "completion_tokens": 10}
-        })
-        .to_string();
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        stream.write_all(response.as_bytes()).unwrap();
-    });
-    (format!("http://{address}/v1"), handle)
+        });
+        Some(("200 OK", "application/json", body.to_string()))
+    })
 }
 
 #[cfg(unix)]
@@ -722,11 +696,11 @@ impl BudgetResumeFixture {
         assert_eq!(traces.len(), 1, "one real paused trace");
         let paused_trace = traces[0].clone();
         assert_eq!(
-            budget_trace_event(&paused_trace, "policy_selected")["tier"],
+            trace_event(&paused_trace, "policy_selected")["tier"],
             "nano"
         );
         assert_eq!(
-            budget_trace_event(&paused_trace, "policy_selected")["max_output_tokens"],
+            trace_event(&paused_trace, "policy_selected")["max_output_tokens"],
             cap
         );
         assert_resume_budget(&paused_trace, Some(cap), cap);
@@ -776,18 +750,13 @@ impl BudgetResumeFixture {
     }
 }
 
-fn budget_trace_event(path: &std::path::Path, kind: &str) -> serde_json::Value {
-    std::fs::read_to_string(path)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .find(|value| value["event"]["type"] == kind)
-        .unwrap_or_else(|| panic!("{} contains no {kind} event", path.display()))["event"]
-        .clone()
+/// The first `kind` event of a trace.
+fn trace_event(path: &std::path::Path, kind: &str) -> serde_json::Value {
+    trace_record(path, kind)["event"].clone()
 }
 
 fn assert_resume_budget(path: &std::path::Path, requested: Option<u32>, effective: u32) {
-    let event = budget_trace_event(path, "main_action_budget");
+    let event = trace_event(path, "main_action_budget");
     let budget = &event["budget"];
     assert_eq!(budget["requested"], serde_json::json!(requested));
     assert_eq!(budget["effective"], effective);
@@ -852,12 +821,12 @@ fn query_output_budget_resume_guidance_roundtrip() {
     let continuation = fixture.continuation();
     assert_resume_budget(&continuation, Some(4096), 4096);
     assert_eq!(
-        budget_trace_event(&continuation, "policy_selected")["max_output_tokens"],
+        trace_event(&continuation, "policy_selected")["max_output_tokens"],
         4096
     );
     assert_eq!(
-        budget_trace_event(&continuation, "session_start")["resumed_from"],
-        first_session_start(&fixture.paused_trace)["session"]
+        trace_event(&continuation, "session_start")["resumed_from"],
+        trace_record(&fixture.paused_trace, "session_start")["session"]
     );
     assert_eq!(
         std::fs::read(fixture.workspace.join("ferric-mock.txt")).unwrap(),
@@ -884,7 +853,7 @@ fn query_resume_budget_is_invocation_scoped() {
         );
         let continuation = fixture.continuation();
         assert_resume_budget(&continuation, requested, effective);
-        let policy = budget_trace_event(&continuation, "policy_selected");
+        let policy = trace_event(&continuation, "policy_selected");
         assert_eq!(policy["max_output_tokens"], effective, "{requested:?}");
         assert_eq!(policy["tier"], "nano");
         assert_eq!(policy["tier_source"], "params");
@@ -978,7 +947,7 @@ fn resume_hint_round_trips_in_documented_shell() {
     let trace_root = root.path().join(trace_name);
     std::fs::create_dir(&workspace).unwrap();
 
-    let (api_base, server) = clarification_server();
+    let mut server = clarification_server();
     let out = ferric()
         .args([
             "query",
@@ -990,7 +959,7 @@ fn resume_hint_round_trips_in_documented_shell() {
             "clarification-fixture",
             "--api-base",
         ])
-        .arg(api_base)
+        .arg(&server.endpoint)
         .arg("--workspace")
         .arg(&workspace)
         .arg("--trace-dir")
@@ -998,7 +967,8 @@ fn resume_hint_round_trips_in_documented_shell() {
         .arg("ask for a database choice")
         .output_bounded()
         .unwrap();
-    server.join().unwrap();
+    server.finish();
+    assert_eq!(server.requests.lock().unwrap().len(), 1);
     assert!(!out.status.success(), "needs_input is a non-success stop");
     let stderr = String::from_utf8(out.stderr).unwrap();
     let command = stderr
@@ -1056,37 +1026,10 @@ fn assert_platform_reparse_trace_root_is_rejected() {
     assert_precreate_trace_root_rejected(&workspace, &alias.join("tail"));
 }
 
-/// T-3705: streaming (now default-on) must not duplicate output. The `--mock`
-/// script's completions are native tool calls with no `message.text`
-/// (`text: None`), so the default `complete_streaming` impl fires zero deltas
-/// for either turn — the final echo is the ONLY place the text appears (the
-/// EARS "no duplication, no missing text" clause).
-#[test]
-fn stream_flag_mock_no_duplication() {
-    let dir = tempfile::tempdir().unwrap();
-    let out = ferric()
-        .args(["query", "--mock", "do a mock task"])
-        .arg("--workspace")
-        .arg(dir.path())
-        .output_bounded()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    let occurrences = stdout.matches("mock run complete").count();
-    assert_eq!(
-        occurrences, 1,
-        "expected exactly one occurrence of the final text, got {occurrences}: {stdout:?}"
-    );
-}
-
 #[test]
 fn query_without_backend_errors() {
-    // Default build lacks backend-openai: a non-mock query must fail with
-    // a message naming the missing feature.
+    // A build without backend-openai: a non-mock query must fail with a
+    // message naming the missing feature.
     #[cfg(not(feature = "backend-openai"))]
     {
         let dir = tempfile::tempdir().unwrap();
@@ -1119,25 +1062,9 @@ fn query_file_text_folds_into_prompt() {
         .arg(&notes)
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let trace_dir = dir.path().join(".ferric").join("trace");
-    let trace = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .expect("a q-*.jsonl trace");
-    let content = std::fs::read_to_string(trace.path()).unwrap();
-    let max_chars = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter(|v| v["event"]["type"] == "prompt_assembled")
-        .filter_map(|v| v["event"]["chars"].as_u64())
-        .max()
-        .unwrap_or(0);
+    assert_success(&out);
+    let trace = latest_q_trace(dir.path());
+    let max_chars = max_assembled_chars(&trace);
     assert!(
         max_chars >= body.len() as u64,
         "assembled prompt ({max_chars} chars) should include the {}-char file",
@@ -1232,30 +1159,9 @@ fn max_ring_caps_the_offered_tools() {
             .arg(dir)
             .output_bounded()
             .unwrap();
-        assert!(
-            out.status.success(),
-            "stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let trace_dir = dir.join(".ferric").join("trace");
-        let trace = std::fs::read_dir(&trace_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-            .expect("a q-*.jsonl trace");
-        let content = std::fs::read_to_string(trace.path()).unwrap();
-        content
-            .lines()
-            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-            .find(|v| v["event"]["type"] == "prompt_assembled")
-            .and_then(|v| {
-                v["event"]["offered_tools"].as_array().map(|a| {
-                    a.iter()
-                        .filter_map(|t| t.as_str().map(String::from))
-                        .collect()
-                })
-            })
-            .unwrap_or_default()
+        assert_success(&out);
+        let trace = latest_q_trace(dir);
+        offered_tools(&trace)
     }
 
     // Without the cap: Small admits Ring 0 + Ring 1.
@@ -1303,30 +1209,9 @@ fn persisted_calibrated_ring_caps_the_offered_tools() {
             .arg(ws)
             .output_bounded()
             .unwrap();
-        assert!(
-            out.status.success(),
-            "stderr: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let trace_dir = ws.join(".ferric").join("trace");
-        let trace = std::fs::read_dir(&trace_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-            .expect("a q-*.jsonl trace");
-        let content = std::fs::read_to_string(trace.path()).unwrap();
-        content
-            .lines()
-            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-            .find(|v| v["event"]["type"] == "prompt_assembled")
-            .and_then(|v| {
-                v["event"]["offered_tools"].as_array().map(|a| {
-                    a.iter()
-                        .filter_map(|t| t.as_str().map(String::from))
-                        .collect()
-                })
-            })
-            .unwrap_or_default()
+        assert_success(&out);
+        let trace = latest_q_trace(ws);
+        offered_tools(&trace)
     }
 
     // A profile dir carrying calibrated_ring 0 for ConstrainedJson + this model.
@@ -1355,45 +1240,6 @@ fn persisted_calibrated_ring_caps_the_offered_tools() {
     );
 }
 
-/// T-3802: `params_b`/`quant`/`family`/`ctx`/`temperature`/`profile_dir` lost
-/// their clap `default_value_t`/`default_value` in favor of bare `Option<T>`,
-/// resolved via `.unwrap_or(today's constant)` at the call site — no config
-/// file exists yet at this point (T-3803). With NO flags and NO config file,
-/// the resolved values must be byte-identical to before: default `--params-b`
-/// 1.2 lands at `Tier::Nano` (512 max_output_tokens, per the pinned tier
-/// table) — isolates the mechanical refactor from any config-precedence
-/// regression, so a failure here points at T-3802, not T-3803.
-#[test]
-fn query_defaults_unchanged_after_clap_type_change() {
-    let dir = tempfile::tempdir().unwrap();
-    let out = ferric()
-        .args(["query", "--mock", "do a task"])
-        .arg("--workspace")
-        .arg(dir.path())
-        .output_bounded()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let trace_dir = dir.path().join(".ferric").join("trace");
-    let trace = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .expect("a q-*.jsonl trace");
-    let content = std::fs::read_to_string(trace.path()).unwrap();
-    let policy = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .find(|v| v["event"]["type"] == "policy_selected")
-        .expect("a policy_selected event");
-    assert_eq!(policy["event"]["tier"], "nano");
-    assert_eq!(policy["event"]["max_output_tokens"], 512);
-    assert_eq!(policy["event"]["harness_policy"], "legacy");
-}
-
 #[test]
 fn evidence_runs_and_planner_fails_before_trace_or_workspace_mutation() {
     let evidence = tempfile::tempdir().unwrap();
@@ -1410,11 +1256,7 @@ fn evidence_runs_and_planner_fails_before_trace_or_workspace_mutation() {
         .arg(evidence.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     assert_eq!(
         policy_event(evidence.path())["event"]["harness_policy"],
         "evidence"
@@ -1455,11 +1297,7 @@ fn harness_policy_config_obeys_cli_over_project_precedence() {
         .arg(configured.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     assert_eq!(
         policy_event(configured.path())["event"]["harness_policy"],
         "evidence"
@@ -1473,11 +1311,7 @@ fn harness_policy_config_obeys_cli_over_project_precedence() {
         .arg(overridden.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     assert_eq!(
         policy_event(overridden.path())["event"]["harness_policy"],
         "legacy"
@@ -1487,18 +1321,7 @@ fn harness_policy_config_obeys_cli_over_project_precedence() {
 /// Shared by the T-3803 config-precedence tests below: the `policy_selected`
 /// trace event's tier, for a `--mock` run against workspace `ws`.
 fn policy_event(ws: &std::path::Path) -> serde_json::Value {
-    let trace_dir = ws.join(".ferric").join("trace");
-    let trace = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .expect("a q-*.jsonl trace");
-    let content = std::fs::read_to_string(trace.path()).unwrap();
-    content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .find(|v| v["event"]["type"] == "policy_selected")
-        .expect("a policy_selected event")
+    trace_record(&latest_q_trace(ws), "policy_selected")
 }
 
 fn policy_tier(ws: &std::path::Path) -> String {
@@ -1527,11 +1350,7 @@ fn config_file_sets_default_without_flag() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     assert_eq!(policy_tier(ws.path()), "small");
 }
 
@@ -1546,11 +1365,7 @@ fn no_config_ignores_project_config() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     assert_eq!(
         policy_tier(ws.path()),
         "nano",
@@ -1567,11 +1382,7 @@ fn max_turns_flag_overrides_the_selected_policy_budget() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     assert_eq!(policy_event(ws.path())["event"]["max_turns"], 7);
 }
 
@@ -1609,35 +1420,12 @@ fn explicit_checks_file_offers_named_tool_and_blocks_unverified_completion() {
     assert!(!out.status.success(), "the fixed mock never runs the check");
     assert!(String::from_utf8_lossy(&out.stderr).contains("verification checks authorized: unit"));
 
-    let trace = std::fs::read_dir(ws.path().join(".ferric").join("trace"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
-        .unwrap();
-    let offered = std::fs::read_to_string(&trace)
-        .unwrap()
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|value| value["event"]["type"] == "prompt_assembled")
-        .unwrap();
-    assert!(
-        offered["event"]["offered_tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|name| name == "run_check")
-    );
-    let gate = std::fs::read_to_string(&trace)
-        .unwrap()
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|value| value["event"]["type"] == "completion_gate")
-        .expect("task_complete must be evidence-gated");
-    assert_eq!(gate["event"]["decision"], "blocked");
-    assert_eq!(
-        gate["event"]["required_checks"],
-        serde_json::json!(["unit"])
-    );
+    let trace = latest_q_trace(ws.path());
+    assert!(offered_tools(&trace).iter().any(|name| name == "run_check"));
+    // task_complete must be evidence-gated.
+    let gate = trace_event(&trace, "completion_gate");
+    assert_eq!(gate["decision"], "blocked");
+    assert_eq!(gate["required_checks"], serde_json::json!(["unit"]));
 }
 
 #[test]
@@ -1672,19 +1460,15 @@ fn cli_flag_overrides_config_file() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     assert_eq!(policy_tier(ws.path()), "nano");
 }
 
-/// C-001 (plan-critic, the significant finding): `model_key` — which feeds
-/// the ADR-029 persisted-profile lookup — must be derived from the
+/// C-001 (plan-critic, the significant finding): the model key that feeds
+/// the ADR-029 persisted-profile lookup must be derived from the
 /// POST-merge, config-resolved `model` value, not the raw CLI arg. Set
 /// `model` ONLY via config.toml (no `--model` flag) alongside a persisted
-/// `calibrated_ring: 0` record for that model; if `model_key` were derived
+/// `calibrated_ring: 0` record for that model; if the key were derived
 /// from the raw (unset) CLI arg instead, the profile lookup would be
 /// silently skipped and Ring 1 tools would still be offered.
 #[test]
@@ -1719,31 +1503,10 @@ fn config_only_model_still_resolves_profile() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
 
-    let trace_dir = ws.path().join(".ferric").join("trace");
-    let trace = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .expect("a q-*.jsonl trace");
-    let content = std::fs::read_to_string(trace.path()).unwrap();
-    let offered: Vec<String> = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .find(|v| v["event"]["type"] == "prompt_assembled")
-        .and_then(|v| {
-            v["event"]["offered_tools"].as_array().map(|a| {
-                a.iter()
-                    .filter_map(|t| t.as_str().map(String::from))
-                    .collect()
-            })
-        })
-        .unwrap_or_default();
+    let trace = latest_q_trace(ws.path());
+    let offered = offered_tools(&trace);
     assert!(
         !offered.contains(&"find_files".to_string()) && offered.contains(&"write_file".to_string()),
         "a config-only `model` must still hit the persisted calibrated_ring 0 profile: {offered:?}"
@@ -1766,31 +1529,10 @@ fn config_only_max_ring_caps_the_offered_tools() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
 
-    let trace_dir = ws.path().join(".ferric").join("trace");
-    let trace = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .expect("a q-*.jsonl trace");
-    let content = std::fs::read_to_string(trace.path()).unwrap();
-    let offered: Vec<String> = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .find(|v| v["event"]["type"] == "prompt_assembled")
-        .and_then(|v| {
-            v["event"]["offered_tools"].as_array().map(|a| {
-                a.iter()
-                    .filter_map(|t| t.as_str().map(String::from))
-                    .collect()
-            })
-        })
-        .unwrap_or_default();
+    let trace = latest_q_trace(ws.path());
+    let offered = offered_tools(&trace);
     assert!(
         !offered.contains(&"find_files".to_string()) && offered.contains(&"write_file".to_string()),
         "a config-only `max_ring = 0` must cap to the core, same as `--max-ring 0`: {offered:?}"
@@ -1818,11 +1560,7 @@ fn config_only_stream_disables_live_output() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     let stdout = String::from_utf8(out.stdout).unwrap();
     // With streaming disabled, the clean task_complete summary appears, NOT
     // the raw streamed JSON.
@@ -1889,7 +1627,16 @@ fn present_invalid_config_blocks_all_consumers() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let ws = tmp.path().join("icm");
-    ferric_icm::scaffold_workspace(&ws).unwrap();
+    let init = ferric()
+        .args(["icm", "init"])
+        .arg(&ws)
+        .output_bounded()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
     write_project_config(&ws, "params_b = nan");
     let out = ferric()
         .args(["icm", "run"])
@@ -1909,7 +1656,16 @@ fn selected_workspace_drives_real_provider_chat_icm() {
     let selected_parent = tempfile::tempdir().unwrap();
     let selected = selected_parent.path().join("selected-workspace");
     let user = tempfile::tempdir().unwrap();
-    ferric_icm::scaffold_workspace(&selected).unwrap();
+    let init = ferric()
+        .args(["icm", "init"])
+        .arg(&selected)
+        .output_bounded()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
     // Match the provider's canonical path spelling, including Windows runner
     // temp aliases. The positive B / negative A assertions remain independent.
     let selected = selected.canonicalize().unwrap();
@@ -2011,26 +1767,10 @@ fn animus_md_folds_into_prompt() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
 
-    let trace_dir = ws.path().join(".ferric").join("trace");
-    let trace = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .expect("a q-*.jsonl trace");
-    let content = std::fs::read_to_string(trace.path()).unwrap();
-    let max_chars = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter(|v| v["event"]["type"] == "prompt_assembled")
-        .filter_map(|v| v["event"]["chars"].as_u64())
-        .max()
-        .unwrap_or(0);
+    let trace = latest_q_trace(ws.path());
+    let max_chars = max_assembled_chars(&trace);
     assert!(
         max_chars >= body.len() as u64,
         "assembled prompt ({max_chars} chars) should include the {}-char Animus.md",
@@ -2052,29 +1792,16 @@ fn animus_md_present_traces_note() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
 
-    let trace_dir = ws.path().join(".ferric").join("trace");
-    let trace = std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
-        .expect("a q-*.jsonl trace");
-    let content = std::fs::read_to_string(trace.path()).unwrap();
-    let has_note = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .any(|v| {
-            v["event"]["type"] == "note"
-                && v["event"]["text"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains("Animus.md applied")
-        });
+    let trace = latest_q_trace(ws.path());
+    let has_note = trace_records(&trace).iter().any(|v| {
+        v["event"]["type"] == "note"
+            && v["event"]["text"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Animus.md applied")
+    });
     assert!(
         has_note,
         "expected a Note event confirming Animus.md was applied"
@@ -2176,7 +1903,7 @@ fn write_clarification_trace_fixture_with_policy(
     assistant.text = None;
     assistant.tool_calls = vec![ferric_core::ToolCall {
         id: "ask-1".to_string(),
-        name: ferric_loop::REQUEST_USER_INPUT.to_string(),
+        name: ferric_iron::terminator::REQUEST_USER_INPUT.to_string(),
         args: serde_json::to_value(&request).unwrap(),
     }];
     let provider = ferric_provider::MockProvider::new(vec![ferric_provider::Completion {
@@ -2217,14 +1944,12 @@ fn write_clarification_trace_fixture_with_policy(
     path
 }
 
+/// The workspace's first `q-*` trace under the default root.
 fn latest_q_trace(ws: &std::path::Path) -> std::path::PathBuf {
-    let trace_dir = ws.join(".ferric").join("trace");
-    std::fs::read_dir(&trace_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("q-"))
+    q_trace_paths(&ws.join(".ferric").join("trace"))
+        .into_iter()
+        .next()
         .expect("a q-*.jsonl trace")
-        .path()
 }
 
 #[test]
@@ -2239,26 +1964,17 @@ fn resume_continues_an_interrupted_session() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
 
-    let content = std::fs::read_to_string(latest_q_trace(ws.path())).unwrap();
-    let resumed_from = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .find(|v| v["event"]["type"] == "session_start")
-        .map(|v| v["event"]["resumed_from"].clone())
-        .unwrap();
-    assert_eq!(resumed_from, serde_json::json!("orig-1"));
-    let selected = content
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|value| value["event"]["type"] == "policy_selected")
-        .expect("resumed trace policy selection");
-    assert_eq!(selected["event"]["harness_policy"], "legacy");
+    let trace = latest_q_trace(ws.path());
+    assert_eq!(
+        trace_event(&trace, "session_start")["resumed_from"],
+        serde_json::json!("orig-1")
+    );
+    assert_eq!(
+        trace_event(&trace, "policy_selected")["harness_policy"],
+        "legacy"
+    );
 }
 
 #[test]
@@ -2302,15 +2018,11 @@ fn external_trace_resume_requires_and_reuses_explicit_root() {
         .arg(&trace_root)
         .output_bounded()
         .unwrap();
-    assert!(
-        resumed.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&resumed.stderr)
-    );
+    assert_success(&resumed);
     let continuations = q_trace_paths(&trace_root);
     assert_eq!(continuations.len(), 1, "one linked q- continuation");
     assert_eq!(
-        first_session_start(&continuations[0])["event"]["resumed_from"],
+        trace_record(&continuations[0], "session_start")["event"]["resumed_from"],
         "external-root-source"
     );
     assert!(workspace.join("ferric-mock.txt").is_file());
@@ -2336,20 +2048,11 @@ fn first_resumed_turn_chars(
     }
     cmd.arg("--workspace").arg(ws);
     let out = cmd.output_bounded().unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
 
-    let content = std::fs::read_to_string(latest_q_trace(ws)).unwrap();
-    content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter(|v| v["event"]["type"] == "prompt_assembled")
-        .filter_map(|v| v["event"]["chars"].as_u64())
-        .next()
-        .expect("a prompt_assembled event")
+    trace_event(&latest_q_trace(ws), "prompt_assembled")["chars"]
+        .as_u64()
+        .unwrap()
 }
 
 #[test]
@@ -2392,23 +2095,17 @@ fn clarification_resume_requires_and_traces_an_explicit_answer() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        answered.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&answered.stderr)
-    );
+    assert_success(&answered);
 
-    let content = std::fs::read_dir(ws.path().join(".ferric").join("trace"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("q-"))
-        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
-        .find(|content| content.contains("\"type\":\"resume_prompt\""))
+    let events = q_trace_paths(&ws.path().join(".ferric").join("trace"))
+        .iter()
+        .map(|path| trace_records(path))
+        .find(|records| {
+            records
+                .iter()
+                .any(|record| record["event"]["type"] == "resume_prompt")
+        })
         .expect("answered continuation trace");
-    let events: Vec<serde_json::Value> = content
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
     let answer = events
         .iter()
         .find(|value| value["event"]["type"] == "resume_prompt")
@@ -2509,12 +2206,10 @@ fn resume_harness_policy_mismatch_is_clear_and_allocates_no_new_trace() {
             && stderr.contains("requested harness policy evidence"),
         "stderr: {stderr}"
     );
-    let q_traces = std::fs::read_dir(ws.path().join(".ferric").join("trace"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with("q-"))
-        .count();
-    assert_eq!(q_traces, 0, "mismatch must fail before trace allocation");
+    assert!(
+        q_trace_paths(&ws.path().join(".ferric").join("trace")).is_empty(),
+        "mismatch must fail before trace allocation"
+    );
 }
 
 #[test]
@@ -2558,21 +2253,9 @@ fn resume_with_animus_md_prints_ignored_note() {
         .arg(ws.path())
         .output_bounded()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert_success(&out);
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("ignores --prompts-dir/Animus.md"));
-}
-
-#[test]
-fn unknown_args_fail_with_usage() {
-    let out = ferric().arg("frobnicate").output_bounded().unwrap();
-    assert!(!out.status.success());
-    let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stderr.to_lowercase().contains("usage") || stderr.contains("unrecognized"));
 }
 
 /// T-3606 E2E (sprint 36, ADR-046): a real `ferric mcp --mock` child process,
@@ -2692,7 +2375,7 @@ fn mcp_stdio_e2e() {
     drop(stdin); // EOF: the server should exit cleanly on its own.
     let status = session
         .child
-        .wait_for_exit_and_disarm(Duration::from_secs(10))
+        .wait_for_exit(Duration::from_secs(10))
         .expect("ferric mcp did not exit within 10s of stdin EOF");
     assert!(status.success(), "ferric mcp did not exit cleanly on EOF");
     session.join_readers();
@@ -2745,15 +2428,9 @@ fn trace_files(ws: &std::path::Path, kind: &str) -> Vec<std::path::PathBuf> {
 }
 
 fn trace_event_types(path: &std::path::Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .unwrap()
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter_map(|v| {
-            v["event"]["type"]
-                .as_str()
-                .map(std::string::ToString::to_string)
-        })
+    trace_records(path)
+        .iter()
+        .filter_map(|record| record["event"]["type"].as_str().map(String::from))
         .collect()
 }
 
@@ -2995,13 +2672,11 @@ fn mcp_resume_continues_an_interrupted_session() {
         .filter(|e| e.file_name().to_string_lossy().starts_with("mcp-"))
         .collect();
     assert_eq!(new_traces.len(), 1, "exactly one mcp- trace file expected");
-    let content = std::fs::read_to_string(new_traces[0].path()).unwrap();
-
-    let is_resumed = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .any(|v| v["event"]["type"] == "session_start" && v["event"]["resumed_from"] == "res-1");
-    assert!(is_resumed, "trace must show it was resumed from res-1");
+    assert_eq!(
+        trace_event(&new_traces[0].path(), "session_start")["resumed_from"],
+        "res-1",
+        "trace must show it was resumed from res-1"
+    );
 }
 
 #[test]

@@ -132,10 +132,6 @@ impl Gate {
         self
     }
 
-    pub fn allowed_hosts(&self) -> &[String] {
-        &self.hosts
-    }
-
     pub fn check(&self, method: &Method, path: &str, headers: &HeaderMap) -> Result<(), Denial> {
         // 1. Host.
         let host = headers
@@ -172,11 +168,7 @@ impl Gate {
                 })
                 .map(str::trim)
                 .ok_or(Denial::MissingToken)?;
-            let presented: [u8; 32] = sha2::Digest::finalize(
-                <sha2::Sha256 as sha2::Digest>::new_with_prefix(presented.as_bytes()),
-            )
-            .into();
-            if !constant_time_eq(&presented, &self.digest) {
+            if !constant_time_eq(&crate::token::sha256(presented), &self.digest) {
                 return Err(Denial::BadToken);
             }
         }
