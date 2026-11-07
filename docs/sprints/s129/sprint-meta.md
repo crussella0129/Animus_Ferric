@@ -35,4 +35,4 @@
     because of a zombie adopted by the test process (D-11). Commit 2a77cac
     does not build on its own; 31c57b5 completes it. See the
     [test report](sprint-tests/test-report.md).
-- **Checkpoint:** (the sprint PR, dev → main)
+- **Checkpoint:** https://github.com/crussella0129/Animus_Ferric/pull/126
