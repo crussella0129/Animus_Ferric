@@ -3,7 +3,7 @@
 Animus does not contain a model runner. It drives an **OpenAI-compatible HTTP
 server** — the "valve" — and `ferric server` is the lifecycle manager for it.
 This chapter goes beyond "launch it with a model" and covers the full surface:
-the lifecycle, every launch flag, edge tuning, multimodal, and secure exposure.
+the lifecycle, every launch flag, edge tuning, multimodal, and remote access.
 
 The default engine is llama.cpp's `llama-server`; Ollama is pluggable via
 `--engine ollama`. (Installing `llama-server` itself is covered in
@@ -14,7 +14,6 @@ The default engine is llama.cpp's `llama-server`; Ollama is pluggable via
 ```sh
 ferric server up      # launch + publish local/global registrations
 ferric server status  # resolve identity/listener ownership + report HTTP health
-ferric server adopt --pid 6501  # example: run the exact command status/down prints
 ferric server doctor  # check engine-binary + model presence (and reachability)
 ferric server down    # stop only a verified instance, then clean registrations
 ```
@@ -43,9 +42,7 @@ power-loss durability for the directory entry.
 Pure argument blockers and blocked registration state precede all external
 probes. Otherwise doctor resolves the complete registration inventory first.
 Degraded, stale-only, conflicting, or unverifiable state returns before
-engine-version and model-file probes. With `--tailscale`, a valid preflight
-runs the usual engine/model checks plus bounded read-only Tailscale LocalAPI
-identity and Serve-configuration checks; it does not mutate Serve state:
+engine-version and model-file probes:
 
 ```console
 $ ferric server doctor --engine llama-server --model ./model.gguf
@@ -93,20 +90,13 @@ equivalent retained-process adapter.
 
 ## Registration and teardown safety
 
-Schema v2 adds teardown identity without breaking deserialization of historical
-runfiles. In addition to the engine, PID, port, and base URL, a new registration
-records:
+Ferric writes and manages schema-v2 registrations only. In addition to the
+engine, PID, port, and base URL, a registration records:
 
 - a process-creation token that distinguishes PID reuse;
 - the resolved executable and complete argument vector;
 - the absolute path of the originating local `.ferric/server.json` mirror; and
 - the existing launch provenance, including model and context when known.
-
-A Tailscale launch additionally records a validated ownership object: its
-128-bit path token, exact mount and loopback proxy target, canonical self FQDN,
-remote `/v1` base, HTTPS port, and capture provenance. The mirrored record is
-published before the Serve mutation, making it a write-ahead recovery journal.
-The ordinary `base_url` stays loopback-local for normal Ferric discovery.
 
 Ferric inventories the current workspace's local registration and the user-level
 global registration independently. A global schema-v2 record also identifies
@@ -128,12 +118,7 @@ selected workspace rather than from the launcher process's current directory.
 Without an explicit endpoint, only an empty inventory selects the built-in
 default and only a Ready inventory selects the managed endpoint. Degraded,
 stale-only, conflicting, malformed, missing-origin, or ownership-uninspectable
-state never falls through to the built-in endpoint. Strict autonomy always
-requires Ready managed discovery even when `--api-base` is supplied, and final
-validation repeats static and process discovery and requires the same process,
-metadata, aliases, origins, and exact registration revisions before its final
-discovery health probe. Only after that check may the consumer issue its own
-HTTP request.
+state never falls through to the built-in endpoint.
 
 Registration publication is no-clobber and atomic per path, not one
 cross-filesystem transaction and not simultaneous visibility across scopes. A
@@ -179,51 +164,35 @@ target/wildcard/foreign/uninspectable listener is a teardown failure: no
 registration is removed and `stopped` is never printed.
 
 Multiple live identities, disagreement between process and listener ownership,
-uninspectable state, malformed or unreadable peer state, a live unadopted
-schema-v1 record, or any other blocked registration refuses teardown. All
+uninspectable state, malformed or unreadable peer state, a retired record, or
+any other blocked registration refuses teardown. All
 aliases are retained, no process is signalled, and no potentially owning
 registration is deleted. Fix the reported state; do not work around it with a
 broad process-name kill.
 
-### Recovering a live schema-v1 registration
+### Retired registrations
 
-Historical schema-v1 runfiles remain readable, but a numeric PID alone cannot
-authorize teardown. If that PID is live, both `status` and `down` retain every
-alias and print a copy/paste-complete recovery command with that numeric PID
-only when the originating local record is present. A global-only legacy record
-is reported for repair because Ferric cannot safely invent its local origin.
-The adoption command has the form `ferric server adopt --pid <pid>`. For
-example, if status/down reports PID 6501, run:
+Two kinds of record are no longer managed: any schema other than v2 (schema-v1
+runfiles, and records with no version, predate recorded process identity), and
+every record written by the retired `server up --tailscale`. `status`, `down`
+and `doctor` report such a record as `[blocked]` and the state as
+unverifiable. Ferric goes no further than the record itself: it neither
+inspects nor signals the recorded PID and never deletes the file. The
+diagnostic names the manual cleanup:
 
-```sh
-ferric server adopt --pid 6501
+```console
+$ ferric server status
+[blocked] local registration C:\Users\<you>\server-project\.ferric\server.json: has schema version 1; only schema 2 is managed, so stop PID 6501 and delete C:\Users\<you>\server-project\.ferric\server.json; recorded-identity=unavailable observed-identity=not-inspected listener=not-inspected health=not-probed
+[absent] global registration %APPDATA%\ferric\server.json: recorded-identity=none observed-identity=none listener=none health=none
+[state] unverifiable
+[next] repair or make readable the 1 unverifiable registration coordinate(s), then rerun `ferric server status` (no process action is authorized)
+[diagnostic] local registration C:\Users\<you>\server-project\.ferric\server.json: has schema version 1; only schema 2 is managed, so stop PID 6501 and delete C:\Users\<you>\server-project\.ferric\server.json
 ```
 
-Adoption is non-destructive. It acquires an exact retained process handle,
-checks the closed engine executable and every available recorded argv
-coordinate, requires exclusive IPv4-loopback listener ownership, and
-conditionally replaces only unchanged local/global aliases with schema v2.
-It never signals the process. After replacement, Ferric rechecks that same
-retained generation. If the generation changed, an alias was concurrently
-replaced, or the transition otherwise fails, Ferric rolls back only the v2 bytes
-it wrote that are still unchanged. External replacements remain untouched, and
-any failed rollback reports the exact alias and preserved location so no
-recovery state is hidden. Any pre-replacement disagreement leaves all original
-bytes intact. A later `server down` re-acquires and revalidates the successfully
-adopted generation.
-
-If the legacy PID is already absent, run:
-
-```sh
-ferric server down
-ferric server up --engine llama-server --model /path/to/model.gguf
-```
-
-The first command treats the unchanged legacy record as stale and removes it
-without signalling a process; the second publishes schema v2. If the PID was
-reused or the record is malformed, Ferric continues to refuse automatic
-cleanup. In that case, compare the local and global files with the record you
-inspected and remove only those exact unchanged files manually.
+For a Tailscale record the diagnostic first says to turn that serve off by
+hand (for example `tailscale serve --https=443 off`), then to stop the PID and
+delete the record. Delete every local and global copy it names; afterwards
+`ferric server up` publishes a fresh schema-v2 registration.
 
 ## Launch flags
 
@@ -241,7 +210,6 @@ inspected and remove only those exact unchanged files manually.
 | `--batch-size <N>` | engine default | batch size (llama-server only) |
 | `--seed <N>` | engine default | llama.cpp sampling seed; use a non-negative value for reproducibility (`-1` requests a random seed) |
 | `--parallel <N>` | engine default | nonzero number of concurrent llama-server request slots |
-| `--tailscale` | off | expose the loopback engine at one exactly owned Tailscale Serve path on HTTPS 443; normal operation requires tailscaled capability 142 with version core 1.102.2 on Linux or Windows |
 
 ### How the flags map to `llama-server`
 
@@ -275,137 +243,16 @@ the machine. This is also why, in the containerized topology, `ferric` and
 `llama-server` are co-located in one container rather than split across a network
 boundary (see [Container Topology & Roadmap](swarming-k8s.md)).
 
-### Tailscale Serve exposure
+### Remote access
 
-`server up --tailscale` leaves the engine bound exclusively to `127.0.0.1` and
-adds one path handler to the node's existing Serve configuration through the
-local tailscaled API. Ferric asks the operating system for a 128-bit random
-token and owns only this coordinate:
-
-```text
-https://example-host.tailnet-example.ts.net/_ferric/<32-hex-token>/v1
-```
-
-Tailscale strips the mount prefix before proxying, so the local backend still
-receives `/v1/...`. The token makes the ownership coordinate unique; it is not
-a credential. Tailnet identity, HTTPS, MagicDNS, and ACL policy determine who
-can reach the endpoint. Ferric neither owns HTTPS 443 nor the node certificate
-nor unrelated Serve handlers.
-
-Normal operations require the response capability header to be exactly 142 and
-the Tailscale version's semantic-version core to be exactly 1.102.2; a valid
-prerelease or build suffix is accepted. Conventional Linux installations must
-expose `/var/run/tailscale/tailscaled.sock`; distributions or appliances that
-relocate that socket are not yet supported. Windows connects to Tailscale's
-protected named pipe. The invoking account must be permitted to open the local
-daemon endpoint. A filesystem or pipe permission failure, or an HTTP 401/403
-from LocalAPI, is an authorization problem to correct at the OS/Tailscale
-boundary. Preflight failures occur before mutation; a 401/403 received after
-POST bytes were sent is indeterminate and retains the journal. macOS is
-explicitly unsupported because its sandboxed GUI variants use a different
-token-and-port discovery protocol.
-
-Publication binds three things, not just a hostname: the stable node ID, the
-canonical dotless FQDN, and HTTPS authority. tailscaled must report
-`BackendState=Running`, the self node must advertise the HTTPS capability, and
-the FQDN must be present in the certificate domains. Enable Tailscale HTTPS on
-the node before launch. Cleanup still requires the same stable node ID, but it
-may target the journaled old FQDN after a node rename or later HTTPS-policy
-change; a profile or node switch never inherits cleanup authority.
-
-Every authoritative Serve observation uses one LocalAPI connection and reads
-`status -> serve-config -> status`. Both status reads must describe the same
-stable node, FQDN, backend state, and HTTPS authority. The configuration ETag
-must be the lowercase SHA-256 of the exact raw response body. Ferric sends one
-whole-document POST with that exact value in `If-Match` and never retries a
-mutation. HTTP 412 therefore proves that the stale body was not applied. Any
-failure after POST bytes were sent without a no-op response is indeterminate:
-the update may have committed, so recovery evidence remains durable.
-
-The Serve-config ETag is not cryptographically bound to the status identity.
-The before/after status sandwiches detect and compensate a node or profile
-switch, but LocalAPI cannot make that identity check atomic with the POST. In
-the narrow race where an operator switches profiles after the pre-POST status
-read and the new profile accepts the same configuration ETag, Ferric can detect
-the mismatch only afterward, attempt scoped compensation, and retain its
-journals. Do not switch Tailscale profiles while `server up --tailscale` or
-`server down` is running.
-
-The strict 1.102.2 schema projection is duplicate-key-safe and deliberately
-fail-closed. Top-level JSON `null` is the documented empty configuration, but a
-null TCP, Web, host, or handler object is invalid. Unknown or wrongly typed
-fields on an authority-relevant object, noncanonical ports, conflicting HTTPS
-443 state, a true expected-host Funnel setting, effective foreground routing,
-and a descendant or trailing-slash alias beneath the owned path all block
-publication. These states could widen, shadow, or normalize the exact route;
-resolve them explicitly before retrying Ferric.
-
-Launch first proves the path absent on a compatible HTTPS 443 Serve entry,
-starts and verifies the exact loopback process, and publishes byte-identical
-local/global ownership journals with `apply_confirmed=false`. It then rechecks
-the same-session identity and exact configuration revision, applies only that
-path to `http://127.0.0.1:<port>` with `If-Match`, and performs a second
-same-session identity/configuration sandwich. Only the exact handler on the
-same publication identity authorizes compare-replacing every unchanged journal
-with `apply_confirmed=true`. The native process/listener and final registration
-revisions are revalidated before ready is reported. The local base remains
-`http://127.0.0.1:<port>/v1`; the tokenized HTTPS base is reported separately.
-
-`status` reports the external coordinate as active only when the token path
-still has the recorded proxy target, the stable node ID and publication FQDN
-match, HTTPS authority remains valid, and no effective foreground, Funnel,
-descendant, or alias route shadows it. An absent path is pending, a different
-handler is replaced, a residual route is shadowed, and unreadable or ambiguous
-state is uninspectable. It also reports whether the journal records a confirmed
-or unconfirmed apply. Only an exact active proxy together with the existing
-Ready native state is success. Each non-ready state prints one safe next action
-and the retained journal location.
-
-`down` revalidates the unchanged journal, same-session identity, raw-body ETag,
-and exact target, then removes only that handler with one `If-Match` CAS. Every
-unrelated JSON value is retained. On the pinned daemon Ferric may also prune an
-empty scaffold only when the journal proves Ferric created it and the current
-shape still matches exactly. After an upgrade, cleanup has a bounded
-best-effort fallback for major-1 versions at or above 1.102.2 and capability at
-least 142: it can remove the exact handler while preserving all TCP/Web
-scaffolding and unknown fields, but it always retains the ownership journals
-because future routing semantics make global endpoint absence unprovable. That
-fallback refuses the POST if reserialization could alter an unknown numeric
-value. When the original Serve configuration was top-level
-`null`, a complete apply/cleanup cycle leaves the semantically equivalent empty
-object `{}`; Ferric cannot restore the original lexical `null` without storing
-and later replacing unrelated whole-document bytes.
-
-Cleanup then repeats the identity/configuration sandwich, independently
-stops/reaps only the exact retained native process, and removes registration
-bytes only after both resources resolve. An absent path is idempotent only for
-a confirmed journal. A replaced, malformed, uninspectable, or identity-mismatched
-handler does not authorize mutation. A descendant/alias or effective foreground
-route that remains after exact removal is a residual shadow: Ferric preserves
-the ownership journals and reports the manual coordinate instead of claiming
-cleanup. An unconfirmed journal also remains when an indeterminate apply is
-followed only by absence, until the delayed exact path is observed and removed
-or separate daemon-generation/manual proof establishes that it cannot land.
-
-Never use `tailscale serve reset` as Ferric recovery: it would clear unrelated
-node-wide state. Ferric has no CLI-command runner for Serve and does not expose
-reset, root-path off, or an unscoped mutation. Its only write is the exact
-checked LocalAPI configuration body described above. For retained evidence,
-inspect the reported token path and target, resolve only that coordinate when
-you can independently verify it, then rerun `ferric server down` so Ferric can
-converge and conditionally remove unchanged journals. Boolean-only historical
-`tailscale: true` records have no typed authority and remain wholly fail-closed
-before process or Tailscale effects.
-
-The automated lifecycle acceptance uses a model-free fake LocalAPI. It does not
-prove a real tailnet, certificate issuance, MagicDNS, ACL reachability, or live
-Windows named-pipe behavior. Perform any live-tailnet acceptance only with
-explicit operator authorization. LocalAPI requests are time-, header-, and
-body-bounded. On Windows, if cancellation of a pending pipe operation cannot be
-observed by the absolute deadline, Ferric closes and poisons the pipe and
-retains at most one pending heap allocation for that poisoned session until the
-short-lived Ferric process exits; this prevents use-after-free without turning
-the timeout into an unbounded wait.
+The engine stays on loopback. To reach Ferric from another machine, use
+`ferric tunnel`, a self-hosted WireGuard tunnel with no coordination server,
+in front of `ferric api --tunnel`; see [Remote access without a coordination
+server](security.md#remote-access-without-a-coordination-server).
+`ferric tunnel up` runs on Linux only, so Windows remote access waits on
+T-12707. The earlier `server up --tailscale` is retired; a registration it left
+behind is reported as described in [Retired
+registrations](#retired-registrations).
 
 ## Edge tuning
 

@@ -88,14 +88,14 @@ machine unless you explicitly point it at a remote server.
 
 ## 2. Build
 
-Inference backends are **feature-gated**. Pick the OpenAI-compatible valve
-(`backend-openai`) — it's the default, reliable, constrained-decoding path:
+Every build includes the OpenAI-compatible valve, the reliable,
+constrained-decoding path; `--mock` covers offline use without a model:
 
 ```sh
 git clone https://github.com/crussella0129/Animus_Ferric.git
 cd Animus_Ferric
 
-cargo build --release -p ferric-cli --features backend-openai
+cargo build --release -p ferric-cli
 ```
 
 The binary lands at `target/release/ferric` (`ferric.exe` on Windows) — call it
@@ -104,21 +104,13 @@ Windows, Linux, and macOS, use `cargo install`, which builds in release and
 copies the binary into `~/.cargo/bin` (rustup already adds that to your `PATH`):
 
 ```sh
-cargo install --path crates/ferric-cli --features backend-openai --force
-# wrappers that do exactly this:
-#   Linux/macOS:  ./tools/install.sh
-#   Windows:      .\tools\install.ps1
+cargo install --path crates/ferric-cli --force
 ```
 
 Re-run that **after every `git pull` or source change**: a plain `cargo build`
 updates `target/release/` but *not* the copy on your `PATH`, so an installed
 `ferric` can silently lag the code. `--force` re-installs despite the unchanged
 `0.1.0` version. The examples below assume `ferric` is on `PATH`.
-
-> **Built with no backend feature** (`cargo build -p ferric-cli`), only the
-> offline tooling works — `trace`, `launch`, `icm init`/`plan`, `cron add`/`list`,
-> and every `--mock` path. `query`/`bench`/`dream` against a real model, and the
-> `api` command, need `--features backend-openai`.
 
 Confirm it runs:
 
@@ -176,7 +168,7 @@ note for your RAM, so an over-large model can't start unnoticed). It then starts
 not run `server up` yourself. This is the normal way in.
 
 The rest of this section is the **manual / expert** route — for pinning an exact
-engine, attaching a remote server, or Tailscale exposure.
+engine or attaching a remote server.
 
 ### 3d. Manual server management (expert)
 
@@ -216,22 +208,18 @@ port, and returns only after the spawned process is still alive and the
 engine-specific HTTP health endpoint returns 200.
 
 Lifecycle resolution inventories both local and global registrations instead
-of silently preferring one. Malformed, conflicting, legacy-live, or
-uninspectable state fails closed; HTTP health alone never authorizes teardown.
-Stale-only records can be cleaned by `server down` without signalling a
-process. See [Registration and teardown
-safety](server-configuration.md#registration-and-teardown-safety) for legacy
-recovery. `server up --tailscale` requires the supported local tailscaled API
-and journals an exact high-entropy Serve coordinate before mutation. Historical
-`tailscale: true` records without typed ownership still require targeted manual
-cleanup, never a node-wide Serve reset; see [Tailscale Serve
-exposure](server-configuration.md#tailscale-serve-exposure).
+of silently preferring one. Malformed, conflicting, retired, or uninspectable
+state fails closed; HTTP health alone never authorizes teardown. Stale-only
+records can be cleaned by `server down` without signalling a process. See
+[Registration and teardown
+safety](server-configuration.md#registration-and-teardown-safety).
 
-If `status` finds a live historical schema-v1 record, it prints the explicit
-non-destructive recovery command `ferric server adopt --pid <PID>`. Run that
-from the workspace containing the local registration; Ferric upgrades only
-unchanged records after verifying the closed engine executable, recorded
-arguments, exact process generation, and exclusive IPv4-loopback listener.
+A record from an older Ferric (schema v1, or one written by the retired
+`server up --tailscale`) is reported as unverifiable, and its diagnostic names
+the manual cleanup: stop the recorded PID and delete the record, after turning
+any Tailscale serve it set up off by hand. See [Retired
+registrations](server-configuration.md#retired-registrations). For remote
+access, use `ferric tunnel` ([security](security.md#remote-access-without-a-coordination-server)).
 
 > **Already running your own server?** (an existing Ollama, LM Studio, vLLM, or a
 > remote llama-server) — skip `ferric server` entirely and pass

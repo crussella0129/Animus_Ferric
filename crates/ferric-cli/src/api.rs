@@ -33,11 +33,8 @@ use ferric_loop::RunArgs;
 use ferric_provider::StreamDelta;
 
 use crate::backend::BackendOpts;
-use crate::config::RunFlags;
-use crate::query::{
-    RunConfig, RunConfigError, build_run_config, ensure_supported_harness_policy, route_files,
-    run_with_provider,
-};
+use crate::config::{ConfigError, RunFlags};
+use crate::query::{RunConfig, build_run_config, route_files, run_with_provider};
 
 /// CLI arguments for `ferric api`.
 #[derive(Args)]
@@ -113,12 +110,9 @@ enum ApiQueryError {
     Internal(String),
 }
 
-impl From<RunConfigError> for ApiQueryError {
-    fn from(error: RunConfigError) -> Self {
-        match error {
-            RunConfigError::UnsupportedPolicy(message) => Self::InvalidRequest(message.to_string()),
-            RunConfigError::Config(error) => Self::Internal(error.to_string()),
-        }
+impl From<ConfigError> for ApiQueryError {
+    fn from(error: ConfigError) -> Self {
+        Self::Internal(error.to_string())
     }
 }
 
@@ -357,7 +351,7 @@ async fn run_query(
 fn api_run_config(
     workspace: &Workspace,
     args: &ApiArgs,
-) -> Result<(BackendOpts, RunConfig), RunConfigError> {
+) -> Result<(BackendOpts, RunConfig), ConfigError> {
     let cfg = crate::config::load_layered(workspace.root())?.config;
     // The HTTP caller is not necessarily the workspace owner, so a
     // workspace-level allowlist is not evidence that *this* requester
@@ -419,8 +413,6 @@ async fn serve(args: ApiArgs) -> Result<std::process::ExitCode, String> {
         launch.max_ring,
     )
     .map_err(|error| format!("api: {error}"))?;
-    ensure_supported_harness_policy(launch.harness_policy)
-        .map_err(|error| format!("api: {error}"))?;
 
     let token_path = args
         .token_file
@@ -489,7 +481,6 @@ fn is_loopback_host(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HarnessPolicyArg;
 
     fn api_args(workspace: &std::path::Path) -> ApiArgs {
         ApiArgs {
@@ -516,33 +507,6 @@ mod tests {
         assert!(!is_loopback_host("0.0.0.0"));
         assert!(!is_loopback_host("192.0.2.10"));
         assert!(!is_loopback_host("example-host"));
-    }
-
-    #[test]
-    fn unsupported_planner_fails_before_api_bind_or_trace() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-
-        let cli_workspace = tempfile::tempdir().unwrap();
-        let mut explicit = api_args(cli_workspace.path());
-        explicit.run.harness_policy = Some(HarnessPolicyArg::EvidencePlanner);
-        assert_eq!(
-            runtime.block_on(run_api(explicit)),
-            std::process::ExitCode::FAILURE
-        );
-        assert!(!cli_workspace.path().join(".ferric/trace").exists());
-
-        let config_workspace = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(config_workspace.path().join(".ferric")).unwrap();
-        std::fs::write(
-            config_workspace.path().join(".ferric/config.toml"),
-            "harness_policy = \"evidence_planner\"\n",
-        )
-        .unwrap();
-        assert_eq!(
-            runtime.block_on(run_api(api_args(config_workspace.path()))),
-            std::process::ExitCode::FAILURE
-        );
-        assert!(!config_workspace.path().join(".ferric/trace").exists());
     }
 
     #[test]

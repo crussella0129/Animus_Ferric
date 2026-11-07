@@ -54,12 +54,9 @@ fn first_run_docs_match_cli() {
     assert!(cli["bin"].as_array().unwrap().iter().any(|binary| {
         binary["name"].as_str() == Some("ferric") && binary["path"].as_str() == Some("src/main.rs")
     }));
-    assert!(
-        cli["features"]["default"]
-            .as_array()
-            .unwrap()
-            .contains(&toml::Value::String("backend-openai".into()))
-    );
+    // The HTTP backend is always compiled: no default feature set exists for
+    // a plain `cargo install --path crates/ferric-cli` to narrow.
+    assert!(cli["features"].get("default").is_none());
 
     let root = tempfile::tempdir().unwrap();
     let primary_help = help(root.path(), &[]);
@@ -73,35 +70,19 @@ fn first_run_docs_match_cli() {
         .lines()
         .filter_map(|line| line.split_whitespace().next())
         .collect();
-    // `setup` needs the backend feature; without it the old four remain.
-    let backend = cfg!(feature = "backend-openai");
-    let expected: &[&str] = if backend {
-        &["run", "setup", "status", "explain", "advanced"]
-    } else {
-        &["run", "status", "explain", "advanced"]
-    };
-    assert_eq!(primary_actions, expected);
-    let in_this_build = |action: &&str| backend || *action != "setup";
-    let readme_actions: Vec<_> = documented_actions(readme)
-        .into_iter()
-        .filter(in_this_build)
-        .collect();
-    let commands_actions: Vec<_> = documented_actions(commands)
-        .into_iter()
-        .filter(in_this_build)
-        .collect();
-    assert_eq!(readme_actions, primary_actions);
-    assert_eq!(commands_actions, primary_actions);
+    assert_eq!(
+        primary_actions,
+        ["run", "setup", "status", "explain", "advanced"]
+    );
+    assert_eq!(documented_actions(readme), primary_actions);
+    assert_eq!(documented_actions(commands), primary_actions);
 
     for (action, options) in [
         ("run", &["[PROMPT]", "--workspace", "--allow-edits"][..]),
         ("setup", &["--list", "--model", "--models-dir", "--yes"][..]),
         ("status", &["--workspace", "--json"][..]),
         ("explain", &["--workspace", "--json"][..]),
-    ]
-    .into_iter()
-    .filter(|(action, _)| in_this_build(action))
-    {
+    ] {
         let action_help = help(root.path(), &[action]);
         let documented = commands
             .lines()

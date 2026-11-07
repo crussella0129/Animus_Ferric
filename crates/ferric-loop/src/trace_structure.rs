@@ -201,10 +201,10 @@ impl ActiveTurn {
     }
 }
 
-/// Validates the ordering and cross-event identities introduced by the
-/// recovery protocol. Legacy turns (those without `ActionsProposed`) retain
-/// their historical next-`TurnStart` boundary and are left to the caller's
-/// existing legacy checks.
+/// Validates the ordering and cross-event identities of the recovery protocol.
+/// A turn ends at its `TurnCommitted`, or at a `SessionEnd` before its
+/// `TurnEnd`; traces from before sprint 113, whose turns had no
+/// `ActionsProposed` and ended at the next `TurnStart`, are rejected.
 #[derive(Debug, Default)]
 pub struct TraceStructure {
     base: StateBase,
@@ -349,12 +349,6 @@ impl TraceStructure {
         if self.saw_turn || self.base != StateBase::None {
             return Err("PolicySelected appears after session state began".to_string());
         }
-        if policy == HarnessPolicy::EvidencePlanner {
-            return Err(
-                "evidence_planner is unsupported until a planner trace protocol is defined"
-                    .to_string(),
-            );
-        }
         self.harness_policy = Some(policy);
         Ok(())
     }
@@ -365,10 +359,6 @@ impl TraceStructure {
                 "{event} is not valid under the legacy harness policy"
             )),
             Some(HarnessPolicy::Evidence) => Ok(()),
-            Some(HarnessPolicy::EvidencePlanner) => Err(
-                "evidence_planner is unsupported until a planner trace protocol is defined"
-                    .to_string(),
-            ),
         }
     }
 
@@ -653,15 +643,6 @@ impl TraceStructure {
             let Some(projected) = self.projected_controller_blocks.get(&guarded.turn) else {
                 continue;
             };
-            if !guarded.controller_blocks_was_present {
-                if guarded.controller_blocks != 0 {
-                    return Err(format!(
-                        "checkpoint guard turn {} has an absent but nonzero controller-block count",
-                        guarded.turn
-                    ));
-                }
-                continue;
-            }
             if guarded.controller_blocks != *projected {
                 return Err(format!(
                     "checkpoint guard turn {} controller-block count {} differs from typed event count {projected}",
@@ -708,10 +689,9 @@ impl TraceStructure {
 
         match context {
             ControllerCheckpointContext::Initial => {
-                let pristine =
-                    ControllerState::new(HarnessPolicy::Evidence, state.required_checks.clone())
-                        .map_err(|error| format!("invalid initial ControllerCheckpoint: {error}"))?
-                        .checkpoint();
+                let pristine = ControllerState::new(state.required_checks.clone())
+                    .map_err(|error| format!("invalid initial ControllerCheckpoint: {error}"))?
+                    .checkpoint();
                 if *state != pristine {
                     return Err(
                         "initial ControllerCheckpoint is not a pristine controller base"
@@ -874,13 +854,15 @@ impl TraceStructure {
                 return Err("resumed evidence TurnStart lacks RecoveryPacketInjected".to_string());
             }
         }
-        if let Some(active) = self.active.take()
-            && active.is_modern()
-        {
-            return Err(format!(
-                "TurnStart({turn}) overwrites modern turn {} without TurnCommitted",
-                active.turn
-            ));
+        if let Some(active) = &self.active {
+            return Err(if active.is_modern() {
+                format!(
+                    "TurnStart({turn}) overwrites modern turn {} without TurnCommitted",
+                    active.turn
+                )
+            } else {
+                unproposed_turn(active.turn)
+            });
         }
 
         let expected = if self.saw_turn {
@@ -931,11 +913,6 @@ impl TraceStructure {
         if active.proposed.is_some() {
             return Err(format!("turn {turn} has duplicate ActionsProposed"));
         }
-        if !active.calls.is_empty() {
-            return Err(format!(
-                "turn {turn} records ToolCall before ActionsProposed"
-            ));
-        }
         active.proposed = Some(calls.to_vec());
         Ok(())
     }
@@ -961,20 +938,22 @@ impl TraceStructure {
                 call.id, previous.call.id
             ));
         }
-        if let Some(proposed) = &active.proposed {
-            let index = active.calls.len();
-            let expected = proposed.get(index).ok_or_else(|| {
-                format!(
-                    "turn {} dispatches more calls than it proposed",
-                    active.turn
-                )
-            })?;
-            if expected != &call {
-                return Err(format!(
-                    "turn {} dispatched call {:?} but proposed {:?} at index {index}",
-                    active.turn, call, expected
-                ));
-            }
+        let proposed = active
+            .proposed
+            .as_ref()
+            .ok_or_else(|| unproposed_turn(active.turn))?;
+        let index = active.calls.len();
+        let expected = proposed.get(index).ok_or_else(|| {
+            format!(
+                "turn {} dispatches more calls than it proposed",
+                active.turn
+            )
+        })?;
+        if expected != &call {
+            return Err(format!(
+                "turn {} dispatched call {:?} but proposed {:?} at index {index}",
+                active.turn, call, expected
+            ));
         }
         active.calls.push(RecordedCall {
             call,
@@ -1393,13 +1372,16 @@ impl TraceStructure {
             return Err("trace contains more than one SessionEnd".to_string());
         }
         if let Some(active) = self.active.take()
-            && active.is_modern()
-            && !(reason == "provider_error" && !active.ended && active.calls.is_empty())
+            && active.ended
         {
-            return Err(format!(
-                "SessionEnd({reason}) closes modern turn {} without TurnCommitted",
-                active.turn
-            ));
+            return Err(if active.is_modern() {
+                format!(
+                    "SessionEnd({reason}) closes modern turn {} without TurnCommitted",
+                    active.turn
+                )
+            } else {
+                unproposed_turn(active.turn)
+            });
         }
         if let Some(committed) = self.awaiting_end.take()
             && committed != reason
@@ -1730,10 +1712,15 @@ fn is_unmeasured_read_only_or_control(name: &str) -> bool {
         || is_completion_control(name)
 }
 
-/// A successful stop reason, including the legacy `done` alias older traces
-/// recorded.
+/// A successful stop reason.
 pub(crate) fn is_success_reason(reason: &str) -> bool {
-    reason == "done" || StopReason::parse(reason).is_some_and(StopReason::is_success)
+    StopReason::parse(reason).is_some_and(StopReason::is_success)
+}
+
+/// A turn without `ActionsProposed` that is dispatched or closed was written
+/// before sprint 113, when the next `TurnStart` was the commit boundary.
+fn unproposed_turn(turn: u32) -> String {
+    format!("turn {turn} has no ActionsProposed; traces from before sprint 113 are not supported")
 }
 
 #[cfg(test)]
@@ -1784,12 +1771,9 @@ mod tests {
                 media: Vec::new(),
             })
             .unwrap();
-        let state = ControllerState::new(
-            HarnessPolicy::Evidence,
-            required_checks.iter().map(|name| (*name).to_string()),
-        )
-        .unwrap()
-        .checkpoint();
+        let state = ControllerState::new(required_checks.iter().map(|name| (*name).to_string()))
+            .unwrap()
+            .checkpoint();
         validator
             .observe(&Event::ControllerCheckpoint { state })
             .unwrap();
@@ -1906,10 +1890,7 @@ mod tests {
         }
     }
 
-    fn checkpoint_with_controller_blocks(
-        controller_blocks: u32,
-        controller_blocks_was_present: bool,
-    ) -> RecoveryCheckpointV1 {
+    fn checkpoint_with_controller_blocks(controller_blocks: u32) -> RecoveryCheckpointV1 {
         let mut checkpoint = core_checkpoint(1, None);
         checkpoint.guard_history = vec![ferric_trace::GuardTurn {
             turn: 0,
@@ -1917,7 +1898,6 @@ mod tests {
             dispatched: 1,
             errored: 1,
             controller_blocks,
-            controller_blocks_was_present,
         }];
         checkpoint
     }
@@ -1932,7 +1912,7 @@ mod tests {
         validator
             .observe(&Event::RecoveryCheckpoint { state: core })
             .unwrap();
-        let pause = ControllerState::new(HarnessPolicy::Evidence, Vec::new())
+        let pause = ControllerState::new(Vec::new())
             .unwrap()
             .checkpoint_for_pause(pause_reason)
             .unwrap();
@@ -1985,21 +1965,20 @@ mod tests {
         };
         evidence.projected_controller_blocks.insert(0, 1);
 
-        let legacy_omission = checkpoint_with_controller_blocks(0, false);
-        evidence
-            .validate_checkpoint_controller_blocks(&legacy_omission)
-            .unwrap();
-        let explicit_zero = checkpoint_with_controller_blocks(0, true);
+        let zero = checkpoint_with_controller_blocks(0);
         assert!(
             evidence
-                .validate_checkpoint_controller_blocks(&explicit_zero)
+                .validate_checkpoint_controller_blocks(&zero)
                 .unwrap_err()
                 .contains("differs from typed event count")
         );
+        evidence
+            .validate_checkpoint_controller_blocks(&checkpoint_with_controller_blocks(1))
+            .unwrap();
 
         let mut legacy = TraceStructure::new();
         legacy.observe(&policy(HarnessPolicy::Legacy)).unwrap();
-        let forged = checkpoint_with_controller_blocks(1, true);
+        let forged = checkpoint_with_controller_blocks(1);
         assert!(
             legacy
                 .observe(&Event::RecoveryCheckpoint { state: forged })
@@ -2064,9 +2043,7 @@ mod tests {
                 media: Vec::new(),
             })
             .unwrap();
-        let mut checkpoint = ControllerState::new(HarnessPolicy::Evidence, Vec::new())
-            .unwrap()
-            .checkpoint();
+        let mut checkpoint = ControllerState::new(Vec::new()).unwrap().checkpoint();
         checkpoint.version += 1;
         let error = unsupported_checkpoint
             .observe(&Event::ControllerCheckpoint { state: checkpoint })
@@ -2123,15 +2100,6 @@ mod tests {
             ))
             .unwrap_err();
         assert!(error.contains("lacks a typed controller record"), "{error}");
-    }
-
-    #[test]
-    fn evidence_planner_fails_closed_until_its_trace_protocol_exists() {
-        let mut validator = TraceStructure::new();
-        let error = validator
-            .observe(&policy(HarnessPolicy::EvidencePlanner))
-            .unwrap_err();
-        assert!(error.contains("planner trace protocol"), "{error}");
     }
 
     #[test]
@@ -2892,7 +2860,7 @@ mod tests {
                 state: core_checkpoint(3, None),
             })
             .unwrap();
-        let mut forged = ControllerState::new(HarnessPolicy::Evidence, Vec::new())
+        let mut forged = ControllerState::new(Vec::new())
             .unwrap()
             .checkpoint_for_pause("max_turns")
             .unwrap();

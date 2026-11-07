@@ -41,7 +41,6 @@ pub(crate) enum EndpointSelection {
     Managed {
         scope: ManagedDiscoveryScope,
         server: Box<ManagedServer>,
-        explicit_base_url: Option<String>,
     },
     Default {
         base_url: String,
@@ -71,7 +70,6 @@ pub(crate) enum EndpointSelectionError {
     StaleOnly(Box<ManagedServerDiscovery>),
     Conflict(Box<ManagedServerDiscovery>),
     Unverifiable(Box<ManagedServerDiscovery>),
-    ExplicitManagedMismatch { explicit: String, managed: String },
 }
 
 impl fmt::Display for EndpointSelectionError {
@@ -106,10 +104,6 @@ impl fmt::Display for EndpointSelectionError {
                 "managed server registrations are unverifiable: {}",
                 issues(discovery)
             ),
-            Self::ExplicitManagedMismatch { explicit, managed } => write!(
-                formatter,
-                "explicit endpoint {explicit} does not match the ready managed endpoint {managed}"
-            ),
         }
     }
 }
@@ -125,7 +119,6 @@ pub(crate) fn automatic_endpoint_from_discovery(
         ManagedServerState::Ready(server) => Ok(EndpointSelection::Managed {
             scope,
             server: Box::new(server.clone()),
-            explicit_base_url: None,
         }),
         ManagedServerState::Degraded { .. } => {
             Err(EndpointSelectionError::Degraded(Box::new(discovery)))
@@ -158,39 +151,6 @@ where
     automatic_endpoint_from_discovery(scope, discovery)
 }
 
-pub(crate) fn require_managed_endpoint(
-    scope: ManagedDiscoveryScope,
-    discovery: ManagedServerDiscovery,
-    explicit: Option<&str>,
-) -> Result<EndpointSelection, EndpointSelectionError> {
-    let mut selection = automatic_endpoint_from_discovery(scope, discovery)?;
-    let EndpointSelection::Managed {
-        server,
-        explicit_base_url,
-        ..
-    } = &mut selection
-    else {
-        return Err(EndpointSelectionError::Setup(
-            "strict managed mode requires a ready `ferric server`; built-in default selection is not permitted"
-                .to_string(),
-        ));
-    };
-    if let Some(explicit) = explicit {
-        if normalized_endpoint(explicit) != normalized_endpoint(&server.runfile.base_url) {
-            return Err(EndpointSelectionError::ExplicitManagedMismatch {
-                explicit: explicit.to_string(),
-                managed: server.runfile.base_url.clone(),
-            });
-        }
-        *explicit_base_url = Some(explicit.to_string());
-    }
-    Ok(selection)
-}
-
-fn normalized_endpoint(value: &str) -> &str {
-    value.trim_end_matches('/')
-}
-
 /// Resolve the endpoint exactly once for commands that launch multiple query
 /// processes. Freezing the discovered runfile URL prevents a long benchmark
 /// from silently switching servers mid-run.
@@ -216,7 +176,6 @@ pub(crate) fn resolved_endpoint_in(
     })
 }
 
-#[cfg(feature = "backend-openai")]
 pub async fn create_provider(
     opts: &BackendOpts,
 ) -> Result<Box<dyn Provider + Send + Sync>, String> {
@@ -225,7 +184,6 @@ pub async fn create_provider(
     create_provider_in(opts, &workspace).await
 }
 
-#[cfg(feature = "backend-openai")]
 pub(crate) async fn create_provider_in(
     opts: &BackendOpts,
     workspace: &Path,
@@ -248,21 +206,10 @@ pub(crate) async fn create_provider_in(
     Ok(Box::new(OpenAiProvider::new(config)))
 }
 
-/// What a caller is told when the binary has no backend compiled in. One
-/// definition: this text lived in four byte-identical copies, each
-/// unreachable in a normally-built binary and so each free to drift
-/// unnoticed. `ferric dream` deliberately keeps its own wording — it has no
-/// `--mock`, so pointing at one would be wrong.
-#[cfg_attr(feature = "backend-openai", allow(dead_code))]
-pub(crate) const BACKEND_FEATURE_MISSING: &str = "this binary was built without backend features; \
-     rebuild with `cargo build --features backend-openai`, or use --mock";
-
 /// A backend a command has finished resolving: either the scripted mock, or a
 /// real provider owning the ONE runtime it will be driven on.
 pub(crate) enum ResolvedBackend {
     Mock,
-    // Constructed only where a backend is compiled in (and by tests).
-    #[cfg_attr(not(feature = "backend-openai"), allow(dead_code))]
     Real {
         provider: Box<dyn Provider + Send + Sync>,
         runtime: tokio::runtime::Runtime,
@@ -271,7 +218,7 @@ pub(crate) enum ResolvedBackend {
 
 impl ResolvedBackend {
     /// The backend a run asked for: the mock, or a real provider bound to the
-    /// same selected workspace as config — or why this binary cannot have one.
+    /// same selected workspace as config.
     pub(crate) fn resolve(
         mock: bool,
         opts: &BackendOpts,
@@ -280,18 +227,9 @@ impl ResolvedBackend {
         if mock {
             return Ok(Self::Mock);
         }
-        #[cfg(feature = "backend-openai")]
-        {
-            let runtime =
-                tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
-            let provider = runtime.block_on(create_provider_in(opts, workspace))?;
-            Ok(Self::Real { provider, runtime })
-        }
-        #[cfg(not(feature = "backend-openai"))]
-        {
-            let _ = (opts, workspace);
-            Err(BACKEND_FEATURE_MISSING.to_string())
-        }
+        let runtime = tokio::runtime::Runtime::new().map_err(|e| format!("tokio runtime: {e}"))?;
+        let provider = runtime.block_on(create_provider_in(opts, workspace))?;
+        Ok(Self::Real { provider, runtime })
     }
 
     /// Drive `future` to completion: the mock has no ambient runtime by
@@ -322,17 +260,6 @@ impl ResolvedBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The one place this string can be checked: it is a user-facing error in
-    /// a path a normally-built binary cannot reach, and it went three sprints
-    /// as three untested copies. It has to name the feature to rebuild with
-    /// *and* the way to proceed without one — a diagnostic that says only
-    /// "unsupported" leaves the user nowhere.
-    #[test]
-    fn the_backend_feature_diagnostic_names_the_feature_and_the_alternative() {
-        assert!(BACKEND_FEATURE_MISSING.contains("backend-openai"));
-        assert!(BACKEND_FEATURE_MISSING.contains("--mock"));
-    }
 
     #[test]
     fn api_base_precedence() {

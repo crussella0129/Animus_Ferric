@@ -33,7 +33,6 @@ pub(crate) struct DescribeArgs {
     pub json: bool,
 }
 
-#[cfg(feature = "backend-openai")]
 pub(crate) fn safe_text(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
@@ -42,7 +41,6 @@ pub(crate) fn safe_text(text: &str) -> String {
 
 /// Shared by interactive setup and the read-only description path. Diagnostic
 /// tails are structured, so neither their text nor an action heuristic is needed.
-#[cfg(feature = "backend-openai")]
 pub(crate) fn render_startup_error(error: &crate::startup::StartupError) -> String {
     tracing::debug!(error = %error, "human startup stopped");
     safe_text(&error.human_message())
@@ -50,18 +48,11 @@ pub(crate) fn render_startup_error(error: &crate::startup::StartupError) -> Stri
 
 pub(crate) fn welcome() {
     println!("Ferric — a local model, ready to help.");
-    #[cfg(feature = "backend-openai")]
-    {
-        println!(
-            "Install once: cargo install --path crates/ferric-cli --force. Then run ferric in your project folder."
-        );
-        println!(
-            "Point FERRIC_MODELS_DIR at the folder holding your .gguf models (or keep them in ./models)."
-        );
-    }
-    #[cfg(not(feature = "backend-openai"))]
     println!(
-        "This build has no real backend. Install with cargo install --path crates/ferric-cli --features backend-openai."
+        "Install once: cargo install --path crates/ferric-cli --force. Then run ferric in your project folder."
+    );
+    println!(
+        "Point FERRIC_MODELS_DIR at the folder holding your .gguf models (or keep them in ./models)."
     );
     println!("Ask mode cannot change files. Folder work needs your permission.");
     println!(
@@ -76,60 +67,42 @@ pub(crate) fn run(args: RunArgs) -> ExitCode {
         welcome();
         return ExitCode::SUCCESS;
     }
-    #[cfg(not(feature = "backend-openai"))]
-    {
-        welcome();
-        ExitCode::FAILURE
-    }
-    #[cfg(feature = "backend-openai")]
-    {
-        enabled::run(args, interactive)
-    }
+    enabled::run(args, interactive)
 }
 
 pub(crate) fn describe(args: DescribeArgs) -> ExitCode {
-    #[cfg(not(feature = "backend-openai"))]
-    {
-        let _ = args;
-        welcome();
-        ExitCode::SUCCESS
-    }
-    #[cfg(feature = "backend-openai")]
-    {
-        let result = (|| {
-            let root = args
-                .workspace
-                .or_else(|| std::env::current_dir().ok())
-                .ok_or("Cannot identify this folder. Open a folder and try again.".to_string())?;
-            let cfg = crate::config::load_layered(&root)
-                .map_err(|e| e.to_string())?
-                .config;
-            let summary = crate::startup::describe(&root, &cfg, None)
-                .map_err(|error| render_startup_error(&error))?;
-            // The description is read-only; status does not invent completed
-            // workflow checkpoints or probe a potentially remote endpoint.
-            if args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&summary)
-                        .map_err(|_| "Cannot format setup summary. Request the text summary without --json for the same selected folder.".to_string())?
-                );
-            } else {
-                println!("{}", summary);
-            }
-            Ok::<(), String>(())
-        })();
-        match result {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("{}", safe_text(&error));
-                ExitCode::FAILURE
-            }
+    let result = (|| {
+        let root = args
+            .workspace
+            .or_else(|| std::env::current_dir().ok())
+            .ok_or("Cannot identify this folder. Open a folder and try again.".to_string())?;
+        let cfg = crate::config::load_layered(&root)
+            .map_err(|e| e.to_string())?
+            .config;
+        let summary = crate::startup::describe(&root, &cfg, None)
+            .map_err(|error| render_startup_error(&error))?;
+        // The description is read-only; status does not invent completed
+        // workflow checkpoints or probe a potentially remote endpoint.
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary)
+                    .map_err(|_| "Cannot format setup summary. Request the text summary without --json for the same selected folder.".to_string())?
+            );
+        } else {
+            println!("{}", summary);
+        }
+        Ok::<(), String>(())
+    })();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{}", safe_text(&error));
+            ExitCode::FAILURE
         }
     }
 }
 
-#[cfg(feature = "backend-openai")]
 mod enabled {
     use super::{RunArgs, render_startup_error, safe_text};
     use std::io::Write;

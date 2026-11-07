@@ -4,7 +4,6 @@
 //! write-ahead protocol. A crash before dispatch is retryable, a tail whose
 //! calls all have durable results is recoverable, and a dispatched call with
 //! no result is reported as ambiguous instead of being silently repeated.
-//! Pre-recovery traces retain their next-`TurnStart` commit semantics.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -103,55 +102,22 @@ pub enum ReplayError {
     },
 }
 
-/// Reconcile the two known differences between older recovery checkpoints and
-/// today's projection, without weakening checkpoint anchoring:
+/// Reconcile the one known difference between older recovery checkpoints and
+/// today's projection, without weakening checkpoint anchoring: before sprint
+/// 129 the projector marked the empty-completion nudge as spent after a
+/// truncated constrained turn, which the live loop never did. A recorded
+/// `true` is accepted where the trace contains a truncation and the projection
+/// says `false`, and the projection's value is kept.
 ///
-/// - the additive `controller_blocks` count introduced after checkpoint v1:
-///   only an actually omitted legacy zero may inherit a nonzero count proven
-///   by typed `ControllerBlocked` events already projected from the same trace;
-/// - before sprint 129 the projector marked the empty-completion nudge as
-///   spent after a truncated constrained turn, which the live loop never did.
-///   A recorded `true` is accepted where the trace contains a truncation and
-///   the projection says `false`, and the projection's value is kept.
-///
-/// Explicit zeroes, nonzero disagreements, raw-count changes, and every other
-/// state difference remain hard errors.
+/// Every other state difference remains a hard error.
 fn reconcile_legacy_checkpoint(
     recorded: &RecoveryCheckpointV1,
     derived: &RecoveryCheckpointV1,
 ) -> Option<RecoveryCheckpointV1> {
-    if recorded.guard_history.len() != derived.guard_history.len() {
-        return None;
-    }
-
     let mut reconciled = recorded.clone();
     if reconciled.nudged_for_no_action && !derived.nudged_for_no_action && derived.truncated_once {
         reconciled.nudged_for_no_action = false;
     }
-    for (stored, projected) in reconciled
-        .guard_history
-        .iter_mut()
-        .zip(&derived.guard_history)
-    {
-        if stored.turn != projected.turn
-            || stored.calls != projected.calls
-            || stored.dispatched != projected.dispatched
-            || stored.errored != projected.errored
-        {
-            return None;
-        }
-        if stored.controller_blocks != projected.controller_blocks {
-            if stored.controller_blocks != 0
-                || stored.controller_blocks_was_present
-                || projected.controller_blocks == 0
-            {
-                return None;
-            }
-            stored.controller_blocks = projected.controller_blocks;
-            stored.controller_blocks_was_present = true;
-        }
-    }
-
     (reconciled == *derived).then_some(reconciled)
 }
 
@@ -163,7 +129,6 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     let mut end_reason: Option<String> = None;
     let mut saw_session_prompt = false;
     let mut saw_state_base = false;
-    let mut saw_modern_turn = false;
     let mut harness_policy: Option<HarnessPolicy> = None;
     let mut saw_session_paused = false;
     let mut structure = TraceStructure::new();
@@ -236,9 +201,6 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                 if !saw_state_base {
                     saw_state_base = true;
                 }
-            }
-            Event::ActionsProposed { .. } | Event::TurnCommitted { .. } => {
-                saw_modern_turn = true;
             }
             Event::SessionPaused { reason } => {
                 pause_reason = Some(reason.clone());
@@ -325,10 +287,6 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                 .count() as u32;
             projector.commit_pending_with(dispatched, errored, None);
         }
-    } else if end_reason_is_legacy_pause(&pause_reason, saw_modern_turn) {
-        // A pre-recovery SessionEnd was only written after run() had returned
-        // from dispatch, so it remains a valid implicit barrier.
-        projector.commit_pending();
     }
 
     if !saw_state_base || (projector.head_len == 0 && !saw_session_prompt) {
@@ -405,9 +363,6 @@ fn projected_controller_checkpoint(
             }
             Ok(Some(checkpoint))
         }
-        HarnessPolicy::EvidencePlanner => Err(ReplayError::InvalidStructure(
-            "evidence_planner is unsupported until a planner trace protocol is defined".to_string(),
-        )),
     }
 }
 
@@ -451,9 +406,6 @@ pub(crate) fn resume_controller_state(
                 .map(Some)
                 .map_err(|error| ReplayError::InvalidControllerCheckpoint(error.to_string()))
         }
-        HarnessPolicy::EvidencePlanner => Err(ReplayError::InvalidStructure(
-            "evidence_planner is unsupported until a planner trace protocol is defined".to_string(),
-        )),
     }
 }
 
@@ -508,10 +460,6 @@ fn validate_checkpoint(state: &ferric_trace::RecoveryCheckpointV1) -> Result<(),
     validate_recovery_checkpoint_shape(state).map_err(ReplayError::InvalidStructure)
 }
 
-fn end_reason_is_legacy_pause(pause_reason: &Option<String>, saw_modern_turn: bool) -> bool {
-    pause_reason.is_some() && !saw_modern_turn
-}
-
 #[cfg(test)]
 mod tests {
     //! Co-located (not `tests/`) so these can call the `pub(crate)`
@@ -559,6 +507,21 @@ mod tests {
         ]
     }
 
+    fn proposed(turn: u32, calls: Vec<ferric_core::ToolCall>) -> Event {
+        Event::ActionsProposed { turn, calls }
+    }
+
+    /// A non-terminal commit of `turn` with `dispatched` successful results.
+    fn committed(turn: u32, dispatched: u32) -> Event {
+        Event::TurnCommitted {
+            turn,
+            dispatched,
+            errored: 0,
+            stop_reason: None,
+            snapshot_commit: None,
+        }
+    }
+
     fn valid_checkpoint_with_history() -> ferric_trace::RecoveryCheckpointV1 {
         let calls = |turn: u32| {
             vec![tool_call(
@@ -597,7 +560,6 @@ mod tests {
                     dispatched: 1,
                     errored: 0,
                     controller_blocks: 0,
-                    controller_blocks_was_present: true,
                 },
                 GuardTurn {
                     turn: 2,
@@ -605,7 +567,6 @@ mod tests {
                     dispatched: 1,
                     errored: 0,
                     controller_blocks: 0,
-                    controller_blocks_was_present: true,
                 },
             ],
             nudged_for_no_action: false,
@@ -626,11 +587,8 @@ mod tests {
     }
 
     fn evidence_fresh_prefix(required_checks: &[&str]) -> (Vec<Event>, ControllerState) {
-        let controller = ControllerState::new(
-            HarnessPolicy::Evidence,
-            required_checks.iter().map(|name| (*name).to_string()),
-        )
-        .unwrap();
+        let controller =
+            ControllerState::new(required_checks.iter().map(|name| (*name).to_string())).unwrap();
         (
             vec![
                 session_start(),
@@ -1214,27 +1172,30 @@ mod tests {
     }
 
     #[test]
-    fn old_checkpoint_omission_recovers_only_typed_controller_block_counts() {
+    fn checkpoint_controller_block_counts_must_match_typed_events() {
         let (mut events, controller) = evidence_fresh_prefix(&[]);
         append_controller_blocked_turn(&mut events, &controller, 0);
         append_pause(&mut events, &controller, "max_turns");
         let (_dir, path) = write_trace(&events);
         let modern = std::fs::read_to_string(&path).unwrap();
         assert!(modern.contains("\"controller_blocks\":1"));
+        assert_eq!(
+            replay(&path).unwrap().core.guard_history[0].controller_blocks,
+            1
+        );
 
-        let legacy = modern.replace(",\"controller_blocks\":1", "");
-        std::fs::write(&path, legacy).unwrap();
-        let replayed = replay(&path).unwrap();
-        assert_eq!(replayed.core.guard_history[0].controller_blocks, 1);
-        assert!(replayed.core.guard_history[0].controller_blocks_was_present);
-
+        // An omitted count (checkpoints from before the field existed) is a
+        // zero like any other; it is no longer recovered from typed events.
+        let omitted = modern.replace(",\"controller_blocks\":1", "");
         let explicit_zero = modern.replace("\"controller_blocks\":1", "\"controller_blocks\":0");
-        std::fs::write(&path, explicit_zero).unwrap();
-        assert!(matches!(
-            replay(&path),
-            Err(ReplayError::InvalidStructure(message))
-                if message.contains("differs from typed event count")
-        ));
+        for zero in [omitted, explicit_zero] {
+            std::fs::write(&path, zero).unwrap();
+            assert!(matches!(
+                replay(&path),
+                Err(ReplayError::InvalidStructure(message))
+                    if message.contains("differs from typed event count")
+            ));
+        }
 
         let explicit_null = modern.replace("\"controller_blocks\":1", "\"controller_blocks\":null");
         std::fs::write(&path, explicit_null).unwrap();
@@ -1633,6 +1594,8 @@ mod tests {
 
     #[test]
     fn replay_reconstructs_a_clean_constrained_json_session() {
+        let read = tool_call("g-0-0", "read_file", json!({"path": "a.txt"}));
+        let complete = tool_call("g-1-0", "task_complete", json!({"summary": "done"}));
         let events = vec![
             session_start(),
             policy_selected(ActionProtocol::ConstrainedJson),
@@ -1646,8 +1609,10 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            call_event(&tool_call("g-0-0", "read_file", json!({"path": "a.txt"}))),
+            proposed(0, vec![read.clone()]),
+            call_event(&read),
             result_event("g-0-0", "read_file", "contents", false),
+            committed(0, 1),
             Event::TurnStart { turn: 1 },
             Event::TurnEnd {
                 turn: 1,
@@ -1657,13 +1622,9 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            call_event(&tool_call(
-                "g-1-0",
-                "task_complete",
-                json!({"summary": "done"}),
-            )),
-            // Confirms turn 1's dispatch fully ran (no crash mid-turn).
-            Event::TurnStart { turn: 2 },
+            proposed(1, vec![complete.clone()]),
+            call_event(&complete),
+            committed(1, 0),
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -1685,11 +1646,11 @@ mod tests {
     }
 
     #[test]
-    fn pre_evidence_trace_fixture_replays_as_legacy() {
+    fn pre_sprint_113_trace_is_refused() {
         // Literal wire data copied in the shape emitted before Sprint 113:
-        // PolicySelected has no `harness_policy`, and the trace contains no
-        // controller events or controller checkpoint from which to invent
-        // evidence state.
+        // PolicySelected has no `harness_policy`, and the turn has no
+        // `ActionsProposed`; the next `TurnStart` was its commit boundary.
+        // Replay of that format is retired (INT-0018 AC-7) and fails closed.
         const PRE_EVIDENCE_TRACE: &str = concat!(
             r#"{"v":1,"ts_ms":1,"session":"pre-evidence","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#,
             "\n",
@@ -1713,18 +1674,19 @@ mod tests {
         let path = dir.path().join("pre-evidence.jsonl");
         std::fs::write(&path, PRE_EVIDENCE_TRACE).unwrap();
 
-        let replayed = replay(&path).unwrap();
-        assert_eq!(replayed.harness_policy, HarnessPolicy::Legacy);
-        assert_eq!(replayed.controller_checkpoint, None);
-        assert_eq!(replayed.core.mutation_epoch, 0);
-        assert!(replayed.core.passed_checks.is_empty());
-        assert_eq!(replayed.core.next_turn, 1);
-        assert_eq!(replayed.protocol, ActionProtocol::ConstrainedJson);
-        assert_eq!(replayed.core.messages.len(), 4);
+        assert!(matches!(
+            replay(&path),
+            Err(ReplayError::InvalidStructure(message))
+                if message.contains("turn 0 has no ActionsProposed")
+        ));
     }
 
     #[test]
     fn replay_preserves_native_multi_tool_call_order() {
+        let calls = [
+            tool_call("tc-0", "tool_a", json!({})),
+            tool_call("tc-1", "tool_b", json!({})),
+        ];
         let events = vec![
             session_start(),
             policy_selected(ActionProtocol::NativeTools),
@@ -1738,11 +1700,12 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            call_event(&tool_call("tc-0", "tool_a", json!({}))),
+            proposed(0, calls.to_vec()),
+            call_event(&calls[0]),
             result_event("tc-0", "tool_a", "a-out", false),
-            call_event(&tool_call("tc-1", "tool_b", json!({}))),
+            call_event(&calls[1]),
             result_event("tc-1", "tool_b", "b-out", false),
-            Event::TurnStart { turn: 1 },
+            committed(0, 2),
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -1764,6 +1727,7 @@ mod tests {
     /// two fields in isolation. Prove both land in the reconstructed message.
     #[test]
     fn replay_preserves_native_text_alongside_tool_calls() {
+        let call = tool_call("tc-0", "tool_a", json!({}));
         let events = vec![
             session_start(),
             policy_selected(ActionProtocol::NativeTools),
@@ -1777,9 +1741,10 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            call_event(&tool_call("tc-0", "tool_a", json!({}))),
+            proposed(0, vec![call.clone()]),
+            call_event(&call),
             result_event("tc-0", "tool_a", "a-out", false),
-            Event::TurnStart { turn: 1 },
+            committed(0, 1),
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -1801,6 +1766,11 @@ mod tests {
     /// the reconstructed assistant message.
     #[test]
     fn replay_preserves_terminator_position_mid_turn() {
+        let calls = [
+            tool_call("tc-0", "tool_a", json!({})),
+            tool_call("tc-1", "task_complete", json!({"summary": "done"})),
+            tool_call("tc-2", "tool_b", json!({})),
+        ];
         let events = vec![
             session_start(),
             policy_selected(ActionProtocol::NativeTools),
@@ -1814,16 +1784,13 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            call_event(&tool_call("tc-0", "tool_a", json!({}))),
+            proposed(0, calls.to_vec()),
+            call_event(&calls[0]),
             result_event("tc-0", "tool_a", "a-out", false),
-            call_event(&tool_call(
-                "tc-1",
-                "task_complete",
-                json!({"summary": "done"}),
-            )),
-            call_event(&tool_call("tc-2", "tool_b", json!({}))),
+            call_event(&calls[1]),
+            call_event(&calls[2]),
             result_event("tc-2", "tool_b", "b-out", false),
-            Event::TurnStart { turn: 1 },
+            committed(0, 2),
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -1842,6 +1809,7 @@ mod tests {
 
     #[test]
     fn replay_reconstructs_repetition_guard_nudge() {
+        let read = tool_call("tc-0", "read_file", json!({}));
         let events = vec![
             session_start(),
             policy_selected(ActionProtocol::NativeTools),
@@ -1855,12 +1823,13 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
+            proposed(0, vec![read.clone()]),
             Event::RepetitionGuard {
                 action: "warned".to_string(),
             },
-            call_event(&tool_call("tc-0", "read_file", json!({}))),
+            call_event(&read),
             result_event("tc-0", "read_file", "contents", false),
-            Event::TurnStart { turn: 1 },
+            committed(0, 1),
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -1873,6 +1842,7 @@ mod tests {
 
     #[test]
     fn replay_reconstructs_no_progress_guard_nudge() {
+        let read = tool_call("tc-0", "read_file", json!({}));
         let events = vec![
             session_start(),
             policy_selected(ActionProtocol::NativeTools),
@@ -1886,12 +1856,13 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
+            proposed(0, vec![read.clone()]),
             Event::NoProgressGuard {
                 action: "warned".to_string(),
             },
-            call_event(&tool_call("tc-0", "read_file", json!({}))),
+            call_event(&read),
             result_event("tc-0", "read_file", "contents", false),
-            Event::TurnStart { turn: 1 },
+            committed(0, 1),
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -1925,9 +1896,10 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            // No ToolCall events: the parse failed, mirroring run()'s real
+            // No proposed actions: the parse failed, mirroring run()'s real
             // zero-actions path for a bad XML completion.
-            Event::TurnStart { turn: 1 },
+            proposed(0, Vec::new()),
+            committed(0, 0),
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -1953,7 +1925,8 @@ mod tests {
                 output_tokens: Some(512),
                 truncated: true,
             },
-            Event::TurnStart { turn: 1 },
+            proposed(0, Vec::new()),
+            committed(0, 0),
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -1982,35 +1955,6 @@ mod tests {
         assert_eq!(replayed.core.next_turn, 0);
     }
 
-    /// A stricter variant of C-001: even a turn WITH a `TurnEnd` (and partial
-    /// dispatch) is discarded if no LATER `TurnStart` confirms dispatch fully
-    /// ran — `TurnEnd` is written *before* dispatch in `run()`, so its mere
-    /// presence doesn't prove the turn finished.
-    #[test]
-    fn replay_discards_a_turn_end_with_no_confirming_next_turn_start() {
-        let events = vec![
-            session_start(),
-            policy_selected(ActionProtocol::NativeTools),
-            session_prompt(),
-            Event::TurnStart { turn: 0 },
-            Event::TurnEnd {
-                turn: 0,
-                text: None,
-                tool_call_count: 1,
-                input_tokens: Some(50),
-                output_tokens: Some(10),
-                truncated: false,
-            },
-            call_event(&tool_call("tc-0", "read_file", json!({}))),
-            // Crash mid-dispatch: no ToolResult, no next TurnStart.
-        ];
-        let (_dir, path) = write_trace(&events);
-        let replayed = replay(&path).unwrap();
-
-        assert_eq!(replayed.core.messages, expected_prefix());
-        assert_eq!(replayed.core.next_turn, 0);
-    }
-
     /// ADR-093: the projector takes its model-facing cap from the trace, so a
     /// replay of a run that used a non-default cap re-truncates at that cap
     /// rather than at the default. Before this, `replay()` built the projector
@@ -2018,6 +1962,7 @@ mod tests {
     #[test]
     fn replay_takes_the_truncation_cap_from_the_trace() {
         let long = "X".repeat(5_000);
+        let read = tool_call("g-0-0", "read_file", json!({"path": "a.txt"}));
         let events = vec![
             session_start(),
             policy_event(ActionProtocol::ConstrainedJson, HarnessPolicy::Legacy, 500),
@@ -2031,11 +1976,12 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            call_event(&tool_call("g-0-0", "read_file", json!({"path": "a.txt"}))),
+            proposed(0, vec![read.clone()]),
+            call_event(&read),
             // The trace keeps the FULL output (ADR-002); the cap applies only
             // when the context window is rebuilt from it.
             result_event("g-0-0", "read_file", &long, false),
-            Event::TurnStart { turn: 1 },
+            committed(0, 1),
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -2081,6 +2027,14 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
+            proposed(0, Vec::new()),
+            Event::TurnCommitted {
+                turn: 0,
+                dispatched: 0,
+                errored: 0,
+                stop_reason: Some("final_text".to_string()),
+                snapshot_commit: None,
+            },
             Event::SessionEnd {
                 reason: "final_text".to_string(),
             },
@@ -2093,9 +2047,15 @@ mod tests {
     }
 
     fn turn_events(turn: u32, tool: &str, output: &str) -> Vec<Event> {
-        let id = format!("tc-{turn}");
+        let mut events = vec![Event::TurnStart { turn }];
+        events.extend(dispatch_events(turn, tool, output));
+        events
+    }
+
+    /// One turn after its `TurnStart`: one successful call, committed.
+    fn dispatch_events(turn: u32, tool: &str, output: &str) -> Vec<Event> {
+        let call = tool_call(&format!("tc-{turn}"), tool, json!({}));
         vec![
-            Event::TurnStart { turn },
             Event::TurnEnd {
                 turn,
                 text: None,
@@ -2104,14 +2064,10 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            call_event(&tool_call(&id, tool, json!({}))),
-            Event::ToolResult {
-                id,
-                name: tool.to_string(),
-                output: output.to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            proposed(turn, vec![call.clone()]),
+            call_event(&call),
+            result_event(&call.id, tool, output, false),
+            committed(turn, 1),
         ]
     }
 
@@ -2148,17 +2104,7 @@ mod tests {
             dropped_turns: 3,
             summary: "did a, b, c".to_string(),
         });
-        events.push(Event::TurnEnd {
-            turn: 5,
-            text: None,
-            tool_call_count: 1,
-            input_tokens: Some(50),
-            output_tokens: Some(10),
-            truncated: false,
-        });
-        events.push(call_event(&tool_call("tc-5", "tool_f", json!({}))));
-        events.push(result_event("tc-5", "tool_f", "f-out", false));
-        events.push(Event::TurnStart { turn: 6 }); // confirms turn 5 committed
+        events.extend(dispatch_events(5, "tool_f", "f-out"));
 
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
@@ -2199,16 +2145,7 @@ mod tests {
             dropped_turns: 3,
             summary: "did a, b, c".to_string(),
         });
-        events.push(Event::TurnEnd {
-            turn: 5,
-            text: None,
-            tool_call_count: 1,
-            input_tokens: Some(50),
-            output_tokens: Some(10),
-            truncated: false,
-        });
-        events.push(call_event(&tool_call("tc-5", "tool_f", json!({}))));
-        events.push(result_event("tc-5", "tool_f", "f-out", false));
+        events.extend(dispatch_events(5, "tool_f", "f-out"));
         events.extend(turn_events(6, "tool_g", "g-out"));
         events.extend(turn_events(7, "tool_h", "h-out"));
         // Turn 8 triggers a SECOND fold covering turns 3-5 (the surviving
@@ -2219,17 +2156,7 @@ mod tests {
             dropped_turns: 3,
             summary: "did d, e, f".to_string(),
         });
-        events.push(Event::TurnEnd {
-            turn: 8,
-            text: None,
-            tool_call_count: 1,
-            input_tokens: Some(50),
-            output_tokens: Some(10),
-            truncated: false,
-        });
-        events.push(call_event(&tool_call("tc-8", "tool_i", json!({}))));
-        events.push(result_event("tc-8", "tool_i", "i-out", false));
-        events.push(Event::TurnStart { turn: 9 }); // confirms turn 8 committed
+        events.extend(dispatch_events(8, "tool_i", "i-out"));
 
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();

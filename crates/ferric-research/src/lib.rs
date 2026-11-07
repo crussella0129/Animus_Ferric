@@ -26,7 +26,7 @@ use thiserror::Error;
 pub mod retriever;
 pub use retriever::{
     LocalFsRetriever, MultiResearch, PlaneResult, RetrieveError, RetrievedChunk, Retriever,
-    SshTransport, TailnetDevice, TailnetFsRetriever, research, research_all,
+    research, research_all,
 };
 
 pub mod airlock;

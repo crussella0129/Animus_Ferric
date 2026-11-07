@@ -616,7 +616,6 @@ fn native_launch(
         batch_size: None,
         seed: None,
         parallel: Some(1),
-        tailscale: false,
     };
     let launch = server::command(&config);
     let mut command = Command::new(&executable);

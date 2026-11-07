@@ -44,10 +44,6 @@ ferric server down
 not pass `--api-base` unless you are targeting a server you did not launch (for
 example an already-running Ollama at `http://localhost:11434/v1`).
 
-> Real-model queries require a binary built with `--features backend-openai`. A
-> feature-less build still runs `--mock` and the offline tooling, and will tell
-> you to rebuild if you ask it for a real run.
-
 ## The workspace is the boundary
 
 A query operates on a **workspace** — by default the current directory, or an

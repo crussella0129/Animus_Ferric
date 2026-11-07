@@ -71,8 +71,7 @@ tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-# Unix Tailscale LocalAPI transport uses poll/read/write with one absolute
-# deadline over the daemon's Unix-domain socket.
+# Unix process ownership (pidfds, signals) and no-follow `openat` access.
 libc = "0.2"
 
 # Native Windows process ownership and explicit test-harness containment.

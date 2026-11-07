@@ -16,7 +16,6 @@ pub enum HarnessPolicy {
     #[default]
     Legacy,
     Evidence,
-    EvidencePlanner,
 }
 
 impl HarnessPolicy {
@@ -25,7 +24,6 @@ impl HarnessPolicy {
         match self {
             Self::Legacy => "legacy",
             Self::Evidence => "evidence",
-            Self::EvidencePlanner => "evidence_planner",
         }
     }
 }
@@ -38,7 +36,7 @@ impl fmt::Display for HarnessPolicy {
 
 /// A harness-policy label was not one of the closed, versioned values.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("unknown harness policy {value:?}; expected legacy, evidence, or evidence_planner")]
+#[error("unknown harness policy {value:?}; expected legacy or evidence")]
 pub struct ParseHarnessPolicyError {
     value: String,
 }
@@ -56,7 +54,6 @@ impl FromStr for HarnessPolicy {
         match value {
             "legacy" => Ok(Self::Legacy),
             "evidence" => Ok(Self::Evidence),
-            "evidence_planner" => Ok(Self::EvidencePlanner),
             _ => Err(ParseHarnessPolicyError {
                 value: value.to_string(),
             }),
@@ -70,11 +67,7 @@ mod tests {
 
     #[test]
     fn labels_display_parse_and_serde_are_one_stable_vocabulary() {
-        for policy in [
-            HarnessPolicy::Legacy,
-            HarnessPolicy::Evidence,
-            HarnessPolicy::EvidencePlanner,
-        ] {
+        for policy in [HarnessPolicy::Legacy, HarnessPolicy::Evidence] {
             let label = policy.label();
             assert_eq!(policy.to_string(), label);
             assert_eq!(label.parse::<HarnessPolicy>().unwrap(), policy);
@@ -92,10 +85,18 @@ mod tests {
     #[test]
     fn default_is_legacy_and_unknown_or_ambiguous_labels_fail_closed() {
         assert_eq!(HarnessPolicy::default(), HarnessPolicy::Legacy);
-        for invalid in ["", "Legacy", "evidence-planner", "planner", "future"] {
+        for invalid in [
+            "",
+            "Legacy",
+            "evidence_planner",
+            "evidence-planner",
+            "planner",
+            "future",
+        ] {
             let error = invalid.parse::<HarnessPolicy>().unwrap_err();
             assert_eq!(error.value(), invalid);
         }
         assert!(serde_json::from_str::<HarnessPolicy>(r#""future""#).is_err());
+        assert!(serde_json::from_str::<HarnessPolicy>(r#""evidence_planner""#).is_err());
     }
 }

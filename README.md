@@ -230,7 +230,7 @@ this limitation remains open. Session traces stay in `.ferric/trace`.
 ## Build from source and configure
 
 The one-line installers above are the normal route. To build and install the
-current source instead (Rust required; normal builds include the
+current source instead (Rust required; every build includes the
 OpenAI-compatible backend):
 
 ```sh
@@ -240,13 +240,13 @@ cargo install --path crates/ferric-cli --force
 Reinstall after source changes; the installed copy is a snapshot. From a
 checkout you can also run without installing: `cargo r` opens a session, and
 arguments go after `cargo r --` (for example, `cargo r -- run --workspace
-../my-project`). For a build without a real backend, use
-`--no-default-features`; expert mock commands remain available.
+../my-project`). Without a model, expert commands such as `query` run
+offline with `--mock`.
 
 [Configuration](docs/configuration.md) explains saved defaults and their
 validation. [Command reference](docs/commands.md) covers the full expert
 surface. [Server configuration](docs/server-configuration.md) covers manually
-managed engines and Tailscale. [Testbench](docs/testbench.md) covers measured
+managed engines. [Testbench](docs/testbench.md) covers measured
 capability. See the [documentation index](docs/README.md) for architecture and
 contributing details.
 

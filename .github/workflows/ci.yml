@@ -40,25 +40,6 @@ jobs:
         shell: bash
         run: bash tools/test-lifecycle-linux.sh workspace
 
-  # Default launch enables the real backend. Keep the explicit backend-free
-  # build and its expert mock commands working on both supported CI hosts.
-  # Startup and positive human-session fixtures are backend-gated; this job
-  # needs neither the namespace workspace mode nor lifecycle-fixture features.
-  no-default-features:
-    name: CLI without backend (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-      - name: clippy without default features
-        run: cargo clippy -p ferric-cli --no-default-features --all-targets --locked -- -D warnings
-      - name: test without default features
-        run: cargo test -p ferric-cli --no-default-features --locked
-
   # Runs the model-free lifecycle fixture on both supported CI hosts. Tests are
   # serialized because they exercise process, listener, and runfile ownership
   # boundaries. On Linux, the positive-path fixture gets an isolated PID,

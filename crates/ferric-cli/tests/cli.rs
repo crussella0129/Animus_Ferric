@@ -471,7 +471,6 @@ fn assert_platform_reparse_trace_root_is_rejected() {
 }
 
 /// A provider whose one answer is a native `request_user_input` call.
-#[cfg(feature = "backend-openai")]
 fn clarification_server() -> support::FakeOpenAi {
     support::FakeOpenAi::new(|_, _| {
         let arguments = serde_json::json!({
@@ -931,7 +930,6 @@ fn query_resume_changed_reserve_rejects_before_effects() {
     );
 }
 
-#[cfg(feature = "backend-openai")]
 #[test]
 fn resume_hint_round_trips_in_documented_shell() {
     let root = tempfile::tempdir().unwrap();
@@ -1024,26 +1022,6 @@ fn assert_platform_reparse_trace_root_is_rejected() {
         String::from_utf8_lossy(&junction.stderr)
     );
     assert_precreate_trace_root_rejected(&workspace, &alias.join("tail"));
-}
-
-#[test]
-fn query_without_backend_errors() {
-    // A build without backend-openai: a non-mock query must fail with a
-    // message naming the missing feature.
-    #[cfg(not(feature = "backend-openai"))]
-    {
-        let dir = tempfile::tempdir().unwrap();
-        let out = ferric()
-            .args(["query", "real task"])
-            .arg("--workspace")
-            .arg(dir.path())
-            .output_bounded()
-            .unwrap();
-        assert!(!out.status.success());
-        let stderr = String::from_utf8(out.stderr).unwrap();
-        // Names the missing backend.
-        assert!(stderr.contains("backend-openai"));
-    }
 }
 
 #[test]
@@ -1278,9 +1256,10 @@ fn evidence_runs_and_planner_fails_before_trace_or_workspace_mutation() {
         .output_bounded()
         .unwrap();
     assert!(!out.status.success(), "evidence-planner unexpectedly ran");
+    // Retired (INT-0018 AC-6): the value is invalid input, refused by the parser.
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("evidence_planner is not implemented yet"),
+        stderr.contains("invalid value 'evidence-planner'"),
         "stderr: {stderr}"
     );
     assert!(!planner.path().join(".ferric").join("trace").exists());
@@ -1573,15 +1552,13 @@ fn config_only_stream_disables_live_output() {
 
 #[test]
 fn present_invalid_config_blocks_all_consumers() {
-    let mut surfaces: Vec<Vec<&str>> = vec![
+    let surfaces: Vec<Vec<&str>> = vec![
         vec!["query", "--mock", "--params-b", "7", "do a task"],
         vec!["chat", "--mock"],
         vec!["mcp", "--mock"],
         vec!["skills", "list"],
+        vec!["api", "--mock", "--port", "0"],
     ];
-    if cfg!(feature = "backend-openai") {
-        surfaces.push(vec!["api", "--mock", "--port", "0"]);
-    }
     for invalid in [
         Some("api_key = 'private-fixture-token' malformed"),
         Some("harness_policy = 'private-fixture-token'"),
@@ -1649,7 +1626,6 @@ fn present_invalid_config_blocks_all_consumers() {
     assert!(!ws.join(".ferric/trace").exists());
 }
 
-#[cfg(feature = "backend-openai")]
 #[test]
 fn selected_workspace_drives_real_provider_chat_icm() {
     let invocation = tempfile::tempdir().unwrap();
@@ -1720,17 +1696,15 @@ fn selected_workspace_drives_real_provider_chat_icm() {
 #[test]
 fn invalid_effective_numbers_rejected_by_cli_surfaces() {
     let root = tempfile::tempdir().unwrap();
-    let mut surfaces = vec![
+    let surfaces = vec![
         vec!["query", "--mock", "do a task"],
         vec!["chat", "--mock"],
         vec!["mcp", "--mock"],
         vec!["bench", "full", "--mock"],
         vec!["bench", "autonomy"],
+        vec!["bench", "ltd"],
+        vec!["api", "--mock", "--port", "0"],
     ];
-    if cfg!(feature = "backend-openai") {
-        surfaces.push(vec!["bench", "ltd"]);
-        surfaces.push(vec!["api", "--mock", "--port", "0"]);
-    }
     for surface in surfaces {
         let mut command = ferric();
         command
@@ -1818,7 +1792,7 @@ fn animus_md_present_traces_note() {
 
 /// A hand-written, synthetic trace fixture (matching `ferric-loop::replay`'s
 /// own test idiom): `SessionPrompt` + `PolicySelected` (`NativeTools`,
-/// matching `--mock`'s resolved protocol) + one COMPLETED turn (a `write_file`
+/// matching `--mock`'s resolved protocol) + one COMMITTED turn (a `write_file`
 /// call+result), no `SessionEnd` — the realistic shape of an interrupted
 /// process (crashed after turn 0, before turn 1 started).
 fn write_interrupted_trace_fixture(ws: &std::path::Path, session: &str) -> std::path::PathBuf {
@@ -1851,13 +1825,16 @@ fn write_interrupted_trace_fixture_in(
             r#"{{"v":1,"ts_ms":5,"session":"{session}","seq":4,"event":{{"type":"turn_end","turn":0,"text":null,"tool_call_count":1,"input_tokens":50,"output_tokens":10}}}}"#
         ),
         format!(
-            r#"{{"v":1,"ts_ms":6,"session":"{session}","seq":5,"event":{{"type":"tool_call","id":"tc-0","name":"write_file","args":{{"path":"a.txt","content":"hi"}}}}}}"#
+            r#"{{"v":1,"ts_ms":6,"session":"{session}","seq":5,"event":{{"type":"actions_proposed","turn":0,"calls":[{{"id":"tc-0","name":"write_file","args":{{"path":"a.txt","content":"hi"}}}}]}}}}"#
         ),
         format!(
-            r#"{{"v":1,"ts_ms":7,"session":"{session}","seq":6,"event":{{"type":"tool_result","id":"tc-0","name":"write_file","output":"wrote 2 bytes","is_error":false,"duration_ms":1}}}}"#
+            r#"{{"v":1,"ts_ms":7,"session":"{session}","seq":6,"event":{{"type":"tool_call","id":"tc-0","name":"write_file","args":{{"path":"a.txt","content":"hi"}}}}}}"#
         ),
         format!(
-            r#"{{"v":1,"ts_ms":8,"session":"{session}","seq":7,"event":{{"type":"turn_start","turn":1}}}}"#
+            r#"{{"v":1,"ts_ms":8,"session":"{session}","seq":7,"event":{{"type":"tool_result","id":"tc-0","name":"write_file","output":"wrote 2 bytes","is_error":false,"duration_ms":1}}}}"#
+        ),
+        format!(
+            r#"{{"v":1,"ts_ms":9,"session":"{session}","seq":8,"event":{{"type":"turn_committed","turn":0,"dispatched":1,"errored":0}}}}"#
         ),
     ];
     std::fs::write(&path, lines.join("\n") + "\n").unwrap();
@@ -2689,7 +2666,7 @@ fn mcp_resume_rejects_already_stopped() {
         r#"{"v":1,"ts_ms":1,"session":"s","seq":0,"event":{"type":"session_start","workspace":"/ws"}}"#,
         r#"{"v":1,"ts_ms":2,"session":"s","seq":1,"event":{"type":"policy_selected","tier":"nano","protocol":"native_tools","max_turns":15,"max_tools":10,"prompt_budget_tokens":2800,"max_output_tokens":512}}"#,
         r#"{"v":1,"ts_ms":3,"session":"s","seq":2,"event":{"type":"session_prompt","system":"s","user":"u"}}"#,
-        r#"{"v":1,"ts_ms":4,"session":"s","seq":3,"event":{"type":"session_end","reason":"done"}}"#,
+        r#"{"v":1,"ts_ms":4,"session":"s","seq":3,"event":{"type":"session_end","reason":"final_text"}}"#,
     ];
     std::fs::write(&path, lines.join("\n") + "\n").unwrap();
 
@@ -2698,7 +2675,7 @@ fn mcp_resume_rejects_already_stopped() {
     assert!(!status.success());
     assert!(stderr.contains("cannot resume"), "stderr: {stderr}");
     assert!(
-        stderr.contains("completed successfully (done)"),
+        stderr.contains("completed successfully (final_text)"),
         "stderr: {stderr}"
     );
 }

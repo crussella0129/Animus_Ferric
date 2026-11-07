@@ -96,7 +96,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--temperature <T>` | sampling temperature (0.0 = deterministic) |
 | `--max-output-tokens <N>` | optional positive main-action cap, bounded by declared context minus the selected policy's prompt reserve; omitted tier defaults are unchanged |
 | `--protocol native\|grammar\|xml` | override the action protocol (default: from backend caps) |
-| `--harness-policy legacy\|evidence\|evidence-planner` | expert control policy; fresh runs default to `legacy`, omitted resumes inherit the source trace; `evidence-planner` is unavailable and rejected |
+| `--harness-policy legacy\|evidence` | expert control policy; fresh runs default to `legacy`, omitted resumes inherit the source trace |
 | `--max-ring <N>` | cap the active tool ring (`0` = core only); restrict-only |
 | `--profile-dir <DIR>` | read `model_profiles.json` for the earned tier/ring (default `benchmarks`) |
 | `--checks-file <PATH>` | explicitly authorize fixed named verification commands and expose `run_check`; no checks are inferred when omitted |
@@ -119,8 +119,9 @@ stop prints a `Resume:` command. Clarification alone adds
 `--answer '<answer>'`. The command uses PowerShell syntax on Windows and POSIX-`sh`
 syntax on Unix (`cmd.exe` is not supported). Successful terminal traces are
 rejected by `--resume`, while an incomplete resumable `session_end` remains a
-valid source. This is a low-level `query` option, not a high-level
-run/status/resume/evidence workflow.
+valid source. Traces written before Sprint 113 (2026-08-26), whose turns have no
+`actions_proposed` record, can no longer be resumed or verified. This is a
+low-level `query` option, not a high-level run/status/resume/evidence workflow.
 
 An explicit `--max-output-tokens` is invocation-scoped. Generated resume
 guidance repeats both the cap and declared `--ctx`; a manually written resume
@@ -134,9 +135,8 @@ effective and observed settings from the source of the selected tier.
 For expert `query`, `evidence` is an opt-in experimental policy that binds supported mutations and
 named checks to recorded workspace evidence. Its Sprint 113 frozen Qwen screen
 remained 0/3 after both permitted revisions, so it is not presented as a
-performance promotion. `evidence-planner` has no implementation and fails
-before trace allocation or workspace mutation; it never falls back to
-evidence-only execution. See the
+performance promotion. The `evidence-planner` arm was never implemented and
+was retired in Sprint 130 (INT-0018); it is no longer a valid value. See the
 [measured decision](sprints/s113/planner-decision.md).
 
 ---
@@ -189,23 +189,17 @@ metadata; Windows currently claims the file-level durability boundary only.
 | `--ctx <N>` | context window (default 4096) |
 | `--port <N>` | port on 127.0.0.1 (default 8080) |
 | `--threads <N>` · `--gpu-layers <N>` · `--batch-size <N>` | edge/latency tuning (llama-server) |
-| `--tailscale` | expose the loopback engine through an exactly owned Tailscale Serve path on HTTPS 443; normal operation requires tailscaled capability 142 with version core 1.102.2 on Linux or Windows |
 
 - `status` — inventory local/global registrations, bind schema-v2 records to
   their process creation identity and listener owner, then report HTTP health
-- `adopt --pid <pid>` — non-destructively verify one live schema-v1 process and
-  conditionally upgrade its unchanged local/global registrations to schema v2;
-  status/down print this complete command with the recorded numeric PID
-- `doctor` — engine binary + launch inputs + registered PID/HTTP health; with
-  `--tailscale`, also a bounded read-only Tailscale LocalAPI identity and Serve
-  configuration check
+- `doctor` — engine binary + launch inputs + registered PID/HTTP health
 - `down` — stop only the uniquely verified process through its retained handle,
   prove that exact process exited and its registered listeners were released,
   then remove only unchanged registration bytes; stale-only records are cleaned
   without signalling a process when all of their listeners are proven absent
 
 Lifecycle commands fail closed when a registration is malformed, unreadable,
-conflicting, legacy schema v1 with a live PID, or otherwise unverifiable. HTTP
+conflicting, retired (below), or otherwise unverifiable. HTTP
 health alone never authorizes teardown. A wildcard/public listener makes
 `status` fail; `down` refuses to signal, preserves every registration, and never
 reports `stopped` because ownership is non-exclusive. Signal failure, exit
@@ -222,55 +216,14 @@ every failure and preserved path, and still returns a failed launch. A signal
 error alone never authorizes cleanup; Ferric deliberately waits the retained
 object so a successful wait may independently prove exit.
 
-With `--tailscale`, the ordinary registration base remains
-`http://127.0.0.1:<port>/v1`; successful launch additionally reports an owned
-remote base of the form
-`https://example-host.tailnet-example.ts.net/_ferric/<32-hex-token>/v1`.
-Ferric publishes the ownership-bearing registration before applying that exact
-Serve path with `apply_confirmed=false`, then promotes every unchanged mirror to
-`true` only after observing the exact applied proxy. Every authoritative
-snapshot is one same-session `status -> serve-config -> status` identity
-sandwich. Publication requires the same stable node ID and FQDN, a running
-backend, HTTPS capability, and the FQDN in the certificate domains; cleanup may
-survive a rename or HTTPS-policy change only when the stable node ID still
-matches, and it still targets the journaled FQDN.
-
-Normal reads and writes require LocalAPI capability 142 and Tailscale version
-core 1.102.2. Ferric validates that the returned ETag is the SHA-256 of the
-exact raw configuration body and performs one whole-document POST with that
-value in `If-Match`; it never retries a mutation. HTTP 412 proves no mutation.
-A failure after POST bytes were sent is indeterminate, so the journal remains
-until observation and scoped cleanup converge. `status` distinguishes exact,
-pending/absent, replaced, shadowed, and uninspectable states. `down` removes
-only the exact handler, preserves unrelated JSON, independently tears down only
-the verified native process, and removes registrations only after both
-resources resolve.
-
-Because the Serve ETag does not bind node/profile identity atomically, avoid
-switching Tailscale profiles while `server up --tailscale` or `server down` is
-running. Ferric's post-check detects a switch and retains recovery evidence,
-but a narrow cross-profile mutation race can only be compensated afterward.
-
-Normal operations fail closed on schema drift, duplicate keys, null handler
-objects, a true expected-host Funnel setting, effective foreground routing, and
-descendant or trailing-slash alias routes. Cleanup on a later major-1 daemon is
-best effort: it can remove only the exact handler and retains all scaffolding,
-but it never treats future routing semantics as proof of endpoint absence and
-therefore always retains the ownership journals. It refuses even that scoped
-POST if JSON reserialization could change an unknown numeric value. Ferric
-never resets or blindly replaces the node-wide Serve configuration.
-
-Production LocalAPI transport is `/var/run/tailscale/tailscaled.sock` on
-conventional Linux installations and the protected Tailscale named pipe on
-Windows. The invoking account must have permission to open that endpoint;
-preflight permission or authorization failures return before mutation. An
-access-denied response after POST bytes were sent is indeterminate and retains
-the journal. Linux packages that place the socket elsewhere and macOS's distinct
-discovery protocol are explicitly unsupported in this release.
-
-Historical `tailscale: true` records without the typed ownership object remain
-fail-closed before process or Tailscale effects. Their exact bytes are retained
-for manual, coordinate-specific recovery.
+Ferric manages only schema-v2 registrations. A schema-1 record (or any other
+version), and any record left by the retired `server up --tailscale`, is
+reported as unverifiable by `status`, `down` and `doctor`; Ferric neither
+signals its PID nor deletes it. The diagnostic names the manual cleanup: stop
+the recorded PID and delete the record, after first turning that Tailscale
+serve off by hand (for example `tailscale serve --https=443 off`) when the
+record carries one. Remote access now goes through `ferric tunnel`; see
+[security](security.md#remote-access-without-a-coordination-server).
 
 Successful `down` reports `stopped`, `stale-cleaned`, or that the retained
 process was already exited. Each registration is also reported independently
@@ -390,7 +343,7 @@ and `--modality`; the query-only `--trace-dir` is not an MCP option.
 ferric api [--host 127.0.0.1] [--port 3581] [OPTIONS]
 ```
 
-Bound to loopback by default. Requires the `backend-openai` build. Routes:
+Bound to loopback by default. Routes:
 `GET /health`, `POST /v1/query` (one JSON response), and `POST /v1/query/stream`
 (SSE stream of `StreamDelta`s). Body: `{"prompt": "..."}`. Other options mirror
 `query`'s model/run controls; the query-only `--trace-dir` is not an API
@@ -405,7 +358,7 @@ ferric dream [--recent-traces <N>] [--memory-file <PATH>] [--model <NAME>] [--ap
 ```
 
 Parses recent `.ferric/trace` files into a synthesized `MEMORY.md` (default
-`.ferric/MEMORY.md`, 5 traces). Requires the `backend-openai` build + a model.
+`.ferric/MEMORY.md`, 5 traces). Requires a model.
 
 ---
 
@@ -455,7 +408,7 @@ overrides with a per-crate filter, e.g. `FERRIC_LOG=ferric_loop=debug`. Quiet
 
 | Path | What |
 |---|---|
-| `.ferric/server.json` | local managed-server registration; schema v2 is mirrored in the user config directory for auto-discovery and is also the write-ahead ownership journal for a Ferric Tailscale Serve path |
+| `.ferric/server.json` | local managed-server registration; schema v2 is mirrored in the user config directory for auto-discovery |
 | `.ferric/trace/*.jsonl` | default per-session traces; `query --trace-dir` can place only query traces in a validated external directory |
 | `.ferric/config.toml` | expert project defaults (model, endpoint, hooks, …); human setup never overwrites this file |
 | `.ferric/startup-preference.json` | remembered model identity; no API key, measured qualification, or permission to edit |

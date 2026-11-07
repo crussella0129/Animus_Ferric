@@ -1055,24 +1055,3 @@ fn evidence_guidance_is_added_to_custom_prompts_and_legacy_is_literal() {
         }
     }
 }
-
-#[test]
-fn planner_rejection_writes_no_trace_or_workspace_effect() {
-    let directory = common::git_workspace(&[("init.txt", "init\n")]);
-    let capture = run_policy(
-        &directory,
-        vec![tool_completion(vec![(
-            "write",
-            "write_file",
-            json!({"path": "never.txt", "content": "never"}),
-        )])],
-        HarnessPolicy::EvidencePlanner,
-        Vec::new(),
-        2,
-        None,
-        Opts::default(),
-    );
-    assert!(matches!(capture.result, Err(FerricError::InvalidInput(_))));
-    assert!(capture.records.is_empty());
-    assert!(!directory.path().join("never.txt").exists());
-}

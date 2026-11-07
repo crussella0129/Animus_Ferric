@@ -731,19 +731,6 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_planner_fails_before_mcp_trace_or_provider() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut args = base_mcp_args(dir.path());
-        args.run.harness_policy = Some(HarnessPolicyArg::EvidencePlanner);
-
-        let error = McpServer::launch(&args)
-            .err()
-            .expect("planner is unavailable");
-        assert!(error.contains("evidence_planner"), "{error}");
-        assert!(!dir.path().join(".ferric/trace").exists());
-    }
-
-    #[test]
     fn parses_valid_request_line() {
         let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
         let req = parse_line(line).unwrap();

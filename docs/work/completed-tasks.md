@@ -2429,3 +2429,54 @@ qualification below after final PR checks reopened Test.**
 - **Completed:** 2026-11-07
 - **Files modified:** Cargo.lock, .github/workflows/release.yml
 - **Commit:** `f256538`
+
+## T-12906 (sprint 130)
+- **Description:** Owner decision on sprint 129's retirements (build plan §E). All were approved on 2026-11-07 and recorded as INT-0018, with one acceptance criterion each. Sprint 130 carried out every one except AC-4, which proved not to be a pure removal and returns to the owner as T-13006.
+- **Intent:** [INT-0018](../intents/INT-0018-retire-superseded-surfaces.md)
+- **Completed:** 2026-11-07
+- **Files modified:** docs/intents/INT-0018-retire-superseded-surfaces.md, docs/sprints/s130/
+- **Commit:** `b19a725`
+
+## T-13001 (sprint 130)
+- **Description:** INT-0018 AC-8 and AC-9. `TailnetFsRetriever`, its SSH transport and tests are removed from ferric-research; nothing constructed them, and a mounted share stays reachable through the local plane. `tools/install.sh` and `tools/install.ps1` are removed; the root installers and one documented `cargo install` remain.
+- **Intent:** [INT-0018](../intents/INT-0018-retire-superseded-surfaces.md) (AC-8, AC-9)
+- **Completed:** 2026-11-07
+- **Files modified:** crates/ferric-research/src/{lib.rs,retriever.rs}, tools/install.{sh,ps1}, docs/{getting-started.md,ornstein.md}, docs/work/tasks.md
+- **Commit:** `b19a725`, `e42778f`
+
+## T-13002 (sprint 130)
+- **Description:** INT-0018 AC-1 and AC-2.
+  - **Removed:** `ferric server up --tailscale`, the Tailscale Serve and LocalAPI adapters, every Tailscale half of up/status/down/doctor, the lifecycle-test binary and its bin-identity gate, the `adopt` subcommand and the adoption machinery.
+  - **Refusal path:** a record with Tailscale ownership, or any schema other than 2, is captured as Retired and reported unverifiable with manual-cleanup guidance. No process is inspected, signalled or deleted.
+  - **Docs:** remote access points to `ferric tunnel`. About −14.7K lines.
+- **Intent:** [INT-0018](../intents/INT-0018-retire-superseded-surfaces.md) (AC-1, AC-2)
+- **Completed:** 2026-11-07
+- **Files modified:** crates/ferric-cli/src/{server/mod.rs,server/tests.rs,server/fixtures.rs,server_registration.rs,server_resolution.rs,lib.rs,main.rs}, crates/ferric-cli/src/{tailscale_serve.rs,tailscale_localapi.rs,bin_identity.rs,bin/ferric_lifecycle_test.rs} (deleted), crates/ferric-cli/{Cargo.toml,tests/server_lifecycle_fixture.rs}, docs/{server-configuration.md,commands.md,getting-started.md,demo-guide.md}
+- **Commit:** `e42778f`
+
+## T-13003 (sprint 130)
+- **Description:** INT-0018 AC-3.
+  - **Removed:** `bench autonomy --paired/--control-bin/--candidate-bin/--control-sha256` and the Evidence arm; the frozen-binary machinery, the strict managed-server binding, the arm/coordinate/paired result layers, and the server helpers only strict mode used.
+  - **Unchanged:** the single-binary matrix. Earlier rows, paired ones included, still parse.
+  - About −3.6K lines.
+- **Intent:** [INT-0018](../intents/INT-0018-retire-superseded-surfaces.md) (AC-3)
+- **Completed:** 2026-11-07
+- **Files modified:** crates/ferric-cli/src/{autonomy_cmd.rs,backend.rs,server/mod.rs,server/tests.rs,server_process.rs}, crates/ferric-bench/src/{autonomy_results.rs,lib.rs}, docs/{server-configuration.md,intents/INT-0001-evidence-bound-autonomous-recovery.md}
+- **Commit:** `810d0b5`
+
+## T-13004 (sprint 130)
+- **Description:** INT-0018 AC-6 and AC-7.
+  - **AC-6:** EvidencePlanner is removed and the value is invalid at clap and at config load. ControllerState drops its policy field.
+  - **AC-7:** the TurnStart commit barrier, the legacy pause path, the omitted-count reconciliation and the `done` alias are removed. A pre-sprint-113 turn now fails closed with an explicit message. The sprint-129 nudge reconciliation is kept.
+- **Intent:** [INT-0018](../intents/INT-0018-retire-superseded-surfaces.md) (AC-6, AC-7)
+- **Completed:** 2026-11-07
+- **Files modified:** crates/ferric-core/src/harness.rs, crates/ferric-loop/src/{run.rs,replay.rs,projector.rs,trace_structure.rs,controller.rs}, crates/ferric-trace/src/event.rs, crates/ferric-cli/src/{config.rs,query.rs,api.rs,chat.rs,mcp.rs,icm.rs,trace_verify.rs,autonomy_cmd.rs}, tests, docs/{commands.md,configuration.md}
+- **Commit:** `598c2c7`
+
+## T-13005 (sprint 130)
+- **Description:** INT-0018 AC-5. The `backend-openai` feature is removed from ferric-cli and ferric-provider, so the HTTP backend, gate and setup are always compiled. The not() arms, `BACKEND_FEATURE_MISSING` and the no-default-features CI lane are gone. `--mock` stays the offline mode. A normal build produces the byte-identical binary.
+- **Intent:** [INT-0018](../intents/INT-0018-retire-superseded-surfaces.md) (AC-5)
+- **Completed:** 2026-11-07
+- **Files modified:** crates/ferric-cli/{Cargo.toml,src/*,tests/*}, crates/ferric-provider/{Cargo.toml,src/lib.rs}, .github/workflows/ci.yml, tools/{run_benchmarks.ps1,demo-smoke.ps1}, docker/Dockerfile, README.md, docs/{getting-started.md,commands.md,demo-guide.md,by-example.md,basics-query.md}
+- **Commit:** `1e7140f`
+

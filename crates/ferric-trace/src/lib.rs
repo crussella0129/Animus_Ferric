@@ -65,7 +65,7 @@ mod tests {
                 protocol: ferric_core::ActionProtocol::ConstrainedJson,
                 // Non-default so this exercises the new additive field rather
                 // than succeeding only because deserialization supplied it.
-                harness_policy: ferric_core::HarnessPolicy::EvidencePlanner,
+                harness_policy: ferric_core::HarnessPolicy::Evidence,
                 max_turns: 15,
                 max_tools: 6,
                 prompt_budget_tokens: 2_800,
@@ -121,7 +121,6 @@ mod tests {
                         dispatched: 1,
                         errored: 0,
                         controller_blocks: 0,
-                        controller_blocks_was_present: true,
                     }],
                     nudged_for_no_action: false,
                     truncated_once: false,
@@ -261,7 +260,7 @@ mod tests {
             Event::ControllerCheckpoint {
                 state: ControllerCheckpointV1 {
                     version: CONTROLLER_CHECKPOINT_VERSION,
-                    harness_policy: ferric_core::HarnessPolicy::EvidencePlanner,
+                    harness_policy: ferric_core::HarnessPolicy::Evidence,
                     mutation_epoch: 3,
                     required_checks: vec!["unit".to_string()],
                     passed_checks: std::collections::BTreeMap::from([("lint".to_string(), 3)]),
@@ -574,7 +573,6 @@ mod tests {
         }"#;
         let parsed: GuardTurn = serde_json::from_str(old).unwrap();
         assert_eq!(parsed.controller_blocks, 0);
-        assert!(!parsed.controller_blocks_was_present);
         assert!(
             !serde_json::to_string(&parsed)
                 .unwrap()
@@ -589,7 +587,6 @@ mod tests {
         assert!(encoded.contains("\"controller_blocks\":1"), "{encoded}");
         let reparsed = serde_json::from_str::<GuardTurn>(&encoded).unwrap();
         assert_eq!(reparsed, with_block);
-        assert!(reparsed.controller_blocks_was_present);
 
         let explicit_zero: GuardTurn = serde_json::from_str(
             r#"{
@@ -601,7 +598,7 @@ mod tests {
             }"#,
         )
         .unwrap();
-        assert!(explicit_zero.controller_blocks_was_present);
+        assert_eq!(explicit_zero.controller_blocks, 0);
 
         let explicit_null = r#"{
             "turn":3,

@@ -251,7 +251,6 @@ fn bench_no_controls_preserve_legacy_mock_defaults() {
     }
 }
 
-#[cfg(feature = "backend-openai")]
 mod http {
     use super::*;
     use support::FakeOpenAi as Server;

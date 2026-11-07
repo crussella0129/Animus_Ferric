@@ -22,7 +22,7 @@
 FROM rust:1.96-slim-bookworm AS build
 ARG TARGETARCH
 
-# The default features include the OpenAI HTTP backend that drives the
+# The binary always includes the OpenAI HTTP backend that drives the
 # co-located llama-server (ADR-051). rustls-tls (ADR-045) means no OpenSSL
 # system dependency is needed for the build.
 WORKDIR /src

@@ -23,11 +23,10 @@ pub use autonomy::{
     embedded_autonomy_suite,
 };
 pub use autonomy_results::{
-    AUTONOMY_RESULTS_SCHEMA_VERSION, AutonomyArm, AutonomyEvaluationCoordinate,
-    AutonomyEvaluationProvenance, AutonomyResultRow, AutonomyRunIssue, AutonomySegmentResult,
-    AutonomyTraceMetrics, ManagedServerProvenance, MechanismCounts, ResumeProbeResult,
-    RetainedTraceValidation, STRICT_EVIDENCE_CONTEXT_SIZE, append_autonomy_row,
-    executable_is_llama_server, summarize_autonomy_run_with_coordinates, write_autonomy_summary,
+    AUTONOMY_RESULTS_SCHEMA_VERSION, AutonomyEvaluationProvenance, AutonomyResultRow,
+    AutonomyRunIssue, AutonomySegmentResult, AutonomyTraceMetrics, ManagedServerProvenance,
+    MechanismCounts, ResumeProbeResult, RetainedTraceValidation, append_autonomy_row,
+    summarize_autonomy_run, write_autonomy_summary,
 };
 pub use budget::{
     AttemptIdentity, BudgetControls, ResolvedAgentBudget, RunBudgetEvidence, TraceEvidenceState,

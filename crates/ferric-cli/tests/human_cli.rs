@@ -10,7 +10,6 @@ fn output(command: &mut Command) -> Output {
     support::output(command, Duration::from_secs(30))
 }
 
-#[cfg(feature = "backend-openai")]
 #[test]
 fn human_read_only_admission_failure_has_one_safe_action() {
     let ambient = tempfile::tempdir().unwrap();
@@ -114,16 +113,11 @@ fn primary_help_is_compact() {
         .lines()
         .filter_map(|line| line.split_whitespace().next())
         .collect();
-    if cfg!(feature = "backend-openai") {
-        assert_eq!(names, ["run", "setup", "status", "explain", "advanced"]);
-    } else {
-        assert_eq!(names, ["run", "status", "explain", "advanced"]);
-    }
+    assert_eq!(names, ["run", "setup", "status", "explain", "advanced"]);
     assert!(!help.contains("--params-b"));
     assert!(!help.contains("--gpu-layers"));
 }
 
-#[cfg(feature = "backend-openai")]
 #[test]
 fn human_invalid_config_blocks_before_preparation() {
     let root = tempfile::tempdir().unwrap();
@@ -162,20 +156,8 @@ fn human_invalid_config_blocks_before_preparation() {
 fn advanced_original_commands_compatible() {
     let root = tempfile::tempdir().unwrap();
     let names = [
-        "query",
-        "bench",
-        "mcp",
-        "chat",
-        "launch",
-        "icm",
-        "cron",
-        "revert",
-        "dream",
-        "server",
-        "skills",
-        "trace",
-        #[cfg(feature = "backend-openai")]
-        "api",
+        "query", "bench", "mcp", "chat", "launch", "icm", "cron", "revert", "dream", "server",
+        "skills", "trace", "api",
     ];
     for name in names {
         let direct = output(command(root.path()).args([name, "--help"]));
@@ -202,7 +184,6 @@ fn advanced_original_commands_compatible() {
     assert!(root.path().join(".ferric/trace").is_dir());
 }
 
-#[cfg(feature = "backend-openai")]
 #[test]
 fn human_explain_does_not_contact_endpoint_or_prepare() {
     let root = tempfile::tempdir().unwrap();
@@ -266,25 +247,6 @@ fn cargo_default_launch_selects_real_cli() {
     );
     let cli: toml::Value = toml::from_str(include_str!("../Cargo.toml")).unwrap();
     assert_eq!(cli["package"]["default-run"].as_str(), Some("ferric"));
-    assert!(
-        cli["features"]["default"]
-            .as_array()
-            .unwrap()
-            .contains(&toml::Value::String("backend-openai".into()))
-    );
-}
-
-#[cfg(not(feature = "backend-openai"))]
-#[test]
-fn no_default_features_welcome_and_mock_compatibility() {
-    let root = tempfile::tempdir().unwrap();
-    let result = output(&mut command(root.path()));
-    assert!(result.status.success());
-    assert!(
-        String::from_utf8(result.stdout)
-            .unwrap()
-            .contains("no real backend")
-    );
-    let result = output(command(root.path()).args(["query", "--mock", "--no-config", "hello"]));
-    assert!(result.status.success());
+    // The real backend is always compiled; no default feature set narrows it.
+    assert!(cli["features"].get("default").is_none());
 }

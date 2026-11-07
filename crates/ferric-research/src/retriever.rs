@@ -4,13 +4,11 @@
 //! UNTRUSTED chunks with provenance; [`research`] runs them all through the
 //! quarantine ([`summarize_quarantined`](crate::summarize_quarantined)) into
 //! typed [`ResearchDigest`]s. The funnel is source-agnostic, so each plane
-//! (local FS now; tailnet/NAS + web next) is an additive `Retriever`, not a
-//! rewrite.
+//! (local FS and the web) is an additive `Retriever`, not a rewrite.
 
 use std::collections::BTreeSet;
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use async_trait::async_trait;
 use ferric_provider::Provider;
@@ -25,8 +23,7 @@ const NOISE_DIRS: &[&str] = &[".git", "target", "node_modules", ".ferric"];
 /// Goes straight to the quarantine — never to the planner.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetrievedChunk {
-    /// Provenance: where it came from (a file relpath, later a URL or a
-    /// tailnet `device:path`).
+    /// Provenance: where it came from (a file relpath or a URL).
     pub source: String,
     /// The untrusted raw content.
     pub content: String,
@@ -42,12 +39,12 @@ pub enum RetrieveError {
 }
 
 /// A research **source plane**. `available()` is a runtime capability probe (a
-/// network/tailnet plane may be offline); `plane()` labels it. Every plane —
-/// local FS, tailnet/NAS, web — implements this one trait and feeds the same
+/// network plane may be offline); `plane()` labels it. Every plane — local FS
+/// and the web — implements this one trait and feeds the same
 /// quarantine.
 #[async_trait]
 pub trait Retriever: Send + Sync {
-    /// A short label for the source plane: `"local"` | `"tailnet"` | `"web"`.
+    /// A short label for the source plane: `"local"` | `"web"`.
     fn plane(&self) -> &str;
     /// Whether this source can run right now (capability probe).
     fn available(&self) -> bool;
@@ -81,7 +78,7 @@ pub async fn research(
 /// Per-plane outcome of an orchestrated [`research_all`] run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlaneResult {
-    /// The source plane label (`"local"` | `"tailnet"` | `"web"`).
+    /// The source plane label (`"local"` | `"web"`).
     pub plane: String,
     /// Whether the plane was available (capability-probed) this run.
     pub available: bool,
@@ -293,245 +290,6 @@ fn cap_bytes(mut s: String, max: usize) -> String {
     s
 }
 
-// ---------------------------------------------------------------------------
-// Tailnet/NAS-FS plane (Ornstein increment 3): search a REMOTE device's
-// filesystem over SSH and feed matches to the same quarantine.
-//
-// `ssh` runs its command through the remote shell, so the caller-supplied query
-// and remote root MUST be POSIX single-quote-escaped or it is remote command
-// injection. The escaping + argv builders are pure (unit-tested); only the
-// process spawn is live (deferred E2E).
-// ---------------------------------------------------------------------------
-
-/// How to reach a tailnet host's shell.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SshTransport {
-    /// `tailscale ssh <host> -- <cmd>` — keyless, identity-based; Linux tailnet devices.
-    Tailscale,
-    /// `ssh -p <port> -o BatchMode=yes -o ConnectTimeout=8 <host> -- <cmd>` — e.g. Termux sshd.
-    Plain { port: u16 },
-}
-
-/// A device seen in `tailscale status`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TailnetDevice {
-    pub name: String,
-    pub ip: String,
-    pub online: bool,
-}
-
-/// POSIX single-quote `s` so a remote shell treats it as one literal argument.
-/// Wraps in `'…'`; an embedded `'` becomes the `'\''` splice. This is the
-/// defense against remote command injection via the research query.
-pub fn shell_single_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for ch in s.chars() {
-        if ch == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
-}
-
-/// Wrap a remote shell command in the transport's argv → `(program, args)`.
-fn ssh_argv(transport: &SshTransport, host: &str, remote_cmd: &str) -> (String, Vec<String>) {
-    match transport {
-        SshTransport::Tailscale => (
-            "tailscale".to_string(),
-            vec![
-                "ssh".to_string(),
-                host.to_string(),
-                "--".to_string(),
-                remote_cmd.to_string(),
-            ],
-        ),
-        SshTransport::Plain { port } => (
-            "ssh".to_string(),
-            vec![
-                "-p".to_string(),
-                port.to_string(),
-                "-o".to_string(),
-                "BatchMode=yes".to_string(),
-                "-o".to_string(),
-                "ConnectTimeout=8".to_string(),
-                host.to_string(),
-                "--".to_string(),
-                remote_cmd.to_string(),
-            ],
-        ),
-    }
-}
-
-/// Argv to list (capped) files under `remote_root` on `host` matching `query`.
-/// The query + root are single-quoted into the remote command (injection-safe).
-pub fn ssh_search_argv(
-    transport: &SshTransport,
-    host: &str,
-    query: &str,
-    remote_root: &str,
-    max_files: usize,
-) -> (String, Vec<String>) {
-    let cmd = format!(
-        "grep -rIl -- {} {} | head -n {}",
-        shell_single_quote(query),
-        shell_single_quote(remote_root),
-        max_files
-    );
-    ssh_argv(transport, host, &cmd)
-}
-
-/// Argv to read one remote file (path single-quoted).
-pub fn ssh_cat_argv(
-    transport: &SshTransport,
-    host: &str,
-    remote_path: &str,
-) -> (String, Vec<String>) {
-    let cmd = format!("cat -- {}", shell_single_quote(remote_path));
-    ssh_argv(transport, host, &cmd)
-}
-
-/// Parse `tailscale status` stdout into devices. Each device line is
-/// `IP  name  owner  os  [status…]`; a line containing "offline" ⇒ `online=false`.
-/// Non-device lines (no `100.x` CGNAT IP first) are ignored.
-pub fn parse_status_devices(stdout: &str) -> Vec<TailnetDevice> {
-    stdout
-        .lines()
-        .filter_map(|line| {
-            let mut cols = line.split_whitespace();
-            let ip = cols.next()?;
-            let name = cols.next()?;
-            if !ip.starts_with("100.") {
-                return None; // not a tailnet (CGNAT 100.64/10) device line
-            }
-            let online = !line.to_lowercase().contains("offline");
-            Some(TailnetDevice {
-                name: name.to_string(),
-                ip: ip.to_string(),
-                online,
-            })
-        })
-        .collect()
-}
-
-/// The Tailnet/NAS-FS source plane: search a remote tailnet device's filesystem
-/// over SSH (Tailscale SSH for Linux devices; plain `ssh -p` for Termux-style
-/// sshd). All retrieved content is untrusted → the quarantine, like any source.
-///
-/// # This plane has never run against a real host, and may never
-/// SSH is a *requirement* of this transport, not an implementation detail: the
-/// `shell_single_quote` escaping below exists because `ssh` runs its command
-/// through the **remote** shell. That requirement is also the plane's problem.
-/// The one online Linux peer on the reference tailnet has SSH blocked **by the
-/// owner's deliberate choice** (2026-07-26, ADR-095), so this transport cannot
-/// be exercised there at all — and a refused port 22 is evidence of intent, not
-/// of a gap to close.
-///
-/// Where a remote filesystem is reachable by **mount** instead (SMB, NFS), it
-/// is just a path, and [`LocalFsRetriever`] with the mount point as its
-/// confined root already serves it — no code here is involved. Generalising or
-/// retiring this transport is an open design decision; see the backlog.
-pub struct TailnetFsRetriever {
-    host: String,
-    remote_root: String,
-    transport: SshTransport,
-    max_files: usize,
-    max_bytes_per_file: usize,
-}
-
-impl TailnetFsRetriever {
-    /// Default caps: 20 files, 64 KiB each.
-    pub fn new(
-        host: impl Into<String>,
-        remote_root: impl Into<String>,
-        transport: SshTransport,
-    ) -> Self {
-        Self {
-            host: host.into(),
-            remote_root: remote_root.into(),
-            transport,
-            max_files: 20,
-            max_bytes_per_file: 64 * 1024,
-        }
-    }
-
-    /// Live: `tailscale status` → parsed devices (empty on any failure).
-    fn status_devices() -> Vec<TailnetDevice> {
-        match Command::new("tailscale").arg("status").output() {
-            Ok(o) if o.status.success() => {
-                parse_status_devices(&String::from_utf8_lossy(&o.stdout))
-            }
-            _ => Vec::new(),
-        }
-    }
-}
-
-#[async_trait]
-impl Retriever for TailnetFsRetriever {
-    fn plane(&self) -> &str {
-        "tailnet"
-    }
-
-    fn available(&self) -> bool {
-        Self::status_devices()
-            .iter()
-            .any(|d| d.name == self.host && d.online)
-    }
-
-    async fn retrieve(&self, query: &str) -> Result<Vec<RetrievedChunk>, RetrieveError> {
-        // 1. Remote search → matching file paths.
-        let (prog, args) = ssh_search_argv(
-            &self.transport,
-            &self.host,
-            query,
-            &self.remote_root,
-            self.max_files,
-        );
-        let search = Command::new(&prog)
-            .args(&args)
-            .output()
-            .map_err(|e| RetrieveError::Exec(format!("{prog}: {e}")))?;
-        if !search.status.success() {
-            return Err(RetrieveError::Exec(format!(
-                "remote search failed: {}",
-                String::from_utf8_lossy(&search.stderr).trim()
-            )));
-        }
-        let files: Vec<String> = String::from_utf8_lossy(&search.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .take(self.max_files)
-            .map(String::from)
-            .collect();
-
-        // 2. Read each match → an untrusted chunk tagged `host:relpath`.
-        let mut chunks = Vec::with_capacity(files.len());
-        for file in files {
-            let (cprog, cargs) = ssh_cat_argv(&self.transport, &self.host, &file);
-            let cat = Command::new(&cprog)
-                .args(&cargs)
-                .output()
-                .map_err(|e| RetrieveError::Exec(format!("{cprog}: {e}")))?;
-            if !cat.status.success() {
-                continue; // skip a file we couldn't read
-            }
-            let content = cap_bytes(
-                String::from_utf8_lossy(&cat.stdout).into_owned(),
-                self.max_bytes_per_file,
-            );
-            chunks.push(RetrievedChunk {
-                source: format!("{}:{}", self.host, file),
-                content,
-            });
-        }
-        Ok(chunks)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -629,102 +387,6 @@ mod tests {
         let digests = block(research(&r, &mock, "tailscale")).unwrap();
         assert!(digests.is_empty(), "unavailable plane → no-op, not error");
     }
-
-    // --- Tailnet plane (pure core; the live spawn is the deferred E2E) ---
-
-    #[test]
-    fn shell_single_quote_neutralizes_injections() {
-        assert_eq!(shell_single_quote("plain"), "'plain'");
-        // an embedded single quote becomes the '\'' splice
-        assert_eq!(shell_single_quote("a'b"), "'a'\\''b'");
-        // shell metacharacters end up inside one quoted literal (no injection)
-        for payload in ["; rm -rf /", "$(whoami)", "`id`", "&& curl evil"] {
-            let q = shell_single_quote(payload);
-            assert!(q.starts_with('\'') && q.ends_with('\''));
-            assert_eq!(&q[1..q.len() - 1], payload, "payload kept verbatim, quoted");
-        }
-    }
-
-    #[test]
-    fn ssh_search_argv_tailscale_form() {
-        let (prog, args) = ssh_search_argv(
-            &SshTransport::Tailscale,
-            "example-linux",
-            "secret; rm -rf /",
-            "/data",
-            5,
-        );
-        assert_eq!(prog, "tailscale");
-        assert_eq!(args[0], "ssh");
-        assert_eq!(args[1], "example-linux");
-        assert_eq!(args[2], "--");
-        let cmd = &args[3];
-        assert!(cmd.contains("grep -rIl --"), "{cmd}");
-        assert!(
-            cmd.contains("'secret; rm -rf /'"),
-            "query single-quoted: {cmd}"
-        );
-        assert!(cmd.contains("'/data'"));
-        assert!(cmd.contains("head -n 5"));
-    }
-
-    #[test]
-    fn ssh_search_argv_plain_form() {
-        let (prog, args) = ssh_search_argv(
-            &SshTransport::Plain { port: 8022 },
-            "example-phone",
-            "tailscale",
-            "/sdcard",
-            3,
-        );
-        assert_eq!(prog, "ssh");
-        assert_eq!(args[0], "-p");
-        assert_eq!(args[1], "8022");
-        assert!(args.contains(&"BatchMode=yes".to_string()));
-        assert_eq!(args[args.len() - 3], "example-phone");
-        assert_eq!(args[args.len() - 2], "--");
-        assert!(args.last().unwrap().contains("'tailscale'"));
-    }
-
-    #[test]
-    fn ssh_cat_argv_escapes_path() {
-        let (prog, args) = ssh_cat_argv(
-            &SshTransport::Plain { port: 22 },
-            "host",
-            "/weird path/$(x).txt",
-        );
-        assert_eq!(prog, "ssh");
-        let cmd = args.last().unwrap();
-        assert!(cmd.starts_with("cat -- '"), "{cmd}");
-        assert!(cmd.contains("'/weird path/$(x).txt'"), "{cmd}");
-    }
-
-    #[test]
-    fn parse_status_devices_reads_online_offline() {
-        // Shaped like real `tailscale status` output, with synthetic identity
-        // (sprint 105): the addresses stay inside Tailscale's real
-        // `100.64.0.0/10` CGNAT range so the sample is representative, but the
-        // devices and the account handle are examples. What this test actually
-        // pins is the column layout and the trailing "offline, last seen …"
-        // marker, and both are preserved verbatim.
-        let sample = "100.64.0.2   example-phone  user@  android  -\n\
-                      100.64.0.3    example-linux  user@  linux    offline, last seen 1h ago\n";
-        let devs = parse_status_devices(sample);
-        assert_eq!(devs.len(), 2);
-        let phone = devs.iter().find(|d| d.name == "example-phone").unwrap();
-        assert_eq!(phone.ip, "100.64.0.2");
-        assert!(phone.online, "no offline marker → online");
-        let linux = devs.iter().find(|d| d.name == "example-linux").unwrap();
-        assert!(!linux.online, "marked offline");
-    }
-
-    #[test]
-    fn tailnet_retriever_plane_label() {
-        let r = TailnetFsRetriever::new("example-linux", "/data", SshTransport::Tailscale);
-        assert_eq!(r.plane(), "tailnet");
-    }
-
-    // --- The research orchestrator (research_all across planes) ---
 
     #[test]
     fn research_all_aggregates_across_planes() {
