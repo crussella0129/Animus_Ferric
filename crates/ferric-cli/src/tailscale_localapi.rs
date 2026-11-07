@@ -300,19 +300,6 @@ impl TailscaleLocalApiClient {
         self.open_session()?.get_status()
     }
 
-    #[allow(dead_code)]
-    #[cfg(test)]
-    pub fn compare_and_set_serve_config(
-        &self,
-        etag: &str,
-        config_json: &[u8],
-    ) -> Result<(), ServeConfigCasError> {
-        validate_cas_input(etag, config_json).map_err(ServeConfigCasError::NoMutation)?;
-        self.open_session()
-            .map_err(ServeConfigCasError::NoMutation)?
-            .compare_and_set_serve_config(etag, config_json)
-    }
-
     #[cfg(test)]
     pub fn with_test_tcp(address: SocketAddr) -> Result<Self, LocalApiError> {
         validate_loopback_address(address)?;

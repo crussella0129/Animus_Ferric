@@ -30,7 +30,7 @@ use crate::server_registration::{
     RegistrationSlot, RemovalError, RemovalFailureKind, RemovalOutcome, ReplacementError,
     ReplacementOutcome, capture_registration_path, inventory_runfiles, publish_mirrored,
     remove_if_unchanged, remove_publication_stage_if_unchanged, replace_if_unchanged,
-    validate_runfile,
+    sort_coordinates, validate_runfile,
 };
 use crate::server_resolution::{
     Candidate, CandidateState, HealthState, Resolution, ResolutionIssue, ResolutionIssueKind,
@@ -41,10 +41,12 @@ use crate::tailscale_serve::{
     TailscaleServeOwnership, coordinate_from_token, generate_token,
 };
 
+/// Schema 1 registrations predate recorded process identity.
+pub(crate) const RUNFILE_SCHEMA_V1: u8 = 1;
 pub(crate) const RUNFILE_SCHEMA_V2: u8 = 2;
 
 const fn legacy_runfile_schema() -> u8 {
-    1
+    RUNFILE_SCHEMA_V1
 }
 
 /// The inference engine the launcher manages. A closed set — the launcher never
@@ -144,27 +146,12 @@ pub struct ServerUpArgs {
     pub tailscale: bool,
 }
 
-/// What `command()` needs. Built from `ServerUpArgs` with the host fixed.
-pub struct ServerConfig {
-    pub engine: Engine,
-    pub model: Option<String>,
-    pub mmproj: Option<PathBuf>,
-    pub ctx: u32,
-    pub host: String,
-    pub port: u16,
-    /// Edge-tuning knobs (sprint 35). Only consumed by `Engine::LlamaServer`'s
-    /// argv builder — Ollama doesn't take these as CLI flags.
-    pub threads: Option<u32>,
-    pub gpu_layers: Option<u32>,
-    pub batch_size: Option<u32>,
-    pub seed: Option<i64>,
-    pub parallel: Option<u32>,
-    pub tailscale: bool,
-}
+/// Every managed engine binds loopback only (ADR-005).
+const LOOPBACK_HOST: &str = "127.0.0.1";
 
-impl ServerConfig {
+impl ServerUpArgs {
     pub fn base_url(&self) -> String {
-        format!("http://{}:{}/v1", self.host, self.port)
+        format!("http://{LOOPBACK_HOST}:{}/v1", self.port)
     }
 }
 
@@ -175,9 +162,9 @@ pub struct LaunchCommand {
     pub env: Vec<(String, String)>,
 }
 
-/// Build the engine launch command. Pure (no spawn). Host is whatever
-/// `cfg.host` is — callers pin it to `127.0.0.1` (ADR-005).
-pub fn command(cfg: &ServerConfig) -> LaunchCommand {
+/// Build the engine launch command. Pure (no spawn). The host is always
+/// loopback (ADR-005); the edge-tuning knobs reach only llama-server's argv.
+pub fn command(cfg: &ServerUpArgs) -> LaunchCommand {
     match cfg.engine {
         Engine::LlamaServer => {
             let mut args: Vec<String> = Vec::new();
@@ -212,7 +199,7 @@ pub fn command(cfg: &ServerConfig) -> LaunchCommand {
                 args.push(parallel.to_string());
             }
             args.push("--host".to_string());
-            args.push(cfg.host.clone());
+            args.push(LOOPBACK_HOST.to_string());
             args.push("--port".to_string());
             args.push(cfg.port.to_string());
             LaunchCommand {
@@ -226,7 +213,7 @@ pub fn command(cfg: &ServerConfig) -> LaunchCommand {
             args: vec!["serve".to_string()],
             env: vec![(
                 "OLLAMA_HOST".to_string(),
-                format!("{}:{}", cfg.host, cfg.port),
+                format!("{LOOPBACK_HOST}:{}", cfg.port),
             )],
         },
     }
@@ -305,60 +292,6 @@ pub fn runfile_path(workspace: &Path) -> PathBuf {
 
 pub fn global_runfile_path() -> Option<PathBuf> {
     crate::config::user_config_path().map(|p| p.with_file_name("server.json"))
-}
-
-#[cfg(test)]
-fn read_runfile_result_impl(
-    workspace: &Path,
-    global: Option<PathBuf>,
-) -> Result<Option<ServerRunfile>, String> {
-    let scope = ManagedDiscoveryScope {
-        workspace: workspace.to_path_buf(),
-        global,
-    };
-    let discovery = discover_managed_server_in(&scope);
-    match discovery.state {
-        ManagedServerState::Empty => Ok(None),
-        ManagedServerState::StaleOnly { stale } => {
-            let details = stale
-                .iter()
-                .map(|coordinate| registration_label(coordinate.scope, &coordinate.path))
-                .collect::<Vec<_>>()
-                .join("; ");
-            Err(format!(
-                "only stale server registrations remain ({details}); run `ferric server down` to clean them after reviewing the reported listener state"
-            ))
-        }
-        ManagedServerState::Conflict { issues } | ManagedServerState::Unverifiable { issues } => {
-            Err(format!(
-                "server registration resolution is blocked: {}",
-                issues
-                    .iter()
-                    .map(|issue| issue.detail.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            ))
-        }
-        ManagedServerState::Degraded { server, .. } => match server.listener {
-            ListenerState::Absent => Err(format!(
-                "managed server PID {} has no listener on its registered port {}",
-                server.runfile.pid, server.runfile.port
-            )),
-            ListenerState::OwnedByTargetWildcard => Err(format!(
-                "managed server PID {} exposes registered port {} through a wildcard/public listener",
-                server.runfile.pid, server.runfile.port
-            )),
-            ListenerState::OwnedByTarget if server.health != HealthState::Healthy => Err(format!(
-                "managed server PID {} owns the registered loopback listener, but its engine health endpoint is not healthy",
-                server.runfile.pid
-            )),
-            other => Err(format!(
-                "managed server PID {} is degraded by listener state {other:?}",
-                server.runfile.pid
-            )),
-        },
-        ManagedServerState::Ready(server) => Ok(Some(server.runfile)),
-    }
 }
 
 fn is_listening(host: &str, port: u16) -> bool {
@@ -568,28 +501,6 @@ impl SpawnedChild for Child {
     }
 }
 
-#[cfg(test)]
-impl SpawnedChild for crate::test_process_containment::ContainedChild {
-    type ExitStatus = std::process::ExitStatus;
-
-    fn pid(&self) -> u32 {
-        self.child().id()
-    }
-
-    fn try_wait(&mut self) -> Result<Option<Self::ExitStatus>, String> {
-        self.try_wait_leader().map_err(|error| error.to_string())
-    }
-
-    fn wait(&mut self) -> Result<Self::ExitStatus, String> {
-        self.wait_for_exit_and_disarm(Duration::from_secs(5))
-            .map_err(|error| error.to_string())
-    }
-
-    fn kill(&mut self) -> Result<(), String> {
-        self.terminate_leader().map_err(|error| error.to_string())
-    }
-}
-
 trait SpawnedProcessRuntime<C: SpawnedChild> {
     type Process: RetainedProcessHandle;
 
@@ -689,25 +600,6 @@ fn wait_healthy_with<C: SpawnedChild, H: HealthProbe, K: LifecycleClock>(
         }
         clock.sleep(Duration::from_millis(500));
     }
-}
-
-#[cfg(test)]
-fn wait_healthy<C: SpawnedChild>(
-    child: &mut C,
-    engine: Engine,
-    host: &str,
-    port: u16,
-    timeout: Duration,
-) -> Result<(), String> {
-    wait_healthy_with(
-        child,
-        engine,
-        host,
-        port,
-        timeout,
-        &mut NativeHealthProbe,
-        &mut SystemLifecycleClock,
-    )
 }
 
 fn stop_child<C: SpawnedChild>(child: &mut C) -> Result<(), String> {
@@ -1033,9 +925,6 @@ impl ManagedDiscoveryScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ObservationId(pub usize);
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PromisedOriginProvenance {
     pub source: RegistrationCoordinate,
@@ -1081,7 +970,6 @@ pub(crate) enum ManagedRegistrationState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ManagedRegistrationObservation {
-    pub id: ObservationId,
     pub coordinate: RegistrationCoordinate,
     pub promised: Option<PromisedOriginProvenance>,
     pub state: ManagedRegistrationState,
@@ -1155,6 +1043,32 @@ pub(crate) enum ManagedServerState {
     Unverifiable {
         issues: Vec<ResolutionIssue>,
     },
+}
+
+impl ManagedServerState {
+    /// The resolution issues a degraded, conflicting or unverifiable state
+    /// carries; empty for every other state.
+    pub(crate) fn issues(&self) -> &[ResolutionIssue] {
+        match self {
+            Self::Degraded { issues, .. }
+            | Self::Conflict { issues }
+            | Self::Unverifiable { issues } => issues,
+            Self::Empty | Self::Ready(_) | Self::StaleOnly { .. } => &[],
+        }
+    }
+
+    /// The issue details joined with `; `.
+    pub(crate) fn issue_summary(&self) -> String {
+        issue_details(self.issues())
+    }
+}
+
+fn issue_details(issues: &[ResolutionIssue]) -> String {
+    issues
+        .iter()
+        .map(|issue| issue.detail.as_str())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1231,11 +1145,49 @@ pub(crate) struct ServerStatusReport {
     pub success: bool,
 }
 
+/// A command's rendered output: stdout lines, stderr lines, exit status.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RenderedServerStatus {
+struct Rendered {
     stdout: Vec<String>,
     stderr: Vec<String>,
     success: bool,
+}
+
+impl Rendered {
+    fn emit(&self) -> ExitCode {
+        for line in &self.stdout {
+            println!("{line}");
+        }
+        for line in &self.stderr {
+            eprintln!("{line}");
+        }
+        if self.success {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn diagnostic_lines(diagnostics: &[String]) -> Vec<String> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| format!("[diagnostic] {diagnostic}"))
+        .collect()
+}
+
+/// A retained holding path, or `none`.
+fn holding_text(preserved_at: Option<&PathBuf>) -> String {
+    preserved_at.map_or_else(|| "none".to_string(), |path| path.display().to_string())
+}
+
+fn identity_text(identity: &ProcessIdentity) -> String {
+    format!(
+        "token={} executable={} argv={:?}",
+        identity.start_token,
+        identity.executable.display(),
+        identity.argv
+    )
 }
 
 struct LifecycleDiscovery<P = LiveProcess> {
@@ -1246,13 +1198,8 @@ struct LifecycleDiscovery<P = LiveProcess> {
 
 struct LifecycleObservation<P = LiveProcess> {
     candidate: Candidate,
-    label: String,
     capture: Option<CapturedRegistration>,
     process: Option<P>,
-}
-
-fn registration_label(scope: RegistrationScope, path: &Path) -> String {
-    format!("{scope} registration {}", path.display())
 }
 
 fn flatten_inventory(inventory: &RegistrationInventory) -> Vec<ManagedRegistrationObservation> {
@@ -1283,10 +1230,7 @@ fn flatten_inventory(inventory: &RegistrationInventory) -> Vec<ManagedRegistrati
                 },
             ),
             RegistrationSlot::Captured(capture) => (
-                RegistrationCoordinate {
-                    scope: capture.scope,
-                    path: capture.path.clone(),
-                },
+                capture.coordinate(),
                 ManagedRegistrationState::Captured {
                     runfile: Box::new(capture.runfile.clone()),
                     raw_sha256: ferric_tools::sha256_bytes(&capture.raw),
@@ -1295,7 +1239,6 @@ fn flatten_inventory(inventory: &RegistrationInventory) -> Vec<ManagedRegistrati
             ),
         };
         observations.push(ManagedRegistrationObservation {
-            id: ObservationId(observations.len()),
             coordinate,
             promised,
             state,
@@ -1329,10 +1272,7 @@ fn static_inventory_issues(
             ManagedRegistrationState::Blocked { reason } => issues.push(ResolutionIssue {
                 coordinates: vec![observation.coordinate.clone()],
                 kind: ResolutionIssueKind::Unverifiable,
-                detail: format!(
-                    "{}: {reason}",
-                    registration_label(observation.coordinate.scope, &observation.coordinate.path)
-                ),
+                detail: format!("{}: {reason}", observation.coordinate),
             }),
             ManagedRegistrationState::Absent if observation.promised.is_some() => {
                 issues.push(ResolutionIssue {
@@ -1413,7 +1353,6 @@ fn push_inventory_slot(
             path,
             reason,
         } => {
-            let label = registration_label(scope, &path);
             observations.push(LifecycleObservation {
                 candidate: Candidate {
                     coordinate: RegistrationCoordinate { scope, path },
@@ -1425,7 +1364,6 @@ fn push_inventory_slot(
                         health: HealthState::NotProbed,
                     },
                 },
-                label,
                 capture: None,
                 process: None,
             });
@@ -1458,23 +1396,17 @@ fn expand_registration_captures(
                 path,
                 reason,
             } => {
-                let label = registration_label(scope, &path);
                 observations.push(LifecycleObservation {
                     candidate: Candidate {
                         coordinate: RegistrationCoordinate { scope, path },
                         runfile: None,
                         state: CandidateState::Unverifiable {
-                            reason: format!(
-                                "{reason}; promised by {} registration {}",
-                                promised.source.scope,
-                                promised.source.path.display()
-                            ),
+                            reason: format!("{reason}; promised by {}", promised.source),
                             observed_identity: None,
                             listener: None,
                             health: HealthState::NotProbed,
                         },
                     },
-                    label,
                     capture: None,
                     process: None,
                 });
@@ -1490,13 +1422,9 @@ fn stale_observation(
     observed_identity: Option<ProcessIdentity>,
     listener: ListenerState,
 ) -> LifecycleObservation {
-    let label = registration_label(capture.scope, &capture.path);
     LifecycleObservation {
         candidate: Candidate {
-            coordinate: RegistrationCoordinate {
-                scope: capture.scope,
-                path: capture.path.clone(),
-            },
+            coordinate: capture.coordinate(),
             runfile: Some(capture.runfile.clone()),
             state: CandidateState::Stale {
                 reason,
@@ -1504,7 +1432,6 @@ fn stale_observation(
                 listener,
             },
         },
-        label,
         capture: Some(capture),
         process: None,
     }
@@ -1542,13 +1469,9 @@ fn blocked_observation_with_facts(
     listener: Option<ListenerState>,
     health: HealthState,
 ) -> LifecycleObservation {
-    let label = registration_label(capture.scope, &capture.path);
     LifecycleObservation {
         candidate: Candidate {
-            coordinate: RegistrationCoordinate {
-                scope: capture.scope,
-                path: capture.path.clone(),
-            },
+            coordinate: capture.coordinate(),
             runfile: Some(capture.runfile.clone()),
             state: CandidateState::Unverifiable {
                 reason,
@@ -1557,7 +1480,6 @@ fn blocked_observation_with_facts(
                 health,
             },
         },
-        label,
         capture: Some(capture),
         process: None,
     }
@@ -1600,29 +1522,22 @@ fn observe_registration(capture: CapturedRegistration) -> LifecycleObservation {
                 None,
                 loopback_listener_state(pid, port),
             ),
-            Ok(false) => {
-                let label = registration_label(capture.scope, &capture.path);
-                LifecycleObservation {
-                    candidate: Candidate {
-                        coordinate: RegistrationCoordinate {
-                            scope: capture.scope,
-                            path: capture.path.clone(),
-                        },
-                        runfile: Some(capture.runfile.clone()),
-                        state: CandidateState::Unverifiable {
-                            reason: format!(
-                                "live schema-1 PID {pid} has no creation identity and cannot authorize teardown"
-                            ),
-                            observed_identity: None,
-                            listener: None,
-                            health: HealthState::NotProbed,
-                        },
+            Ok(false) => LifecycleObservation {
+                candidate: Candidate {
+                    coordinate: capture.coordinate(),
+                    runfile: Some(capture.runfile.clone()),
+                    state: CandidateState::Unverifiable {
+                        reason: format!(
+                            "live schema-1 PID {pid} has no creation identity and cannot authorize teardown"
+                        ),
+                        observed_identity: None,
+                        listener: None,
+                        health: HealthState::NotProbed,
                     },
-                    label,
-                    capture: Some(capture),
-                    process: Some(process),
-                }
-            }
+                },
+                capture: Some(capture),
+                process: Some(process),
+            },
             Err(error) => blocked_observation(
                 capture,
                 format!("could not inspect legacy PID {pid}: {error}"),
@@ -1690,13 +1605,9 @@ fn observe_registration(capture: CapturedRegistration) -> LifecycleObservation {
     // HTTP is deliberately deferred until all process/listener observations
     // resolve to one exclusive target. Ambiguity must never trigger a probe.
     let health = HealthState::NotProbed;
-    let label = registration_label(capture.scope, &capture.path);
     LifecycleObservation {
         candidate: Candidate {
-            coordinate: RegistrationCoordinate {
-                scope: capture.scope,
-                path: capture.path.clone(),
-            },
+            coordinate: capture.coordinate(),
             runfile: Some(capture.runfile.clone()),
             state: CandidateState::Verified {
                 identity: facts.identity,
@@ -1704,7 +1615,6 @@ fn observe_registration(capture: CapturedRegistration) -> LifecycleObservation {
                 health,
             },
         },
-        label,
         capture: Some(capture),
         process: Some(process),
     }
@@ -1949,11 +1859,7 @@ where
     let static_issues = static_inventory_issues(&managed_observations);
     if !static_issues.is_empty() {
         let (captures, mut observations) = expand_registration_captures(inventory.clone());
-        let reason = static_issues
-            .iter()
-            .map(|issue| issue.detail.as_str())
-            .collect::<Vec<_>>()
-            .join("; ");
+        let reason = issue_details(&static_issues);
         observations.extend(
             captures
                 .into_iter()
@@ -2081,22 +1987,6 @@ where
     discovery
 }
 
-#[cfg(test)]
-fn discover_inventory_with<O, H, R>(
-    inventory: RegistrationInventory,
-    observe: O,
-    health: &mut H,
-    revalidate_after_health: R,
-) -> LifecycleDiscovery
-where
-    O: FnMut(CapturedRegistration) -> LifecycleObservation,
-    H: HealthProbe,
-    R: FnMut(&mut LifecycleObservation) -> Result<(), String>,
-{
-    let discovery = discover_inventory_before_health_with(inventory, observe);
-    complete_lifecycle_health_with(discovery, health, revalidate_after_health)
-}
-
 fn discover_lifecycle_before_health_in(scope: &ManagedDiscoveryScope) -> LifecycleDiscovery {
     let inventory = inventory_runfiles(&scope.workspace, scope.global.clone());
     discover_inventory_before_health_with(inventory, observe_registration)
@@ -2120,6 +2010,43 @@ impl PendingManagedDiscovery {
         )
         .managed
     }
+}
+
+/// The pending discovery's server, provided it still carries the strict
+/// binding's fingerprint; the loopback owner not yet health-probed counts.
+pub(crate) fn require_matching_pre_health_discovery<'a>(
+    discovery: &'a ManagedServerDiscovery,
+    expected: &DiscoveryFingerprint,
+) -> Result<&'a ManagedServer, String> {
+    let server = match &discovery.state {
+        ManagedServerState::Degraded { server, .. }
+            if server.listener == ListenerState::OwnedByTarget
+                && server.health == HealthState::NotProbed =>
+        {
+            server
+        }
+        ManagedServerState::Ready(server) => server,
+        ManagedServerState::Empty => {
+            return Err("managed registration disappeared before final HTTP health".to_string());
+        }
+        state @ (ManagedServerState::Degraded { .. }
+        | ManagedServerState::Conflict { .. }
+        | ManagedServerState::Unverifiable { .. }) => {
+            return Err(format!(
+                "fresh managed discovery is blocked before final HTTP health: {}",
+                state.issue_summary()
+            ));
+        }
+        ManagedServerState::StaleOnly { .. } => {
+            return Err("managed registration became stale before final HTTP health".to_string());
+        }
+    };
+    if &server.fingerprint != expected {
+        return Err(
+            "managed registration/process fingerprint changed before final HTTP health".to_string(),
+        );
+    }
+    Ok(server)
 }
 
 pub(crate) fn begin_managed_server_discovery_in(
@@ -2186,23 +2113,6 @@ pub fn run_server(workspace: &Path, cmd: ServerCommand) -> ExitCode {
     }
 }
 
-fn config_from(args: &ServerUpArgs) -> ServerConfig {
-    ServerConfig {
-        engine: args.engine,
-        model: args.model.clone(),
-        mmproj: args.mmproj.clone(),
-        ctx: args.ctx,
-        host: "127.0.0.1".to_string(),
-        port: args.port,
-        threads: args.threads,
-        gpu_layers: args.gpu_layers,
-        batch_size: args.batch_size,
-        seed: args.seed,
-        parallel: args.parallel,
-        tailscale: args.tailscale,
-    }
-}
-
 fn require_registration_absent(path: &Path, scope: &str) -> Result<(), String> {
     match std::fs::metadata(path) {
         Ok(_) => Err(format!(
@@ -2217,43 +2127,66 @@ fn require_registration_absent(path: &Path, scope: &str) -> Result<(), String> {
     }
 }
 
+/// Launch-argument violations in preflight order, each tagged the way
+/// `server doctor` reports it. `check_files` adds the model and projector
+/// file checks that only preflight performs.
+fn launch_argument_issues(args: &ServerUpArgs, check_files: bool) -> Vec<(&'static str, String)> {
+    let mut issues = Vec::new();
+    if args.port == 0 {
+        issues.push(("INVALID", "--port must be greater than zero".to_string()));
+    }
+    if args.engine == Engine::LlamaServer {
+        if args.ctx == 0 {
+            issues.push((
+                "INVALID",
+                "--ctx must be greater than zero for llama-server".to_string(),
+            ));
+        }
+        match args.model.as_deref() {
+            None => issues.push((
+                "MISSING",
+                "--model is required for llama-server".to_string(),
+            )),
+            Some(model) if check_files && !Path::new(model).is_file() => issues.push((
+                "INVALID",
+                format!("llama-server model must be a regular file: {model}"),
+            )),
+            Some(_) => {}
+        }
+        if let Some(mmproj) = &args.mmproj
+            && check_files
+            && !mmproj.is_file()
+        {
+            issues.push((
+                "INVALID",
+                format!(
+                    "llama-server multimodal projector must be a regular file: {}",
+                    mmproj.display()
+                ),
+            ));
+        }
+        if args.parallel == Some(0) {
+            issues.push((
+                "INVALID",
+                "--parallel must be greater than zero for llama-server".to_string(),
+            ));
+        }
+    } else if args.seed.is_some() || args.parallel.is_some() {
+        issues.push((
+            "INVALID",
+            "--seed and --parallel are supported only by llama-server".to_string(),
+        ));
+    }
+    issues
+}
+
 fn validate_launch_preconditions(
     workspace: &Path,
     args: &ServerUpArgs,
     global_runfile: Option<&Path>,
 ) -> Result<(), String> {
-    if args.port == 0 {
-        return Err("--port must be greater than zero".to_string());
-    }
-
-    if args.engine == Engine::LlamaServer {
-        if args.ctx == 0 {
-            return Err("--ctx must be greater than zero for llama-server".to_string());
-        }
-
-        let model = args
-            .model
-            .as_deref()
-            .ok_or_else(|| "--model is required for llama-server".to_string())?;
-        if !Path::new(model).is_file() {
-            return Err(format!(
-                "llama-server model must be a regular file: {model}"
-            ));
-        }
-
-        if let Some(mmproj) = &args.mmproj
-            && !mmproj.is_file()
-        {
-            return Err(format!(
-                "llama-server multimodal projector must be a regular file: {}",
-                mmproj.display()
-            ));
-        }
-        if args.parallel == Some(0) {
-            return Err("--parallel must be greater than zero for llama-server".to_string());
-        }
-    } else if args.seed.is_some() || args.parallel.is_some() {
-        return Err("--seed and --parallel are supported only by llama-server".to_string());
+    if let Some((_, error)) = launch_argument_issues(args, true).into_iter().next() {
+        return Err(error);
     }
 
     require_registration_absent(&runfile_path(workspace), "local")?;
@@ -2297,25 +2230,11 @@ struct PublicationCompletionReport {
     success: bool,
 }
 
-trait PublicationCompensationEffects {
-    fn replace_final(
-        &mut self,
-        captured: &CapturedRegistration,
-        replacement: &[u8],
-    ) -> Result<ReplacementOutcome, ReplacementError>;
-
-    fn remove_final(
-        &mut self,
-        captured: &CapturedRegistration,
-    ) -> Result<RemovalOutcome, RemovalError>;
-
-    fn remove_stage(&mut self, stage: &PublicationStage) -> Result<RemovalOutcome, RemovalError>;
-}
-
-struct NativePublicationCompensationEffects;
-
-impl PublicationCompensationEffects for NativePublicationCompensationEffects {
-    fn replace_final(
+/// Conditional mutation of captured registrations and publication stages.
+/// The default methods are the native operations; test doubles override them
+/// to record or script each mutation.
+trait RegistrationStore {
+    fn replace(
         &mut self,
         captured: &CapturedRegistration,
         replacement: &[u8],
@@ -2323,10 +2242,7 @@ impl PublicationCompensationEffects for NativePublicationCompensationEffects {
         replace_if_unchanged(captured, replacement)
     }
 
-    fn remove_final(
-        &mut self,
-        captured: &CapturedRegistration,
-    ) -> Result<RemovalOutcome, RemovalError> {
+    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError> {
         remove_if_unchanged(captured)
     }
 
@@ -2334,6 +2250,10 @@ impl PublicationCompensationEffects for NativePublicationCompensationEffects {
         remove_publication_stage_if_unchanged(stage)
     }
 }
+
+struct NativeRegistrationStore;
+
+impl RegistrationStore for NativeRegistrationStore {}
 
 fn publication_failure_parts(
     error: PublishError,
@@ -2378,23 +2298,20 @@ fn require_published_journals_unchanged(published: &PublishedRegistrations) -> R
                 if current.raw == expected.raw && current.runfile == expected.runfile => {}
             RegistrationSlot::Captured(_) => {
                 return Err(format!(
-                    "{} registration {} changed after write-ahead publication",
-                    expected.scope,
-                    expected.path.display()
+                    "{} changed after write-ahead publication",
+                    expected.coordinate()
                 ));
             }
             RegistrationSlot::Absent { .. } => {
                 return Err(format!(
-                    "{} registration {} disappeared after write-ahead publication",
-                    expected.scope,
-                    expected.path.display()
+                    "{} disappeared after write-ahead publication",
+                    expected.coordinate()
                 ));
             }
             RegistrationSlot::Blocked { reason, .. } => {
                 return Err(format!(
-                    "{} registration {} became non-authorizing after write-ahead publication: {reason}",
-                    expected.scope,
-                    expected.path.display()
+                    "{} became non-authorizing after write-ahead publication: {reason}",
+                    expected.coordinate()
                 ));
             }
         }
@@ -2412,16 +2329,14 @@ where
 {
     let Some(captured_ownership) = captured.runfile.tailscale_serve.as_ref() else {
         return Err(format!(
-            "{} registration {} does not contain the expected write-ahead Tailscale ownership",
-            captured.scope,
-            captured.path.display()
+            "{} does not contain the expected write-ahead Tailscale ownership",
+            captured.coordinate()
         ));
     };
     if !captured_ownership.same_coordinate(ownership) {
         return Err(format!(
-            "{} registration {} does not contain the expected write-ahead Tailscale ownership",
-            captured.scope,
-            captured.path.display()
+            "{} does not contain the expected write-ahead Tailscale ownership",
+            captured.coordinate()
         ));
     }
     if captured_ownership.apply_confirmed {
@@ -2429,39 +2344,14 @@ where
     }
     let mut confirmed_ownership = captured_ownership.clone();
     confirmed_ownership.apply_confirmed = true;
-    let mut runfile = captured.runfile.clone();
-    runfile.tailscale_serve = Some(confirmed_ownership);
-    let raw = serde_json::to_vec_pretty(&runfile).map_err(|error| {
-        format!(
-            "could not serialize confirmed Tailscale ownership for {} registration {}: {error}",
-            captured.scope,
-            captured.path.display()
-        )
-    })?;
-    match replace(captured, &raw) {
-        Ok(ReplacementOutcome::Replaced) => Ok(CapturedRegistration {
-            scope: captured.scope,
-            path: captured.path.clone(),
-            raw,
-            runfile,
-        }),
-        Ok(ReplacementOutcome::Absent) => Err(format!(
-            "{} registration {} disappeared while confirming Tailscale apply",
-            captured.scope,
-            captured.path.display()
-        )),
-        Ok(ReplacementOutcome::ReplacementPreserved { path, detail }) => Err(format!(
-            "{} registration {} changed while confirming Tailscale apply; preserved at {}: {detail}",
-            captured.scope,
-            captured.path.display(),
-            path.display()
-        )),
-        Err(error) => Err(format!(
-            "could not durably confirm Tailscale apply in {} registration {}: {error}",
-            captured.scope,
-            captured.path.display()
-        )),
-    }
+    rewrite_tailscale_capture(
+        captured,
+        confirmed_ownership,
+        "confirmed",
+        "while confirming Tailscale apply",
+        "confirm Tailscale apply in",
+        replace,
+    )
 }
 
 fn refresh_tailscale_capture_with<F>(
@@ -2478,27 +2368,46 @@ where
     }
     let Some(captured_ownership) = captured.runfile.tailscale_serve.as_ref() else {
         return Err(format!(
-            "{} registration {} does not contain write-ahead Tailscale ownership",
-            captured.scope,
-            captured.path.display()
+            "{} does not contain write-ahead Tailscale ownership",
+            captured.coordinate()
         ));
     };
     if !captured_ownership.same_endpoint_coordinate(refreshed) || captured_ownership.apply_confirmed
     {
         return Err(format!(
-            "{} registration {} changed before authoritative Tailscale pre-apply refresh",
-            captured.scope,
-            captured.path.display()
+            "{} changed before authoritative Tailscale pre-apply refresh",
+            captured.coordinate()
         ));
     }
+    rewrite_tailscale_capture(
+        captured,
+        refreshed.clone(),
+        "refreshed",
+        "during authoritative Tailscale pre-apply refresh",
+        "refresh Tailscale ownership in",
+        replace,
+    )
+}
+
+/// Conditionally replace one write-ahead capture with `ownership`. The texts
+/// name the rewrite in its errors: `kind` the serialized ownership, `step`
+/// the drift that stopped it, `durable` the failed replacement.
+fn rewrite_tailscale_capture<F>(
+    captured: &CapturedRegistration,
+    ownership: TailscaleServeOwnership,
+    kind: &str,
+    step: &str,
+    durable: &str,
+    replace: &mut F,
+) -> Result<CapturedRegistration, String>
+where
+    F: FnMut(&CapturedRegistration, &[u8]) -> Result<ReplacementOutcome, ReplacementError>,
+{
+    let label = captured.coordinate();
     let mut runfile = captured.runfile.clone();
-    runfile.tailscale_serve = Some(refreshed.clone());
+    runfile.tailscale_serve = Some(ownership);
     let raw = serde_json::to_vec_pretty(&runfile).map_err(|error| {
-        format!(
-            "could not serialize refreshed Tailscale ownership for {} registration {}: {error}",
-            captured.scope,
-            captured.path.display()
-        )
+        format!("could not serialize {kind} Tailscale ownership for {label}: {error}")
     })?;
     match replace(captured, &raw) {
         Ok(ReplacementOutcome::Replaced) => Ok(CapturedRegistration {
@@ -2507,32 +2416,21 @@ where
             raw,
             runfile,
         }),
-        Ok(ReplacementOutcome::Absent) => Err(format!(
-            "{} registration {} disappeared during authoritative Tailscale pre-apply refresh",
-            captured.scope,
-            captured.path.display()
-        )),
+        Ok(ReplacementOutcome::Absent) => Err(format!("{label} disappeared {step}")),
         Ok(ReplacementOutcome::ReplacementPreserved { path, detail }) => Err(format!(
-            "{} registration {} changed during authoritative Tailscale pre-apply refresh; preserved at {}: {detail}",
-            captured.scope,
-            captured.path.display(),
+            "{label} changed {step}; preserved at {}: {detail}",
             path.display()
         )),
-        Err(error) => Err(format!(
-            "could not durably refresh Tailscale ownership in {} registration {}: {error}",
-            captured.scope,
-            captured.path.display()
-        )),
+        Err(error) => Err(format!("could not durably {durable} {label}: {error}")),
     }
 }
 
-fn refresh_tailscale_publication<E: PublicationCompensationEffects>(
+fn refresh_tailscale_publication<E: RegistrationStore>(
     published: &mut PublishedRegistrations,
     refreshed: &TailscaleServeOwnership,
     effects: &mut E,
 ) -> Result<(), String> {
-    let mut replace =
-        |captured: &CapturedRegistration, raw: &[u8]| effects.replace_final(captured, raw);
+    let mut replace = |captured: &CapturedRegistration, raw: &[u8]| effects.replace(captured, raw);
     published.local = refresh_tailscale_capture_with(&published.local, refreshed, &mut replace)?;
     if let Some(global) = &mut published.global {
         *global = refresh_tailscale_capture_with(global, refreshed, &mut replace)?;
@@ -2540,13 +2438,12 @@ fn refresh_tailscale_publication<E: PublicationCompensationEffects>(
     Ok(())
 }
 
-fn confirm_tailscale_publication<E: PublicationCompensationEffects>(
+fn confirm_tailscale_publication<E: RegistrationStore>(
     published: &mut PublishedRegistrations,
     ownership: &TailscaleServeOwnership,
     effects: &mut E,
 ) -> Result<(), String> {
-    let mut replace =
-        |captured: &CapturedRegistration, raw: &[u8]| effects.replace_final(captured, raw);
+    let mut replace = |captured: &CapturedRegistration, raw: &[u8]| effects.replace(captured, raw);
     published.local = confirm_tailscale_capture_with(&published.local, ownership, &mut replace)?;
     if let Some(global) = &mut published.global {
         *global = confirm_tailscale_capture_with(global, ownership, &mut replace)?;
@@ -2563,28 +2460,15 @@ where
     F: FnMut(&CapturedRegistration, &[u8]) -> Result<ReplacementOutcome, ReplacementError>,
 {
     validate_mutation_path_aliases(captures)?;
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    for (index, capture) in captures.iter().enumerate() {
-        let should_confirm = capture
+    let groups = group_by_path(captures, |capture| {
+        capture
             .runfile
             .tailscale_serve
             .as_ref()
             .is_some_and(|candidate| {
                 candidate.same_coordinate(ownership) && !candidate.apply_confirmed
-            });
-        if !should_confirm {
-            continue;
-        }
-        let key = mutation_path_key(&capture.path);
-        if let Some(group) = groups
-            .iter_mut()
-            .find(|group| mutation_path_key(&captures[group[0]].path) == key)
-        {
-            group.push(index);
-        } else {
-            groups.push(vec![index]);
-        }
-    }
+            })
+    });
     for group in groups {
         let confirmed =
             confirm_tailscale_capture_with(&captures[group[0]], ownership, &mut replace)?;
@@ -2832,9 +2716,7 @@ fn require_post_publication_authority<P: RetainedProcessHandle>(
     Ok(())
 }
 
-fn publication_removal_outcome(
-    result: Result<RemovalOutcome, RemovalError>,
-) -> DownRegistrationOutcome {
+fn cleanup_outcome(result: Result<RemovalOutcome, RemovalError>) -> DownRegistrationOutcome {
     match result {
         Ok(RemovalOutcome::Removed) => DownRegistrationOutcome::Removed,
         Ok(RemovalOutcome::Absent) => DownRegistrationOutcome::AlreadyAbsent,
@@ -2858,7 +2740,7 @@ fn publication_removal_outcome(
     }
 }
 
-fn publication_cleanup_complete(outcome: &DownRegistrationOutcome) -> bool {
+fn cleanup_complete(outcome: &DownRegistrationOutcome) -> bool {
     matches!(
         outcome,
         DownRegistrationOutcome::Removed | DownRegistrationOutcome::AlreadyAbsent
@@ -2899,18 +2781,6 @@ fn publication_cleanup_alias_error(
     None
 }
 
-fn held_publication_final(capture: &CapturedRegistration, detail: &str) -> DownRegistrationReport {
-    DownRegistrationReport {
-        coordinate: RegistrationCoordinate {
-            scope: capture.scope,
-            path: capture.path.clone(),
-        },
-        outcome: DownRegistrationOutcome::Held {
-            detail: detail.to_string(),
-        },
-    }
-}
-
 fn held_publication_stage(stage: &PublicationStage, detail: &str) -> PublicationStageReport {
     PublicationStageReport {
         scope: stage.scope,
@@ -2934,7 +2804,7 @@ where
     C: SpawnedChild,
     P: RetainedProcessHandle,
     L: ListenerInspector,
-    E: PublicationCompensationEffects,
+    E: RegistrationStore,
 {
     let (failure, finals, stages) = match publication {
         Ok(published) => match child.try_wait() {
@@ -2975,10 +2845,7 @@ where
             disposition: PublicationDisposition::RecoveryHeld,
             published: None,
             shutdown: Some(shutdown),
-            finals: finals
-                .iter()
-                .map(|capture| held_publication_final(capture, detail))
-                .collect(),
+            finals: held_registration_reports(&finals, detail),
             stages: stages
                 .iter()
                 .map(|stage| held_publication_stage(stage, detail))
@@ -2988,16 +2855,35 @@ where
         };
     }
 
-    if let Some(error) = publication_cleanup_alias_error(&finals, &stages) {
+    roll_back_publication(
+        &finals,
+        &stages,
+        shutdown,
+        diagnostics,
+        "publication compensation was partial; every preserved path is reported",
+        effects,
+    )
+}
+
+/// The rollback shared by every publication failure once exact child
+/// quiescence (and any Serve cleanup) authorized it: refuse aliased paths,
+/// then conditionally remove each final and stage, reporting `partial` when
+/// any path was preserved instead.
+fn roll_back_publication<E: RegistrationStore>(
+    finals: &[CapturedRegistration],
+    stages: &[PublicationStage],
+    shutdown: ManagedChildShutdownReport,
+    mut diagnostics: Vec<String>,
+    partial: &str,
+    effects: &mut E,
+) -> PublicationCompletionReport {
+    if let Some(error) = publication_cleanup_alias_error(finals, stages) {
         diagnostics.push(error.clone());
         return PublicationCompletionReport {
             disposition: PublicationDisposition::RecoveryPartial,
             published: None,
             shutdown: Some(shutdown),
-            finals: finals
-                .iter()
-                .map(|capture| held_publication_final(capture, &error))
-                .collect(),
+            finals: held_registration_reports(finals, &error),
             stages: stages
                 .iter()
                 .map(|stage| held_publication_stage(stage, &error))
@@ -3010,11 +2896,8 @@ where
     let final_reports = finals
         .iter()
         .map(|capture| DownRegistrationReport {
-            coordinate: RegistrationCoordinate {
-                scope: capture.scope,
-                path: capture.path.clone(),
-            },
-            outcome: publication_removal_outcome(effects.remove_final(capture)),
+            coordinate: capture.coordinate(),
+            outcome: cleanup_outcome(effects.remove(capture)),
         })
         .collect::<Vec<_>>();
     let stage_reports = stages
@@ -3023,19 +2906,17 @@ where
             scope: stage.scope,
             final_path: stage.final_path.clone(),
             path: stage.path.clone(),
-            outcome: publication_removal_outcome(effects.remove_stage(stage)),
+            outcome: cleanup_outcome(effects.remove_stage(stage)),
         })
         .collect::<Vec<_>>();
     let complete = final_reports
         .iter()
-        .all(|report| publication_cleanup_complete(&report.outcome))
+        .all(|report| cleanup_complete(&report.outcome))
         && stage_reports
             .iter()
-            .all(|report| publication_cleanup_complete(&report.outcome));
+            .all(|report| cleanup_complete(&report.outcome));
     if !complete {
-        diagnostics.push(
-            "publication compensation was partial; every preserved path is reported".to_string(),
-        );
+        diagnostics.push(partial.to_string());
     }
     PublicationCompletionReport {
         disposition: if complete {
@@ -3069,7 +2950,7 @@ where
     C: SpawnedChild,
     P: RetainedProcessHandle,
     L: ListenerInspector,
-    E: PublicationCompensationEffects,
+    E: RegistrationStore,
     S: TailscaleServeEffects,
 {
     let proxy = match serve_context {
@@ -3105,64 +2986,21 @@ where
             disposition: PublicationDisposition::RecoveryHeld,
             published: None,
             shutdown: Some(shutdown),
-            finals: finals
-                .iter()
-                .map(|capture| held_publication_final(capture, detail))
-                .collect(),
+            finals: held_registration_reports(&finals, detail),
             stages: Vec::new(),
             diagnostics,
             success: false,
         };
     }
 
-    if let Some(error) = publication_cleanup_alias_error(&finals, &[]) {
-        diagnostics.push(error.clone());
-        return PublicationCompletionReport {
-            disposition: PublicationDisposition::RecoveryPartial,
-            published: None,
-            shutdown: Some(shutdown),
-            finals: finals
-                .iter()
-                .map(|capture| held_publication_final(capture, &error))
-                .collect(),
-            stages: Vec::new(),
-            diagnostics,
-            success: false,
-        };
-    }
-
-    let final_reports = finals
-        .iter()
-        .map(|capture| DownRegistrationReport {
-            coordinate: RegistrationCoordinate {
-                scope: capture.scope,
-                path: capture.path.clone(),
-            },
-            outcome: publication_removal_outcome(effects.remove_final(capture)),
-        })
-        .collect::<Vec<_>>();
-    let complete = final_reports
-        .iter()
-        .all(|report| publication_cleanup_complete(&report.outcome));
-    if !complete {
-        diagnostics.push(
-            "owned launch compensation was partial; every preserved journal is reported"
-                .to_string(),
-        );
-    }
-    PublicationCompletionReport {
-        disposition: if complete {
-            PublicationDisposition::RolledBack
-        } else {
-            PublicationDisposition::RecoveryPartial
-        },
-        published: None,
-        shutdown: Some(shutdown),
-        finals: final_reports,
-        stages: Vec::new(),
+    roll_back_publication(
+        &finals,
+        &[],
+        shutdown,
         diagnostics,
-        success: false,
-    }
+        "owned launch compensation was partial; every preserved journal is reported",
+        effects,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3180,7 +3018,7 @@ where
     C: SpawnedChild,
     P: RetainedProcessHandle,
     L: ListenerInspector,
-    E: PublicationCompensationEffects,
+    E: RegistrationStore,
     S: TailscaleServeEffects,
 {
     let mut published = match publication {
@@ -3385,7 +3223,7 @@ where
     }
 }
 
-fn render_publication_cleanup(subject: &str, outcome: &DownRegistrationOutcome) -> String {
+fn render_cleanup_outcome(subject: &str, outcome: &DownRegistrationOutcome) -> String {
     match outcome {
         DownRegistrationOutcome::Removed => format!("[removed] {subject}"),
         DownRegistrationOutcome::AlreadyAbsent => format!("[already-absent] {subject}"),
@@ -3398,27 +3236,21 @@ fn render_publication_cleanup(subject: &str, outcome: &DownRegistrationOutcome) 
             detail,
         } => format!(
             "[restore-failed] {subject} holding={} detail={detail}",
-            preserved_at
-                .as_ref()
-                .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+            holding_text(preserved_at.as_ref())
         ),
         DownRegistrationOutcome::RemovalFailed {
             preserved_at,
             detail,
         } => format!(
             "[removal-failed] {subject} holding={} detail={detail}",
-            preserved_at
-                .as_ref()
-                .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+            holding_text(preserved_at.as_ref())
         ),
         DownRegistrationOutcome::CleanupFailed {
             preserved_at,
             detail,
         } => format!(
             "[cleanup-failed] {subject} holding={} detail={detail}",
-            preserved_at
-                .as_ref()
-                .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+            holding_text(preserved_at.as_ref())
         ),
         DownRegistrationOutcome::Held { detail } => {
             format!("[held] {subject} detail={detail}")
@@ -3426,19 +3258,12 @@ fn render_publication_cleanup(subject: &str, outcome: &DownRegistrationOutcome) 
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RenderedPublicationReport {
-    stdout: Vec<String>,
-    stderr: Vec<String>,
-    success: bool,
-}
-
-fn render_publication_report(report: &PublicationCompletionReport) -> RenderedPublicationReport {
+fn render_publication_report(report: &PublicationCompletionReport) -> Rendered {
     let mut stdout = report
         .finals
         .iter()
         .map(|final_report| {
-            render_publication_cleanup(
+            render_cleanup_outcome(
                 &format!(
                     "{} published registration {}",
                     final_report.coordinate.scope,
@@ -3448,7 +3273,7 @@ fn render_publication_report(report: &PublicationCompletionReport) -> RenderedPu
             )
         })
         .chain(report.stages.iter().map(|stage_report| {
-            render_publication_cleanup(
+            render_cleanup_outcome(
                 &format!(
                     "{} publication stage {} for final {}",
                     stage_report.scope,
@@ -3477,13 +3302,9 @@ fn render_publication_report(report: &PublicationCompletionReport) -> RenderedPu
             "[state] publication failed; rollback partial".to_string()
         }
     });
-    RenderedPublicationReport {
+    Rendered {
         stdout,
-        stderr: report
-            .diagnostics
-            .iter()
-            .map(|diagnostic| format!("[diagnostic] {diagnostic}"))
-            .collect(),
+        stderr: diagnostic_lines(&report.diagnostics),
         success: report.success,
     }
 }
@@ -3491,12 +3312,7 @@ fn render_publication_report(report: &PublicationCompletionReport) -> RenderedPu
 fn emit_publication_report(report: PublicationCompletionReport) -> Option<PublishedRegistrations> {
     let rendered = render_publication_report(&report);
     if !rendered.success {
-        for line in rendered.stdout {
-            println!("{line}");
-        }
-        for line in rendered.stderr {
-            eprintln!("{line}");
-        }
+        rendered.emit();
     }
     report.published
 }
@@ -3555,7 +3371,7 @@ fn render_launch_success(launched: &LaunchOrchestrationSuccess) -> Vec<String> {
 fn orchestrate_launch_with<C, R, L, H, K, E, S, F, T>(
     workspace: &Path,
     global_path: Option<&Path>,
-    cfg: &ServerConfig,
+    cfg: &ServerUpArgs,
     tailscale_serve: Option<TailscaleServeOwnership>,
     serve: &T,
     spawn: S,
@@ -3572,7 +3388,7 @@ where
     L: ListenerInspector,
     H: HealthProbe,
     K: LifecycleClock,
-    E: PublicationCompensationEffects,
+    E: RegistrationStore,
     T: TailscaleServeEffects,
     S: FnOnce() -> Result<C, String>,
     F: FnOnce(&Path, Option<&Path>, &ServerRunfile) -> Result<PublishedRegistrations, PublishError>,
@@ -3597,7 +3413,7 @@ where
     if let Err(detail) = wait_healthy_with(
         &mut child,
         cfg.engine,
-        &cfg.host,
+        LOOPBACK_HOST,
         cfg.port,
         Duration::from_secs(300),
         health,
@@ -3732,28 +3548,27 @@ fn up(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let cfg = config_from(args);
     let serve = TailscaleServeAdapter::native();
-    let launch = command(&cfg);
+    let launch = command(args);
     let launched = match with_prepared_tailscale_launch(
-        cfg.tailscale,
-        cfg.port,
+        args.tailscale,
+        args.port,
         &serve,
         || generate_token().map_err(|error| error.to_string()),
         |tailscale_serve| {
-            let mut proc = Command::new(cfg.engine.executable());
+            let mut proc = Command::new(args.engine.executable());
             proc.args(&launch.args);
             for (k, v) in &launch.env {
                 proc.env(k, v);
             }
-            println!("Launching {} on {} ...", launch.program, cfg.base_url());
+            println!("Launching {} on {} ...", launch.program, args.base_url());
             let mut health = NativeHealthProbe;
             let mut clock = SystemLifecycleClock;
-            let mut compensation = NativePublicationCompensationEffects;
+            let mut compensation = NativeRegistrationStore;
             orchestrate_launch_with(
                 workspace,
                 global_path.as_deref(),
-                &cfg,
+                args,
                 tailscale_serve,
                 &serve,
                 || proc.spawn().map_err(|error| error.to_string()),
@@ -4008,33 +3823,6 @@ struct AdoptionReport {
     success: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RenderedAdoptionReport {
-    stdout: Vec<String>,
-    stderr: Vec<String>,
-    success: bool,
-}
-
-trait AdoptionEffects {
-    fn replace(
-        &mut self,
-        captured: &CapturedRegistration,
-        replacement: &[u8],
-    ) -> Result<ReplacementOutcome, ReplacementError>;
-}
-
-struct NativeAdoptionEffects;
-
-impl AdoptionEffects for NativeAdoptionEffects {
-    fn replace(
-        &mut self,
-        captured: &CapturedRegistration,
-        replacement: &[u8],
-    ) -> Result<ReplacementOutcome, ReplacementError> {
-        replace_if_unchanged(captured, replacement)
-    }
-}
-
 fn held_adoption_reports(
     captures: &[CapturedRegistration],
     detail: &str,
@@ -4042,10 +3830,7 @@ fn held_adoption_reports(
     captures
         .iter()
         .map(|capture| AdoptionAliasReport {
-            coordinate: RegistrationCoordinate {
-                scope: capture.scope,
-                path: capture.path.clone(),
-            },
+            coordinate: capture.coordinate(),
             transition: AdoptionAliasTransition::Held {
                 detail: detail.to_string(),
             },
@@ -4125,22 +3910,6 @@ fn validate_legacy_adoption_inputs(
     Ok((reference.runfile.clone(), origin))
 }
 
-fn adoption_mutation_groups(captures: &[CapturedRegistration]) -> Vec<Vec<usize>> {
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    for (index, capture) in captures.iter().enumerate() {
-        let key = mutation_path_key(&capture.path);
-        if let Some(group) = groups
-            .iter_mut()
-            .find(|group| mutation_path_key(&captures[group[0]].path) == key)
-        {
-            group.push(index);
-        } else {
-            groups.push(vec![index]);
-        }
-    }
-    groups
-}
-
 struct AppliedAdoption {
     legacy: CapturedRegistration,
     adopted: CapturedRegistration,
@@ -4157,7 +3926,7 @@ fn set_adoption_transition(
     }
 }
 
-fn rollback_adoption<E: AdoptionEffects>(
+fn rollback_adoption<E: RegistrationStore>(
     replacements: &[AppliedAdoption],
     reports: &mut [AdoptionAliasReport],
     effects: &mut E,
@@ -4201,7 +3970,7 @@ fn rollback_adoption<E: AdoptionEffects>(
     (complete, diagnostics)
 }
 
-fn failed_adoption_after_replacement<E: AdoptionEffects>(
+fn failed_adoption_after_replacement<E: RegistrationStore>(
     pid: u32,
     mut reports: Vec<AdoptionAliasReport>,
     replacements: &[AppliedAdoption],
@@ -4246,7 +4015,7 @@ fn execute_legacy_adoption<R, E>(
 ) -> AdoptionReport
 where
     R: ProcessRuntime,
-    E: AdoptionEffects,
+    E: RegistrationStore,
 {
     let (reference, origin) = match validate_legacy_adoption_inputs(&captures, requested_pid) {
         Ok(validated) => validated,
@@ -4356,7 +4125,7 @@ where
 
     let mut reports = held_adoption_reports(&captures, "adoption not attempted");
     let mut replacements = Vec::new();
-    for indices in adoption_mutation_groups(&captures) {
+    for indices in group_by_path(&captures, |_| true) {
         let legacy = captures[indices[0]].clone();
         let adopted_capture = CapturedRegistration {
             scope: legacy.scope,
@@ -4485,7 +4254,7 @@ pub(crate) struct LegacyAdoptionTestSummary {
 
 /// Narrow test seam for cross-process adoption races. The caller supplies the
 /// retained-process runtime and owns its inspect/signal ledger; production
-/// conditional replacement remains in `NativeAdoptionEffects` so the race
+/// conditional replacement remains in `NativeRegistrationStore` so the race
 /// crosses the same filesystem CAS boundary as the CLI.
 #[cfg(test)]
 pub(crate) fn execute_legacy_adoption_for_test<R: ProcessRuntime>(
@@ -4493,7 +4262,7 @@ pub(crate) fn execute_legacy_adoption_for_test<R: ProcessRuntime>(
     pid: u32,
     runtime: &R,
 ) -> LegacyAdoptionTestSummary {
-    let mut effects = NativeAdoptionEffects;
+    let mut effects = NativeRegistrationStore;
     let report = execute_legacy_adoption(captures, pid, runtime, &mut effects);
     let replacement_preserved_at =
         report
@@ -4515,7 +4284,7 @@ pub(crate) fn execute_legacy_adoption_for_test<R: ProcessRuntime>(
     }
 }
 
-fn render_adoption_report(report: &AdoptionReport) -> RenderedAdoptionReport {
+fn render_adoption_report(report: &AdoptionReport) -> Rendered {
     let mut stdout = report
         .registrations
         .iter()
@@ -4534,9 +4303,7 @@ fn render_adoption_report(report: &AdoptionReport) -> RenderedAdoptionReport {
                     replacement_committed,
                 } => format!(
                     "replace-failed holding={} committed={replacement_committed} detail={detail}",
-                    preserved_at
-                        .as_ref()
-                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+                    holding_text(preserved_at.as_ref())
                 ),
             };
             let rollback = match &registration.rollback {
@@ -4555,16 +4322,10 @@ fn render_adoption_report(report: &AdoptionReport) -> RenderedAdoptionReport {
                     replacement_committed,
                 }) => format!(
                     "rollback=failed holding={} committed={replacement_committed} detail={detail}",
-                    preserved_at
-                        .as_ref()
-                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+                    holding_text(preserved_at.as_ref())
                 ),
             };
-            format!(
-                "[{transition}] {} registration {} {rollback}",
-                registration.coordinate.scope,
-                registration.coordinate.path.display()
-            )
+            format!("[{transition}] {} {rollback}", registration.coordinate)
         })
         .collect::<Vec<_>>();
     stdout.push(match report.disposition {
@@ -4585,29 +4346,10 @@ fn render_adoption_report(report: &AdoptionReport) -> RenderedAdoptionReport {
             "[state] adoption failed; recovery partial".to_string()
         }
     });
-    RenderedAdoptionReport {
+    Rendered {
         stdout,
-        stderr: report
-            .diagnostics
-            .iter()
-            .map(|diagnostic| format!("[diagnostic] {diagnostic}"))
-            .collect(),
+        stderr: diagnostic_lines(&report.diagnostics),
         success: report.success,
-    }
-}
-
-fn emit_adoption_report(report: &AdoptionReport) -> ExitCode {
-    let rendered = render_adoption_report(report);
-    for line in rendered.stdout {
-        println!("{line}");
-    }
-    for line in rendered.stderr {
-        eprintln!("{line}");
-    }
-    if rendered.success {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
     }
 }
 
@@ -4617,11 +4359,12 @@ fn adopt(workspace: &Path, args: &ServerAdoptArgs) -> ExitCode {
 
 fn adopt_impl(workspace: &Path, global_path: Option<PathBuf>, args: &ServerAdoptArgs) -> ExitCode {
     if args.pid == 0 {
-        return emit_adoption_report(&blocked_adoption_report(
+        return render_adoption_report(&blocked_adoption_report(
             args.pid,
             &[],
             "adoption requires a nonzero --pid".to_string(),
-        ));
+        ))
+        .emit();
     }
     let inventory = inventory_runfiles(workspace, global_path);
     let (captures, blocked) = expand_registration_captures(inventory);
@@ -4639,23 +4382,24 @@ fn adopt_impl(workspace: &Path, global_path: Option<PathBuf>, args: &ServerAdopt
             };
             report
                 .diagnostics
-                .push(format!("{}: {reason}", observation.label));
+                .push(format!("{}: {reason}", observation.candidate.coordinate));
             report.registrations.push(AdoptionAliasReport {
                 coordinate: observation.candidate.coordinate,
                 transition: AdoptionAliasTransition::Held { detail: reason },
                 rollback: None,
             });
         }
-        return emit_adoption_report(&report);
+        return render_adoption_report(&report).emit();
     }
     let runtime = NativeProcessRuntime;
-    let mut effects = NativeAdoptionEffects;
-    emit_adoption_report(&execute_legacy_adoption(
+    let mut effects = NativeRegistrationStore;
+    render_adoption_report(&execute_legacy_adoption(
         captures,
         args.pid,
         &runtime,
         &mut effects,
     ))
+    .emit()
 }
 
 fn status(workspace: &Path) -> ExitCode {
@@ -4667,11 +4411,7 @@ fn issue_coordinates(issues: &[ResolutionIssue]) -> Vec<RegistrationCoordinate> 
         .iter()
         .flat_map(|issue| issue.coordinates.iter().cloned())
         .collect::<Vec<_>>();
-    coordinates.sort_by(|left, right| {
-        left.path
-            .cmp(&right.path)
-            .then_with(|| left.scope.to_string().cmp(&right.scope.to_string()))
-    });
+    sort_coordinates(&mut coordinates);
     coordinates.dedup();
     coordinates
 }
@@ -4801,11 +4541,7 @@ fn status_report(discovery: &ManagedServerDiscovery) -> ServerStatusReport {
                 | ManagedRegistrationState::Captured { .. } => None,
             })
             .collect::<Vec<_>>();
-        coordinates.sort_by(|left, right| {
-            left.path
-                .cmp(&right.path)
-                .then_with(|| left.scope.to_string().cmp(&right.scope.to_string()))
-        });
+        sort_coordinates(&mut coordinates);
         coordinates.dedup();
         next_action = StatusNextAction::ResolveConflict { coordinates };
     }
@@ -4993,17 +4729,9 @@ fn render_registration_status(observation: &ManagedRegistrationObservation) -> S
         .promised
         .as_ref()
         .map_or_else(String::new, |promised| {
-            format!(
-                " promised-by={} registration {}",
-                promised.source.scope,
-                promised.source.path.display()
-            )
+            format!(" promised-by={}", promised.source)
         });
-    let prefix = format!(
-        "{} registration {}{promised}",
-        observation.coordinate.scope,
-        observation.coordinate.path.display()
-    );
+    let prefix = format!("{}{promised}", observation.coordinate);
     match &observation.state {
         ManagedRegistrationState::Absent => format!(
             "[absent] {prefix}: recorded-identity=none observed-identity=none listener=none health=none"
@@ -5029,17 +4757,10 @@ fn render_registration_status(observation: &ManagedRegistrationObservation) -> S
                     )
                 },
             );
-            let recorded = runfile.process_identity.as_ref().map_or_else(
-                || "legacy-none".to_string(),
-                |identity| {
-                    format!(
-                        "token={} executable={} argv={:?}",
-                        identity.start_token,
-                        identity.executable.display(),
-                        identity.argv
-                    )
-                },
-            );
+            let recorded = runfile
+                .process_identity
+                .as_ref()
+                .map_or_else(|| "legacy-none".to_string(), identity_text);
             let observed = match runtime {
                 RuntimeObservation::NotInspected => {
                     "observed-identity=not-inspected listener=not-inspected health=not-probed"
@@ -5050,10 +4771,8 @@ fn render_registration_status(observation: &ManagedRegistrationObservation) -> S
                     listener,
                     health,
                 } => format!(
-                    "observed-identity=token={} executable={} argv={:?} listener={} health={}",
-                    identity.start_token,
-                    identity.executable.display(),
-                    identity.argv,
+                    "observed-identity={} listener={} health={}",
+                    identity_text(identity),
                     listener_status(listener),
                     health_status(*health)
                 ),
@@ -5062,17 +4781,9 @@ fn render_registration_status(observation: &ManagedRegistrationObservation) -> S
                     observed_identity,
                     listener,
                 } => {
-                    let identity = observed_identity.as_ref().map_or_else(
-                        || "stale-unavailable".to_string(),
-                        |identity| {
-                            format!(
-                                "token={} executable={} argv={:?}",
-                                identity.start_token,
-                                identity.executable.display(),
-                                identity.argv
-                            )
-                        },
-                    );
+                    let identity = observed_identity
+                        .as_ref()
+                        .map_or_else(|| "stale-unavailable".to_string(), identity_text);
                     format!(
                         "observed-identity={identity} stale-reason={reason} listener={} health=not-probed",
                         listener_status(listener)
@@ -5087,17 +4798,9 @@ fn render_registration_status(observation: &ManagedRegistrationObservation) -> S
                     listener,
                     health,
                 } => {
-                    let identity = observed_identity.as_ref().map_or_else(
-                        || "unavailable".to_string(),
-                        |identity| {
-                            format!(
-                                "token={} executable={} argv={:?}",
-                                identity.start_token,
-                                identity.executable.display(),
-                                identity.argv
-                            )
-                        },
-                    );
+                    let identity = observed_identity
+                        .as_ref()
+                        .map_or_else(|| "unavailable".to_string(), identity_text);
                     let listener = listener
                         .as_ref()
                         .map_or_else(|| "unverifiable".to_string(), listener_status);
@@ -5175,56 +4878,40 @@ fn next_action_text(action: &StatusNextAction) -> String {
     }
 }
 
-fn render_status(report: &ServerStatusReport) -> RenderedServerStatus {
+fn render_status(report: &ServerStatusReport) -> Rendered {
     let mut stdout = report
         .registrations
         .iter()
         .map(render_registration_status)
         .collect::<Vec<_>>();
-    let mut stderr = Vec::new();
-    match &report.state {
-        ManagedServerState::Empty => stdout.push("[state] empty".to_string()),
-        ManagedServerState::Ready(server) => stdout.push(format!(
+    stdout.push(match &report.state {
+        ManagedServerState::Empty => "[state] empty".to_string(),
+        ManagedServerState::Ready(server) => format!(
             "[state] ready pid={} aliases={} stale={} listener={} health={}",
             server.runfile.pid,
             server.aliases.len(),
             server.stale.len(),
             listener_status(&server.listener),
             health_status(server.health)
-        )),
-        ManagedServerState::Degraded { server, issues } => {
-            stdout.push(format!(
-                "[state] degraded pid={} listener={} health={}",
-                server.runfile.pid,
-                listener_status(&server.listener),
-                health_status(server.health)
-            ));
-            stderr.extend(
-                issues
-                    .iter()
-                    .map(|issue| format!("[diagnostic] {}", issue.detail)),
-            );
-        }
+        ),
+        ManagedServerState::Degraded { server, .. } => format!(
+            "[state] degraded pid={} listener={} health={}",
+            server.runfile.pid,
+            listener_status(&server.listener),
+            health_status(server.health)
+        ),
         ManagedServerState::StaleOnly { stale } => {
-            stdout.push(format!("[state] stale-only registrations={}", stale.len()));
+            format!("[state] stale-only registrations={}", stale.len())
         }
-        ManagedServerState::Conflict { issues } => {
-            stdout.push("[state] conflict".to_string());
-            stderr.extend(
-                issues
-                    .iter()
-                    .map(|issue| format!("[diagnostic] {}", issue.detail)),
-            );
-        }
-        ManagedServerState::Unverifiable { issues } => {
-            stdout.push("[state] unverifiable".to_string());
-            stderr.extend(
-                issues
-                    .iter()
-                    .map(|issue| format!("[diagnostic] {}", issue.detail)),
-            );
-        }
-    }
+        ManagedServerState::Conflict { .. } => "[state] conflict".to_string(),
+        ManagedServerState::Unverifiable { .. } => "[state] unverifiable".to_string(),
+    });
+    let stderr = report
+        .state
+        .issues()
+        .iter()
+        .map(|issue| format!("[diagnostic] {}", issue.detail))
+        .collect();
     if let Some(tailscale) = &report.tailscale {
         stdout.push(match &tailscale.status {
             TailscaleProxyStatus::Active => format!(
@@ -5260,7 +4947,7 @@ fn render_status(report: &ServerStatusReport) -> RenderedServerStatus {
         stdout.push(format!("[tailscale] ownership-blocked reason={reason}"));
     }
     stdout.push(format!("[next] {}", next_action_text(&report.next_action)));
-    RenderedServerStatus {
+    Rendered {
         stdout,
         stderr,
         success: report.success,
@@ -5274,18 +4961,7 @@ fn status_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
     };
     let discovery = discover_managed_server_in(&scope);
     let serve = TailscaleServeAdapter::native();
-    let rendered = render_status(&status_report_with_tailscale(&discovery, &serve));
-    for line in rendered.stdout {
-        println!("{line}");
-    }
-    for line in rendered.stderr {
-        eprintln!("{line}");
-    }
-    if rendered.success {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
+    render_status(&status_report_with_tailscale(&discovery, &serve)).emit()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5343,13 +5019,6 @@ struct DownReport {
     success: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RenderedDownReport {
-    stdout: Vec<String>,
-    stderr: Vec<String>,
-    success: bool,
-}
-
 enum DownPlan<P> {
     Empty,
     Blocked {
@@ -5371,11 +5040,10 @@ enum DownPlan<P> {
     },
 }
 
-trait DownEffects {
+trait DownEffects: RegistrationStore {
     fn revalidate_registrations(&mut self, expected: &[RegistrationRevision])
     -> Result<(), String>;
     fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState;
-    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError>;
     fn reconcile_tailscale(
         &mut self,
         _ownership: &TailscaleServeOwnership,
@@ -5400,26 +5068,55 @@ struct NativeDownEffects {
 const REGISTRATION_REVISION_CHANGED: &str =
     "registration inventory changed after teardown resolution; registration cleanup was refused";
 
+/// Compare the scope's current registration revisions with the ones a
+/// teardown plan was resolved against.
+fn revalidate_scope_registrations(
+    scope: &ManagedDiscoveryScope,
+    expected: &[RegistrationRevision],
+) -> Result<(), String> {
+    let inventory = inventory_runfiles(&scope.workspace, scope.global.clone());
+    let current = discovery_revisions(&flatten_inventory(&inventory));
+    if current == expected {
+        Ok(())
+    } else {
+        Err(REGISTRATION_REVISION_CHANGED.to_string())
+    }
+}
+
+/// Teardown's proxy reconciliation: the journal's apply phase selects the
+/// context, and established ownership is confirmed through `replace`.
+fn reconcile_down_proxy<S, F>(
+    ownership: &TailscaleServeOwnership,
+    serve: &S,
+    captures: &mut [CapturedRegistration],
+    mut replace: F,
+) -> ProxyCleanupReport
+where
+    S: TailscaleServeEffects,
+    F: FnMut(&CapturedRegistration, &[u8]) -> Result<ReplacementOutcome, ReplacementError>,
+{
+    let context = if ownership.apply_confirmed {
+        ProxyReconcileContext::EstablishedOwnership
+    } else {
+        ProxyReconcileContext::AmbiguousApply
+    };
+    reconcile_owned_proxy(ownership, serve, context, || {
+        confirm_tailscale_captures_with(captures, ownership, &mut replace)
+    })
+}
+
+impl RegistrationStore for NativeDownEffects {}
+
 impl DownEffects for NativeDownEffects {
     fn revalidate_registrations(
         &mut self,
         expected: &[RegistrationRevision],
     ) -> Result<(), String> {
-        let inventory = inventory_runfiles(&self.scope.workspace, self.scope.global.clone());
-        let current = discovery_revisions(&flatten_inventory(&inventory));
-        if current == expected {
-            Ok(())
-        } else {
-            Err(REGISTRATION_REVISION_CHANGED.to_string())
-        }
+        revalidate_scope_registrations(&self.scope, expected)
     }
 
     fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState {
         loopback_listener_state(pid, port)
-    }
-
-    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError> {
-        remove_if_unchanged(captured)
     }
 
     fn reconcile_tailscale(
@@ -5427,20 +5124,7 @@ impl DownEffects for NativeDownEffects {
         ownership: &TailscaleServeOwnership,
         captures: &mut [CapturedRegistration],
     ) -> ProxyCleanupReport {
-        reconcile_owned_proxy(
-            ownership,
-            &self.serve,
-            if ownership.apply_confirmed {
-                ProxyReconcileContext::EstablishedOwnership
-            } else {
-                ProxyReconcileContext::AmbiguousApply
-            },
-            || {
-                confirm_tailscale_captures_with(captures, ownership, |captured, raw| {
-                    replace_if_unchanged(captured, raw)
-                })
-            },
-        )
+        reconcile_down_proxy(ownership, &self.serve, captures, replace_if_unchanged)
     }
 }
 
@@ -5492,7 +5176,7 @@ fn captures_for_indices<P>(
             observations[index].capture.clone().ok_or_else(|| {
                 format!(
                     "{} has no exact-byte registration capture",
-                    observations[index].label
+                    observations[index].candidate.coordinate
                 )
             })
         })
@@ -5636,10 +5320,7 @@ fn held_registration_reports(
     captures
         .iter()
         .map(|capture| DownRegistrationReport {
-            coordinate: RegistrationCoordinate {
-                scope: capture.scope,
-                path: capture.path.clone(),
-            },
+            coordinate: capture.coordinate(),
             outcome: DownRegistrationOutcome::Held {
                 detail: detail.to_string(),
             },
@@ -5647,17 +5328,32 @@ fn held_registration_reports(
         .collect()
 }
 
-fn mutation_path_key(path: &Path) -> PathBuf {
-    // Inventory capture already stores an absolute, lexically normalized path.
-    // Mutation grouping deliberately requires that exact lossless spelling;
-    // broader aliases are blockers, never silently collapsed mutation keys.
-    path.to_path_buf()
+/// Indices of the selected captures grouped by path, in first-seen order.
+/// Inventory capture already stores an absolute, lexically normalized path.
+/// Mutation grouping deliberately requires that exact lossless spelling;
+/// broader aliases are blockers, never silently collapsed mutation keys.
+fn group_by_path(
+    captures: &[CapturedRegistration],
+    selected: impl Fn(&CapturedRegistration) -> bool,
+) -> Vec<Vec<usize>> {
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (index, capture) in captures.iter().enumerate() {
+        if !selected(capture) {
+            continue;
+        }
+        match groups
+            .iter_mut()
+            .find(|group| captures[group[0]].path == capture.path)
+        {
+            Some(group) => group.push(index),
+            None => groups.push(vec![index]),
+        }
+    }
+    groups
 }
 
 fn distinct_mutation_paths_may_alias(left: &Path, right: &Path) -> bool {
-    let left_key = mutation_path_key(left);
-    let right_key = mutation_path_key(right);
-    if left_key == right_key {
+    if left == right {
         return false;
     }
     if matches!(
@@ -5672,9 +5368,8 @@ fn distinct_mutation_paths_may_alias(left: &Path, right: &Path) -> bool {
         // grouping key, so lossy or incomplete Unicode folding can at worst
         // refuse a mutation; it cannot collapse distinct entries and report a
         // mutation that did not happen.
-        left_key
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&right_key.to_string_lossy())
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
     }
     #[cfg(not(windows))]
     {
@@ -5685,9 +5380,7 @@ fn distinct_mutation_paths_may_alias(left: &Path, right: &Path) -> bool {
 fn validate_mutation_path_aliases(captures: &[CapturedRegistration]) -> Result<(), String> {
     for (index, left) in captures.iter().enumerate() {
         for right in &captures[index + 1..] {
-            let left_key = mutation_path_key(&left.path);
-            let right_key = mutation_path_key(&right.path);
-            if left_key == right_key && left.raw != right.raw {
+            if left.path == right.path && left.raw != right.raw {
                 return Err(format!(
                     "registration path {} has conflicting exact-byte mutation captures",
                     right.path.display()
@@ -5715,9 +5408,8 @@ fn unique_tailscale_ownership_from_captures(
         }
         let candidate = capture.runfile.tailscale_serve.as_ref().ok_or_else(|| {
             format!(
-                "{} registration {} has legacy Tailscale state without endpoint-scoped ownership",
-                capture.scope,
-                capture.path.display()
+                "{} has legacy Tailscale state without endpoint-scoped ownership",
+                capture.coordinate()
             )
         })?;
         candidate
@@ -5737,68 +5429,25 @@ fn unique_tailscale_ownership_from_captures(
     Ok(ownership)
 }
 
-struct DownCleanupGroup {
-    key: PathBuf,
-    capture: CapturedRegistration,
-    indices: Vec<usize>,
-}
-
-fn down_cleanup_groups(captures: &[CapturedRegistration]) -> Result<Vec<DownCleanupGroup>, String> {
+/// Cleanup removes each exact path once; the alias validation refuses any
+/// path captured with differing bytes.
+fn down_cleanup_groups(captures: &[CapturedRegistration]) -> Result<Vec<Vec<usize>>, String> {
     validate_mutation_path_aliases(captures)?;
-    let mut groups: Vec<DownCleanupGroup> = Vec::new();
-    for (index, capture) in captures.iter().enumerate() {
-        let key = mutation_path_key(&capture.path);
-        if let Some(existing) = groups.iter_mut().find(|group| group.key == key) {
-            if existing.capture.raw != capture.raw {
-                return Err(format!(
-                    "registration path {} has conflicting exact-byte cleanup captures",
-                    capture.path.display()
-                ));
-            }
-            existing.indices.push(index);
-            continue;
-        }
-        groups.push(DownCleanupGroup {
-            key,
-            capture: capture.clone(),
-            indices: vec![index],
-        });
-    }
-    Ok(groups)
+    Ok(group_by_path(captures, |_| true))
 }
 
 fn cleanup_registrations<E: DownEffects>(
     captures: &[CapturedRegistration],
-    groups: &[DownCleanupGroup],
+    groups: &[Vec<usize>],
     effects: &mut E,
 ) -> (Vec<DownRegistrationReport>, bool) {
     let mut complete = true;
     let outcomes = groups
         .iter()
-        .map(|group| match effects.remove(&group.capture) {
-            Ok(RemovalOutcome::Removed) => DownRegistrationOutcome::Removed,
-            Ok(RemovalOutcome::Absent) => DownRegistrationOutcome::AlreadyAbsent,
-            Ok(RemovalOutcome::ReplacementPreserved { path, detail }) => {
-                complete = false;
-                DownRegistrationOutcome::ReplacementPreserved { path, detail }
-            }
-            Err(error) => {
-                complete = false;
-                match error.kind {
-                    RemovalFailureKind::Restore => DownRegistrationOutcome::RestoreFailed {
-                        preserved_at: error.preserved_at,
-                        detail: error.detail,
-                    },
-                    RemovalFailureKind::Remove => DownRegistrationOutcome::RemovalFailed {
-                        preserved_at: error.preserved_at,
-                        detail: error.detail,
-                    },
-                    RemovalFailureKind::Other => DownRegistrationOutcome::CleanupFailed {
-                        preserved_at: error.preserved_at,
-                        detail: error.detail,
-                    },
-                }
-            }
+        .map(|group| {
+            let outcome = cleanup_outcome(effects.remove(&captures[group[0]]));
+            complete &= cleanup_complete(&outcome);
+            outcome
         })
         .collect::<Vec<_>>();
     let reports = captures
@@ -5808,15 +5457,12 @@ fn cleanup_registrations<E: DownEffects>(
             let outcome = groups
                 .iter()
                 .enumerate()
-                .find(|(_, group)| group.indices.contains(&index))
+                .find(|(_, group)| group.contains(&index))
                 .expect("every cleanup capture belongs to a planned path group")
                 .0;
             let outcome = outcomes[outcome].clone();
             DownRegistrationReport {
-                coordinate: RegistrationCoordinate {
-                    scope: capture.scope,
-                    path: capture.path.clone(),
-                },
+                coordinate: capture.coordinate(),
                 outcome,
             }
         })
@@ -5915,6 +5561,34 @@ fn failed_down_report_with_proxy(
     report
 }
 
+/// Reconcile any owned Serve proxy before process or registration effects,
+/// re-key the expected revisions to the confirmed journals, and note the
+/// retained ownership when the proxy is not provably gone.
+fn reconcile_teardown_proxy<E: DownEffects>(
+    effects: &mut E,
+    ownership: Option<&TailscaleServeOwnership>,
+    captures: &mut [CapturedRegistration],
+    expected_revisions: &mut [RegistrationRevision],
+) -> ProxyCleanupReport {
+    let mut proxy = ownership.map_or_else(
+        || ProxyCleanupReport {
+            resolved: true,
+            off_failed: false,
+            diagnostics: Vec::new(),
+        },
+        |ownership| effects.reconcile_tailscale(ownership, captures),
+    );
+    refresh_expected_revisions_after_confirmation(expected_revisions, captures);
+    if (!proxy.resolved || proxy.off_failed)
+        && let Some(ownership) = ownership
+    {
+        proxy
+            .diagnostics
+            .push(retain_owned_proxy_diagnostic(ownership));
+    }
+    proxy
+}
+
 fn execute_down_plan<P, E>(plan: DownPlan<P>, effects: &mut E) -> DownReport
 where
     P: RetainedProcessHandle,
@@ -5961,22 +5635,12 @@ where
             if let Err(error) = effects.revalidate_registrations(&expected_revisions) {
                 return failed_down_report(None, &captures, error);
             }
-            let mut proxy = ownership.as_ref().map_or_else(
-                || ProxyCleanupReport {
-                    resolved: true,
-                    off_failed: false,
-                    diagnostics: Vec::new(),
-                },
-                |ownership| effects.reconcile_tailscale(ownership, &mut captures),
+            let proxy = reconcile_teardown_proxy(
+                effects,
+                ownership.as_ref(),
+                &mut captures,
+                &mut expected_revisions,
             );
-            refresh_expected_revisions_after_confirmation(&mut expected_revisions, &captures);
-            if (!proxy.resolved || proxy.off_failed)
-                && let Some(ownership) = ownership.as_ref()
-            {
-                proxy
-                    .diagnostics
-                    .push(retain_owned_proxy_diagnostic(ownership));
-            }
             let mut checked = Vec::new();
             if let Err(error) = require_absent_cleanup_ports(&captures, effects, &mut checked) {
                 let mut diagnostics = proxy.diagnostics;
@@ -6046,22 +5710,12 @@ where
             if let Err(error) = effects.revalidate_registrations(&expected_revisions) {
                 return failed_down_report(Some(pid), &captures, error);
             }
-            let mut proxy = ownership.as_ref().map_or_else(
-                || ProxyCleanupReport {
-                    resolved: true,
-                    off_failed: false,
-                    diagnostics: Vec::new(),
-                },
-                |ownership| effects.reconcile_tailscale(ownership, &mut captures),
+            let proxy = reconcile_teardown_proxy(
+                effects,
+                ownership.as_ref(),
+                &mut captures,
+                &mut expected_revisions,
             );
-            refresh_expected_revisions_after_confirmation(&mut expected_revisions, &captures);
-            if (!proxy.resolved || proxy.off_failed)
-                && let Some(ownership) = ownership.as_ref()
-            {
-                proxy
-                    .diagnostics
-                    .push(retain_owned_proxy_diagnostic(ownership));
-            }
             if ownership.is_some()
                 && let Err(error) = effects.revalidate_registrations(&expected_revisions)
             {
@@ -6227,68 +5881,12 @@ where
     }
 }
 
-fn render_down_report(report: &DownReport) -> RenderedDownReport {
+fn render_down_report(report: &DownReport) -> Rendered {
     let mut stdout = report
         .registrations
         .iter()
         .map(|registration| {
-            let coordinate = &registration.coordinate;
-            match &registration.outcome {
-                DownRegistrationOutcome::Removed => format!(
-                    "[removed] {} registration {}",
-                    coordinate.scope,
-                    coordinate.path.display()
-                ),
-                DownRegistrationOutcome::AlreadyAbsent => format!(
-                    "[already-absent] {} registration {}",
-                    coordinate.scope,
-                    coordinate.path.display()
-                ),
-                DownRegistrationOutcome::ReplacementPreserved { path, detail } => format!(
-                    "[replacement-preserved] {} registration {} preserved-at={} detail={detail}",
-                    coordinate.scope,
-                    coordinate.path.display(),
-                    path.display()
-                ),
-                DownRegistrationOutcome::RestoreFailed {
-                    preserved_at,
-                    detail,
-                } => format!(
-                    "[restore-failed] {} registration {} holding={} detail={detail}",
-                    coordinate.scope,
-                    coordinate.path.display(),
-                    preserved_at
-                        .as_ref()
-                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
-                ),
-                DownRegistrationOutcome::RemovalFailed {
-                    preserved_at,
-                    detail,
-                } => format!(
-                    "[removal-failed] {} registration {} holding={} detail={detail}",
-                    coordinate.scope,
-                    coordinate.path.display(),
-                    preserved_at
-                        .as_ref()
-                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
-                ),
-                DownRegistrationOutcome::CleanupFailed {
-                    preserved_at,
-                    detail,
-                } => format!(
-                    "[cleanup-failed] {} registration {} holding={} detail={detail}",
-                    coordinate.scope,
-                    coordinate.path.display(),
-                    preserved_at
-                        .as_ref()
-                        .map_or_else(|| "none".to_string(), |path| path.display().to_string())
-                ),
-                DownRegistrationOutcome::Held { detail } => format!(
-                    "[held] {} registration {} detail={detail}",
-                    coordinate.scope,
-                    coordinate.path.display()
-                ),
-            }
+            render_cleanup_outcome(&registration.coordinate.to_string(), &registration.outcome)
         })
         .collect::<Vec<_>>();
     stdout.push(match report.disposition {
@@ -6311,29 +5909,10 @@ fn render_down_report(report: &DownReport) -> RenderedDownReport {
     if let Some(guidance) = &report.guidance {
         stdout.push(format!("[next] {guidance}"));
     }
-    RenderedDownReport {
+    Rendered {
         stdout,
-        stderr: report
-            .diagnostics
-            .iter()
-            .map(|diagnostic| format!("[diagnostic] {diagnostic}"))
-            .collect(),
+        stderr: diagnostic_lines(&report.diagnostics),
         success: report.success,
-    }
-}
-
-fn emit_down_report(report: &DownReport) -> ExitCode {
-    let rendered = render_down_report(report);
-    for line in rendered.stdout {
-        println!("{line}");
-    }
-    for line in rendered.stderr {
-        eprintln!("{line}");
-    }
-    if rendered.success {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
     }
 }
 
@@ -6352,7 +5931,7 @@ fn down_impl(workspace: &Path, global_path: Option<PathBuf>) -> ExitCode {
         scope,
         serve: TailscaleServeAdapter::native(),
     };
-    emit_down_report(&execute_down_plan(plan, &mut effects))
+    render_down_report(&execute_down_plan(plan, &mut effects)).emit()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6362,26 +5941,10 @@ struct DoctorReport {
 }
 
 fn static_doctor_blocker(args: &ServerUpArgs) -> Option<DoctorReport> {
-    let mut lines = Vec::new();
-    if args.port == 0 {
-        lines.push("[INVALID] --port must be greater than zero".to_string());
-    }
-    if args.engine == Engine::LlamaServer {
-        if args.ctx == 0 {
-            lines.push("[INVALID] --ctx must be greater than zero for llama-server".to_string());
-        }
-        if args.model.is_none() {
-            lines.push("[MISSING] --model is required for llama-server".to_string());
-        }
-        if args.parallel == Some(0) {
-            lines.push(
-                "[INVALID] --parallel must be greater than zero for llama-server".to_string(),
-            );
-        }
-    } else if args.seed.is_some() || args.parallel.is_some() {
-        lines
-            .push("[INVALID] --seed and --parallel are supported only by llama-server".to_string());
-    }
+    let lines = launch_argument_issues(args, false)
+        .into_iter()
+        .map(|(tag, issue)| format!("[{tag}] {issue}"))
+        .collect::<Vec<_>>();
     (!lines.is_empty()).then_some(DoctorReport {
         lines,
         success: false,
@@ -6516,9 +6079,6 @@ fn doctor_report_after_discovery<E: DoctorProbeEffects>(
     discovery: &ManagedServerDiscovery,
     effects: &mut E,
 ) -> DoctorReport {
-    if let Some(report) = static_doctor_blocker(args) {
-        return report;
-    }
     if let Some(report) = registration_doctor_blocker(discovery) {
         return report;
     }
@@ -6548,14 +6108,12 @@ where
 }
 
 fn emit_doctor_report(report: DoctorReport) -> ExitCode {
-    for line in report.lines {
-        println!("{line}");
+    Rendered {
+        stdout: report.lines,
+        stderr: Vec::new(),
+        success: report.success,
     }
-    if report.success {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
+    .emit()
 }
 
 fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
@@ -6573,4 +6131,6 @@ fn doctor(workspace: &Path, args: &ServerUpArgs) -> ExitCode {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+pub(crate) mod fixtures;
+#[cfg(test)]
+mod tests;

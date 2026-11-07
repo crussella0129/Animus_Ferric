@@ -1,17 +1,18 @@
 use super::*;
+use crate::server::fixtures::{
+    ScriptedPersistenceEffects, fixture_executable, process_identity, tailscale_identity,
+};
 use crate::server_process::canonical_test_start_token;
 use crate::server_registration::{
-    PersistenceEffects, PersistencePhase, PromisedOriginRegistration, RegistrationBlock,
-    StagePersistError, capture_registration_path, publish_mirrored_with,
+    PersistencePhase, PromisedOriginRegistration, RegistrationBlock, capture_registration_path,
+    publish_mirrored_with,
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::io;
 use std::net::TcpListener;
 use std::rc::Rc;
 use std::thread;
-use tempfile::NamedTempFile;
 
 fn spawn_contained_test_child(
     command: &mut Command,
@@ -21,13 +22,33 @@ fn spawn_contained_test_child(
         .unwrap_or_else(|error| panic!("spawn {label}: {error}"))
 }
 
-fn cfg(engine: Engine) -> ServerConfig {
-    ServerConfig {
+impl SpawnedChild for crate::test_process_containment::ContainedChild {
+    type ExitStatus = std::process::ExitStatus;
+
+    fn pid(&self) -> u32 {
+        self.child().id()
+    }
+
+    fn try_wait(&mut self) -> Result<Option<Self::ExitStatus>, String> {
+        self.try_wait_leader().map_err(|error| error.to_string())
+    }
+
+    fn wait(&mut self) -> Result<Self::ExitStatus, String> {
+        self.wait_for_exit_and_disarm(Duration::from_secs(5))
+            .map_err(|error| error.to_string())
+    }
+
+    fn kill(&mut self) -> Result<(), String> {
+        self.terminate_leader().map_err(|error| error.to_string())
+    }
+}
+
+fn cfg(engine: Engine) -> ServerUpArgs {
+    ServerUpArgs {
         engine,
         model: Some("model.gguf".to_string()),
         mmproj: None,
         ctx: 4096,
-        host: "127.0.0.1".to_string(),
         port: 8080,
         threads: None,
         gpu_layers: None,
@@ -49,25 +70,6 @@ fn discovery_fixture_path(name: &str) -> PathBuf {
     }
 }
 
-fn discovery_fixture_executable() -> PathBuf {
-    #[cfg(windows)]
-    {
-        PathBuf::from(r"C:\fixture\llama-server.exe")
-    }
-    #[cfg(not(windows))]
-    {
-        PathBuf::from("/fixture/llama-server")
-    }
-}
-
-fn discovery_fixture_identity(seed: u64) -> ProcessIdentity {
-    ProcessIdentity {
-        start_token: canonical_test_start_token(seed),
-        executable: discovery_fixture_executable(),
-        argv: vec!["llama-server".to_string(), "--serve".to_string()],
-    }
-}
-
 fn discovery_fixture_runfile(pid: u32, name: &str) -> ServerRunfile {
     let port = u16::try_from(7000 + pid % 1000).unwrap();
     ServerRunfile {
@@ -82,7 +84,7 @@ fn discovery_fixture_runfile(pid: u32, name: &str) -> ServerRunfile {
         context_size: Some(8192),
         sampling_seed: Some(42),
         parallel_slots: Some(1),
-        process_identity: Some(discovery_fixture_identity(u64::from(pid))),
+        process_identity: Some(process_identity(u64::from(pid))),
         origin_local_runfile: Some(discovery_fixture_path(name)),
     }
 }
@@ -134,7 +136,7 @@ fn legacy_adoption_fixture(pid: u32) -> (Vec<CapturedRegistration>, ProcessFacts
     };
     let identity = ProcessIdentity {
         start_token: canonical_test_start_token(u64::from(pid)),
-        executable: discovery_fixture_executable(),
+        executable: fixture_executable(),
         argv: vec![
             "llama-server".to_string(),
             "-m".to_string(),
@@ -212,7 +214,6 @@ fn discovery_fixture_observation(
     runtime: RuntimeObservation,
 ) -> ManagedRegistrationObservation {
     ManagedRegistrationObservation {
-        id: ObservationId(0),
         coordinate,
         promised: None,
         state: ManagedRegistrationState::Captured {
@@ -240,13 +241,11 @@ fn discovery_fixture_empty() -> ManagedServerDiscovery {
         },
         observations: vec![
             ManagedRegistrationObservation {
-                id: ObservationId(0),
                 coordinate: local,
                 promised: None,
                 state: ManagedRegistrationState::Absent,
             },
             ManagedRegistrationObservation {
-                id: ObservationId(1),
                 coordinate: global,
                 promised: None,
                 state: ManagedRegistrationState::Absent,
@@ -262,7 +261,6 @@ fn discovery_fixture_ready() -> ManagedServerDiscovery {
     let identity = runfile.process_identity.clone().unwrap();
     let raw = serde_json::to_vec(&runfile).unwrap();
     let observation = ManagedRegistrationObservation {
-        id: ObservationId(0),
         coordinate: coordinate.clone(),
         promised: None,
         state: ManagedRegistrationState::Captured {
@@ -398,7 +396,7 @@ fn add_distinct_stale_tailscale_peer(
     name: &str,
 ) -> TailscaleServeOwnership {
     let mut capture = discovery_fixture_capture(RegistrationScope::Global, pid, name);
-    let identity = test_tailscale_identity();
+    let identity = tailscale_identity();
     let coordinate = coordinate_from_token(
         capture.runfile.port,
         &identity,
@@ -416,13 +414,9 @@ fn add_distinct_stale_tailscale_peer(
     capture.runfile.tailscale = true;
     capture.runfile.tailscale_serve = Some(ownership.clone());
     capture.raw = serde_json::to_vec_pretty(&capture.runfile).unwrap();
-    let coordinate = RegistrationCoordinate {
-        scope: capture.scope,
-        path: capture.path.clone(),
-    };
+    let coordinate = capture.coordinate();
     discovery.inventory.global = Some(RegistrationSlot::Captured(Box::new(capture.clone())));
     discovery.observations.push(ManagedRegistrationObservation {
-        id: ObservationId(discovery.observations.len()),
         coordinate: coordinate.clone(),
         promised: None,
         state: ManagedRegistrationState::Captured {
@@ -536,6 +530,23 @@ fn discovery_fixture_blocked(conflict: bool) -> ManagedServerDiscovery {
     discovery
 }
 
+fn verified_not_probed_observation(capture: CapturedRegistration) -> LifecycleObservation {
+    let identity = capture.runfile.process_identity.clone().unwrap();
+    LifecycleObservation {
+        candidate: Candidate {
+            coordinate: capture.coordinate(),
+            runfile: Some(capture.runfile.clone()),
+            state: CandidateState::Verified {
+                identity,
+                listener: ListenerState::OwnedByTarget,
+                health: HealthState::NotProbed,
+            },
+        },
+        capture: Some(capture),
+        process: None,
+    }
+}
+
 struct PanicHealth;
 
 impl HealthProbe for PanicHealth {
@@ -545,7 +556,7 @@ impl HealthProbe for PanicHealth {
 }
 
 #[test]
-pub(crate) fn legacy_tailscale_registration_remains_unowned() {
+fn legacy_tailscale_registration_remains_unowned() {
     let root = tempfile::tempdir().unwrap();
     for scope in [
         RegistrationScope::Local,
@@ -598,9 +609,8 @@ pub(crate) fn legacy_tailscale_registration_remains_unowned() {
         };
         let ledger = Rc::new(RefCell::new(Vec::new()));
         let calls = Rc::clone(&ledger);
-        let discovery = discover_inventory_with(
-            inventory,
-            move |capture| {
+        let discovery = complete_lifecycle_health_with(
+            discover_inventory_before_health_with(inventory, move |capture| {
                 calls
                     .borrow_mut()
                     .push(LifecycleEvent::Acquire(capture.runfile.pid));
@@ -608,7 +618,7 @@ pub(crate) fn legacy_tailscale_registration_remains_unowned() {
                     blocked_observation_with_facts(
                         capture,
                         "simulated present process".to_string(),
-                        Some(discovery_fixture_identity(u64::from(pid))),
+                        Some(process_identity(u64::from(pid))),
                         Some(ListenerState::OwnedByTarget),
                         HealthState::NotProbed,
                     )
@@ -620,7 +630,7 @@ pub(crate) fn legacy_tailscale_registration_remains_unowned() {
                         ListenerState::Absent,
                     )
                 }
-            },
+            }),
             &mut PanicHealth,
             |_observation| panic!("Tailscale blocker must precede retained reinspection"),
         );
@@ -653,13 +663,13 @@ pub(crate) fn legacy_tailscale_registration_remains_unowned() {
                 && line.contains("blind node-wide reset")
         }));
         let plan = down_plan_from_lifecycle(discovery);
-        let mut effects = ScriptedDownEffects::new(
+        let mut effects = ScriptedEffects::new(
             Vec::<ListenerState>::new(),
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Rc::clone(&ledger),
         );
         let report = execute_down_plan(plan, &mut effects);
-        let rendered = render_down_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_down_report(&report), &ledger);
         assert_eq!(report.disposition, DownDisposition::Blocked);
         assert!(!report.signalled);
         assert!(rendered.stdout.iter().all(|line| !line.contains("stopped")));
@@ -669,7 +679,7 @@ pub(crate) fn legacy_tailscale_registration_remains_unowned() {
 }
 
 #[test]
-pub(crate) fn promised_origin_static_matrix_precedes_process_inspection() {
+fn promised_origin_static_matrix_precedes_process_inspection() {
     for changed in [false, true] {
         let local = discovery_fixture_coordinate(RegistrationScope::Local, "local");
         let global = discovery_fixture_coordinate(RegistrationScope::Global, "global");
@@ -708,9 +718,10 @@ pub(crate) fn promised_origin_static_matrix_precedes_process_inspection() {
                 slot: origin_slot,
             }],
         };
-        let result = discover_inventory_with(
-            inventory,
-            |_capture| panic!("origin blocker must precede process acquisition"),
+        let result = complete_lifecycle_health_with(
+            discover_inventory_before_health_with(inventory, |_capture| {
+                panic!("origin blocker must precede process acquisition")
+            }),
             &mut PanicHealth,
             |_observation| panic!("origin blocker must precede retained reinspection"),
         );
@@ -802,149 +813,151 @@ impl DoctorProbeEffects for RecordingDoctorEffects {
     }
 }
 
-fn expected_status_listener(listener: &ListenerState) -> String {
-    match listener {
-        ListenerState::OwnedByTarget => "owned-loopback".to_string(),
-        ListenerState::OwnedByTargetWildcard => "wildcard-public".to_string(),
-        ListenerState::Absent => "absent".to_string(),
-        ListenerState::OwnedByOther(owners) => format!("foreign-or-shared:{owners:?}"),
-        ListenerState::Uninspectable(detail) => format!("uninspectable:{detail}"),
-    }
-}
-
-fn expected_status_health(health: HealthState) -> &'static str {
-    match health {
-        HealthState::NotProbed => "not-probed",
-        HealthState::Healthy => "healthy",
-        HealthState::Unhealthy => "unhealthy",
-    }
-}
-
-fn expected_registration_status(observation: &ManagedRegistrationObservation) -> String {
-    let promised = observation
-        .promised
-        .as_ref()
-        .map_or_else(String::new, |promised| {
-            format!(
-                " promised-by={} registration {}",
-                promised.source.scope,
-                promised.source.path.display()
-            )
-        });
-    let prefix = format!(
-        "{} registration {}{promised}",
-        observation.coordinate.scope,
-        observation.coordinate.path.display()
+#[test]
+fn status_registration_lines_are_golden_for_every_runtime_observation() {
+    let local = discovery_fixture_coordinate(RegistrationScope::Local, "local");
+    let path = local.path.display().to_string();
+    let identity = process_identity(4101);
+    let identity_text = format!(
+        "token={} executable={} argv=[\"llama-server\", \"--serve\"]",
+        identity.start_token,
+        identity.executable.display()
     );
-    match &observation.state {
-        ManagedRegistrationState::Absent => format!(
-            "[absent] {prefix}: recorded-identity=none observed-identity=none listener=none health=none"
+    let line = |runfile: ServerRunfile, runtime| {
+        render_registration_status(&discovery_fixture_observation(
+            local.clone(),
+            runfile,
+            runtime,
+        ))
+    };
+    let captured = format!(
+        "[captured] local registration {path}: schema=2 engine=LlamaServer pid=4101 base-url=http://127.0.0.1:7101/v1"
+    );
+    let rows = [
+        (
+            RuntimeObservation::NotInspected,
+            "observed-identity=not-inspected listener=not-inspected health=not-probed".to_string(),
         ),
-        ManagedRegistrationState::Blocked { reason } => format!(
-            "[blocked] {prefix}: {reason}; recorded-identity=unavailable observed-identity=not-inspected listener=not-inspected health=not-probed"
+        (
+            RuntimeObservation::Verified {
+                identity: identity.clone(),
+                listener: ListenerState::OwnedByTarget,
+                health: HealthState::Healthy,
+            },
+            format!("observed-identity={identity_text} listener=owned-loopback health=healthy"),
         ),
-        ManagedRegistrationState::Captured {
-            runfile, runtime, ..
-        } => {
-            let tailscale = runfile.tailscale_serve.as_ref().map_or_else(
-                || {
-                    if runfile.tailscale {
-                        " tailscale=legacy-unowned".to_string()
-                    } else {
-                        String::new()
-                    }
-                },
-                |ownership| {
-                    format!(
-                        " tailscale=owned mount={} remote-base={}",
-                        ownership.mount_path, ownership.remote_base_url
-                    )
-                },
-            );
-            let recorded = runfile.process_identity.as_ref().map_or_else(
-                || "legacy-none".to_string(),
-                |identity| {
-                    format!(
-                        "token={} executable={} argv={:?}",
-                        identity.start_token,
-                        identity.executable.display(),
-                        identity.argv
-                    )
-                },
-            );
-            let observed = match runtime {
-                RuntimeObservation::NotInspected => {
-                    "observed-identity=not-inspected listener=not-inspected health=not-probed"
-                        .to_string()
-                }
-                RuntimeObservation::Verified {
-                    identity,
-                    listener,
-                    health,
-                } => format!(
-                    "observed-identity=token={} executable={} argv={:?} listener={} health={}",
-                    identity.start_token,
-                    identity.executable.display(),
-                    identity.argv,
-                    expected_status_listener(listener),
-                    expected_status_health(*health)
-                ),
-                RuntimeObservation::Stale {
-                    reason,
-                    observed_identity,
-                    listener,
-                } => {
-                    let identity = observed_identity.as_ref().map_or_else(
-                        || "stale-unavailable".to_string(),
-                        |identity| {
-                            format!(
-                                "token={} executable={} argv={:?}",
-                                identity.start_token,
-                                identity.executable.display(),
-                                identity.argv
-                            )
-                        },
-                    );
-                    format!(
-                        "observed-identity={identity} stale-reason={reason} listener={} health=not-probed",
-                        expected_status_listener(listener)
-                    )
-                }
-                RuntimeObservation::LegacyLive { pid } => format!(
-                    "observed-identity=legacy-live-pid:{pid} listener=unverified health=not-probed"
-                ),
-                RuntimeObservation::Unverifiable {
-                    reason,
-                    observed_identity,
-                    listener,
-                    health,
-                } => {
-                    let identity = observed_identity.as_ref().map_or_else(
-                        || "unavailable".to_string(),
-                        |identity| {
-                            format!(
-                                "token={} executable={} argv={:?}",
-                                identity.start_token,
-                                identity.executable.display(),
-                                identity.argv
-                            )
-                        },
-                    );
-                    let listener = listener
-                        .as_ref()
-                        .map_or_else(|| "unverifiable".to_string(), expected_status_listener);
-                    format!(
-                        "observed-identity={identity} unverifiable-reason={reason} listener={listener} health={}",
-                        expected_status_health(*health)
-                    )
-                }
-            };
+        (
+            RuntimeObservation::Verified {
+                identity: identity.clone(),
+                listener: ListenerState::OwnedByTargetWildcard,
+                health: HealthState::Unhealthy,
+            },
+            format!("observed-identity={identity_text} listener=wildcard-public health=unhealthy"),
+        ),
+        (
+            RuntimeObservation::Stale {
+                reason: "generation changed".to_string(),
+                observed_identity: Some(identity.clone()),
+                listener: ListenerState::Absent,
+            },
             format!(
-                "[captured] {prefix}: schema={} engine={:?} pid={} base-url={} recorded-identity={recorded}{tailscale} {observed}",
-                runfile.schema_version, runfile.engine, runfile.pid, runfile.base_url,
-            )
-        }
+                "observed-identity={identity_text} stale-reason=generation changed listener=absent health=not-probed"
+            ),
+        ),
+        (
+            RuntimeObservation::Stale {
+                reason: "process exited".to_string(),
+                observed_identity: None,
+                listener: ListenerState::OwnedByOther(vec![9, 4101]),
+            },
+            "observed-identity=stale-unavailable stale-reason=process exited listener=foreign-or-shared:[9, 4101] health=not-probed".to_string(),
+        ),
+        (
+            RuntimeObservation::LegacyLive { pid: 4101 },
+            "observed-identity=legacy-live-pid:4101 listener=unverified health=not-probed"
+                .to_string(),
+        ),
+        (
+            RuntimeObservation::Unverifiable {
+                reason: "probe failed".to_string(),
+                observed_identity: Some(identity.clone()),
+                listener: Some(ListenerState::Uninspectable("denied".to_string())),
+                health: HealthState::NotProbed,
+            },
+            format!(
+                "observed-identity={identity_text} unverifiable-reason=probe failed listener=uninspectable:denied health=not-probed"
+            ),
+        ),
+        (
+            RuntimeObservation::Unverifiable {
+                reason: "no access".to_string(),
+                observed_identity: None,
+                listener: None,
+                health: HealthState::Unhealthy,
+            },
+            "observed-identity=unavailable unverifiable-reason=no access listener=unverifiable health=unhealthy".to_string(),
+        ),
+    ];
+    for (runtime, observed) in rows {
+        assert_eq!(
+            line(discovery_fixture_runfile(4101, "local"), runtime),
+            format!("{captured} recorded-identity={identity_text} {observed}")
+        );
     }
+
+    let not_inspected = "observed-identity=not-inspected listener=not-inspected health=not-probed";
+    let mut legacy = discovery_fixture_runfile(4101, "local");
+    legacy.schema_version = 1;
+    legacy.process_identity = None;
+    legacy.tailscale = true;
+    assert_eq!(
+        line(legacy, RuntimeObservation::NotInspected),
+        format!(
+            "[captured] local registration {path}: schema=1 engine=LlamaServer pid=4101 base-url=http://127.0.0.1:7101/v1 recorded-identity=legacy-none tailscale=legacy-unowned {not_inspected}"
+        )
+    );
+    let mut owned = discovery_fixture_runfile(4101, "local");
+    let ownership = tailscale_ownership(7101);
+    owned.tailscale = true;
+    owned.tailscale_serve = Some(ownership);
+    assert_eq!(
+        line(owned, RuntimeObservation::NotInspected),
+        format!(
+            "{captured} recorded-identity={identity_text} tailscale=owned mount=/_ferric/00112233445566778899aabbccddeeff remote-base=https://example-host.tailnet-example.ts.net/_ferric/00112233445566778899aabbccddeeff/v1 {not_inspected}"
+        )
+    );
+
+    let global = discovery_fixture_coordinate(RegistrationScope::Global, "global");
+    let origin = discovery_fixture_coordinate(RegistrationScope::Origin, "origin");
+    let promised_absent = ManagedRegistrationObservation {
+        coordinate: origin.clone(),
+        promised: Some(PromisedOriginProvenance {
+            source: global.clone(),
+            expected_runfile: discovery_fixture_runfile(4101, "origin"),
+        }),
+        state: ManagedRegistrationState::Absent,
+    };
+    assert_eq!(
+        render_registration_status(&promised_absent),
+        format!(
+            "[absent] origin registration {} promised-by=global registration {}: recorded-identity=none observed-identity=none listener=none health=none",
+            origin.path.display(),
+            global.path.display()
+        )
+    );
+    let blocked = ManagedRegistrationObservation {
+        coordinate: local.clone(),
+        promised: None,
+        state: ManagedRegistrationState::Blocked {
+            reason: "unreadable registration".to_string(),
+        },
+    };
+    assert_eq!(
+        render_registration_status(&blocked),
+        format!(
+            "[blocked] local registration {path}: unreadable registration; recorded-identity=unavailable observed-identity=not-inspected listener=not-inspected health=not-probed"
+        )
+    );
 }
 
 fn assert_status_matrix_row(
@@ -967,7 +980,7 @@ fn assert_status_matrix_row(
     let mut expected_stdout = discovery
         .observations
         .iter()
-        .map(expected_registration_status)
+        .map(render_registration_status)
         .collect::<Vec<_>>();
     expected_stdout.push(expected_state.to_string());
     if let Some(reason) = &report.tailscale_issue {
@@ -1062,7 +1075,7 @@ fn status_reports_scope_identity_health_and_next_action() {
         stale_record,
         RuntimeObservation::Stale {
             reason: "generation changed".to_string(),
-            observed_identity: Some(discovery_fixture_identity(4102)),
+            observed_identity: Some(process_identity(4102)),
             listener: ListenerState::Absent,
         },
     ));
@@ -1098,7 +1111,6 @@ fn status_reports_scope_identity_health_and_next_action() {
     missing_origin
         .observations
         .push(ManagedRegistrationObservation {
-            id: ObservationId(2),
             coordinate: origin.clone(),
             promised: Some(promised),
             state: ManagedRegistrationState::Absent,
@@ -1153,12 +1165,11 @@ fn status_reports_scope_identity_health_and_next_action() {
         raw: legacy_raw,
         runfile: legacy_runfile.clone(),
     })));
-    let mut legacy_alias = discovery_fixture_observation(
+    let legacy_alias = discovery_fixture_observation(
         legacy_global.clone(),
         legacy_runfile,
         RuntimeObservation::LegacyLive { pid: legacy_pid },
     );
-    legacy_alias.id = ObservationId(1);
     legacy.observations.push(legacy_alias);
     legacy.state = ManagedServerState::Unverifiable {
         issues: vec![ResolutionIssue {
@@ -1865,9 +1876,10 @@ fn mirrored_tailscale_provenance_conflicts_block_before_effects() {
             global: Some(RegistrationSlot::Captured(Box::new(global))),
             promised_origins: Vec::new(),
         };
-        let discovery = discover_inventory_with(
-            inventory,
-            |_capture| panic!("{case}: provenance conflict reached process inspection"),
+        let discovery = complete_lifecycle_health_with(
+            discover_inventory_before_health_with(inventory, |_capture| {
+                panic!("{case}: provenance conflict reached process inspection")
+            }),
             &mut PanicHealth,
             |_observation| panic!("{case}: provenance conflict reached revalidation"),
         );
@@ -1919,13 +1931,13 @@ fn mirrored_tailscale_provenance_conflicts_block_before_effects() {
         );
 
         let plan = down_plan_from_lifecycle(discovery);
-        let mut effects = ScriptedDownEffects::new(
+        let mut effects = ScriptedEffects::new(
             Vec::<ListenerState>::new(),
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Rc::clone(&ledger),
         );
         let report = execute_down_plan(plan, &mut effects);
-        let rendered = render_down_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_down_report(&report), &ledger);
         assert_eq!(report.disposition, DownDisposition::Blocked, "{case}");
         assert!(!report.signalled, "{case}");
         assert_eq!(report.registrations.len(), 2, "{case}");
@@ -1946,9 +1958,9 @@ fn mirrored_tailscale_provenance_conflicts_block_before_effects() {
 
 #[test]
 fn status_exact_proxy_is_not_ready_after_tailscale_identity_drift() {
-    let mut renamed = test_tailscale_identity();
+    let mut renamed = tailscale_identity();
     renamed.fqdn = "renamed.tailnet-example.ts.net".to_string();
-    let mut switched = test_tailscale_identity();
+    let mut switched = tailscale_identity();
     switched.stable_node_id = "other-stable-node".to_string();
 
     for (case, identity, expected_detail) in [
@@ -2272,13 +2284,13 @@ fn assert_blocked_down_consumer(discovery: &ManagedServerDiscovery, resolution: 
         resolution,
     });
     let ledger = Rc::new(RefCell::new(Vec::new()));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         Vec::<ListenerState>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
     );
     let report = execute_down_plan(plan, &mut effects);
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert_eq!(report.disposition, DownDisposition::Blocked);
     assert_eq!(report.registrations.len(), expected_held);
     assert!(
@@ -2305,13 +2317,13 @@ fn assert_down_consumer_matrix_row(discovery: &ManagedServerDiscovery) {
                 observations: Vec::new(),
                 resolution: Resolution::Empty,
             });
-            let mut effects = ScriptedDownEffects::new(
+            let mut effects = ScriptedEffects::new(
                 Vec::<ListenerState>::new(),
                 Vec::<Result<RemovalOutcome, RemovalError>>::new(),
                 Rc::clone(&ledger),
             );
             let report = execute_down_plan(plan, &mut effects);
-            render_down_with_ledger(&report, &ledger);
+            ledger_rendered(render_down_report(&report), &ledger);
             assert_eq!(report.disposition, DownDisposition::Empty);
             assert!(report.success);
             assert_eq!(*ledger.borrow(), vec![LifecycleEvent::Render]);
@@ -2356,20 +2368,19 @@ fn assert_down_consumer_matrix_row(discovery: &ManagedServerDiscovery) {
             let plan = down_plan_from_lifecycle(LifecycleDiscovery {
                 managed: discovery.clone(),
                 observations: vec![LifecycleObservation {
-                    label: registration_label(capture.scope, &capture.path),
                     candidate,
                     capture: Some(capture.clone()),
                     process: Some(process),
                 }],
                 resolution,
             });
-            let mut effects = ScriptedDownEffects::new(
+            let mut effects = ScriptedEffects::new(
                 [ListenerState::Absent],
                 [Ok(RemovalOutcome::Removed)],
                 Rc::clone(&ledger),
             );
             let report = execute_down_plan(plan, &mut effects);
-            render_down_with_ledger(&report, &ledger);
+            ledger_rendered(render_down_report(&report), &ledger);
             assert_eq!(report.disposition, DownDisposition::Stopped);
             assert!(report.success);
             assert_eq!(report.registrations.len(), 1);
@@ -2396,10 +2407,7 @@ fn assert_down_consumer_matrix_row(discovery: &ManagedServerDiscovery) {
                 managed: discovery.clone(),
                 observations: vec![LifecycleObservation {
                     candidate: Candidate {
-                        coordinate: RegistrationCoordinate {
-                            scope: capture.scope,
-                            path: capture.path.clone(),
-                        },
+                        coordinate: capture.coordinate(),
                         runfile: Some(capture.runfile.clone()),
                         state: CandidateState::Stale {
                             reason: "PID is absent".to_string(),
@@ -2407,19 +2415,18 @@ fn assert_down_consumer_matrix_row(discovery: &ManagedServerDiscovery) {
                             listener: ListenerState::Absent,
                         },
                     },
-                    label: registration_label(capture.scope, &capture.path),
                     capture: Some(capture.clone()),
                     process: None,
                 }],
                 resolution: Resolution::StaleOnly { stale: vec![0] },
             });
-            let mut effects = ScriptedDownEffects::new(
+            let mut effects = ScriptedEffects::new(
                 [ListenerState::Absent],
                 [Ok(RemovalOutcome::Removed)],
                 Rc::clone(&ledger),
             );
             let report = execute_down_plan(plan, &mut effects);
-            render_down_with_ledger(&report, &ledger);
+            ledger_rendered(render_down_report(&report), &ledger);
             assert_eq!(report.disposition, DownDisposition::StaleCleaned);
             assert!(report.success);
             assert_eq!(report.registrations.len(), 1);
@@ -2595,16 +2602,6 @@ fn registration_consumers_propagate_typed_ambiguity() {
             }
         }
     }
-
-    // The frozen E03-C command owns the consumer-effect proof. Keep the
-    // focused neighbors as independently runnable regressions, but invoke
-    // their real autonomy/HTTP revalidation, doctor probe-ordering, and
-    // down mutation ledgers here so a name-filtered acceptance run cannot
-    // pass on policy-return values alone.
-    strict_autonomy_requires_fresh_managed_discovery_before_http();
-    registered_consumer_effect_revalidates_retained_generation_on_every_outcome();
-    doctor_blockers_precede_all_probes();
-    ambiguous_or_unverifiable_down_is_non_mutating();
 }
 
 #[test]
@@ -2633,13 +2630,9 @@ fn strict_autonomy_requires_fresh_managed_discovery_before_http() {
 
     fn observe_exact(capture: CapturedRegistration) -> LifecycleObservation {
         let identity = capture.runfile.process_identity.clone().unwrap();
-        let label = registration_label(capture.scope, &capture.path);
         LifecycleObservation {
             candidate: Candidate {
-                coordinate: RegistrationCoordinate {
-                    scope: capture.scope,
-                    path: capture.path.clone(),
-                },
+                coordinate: capture.coordinate(),
                 runfile: Some(capture.runfile.clone()),
                 state: CandidateState::Verified {
                     identity,
@@ -2647,7 +2640,6 @@ fn strict_autonomy_requires_fresh_managed_discovery_before_http() {
                     health: HealthState::NotProbed,
                 },
             },
-            label,
             capture: Some(capture),
             process: None,
         }
@@ -2659,8 +2651,7 @@ fn strict_autonomy_requires_fresh_managed_discovery_before_http() {
         ManagedServerState::Degraded { server, .. } => server.fingerprint.clone(),
         state => panic!("pre-health exact owner must be typed Degraded, got {state:?}"),
     };
-    crate::autonomy_cmd::require_matching_pre_health_discovery(&initial.managed, &expected)
-        .unwrap();
+    require_matching_pre_health_discovery(&initial.managed, &expected).unwrap();
     let ledger = Rc::new(RefCell::new(Vec::new()));
     let mut health = ScriptedHealth {
         results: VecDeque::from([true]),
@@ -2722,19 +2713,13 @@ fn strict_autonomy_requires_fresh_managed_discovery_before_http() {
         unreachable!()
     };
     global.runfile.pid = 4102;
-    global.runfile.process_identity = Some(discovery_fixture_identity(4102));
+    global.runfile.process_identity = Some(process_identity(4102));
     global.raw = serde_json::to_vec(&global.runfile).unwrap();
 
     for changed in [changed_revision, missing_alias, conflicting_peer] {
         ledger.borrow_mut().clear();
         let before_health = discover_inventory_before_health_with(changed, observe_exact);
-        assert!(
-            crate::autonomy_cmd::require_matching_pre_health_discovery(
-                &before_health.managed,
-                &expected,
-            )
-            .is_err()
-        );
+        assert!(require_matching_pre_health_discovery(&before_health.managed, &expected,).is_err());
         assert!(
             ledger.borrow().is_empty(),
             "fingerprint or conflict rejection must precede HTTP health"
@@ -2808,7 +2793,7 @@ impl ScriptedTailscaleServe {
         ledger: EventLedger,
     ) -> Self {
         Self {
-            identities: RefCell::new((0..16).map(|_| Ok(test_tailscale_identity())).collect()),
+            identities: RefCell::new((0..16).map(|_| Ok(tailscale_identity())).collect()),
             observations: RefCell::new(observations.into_iter().collect()),
             applies: RefCell::new(VecDeque::from([Ok(())])),
             offs: RefCell::new(VecDeque::from([Ok(())])),
@@ -2908,26 +2893,16 @@ impl TailscaleServeEffects for ScriptedTailscaleServe {
     }
 }
 
-fn test_tailscale_identity() -> crate::tailscale_serve::TailscaleIdentity {
-    crate::tailscale_serve::TailscaleIdentity {
-        stable_node_id: "node-fixture".to_string(),
-        fqdn: "example-host.tailnet-example.ts.net".to_string(),
-        backend_running: true,
-        https_capable: true,
-        certificate_domain: true,
-    }
-}
-
 fn tailscale_ownership(port: u16) -> TailscaleServeOwnership {
     let token = "00112233445566778899aabbccddeeff".to_string();
-    let coordinate = coordinate_from_token(port, &test_tailscale_identity(), token).unwrap();
+    let coordinate = coordinate_from_token(port, &tailscale_identity(), token).unwrap();
     let mut observation = crate::tailscale_serve::project_localapi_status(
         b"{}",
         &coordinate.fqdn,
         &coordinate.mount_path,
     )
     .unwrap();
-    observation.identity = Some(test_tailscale_identity());
+    observation.identity = Some(tailscale_identity());
     coordinate.into_ownership(&observation).unwrap()
 }
 
@@ -2943,7 +2918,7 @@ fn tailscale_observation(
         mount_path: ownership.mount_path.clone(),
         status_sha256: digest.to_string().repeat(64),
         path_state,
-        identity: Some(test_tailscale_identity()),
+        identity: Some(tailscale_identity()),
         scaffold: crate::tailscale_serve::ServeScaffoldState {
             tcp_map_present: active,
             tcp_https_present: active,
@@ -2960,10 +2935,7 @@ fn tailscale_observation(
 
 fn representative_revision(capture: &CapturedRegistration) -> RegistrationRevision {
     RegistrationRevision {
-        coordinate: RegistrationCoordinate {
-            scope: capture.scope,
-            path: capture.path.clone(),
-        },
+        coordinate: capture.coordinate(),
         promised: None,
         state: RegistrationRevisionState::Captured(ferric_bench::sha256_bytes(&capture.raw)),
     }
@@ -3182,34 +3154,88 @@ impl ProcessRuntime for ScriptedPidMapRuntime {
     }
 }
 
-struct ScriptedDownEffects {
+/// The one registration-mutation and teardown double. Every mutation is
+/// recorded in the ledger; a `Some` script answers it, while `None` runs the
+/// native conditional operation against the real filesystem.
+struct ScriptedEffects {
+    replacements: Option<VecDeque<Result<ReplacementOutcome, ReplacementError>>>,
+    removals: Option<VecDeque<Result<RemovalOutcome, RemovalError>>>,
+    stage_removals: Option<VecDeque<Result<RemovalOutcome, RemovalError>>>,
+    /// `Some` revalidates against that scope's real inventory instead of
+    /// replaying `revalidations`.
+    scope: Option<ManagedDiscoveryScope>,
     revalidations: VecDeque<Result<(), String>>,
     listeners: VecDeque<ListenerState>,
-    removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
-    replacements: VecDeque<Result<ReplacementOutcome, ReplacementError>>,
-    tailscale: Option<ScriptedTailscaleServe>,
+    tailscale: Option<Rc<ScriptedTailscaleServe>>,
     ledger: EventLedger,
 }
 
-impl ScriptedDownEffects {
+impl ScriptedEffects {
+    /// Native mutations, recorded.
+    fn filesystem(ledger: EventLedger) -> Self {
+        Self {
+            replacements: None,
+            removals: None,
+            stage_removals: None,
+            scope: None,
+            revalidations: VecDeque::from([Ok(())]),
+            listeners: VecDeque::new(),
+            tailscale: None,
+            ledger,
+        }
+    }
+
+    /// Scripted teardown: listener states and registration removals.
     fn new(
         listeners: impl IntoIterator<Item = ListenerState>,
         removals: impl IntoIterator<Item = Result<RemovalOutcome, RemovalError>>,
         ledger: EventLedger,
     ) -> Self {
         Self {
-            revalidations: VecDeque::from([Ok(())]),
+            replacements: Some(VecDeque::new()),
+            removals: Some(removals.into_iter().collect()),
+            stage_removals: Some(VecDeque::new()),
             listeners: listeners.into_iter().collect(),
-            removals: removals.into_iter().collect(),
-            replacements: VecDeque::new(),
-            tailscale: None,
-            ledger,
+            ..Self::filesystem(ledger)
         }
+    }
+
+    /// Scripted publication compensation: final and stage removals.
+    fn publication(
+        removals: impl IntoIterator<Item = Result<RemovalOutcome, RemovalError>>,
+        stage_removals: impl IntoIterator<Item = Result<RemovalOutcome, RemovalError>>,
+        ledger: EventLedger,
+    ) -> Self {
+        Self {
+            stage_removals: Some(stage_removals.into_iter().collect()),
+            ..Self::new([], removals, ledger)
+        }
+    }
+
+    /// Scripted adoption: conditional replacements.
+    fn adoption(
+        replacements: impl IntoIterator<Item = Result<ReplacementOutcome, ReplacementError>>,
+        ledger: EventLedger,
+    ) -> Self {
+        Self {
+            replacements: Some(replacements.into_iter().collect()),
+            ..Self::new([], [], ledger)
+        }
+    }
+
+    fn with_scope(mut self, scope: ManagedDiscoveryScope) -> Self {
+        self.scope = Some(scope);
+        self
+    }
+
+    fn with_listeners(mut self, listeners: impl IntoIterator<Item = ListenerState>) -> Self {
+        self.listeners = listeners.into_iter().collect();
+        self
     }
 
     fn with_tailscale(mut self, tailscale: ScriptedTailscaleServe) -> Self {
         self.revalidations = VecDeque::from([Ok(()), Ok(()), Ok(())]);
-        self.tailscale = Some(tailscale);
+        self.tailscale = Some(Rc::new(tailscale));
         self
     }
 
@@ -3217,12 +3243,61 @@ impl ScriptedDownEffects {
         mut self,
         replacements: impl IntoIterator<Item = Result<ReplacementOutcome, ReplacementError>>,
     ) -> Self {
-        self.replacements = replacements.into_iter().collect();
+        self.replacements = Some(replacements.into_iter().collect());
         self
     }
 }
 
-impl DownEffects for ScriptedDownEffects {
+impl RegistrationStore for ScriptedEffects {
+    fn replace(
+        &mut self,
+        captured: &CapturedRegistration,
+        replacement: &[u8],
+    ) -> Result<ReplacementOutcome, ReplacementError> {
+        self.ledger.borrow_mut().push(scripted_replace_event(
+            &captured.path,
+            &captured.raw,
+            replacement,
+        ));
+        match &mut self.replacements {
+            None => replace_if_unchanged(captured, replacement),
+            // Scripted Tailscale teardown confirms its journals unless told otherwise.
+            Some(script) if self.tailscale.is_some() => script
+                .pop_front()
+                .unwrap_or(Ok(ReplacementOutcome::Replaced)),
+            Some(script) => script
+                .pop_front()
+                .expect("scripted conditional-replacement result"),
+        }
+    }
+
+    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError> {
+        self.ledger
+            .borrow_mut()
+            .push(scripted_remove_event(captured));
+        match &mut self.removals {
+            None => remove_if_unchanged(captured),
+            Some(script) => script
+                .pop_front()
+                .expect("scripted conditional-removal result"),
+        }
+    }
+
+    fn remove_stage(&mut self, stage: &PublicationStage) -> Result<RemovalOutcome, RemovalError> {
+        self.ledger.borrow_mut().push(LifecycleEvent::RemoveStage(
+            stage.path.clone(),
+            stage.raw.as_deref().map(ferric_bench::sha256_bytes),
+        ));
+        match &mut self.stage_removals {
+            None => remove_publication_stage_if_unchanged(stage),
+            Some(script) => script
+                .pop_front()
+                .expect("scripted publication-stage removal"),
+        }
+    }
+}
+
+impl DownEffects for ScriptedEffects {
     fn revalidate_registrations(
         &mut self,
         expected: &[RegistrationRevision],
@@ -3234,9 +3309,13 @@ impl DownEffects for ScriptedDownEffects {
             );
         }
         self.ledger.borrow_mut().push(LifecycleEvent::Revalidate);
-        self.revalidations
-            .pop_front()
-            .expect("scripted registration revalidation")
+        match &self.scope {
+            Some(scope) => revalidate_scope_registrations(scope, expected),
+            None => self
+                .revalidations
+                .pop_front()
+                .expect("scripted registration revalidation"),
+        }
     }
 
     fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState {
@@ -3248,501 +3327,42 @@ impl DownEffects for ScriptedDownEffects {
             .expect("scripted down-listener state")
     }
 
-    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError> {
-        self.ledger.borrow_mut().push(LifecycleEvent::Remove(
-            captured.path.clone(),
-            ferric_bench::sha256_bytes(&captured.raw),
-        ));
-        self.removals
-            .pop_front()
-            .expect("scripted conditional-removal result")
-    }
-
     fn reconcile_tailscale(
         &mut self,
         ownership: &TailscaleServeOwnership,
         captures: &mut [CapturedRegistration],
     ) -> ProxyCleanupReport {
-        let replacements = &mut self.replacements;
-        let ledger = Rc::clone(&self.ledger);
-        reconcile_owned_proxy(
-            ownership,
+        let serve = Rc::clone(
             self.tailscale
                 .as_ref()
                 .expect("scripted Tailscale down effects"),
-            if ownership.apply_confirmed {
-                ProxyReconcileContext::EstablishedOwnership
-            } else {
-                ProxyReconcileContext::AmbiguousApply
-            },
-            || {
-                confirm_tailscale_captures_with(captures, ownership, |captured, raw| {
-                    ledger.borrow_mut().push(LifecycleEvent::Replace(
-                        captured.path.clone(),
-                        ferric_bench::sha256_bytes(&captured.raw),
-                        ferric_bench::sha256_bytes(raw),
-                    ));
-                    replacements
-                        .pop_front()
-                        .unwrap_or(Ok(ReplacementOutcome::Replaced))
-                })
-            },
-        )
+        );
+        reconcile_down_proxy(ownership, serve.as_ref(), captures, |captured, raw| {
+            self.replace(captured, raw)
+        })
     }
 }
 
-struct FilesystemDownEffects {
-    scope: ManagedDiscoveryScope,
-    listeners: VecDeque<ListenerState>,
-    ledger: EventLedger,
-}
-
-impl DownEffects for FilesystemDownEffects {
-    fn revalidate_registrations(
-        &mut self,
-        expected: &[RegistrationRevision],
-    ) -> Result<(), String> {
-        self.ledger.borrow_mut().push(LifecycleEvent::Revalidate);
-        let inventory = inventory_runfiles(&self.scope.workspace, self.scope.global.clone());
-        let current = discovery_revisions(&flatten_inventory(&inventory));
-        if current == expected {
-            Ok(())
-        } else {
-            Err("composition inventory changed before teardown".to_string())
-        }
-    }
-
-    fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState {
-        self.ledger
-            .borrow_mut()
-            .push(LifecycleEvent::Listener(pid, port));
-        self.listeners
-            .pop_front()
-            .expect("scripted composition listener state")
-    }
-
-    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError> {
-        self.ledger
-            .borrow_mut()
-            .push(scripted_remove_event(captured));
-        remove_if_unchanged(captured)
-    }
-}
-
-struct FilesystemTailscaleDownEffects {
-    scope: ManagedDiscoveryScope,
-    listeners: VecDeque<ListenerState>,
-    serve: ScriptedTailscaleServe,
-    ledger: EventLedger,
-}
-
-impl DownEffects for FilesystemTailscaleDownEffects {
-    fn revalidate_registrations(
-        &mut self,
-        expected: &[RegistrationRevision],
-    ) -> Result<(), String> {
-        self.ledger.borrow_mut().push(LifecycleEvent::Revalidate);
-        let inventory = inventory_runfiles(&self.scope.workspace, self.scope.global.clone());
-        let current = discovery_revisions(&flatten_inventory(&inventory));
-        if current == expected {
-            Ok(())
-        } else {
-            Err("Tailscale recovery inventory changed before teardown".to_string())
-        }
-    }
-
-    fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState {
-        self.ledger
-            .borrow_mut()
-            .push(LifecycleEvent::Listener(pid, port));
-        self.listeners
-            .pop_front()
-            .expect("scripted Tailscale recovery listener state")
-    }
-
-    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError> {
-        self.ledger
-            .borrow_mut()
-            .push(scripted_remove_event(captured));
-        remove_if_unchanged(captured)
-    }
-
-    fn reconcile_tailscale(
-        &mut self,
-        ownership: &TailscaleServeOwnership,
-        captures: &mut [CapturedRegistration],
-    ) -> ProxyCleanupReport {
-        let ledger = Rc::clone(&self.ledger);
-        reconcile_owned_proxy(
-            ownership,
-            &self.serve,
-            if ownership.apply_confirmed {
-                ProxyReconcileContext::EstablishedOwnership
-            } else {
-                ProxyReconcileContext::AmbiguousApply
-            },
-            || {
-                confirm_tailscale_captures_with(captures, ownership, |captured, raw| {
-                    ledger.borrow_mut().push(LifecycleEvent::Replace(
-                        captured.path.clone(),
-                        ferric_bench::sha256_bytes(&captured.raw),
-                        ferric_bench::sha256_bytes(raw),
-                    ));
-                    replace_if_unchanged(captured, raw)
-                })
-            },
-        )
-    }
-}
-
-struct RevisionCheckingDownEffects {
-    scope: ManagedDiscoveryScope,
-    listeners: VecDeque<ListenerState>,
-    removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
-    ledger: EventLedger,
-}
-
-impl DownEffects for RevisionCheckingDownEffects {
-    fn revalidate_registrations(
-        &mut self,
-        expected: &[RegistrationRevision],
-    ) -> Result<(), String> {
-        self.ledger.borrow_mut().push(LifecycleEvent::Revalidate);
-        let inventory = inventory_runfiles(&self.scope.workspace, self.scope.global.clone());
-        let current = discovery_revisions(&flatten_inventory(&inventory));
-        if current == expected {
-            Ok(())
-        } else {
-            Err("composition inventory changed before teardown".to_string())
-        }
-    }
-
-    fn listener_state(&mut self, pid: u32, port: u16) -> ListenerState {
-        self.ledger
-            .borrow_mut()
-            .push(LifecycleEvent::Listener(pid, port));
-        self.listeners
-            .pop_front()
-            .expect("scripted transition listener state")
-    }
-
-    fn remove(&mut self, captured: &CapturedRegistration) -> Result<RemovalOutcome, RemovalError> {
-        self.ledger
-            .borrow_mut()
-            .push(scripted_remove_event(captured));
-        self.removals
-            .pop_front()
-            .expect("scripted transition removal")
-    }
-}
-
-struct ScriptedPublicationEffects {
-    final_removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
-    stage_removals: VecDeque<Result<RemovalOutcome, RemovalError>>,
-    ledger: EventLedger,
-}
-
-impl ScriptedPublicationEffects {
-    fn new(
-        final_removals: impl IntoIterator<Item = Result<RemovalOutcome, RemovalError>>,
-        stage_removals: impl IntoIterator<Item = Result<RemovalOutcome, RemovalError>>,
-        ledger: EventLedger,
-    ) -> Self {
-        Self {
-            final_removals: final_removals.into_iter().collect(),
-            stage_removals: stage_removals.into_iter().collect(),
-            ledger,
-        }
-    }
-}
-
-impl PublicationCompensationEffects for ScriptedPublicationEffects {
-    fn replace_final(
-        &mut self,
-        _captured: &CapturedRegistration,
-        _replacement: &[u8],
-    ) -> Result<ReplacementOutcome, ReplacementError> {
-        panic!("non-Tailscale scripted publication must not confirm Serve ownership")
-    }
-
-    fn remove_final(
-        &mut self,
-        captured: &CapturedRegistration,
-    ) -> Result<RemovalOutcome, RemovalError> {
-        self.ledger.borrow_mut().push(LifecycleEvent::Remove(
-            captured.path.clone(),
-            ferric_bench::sha256_bytes(&captured.raw),
-        ));
-        self.final_removals
-            .pop_front()
-            .expect("scripted publication-final removal")
-    }
-
-    fn remove_stage(&mut self, stage: &PublicationStage) -> Result<RemovalOutcome, RemovalError> {
-        self.ledger.borrow_mut().push(LifecycleEvent::RemoveStage(
-            stage.path.clone(),
-            stage.raw.as_deref().map(ferric_bench::sha256_bytes),
-        ));
-        self.stage_removals
-            .pop_front()
-            .expect("scripted publication-stage removal")
-    }
-}
-
-struct CompositionPersistenceEffects {
-    failure: Option<(PathBuf, PersistencePhase)>,
-    retain_stage_after_persist: Option<PathBuf>,
-    serializations: usize,
-    ledger: EventLedger,
-}
-
-impl CompositionPersistenceEffects {
-    fn default_with(ledger: EventLedger) -> Self {
-        Self {
-            failure: None,
-            retain_stage_after_persist: None,
-            serializations: 0,
-            ledger,
-        }
-    }
-
-    fn failing(final_path: &Path, phase: PersistencePhase, ledger: EventLedger) -> Self {
-        Self {
-            failure: Some((final_path.to_path_buf(), phase)),
-            ..Self::default_with(ledger)
-        }
-    }
-
-    fn retaining_committed_stage(final_path: &Path, ledger: EventLedger) -> Self {
-        Self {
-            retain_stage_after_persist: Some(final_path.to_path_buf()),
-            ..Self::default_with(ledger)
-        }
-    }
-
-    fn fails(&self, final_path: &Path, phase: PersistencePhase) -> bool {
-        self.failure
-            .as_ref()
-            .is_some_and(|(path, target)| path == final_path && *target == phase)
-    }
-
-    fn record(&self, phase: PersistencePhase, final_path: &Path) {
-        self.ledger
-            .borrow_mut()
-            .push(LifecycleEvent::Persistence(phase, final_path.to_path_buf()));
-    }
-
-    fn injected(phase: PersistencePhase) -> io::Error {
-        io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("injected {phase:?} composition failure"),
-        )
-    }
-}
-
-impl PersistenceEffects for CompositionPersistenceEffects {
-    fn serialize(&mut self, runfile: &ServerRunfile) -> serde_json::Result<Vec<u8>> {
-        self.serializations += 1;
-        serde_json::to_vec_pretty(runfile)
-    }
-
-    fn create_stage(&mut self, final_path: &Path, parent: &Path) -> io::Result<NamedTempFile> {
-        self.record(PersistencePhase::CreateStage, final_path);
-        if self.fails(final_path, PersistencePhase::CreateStage) {
-            return Err(Self::injected(PersistencePhase::CreateStage));
-        }
-        tempfile::Builder::new()
-            .prefix(".server-registration-composition-")
-            .tempfile_in(parent)
-    }
-
-    fn write_all(
-        &mut self,
-        final_path: &Path,
-        stage: &mut NamedTempFile,
-        raw: &[u8],
-    ) -> io::Result<()> {
-        self.record(PersistencePhase::WriteAll, final_path);
-        if self.fails(final_path, PersistencePhase::WriteAll) {
-            stage.write_all(&raw[..raw.len().min(7)])?;
-            return Err(Self::injected(PersistencePhase::WriteAll));
-        }
-        stage.write_all(raw)
-    }
-
-    fn flush(&mut self, final_path: &Path, stage: &mut NamedTempFile) -> io::Result<()> {
-        self.record(PersistencePhase::Flush, final_path);
-        if self.fails(final_path, PersistencePhase::Flush) {
-            return Err(Self::injected(PersistencePhase::Flush));
-        }
-        stage.as_file_mut().flush()
-    }
-
-    fn sync_file(&mut self, final_path: &Path, stage: &NamedTempFile) -> io::Result<()> {
-        self.record(PersistencePhase::FileSync, final_path);
-        if self.fails(final_path, PersistencePhase::FileSync) {
-            return Err(Self::injected(PersistencePhase::FileSync));
-        }
-        stage.as_file().sync_all()
-    }
-
-    fn persist_noclobber(
-        &mut self,
-        final_path: &Path,
-        mut stage: NamedTempFile,
-    ) -> Result<(), StagePersistError> {
-        self.record(PersistencePhase::PersistNoClobber, final_path);
-        if self.fails(final_path, PersistencePhase::PersistNoClobber) {
-            return Err(StagePersistError {
-                error: Self::injected(PersistencePhase::PersistNoClobber),
-                stage,
-            });
-        }
-        if self
-            .retain_stage_after_persist
-            .as_ref()
-            .is_some_and(|target| target == final_path)
-        {
-            if let Err(error) = fs::hard_link(stage.path(), final_path) {
-                return Err(StagePersistError { error, stage });
-            }
-            stage.disable_cleanup(true);
-            drop(stage);
-            return Ok(());
-        }
-        stage
-            .persist_noclobber(final_path)
-            .map(drop)
-            .map_err(|error| StagePersistError {
-                error: error.error,
-                stage: error.file,
-            })
-    }
-
-    fn sync_parent(&mut self, final_path: &Path, _parent: &Path) -> io::Result<()> {
-        self.record(PersistencePhase::ParentSync, final_path);
-        if self.fails(final_path, PersistencePhase::ParentSync) {
-            return Err(Self::injected(PersistencePhase::ParentSync));
-        }
-        Ok(())
-    }
-}
-
-struct FilesystemPublicationEffects {
-    ledger: EventLedger,
-}
-
-impl PublicationCompensationEffects for FilesystemPublicationEffects {
-    fn replace_final(
-        &mut self,
-        captured: &CapturedRegistration,
-        replacement: &[u8],
-    ) -> Result<ReplacementOutcome, ReplacementError> {
-        self.ledger.borrow_mut().push(LifecycleEvent::Replace(
-            captured.path.clone(),
-            ferric_bench::sha256_bytes(&captured.raw),
-            ferric_bench::sha256_bytes(replacement),
-        ));
-        replace_if_unchanged(captured, replacement)
-    }
-
-    fn remove_final(
-        &mut self,
-        captured: &CapturedRegistration,
-    ) -> Result<RemovalOutcome, RemovalError> {
-        self.ledger
-            .borrow_mut()
-            .push(scripted_remove_event(captured));
-        remove_if_unchanged(captured)
-    }
-
-    fn remove_stage(&mut self, stage: &PublicationStage) -> Result<RemovalOutcome, RemovalError> {
-        self.ledger.borrow_mut().push(LifecycleEvent::RemoveStage(
-            stage.path.clone(),
-            stage.raw.as_deref().map(ferric_bench::sha256_bytes),
-        ));
-        remove_publication_stage_if_unchanged(stage)
-    }
-}
-
-struct ScriptedAdoptionEffects {
-    replacements: VecDeque<Result<ReplacementOutcome, ReplacementError>>,
-    ledger: EventLedger,
-}
-
-impl ScriptedAdoptionEffects {
-    fn new(
-        replacements: impl IntoIterator<Item = Result<ReplacementOutcome, ReplacementError>>,
-        ledger: EventLedger,
-    ) -> Self {
-        Self {
-            replacements: replacements.into_iter().collect(),
-            ledger,
-        }
-    }
-}
-
-impl AdoptionEffects for ScriptedAdoptionEffects {
-    fn replace(
-        &mut self,
-        captured: &CapturedRegistration,
-        replacement: &[u8],
-    ) -> Result<ReplacementOutcome, ReplacementError> {
-        self.ledger.borrow_mut().push(LifecycleEvent::Replace(
-            captured.path.clone(),
-            ferric_bench::sha256_bytes(&captured.raw),
-            ferric_bench::sha256_bytes(replacement),
-        ));
-        self.replacements
-            .pop_front()
-            .expect("scripted conditional-replacement result")
-    }
-}
-
-struct FilesystemAdoptionEffects {
-    ledger: EventLedger,
-}
-
-impl AdoptionEffects for FilesystemAdoptionEffects {
-    fn replace(
-        &mut self,
-        captured: &CapturedRegistration,
-        replacement: &[u8],
-    ) -> Result<ReplacementOutcome, ReplacementError> {
-        self.ledger.borrow_mut().push(scripted_replace_event(
-            &captured.path,
-            &captured.raw,
-            replacement,
-        ));
-        replace_if_unchanged(captured, replacement)
-    }
-}
-
-fn render_down_with_ledger(report: &DownReport, ledger: &EventLedger) -> RenderedDownReport {
-    let rendered = render_down_report(report);
-    ledger.borrow_mut().push(LifecycleEvent::Render);
-    rendered
-}
-
-fn render_publication_with_ledger(
-    report: &PublicationCompletionReport,
+/// Scripted persistence that also records each phase in the lifecycle ledger.
+fn ledgered(
+    effects: ScriptedPersistenceEffects,
     ledger: &EventLedger,
-) -> RenderedPublicationReport {
-    let rendered = render_publication_report(report);
+) -> ScriptedPersistenceEffects {
+    let ledger = Rc::clone(ledger);
+    effects.on_phase(move |phase, path| {
+        ledger
+            .borrow_mut()
+            .push(LifecycleEvent::Persistence(phase, path.to_path_buf()));
+    })
+}
+
+/// Record the render step in the ledger once `rendered` exists.
+fn ledger_rendered(rendered: Rendered, ledger: &EventLedger) -> Rendered {
     ledger.borrow_mut().push(LifecycleEvent::Render);
     rendered
 }
 
-fn render_adoption_with_ledger(
-    report: &AdoptionReport,
-    ledger: &EventLedger,
-) -> RenderedAdoptionReport {
-    let rendered = render_adoption_report(report);
-    ledger.borrow_mut().push(LifecycleEvent::Render);
-    rendered
-}
-
-fn assert_down_failure_kept_recovery(report: &DownReport, rendered: &RenderedDownReport) {
+fn assert_down_failure_kept_recovery(report: &DownReport, rendered: &Rendered) {
     assert!(!report.success);
     assert_eq!(report.disposition, DownDisposition::Failed);
     assert!(
@@ -3779,7 +3399,7 @@ fn down_signals_only_the_retained_handle() {
                     identity: expected.clone(),
                     listener: listener.clone(),
                 }));
-            let mut effects = ScriptedDownEffects::new(
+            let mut effects = ScriptedEffects::new(
                 [ListenerState::Absent],
                 [Ok(RemovalOutcome::Removed)],
                 Rc::clone(&ledger),
@@ -3814,7 +3434,7 @@ fn down_signals_only_the_retained_handle() {
                 .unwrap(),
                 &mut effects,
             );
-            let rendered = render_down_with_ledger(&report, &ledger);
+            let rendered = ledger_rendered(render_down_report(&report), &ledger);
 
             assert!(report.success, "{case}, health={recorded_health:?}");
             assert_eq!(report.disposition, DownDisposition::Stopped);
@@ -3884,7 +3504,7 @@ fn down_cleans_proxy_before_process() {
                 listener: ListenerState::OwnedByTarget,
             }),
         );
-        let mut effects = ScriptedDownEffects::new(
+        let mut effects = ScriptedEffects::new(
             [ListenerState::Absent],
             [Ok(RemovalOutcome::Removed)],
             Rc::clone(&ledger),
@@ -4061,7 +3681,7 @@ fn down_proxy_failure_matrix_preserves_journal() {
                 listener: ListenerState::OwnedByTarget,
             }));
         let revision = representative_revision(&capture);
-        let mut effects = ScriptedDownEffects::new(
+        let mut effects = ScriptedEffects::new(
             [ListenerState::Absent],
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Rc::clone(&ledger),
@@ -4214,7 +3834,7 @@ fn down_proxy_failure_matrix_preserves_journal() {
                 identity: expected.clone(),
                 listener: ListenerState::OwnedByTarget,
             }));
-        let mut effects = ScriptedDownEffects::new(
+        let mut effects = ScriptedEffects::new(
             if expect_proxy_cleanup {
                 vec![ListenerState::Absent]
             } else {
@@ -4293,7 +3913,7 @@ fn down_retries_absent_proxy_and_stale_process() {
         ))],
         Rc::clone(&ledger),
     );
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent],
         [Ok(RemovalOutcome::Removed)],
         Rc::clone(&ledger),
@@ -4326,7 +3946,7 @@ fn down_retries_absent_proxy_and_stale_process() {
     drift_absent.cleanup_semantics_pinned = false;
     let ledger = Rc::new(RefCell::new(Vec::new()));
     let serve = ScriptedTailscaleServe::new([Ok(drift_absent)], Rc::clone(&ledger));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent],
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
@@ -4382,7 +4002,7 @@ fn down_retries_absent_proxy_and_stale_process() {
     );
     let process = ScriptedProcess::new(pid, "already-exited", Rc::clone(&ledger))
         .with_inspection(Err(ProcessError::NotFound(pid)));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent],
         [Ok(RemovalOutcome::Removed)],
         Rc::clone(&ledger),
@@ -4416,7 +4036,7 @@ fn down_retries_absent_proxy_and_stale_process() {
         resolution: Resolution::Empty,
     });
     let repeated_ledger = Rc::new(RefCell::new(Vec::new()));
-    let mut repeated = ScriptedDownEffects::new(
+    let mut repeated = ScriptedEffects::new(
         Vec::<ListenerState>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&repeated_ledger),
@@ -4425,19 +4045,6 @@ fn down_retries_absent_proxy_and_stale_process() {
     assert!(empty.success);
     assert_eq!(empty.disposition, DownDisposition::Empty);
     assert!(repeated_ledger.borrow().is_empty());
-}
-
-#[test]
-fn tailscale_fault_seam_clause_matrix() {
-    tailscale_pre_mutation_failures_never_apply();
-    tailscale_launch_failure_matrix_holds_or_compensates_exactly();
-    status_reports_each_proxy_state();
-    down_cleans_proxy_before_process();
-    down_proxy_failure_matrix_preserves_journal();
-    down_retries_absent_proxy_and_stale_process();
-    legacy_tailscale_registration_remains_unowned();
-    status_recovery_guidance_respects_native_authority();
-    status_never_hides_tailscale_ownership_conflicts();
 }
 
 #[test]
@@ -4455,7 +4062,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
     let process = ScriptedProcess::new(pid, "signal-error", Rc::clone(&ledger))
         .with_inspection(Ok(facts.clone()))
         .with_terminate(Err(ProcessError::Operation("access denied".to_string())));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         Vec::<ListenerState>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
@@ -4471,7 +4078,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
         },
         &mut effects,
     );
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert_down_failure_kept_recovery(&report, &rendered);
     assert_eq!(
         *ledger.borrow(),
@@ -4485,7 +4092,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
 
     let ledger = Rc::new(RefCell::new(Vec::new()));
     let process = ScriptedProcess::new(pid, "revision-change", Rc::clone(&ledger));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         Vec::<ListenerState>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
@@ -4504,7 +4111,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
         },
         &mut effects,
     );
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert_down_failure_kept_recovery(&report, &rendered);
     assert_eq!(
         *ledger.borrow(),
@@ -4517,7 +4124,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
         .with_inspection(Ok(facts.clone()))
         .with_terminate(Ok(false))
         .with_wait(Ok(true));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent],
         [Ok(RemovalOutcome::Removed)],
         Rc::clone(&ledger),
@@ -4533,7 +4140,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
         },
         &mut effects,
     );
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert!(report.success);
     assert_eq!(report.disposition, DownDisposition::AlreadyExited);
     assert!(!report.signalled);
@@ -4571,7 +4178,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
         let process = ScriptedProcess::new(pid, generation, Rc::clone(&ledger))
             .with_inspection(Ok(facts.clone()))
             .with_wait(wait);
-        let mut effects = ScriptedDownEffects::new(
+        let mut effects = ScriptedEffects::new(
             Vec::<ListenerState>::new(),
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Rc::clone(&ledger),
@@ -4587,7 +4194,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
             },
             &mut effects,
         );
-        let rendered = render_down_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_down_report(&report), &ledger);
         assert_down_failure_kept_recovery(&report, &rendered);
         assert!(report.signalled);
         assert!(!report.exit_proven);
@@ -4615,7 +4222,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
         let ledger = Rc::new(RefCell::new(Vec::new()));
         let process = ScriptedProcess::new(pid, "listener-held", Rc::clone(&ledger))
             .with_inspection(Ok(facts.clone()));
-        let mut effects = ScriptedDownEffects::new(
+        let mut effects = ScriptedEffects::new(
             [residual],
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Rc::clone(&ledger),
@@ -4631,7 +4238,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
             },
             &mut effects,
         );
-        let rendered = render_down_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_down_report(&report), &ledger);
         assert_down_failure_kept_recovery(&report, &rendered);
         assert!(report.signalled, "{case}");
         assert!(report.exit_proven, "{case}");
@@ -4653,7 +4260,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
     let ledger = Rc::new(RefCell::new(Vec::new()));
     let process = ScriptedProcess::new(pid, "released", Rc::clone(&ledger))
         .with_inspection(Ok(facts.clone()));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent],
         [Ok(RemovalOutcome::Removed)],
         Rc::clone(&ledger),
@@ -4669,7 +4276,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
         },
         &mut effects,
     );
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert_eq!(report.disposition, DownDisposition::Stopped);
     assert!(report.success);
     assert!(
@@ -4694,7 +4301,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
     let ledger = Rc::new(RefCell::new(Vec::new()));
     let process = ScriptedProcess::new(pid, "already-exited", Rc::clone(&ledger))
         .with_inspection(Err(ProcessError::NotFound(pid)));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent],
         [Ok(RemovalOutcome::Removed)],
         Rc::clone(&ledger),
@@ -4710,7 +4317,7 @@ fn down_exit_and_listener_postconditions_gate_success() {
         },
         &mut effects,
     );
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert!(report.success);
     assert_eq!(report.disposition, DownDisposition::AlreadyExited);
     assert!(!report.signalled);
@@ -4732,12 +4339,6 @@ fn down_exit_and_listener_postconditions_gate_success() {
             LifecycleEvent::Render,
         ]
     );
-
-    // Retained wait is the down-process postcondition; the companion
-    // spawned-child seam proves that a known-exited owned child is also
-    // reaped before a residual listener can turn the result into failure.
-    // Invoke it from the frozen E04-B name as required by the locked row.
-    stop_managed_child_reaps_proven_exit_before_listener_failure();
 }
 
 #[test]
@@ -4751,7 +4352,7 @@ fn down_cleanup_outcome_matrix() {
             identity: stopped_expected.clone(),
             listener: ListenerState::OwnedByTarget,
         }));
-    let mut stopped_effects = ScriptedDownEffects::new(
+    let mut stopped_effects = ScriptedEffects::new(
         [ListenerState::Absent],
         [Ok(RemovalOutcome::Removed)],
         Rc::clone(&stopped_ledger),
@@ -4767,7 +4368,7 @@ fn down_cleanup_outcome_matrix() {
         },
         &mut stopped_effects,
     );
-    let stopped_rendered = render_down_with_ledger(&stopped_report, &stopped_ledger);
+    let stopped_rendered = ledger_rendered(render_down_report(&stopped_report), &stopped_ledger);
     assert_eq!(stopped_report.disposition, DownDisposition::Stopped);
     assert!(stopped_report.success);
     assert!(
@@ -4849,7 +4450,7 @@ fn down_cleanup_outcome_matrix() {
         let port = capture.runfile.port;
         let ledger = Rc::new(RefCell::new(Vec::new()));
         let mut effects =
-            ScriptedDownEffects::new([ListenerState::Absent], [outcome], Rc::clone(&ledger));
+            ScriptedEffects::new([ListenerState::Absent], [outcome], Rc::clone(&ledger));
         let report = execute_down_plan(
             DownPlan::<ScriptedProcess>::Stale {
                 captures: vec![capture.clone()],
@@ -4857,7 +4458,7 @@ fn down_cleanup_outcome_matrix() {
             },
             &mut effects,
         );
-        let rendered = render_down_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_down_report(&report), &ledger);
         assert_eq!(report.success, complete, "{name}");
         assert_eq!(
             report.disposition,
@@ -4905,7 +4506,7 @@ fn down_cleanup_outcome_matrix() {
     global.scope = RegistrationScope::Global;
     global.path = discovery_fixture_path("partial-global");
     let ledger = Rc::new(RefCell::new(Vec::new()));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent, ListenerState::Absent],
         [
             Ok(RemovalOutcome::Removed),
@@ -4925,7 +4526,7 @@ fn down_cleanup_outcome_matrix() {
         },
         &mut effects,
     );
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert_eq!(report.disposition, DownDisposition::CleanupPartial);
     assert!(!report.success);
     assert_eq!(report.registrations[0].coordinate.path, local.path);
@@ -4954,7 +4555,7 @@ fn down_cleanup_outcome_matrix() {
     let mut duplicate_alias = physical.clone();
     duplicate_alias.scope = RegistrationScope::Global;
     let ledger = Rc::new(RefCell::new(Vec::new()));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent],
         [Ok(RemovalOutcome::Removed)],
         Rc::clone(&ledger),
@@ -4966,7 +4567,7 @@ fn down_cleanup_outcome_matrix() {
         },
         &mut effects,
     );
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert!(report.success);
     assert_eq!(report.registrations.len(), 2);
     assert!(
@@ -4992,7 +4593,7 @@ fn down_cleanup_outcome_matrix() {
 
     duplicate_alias.raw.push(b' ');
     let ledger = Rc::new(RefCell::new(Vec::new()));
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         Vec::<ListenerState>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
@@ -5004,7 +4605,7 @@ fn down_cleanup_outcome_matrix() {
         },
         &mut effects,
     );
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert_down_failure_kept_recovery(&report, &rendered);
     assert_eq!(*ledger.borrow(), vec![LifecycleEvent::Render]);
 }
@@ -5142,7 +4743,7 @@ fn ambiguous_or_unverifiable_down_is_non_mutating() {
                     write_runfile_slot(RegistrationScope::Local, &local_path, &local_runfile);
                 let mut global_runfile = local_runfile.clone();
                 global_runfile.pid = 6451;
-                global_runfile.process_identity = Some(discovery_fixture_identity(6451));
+                global_runfile.process_identity = Some(process_identity(6451));
                 let (global, global_raw) =
                     write_runfile_slot(RegistrationScope::Global, &global_path, &global_runfile);
                 (
@@ -5203,17 +4804,12 @@ fn ambiguous_or_unverifiable_down_is_non_mutating() {
                         health: HealthState::NotProbed,
                     }
                 };
-            let label = registration_label(capture.scope, &capture.path);
             LifecycleObservation {
                 candidate: Candidate {
-                    coordinate: RegistrationCoordinate {
-                        scope: capture.scope,
-                        path: capture.path.clone(),
-                    },
+                    coordinate: capture.coordinate(),
                     runfile: Some(capture.runfile.clone()),
                     state,
                 },
-                label,
                 capture: Some(capture),
                 process: None,
             }
@@ -5223,13 +4819,13 @@ fn ambiguous_or_unverifiable_down_is_non_mutating() {
             "{blocker} must become a typed mutation blocker through inventory and resolution"
         );
         let plan = down_plan_from_lifecycle(discovery);
-        let mut effects = ScriptedDownEffects::new(
+        let mut effects = ScriptedEffects::new(
             Vec::<ListenerState>::new(),
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Rc::clone(&ledger),
         );
         let report = execute_down_plan(plan, &mut effects);
-        let rendered = render_down_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_down_report(&report), &ledger);
         assert_eq!(report.disposition, DownDisposition::Blocked, "{blocker}");
         assert!(!report.success, "{blocker}");
         assert!(!report.signalled, "{blocker}");
@@ -5304,13 +4900,13 @@ fn tailscale_blocked_commands_preserve_records_and_never_reset() {
     assert_eq!(std::fs::read(&registration_path).unwrap(), original);
 
     let plan = down_plan_from_lifecycle(discovery);
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         Vec::<ListenerState>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
     );
     let report = execute_down_plan(plan, &mut effects);
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert_eq!(report.disposition, DownDisposition::Blocked);
     assert!(!report.success);
     assert!(!report.signalled);
@@ -5328,10 +4924,7 @@ fn live_v1_guidance_and_explicit_adoption() {
     let adopted_raw = adoption_fixture_replacement_raw(&captures, &facts);
     let coordinates = captures
         .iter()
-        .map(|capture| RegistrationCoordinate {
-            scope: capture.scope,
-            path: capture.path.clone(),
-        })
+        .map(|capture| capture.coordinate())
         .collect::<Vec<_>>();
     let issues = vec![ResolutionIssue {
         coordinates: coordinates.clone(),
@@ -5349,7 +4942,6 @@ fn live_v1_guidance_and_explicit_adoption() {
         .iter()
         .enumerate()
         .map(|(index, capture)| ManagedRegistrationObservation {
-            id: ObservationId(index),
             coordinate: coordinates[index].clone(),
             promised: None,
             state: ManagedRegistrationState::Captured {
@@ -5374,10 +4966,13 @@ fn live_v1_guidance_and_explicit_adoption() {
     assert_eq!(rendered_status.stdout.len(), managed.observations.len() + 2);
     assert_eq!(
         &rendered_status.stdout[..managed.observations.len()],
-        managed
-            .observations
+        captures
             .iter()
-            .map(expected_registration_status)
+            .map(|capture| format!(
+                "[captured] {} registration {}: schema=1 engine=LlamaServer pid={pid} base-url=http://127.0.0.1:7601/v1 recorded-identity=legacy-none observed-identity=legacy-live-pid:{pid} listener=unverified health=not-probed",
+                capture.scope,
+                capture.path.display()
+            ))
             .collect::<Vec<_>>()
     );
     assert_eq!(
@@ -5411,7 +5006,6 @@ fn live_v1_guidance_and_explicit_adoption() {
             promised_origins: Vec::new(),
         },
         observations: vec![ManagedRegistrationObservation {
-            id: ObservationId(0),
             coordinate: local_only_coordinate.clone(),
             promised: None,
             state: ManagedRegistrationState::Captured {
@@ -5445,13 +5039,14 @@ fn live_v1_guidance_and_explicit_adoption() {
         },
     });
     let local_only_ledger = Rc::new(RefCell::new(Vec::new()));
-    let mut local_only_effects = ScriptedDownEffects::new(
+    let mut local_only_effects = ScriptedEffects::new(
         Vec::<ListenerState>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&local_only_ledger),
     );
     let local_only_report = execute_down_plan(local_only_plan, &mut local_only_effects);
-    let local_only_rendered = render_down_with_ledger(&local_only_report, &local_only_ledger);
+    let local_only_rendered =
+        ledger_rendered(render_down_report(&local_only_report), &local_only_ledger);
     assert_eq!(local_only_report.disposition, DownDisposition::Blocked);
     assert!(!local_only_report.signalled);
     assert_eq!(local_only_report.registrations.len(), 1);
@@ -5503,13 +5098,13 @@ fn live_v1_guidance_and_explicit_adoption() {
         resolution: Resolution::Unverifiable { issues },
     });
     let down_ledger = Rc::new(RefCell::new(Vec::new()));
-    let mut down_effects = ScriptedDownEffects::new(
+    let mut down_effects = ScriptedEffects::new(
         Vec::<ListenerState>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&down_ledger),
     );
     let down_report = execute_down_plan(plan, &mut down_effects);
-    let rendered_down = render_down_with_ledger(&down_report, &down_ledger);
+    let rendered_down = ledger_rendered(render_down_report(&down_report), &down_ledger);
     assert_eq!(down_report.disposition, DownDisposition::Blocked);
     assert_eq!(down_report.registrations.len(), 2);
     assert!(
@@ -5539,7 +5134,7 @@ fn live_v1_guidance_and_explicit_adoption() {
         .with_inspection(Ok(facts.clone()))
         .with_wait(Ok(false));
     let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-    let mut effects = ScriptedAdoptionEffects::new(
+    let mut effects = ScriptedEffects::adoption(
         [
             Ok(ReplacementOutcome::Replaced),
             Ok(ReplacementOutcome::Replaced),
@@ -5547,7 +5142,7 @@ fn live_v1_guidance_and_explicit_adoption() {
         Rc::clone(&ledger),
     );
     let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-    let rendered = render_adoption_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_adoption_report(&report), &ledger);
 
     assert!(report.success);
     assert_eq!(report.disposition, AdoptionDisposition::Adopted);
@@ -5576,13 +5171,6 @@ fn live_v1_guidance_and_explicit_adoption() {
             LifecycleEvent::Render,
         ]
     );
-
-    // The exact E04-E acceptance name must execute the negative
-    // executable/argv/listener, conditional replacement, final-generation
-    // and rollback rows; differently named focused tests remain useful but
-    // cannot carry this frozen row on their own.
-    legacy_adoption_coordinates_require_closed_engine_and_every_recorded_value();
-    legacy_adoption_transition_and_rollback_matrix();
 }
 
 #[test]
@@ -5661,12 +5249,12 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         let process =
             ScriptedProcess::new(pid, case, Rc::clone(&ledger)).with_inspection(Ok(blocked_facts));
         let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-        let mut effects = ScriptedAdoptionEffects::new(
+        let mut effects = ScriptedEffects::adoption(
             Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
             Rc::clone(&ledger),
         );
         let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-        let rendered = render_adoption_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_adoption_report(&report), &ledger);
         assert_eq!(report.disposition, AdoptionDisposition::Blocked, "{case}");
         assert!(
             report
@@ -5698,12 +5286,12 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         Err("retained handle unavailable".to_string()),
         Rc::clone(&ledger),
     );
-    let mut effects = ScriptedAdoptionEffects::new(
+    let mut effects = ScriptedEffects::adoption(
         Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
         Rc::clone(&ledger),
     );
     let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-    render_adoption_with_ledger(&report, &ledger);
+    ledger_rendered(render_adoption_report(&report), &ledger);
     assert_eq!(report.disposition, AdoptionDisposition::Blocked);
     assert_eq!(
         *ledger.borrow(),
@@ -5715,12 +5303,12 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         Err(ProcessError::Operation("inspection denied".to_string())),
     );
     let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-    let mut effects = ScriptedAdoptionEffects::new(
+    let mut effects = ScriptedEffects::adoption(
         Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
         Rc::clone(&ledger),
     );
     let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-    render_adoption_with_ledger(&report, &ledger);
+    ledger_rendered(render_adoption_report(&report), &ledger);
     assert_eq!(report.disposition, AdoptionDisposition::Blocked);
     assert_eq!(
         *ledger.borrow(),
@@ -5743,12 +5331,12 @@ fn legacy_adoption_transition_and_rollback_matrix() {
             .with_inspection(Ok(facts.clone()))
             .with_wait(wait);
         let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-        let mut effects = ScriptedAdoptionEffects::new(
+        let mut effects = ScriptedEffects::adoption(
             Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
             Rc::clone(&ledger),
         );
         let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-        render_adoption_with_ledger(&report, &ledger);
+        ledger_rendered(render_adoption_report(&report), &ledger);
         assert_eq!(report.disposition, AdoptionDisposition::Blocked, "{case}");
         assert_eq!(
             *ledger.borrow(),
@@ -5773,9 +5361,9 @@ fn legacy_adoption_transition_and_rollback_matrix() {
             .collect::<Vec<_>>();
         outcomes.push(Ok(ReplacementOutcome::Absent));
         outcomes.extend((0..failed_index).map(|_| Ok(ReplacementOutcome::Replaced)));
-        let mut effects = ScriptedAdoptionEffects::new(outcomes, Rc::clone(&ledger));
+        let mut effects = ScriptedEffects::adoption(outcomes, Rc::clone(&ledger));
         let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-        let rendered = render_adoption_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_adoption_report(&report), &ledger);
         assert!(!report.success);
         let expected_disposition = if failed_index == 0 {
             AdoptionDisposition::Failed
@@ -5841,9 +5429,9 @@ fn legacy_adoption_transition_and_rollback_matrix() {
             .with_inspection(Ok(facts.clone()))
             .with_wait(Ok(false));
         let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-        let mut effects = ScriptedAdoptionEffects::new([outcome], Rc::clone(&ledger));
+        let mut effects = ScriptedEffects::adoption([outcome], Rc::clone(&ledger));
         let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-        let rendered = render_adoption_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_adoption_report(&report), &ledger);
         assert_eq!(report.disposition, AdoptionDisposition::Failed, "{case}");
         assert_eq!(
             rendered.stdout.last().map(String::as_str),
@@ -5877,7 +5465,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         .with_inspection(Ok(changed_facts))
         .with_wait(Ok(false));
     let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-    let mut effects = ScriptedAdoptionEffects::new(
+    let mut effects = ScriptedEffects::adoption(
         [
             Ok(ReplacementOutcome::Replaced),
             Ok(ReplacementOutcome::Replaced),
@@ -5887,7 +5475,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         Rc::clone(&ledger),
     );
     let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-    render_adoption_with_ledger(&report, &ledger);
+    ledger_rendered(render_adoption_report(&report), &ledger);
     assert_eq!(report.disposition, AdoptionDisposition::RolledBack);
     assert!(report.registrations.iter().all(|registration| {
         registration.rollback == Some(AdoptionRollbackOutcome::LegacyRestored)
@@ -5929,7 +5517,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
             .with_inspection(final_inspection)
             .with_wait(Ok(false));
         let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-        let mut effects = ScriptedAdoptionEffects::new(
+        let mut effects = ScriptedEffects::adoption(
             [
                 Ok(ReplacementOutcome::Replaced),
                 Ok(ReplacementOutcome::Replaced),
@@ -5939,7 +5527,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
             Rc::clone(&ledger),
         );
         let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-        render_adoption_with_ledger(&report, &ledger);
+        ledger_rendered(render_adoption_report(&report), &ledger);
         assert_eq!(
             report.disposition,
             AdoptionDisposition::RolledBack,
@@ -5991,7 +5579,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
             .with_inspection(Ok(facts.clone()))
             .with_wait(Ok(false));
         let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-        let mut effects = ScriptedAdoptionEffects::new(
+        let mut effects = ScriptedEffects::adoption(
             [
                 Ok(ReplacementOutcome::Replaced),
                 Ok(ReplacementOutcome::Absent),
@@ -6000,7 +5588,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
             Rc::clone(&ledger),
         );
         let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-        let rendered = render_adoption_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_adoption_report(&report), &ledger);
         assert_eq!(
             report.disposition,
             AdoptionDisposition::RecoveryPartial,
@@ -6035,7 +5623,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         .with_inspection(Ok(facts.clone()))
         .with_wait(Ok(false));
     let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-    let mut effects = ScriptedAdoptionEffects::new(
+    let mut effects = ScriptedEffects::adoption(
         [
             Ok(ReplacementOutcome::Replaced),
             Ok(ReplacementOutcome::Absent),
@@ -6044,7 +5632,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         Rc::clone(&ledger),
     );
     let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-    let rendered = render_adoption_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_adoption_report(&report), &ledger);
     assert_eq!(report.disposition, AdoptionDisposition::RecoveryPartial);
     assert_eq!(
         report.registrations[0].rollback,
@@ -6070,7 +5658,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
     let mut same_path_alias = captures[0].clone();
     same_path_alias.scope = RegistrationScope::Global;
     let same_path_captures = vec![captures[0].clone(), same_path_alias.clone()];
-    assert_eq!(adoption_mutation_groups(&same_path_captures).len(), 1);
+    assert_eq!(group_by_path(&same_path_captures, |_| true).len(), 1);
     let alias_root = tempfile::tempdir().unwrap();
     std::fs::create_dir(alias_root.path().join("nested")).unwrap();
     let alias_file = alias_root.path().join("registration.json");
@@ -6095,9 +5683,9 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         .with_wait(Ok(false));
     let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
     let mut effects =
-        ScriptedAdoptionEffects::new([Ok(ReplacementOutcome::Replaced)], Rc::clone(&ledger));
+        ScriptedEffects::adoption([Ok(ReplacementOutcome::Replaced)], Rc::clone(&ledger));
     let report = execute_legacy_adoption(same_path_captures.clone(), pid, &runtime, &mut effects);
-    render_adoption_with_ledger(&report, &ledger);
+    ledger_rendered(render_adoption_report(&report), &ledger);
     assert!(report.success);
     assert_eq!(report.registrations.len(), 2);
     assert_eq!(
@@ -6120,7 +5708,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
     let ledger = Rc::new(RefCell::new(Vec::new()));
     let process = ScriptedProcess::new(pid, "conflicting-path-token", Rc::clone(&ledger));
     let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-    let mut effects = ScriptedAdoptionEffects::new(
+    let mut effects = ScriptedEffects::adoption(
         Vec::<Result<ReplacementOutcome, ReplacementError>>::new(),
         Rc::clone(&ledger),
     );
@@ -6130,7 +5718,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         &runtime,
         &mut effects,
     );
-    render_adoption_with_ledger(&report, &ledger);
+    ledger_rendered(render_adoption_report(&report), &ledger);
     assert_eq!(report.disposition, AdoptionDisposition::Blocked);
     assert_eq!(
         *ledger.borrow(),
@@ -6143,7 +5731,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         .with_inspection(Ok(facts))
         .with_wait(Ok(false));
     let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-    let mut effects = ScriptedAdoptionEffects::new(
+    let mut effects = ScriptedEffects::adoption(
         [
             Ok(ReplacementOutcome::Replaced),
             Err(ReplacementError {
@@ -6158,7 +5746,7 @@ fn legacy_adoption_transition_and_rollback_matrix() {
         Rc::clone(&ledger),
     );
     let report = execute_legacy_adoption(captures.clone(), pid, &runtime, &mut effects);
-    render_adoption_with_ledger(&report, &ledger);
+    ledger_rendered(render_adoption_report(&report), &ledger);
     assert_eq!(report.disposition, AdoptionDisposition::RolledBack);
     assert!(matches!(
         report.registrations[1].transition,
@@ -6206,7 +5794,7 @@ fn registered_consumer_effect_revalidates_retained_generation_on_every_outcome()
         (
             "identity-change",
             ProcessFacts {
-                identity: discovery_fixture_identity(4102),
+                identity: process_identity(4102),
                 listener: ListenerState::OwnedByTarget,
             },
             "changed process identity",
@@ -6444,7 +6032,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
     let process = ScriptedProcess::new(pid, "global-precommit", Rc::clone(&ledger));
     let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
     let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-    let mut effects = ScriptedPublicationEffects::new(
+    let mut effects = ScriptedEffects::publication(
         [Ok(RemovalOutcome::Removed)],
         [Ok(RemovalOutcome::Removed)],
         Rc::clone(&ledger),
@@ -6457,7 +6045,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
         &listener,
         &mut effects,
     );
-    let rendered = render_publication_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_publication_report(&report), &ledger);
     assert_eq!(report.disposition, PublicationDisposition::RolledBack);
     assert!(!report.success);
     assert!(
@@ -6492,7 +6080,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
         .with_wait(Ok(true));
     let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
     let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-    let mut effects = ScriptedPublicationEffects::new(
+    let mut effects = ScriptedEffects::publication(
         [Ok(RemovalOutcome::Removed)],
         [Ok(RemovalOutcome::Removed)],
         Rc::clone(&ledger),
@@ -6505,7 +6093,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
         &listener,
         &mut effects,
     );
-    render_publication_with_ledger(&report, &ledger);
+    ledger_rendered(render_publication_report(&report), &ledger);
     assert_eq!(report.disposition, PublicationDisposition::RolledBack);
     assert!(
         report
@@ -6550,14 +6138,14 @@ fn partial_publication_stops_child_and_compensates_exactly() {
             final_committed: true,
         }),
     });
-    let mut effects = ScriptedPublicationEffects::new(
+    let mut effects = ScriptedEffects::publication(
         [Ok(RemovalOutcome::Removed)],
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
     );
     let report =
         complete_publication_with(&mut child, &process, port, failure, &listener, &mut effects);
-    render_publication_with_ledger(&report, &ledger);
+    ledger_rendered(render_publication_report(&report), &ledger);
     assert_eq!(report.disposition, PublicationDisposition::RolledBack);
     assert_eq!(report.finals.len(), 1);
     assert!(report.stages.is_empty());
@@ -6585,7 +6173,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
         Rc::clone(&ledger),
     );
     let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-    let mut effects = ScriptedPublicationEffects::new(
+    let mut effects = ScriptedEffects::publication(
         [Ok(RemovalOutcome::Removed), Ok(RemovalOutcome::Removed)],
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
@@ -6601,7 +6189,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
         &listener,
         &mut effects,
     );
-    render_publication_with_ledger(&report, &ledger);
+    ledger_rendered(render_publication_report(&report), &ledger);
     assert_eq!(report.disposition, PublicationDisposition::RolledBack);
     assert_eq!(
         *ledger.borrow(),
@@ -6667,7 +6255,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
             },
             Rc::clone(&ledger),
         );
-        let mut effects = ScriptedPublicationEffects::new(
+        let mut effects = ScriptedEffects::publication(
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Rc::clone(&ledger),
@@ -6680,7 +6268,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
             &listener,
             &mut effects,
         );
-        let rendered = render_publication_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_publication_report(&report), &ledger);
         assert_eq!(
             report.disposition,
             PublicationDisposition::RecoveryHeld,
@@ -6689,10 +6277,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
         assert_eq!(report.finals.len(), 1, "{case}");
         assert_eq!(
             report.finals[0].coordinate,
-            RegistrationCoordinate {
-                scope: held_local.scope,
-                path: held_local.path.clone(),
-            },
+            held_local.coordinate(),
             "{case}"
         );
         assert_eq!(report.stages.len(), 1, "{case}");
@@ -6767,7 +6352,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
             final_committed: true,
         }),
     });
-    let mut effects = ScriptedPublicationEffects::new(
+    let mut effects = ScriptedEffects::publication(
         [
             Ok(RemovalOutcome::ReplacementPreserved {
                 path: replacement_path.clone(),
@@ -6790,7 +6375,7 @@ fn partial_publication_stops_child_and_compensates_exactly() {
     );
     let report =
         complete_publication_with(&mut child, &process, port, failure, &listener, &mut effects);
-    let rendered = render_publication_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_publication_report(&report), &ledger);
     assert_eq!(report.disposition, PublicationDisposition::RecoveryPartial);
     assert!(
         rendered
@@ -7092,28 +6677,8 @@ fn status_and_discovery_two_scope_matrix() {
         results: VecDeque::from([true]),
         ledger: Rc::clone(&ledger),
     };
-    let lifecycle = discover_inventory_with(
-        inventory,
-        |capture| {
-            let identity = capture.runfile.process_identity.clone().unwrap();
-            LifecycleObservation {
-                candidate: Candidate {
-                    coordinate: RegistrationCoordinate {
-                        scope: capture.scope,
-                        path: capture.path.clone(),
-                    },
-                    runfile: Some(capture.runfile.clone()),
-                    state: CandidateState::Verified {
-                        identity,
-                        listener: ListenerState::OwnedByTarget,
-                        health: HealthState::NotProbed,
-                    },
-                },
-                label: registration_label(capture.scope, &capture.path),
-                capture: Some(capture),
-                process: None,
-            }
-        },
+    let lifecycle = complete_lifecycle_health_with(
+        discover_inventory_before_health_with(inventory, verified_not_probed_observation),
         &mut health,
         |_observation| Ok(()),
     );
@@ -7156,7 +6721,7 @@ fn status_and_discovery_two_scope_matrix() {
     ));
     assert!(crate::backend::require_managed_endpoint(scope.clone(), managed.clone(), None).is_ok());
     assert_eq!(
-        crate::autonomy_cmd::require_matching_pre_health_discovery(&managed, &server.fingerprint,)
+        require_matching_pre_health_discovery(&managed, &server.fingerprint,)
             .unwrap()
             .fingerprint,
         server.fingerprint,
@@ -7187,13 +6752,11 @@ fn status_and_discovery_two_scope_matrix() {
         discovery_revisions(&managed.observations),
     )
     .unwrap();
-    let mut down_effects = FilesystemDownEffects {
-        scope,
-        listeners: VecDeque::from([ListenerState::Absent]),
-        ledger: Rc::clone(&ledger),
-    };
+    let mut down_effects = ScriptedEffects::filesystem(Rc::clone(&ledger))
+        .with_scope(scope)
+        .with_listeners(VecDeque::from([ListenerState::Absent]));
     let report = execute_down_plan(plan, &mut down_effects);
-    let down = render_down_with_ledger(&report, &ledger);
+    let down = ledger_rendered(render_down_report(&report), &ledger);
     assert!(down.success);
     assert_eq!(report.disposition, DownDisposition::Stopped);
     assert!(
@@ -7244,28 +6807,11 @@ fn down_retained_handle_transition_matrix() {
         results: VecDeque::from([true]),
         ledger: Rc::clone(&ledger),
     };
-    let lifecycle = discover_inventory_with(
-        inventory_runfiles(&workspace, scope.global.clone()),
-        |capture| {
-            let observed_identity = capture.runfile.process_identity.clone().unwrap();
-            LifecycleObservation {
-                candidate: Candidate {
-                    coordinate: RegistrationCoordinate {
-                        scope: capture.scope,
-                        path: capture.path.clone(),
-                    },
-                    runfile: Some(capture.runfile.clone()),
-                    state: CandidateState::Verified {
-                        identity: observed_identity,
-                        listener: ListenerState::OwnedByTarget,
-                        health: HealthState::NotProbed,
-                    },
-                },
-                label: registration_label(capture.scope, &capture.path),
-                capture: Some(capture),
-                process: None,
-            }
-        },
+    let lifecycle = complete_lifecycle_health_with(
+        discover_inventory_before_health_with(
+            inventory_runfiles(&workspace, scope.global.clone()),
+            verified_not_probed_observation,
+        ),
         &mut health,
         |_observation| Ok(()),
     );
@@ -7289,24 +6835,24 @@ fn down_retained_handle_transition_matrix() {
         "replacement-generation",
         ScriptedProcess::new(pid, "replacement-generation", Rc::clone(&ledger)).with_inspection(
             Ok(ProcessFacts {
-                identity: discovery_fixture_identity(u64::from(pid) + 1),
+                identity: process_identity(u64::from(pid) + 1),
                 listener: ListenerState::OwnedByTarget,
             }),
         ),
     );
     let replacement = discovery_fixture_path("transition-replacement");
-    let mut effects = RevisionCheckingDownEffects {
-        scope: scope.clone(),
-        listeners: VecDeque::from([ListenerState::Absent]),
-        removals: VecDeque::from([
+    let mut effects = ScriptedEffects::new(
+        [ListenerState::Absent],
+        [
             Ok(RemovalOutcome::Removed),
             Ok(RemovalOutcome::ReplacementPreserved {
                 path: replacement.clone(),
                 detail: "concurrent alias replacement".to_string(),
             }),
-        ]),
-        ledger: Rc::clone(&ledger),
-    };
+        ],
+        Rc::clone(&ledger),
+    )
+    .with_scope(scope.clone());
     let plan = retained_target_down_plan(
         &managed.state,
         retained,
@@ -7315,7 +6861,7 @@ fn down_retained_handle_transition_matrix() {
     )
     .unwrap();
     let report = execute_down_plan(plan, &mut effects);
-    let rendered = render_down_with_ledger(&report, &ledger);
+    let rendered = ledger_rendered(render_down_report(&report), &ledger);
     assert_eq!(report.disposition, DownDisposition::CleanupPartial);
     assert!(report.exit_proven && report.listener_released);
     assert!(rendered.stdout.iter().any(|line| {
@@ -7384,7 +6930,7 @@ fn down_retained_handle_transition_matrix() {
         }
         let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
         let retained = runtime.acquire(pid).unwrap();
-        let mut effects = ScriptedDownEffects::new(
+        let mut effects = ScriptedEffects::new(
             [if case == "post-exit-listener-transfer" {
                 ListenerState::OwnedByOther(vec![9902])
             } else {
@@ -7405,7 +6951,7 @@ fn down_retained_handle_transition_matrix() {
         )
         .unwrap();
         let report = execute_down_plan(plan, &mut effects);
-        let rendered = render_down_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_down_report(&report), &ledger);
         assert_eq!(report.disposition, DownDisposition::Failed, "{case}");
         assert!(!rendered.success, "{case}");
         assert!(
@@ -7491,10 +7037,8 @@ fn scripted_tailscale_launch_case_with(
         now: Instant::now(),
         ledger: Rc::clone(&ledger),
     };
-    let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
-    let mut compensation = FilesystemPublicationEffects {
-        ledger: Rc::clone(&ledger),
-    };
+    let mut persistence = ledgered(ScriptedPersistenceEffects::default(), &ledger);
+    let mut compensation = ScriptedEffects::filesystem(Rc::clone(&ledger));
     let mut launch_cfg = cfg(Engine::LlamaServer);
     launch_cfg.port = port;
     launch_cfg.tailscale = true;
@@ -7532,7 +7076,7 @@ fn scripted_tailscale_launch_case_with(
 
 fn exact_launch_facts(pid: u32) -> ProcessFacts {
     ProcessFacts {
-        identity: discovery_fixture_identity(u64::from(pid)),
+        identity: process_identity(u64::from(pid)),
         listener: ListenerState::OwnedByTarget,
     }
 }
@@ -7805,7 +7349,7 @@ fn tailscale_pre_mutation_failures_never_apply() {
         (
             "listener-inspection-failure",
             Ok(ProcessFacts {
-                identity: discovery_fixture_identity(u64::from(pid + 1)),
+                identity: process_identity(u64::from(pid + 1)),
                 listener: ListenerState::OwnedByOther(vec![9900]),
             }),
         ),
@@ -7926,7 +7470,7 @@ fn tailscale_identity_races_never_publish_or_cross_profile_cleanup() {
     let ownership = tailscale_ownership(port);
     let ledger = Rc::new(RefCell::new(Vec::new()));
     let mut renamed_absent = tailscale_observation(&ownership, ServePathState::Absent, 'b');
-    let mut renamed_identity = test_tailscale_identity();
+    let mut renamed_identity = tailscale_identity();
     renamed_identity.fqdn = "renamed.tailnet-example.ts.net".to_string();
     renamed_absent.identity = Some(renamed_identity.clone());
     let serve = ScriptedTailscaleServe::new([Ok(renamed_absent)], Rc::clone(&ledger));
@@ -8011,7 +7555,7 @@ fn tailscale_identity_races_never_publish_or_cross_profile_cleanup() {
         },
         'c',
     );
-    let mut switched_identity = test_tailscale_identity();
+    let mut switched_identity = tailscale_identity();
     switched_identity.stable_node_id = "other-stable-node".to_string();
     switched_exact.identity = Some(switched_identity.clone());
     let mut cleanup_switched = switched_exact.clone();
@@ -8041,7 +7585,7 @@ fn tailscale_identity_races_never_publish_or_cross_profile_cleanup() {
 fn tailscale_cleanup_allows_same_node_rename_without_https_authority() {
     let ownership = tailscale_ownership(9553);
     let ledger = Rc::new(RefCell::new(Vec::new()));
-    let mut renamed = test_tailscale_identity();
+    let mut renamed = tailscale_identity();
     renamed.fqdn = "renamed.tailnet-example.ts.net".to_string();
     renamed.backend_running = false;
     renamed.https_capable = false;
@@ -8241,7 +7785,7 @@ fn tailscale_launch_failure_matrix_holds_or_compensates_exactly() {
     ));
     let exact = exact_launch_facts(pid);
     let changed = ProcessFacts {
-        identity: discovery_fixture_identity(u64::from(pid + 1)),
+        identity: process_identity(u64::from(pid + 1)),
         listener: ListenerState::OwnedByTarget,
     };
     let (result, _, journal) = scripted_tailscale_launch_case(
@@ -8316,7 +7860,7 @@ fn tailscale_launch_failure_matrix_holds_or_compensates_exactly() {
     ));
     let exact = exact_launch_facts(pid);
     let changed = ProcessFacts {
-        identity: discovery_fixture_identity(u64::from(pid + 1)),
+        identity: process_identity(u64::from(pid + 1)),
         listener: ListenerState::OwnedByTarget,
     };
     let (result, _, journal) = scripted_tailscale_launch_case(
@@ -8432,7 +7976,7 @@ fn tailscale_launch_failure_matrix_holds_or_compensates_exactly() {
         ))],
         Rc::clone(&down_ledger),
     );
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent],
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&down_ledger),
@@ -8828,10 +8372,7 @@ fn phase_torn_tailscale_mirrors_promote_once_and_clean_fresh_bytes() {
         inventory_runfiles(&workspace, scope.global.clone()),
         |capture| LifecycleObservation {
             candidate: Candidate {
-                coordinate: RegistrationCoordinate {
-                    scope: capture.scope,
-                    path: capture.path.clone(),
-                },
+                coordinate: capture.coordinate(),
                 runfile: Some(capture.runfile.clone()),
                 state: CandidateState::Stale {
                     reason: "PID is absent".to_string(),
@@ -8839,7 +8380,6 @@ fn phase_torn_tailscale_mirrors_promote_once_and_clean_fresh_bytes() {
                     listener: ListenerState::Absent,
                 },
             },
-            label: registration_label(capture.scope, &capture.path),
             capture: Some(capture),
             process: None,
         },
@@ -8871,12 +8411,10 @@ fn phase_torn_tailscale_mirrors_promote_once_and_clean_fresh_bytes() {
         ],
         Rc::clone(&ledger),
     );
-    let mut effects = FilesystemTailscaleDownEffects {
-        scope,
-        listeners: VecDeque::from([ListenerState::Absent]),
-        serve,
-        ledger: Rc::clone(&ledger),
-    };
+    let mut effects = ScriptedEffects::filesystem(Rc::clone(&ledger))
+        .with_scope(scope)
+        .with_listeners(VecDeque::from([ListenerState::Absent]))
+        .with_tailscale(serve);
     let report = execute_down_plan(down_plan_from_lifecycle(lifecycle), &mut effects);
     assert_eq!(report.disposition, DownDisposition::StaleCleaned);
     assert!(report.success, "{:?}", report.diagnostics);
@@ -8945,7 +8483,7 @@ fn partial_tailscale_confirmation_holds_every_journal_before_off() {
         ))],
         Rc::clone(&ledger),
     );
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         [ListenerState::Absent],
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
@@ -9007,7 +8545,7 @@ fn tailscale_reconciliation_revision_race_never_signals_process() {
         ],
         Rc::clone(&ledger),
     );
-    let mut effects = ScriptedDownEffects::new(
+    let mut effects = ScriptedEffects::new(
         Vec::<ListenerState>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
@@ -9057,11 +8595,11 @@ fn up_spawned_child_binding_precedes_readiness() {
     let ledger = Rc::new(RefCell::new(Vec::new()));
     let process = ScriptedProcess::new(pid, "up-bound-generation", Rc::clone(&ledger))
         .with_inspection(Ok(ProcessFacts {
-            identity: discovery_fixture_identity(u64::from(pid)),
+            identity: process_identity(u64::from(pid)),
             listener: ListenerState::OwnedByTarget,
         }))
         .with_inspection(Ok(ProcessFacts {
-            identity: discovery_fixture_identity(u64::from(pid)),
+            identity: process_identity(u64::from(pid)),
             listener: ListenerState::OwnedByTarget,
         }));
     let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
@@ -9074,8 +8612,8 @@ fn up_spawned_child_binding_precedes_readiness() {
         now: Instant::now(),
         ledger: Rc::clone(&ledger),
     };
-    let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
-    let mut compensation = ScriptedPublicationEffects::new(
+    let mut persistence = ledgered(ScriptedPersistenceEffects::default(), &ledger);
+    let mut compensation = ScriptedEffects::publication(
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&ledger),
@@ -9166,9 +8704,9 @@ fn up_spawned_child_binding_precedes_readiness() {
         let case_pid = pid + if changed_identity { 10 } else { 20 };
         let case_port = port + if changed_identity { 10 } else { 20 };
         let case_workspace = root.path().join(case);
-        let expected_identity = discovery_fixture_identity(u64::from(case_pid));
+        let expected_identity = process_identity(u64::from(case_pid));
         let post_identity = if changed_identity {
-            discovery_fixture_identity(u64::from(case_pid + 1))
+            process_identity(u64::from(case_pid + 1))
         } else {
             expected_identity.clone()
         };
@@ -9196,10 +8734,8 @@ fn up_spawned_child_binding_precedes_readiness() {
             now: Instant::now(),
             ledger: Rc::clone(&case_ledger),
         };
-        let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&case_ledger));
-        let mut compensation = FilesystemPublicationEffects {
-            ledger: Rc::clone(&case_ledger),
-        };
+        let mut persistence = ledgered(ScriptedPersistenceEffects::default(), &case_ledger);
+        let mut compensation = ScriptedEffects::filesystem(Rc::clone(&case_ledger));
         let mut case_cfg = cfg(Engine::LlamaServer);
         case_cfg.port = case_port;
         let spawn_ledger = Rc::clone(&case_ledger);
@@ -9278,8 +8814,8 @@ fn up_spawned_child_binding_precedes_readiness() {
         now: Instant::now(),
         ledger: Rc::clone(&blocked_ledger),
     };
-    let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&blocked_ledger));
-    let mut compensation = ScriptedPublicationEffects::new(
+    let mut persistence = ledgered(ScriptedPersistenceEffects::default(), &blocked_ledger);
+    let mut compensation = ScriptedEffects::publication(
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Vec::<Result<RemovalOutcome, RemovalError>>::new(),
         Rc::clone(&blocked_ledger),
@@ -9348,11 +8884,9 @@ fn legacy_adoption_then_down() {
         .with_inspection(Ok(facts.clone()))
         .with_wait(Ok(false));
     let runtime = ScriptedRuntime::new(Ok(process), Rc::clone(&ledger));
-    let mut adoption_effects = FilesystemAdoptionEffects {
-        ledger: Rc::clone(&ledger),
-    };
+    let mut adoption_effects = ScriptedEffects::filesystem(Rc::clone(&ledger));
     let adoption = execute_legacy_adoption(legacy, pid, &runtime, &mut adoption_effects);
-    let adoption_rendered = render_adoption_with_ledger(&adoption, &ledger);
+    let adoption_rendered = ledger_rendered(render_adoption_report(&adoption), &ledger);
     assert!(adoption_rendered.success);
     assert_eq!(adoption.disposition, AdoptionDisposition::Adopted);
     assert!(ledger.borrow().iter().all(|event| !matches!(
@@ -9382,28 +8916,8 @@ fn legacy_adoption_then_down() {
         results: VecDeque::from([true]),
         ledger: Rc::clone(&ledger),
     };
-    let lifecycle = discover_inventory_with(
-        adopted_inventory,
-        |capture| {
-            let identity = capture.runfile.process_identity.clone().unwrap();
-            LifecycleObservation {
-                candidate: Candidate {
-                    coordinate: RegistrationCoordinate {
-                        scope: capture.scope,
-                        path: capture.path.clone(),
-                    },
-                    runfile: Some(capture.runfile.clone()),
-                    state: CandidateState::Verified {
-                        identity,
-                        listener: ListenerState::OwnedByTarget,
-                        health: HealthState::NotProbed,
-                    },
-                },
-                label: registration_label(capture.scope, &capture.path),
-                capture: Some(capture),
-                process: None,
-            }
-        },
+    let lifecycle = complete_lifecycle_health_with(
+        discover_inventory_before_health_with(adopted_inventory, verified_not_probed_observation),
         &mut health,
         |_observation| Ok(()),
     );
@@ -9424,13 +8938,11 @@ fn legacy_adoption_then_down() {
         discovery_revisions(&managed.observations),
     )
     .unwrap();
-    let mut down_effects = FilesystemDownEffects {
-        scope,
-        listeners: VecDeque::from([ListenerState::Absent]),
-        ledger: Rc::clone(&ledger),
-    };
+    let mut down_effects = ScriptedEffects::filesystem(Rc::clone(&ledger))
+        .with_scope(scope)
+        .with_listeners(VecDeque::from([ListenerState::Absent]));
     let down = execute_down_plan(plan, &mut down_effects);
-    let down_rendered = render_down_with_ledger(&down, &ledger);
+    let down_rendered = ledger_rendered(render_down_report(&down), &ledger);
     assert!(down_rendered.success);
     assert_eq!(down.disposition, DownDisposition::Stopped);
     assert!(
@@ -9498,7 +9010,7 @@ fn registration_publication_failure_matrix() {
         let pid = 4550 + u32::from(mirrored);
         let runfile = composition_runfile(pid, &local);
         let ledger = Rc::new(RefCell::new(Vec::new()));
-        let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+        let mut persistence = ledgered(ScriptedPersistenceEffects::default(), &ledger);
         let publication = publish_mirrored_with(
             &workspace,
             mirrored.then_some(global.as_path()),
@@ -9516,7 +9028,7 @@ fn registration_publication_failure_matrix() {
             }));
         let mut child = ScriptedChild::new(pid, [Ok(None)], Rc::clone(&ledger));
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-        let mut cleanup = ScriptedPublicationEffects::new(
+        let mut cleanup = ScriptedEffects::publication(
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Rc::clone(&ledger),
@@ -9580,9 +9092,12 @@ fn registration_publication_failure_matrix() {
             let target = if fail_global { &global } else { &local };
             let ledger = Rc::new(RefCell::new(Vec::new()));
             let mut persistence = if phase == PersistencePhase::StageCleanup {
-                CompositionPersistenceEffects::retaining_committed_stage(target, Rc::clone(&ledger))
+                ledgered(
+                    ScriptedPersistenceEffects::retaining_committed_stage(target),
+                    &ledger,
+                )
             } else {
-                CompositionPersistenceEffects::failing(target, phase, Rc::clone(&ledger))
+                ledgered(ScriptedPersistenceEffects::failing(target, phase), &ledger)
             };
             let publication = publish_mirrored_with(
                 &workspace,
@@ -9622,9 +9137,7 @@ fn registration_publication_failure_matrix() {
             let process = ScriptedProcess::new(pid, "publication-boundary", Rc::clone(&ledger));
             let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
             let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-            let mut cleanup = FilesystemPublicationEffects {
-                ledger: Rc::clone(&ledger),
-            };
+            let mut cleanup = ScriptedEffects::filesystem(Rc::clone(&ledger));
             let report = complete_publication_with(
                 &mut child,
                 &process,
@@ -9696,7 +9209,7 @@ fn registration_publication_failure_matrix() {
         let pid = 4570 + u32::from(existing_global);
         let runfile = composition_runfile(pid, &local);
         let ledger = Rc::new(RefCell::new(Vec::new()));
-        let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+        let mut persistence = ledgered(ScriptedPersistenceEffects::default(), &ledger);
         let publication = publish_mirrored_with(
             &workspace,
             existing_global.then_some(global.as_path()),
@@ -9710,9 +9223,7 @@ fn registration_publication_failure_matrix() {
         let process = ScriptedProcess::new(pid, "publication-no-clobber", Rc::clone(&ledger));
         let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-        let mut cleanup = FilesystemPublicationEffects {
-            ledger: Rc::clone(&ledger),
-        };
+        let mut cleanup = ScriptedEffects::filesystem(Rc::clone(&ledger));
         let report = complete_publication_with(
             &mut child,
             &process,
@@ -9738,7 +9249,7 @@ fn registration_publication_failure_matrix() {
         let pid = 4581;
         let runfile = composition_runfile(pid, &local);
         let ledger = Rc::new(RefCell::new(Vec::new()));
-        let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+        let mut persistence = ledgered(ScriptedPersistenceEffects::default(), &ledger);
         let publication =
             publish_mirrored_with(&workspace, Some(&alias), &runfile, &mut persistence);
         assert!(matches!(publication, Err(PublishError::Invalid { .. })));
@@ -9747,9 +9258,7 @@ fn registration_publication_failure_matrix() {
         let process = ScriptedProcess::new(pid, "publication-alias", Rc::clone(&ledger));
         let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-        let mut cleanup = FilesystemPublicationEffects {
-            ledger: Rc::clone(&ledger),
-        };
+        let mut cleanup = ScriptedEffects::filesystem(Rc::clone(&ledger));
         let report = complete_publication_with(
             &mut child,
             &process,
@@ -9774,7 +9283,7 @@ fn registration_publication_failure_matrix() {
         let pid = 4591;
         let runfile = composition_runfile(pid, &local);
         let ledger = Rc::new(RefCell::new(Vec::new()));
-        let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+        let mut persistence = ledgered(ScriptedPersistenceEffects::default(), &ledger);
         let publication =
             publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
         let process = ScriptedProcess::new(pid, "publication-child-exit", Rc::clone(&ledger))
@@ -9785,9 +9294,7 @@ fn registration_publication_failure_matrix() {
             Rc::clone(&ledger),
         );
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-        let mut cleanup = FilesystemPublicationEffects {
-            ledger: Rc::clone(&ledger),
-        };
+        let mut cleanup = ScriptedEffects::filesystem(Rc::clone(&ledger));
         let report = complete_publication_with(
             &mut child,
             &process,
@@ -9826,7 +9333,7 @@ fn registration_publication_failure_matrix() {
         let pid = 4595 + u32::from(retained_exit_proven);
         let runfile = composition_runfile(pid, &local);
         let ledger = Rc::new(RefCell::new(Vec::new()));
-        let mut persistence = CompositionPersistenceEffects::default_with(Rc::clone(&ledger));
+        let mut persistence = ledgered(ScriptedPersistenceEffects::default(), &ledger);
         let publication =
             publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
         assert!(publication.is_ok());
@@ -9846,9 +9353,7 @@ fn registration_publication_failure_matrix() {
             Rc::clone(&ledger),
         );
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-        let mut cleanup = FilesystemPublicationEffects {
-            ledger: Rc::clone(&ledger),
-        };
+        let mut cleanup = ScriptedEffects::filesystem(Rc::clone(&ledger));
         let report = complete_publication_with(
             &mut child,
             &process,
@@ -9914,10 +9419,9 @@ fn registration_publication_failure_matrix() {
         let pid = 4601;
         let runfile = composition_runfile(pid, &local);
         let ledger = Rc::new(RefCell::new(Vec::new()));
-        let mut persistence = CompositionPersistenceEffects::failing(
-            &global,
-            PersistencePhase::FileSync,
-            Rc::clone(&ledger),
+        let mut persistence = ledgered(
+            ScriptedPersistenceEffects::failing(&global, PersistencePhase::FileSync),
+            &ledger,
         );
         let publication =
             publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
@@ -9945,7 +9449,7 @@ fn registration_publication_failure_matrix() {
             },
             Rc::clone(&ledger),
         );
-        let mut cleanup = ScriptedPublicationEffects::new(
+        let mut cleanup = ScriptedEffects::publication(
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Vec::<Result<RemovalOutcome, RemovalError>>::new(),
             Rc::clone(&ledger),
@@ -9991,10 +9495,9 @@ fn registration_publication_failure_matrix() {
         let pid = 4611;
         let runfile = composition_runfile(pid, &local);
         let ledger = Rc::new(RefCell::new(Vec::new()));
-        let mut persistence = CompositionPersistenceEffects::failing(
-            &global,
-            PersistencePhase::FileSync,
-            Rc::clone(&ledger),
+        let mut persistence = ledgered(
+            ScriptedPersistenceEffects::failing(&global, PersistencePhase::FileSync),
+            &ledger,
         );
         let publication =
             publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
@@ -10003,9 +9506,7 @@ fn registration_publication_failure_matrix() {
             .with_wait(Ok(true));
         let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-        let mut cleanup = FilesystemPublicationEffects {
-            ledger: Rc::clone(&ledger),
-        };
+        let mut cleanup = ScriptedEffects::filesystem(Rc::clone(&ledger));
         let report = complete_publication_with(
             &mut child,
             &process,
@@ -10028,10 +9529,9 @@ fn registration_publication_failure_matrix() {
         let pid = 4621;
         let runfile = composition_runfile(pid, &local);
         let ledger = Rc::new(RefCell::new(Vec::new()));
-        let mut persistence = CompositionPersistenceEffects::failing(
-            &global,
-            PersistencePhase::FileSync,
-            Rc::clone(&ledger),
+        let mut persistence = ledgered(
+            ScriptedPersistenceEffects::failing(&global, PersistencePhase::FileSync),
+            &ledger,
         );
         let publication =
             publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
@@ -10039,9 +9539,7 @@ fn registration_publication_failure_matrix() {
         let process = ScriptedProcess::new(pid, "publication-replacement", Rc::clone(&ledger));
         let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-        let mut cleanup = FilesystemPublicationEffects {
-            ledger: Rc::clone(&ledger),
-        };
+        let mut cleanup = ScriptedEffects::filesystem(Rc::clone(&ledger));
         let report = complete_publication_with(
             &mut child,
             &process,
@@ -10074,17 +9572,16 @@ fn registration_publication_failure_matrix() {
         let pid = 4631;
         let runfile = composition_runfile(pid, &local);
         let ledger = Rc::new(RefCell::new(Vec::new()));
-        let mut persistence = CompositionPersistenceEffects::failing(
-            &global,
-            PersistencePhase::FileSync,
-            Rc::clone(&ledger),
+        let mut persistence = ledgered(
+            ScriptedPersistenceEffects::failing(&global, PersistencePhase::FileSync),
+            &ledger,
         );
         let publication =
             publish_mirrored_with(&workspace, Some(&global), &runfile, &mut persistence);
         let process = ScriptedProcess::new(pid, "publication-cleanup-failure", Rc::clone(&ledger));
         let mut child = ScriptedChild::new(pid, [], Rc::clone(&ledger));
         let listener = ScriptedListener::new(ListenerState::Absent, Rc::clone(&ledger));
-        let mut cleanup = ScriptedPublicationEffects::new(
+        let mut cleanup = ScriptedEffects::publication(
             [Err(RemovalError {
                 path: local.clone(),
                 kind: RemovalFailureKind::Remove,
@@ -10107,7 +9604,7 @@ fn registration_publication_failure_matrix() {
             &listener,
             &mut cleanup,
         );
-        let rendered = render_publication_with_ledger(&report, &ledger);
+        let rendered = ledger_rendered(render_publication_report(&report), &ledger);
         assert_eq!(report.disposition, PublicationDisposition::RecoveryPartial);
         assert!(
             rendered
@@ -10143,672 +9640,9 @@ fn unused_port() -> u16 {
         .port()
 }
 
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-const LIFECYCLE_HELPER_ENV: &str = "FERRIC_TEST_LIFECYCLE_HELPER";
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-const LIFECYCLE_HELPER_WILDCARD_ENV: &str = "FERRIC_TEST_LIFECYCLE_WILDCARD";
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-static LIFECYCLE_PARENT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-const LIFECYCLE_HELPER_READY_TIMEOUT: Duration = Duration::from_secs(30);
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-const LIFECYCLE_HELPER_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-struct LifecycleHelperGuard {
-    child: crate::test_process_containment::ContainedChild,
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-impl LifecycleHelperGuard {
-    fn new(child: crate::test_process_containment::ContainedChild) -> Self {
-        Self { child }
-    }
-
-    fn child(&self) -> &Child {
-        self.child.child()
-    }
-
-    fn child_mut(&mut self) -> &mut crate::test_process_containment::ContainedChild {
-        &mut self.child
-    }
-
-    fn id(&self) -> u32 {
-        self.child().id()
-    }
-
-    fn wait_for_exit_and_disarm(&mut self, context: &str) -> Result<(), String> {
-        self.child
-            .wait_for_exit_and_disarm(LIFECYCLE_HELPER_EXIT_TIMEOUT)
-            .map(|_| ())
-            .map_err(|error| format!("{context}: {error}"))
-    }
-
-    fn reap_and_disarm(&mut self, context: &str) {
-        self.wait_for_exit_and_disarm(context)
-            .unwrap_or_else(|error| panic!("{error}"));
-    }
-
-    fn terminate_reap_and_disarm(&mut self, context: &str) {
-        self.child
-            .terminate_and_reap()
-            .unwrap_or_else(|error| panic!("{context}: {error}"));
-    }
-}
-
-/// Child-scoped test process used by the cross-workspace lifecycle
-/// regression below. A normal test-harness invocation returns immediately;
-/// only the explicitly spawned child enters the serving loop.
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-#[test]
-fn lifecycle_helper_process() {
-    if std::env::var(LIFECYCLE_HELPER_ENV).ok().as_deref() != Some("1") {
-        return;
-    }
-    crate::test_process_containment::arm_current_process_parent_death_signal()
-        .expect("arm lifecycle-helper parent-death containment");
-    let port = std::env::var("FERRIC_TEST_LIFECYCLE_PORT")
-        .expect("helper port")
-        .parse::<u16>()
-        .expect("numeric helper port");
-    let bind_host = if std::env::var(LIFECYCLE_HELPER_WILDCARD_ENV).ok().as_deref() == Some("1") {
-        "0.0.0.0"
-    } else {
-        "127.0.0.1"
-    };
-    let listener = TcpListener::bind((bind_host, port)).expect("bind helper listener");
-    loop {
-        let (mut stream, _) = listener.accept().expect("accept helper request");
-        let mut request = [0_u8; 512];
-        let _ = stream.read(&mut request);
-        stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
-            .expect("write helper response");
-    }
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-fn spawn_lifecycle_helper(port: u16) -> LifecycleHelperGuard {
-    spawn_lifecycle_helper_with_binding(port, false)
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-fn spawn_lifecycle_helper_with_binding(port: u16, wildcard: bool) -> LifecycleHelperGuard {
-    let mut command = Command::new(std::env::current_exe().expect("current test executable"));
-    command
-        .args([
-            "--exact",
-            "server::tests::lifecycle_helper_process",
-            "--nocapture",
-        ])
-        .env(LIFECYCLE_HELPER_ENV, "1")
-        .env(
-            LIFECYCLE_HELPER_WILDCARD_ENV,
-            if wildcard { "1" } else { "0" },
-        )
-        .env("FERRIC_TEST_LIFECYCLE_PORT", port.to_string())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let child = crate::test_process_containment::ContainedChild::spawn(&mut command)
-        .expect("spawn contained lifecycle helper");
-    LifecycleHelperGuard::new(child)
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-fn lifecycle_parent_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    crate::test_process_containment::ensure_current_process_tree_is_contained()
-        .expect("install lifecycle-test process containment");
-    LIFECYCLE_PARENT_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-fn wait_for_lifecycle_helper(
-    child: &mut crate::test_process_containment::ContainedChild,
-    port: u16,
-) {
-    if let Err(error) = wait_healthy(
-        child,
-        Engine::LlamaServer,
-        "127.0.0.1",
-        port,
-        LIFECYCLE_HELPER_READY_TIMEOUT,
-    ) {
-        let cleanup = stop_child(child);
-        panic!("lifecycle helper did not become HTTP-ready: {error}; cleanup result: {cleanup:?}");
-    }
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-fn native_listener_matches_or_has_documented_visibility_limit(
-    actual: &ListenerState,
-    expected: ListenerState,
-) -> bool {
-    if actual == &expected {
-        return true;
-    }
-    #[cfg(target_os = "linux")]
-    if let ListenerState::Uninspectable(error) = actual {
-        assert!(
-            error.contains("listener owner enumeration is incomplete")
-                || error.contains("whose owners are not inspectable"),
-            "unexpected Linux listener-inspection failure: {error}"
-        );
-        return false;
-    }
-    panic!("expected native listener state {expected:?}, got {actual:?}");
-}
-
-#[cfg(all(
-    target_os = "linux",
-    target_endian = "little",
-    target_pointer_width = "64",
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
-fn is_documented_linux_listener_visibility_error(error: &str) -> bool {
-    error.contains("listener owner enumeration is incomplete")
-        || error.contains("whose owners are not inspectable")
-}
-
 fn write_test_runfile(path: &Path, runfile: &ServerRunfile) {
     std::fs::create_dir_all(path.parent().expect("runfile parent")).unwrap();
     std::fs::write(path, serde_json::to_vec_pretty(runfile).unwrap()).unwrap();
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-#[test]
-fn cross_workspace_stale_local_selects_and_stops_only_verified_global() {
-    let _lifecycle_serial = lifecycle_parent_test_guard();
-    let root = tempfile::tempdir().unwrap();
-    let workspace_a = root.path().join("workspace-a");
-    let workspace_b = root.path().join("workspace-b");
-    std::fs::create_dir_all(&workspace_a).unwrap();
-    std::fs::create_dir_all(&workspace_b).unwrap();
-    let local_a = std::path::absolute(runfile_path(&workspace_a)).unwrap();
-    let local_b = std::path::absolute(runfile_path(&workspace_b)).unwrap();
-    let global = root.path().join("config").join("server.json");
-    let port = unused_port();
-    let mut helper = spawn_lifecycle_helper(port);
-    wait_for_lifecycle_helper(helper.child_mut(), port);
-
-    let helper_pid = helper.id();
-    let helper_facts = LiveProcess::acquire_child(helper.child())
-        .unwrap()
-        .inspect(port)
-        .unwrap();
-    if !native_listener_matches_or_has_documented_visibility_limit(
-        &helper_facts.listener,
-        ListenerState::OwnedByTarget,
-    ) {
-        helper.terminate_reap_and_disarm("clean up visibility-limited lifecycle helper");
-        return;
-    }
-    let live = ServerRunfile {
-        schema_version: RUNFILE_SCHEMA_V2,
-        engine: Engine::LlamaServer,
-        pid: helper_pid,
-        port,
-        base_url: format!("http://127.0.0.1:{port}/v1"),
-        tailscale: false,
-        tailscale_serve: None,
-        model: Some("example.gguf".to_string()),
-        context_size: Some(8192),
-        sampling_seed: Some(42),
-        parallel_slots: Some(1),
-        process_identity: Some(helper_facts.identity),
-        origin_local_runfile: Some(local_b.clone()),
-    };
-    write_test_runfile(&local_b, &live);
-    write_test_runfile(&global, &live);
-
-    // The stale local record names the test runner itself with a deliberately
-    // wrong creation token. Old local-first/PID-only teardown would signal
-    // this PID. Identity resolution must classify it stale and target only
-    // the exact helper retained by the global/origin mirrors.
-    let mut stale_identity = LiveProcess::acquire(std::process::id())
-        .unwrap()
-        .inspect(port)
-        .unwrap()
-        .identity;
-    let alternative = canonical_test_start_token(1);
-    stale_identity.start_token = if stale_identity.start_token == alternative {
-        canonical_test_start_token(2)
-    } else {
-        alternative
-    };
-    let mut stale = live.clone();
-    stale.pid = std::process::id();
-    stale.process_identity = Some(stale_identity);
-    stale.origin_local_runfile = Some(local_a.clone());
-    write_test_runfile(&local_a, &stale);
-
-    let discovered = read_runfile_result_impl(&workspace_a, Some(global.clone()))
-        .unwrap()
-        .expect("read-only consumers resolve the verified global server");
-    assert_eq!(discovered.pid, helper_pid);
-    assert_eq!(
-        status_impl(&workspace_a, Some(global.clone())),
-        ExitCode::SUCCESS
-    );
-    assert_eq!(
-        down_impl(&workspace_a, Some(global.clone())),
-        ExitCode::SUCCESS
-    );
-    helper.reap_and_disarm("reap terminated helper");
-    assert!(!local_a.exists(), "stale current-workspace alias cleaned");
-    assert!(!local_b.exists(), "selected global origin alias cleaned");
-    assert!(!global.exists(), "selected global alias cleaned");
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-#[test]
-fn wildcard_listener_blocks_teardown_and_preserves_registration() {
-    let _lifecycle_serial = lifecycle_parent_test_guard();
-    let root = tempfile::tempdir().unwrap();
-    let workspace = root.path().join("workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
-    let local = std::path::absolute(runfile_path(&workspace)).unwrap();
-    let port = unused_port();
-    let mut helper = spawn_lifecycle_helper_with_binding(port, true);
-    wait_for_lifecycle_helper(helper.child_mut(), port);
-
-    let helper_pid = helper.id();
-    let helper_facts = LiveProcess::acquire_child(helper.child())
-        .unwrap()
-        .inspect(port)
-        .unwrap();
-    native_listener_matches_or_has_documented_visibility_limit(
-        &helper_facts.listener,
-        ListenerState::OwnedByTargetWildcard,
-    );
-    let record = ServerRunfile {
-        schema_version: RUNFILE_SCHEMA_V2,
-        engine: Engine::LlamaServer,
-        pid: helper_pid,
-        port,
-        base_url: format!("http://127.0.0.1:{port}/v1"),
-        tailscale: false,
-        tailscale_serve: None,
-        model: Some("example.gguf".to_string()),
-        context_size: Some(8192),
-        sampling_seed: Some(42),
-        parallel_slots: Some(1),
-        process_identity: Some(helper_facts.identity),
-        origin_local_runfile: Some(local.clone()),
-    };
-    write_test_runfile(&local, &record);
-    let original_registration = std::fs::read(&local).unwrap();
-
-    assert_eq!(status_impl(&workspace, None), ExitCode::FAILURE);
-    let result = down_impl(&workspace, None);
-    let registration_after_down = std::fs::read(&local).unwrap();
-    let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
-    helper.terminate_reap_and_disarm("clean up wildcard lifecycle helper");
-
-    assert_eq!(result, ExitCode::FAILURE);
-    assert_eq!(
-        registration_after_down, original_registration,
-        "wildcard teardown must have an empty registration-delete ledger"
-    );
-    assert!(
-        helper_remained_live,
-        "wildcard teardown must have an empty process-signal ledger"
-    );
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-#[test]
-fn stale_registration_keeps_live_foreign_listener_and_recovery_record() {
-    let _lifecycle_serial = lifecycle_parent_test_guard();
-    let root = tempfile::tempdir().unwrap();
-    let workspace = root.path().join("workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
-    let local = std::path::absolute(runfile_path(&workspace)).unwrap();
-    let port = unused_port();
-    let mut helper = spawn_lifecycle_helper(port);
-    wait_for_lifecycle_helper(helper.child_mut(), port);
-
-    let helper_facts = LiveProcess::acquire_child(helper.child())
-        .unwrap()
-        .inspect(port)
-        .unwrap();
-    native_listener_matches_or_has_documented_visibility_limit(
-        &helper_facts.listener,
-        ListenerState::OwnedByTarget,
-    );
-    let stale = ServerRunfile {
-        schema_version: RUNFILE_SCHEMA_V2,
-        engine: Engine::LlamaServer,
-        pid: u32::MAX,
-        port,
-        base_url: format!("http://127.0.0.1:{port}/v1"),
-        tailscale: false,
-        tailscale_serve: None,
-        model: Some("example.gguf".to_string()),
-        context_size: Some(8192),
-        sampling_seed: Some(42),
-        parallel_slots: Some(1),
-        process_identity: Some(helper_facts.identity),
-        origin_local_runfile: Some(local.clone()),
-    };
-    write_test_runfile(&local, &stale);
-
-    let result = down_impl(&workspace, None);
-    let registration_remained = local.exists();
-    let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
-    helper.terminate_reap_and_disarm("clean up foreign-listener lifecycle helper");
-
-    assert_eq!(result, ExitCode::FAILURE);
-    assert!(
-        registration_remained,
-        "an active endpoint must keep its recovery registration"
-    );
-    assert!(
-        helper_remained_live,
-        "a listener owned by a foreign PID must never be signalled"
-    );
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-#[test]
-fn live_legacy_registration_cannot_authorize_teardown() {
-    let _lifecycle_serial = lifecycle_parent_test_guard();
-    let root = tempfile::tempdir().unwrap();
-    let workspace = root.path().join("workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
-    let local = std::path::absolute(runfile_path(&workspace)).unwrap();
-    let port = unused_port();
-    let mut helper = spawn_lifecycle_helper(port);
-    wait_for_lifecycle_helper(helper.child_mut(), port);
-
-    let legacy = ServerRunfile {
-        schema_version: 1,
-        engine: Engine::LlamaServer,
-        pid: helper.id(),
-        port,
-        base_url: format!("http://127.0.0.1:{port}/v1"),
-        tailscale: false,
-        tailscale_serve: None,
-        model: Some("example.gguf".to_string()),
-        context_size: Some(8192),
-        sampling_seed: Some(42),
-        parallel_slots: Some(1),
-        process_identity: None,
-        origin_local_runfile: None,
-    };
-    write_test_runfile(&local, &legacy);
-
-    let result = down_impl(&workspace, None);
-    let registration_remained = local.exists();
-    let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
-    helper.terminate_reap_and_disarm("clean up legacy lifecycle helper");
-
-    assert_eq!(result, ExitCode::FAILURE);
-    assert!(
-        registration_remained,
-        "blocked legacy record must be retained"
-    );
-    assert!(
-        helper_remained_live,
-        "a live schema-1 PID must never be signalled without creation identity"
-    );
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-#[test]
-fn malformed_v2_token_blocks_down_without_signal_or_delete() {
-    let _lifecycle_serial = lifecycle_parent_test_guard();
-    let root = tempfile::tempdir().unwrap();
-    let workspace = root.path().join("workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
-    let local = std::path::absolute(runfile_path(&workspace)).unwrap();
-    let port = unused_port();
-    let mut helper = spawn_lifecycle_helper(port);
-    wait_for_lifecycle_helper(helper.child_mut(), port);
-
-    let mut identity = LiveProcess::acquire_child(helper.child())
-        .unwrap()
-        .inspect(port)
-        .unwrap()
-        .identity;
-    identity.start_token = "opaque".to_string();
-    let record = ServerRunfile {
-        schema_version: RUNFILE_SCHEMA_V2,
-        engine: Engine::LlamaServer,
-        pid: helper.id(),
-        port,
-        base_url: format!("http://127.0.0.1:{port}/v1"),
-        tailscale: false,
-        tailscale_serve: None,
-        model: Some("example.gguf".to_string()),
-        context_size: Some(8192),
-        sampling_seed: Some(42),
-        parallel_slots: Some(1),
-        process_identity: Some(identity),
-        origin_local_runfile: Some(local.clone()),
-    };
-    write_test_runfile(&local, &record);
-    let original_registration = std::fs::read(&local).unwrap();
-
-    let result = down_impl(&workspace, None);
-    let registration_after_down = std::fs::read(&local).unwrap();
-    let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
-    helper.terminate_reap_and_disarm("clean up malformed-token lifecycle helper");
-
-    assert_eq!(result, ExitCode::FAILURE);
-    assert_eq!(registration_after_down, original_registration);
-    assert!(
-        helper_remained_live,
-        "a malformed creation token must block before process acquisition or signalling"
-    );
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-#[test]
-fn same_creation_with_different_process_metadata_blocks_cleanup_and_signal() {
-    let _lifecycle_serial = lifecycle_parent_test_guard();
-    let root = tempfile::tempdir().unwrap();
-    let workspace = root.path().join("workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
-    let local = std::path::absolute(runfile_path(&workspace)).unwrap();
-    let port = unused_port();
-    let mut helper = spawn_lifecycle_helper(port);
-    wait_for_lifecycle_helper(helper.child_mut(), port);
-
-    let mut identity = LiveProcess::acquire_child(helper.child())
-        .unwrap()
-        .inspect(port)
-        .unwrap()
-        .identity;
-    identity.argv.push("--not-the-observed-command".to_string());
-    let record = ServerRunfile {
-        schema_version: RUNFILE_SCHEMA_V2,
-        engine: Engine::LlamaServer,
-        pid: helper.id(),
-        port,
-        base_url: format!("http://127.0.0.1:{port}/v1"),
-        tailscale: false,
-        tailscale_serve: None,
-        model: Some("example.gguf".to_string()),
-        context_size: Some(8192),
-        sampling_seed: Some(42),
-        parallel_slots: Some(1),
-        process_identity: Some(identity),
-        origin_local_runfile: Some(local.clone()),
-    };
-    write_test_runfile(&local, &record);
-
-    let result = down_impl(&workspace, None);
-    let registration_remained = local.exists();
-    let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
-    helper.terminate_reap_and_disarm("clean up metadata-mismatch lifecycle helper");
-
-    assert_eq!(result, ExitCode::FAILURE);
-    assert!(
-        registration_remained,
-        "a live same-creation metadata mismatch must retain its recovery coordinate"
-    );
-    assert!(
-        helper_remained_live,
-        "a live same-creation metadata mismatch must never be signalled"
-    );
 }
 
 #[test]
@@ -10987,9 +9821,20 @@ fn blocked_local_inventory_prevents_global_autodiscovery() {
         },
     );
 
-    let error = read_runfile_result_impl(&workspace, Some(global)).unwrap_err();
-    assert!(error.contains("blocked"), "unexpected error: {error}");
-    assert!(error.contains(&local.display().to_string()));
+    let discovery = discover_managed_server_in(&ManagedDiscoveryScope {
+        workspace,
+        global: Some(global),
+    });
+    let (ManagedServerState::Conflict { issues } | ManagedServerState::Unverifiable { issues }) =
+        discovery.state
+    else {
+        panic!("blocked local registration must block resolution: {discovery:?}");
+    };
+    let local = local.display().to_string();
+    assert!(
+        issues.iter().any(|issue| issue.detail.contains(&local)),
+        "{issues:?}"
+    );
 }
 
 #[test]
@@ -11062,78 +9907,6 @@ fn serve_one_status(path: &'static str, status: &'static str) -> (u16, thread::J
         stream.write_all(response.as_bytes()).unwrap();
     });
     (port, handle)
-}
-
-#[cfg(any(
-    windows,
-    all(
-        target_os = "linux",
-        target_endian = "little",
-        target_pointer_width = "64",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    )
-))]
-#[test]
-fn live_registration_inspection_binds_pid_listener_and_health() {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let (release, released) = std::sync::mpsc::channel();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut request = [0_u8; 512];
-        let read = stream.read(&mut request).unwrap();
-        assert!(String::from_utf8_lossy(&request[..read]).starts_with("GET /health "));
-        stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
-            .unwrap();
-        released.recv_timeout(Duration::from_secs(15)).unwrap();
-    });
-    let runfile = ServerRunfile {
-        schema_version: 1,
-        engine: Engine::LlamaServer,
-        pid: std::process::id(),
-        port,
-        base_url: format!("http://127.0.0.1:{port}/v1"),
-        tailscale: false,
-        tailscale_serve: None,
-        model: Some("model.gguf".to_string()),
-        context_size: Some(8192),
-        sampling_seed: Some(42),
-        parallel_slots: Some(1),
-        process_identity: None,
-        origin_local_runfile: None,
-    };
-    let inspected = inspect_registered_server(&runfile);
-    if inspected.is_err() {
-        // A restricted Linux /proc can reject before the HTTP request.
-        // Wake the server thread with a valid probe so this native smoke
-        // still exits cleanly while reporting the visibility limitation.
-        if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
-            let _ = stream.write_all(
-                format!(
-                    "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-                )
-                .as_bytes(),
-            );
-        }
-    }
-    release.send(()).unwrap();
-    server.join().unwrap();
-    match inspected {
-        Ok(inspected) => {
-            assert_eq!(inspected.pid, std::process::id());
-            assert_eq!(inspected.listener_owner_pid, std::process::id());
-            assert!(!inspected.argv.is_empty());
-            assert!(inspected.executable.is_file());
-        }
-        #[cfg(target_os = "linux")]
-        Err(error) => assert!(
-            is_documented_linux_listener_visibility_error(&error),
-            "unexpected Linux registered-server inspection failure: {error}"
-        ),
-        #[cfg(windows)]
-        Err(error) => panic!("registered-server inspection failed: {error}"),
-    }
 }
 
 #[test]
@@ -11411,12 +10184,14 @@ fn readiness_fails_when_child_exits_before_http_health() {
     };
     let mut child = spawn_contained_test_child(&mut command, "exited readiness probe");
 
-    let error = wait_healthy(
+    let error = wait_healthy_with(
         &mut child,
         Engine::LlamaServer,
         "127.0.0.1",
         unused_port(),
         Duration::from_secs(2),
+        &mut NativeHealthProbe,
+        &mut SystemLifecycleClock,
     )
     .expect_err("an exited child cannot become ready");
     assert!(error.contains("exited before readiness"));
@@ -11451,12 +10226,14 @@ fn readiness_succeeds_only_while_child_is_alive_and_http_is_200() {
     };
     let mut child = spawn_contained_test_child(&mut command, "live readiness probe");
 
-    wait_healthy(
+    wait_healthy_with(
         &mut child,
         Engine::LlamaServer,
         "127.0.0.1",
         port,
         Duration::from_secs(2),
+        &mut NativeHealthProbe,
+        &mut SystemLifecycleClock,
     )
     .expect("a live child plus HTTP 200 is ready");
     assert!(matches!(child.try_wait_leader(), Ok(None)));
@@ -11559,8 +10336,11 @@ fn promised_origin_expansion_keeps_independent_capture_and_source_aware_blocker(
     }));
     assert_eq!(observations.len(), 1);
     assert_eq!(
-        observations[0].label,
-        registration_label(RegistrationScope::Origin, &blocked_path)
+        observations[0].candidate.coordinate,
+        RegistrationCoordinate {
+            scope: RegistrationScope::Origin,
+            path: blocked_path.clone(),
+        }
     );
     assert!(matches!(
         &observations[0].candidate.state,
@@ -11571,49 +10351,582 @@ fn promised_origin_expansion_keeps_independent_capture_and_source_aware_blocker(
 }
 
 #[test]
-fn runfile_serde_roundtrip() {
-    let rf = ServerRunfile {
-        schema_version: 1,
-        engine: Engine::LlamaServer,
-        pid: 4321,
-        port: 8080,
-        base_url: "http://127.0.0.1:8080/v1".to_string(),
-        tailscale: false,
-        tailscale_serve: None,
-        model: Some("model.gguf".to_string()),
-        context_size: Some(4096),
-        sampling_seed: Some(42),
-        parallel_slots: Some(1),
-        process_identity: None,
-        origin_local_runfile: None,
-    };
-    let s = serde_json::to_string(&rf).unwrap();
-    let back: ServerRunfile = serde_json::from_str(&s).unwrap();
-    assert_eq!(back.pid, 4321);
-    assert_eq!(back.engine, Engine::LlamaServer);
-    assert_eq!(back.base_url, rf.base_url);
-    assert_eq!(back.sampling_seed, Some(42));
-    assert_eq!(back.parallel_slots, Some(1));
-    assert_eq!(back.context_size, Some(4096));
-    assert_eq!(back.model.as_deref(), Some("model.gguf"));
-}
-
-#[test]
-fn old_runfile_sampling_metadata_defaults_to_unknown() {
-    let old = r#"{"engine":"llama-server","pid":4321,"port":8080,"base_url":"http://127.0.0.1:8080/v1","tailscale":false}"#;
-    let runfile: ServerRunfile = serde_json::from_str(old).unwrap();
-    assert!(runfile.model.is_none());
-    assert!(runfile.context_size.is_none());
-    assert!(runfile.sampling_seed.is_none());
-    assert!(runfile.parallel_slots.is_none());
-}
-
-#[test]
 fn read_runfile_absent_is_none() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(
-        read_runfile_result_impl(dir.path(), None)
+    let discovery = discover_managed_server_in(&ManagedDiscoveryScope {
+        workspace: dir.path().to_path_buf(),
+        global: None,
+    });
+    assert_eq!(discovery.state, ManagedServerState::Empty);
+}
+
+#[cfg(any(
+    windows,
+    all(
+        target_os = "linux",
+        target_endian = "little",
+        target_pointer_width = "64",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )
+))]
+mod native {
+    use super::*;
+
+    const LIFECYCLE_HELPER_ENV: &str = "FERRIC_TEST_LIFECYCLE_HELPER";
+
+    const LIFECYCLE_HELPER_WILDCARD_ENV: &str = "FERRIC_TEST_LIFECYCLE_WILDCARD";
+
+    static LIFECYCLE_PARENT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    const LIFECYCLE_HELPER_READY_TIMEOUT: Duration = Duration::from_secs(30);
+
+    const LIFECYCLE_HELPER_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    struct LifecycleHelperGuard {
+        child: crate::test_process_containment::ContainedChild,
+    }
+
+    impl LifecycleHelperGuard {
+        fn new(child: crate::test_process_containment::ContainedChild) -> Self {
+            Self { child }
+        }
+
+        fn child(&self) -> &Child {
+            self.child.child()
+        }
+
+        fn child_mut(&mut self) -> &mut crate::test_process_containment::ContainedChild {
+            &mut self.child
+        }
+
+        fn id(&self) -> u32 {
+            self.child().id()
+        }
+
+        fn wait_for_exit_and_disarm(&mut self, context: &str) -> Result<(), String> {
+            self.child
+                .wait_for_exit_and_disarm(LIFECYCLE_HELPER_EXIT_TIMEOUT)
+                .map(|_| ())
+                .map_err(|error| format!("{context}: {error}"))
+        }
+
+        fn reap_and_disarm(&mut self, context: &str) {
+            self.wait_for_exit_and_disarm(context)
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+
+        fn terminate_reap_and_disarm(&mut self, context: &str) {
+            self.child
+                .terminate_and_reap()
+                .unwrap_or_else(|error| panic!("{context}: {error}"));
+        }
+    }
+
+    /// Child-scoped test process used by the cross-workspace lifecycle
+    /// regression below. A normal test-harness invocation returns immediately;
+    /// only the explicitly spawned child enters the serving loop.
+    #[test]
+    fn lifecycle_helper_process() {
+        if std::env::var(LIFECYCLE_HELPER_ENV).ok().as_deref() != Some("1") {
+            return;
+        }
+        crate::test_process_containment::arm_current_process_parent_death_signal()
+            .expect("arm lifecycle-helper parent-death containment");
+        let port = std::env::var("FERRIC_TEST_LIFECYCLE_PORT")
+            .expect("helper port")
+            .parse::<u16>()
+            .expect("numeric helper port");
+        let bind_host = if std::env::var(LIFECYCLE_HELPER_WILDCARD_ENV).ok().as_deref() == Some("1")
+        {
+            "0.0.0.0"
+        } else {
+            "127.0.0.1"
+        };
+        let listener = TcpListener::bind((bind_host, port)).expect("bind helper listener");
+        loop {
+            let (mut stream, _) = listener.accept().expect("accept helper request");
+            let mut request = [0_u8; 512];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .expect("write helper response");
+        }
+    }
+
+    fn spawn_lifecycle_helper(port: u16) -> LifecycleHelperGuard {
+        spawn_lifecycle_helper_with_binding(port, false)
+    }
+
+    fn spawn_lifecycle_helper_with_binding(port: u16, wildcard: bool) -> LifecycleHelperGuard {
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .args([
+                "--exact",
+                "server::tests::native::lifecycle_helper_process",
+                "--nocapture",
+            ])
+            .env(LIFECYCLE_HELPER_ENV, "1")
+            .env(
+                LIFECYCLE_HELPER_WILDCARD_ENV,
+                if wildcard { "1" } else { "0" },
+            )
+            .env("FERRIC_TEST_LIFECYCLE_PORT", port.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = crate::test_process_containment::ContainedChild::spawn(&mut command)
+            .expect("spawn contained lifecycle helper");
+        LifecycleHelperGuard::new(child)
+    }
+
+    fn lifecycle_parent_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        crate::test_process_containment::ensure_current_process_tree_is_contained()
+            .expect("install lifecycle-test process containment");
+        LIFECYCLE_PARENT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn wait_for_lifecycle_helper(
+        child: &mut crate::test_process_containment::ContainedChild,
+        port: u16,
+    ) {
+        if let Err(error) = wait_healthy_with(
+            child,
+            Engine::LlamaServer,
+            "127.0.0.1",
+            port,
+            LIFECYCLE_HELPER_READY_TIMEOUT,
+            &mut NativeHealthProbe,
+            &mut SystemLifecycleClock,
+        ) {
+            let cleanup = stop_child(child);
+            panic!(
+                "lifecycle helper did not become HTTP-ready: {error}; cleanup result: {cleanup:?}"
+            );
+        }
+    }
+
+    fn native_listener_matches_or_has_documented_visibility_limit(
+        actual: &ListenerState,
+        expected: ListenerState,
+    ) -> bool {
+        if actual == &expected {
+            return true;
+        }
+        #[cfg(target_os = "linux")]
+        if let ListenerState::Uninspectable(error) = actual {
+            assert!(
+                is_documented_linux_listener_visibility_error(error),
+                "unexpected Linux listener-inspection failure: {error}"
+            );
+            return false;
+        }
+        panic!("expected native listener state {expected:?}, got {actual:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    fn is_documented_linux_listener_visibility_error(error: &str) -> bool {
+        error.contains("listener owner enumeration is incomplete")
+            || error.contains("whose owners are not inspectable")
+    }
+
+    #[test]
+    fn cross_workspace_stale_local_selects_and_stops_only_verified_global() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace_a = root.path().join("workspace-a");
+        let workspace_b = root.path().join("workspace-b");
+        std::fs::create_dir_all(&workspace_a).unwrap();
+        std::fs::create_dir_all(&workspace_b).unwrap();
+        let local_a = std::path::absolute(runfile_path(&workspace_a)).unwrap();
+        let local_b = std::path::absolute(runfile_path(&workspace_b)).unwrap();
+        let global = root.path().join("config").join("server.json");
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
+
+        let helper_pid = helper.id();
+        let helper_facts = LiveProcess::acquire_child(helper.child())
             .unwrap()
-            .is_none()
-    );
+            .inspect(port)
+            .unwrap();
+        if !native_listener_matches_or_has_documented_visibility_limit(
+            &helper_facts.listener,
+            ListenerState::OwnedByTarget,
+        ) {
+            helper.terminate_reap_and_disarm("clean up visibility-limited lifecycle helper");
+            return;
+        }
+        let live = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: helper_pid,
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            tailscale_serve: None,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(helper_facts.identity),
+            origin_local_runfile: Some(local_b.clone()),
+        };
+        write_test_runfile(&local_b, &live);
+        write_test_runfile(&global, &live);
+
+        // The stale local record names the test runner itself with a deliberately
+        // wrong creation token. Old local-first/PID-only teardown would signal
+        // this PID. Identity resolution must classify it stale and target only
+        // the exact helper retained by the global/origin mirrors.
+        let mut stale_identity = LiveProcess::acquire(std::process::id())
+            .unwrap()
+            .inspect(port)
+            .unwrap()
+            .identity;
+        let alternative = canonical_test_start_token(1);
+        stale_identity.start_token = if stale_identity.start_token == alternative {
+            canonical_test_start_token(2)
+        } else {
+            alternative
+        };
+        let mut stale = live.clone();
+        stale.pid = std::process::id();
+        stale.process_identity = Some(stale_identity);
+        stale.origin_local_runfile = Some(local_a.clone());
+        write_test_runfile(&local_a, &stale);
+
+        let discovery = discover_managed_server_in(&ManagedDiscoveryScope {
+            workspace: workspace_a.clone(),
+            global: Some(global.clone()),
+        });
+        let ManagedServerState::Ready(discovered) = discovery.state else {
+            panic!("read-only consumers resolve the verified global server: {discovery:?}");
+        };
+        assert_eq!(discovered.runfile.pid, helper_pid);
+        assert_eq!(
+            status_impl(&workspace_a, Some(global.clone())),
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            down_impl(&workspace_a, Some(global.clone())),
+            ExitCode::SUCCESS
+        );
+        helper.reap_and_disarm("reap terminated helper");
+        assert!(!local_a.exists(), "stale current-workspace alias cleaned");
+        assert!(!local_b.exists(), "selected global origin alias cleaned");
+        assert!(!global.exists(), "selected global alias cleaned");
+    }
+
+    #[test]
+    fn wildcard_listener_blocks_teardown_and_preserves_registration() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper_with_binding(port, true);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
+
+        let helper_pid = helper.id();
+        let helper_facts = LiveProcess::acquire_child(helper.child())
+            .unwrap()
+            .inspect(port)
+            .unwrap();
+        native_listener_matches_or_has_documented_visibility_limit(
+            &helper_facts.listener,
+            ListenerState::OwnedByTargetWildcard,
+        );
+        let record = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: helper_pid,
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            tailscale_serve: None,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(helper_facts.identity),
+            origin_local_runfile: Some(local.clone()),
+        };
+        write_test_runfile(&local, &record);
+        let original_registration = std::fs::read(&local).unwrap();
+
+        assert_eq!(status_impl(&workspace, None), ExitCode::FAILURE);
+        let result = down_impl(&workspace, None);
+        let registration_after_down = std::fs::read(&local).unwrap();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up wildcard lifecycle helper");
+
+        assert_eq!(result, ExitCode::FAILURE);
+        assert_eq!(
+            registration_after_down, original_registration,
+            "wildcard teardown must have an empty registration-delete ledger"
+        );
+        assert!(
+            helper_remained_live,
+            "wildcard teardown must have an empty process-signal ledger"
+        );
+    }
+
+    #[test]
+    fn stale_registration_keeps_live_foreign_listener_and_recovery_record() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
+
+        let helper_facts = LiveProcess::acquire_child(helper.child())
+            .unwrap()
+            .inspect(port)
+            .unwrap();
+        native_listener_matches_or_has_documented_visibility_limit(
+            &helper_facts.listener,
+            ListenerState::OwnedByTarget,
+        );
+        let stale = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: u32::MAX,
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            tailscale_serve: None,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(helper_facts.identity),
+            origin_local_runfile: Some(local.clone()),
+        };
+        write_test_runfile(&local, &stale);
+
+        let result = down_impl(&workspace, None);
+        let registration_remained = local.exists();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up foreign-listener lifecycle helper");
+
+        assert_eq!(result, ExitCode::FAILURE);
+        assert!(
+            registration_remained,
+            "an active endpoint must keep its recovery registration"
+        );
+        assert!(
+            helper_remained_live,
+            "a listener owned by a foreign PID must never be signalled"
+        );
+    }
+
+    #[test]
+    fn live_legacy_registration_cannot_authorize_teardown() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
+
+        let legacy = ServerRunfile {
+            schema_version: 1,
+            engine: Engine::LlamaServer,
+            pid: helper.id(),
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            tailscale_serve: None,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: None,
+            origin_local_runfile: None,
+        };
+        write_test_runfile(&local, &legacy);
+
+        let result = down_impl(&workspace, None);
+        let registration_remained = local.exists();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up legacy lifecycle helper");
+
+        assert_eq!(result, ExitCode::FAILURE);
+        assert!(
+            registration_remained,
+            "blocked legacy record must be retained"
+        );
+        assert!(
+            helper_remained_live,
+            "a live schema-1 PID must never be signalled without creation identity"
+        );
+    }
+
+    #[test]
+    fn malformed_v2_token_blocks_down_without_signal_or_delete() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
+
+        let mut identity = LiveProcess::acquire_child(helper.child())
+            .unwrap()
+            .inspect(port)
+            .unwrap()
+            .identity;
+        identity.start_token = "opaque".to_string();
+        let record = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: helper.id(),
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            tailscale_serve: None,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(identity),
+            origin_local_runfile: Some(local.clone()),
+        };
+        write_test_runfile(&local, &record);
+        let original_registration = std::fs::read(&local).unwrap();
+
+        let result = down_impl(&workspace, None);
+        let registration_after_down = std::fs::read(&local).unwrap();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up malformed-token lifecycle helper");
+
+        assert_eq!(result, ExitCode::FAILURE);
+        assert_eq!(registration_after_down, original_registration);
+        assert!(
+            helper_remained_live,
+            "a malformed creation token must block before process acquisition or signalling"
+        );
+    }
+
+    #[test]
+    fn same_creation_with_different_process_metadata_blocks_cleanup_and_signal() {
+        let _lifecycle_serial = lifecycle_parent_test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let local = std::path::absolute(runfile_path(&workspace)).unwrap();
+        let port = unused_port();
+        let mut helper = spawn_lifecycle_helper(port);
+        wait_for_lifecycle_helper(helper.child_mut(), port);
+
+        let mut identity = LiveProcess::acquire_child(helper.child())
+            .unwrap()
+            .inspect(port)
+            .unwrap()
+            .identity;
+        identity.argv.push("--not-the-observed-command".to_string());
+        let record = ServerRunfile {
+            schema_version: RUNFILE_SCHEMA_V2,
+            engine: Engine::LlamaServer,
+            pid: helper.id(),
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            tailscale_serve: None,
+            model: Some("example.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: Some(identity),
+            origin_local_runfile: Some(local.clone()),
+        };
+        write_test_runfile(&local, &record);
+
+        let result = down_impl(&workspace, None);
+        let registration_remained = local.exists();
+        let helper_remained_live = helper.child_mut().try_wait().unwrap().is_none();
+        helper.terminate_reap_and_disarm("clean up metadata-mismatch lifecycle helper");
+
+        assert_eq!(result, ExitCode::FAILURE);
+        assert!(
+            registration_remained,
+            "a live same-creation metadata mismatch must retain its recovery coordinate"
+        );
+        assert!(
+            helper_remained_live,
+            "a live same-creation metadata mismatch must never be signalled"
+        );
+    }
+
+    #[test]
+    fn live_registration_inspection_binds_pid_listener_and_health() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release, released) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 512];
+            let read = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..read]).starts_with("GET /health "));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .unwrap();
+            released.recv_timeout(Duration::from_secs(15)).unwrap();
+        });
+        let runfile = ServerRunfile {
+            schema_version: 1,
+            engine: Engine::LlamaServer,
+            pid: std::process::id(),
+            port,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            tailscale: false,
+            tailscale_serve: None,
+            model: Some("model.gguf".to_string()),
+            context_size: Some(8192),
+            sampling_seed: Some(42),
+            parallel_slots: Some(1),
+            process_identity: None,
+            origin_local_runfile: None,
+        };
+        let inspected = inspect_registered_server(&runfile);
+        if inspected.is_err() {
+            // A restricted Linux /proc can reject before the HTTP request.
+            // Wake the server thread with a valid probe so this native smoke
+            // still exits cleanly while reporting the visibility limitation.
+            if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
+                let _ = stream.write_all(
+                format!(
+                    "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+            }
+        }
+        release.send(()).unwrap();
+        server.join().unwrap();
+        match inspected {
+            Ok(inspected) => {
+                assert_eq!(inspected.pid, std::process::id());
+                assert_eq!(inspected.listener_owner_pid, std::process::id());
+                assert!(!inspected.argv.is_empty());
+                assert!(inspected.executable.is_file());
+            }
+            #[cfg(target_os = "linux")]
+            Err(error) => assert!(
+                is_documented_linux_listener_visibility_error(&error),
+                "unexpected Linux registered-server inspection failure: {error}"
+            ),
+            #[cfg(windows)]
+            Err(error) => panic!("registered-server inspection failed: {error}"),
+        }
+    }
 }

@@ -1424,7 +1424,10 @@ fn revalidate_managed_server(
     strict: &StrictManagedServerBinding,
 ) -> Result<(), String> {
     let pending = crate::server::begin_managed_server_discovery_in(&strict.scope);
-    require_matching_pre_health_discovery(pending.discovery(), &strict.initial_fingerprint)?;
+    crate::server::require_matching_pre_health_discovery(
+        pending.discovery(),
+        &strict.initial_fingerprint,
+    )?;
     let discovery = pending.finish();
     let fresh = require_fresh_managed_discovery(&discovery, &strict.initial_fingerprint)?;
     let discovery_snapshot = fresh.ready_snapshot()?;
@@ -1465,45 +1468,6 @@ fn revalidate_managed_server(
     Ok(())
 }
 
-pub(crate) fn require_matching_pre_health_discovery<'a>(
-    discovery: &'a crate::server::ManagedServerDiscovery,
-    expected: &crate::server::DiscoveryFingerprint,
-) -> Result<&'a crate::server::ManagedServer, String> {
-    let server = match &discovery.state {
-        crate::server::ManagedServerState::Degraded { server, .. }
-            if server.listener == crate::server_process::ListenerState::OwnedByTarget
-                && server.health == crate::server_resolution::HealthState::NotProbed =>
-        {
-            server
-        }
-        crate::server::ManagedServerState::Ready(server) => server,
-        crate::server::ManagedServerState::Empty => {
-            return Err("managed registration disappeared before final HTTP health".to_string());
-        }
-        crate::server::ManagedServerState::Degraded { issues, .. }
-        | crate::server::ManagedServerState::Conflict { issues }
-        | crate::server::ManagedServerState::Unverifiable { issues } => {
-            return Err(format!(
-                "fresh managed discovery is blocked before final HTTP health: {}",
-                issues
-                    .iter()
-                    .map(|issue| issue.detail.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            ));
-        }
-        crate::server::ManagedServerState::StaleOnly { .. } => {
-            return Err("managed registration became stale before final HTTP health".to_string());
-        }
-    };
-    if &server.fingerprint != expected {
-        return Err(
-            "managed registration/process fingerprint changed before final HTTP health".to_string(),
-        );
-    }
-    Ok(server)
-}
-
 pub(crate) fn require_fresh_managed_discovery<'a>(
     discovery: &'a crate::server::ManagedServerDiscovery,
     expected: &crate::server::DiscoveryFingerprint,
@@ -1513,16 +1477,12 @@ pub(crate) fn require_fresh_managed_discovery<'a>(
         crate::server::ManagedServerState::Empty => {
             return Err("managed registration disappeared during the matrix".to_string());
         }
-        crate::server::ManagedServerState::Degraded { issues, .. }
-        | crate::server::ManagedServerState::Conflict { issues }
-        | crate::server::ManagedServerState::Unverifiable { issues } => {
+        state @ (crate::server::ManagedServerState::Degraded { .. }
+        | crate::server::ManagedServerState::Conflict { .. }
+        | crate::server::ManagedServerState::Unverifiable { .. }) => {
             return Err(format!(
                 "fresh managed discovery is blocked: {}",
-                issues
-                    .iter()
-                    .map(|issue| issue.detail.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; ")
+                state.issue_summary()
             ));
         }
         crate::server::ManagedServerState::StaleOnly { .. } => {

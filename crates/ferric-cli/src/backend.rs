@@ -77,19 +77,12 @@ pub(crate) enum EndpointSelectionError {
 impl fmt::Display for EndpointSelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let issues = |discovery: &ManagedServerDiscovery| match &discovery.state {
-            ManagedServerState::Degraded { issues, .. }
-            | ManagedServerState::Conflict { issues }
-            | ManagedServerState::Unverifiable { issues } => issues
-                .iter()
-                .map(|issue| issue.detail.as_str())
-                .collect::<Vec<_>>()
-                .join("; "),
             ManagedServerState::StaleOnly { stale } => stale
                 .iter()
                 .map(|coordinate| coordinate.path.display().to_string())
                 .collect::<Vec<_>>()
                 .join("; "),
-            ManagedServerState::Empty | ManagedServerState::Ready(_) => String::new(),
+            state => state.issue_summary(),
         };
         match self {
             Self::Setup(detail) => formatter.write_str(detail),

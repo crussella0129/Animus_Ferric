@@ -2303,9 +2303,10 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::server::fixtures::{
+        TAILSCALE_FQDN as FQDN, TAILSCALE_TOKEN as TOKEN, tailscale_identity, tailscale_ownership,
+    };
 
-    const FQDN: &str = "example-host.tailnet-example.ts.net";
-    const TOKEN: &str = "00112233445566778899aabbccddeeff";
     const MOUNT: &str = "/_ferric/00112233445566778899aabbccddeeff";
 
     #[test]
@@ -2464,39 +2465,11 @@ mod tests {
         }
     }
 
-    fn ownership() -> TailscaleServeOwnership {
-        TailscaleServeOwnership {
-            version: OWNERSHIP_VERSION,
-            token: TOKEN.to_string(),
-            stable_node_id: "node-fixture".to_string(),
-            fqdn: FQDN.to_string(),
-            https_port: HTTPS_PORT,
-            mount_path: MOUNT.to_string(),
-            proxy_target: "http://127.0.0.1:8080".to_string(),
-            remote_base_url: format!("https://{FQDN}{MOUNT}/v1"),
-            before_status_sha256: "a".repeat(64),
-            tcp_map_preexisting: false,
-            tcp_https_preexisting: false,
-            web_map_preexisting: false,
-            web_host_preexisting: false,
-            apply_confirmed: false,
-        }
-    }
-
-    fn identity() -> TailscaleIdentity {
-        TailscaleIdentity {
-            stable_node_id: "node-fixture".to_string(),
-            fqdn: FQDN.to_string(),
-            backend_running: true,
-            https_capable: true,
-            certificate_domain: true,
-        }
-    }
-
     fn ownership_for_config(raw: &[u8]) -> TailscaleServeOwnership {
-        let coordinate = coordinate_from_token(8080, &identity(), TOKEN.to_string()).unwrap();
+        let coordinate =
+            coordinate_from_token(8080, &tailscale_identity(), TOKEN.to_string()).unwrap();
         let mut observation = project_localapi_status(raw, FQDN, MOUNT).unwrap();
-        observation.identity = Some(identity());
+        observation.identity = Some(tailscale_identity());
         coordinate.into_ownership(&observation).unwrap()
     }
 
@@ -2593,10 +2566,11 @@ mod tests {
             ),
         ];
         for (index, config) in cases.into_iter().enumerate() {
-            let coordinate = coordinate_from_token(8080, &identity(), TOKEN.to_string()).unwrap();
+            let coordinate =
+                coordinate_from_token(8080, &tailscale_identity(), TOKEN.to_string()).unwrap();
             let result = project_localapi_status(config.as_bytes(), FQDN, MOUNT)
                 .and_then(|mut observation| {
-                    observation.identity = Some(identity());
+                    observation.identity = Some(tailscale_identity());
                     coordinate.into_ownership(&observation)
                 })
                 .and_then(|ownership| {
@@ -2620,7 +2594,7 @@ mod tests {
             }
         });
         let descendant_only = serde_json::to_vec(&descendant_only).unwrap();
-        let error = prepare_localapi_apply(&descendant_only, &ownership())
+        let error = prepare_localapi_apply(&descendant_only, &tailscale_ownership(8080, false))
             .expect_err("a descendant route must block pre-apply publication");
         assert!(error.to_string().contains("descendant"));
 
@@ -2924,7 +2898,8 @@ mod tests {
             0xee, 0xff,
         ];
         let coordinate =
-            prepare_coordinate_with_entropy(8080, &identity(), &FixedEntropy(Ok(bytes))).unwrap();
+            prepare_coordinate_with_entropy(8080, &tailscale_identity(), &FixedEntropy(Ok(bytes)))
+                .unwrap();
         assert_eq!(coordinate.token, TOKEN);
         assert_eq!(coordinate.mount_path, MOUNT);
         assert_eq!(coordinate.proxy_target, "http://127.0.0.1:8080");
@@ -2933,7 +2908,7 @@ mod tests {
             format!("https://{FQDN}{MOUNT}/v1")
         );
         let mut observation = project_localapi_status(b"{}", FQDN, MOUNT).unwrap();
-        observation.identity = Some(identity());
+        observation.identity = Some(tailscale_identity());
         let ownership = coordinate.into_ownership(&observation).unwrap();
         ownership.validate_for_port(8080).unwrap();
         assert_eq!(ownership.proxy_port().unwrap(), 8080);

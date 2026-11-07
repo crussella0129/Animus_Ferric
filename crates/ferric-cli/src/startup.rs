@@ -598,7 +598,7 @@ fn native_launch(
     let mut version_command = Command::new(&executable);
     version_command.arg("--version");
     let version = runtime::version(version_command, cancel, deadline)?;
-    let config = server::ServerConfig {
+    let config = server::ServerUpArgs {
         engine: server::Engine::LlamaServer,
         model: Some(
             model
@@ -612,7 +612,6 @@ fn native_launch(
         ),
         mmproj: None,
         ctx: context,
-        host: "127.0.0.1".into(),
         port,
         threads: None,
         gpu_layers: Some(0),
