@@ -75,9 +75,8 @@ impl Engine {
     fn executable(self) -> std::ffi::OsString {
         #[cfg(feature = "backend-openai")]
         if self == Engine::LlamaServer
-            && crate::startup::engine_on_path().is_err()
-            && let Some(managed) = ferric_setup::paths::engine_root()
-                .and_then(|root| ferric_setup::engine::managed_engine(&root))
+            && !matches!(ferric_setup::engine::on_path(), Some(Ok(_)))
+            && let Some(managed) = ferric_setup::engine::installed()
         {
             return managed.into_os_string();
         }

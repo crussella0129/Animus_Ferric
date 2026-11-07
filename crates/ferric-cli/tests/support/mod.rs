@@ -13,12 +13,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-#[path = "../../src/test_process_containment.rs"]
-pub mod test_process_containment;
-
 /// Run `command` within `timeout`; every owned child is reaped first.
 pub fn output(command: &mut Command, timeout: Duration) -> Output {
-    test_process_containment::output_bounded(command, timeout)
+    ferric_process::testing::output(command, timeout)
         .expect("bounded command finished and every owned child was reaped")
 }
 
@@ -147,7 +144,7 @@ impl FakeOpenAi {
             let deadline = Instant::now() + Duration::from_secs(6);
             while !worker.is_finished() {
                 if Instant::now() >= deadline {
-                    test_process_containment::abort_on_cleanup_failure(
+                    ferric_process::abort_on_cleanup_failure(
                         "HTTP fixture join",
                         "join deadline exceeded",
                     );

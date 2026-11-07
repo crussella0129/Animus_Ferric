@@ -3,7 +3,6 @@
 use std::process::Command;
 
 mod support;
-use support::test_process_containment;
 
 trait BoundedOutput {
     fn output_bounded(&mut self) -> std::io::Result<std::process::Output>;
@@ -11,33 +10,28 @@ trait BoundedOutput {
 
 impl BoundedOutput for Command {
     fn output_bounded(&mut self) -> std::io::Result<std::process::Output> {
-        test_process_containment::output_bounded(self, std::time::Duration::from_secs(60))
+        ferric_process::testing::output(self, std::time::Duration::from_secs(60))
     }
 }
 
 fn ferric() -> Command {
-    test_process_containment::ensure_current_process_tree_is_contained()
+    ferric_process::testing::contain_current_process()
         .expect("install CLI integration-test process containment");
     Command::new(env!("CARGO_BIN_EXE_ferric"))
 }
 
 fn bounded_test_output(command: &mut Command) -> std::process::Output {
-    test_process_containment::output_bounded(command, std::time::Duration::from_secs(30))
+    ferric_process::testing::output(command, std::time::Duration::from_secs(30))
         .expect("run bounded integration-test child")
 }
 
 fn bounded_test_output_with_input(command: &mut Command, input: &[u8]) -> std::process::Output {
-    test_process_containment::output_bounded_with_input(
-        command,
-        input,
-        std::time::Duration::from_secs(30),
-    )
-    .expect("run bounded integration-test child with source-defined input")
+    ferric_process::testing::output_with_input(command, input, std::time::Duration::from_secs(30))
+        .expect("run bounded integration-test child with source-defined input")
 }
 
-fn spawn_contained_test_child(command: &mut Command) -> test_process_containment::ContainedChild {
-    test_process_containment::ContainedChild::spawn(command)
-        .expect("spawn contained integration-test child")
+fn spawn_contained_test_child(command: &mut Command) -> ferric_process::ProcessTree {
+    ferric_process::testing::spawn(command).expect("spawn contained integration-test child")
 }
 
 fn assert_success(out: &std::process::Output) {
@@ -90,7 +84,7 @@ fn max_assembled_chars(path: &std::path::Path) -> u64 {
 /// writers before the bounded reader join; no detached reader can outlive this
 /// test's cleanup boundary.
 struct McpSession {
-    child: test_process_containment::ContainedChild,
+    child: ferric_process::ProcessTree,
     readers: Vec<std::thread::JoinHandle<()>>,
 }
 
@@ -100,7 +94,7 @@ impl McpSession {
         for reader in self.readers.drain(..) {
             while !reader.is_finished() {
                 if std::time::Instant::now() >= deadline {
-                    test_process_containment::abort_on_cleanup_failure(
+                    ferric_process::abort_on_cleanup_failure(
                         "MCP pipe reader did not finish after child-tree cleanup",
                         "reader join deadline exceeded",
                     );
@@ -108,7 +102,7 @@ impl McpSession {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             if reader.join().is_err() {
-                test_process_containment::abort_on_cleanup_failure(
+                ferric_process::abort_on_cleanup_failure(
                     "MCP pipe reader panicked during teardown",
                     "reader join failed",
                 );
@@ -120,7 +114,7 @@ impl McpSession {
 impl Drop for McpSession {
     fn drop(&mut self) {
         if let Err(error) = self.child.terminate_and_reap() {
-            test_process_containment::abort_on_cleanup_failure("MCP child cleanup failed", error);
+            ferric_process::abort_on_cleanup_failure("MCP child cleanup failed", error);
         }
         self.join_readers();
     }
@@ -2381,7 +2375,7 @@ fn mcp_stdio_e2e() {
     drop(stdin); // EOF: the server should exit cleanly on its own.
     let status = session
         .child
-        .wait_for_exit_and_disarm(Duration::from_secs(10))
+        .wait_for_exit(Duration::from_secs(10))
         .expect("ferric mcp did not exit within 10s of stdin EOF");
     assert!(status.success(), "ferric mcp did not exit cleanly on EOF");
     session.join_readers();

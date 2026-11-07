@@ -186,17 +186,10 @@ pub(super) fn scan_dir(
         };
         return Ok(vec![LocalModel::open(&selected)?]);
     }
-    scan_discovered(models_dir, |_| Ok(()))
-}
-
-fn scan_discovered(
-    models_dir: &Path,
-    checkpoint: impl FnOnce(&DiscoveredDirectory) -> Result<(), StartupError>,
-) -> Result<Vec<LocalModel>, StartupError> {
     let Some(binding) = DiscoveredDirectory::open(models_dir)? else {
         return Ok(Vec::new());
     };
-    scan_binding(binding, checkpoint)
+    scan_binding(binding, |_| Ok(()))
 }
 
 fn scan_binding(
@@ -374,10 +367,7 @@ mod tests {
     fn gguf(directory: &Path, extra_bytes: usize) -> PathBuf {
         std::fs::create_dir_all(directory).unwrap();
         let path = directory.join("choice.gguf");
-        let mut header = vec![0_u8; 24 + extra_bytes];
-        header[..4].copy_from_slice(b"GGUF");
-        header[4..8].copy_from_slice(&3_u32.to_le_bytes());
-        std::fs::write(&path, header).unwrap();
+        crate::startup::test_support::write_gguf(&path, extra_bytes);
         path
     }
 

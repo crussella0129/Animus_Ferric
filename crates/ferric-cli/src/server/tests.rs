@@ -14,15 +14,11 @@ use std::net::TcpListener;
 use std::rc::Rc;
 use std::thread;
 
-fn spawn_contained_test_child(
-    command: &mut Command,
-    label: &str,
-) -> crate::test_process_containment::ContainedChild {
-    crate::test_process_containment::ContainedChild::spawn(command)
-        .unwrap_or_else(|error| panic!("spawn {label}: {error}"))
+fn spawn_contained_test_child(command: &mut Command, label: &str) -> ferric_process::ProcessTree {
+    ferric_process::testing::spawn(command).unwrap_or_else(|error| panic!("spawn {label}: {error}"))
 }
 
-impl SpawnedChild for crate::test_process_containment::ContainedChild {
+impl SpawnedChild for ferric_process::ProcessTree {
     type ExitStatus = std::process::ExitStatus;
 
     fn pid(&self) -> u32 {
@@ -34,7 +30,7 @@ impl SpawnedChild for crate::test_process_containment::ContainedChild {
     }
 
     fn wait(&mut self) -> Result<Self::ExitStatus, String> {
-        self.wait_for_exit_and_disarm(Duration::from_secs(5))
+        self.wait_for_exit(Duration::from_secs(5))
             .map_err(|error| error.to_string())
     }
 
@@ -10383,11 +10379,11 @@ mod native {
     const LIFECYCLE_HELPER_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
     struct LifecycleHelperGuard {
-        child: crate::test_process_containment::ContainedChild,
+        child: ferric_process::ProcessTree,
     }
 
     impl LifecycleHelperGuard {
-        fn new(child: crate::test_process_containment::ContainedChild) -> Self {
+        fn new(child: ferric_process::ProcessTree) -> Self {
             Self { child }
         }
 
@@ -10395,7 +10391,7 @@ mod native {
             self.child.child()
         }
 
-        fn child_mut(&mut self) -> &mut crate::test_process_containment::ContainedChild {
+        fn child_mut(&mut self) -> &mut ferric_process::ProcessTree {
             &mut self.child
         }
 
@@ -10405,7 +10401,7 @@ mod native {
 
         fn wait_for_exit_and_disarm(&mut self, context: &str) -> Result<(), String> {
             self.child
-                .wait_for_exit_and_disarm(LIFECYCLE_HELPER_EXIT_TIMEOUT)
+                .wait_for_exit(LIFECYCLE_HELPER_EXIT_TIMEOUT)
                 .map(|_| ())
                 .map_err(|error| format!("{context}: {error}"))
         }
@@ -10430,7 +10426,7 @@ mod native {
         if std::env::var(LIFECYCLE_HELPER_ENV).ok().as_deref() != Some("1") {
             return;
         }
-        crate::test_process_containment::arm_current_process_parent_death_signal()
+        ferric_process::testing::contain_current_process()
             .expect("arm lifecycle-helper parent-death containment");
         let port = std::env::var("FERRIC_TEST_LIFECYCLE_PORT")
             .expect("helper port")
@@ -10458,13 +10454,10 @@ mod native {
     }
 
     fn spawn_lifecycle_helper_with_binding(port: u16, wildcard: bool) -> LifecycleHelperGuard {
-        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        let mut command = ferric_process::testing::harness_command(
+            "server::tests::native::lifecycle_helper_process",
+        );
         command
-            .args([
-                "--exact",
-                "server::tests::native::lifecycle_helper_process",
-                "--nocapture",
-            ])
             .env(LIFECYCLE_HELPER_ENV, "1")
             .env(
                 LIFECYCLE_HELPER_WILDCARD_ENV,
@@ -10473,23 +10466,20 @@ mod native {
             .env("FERRIC_TEST_LIFECYCLE_PORT", port.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let child = crate::test_process_containment::ContainedChild::spawn(&mut command)
-            .expect("spawn contained lifecycle helper");
+        let child =
+            ferric_process::testing::spawn(&mut command).expect("spawn contained lifecycle helper");
         LifecycleHelperGuard::new(child)
     }
 
     fn lifecycle_parent_test_guard() -> std::sync::MutexGuard<'static, ()> {
-        crate::test_process_containment::ensure_current_process_tree_is_contained()
+        ferric_process::testing::contain_current_process()
             .expect("install lifecycle-test process containment");
         LIFECYCLE_PARENT_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn wait_for_lifecycle_helper(
-        child: &mut crate::test_process_containment::ContainedChild,
-        port: u16,
-    ) {
+    fn wait_for_lifecycle_helper(child: &mut ferric_process::ProcessTree, port: u16) {
         if let Err(error) = wait_healthy_with(
             child,
             Engine::LlamaServer,

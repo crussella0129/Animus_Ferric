@@ -4,17 +4,14 @@
 
 use std::process::{Command, Output};
 
-#[path = "../src/test_process_containment.rs"]
-mod test_process_containment;
-
 fn ferric() -> Command {
-    test_process_containment::ensure_current_process_tree_is_contained()
+    ferric_process::testing::contain_current_process()
         .expect("install benchmark integration-test process containment");
     Command::new(env!("CARGO_BIN_EXE_ferric"))
 }
 
 fn output(command: &mut Command) -> Output {
-    test_process_containment::output_bounded(command, std::time::Duration::from_secs(60)).unwrap()
+    ferric_process::testing::output(command, std::time::Duration::from_secs(60)).unwrap()
 }
 
 #[test]

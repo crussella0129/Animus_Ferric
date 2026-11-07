@@ -34,7 +34,7 @@ pub(crate) struct DescribeArgs {
 }
 
 #[cfg(feature = "backend-openai")]
-fn safe_text(text: &str) -> String {
+pub(crate) fn safe_text(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
         .collect()
@@ -142,11 +142,12 @@ mod enabled {
     use std::time::Duration;
 
     use crate::config::Config;
-    use crate::startup::{MemoryProbe, NativeMemoryProbe, PreparedSession, Startup, SystemMemory};
+    use crate::startup::{PreparedSession, Startup};
     use ferric_core::{
         Fit, HarnessPolicy, Message, ModelProfile, Tier, classify_fit, estimate_model_memory,
     };
     use ferric_guard::Workspace;
+    use ferric_process::memory::SystemMemory;
     use ferric_provider::{Completion, CompletionRequest, Provider, SamplingParams, StreamDelta};
     use ferric_trace::{Event, JsonlSink};
 
@@ -283,7 +284,7 @@ mod enabled {
                 for (index, model) in start.models.iter().enumerate() {
                     let size = model
                         .bytes
-                        .map(|bytes| format!(" ({:.1} GiB file)", bytes as f64 / 1_073_741_824.0))
+                        .map(|bytes| format!(" ({} file)", gib(bytes)))
                         .unwrap_or_default();
                     let remembered = if start.preferred_index == Some(index) {
                         " (last used)"
@@ -673,7 +674,7 @@ mod enabled {
             }
             Err(error) => return Err(render_startup_error(&error)),
         };
-        let memory = NativeMemoryProbe.probe();
+        let memory = ferric_process::memory::system_memory();
         let Some(index) = choose_model(&start, interactive, io, memory, &models_dir)? else {
             io.say("Cancelled. No session started.");
             return Ok(());
@@ -693,10 +694,7 @@ mod enabled {
                     "This folder is Ferric's own source tree:\n  {}\nFolder work here can modify Ferric itself. Work here anyway? [y/N] ",
                     safe_text(&root.display().to_string())
                 ))?;
-                if !matches!(
-                    answer.as_deref().map(str::trim),
-                    Some("y" | "Y" | "yes" | "Yes")
-                ) {
+                if !confirmed_yes(answer.as_deref()) {
                     io.say(
                         "Cancelled. Re-run from your project folder, or pass --workspace <dir>.",
                     );
@@ -716,10 +714,7 @@ mod enabled {
             ));
             if interactive {
                 let answer = io.read("Start the local model? [y/N] ")?;
-                if !matches!(
-                    answer.as_deref().map(str::trim),
-                    Some("y" | "Y" | "yes" | "Yes")
-                ) {
+                if !confirmed_yes(answer.as_deref()) {
                     io.say("Cancelled. No engine started.");
                     return Ok(());
                 }

@@ -55,10 +55,7 @@ impl Tail {
             .iter()
             .copied()
             .collect();
-        String::from_utf8_lossy(&bytes)
-            .chars()
-            .filter(|character| !character.is_control() || matches!(character, '\n' | '\t'))
-            .collect()
+        crate::human::safe_text(&String::from_utf8_lossy(&bytes))
     }
 
     fn finish(&mut self) {

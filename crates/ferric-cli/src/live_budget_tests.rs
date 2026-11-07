@@ -414,16 +414,11 @@ impl Provider for RecordingProvider {
 
 fn parent_run(mode: &str, root: &Path, execution: Duration) -> Result<Value, String> {
     let started = Instant::now();
-    crate::test_process_containment::ensure_current_process_tree_is_contained()?;
-    let mut command = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
+    ferric_process::testing::contain_current_process().map_err(|error| error.to_string())?;
+    let mut command =
+        ferric_process::testing::harness_command("live_budget_tests::live_budget_child");
     command
-        .args([
-            "--ignored",
-            "--exact",
-            "live_budget_tests::live_budget_child",
-            "--nocapture",
-            "--test-threads=1",
-        ])
+        .arg("--ignored")
         .env("FERRIC_BUDGET_CHILD_MODE", mode)
         .env("FERRIC_BUDGET_CHILD_ROOT", root);
     let outcome = ferric_process::run_bounded(
@@ -608,29 +603,16 @@ fn live_budget_fixture_stalled_phases_reap() {
 }
 
 fn fixture_model(root: &Path) -> PathBuf {
-    let mut header = [0u8; 24];
-    header[..4].copy_from_slice(b"GGUF");
-    header[4..8].copy_from_slice(&3u32.to_le_bytes());
     let model = root.join("fixture.gguf");
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&model)
-        .unwrap();
-    file.write_all(&header).unwrap();
+    crate::startup::test_support::write_gguf(&model, 0);
     model
 }
 
 fn source_engine(port: u16, mode: &str, root: &Path) -> Command {
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command =
+        ferric_process::testing::harness_command("live_budget_tests::live_budget_engine");
     command
-        .args([
-            "--ignored",
-            "--exact",
-            "live_budget_tests::live_budget_engine",
-            "--nocapture",
-            "--test-threads=1",
-        ])
+        .arg("--ignored")
         .env("FERRIC_BUDGET_ENGINE_PORT", port.to_string())
         .env("FERRIC_BUDGET_ENGINE_MODE", mode)
         .env("FERRIC_BUDGET_CHILD_ROOT", root);
@@ -643,7 +625,7 @@ fn live_budget_child() {
     let Ok(mode) = std::env::var("FERRIC_BUDGET_CHILD_MODE") else {
         return;
     };
-    crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
+    ferric_process::testing::contain_current_process().unwrap();
     let root = PathBuf::from(std::env::var_os("FERRIC_BUDGET_CHILD_ROOT").unwrap());
     let report = child_body(&mode, &root);
     write_new_json(&root.join("child-report.json"), &report).unwrap();
@@ -1029,7 +1011,7 @@ fn live_budget_engine() {
     let Ok(port) = std::env::var("FERRIC_BUDGET_ENGINE_PORT") else {
         return;
     };
-    crate::test_process_containment::ensure_current_process_tree_is_contained().unwrap();
+    ferric_process::testing::contain_current_process().unwrap();
     let port: u16 = port.parse().unwrap();
     let root = PathBuf::from(std::env::var_os("FERRIC_BUDGET_CHILD_ROOT").unwrap());
     let mode = std::env::var("FERRIC_BUDGET_ENGINE_MODE").unwrap();

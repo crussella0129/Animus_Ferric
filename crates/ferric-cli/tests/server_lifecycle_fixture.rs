@@ -17,10 +17,6 @@
     )
 ))]
 
-#[cfg(any(windows, target_os = "linux"))]
-#[path = "../src/test_process_containment.rs"]
-mod test_process_containment;
-
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
@@ -37,6 +33,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+use ferric_process::exact::{Access, ExactProcess, ProcessState};
 use sha2::{Digest, Sha256};
 
 const SENTINEL_NAME: &str = "unrelated-sentinel.txt";
@@ -72,7 +69,7 @@ const FIXTURE_LIFETIME_LIMIT: Duration = Duration::from_secs(90);
 const PORT_ATTEMPTS: usize = 3;
 
 fn lifecycle_test_lock() -> MutexGuard<'static, ()> {
-    test_process_containment::ensure_current_process_tree_is_contained()
+    ferric_process::testing::contain_current_process()
         .expect("install lifecycle-test process containment");
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -123,33 +120,6 @@ fn engine_filename() -> &'static str {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_self_start_ticks() -> String {
-    linux_process_start_ticks(std::process::id())
-        .expect("read lifecycle harness stat")
-        .to_string()
-}
-
-#[cfg(target_os = "linux")]
-fn linux_process_start_ticks(pid: u32) -> std::io::Result<u64> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
-    let close = stat.rfind(')').ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "lifecycle process stat lacked a command delimiter",
-        )
-    })?;
-    stat.get(close + 1..)
-        .and_then(|suffix| suffix.split_whitespace().nth(19))
-        .and_then(|field| field.parse::<u64>().ok())
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "lifecycle process stat lacked numeric start ticks",
-            )
-        })
-}
-
-#[cfg(target_os = "linux")]
 fn linux_process_start_token(pid: u32) -> std::io::Result<String> {
     let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
     let boot_id = boot_id.trim();
@@ -159,7 +129,7 @@ fn linux_process_start_token(pid: u32) -> std::io::Result<String> {
             "Linux boot ID was empty",
         ));
     }
-    let start_ticks = linux_process_start_ticks(pid)?;
+    let start_ticks = ferric_process::exact::start_ticks(pid)?;
     Ok(format!("linux-boot-id:{boot_id};start-ticks:{start_ticks}"))
 }
 
@@ -167,7 +137,12 @@ fn configure_fixture_owner_environment(command: &mut Command) {
     #[cfg(target_os = "linux")]
     command
         .env(OWNER_PID_ENV, std::process::id().to_string())
-        .env(OWNER_START_TICKS_ENV, linux_self_start_ticks());
+        .env(
+            OWNER_START_TICKS_ENV,
+            ferric_process::exact::start_ticks(std::process::id())
+                .expect("read lifecycle harness stat")
+                .to_string(),
+        );
 
     #[cfg(windows)]
     let _ = command;
@@ -204,8 +179,7 @@ fn isolated_ferric(workspace: &Path, appdata: &Path, bin_dir: &Path) -> Command 
         .env("HOME", appdata.join("unused-home"))
         // Ferric can resolve only the copied closed-engine fixture.
         .env("PATH", bin_dir);
-    test_process_containment::configure_command_parent_death_signal(&mut command)
-        .expect("configure Ferric test-child parent-death containment");
+    ferric_process::testing::parent_death_signal(&mut command);
     configure_fixture_owner_environment(&mut command);
     command
 }
@@ -232,8 +206,7 @@ fn isolated_production_ferric(workspace: &Path, appdata: &Path, bin_dir: &Path) 
         .env("XDG_CONFIG_HOME", appdata.join("unused-xdg"))
         .env("HOME", appdata.join("unused-home"))
         .env("PATH", bin_dir);
-    test_process_containment::configure_command_parent_death_signal(&mut command)
-        .expect("configure production Ferric test-child parent-death containment");
+    ferric_process::testing::parent_death_signal(&mut command);
     configure_fixture_owner_environment(&mut command);
     command
 }
@@ -255,11 +228,11 @@ fn wait_for_child_exit(
 }
 
 fn report_drop_cleanup_failure(context: &str, error: std::io::Error) {
-    test_process_containment::abort_on_cleanup_failure(context, error);
+    ferric_process::abort_on_cleanup_failure(context, error);
 }
 
 fn run_cli_output_bounded(label: &str, command: &mut Command) -> Output {
-    test_process_containment::output_bounded(command, CLI_TIMEOUT)
+    ferric_process::testing::output(command, CLI_TIMEOUT)
         .unwrap_or_else(|error| panic!("run {label} within owned CLI scope: {error}"))
 }
 
@@ -303,7 +276,7 @@ fn run_managed_cli_output_bounded(
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout.try_clone().unwrap()))
         .stderr(Stdio::from(stderr.try_clone().unwrap()));
-    let child = test_process_containment::ContainedChild::spawn(command)
+    let child = ferric_process::testing::spawn(command)
         .unwrap_or_else(|error| panic!("spawn {label} in retained lifecycle scope: {error}"));
     // `server up` deliberately hands its server to the test's lifecycle owner.
     // On Linux a live source supervisor anchors this scope and reaps the real
@@ -1004,413 +977,50 @@ fn write_localapi_response(stream: &mut TcpStream, status: u16, body: &[u8], eta
     stream.flush().expect("flush fake LocalAPI response");
 }
 
-#[cfg(windows)]
-mod native_process {
-    use std::ffi::c_void;
-    use std::io;
-    use std::mem::MaybeUninit;
-
-    type Handle = *mut c_void;
-    const PROCESS_TERMINATE: u32 = 0x0001;
-    const SYNCHRONIZE: u32 = 0x0010_0000;
-    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
-    const WAIT_OBJECT_0: u32 = 0;
-    const WAIT_TIMEOUT: u32 = 258;
-    const WAIT_FAILED: u32 = u32::MAX;
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct FileTime {
-        low_date_time: u32,
-        high_date_time: u32,
-    }
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> Handle;
-        fn TerminateProcess(process: Handle, exit_code: u32) -> i32;
-        fn WaitForSingleObject(object: Handle, milliseconds: u32) -> u32;
-        fn CloseHandle(object: Handle) -> i32;
-        fn GetProcessTimes(
-            process: Handle,
-            creation_time: *mut FileTime,
-            exit_time: *mut FileTime,
-            kernel_time: *mut FileTime,
-            user_time: *mut FileTime,
-        ) -> i32;
-    }
-
-    /// One retained process-object handle. PID reuse cannot retarget it.
-    pub struct ExactProcess {
-        handle: Handle,
-    }
-
-    impl ExactProcess {
-        pub fn acquire(pid: u32, expected_start_token: &str) -> io::Result<Self> {
-            let handle = unsafe {
-                OpenProcess(
-                    PROCESS_TERMINATE | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-                    0,
-                    pid,
-                )
-            };
-            if handle.is_null() {
-                return Err(io::Error::last_os_error());
-            }
-            let process = Self { handle };
-            if !process.active()? {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "retained process exited before creation-token validation",
-                ));
-            }
-            let observed_start_token = process.start_token()?;
-            if !process.active()? {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "retained process exited during creation-token validation",
-                ));
-            }
-            if observed_start_token != expected_start_token {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "published start token {expected_start_token:?} does not match retained process token {observed_start_token:?}"
-                    ),
-                ));
-            }
-            Ok(process)
-        }
-
-        fn active(&self) -> io::Result<bool> {
-            match unsafe { WaitForSingleObject(self.handle, 0) } {
-                WAIT_OBJECT_0 => Ok(false),
-                WAIT_TIMEOUT => Ok(true),
-                WAIT_FAILED => Err(io::Error::last_os_error()),
-                state => Err(io::Error::other(format!(
-                    "unexpected retained process wait state {state}"
-                ))),
-            }
-        }
-
-        fn start_token(&self) -> io::Result<String> {
-            let mut creation = MaybeUninit::<FileTime>::uninit();
-            let mut exit = MaybeUninit::<FileTime>::uninit();
-            let mut kernel = MaybeUninit::<FileTime>::uninit();
-            let mut user = MaybeUninit::<FileTime>::uninit();
-            if unsafe {
-                GetProcessTimes(
-                    self.handle,
-                    creation.as_mut_ptr(),
-                    exit.as_mut_ptr(),
-                    kernel.as_mut_ptr(),
-                    user.as_mut_ptr(),
-                )
-            } == 0
-            {
-                return Err(io::Error::last_os_error());
-            }
-            let creation = unsafe { creation.assume_init() };
-            let filetime =
-                (u64::from(creation.high_date_time) << 32) | u64::from(creation.low_date_time);
-            Ok(format!("windows-filetime:{filetime}"))
-        }
-
-        pub fn running(&self) -> bool {
-            // An observation failure is not proof of exit. Keep cleanup and
-            // the assertion fail-closed on the retained exact object.
-            self.active().unwrap_or(true)
-        }
-
-        pub fn exited(&self) -> io::Result<bool> {
-            self.active().map(|active| !active)
-        }
-
-        pub fn reap_after_exit(&self) -> io::Result<()> {
-            if self.exited()? {
-                Ok(())
-            } else {
-                Err(io::Error::other("retained Windows fixture has not exited"))
-            }
-        }
-
-        pub fn terminate_for_cleanup(&self) -> io::Result<()> {
-            if !self.active()? {
-                return Ok(());
-            }
-            if unsafe { TerminateProcess(self.handle, 1) } == 0 {
-                let terminate_error = io::Error::last_os_error();
-                if self.active()? {
-                    return Err(terminate_error);
-                }
-                return Ok(());
-            }
-            match unsafe { WaitForSingleObject(self.handle, 5_000) } {
-                WAIT_OBJECT_0 => Ok(()),
-                WAIT_TIMEOUT => Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "timed out waiting for retained process termination",
-                )),
-                WAIT_FAILED => Err(io::Error::last_os_error()),
-                state => Err(io::Error::other(format!(
-                    "unexpected retained process cleanup wait state {state}"
-                ))),
-            }
-        }
-    }
-
-    impl Drop for ExactProcess {
-        fn drop(&mut self) {
-            unsafe {
-                CloseHandle(self.handle);
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-mod native_process {
-    use std::ffi::{c_int, c_long, c_void};
-    use std::fs;
-    use std::io;
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-
-    const SYS_PIDFD_SEND_SIGNAL: c_long = 424;
-    const SYS_PIDFD_OPEN: c_long = 434;
-    const POLLIN: i16 = 0x0001;
-    const POLLHUP: i16 = 0x0010;
-    const SIGKILL: c_int = 9;
-
-    #[repr(C)]
-    struct PollFd {
-        fd: c_int,
-        events: i16,
-        revents: i16,
-    }
-
-    unsafe extern "C" {
-        fn syscall(number: c_long, ...) -> c_long;
-        fn poll(descriptors: *mut PollFd, count: usize, timeout_ms: c_int) -> c_int;
-    }
-
-    /// One retained pidfd. PID reuse cannot retarget it, and polling it treats
-    /// an exited-but-unreaped process as exited rather than `/proc`-live.
-    pub struct ExactProcess {
-        pidfd: OwnedFd,
-    }
-
-    impl ExactProcess {
-        pub fn acquire(pid: u32, expected_start_token: &str) -> io::Result<Self> {
-            if pid == 0 || pid > c_int::MAX as u32 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "published PID is outside the pidfd range",
-                ));
-            }
-            let raw = unsafe { syscall(SYS_PIDFD_OPEN, pid as c_int, 0_u32) };
-            if raw < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let pidfd = unsafe { OwnedFd::from_raw_fd(raw as c_int) };
-            let process = Self { pidfd };
-
-            // All identity coordinates below are PID-indexed. Active pidfd
-            // checks bracket the complete read so exit/reuse cannot pair a
-            // replacement's /proc facts with this retained process object.
-            if !process.active()? {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "retained process exited before start-token validation",
-                ));
-            }
-            let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
-            let boot_id = boot_id.trim();
-            if boot_id.is_empty() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Linux boot ID was empty",
-                ));
-            }
-            let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
-            let close = stat.rfind(')').ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "process stat did not contain a closing command delimiter",
-                )
-            })?;
-            let start_ticks = stat
-                .get(close + 1..)
-                .and_then(|suffix| suffix.split_whitespace().nth(19))
-                .and_then(|field| field.parse::<u64>().ok())
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "process stat did not contain numeric start ticks",
-                    )
-                })?;
-            let observed_start_token = format!("linux-boot-id:{boot_id};start-ticks:{start_ticks}");
-            if !process.active()? {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "retained process exited during start-token validation",
-                ));
-            }
-            if observed_start_token != expected_start_token {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "published start token {expected_start_token:?} does not match retained process token {observed_start_token:?}"
-                    ),
-                ));
-            }
-            Ok(process)
-        }
-
-        fn poll_exit(&self, timeout_ms: c_int) -> io::Result<bool> {
-            let mut descriptor = PollFd {
-                fd: self.pidfd.as_raw_fd(),
-                events: POLLIN,
-                revents: 0,
-            };
-            let result = unsafe { poll(&mut descriptor, 1, timeout_ms) };
-            if result == 0 {
-                return Ok(false);
-            }
-            if result < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            if descriptor.revents & !(POLLIN | POLLHUP) != 0 {
-                Err(io::Error::other(format!(
-                    "retained pidfd returned invalid poll events {:#x}",
-                    descriptor.revents
-                )))
-            } else if descriptor.revents & (POLLIN | POLLHUP) != 0 {
-                Ok(true)
-            } else {
-                Err(io::Error::other(format!(
-                    "retained pidfd returned ambiguous poll events {:#x}",
-                    descriptor.revents
-                )))
-            }
-        }
-
-        fn active(&self) -> io::Result<bool> {
-            self.poll_exit(0).map(|exited| !exited)
-        }
-
-        pub fn running(&self) -> bool {
-            // A poll failure is not proof of exit. Keep cleanup and the
-            // assertion fail-closed on the retained exact object.
-            self.active().unwrap_or(true)
-        }
-
-        pub fn exited(&self) -> io::Result<bool> {
-            self.active().map(|active| !active)
-        }
-
-        /// Reap only this retained process. A fixture still owned by its
-        /// source supervisor may be reaped there; POLLHUP proves that case.
-        /// Unlike numeric waitpid, P_PIDFD cannot target a reused process ID.
-        pub fn reap_after_exit(&self) -> io::Result<()> {
-            let deadline = std::time::Instant::now() + super::CHILD_EXIT_GRACE;
-            loop {
-                let mut descriptor = PollFd {
-                    fd: self.pidfd.as_raw_fd(),
-                    events: POLLIN,
-                    revents: 0,
-                };
-                let polled = unsafe { poll(&mut descriptor, 1, 0) };
-                if polled < 0 {
-                    let error = io::Error::last_os_error();
-                    if error.kind() == io::ErrorKind::Interrupted {
-                        continue;
-                    }
-                    return Err(error);
-                }
-                if descriptor.revents & !(POLLIN | POLLHUP) != 0 {
-                    return Err(io::Error::other(format!(
-                        "retained pidfd returned invalid reap events {:#x}",
-                        descriptor.revents
-                    )));
-                }
-                if descriptor.revents & POLLHUP != 0 {
-                    return Ok(());
-                }
-                let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
-                let waited = unsafe {
-                    libc::waitid(
-                        libc::P_PIDFD,
-                        self.pidfd.as_raw_fd() as libc::id_t,
-                        &mut status,
-                        libc::WEXITED | libc::WNOHANG,
-                    )
-                };
-                if waited == 0 && unsafe { status.si_pid() } != 0 {
-                    return Ok(());
-                }
-                if waited != 0 {
-                    let error = io::Error::last_os_error();
-                    if error.raw_os_error() != Some(libc::ECHILD)
-                        && error.kind() != io::ErrorKind::Interrupted
-                    {
-                        return Err(error);
-                    }
-                }
-                if std::time::Instant::now() >= deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "exact fixture exited but neither source reaping nor external reaping was proved",
-                    ));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-        }
-
-        pub fn terminate_for_cleanup(&self) -> io::Result<()> {
-            if !self.active()? {
-                return Ok(());
-            }
-            let signal_result = unsafe {
-                syscall(
-                    SYS_PIDFD_SEND_SIGNAL,
-                    self.pidfd.as_raw_fd(),
-                    SIGKILL,
-                    std::ptr::null::<c_void>(),
-                    0_u32,
-                )
-            };
-            if signal_result < 0 {
-                let signal_error = io::Error::last_os_error();
-                if self.active()? {
-                    return Err(signal_error);
-                }
-                return Ok(());
-            }
-            if self.poll_exit(5_000)? {
-                Ok(())
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "timed out waiting for retained process termination",
-                ))
-            }
-        }
-    }
-}
-
 /// Cleans an up-launched fixture if a later assertion fails. The exact OS
 /// process object is acquired once from the just-published PID and retained;
 /// neither liveness checks nor cleanup reopen that numeric PID.
 struct ExternalProcessGuard {
-    process: native_process::ExactProcess,
+    process: ExactProcess,
     armed: bool,
     reap: bool,
 }
 
 impl ExternalProcessGuard {
     fn acquire(pid: u32, expected_start_token: &str) -> std::io::Result<Self> {
+        // Validate before constructing the terminating guard: a mismatched
+        // coordinate never becomes cleanup authority over a replacement PID.
+        let process = ExactProcess::open(pid, Access::Terminate)?;
+        let exited =
+            || Ok::<_, std::io::Error>(process.state(Duration::ZERO)? != ProcessState::Running);
+        // Linux start tokens are read by PID. Active checks bracket the read
+        // so exit/reuse cannot pair a replacement's facts with this object.
+        if exited()? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "retained process exited before start-token validation",
+            ));
+        }
+        #[cfg(windows)]
+        let observed_start_token = format!("windows-filetime:{}", process.generation()?);
+        #[cfg(target_os = "linux")]
+        let observed_start_token = linux_process_start_token(pid)?;
+        if exited()? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "retained process exited during start-token validation",
+            ));
+        }
+        if observed_start_token != expected_start_token {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "published start token {expected_start_token:?} does not match retained process token {observed_start_token:?}"
+                ),
+            ));
+        }
         Ok(Self {
-            process: native_process::ExactProcess::acquire(pid, expected_start_token)?,
+            process,
             armed: true,
             reap: true,
         })
@@ -1419,31 +1029,45 @@ impl ExternalProcessGuard {
     #[cfg(target_os = "linux")]
     fn observe_child(pid: u32, expected_start_token: &str) -> std::io::Result<Self> {
         let mut guard = Self::acquire(pid, expected_start_token)?;
-        // Its ContainedChild scope owns the direct leader's reap obligation.
+        // Its owned ProcessTree scope holds the direct leader's reap obligation.
         guard.reap = false;
         Ok(guard)
     }
 
+    fn exited(&self) -> std::io::Result<bool> {
+        Ok(self.process.state(Duration::ZERO)? != ProcessState::Running)
+    }
+
     fn running(&self) -> bool {
-        self.process.running()
+        // An observation failure is not proof of exit. Keep cleanup and the
+        // assertion fail-closed on the retained exact object.
+        !self.exited().unwrap_or(false)
     }
 
     fn disarm_after_exit(&mut self) -> std::io::Result<()> {
-        if !self.process.exited()? {
+        if !self.exited()? {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::WouldBlock,
                 "cannot disarm cleanup for a retained process that is still running",
             ));
         }
+        // A fixture still owned by its source supervisor may be reaped there;
+        // reaping proves that case too.
         if self.reap {
-            self.process.reap_after_exit()?;
+            self.process.reap(CHILD_EXIT_GRACE)?;
         }
         self.armed = false;
         Ok(())
     }
 
     fn terminate_and_disarm(&mut self) -> std::io::Result<()> {
-        self.process.terminate_for_cleanup()?;
+        self.process.terminate()?;
+        if self.process.state(Duration::from_secs(5))? == ProcessState::Running {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timed out waiting for retained process termination",
+            ));
+        }
         self.disarm_after_exit()
     }
 }
@@ -1473,7 +1097,7 @@ struct FixtureLifetimeGuard {
     watchdog_cancel: Option<Sender<()>>,
     watchdog: Option<thread::JoinHandle<()>>,
     armed: bool,
-    scopes: Vec<test_process_containment::ContainedChild>,
+    scopes: Vec<ferric_process::ProcessTree>,
 }
 
 impl FixtureLifetimeGuard {
@@ -1910,7 +1534,7 @@ fn run_owner_death_probe() -> std::io::Result<()> {
 
 #[cfg(target_os = "linux")]
 fn wait_for_owner_death_coordinate(
-    owner: &mut test_process_containment::ContainedChild,
+    owner: &mut ferric_process::ProcessTree,
     ready: &Path,
 ) -> Result<OwnerDeathCoordinate, String> {
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -2108,8 +1732,7 @@ fn launch_direct_fixture_with_retry(
             .current_dir(workspace)
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        test_process_containment::configure_command_parent_death_signal(&mut child)
-            .expect("configure direct fixture parent-death containment");
+        ferric_process::testing::parent_death_signal(&mut child);
         configure_fixture_owner_environment(&mut child);
         let mut child = child
             .spawn()
@@ -2217,16 +1840,8 @@ fn lifecycle_fixture_exits_when_exact_owner_pidfd_signals() {
         let stderr_path = root.path().join(format!("owner-death-{attempt}.stderr"));
         let stdout = File::create(&stdout_path).expect("create sacrificial-owner stdout capture");
         let stderr = File::create(&stderr_path).expect("create sacrificial-owner stderr capture");
-        let mut command = Command::new(
-            std::env::current_exe().expect("resolve Cargo-provided lifecycle test harness"),
-        );
+        let mut command = ferric_process::testing::harness_command(OWNER_DEATH_PROBE_TEST_NAME);
         command
-            .args([
-                "--exact",
-                OWNER_DEATH_PROBE_TEST_NAME,
-                "--nocapture",
-                "--test-threads=1",
-            ])
             .env(OWNER_DEATH_PROBE_MODE_ENV, "owner")
             .env(OWNER_DEATH_PROBE_FIXTURE_ENV, fixture_executable())
             .env(OWNER_DEATH_PROBE_MODEL_ENV, &model)
@@ -2236,7 +1851,7 @@ fn lifecycle_fixture_exits_when_exact_owner_pidfd_signals() {
             .env(BIND_DIAGNOSTIC_ENV, &bind_diagnostic)
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        let mut owner = test_process_containment::ContainedChild::spawn(&mut command)
+        let mut owner = ferric_process::testing::spawn(&mut command)
             .expect("spawn source-defined sacrificial owner");
         let spawned_owner_pid = owner.child().id();
         match wait_for_owner_death_coordinate(&mut owner, &ready) {
@@ -2339,7 +1954,7 @@ fn lifecycle_fixture_exits_when_exact_owner_pidfd_signals() {
         .disarm_after_exit()
         .expect("confirm exact lifecycle-fixture exit and adopted reaping after owner death");
     owner
-        .wait_for_exit_and_disarm(CHILD_EXIT_GRACE)
+        .wait_for_exit(CHILD_EXIT_GRACE)
         .expect("reap sacrificial owner and drain its source-owned scope");
     assert!(
         wait_until(|| endpoint_is_closed(coordinate.port)),

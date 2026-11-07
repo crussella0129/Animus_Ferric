@@ -1887,11 +1887,9 @@ mod tests {
             .arg("/J")
             .arg(link)
             .arg(target);
-        let output = crate::test_process_containment::output_bounded(
-            &mut command,
-            std::time::Duration::from_secs(10),
-        )
-        .unwrap();
+        let output =
+            ferric_process::testing::output(&mut command, std::time::Duration::from_secs(10))
+                .unwrap();
         assert!(
             output.status.success(),
             "junction creation failed: stdout={} stderr={}",
@@ -2156,7 +2154,7 @@ mod tests {
         let script = format!(
             "[Console]::Error.WriteLine('{ENTERED}'); function ferric {{ foreach ($value in $args) {{ [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value)) }} }}; {command}; [Console]::Error.WriteLine('{COMPLETE}')"
         );
-        crate::test_process_containment::ensure_current_process_tree_is_contained()
+        ferric_process::testing::contain_current_process()
             .expect("source harness containment before PowerShell admission");
         let mut command = std::process::Command::new("powershell.exe");
         command
@@ -2232,11 +2230,9 @@ mod tests {
             format!("ferric() {{ for value do printf '%s\\0' \"$value\"; done; }}; {command}");
         let mut command = std::process::Command::new("/bin/sh");
         command.arg("-c").arg(script);
-        let output = crate::test_process_containment::output_bounded(
-            &mut command,
-            std::time::Duration::from_secs(10),
-        )
-        .unwrap();
+        let output =
+            ferric_process::testing::output(&mut command, std::time::Duration::from_secs(10))
+                .unwrap();
         assert!(
             output.status.success(),
             "sh failed: {}",

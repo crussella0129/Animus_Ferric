@@ -2185,7 +2185,7 @@ mod tests {
 
     struct ProcessClientGuard {
         label: String,
-        child: crate::test_process_containment::ContainedChild,
+        child: ferric_process::ProcessTree,
         stdout: std::fs::File,
         stderr: std::fs::File,
     }
@@ -2201,14 +2201,10 @@ mod tests {
             let label = label.into();
             let stdout = tempfile::tempfile().expect("create process-client stdout capture");
             let stderr = tempfile::tempfile().expect("create process-client stderr capture");
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            let mut command = ferric_process::testing::harness_command(
+                "server_registration::tests::lifecycle_interleaving_process_client",
+            );
             command
-                .args([
-                    "--exact",
-                    "server_registration::tests::lifecycle_interleaving_process_client",
-                    "--nocapture",
-                    "--test-threads=1",
-                ])
                 .env(PROCESS_CLIENT_MODE, mode)
                 .env(PROCESS_CLIENT_ROOT, root)
                 .env(PROCESS_CLIENT_ID, id)
@@ -2218,7 +2214,7 @@ mod tests {
             for (name, value) in environment {
                 command.env(name, value);
             }
-            let child = crate::test_process_containment::ContainedChild::spawn(&mut command)
+            let child = ferric_process::testing::spawn(&mut command)
                 .unwrap_or_else(|error| panic!("spawn {label}: {error}"));
             Self {
                 label,
@@ -2231,7 +2227,7 @@ mod tests {
         fn finish(mut self) {
             let status = self
                 .child
-                .wait_for_exit_and_disarm(std::time::Duration::from_secs(20))
+                .wait_for_exit(std::time::Duration::from_secs(20))
                 .unwrap_or_else(|error| panic!("finish {} process client: {error}", self.label));
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();

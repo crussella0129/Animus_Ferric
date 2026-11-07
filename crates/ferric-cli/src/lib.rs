@@ -51,10 +51,6 @@ mod skills_cmd;
 mod startup;
 mod tailscale_localapi;
 mod tailscale_serve;
-#[cfg(test)]
-mod test_process_containment;
-#[cfg(all(test, any(windows, target_os = "linux")))]
-mod test_process_containment_tests;
 mod toolbench_cmd;
 mod trace_cmd;
 mod trace_verify;

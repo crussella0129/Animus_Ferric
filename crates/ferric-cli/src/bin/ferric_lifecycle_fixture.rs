@@ -12,9 +12,6 @@ use std::process::ExitCode;
 use std::thread;
 use std::time::Duration;
 
-#[cfg(target_os = "linux")]
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-
 const INVOCATION_MARKER_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_INVOCATION_MARKER";
 const LIFETIME_TOKEN_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_LIFETIME_TOKEN";
 const BIND_DIAGNOSTIC_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_BIND_DIAGNOSTIC";
@@ -26,10 +23,9 @@ const OWNER_START_TICKS_ENV: &str = "FERRIC_LIFECYCLE_FIXTURE_OWNER_START_TICKS"
 const ADDRESS_IN_USE_DIAGNOSTIC: &[u8] = b"ferric-lifecycle-fixture:address-in-use:v1\n";
 const READY_MARKER: &[u8] = b"ferric-lifecycle-fixture:ready:v1\n";
 
+/// The exact test-harness process that owns this fixture's lifetime.
 #[cfg(target_os = "linux")]
-struct HarnessOwner {
-    pidfd: OwnedFd,
-}
+struct HarnessOwner(ferric_process::exact::ExactProcess);
 
 #[cfg(target_os = "linux")]
 impl HarnessOwner {
@@ -47,14 +43,11 @@ impl HarnessOwner {
             .map_err(|_| std::io::Error::other("fixture owner start ticks are required"))?
             .parse::<u64>()
             .map_err(|_| std::io::Error::other("fixture owner start ticks must be numeric"))?;
-        let raw_pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0_u32) };
-        if raw_pidfd < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        let owner = Self {
-            pidfd: unsafe { OwnedFd::from_raw_fd(raw_pidfd as libc::c_int) },
-        };
-        let observed_start_ticks = read_linux_start_ticks(pid)?;
+        let owner = Self(ferric_process::exact::ExactProcess::open(
+            pid as u32,
+            ferric_process::exact::Access::Observe,
+        )?);
+        let observed_start_ticks = owner.0.generation()?;
         if observed_start_ticks != expected_start_ticks {
             return Err(std::io::Error::other(format!(
                 "fixture owner generation changed: expected start ticks {expected_start_ticks}, observed {observed_start_ticks}"
@@ -69,44 +62,8 @@ impl HarnessOwner {
     }
 
     fn exited(&self) -> std::io::Result<bool> {
-        let mut descriptor = libc::pollfd {
-            fd: self.pidfd.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let result = unsafe { libc::poll(&mut descriptor, 1, 0) };
-        if result < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        if result == 0 {
-            return Ok(false);
-        }
-        if descriptor.revents & !(libc::POLLIN | libc::POLLHUP) != 0 {
-            Err(std::io::Error::other(format!(
-                "fixture owner pidfd returned invalid poll events {:#x}",
-                descriptor.revents
-            )))
-        } else if descriptor.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
-            Ok(true)
-        } else {
-            Err(std::io::Error::other(format!(
-                "fixture owner pidfd returned unexpected poll events {:#x}",
-                descriptor.revents
-            )))
-        }
+        Ok(self.0.state(Duration::ZERO)? != ferric_process::exact::ProcessState::Running)
     }
-}
-
-#[cfg(target_os = "linux")]
-fn read_linux_start_ticks(pid: libc::pid_t) -> std::io::Result<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
-    let close = stat
-        .rfind(')')
-        .ok_or_else(|| std::io::Error::other("fixture owner stat lacked a command delimiter"))?;
-    stat.get(close + 1..)
-        .and_then(|suffix| suffix.split_whitespace().nth(19))
-        .and_then(|field| field.parse::<u64>().ok())
-        .ok_or_else(|| std::io::Error::other("fixture owner stat lacked numeric start ticks"))
 }
 
 fn record_invocation() -> std::io::Result<()> {
