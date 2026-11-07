@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::GateError;
-use crate::token::{check_private, state_dir, write_private};
+use crate::token::{check_private, random32, state_dir, write_private};
 
 pub const DEFAULT_INTERFACE: &str = "ferric0";
 pub const DEFAULT_LISTEN_PORT: u16 = 51820;
@@ -68,12 +68,6 @@ impl KeyPair {
     fn secret_base64(&self) -> String {
         B64.encode(self.secret)
     }
-}
-
-fn random32() -> Result<[u8; 32], GateError> {
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|error| GateError::Random(error.to_string()))?;
-    Ok(bytes)
 }
 
 /// A complete two-peer plan.

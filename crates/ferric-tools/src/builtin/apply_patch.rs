@@ -2,15 +2,11 @@ use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
-use crate::control::{
-    ControlCapability, NoEffectKind, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
-};
+use crate::control::{ControlCapability, NoEffectKind, PrepareCtx, PrepareError, ToolPreparation};
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
-use super::controlled_file::{
-    compile_candidate, inspect_for_prepare, reject_unchanged, utf8_preimage,
-};
-use super::path_arg;
+use super::args;
+use super::controlled_file::{EditFailure, compile_candidate, inspect_for_prepare, utf8_preimage};
 
 /// Apply a context-located unified diff to one file as one candidate. Ring 2
 /// ("plan & apply structured changes"), alongside `multi_edit`. Where
@@ -66,94 +62,54 @@ impl Tool for ApplyPatch {
         ctx: &PrepareCtx<'_>,
         args: &serde_json::Value,
     ) -> Result<ToolPreparation, PrepareError> {
-        let path = args
-            .get("path")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: path",
-                )
-            })?;
-        let patch = args
-            .get("patch")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: patch",
-                )
-            })?;
-        let hunks = parse_hunks(patch)
-            .map_err(|message| PrepareError::new(PrepareErrorKind::InvalidArguments, message))?;
+        let path = args::string(args, "path")?;
+        let patch = args::string(args, "patch")?;
+        let hunks = parse_hunks(patch).map_err(args::invalid)?;
         let target = inspect_for_prepare(ctx, path, false)?;
         let content = utf8_preimage(&target, "apply_patch")?;
-        let mut working: Vec<String> = content.split('\n').map(str::to_string).collect();
-        for (index, hunk) in hunks.iter().enumerate() {
-            if hunk.before.is_empty() {
-                return Err(PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    format!(
-                        "hunk {index}: no context or removed lines to locate (need at least one ' ' or '-' line)"
-                    ),
-                ));
-            }
-            let Some(at) = locate(&working, &hunk.before) else {
-                return Err(reject_unchanged(
-                    &target,
-                    NoEffectKind::MatchNotFound,
-                    format!(
-                        "hunk {index}: context not found in {path} (the ' '/'-' lines must match)"
-                    ),
-                ));
-            };
-            working.splice(at..at + hunk.before.len(), hunk.after.iter().cloned());
-        }
-
+        let patched =
+            apply_hunks(content, &hunks, path).map_err(|failure| failure.rejected(&target))?;
         compile_candidate(
             target,
-            working.join("\n").into_bytes(),
+            patched.into_bytes(),
             NoEffectKind::NetZeroPatch,
             format!("applied {} hunk(s) to {path}", hunks.len()),
         )
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let path = path_arg(args)?;
-        let patch = args
-            .get("patch")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required string argument: patch".to_string())?;
-
+        let path = args::string(args, "path")?;
+        let patch = args::string(args, "patch")?;
         let hunks = parse_hunks(patch)?;
-
-        let resolved = ctx
-            .workspace
-            .resolve(path)
-            .map_err(|e| format!("boundary: {e}"))?;
+        let resolved = ctx.resolve(path)?;
         let content =
             std::fs::read_to_string(&resolved).map_err(|e| format!("read {path}: {e}"))?;
-
-        // Split into lines (owned) and apply every hunk to this working copy
-        // BEFORE any write. `split('\n')` + `join("\n")` round-trips the trailing
-        // newline (a trailing "" element rejoins to the final "\n").
-        let mut working: Vec<String> = content.split('\n').map(str::to_string).collect();
-        for (i, hunk) in hunks.iter().enumerate() {
-            if hunk.before.is_empty() {
-                return Err(format!(
-                    "hunk {i}: no context or removed lines to locate (need at least one \
-                     ' ' or '-' line)"
-                ));
-            }
-            let at = locate(&working, &hunk.before).ok_or_else(|| {
-                format!("hunk {i}: context not found in {path} (the ' '/'-' lines must match)")
-            })?;
-            working.splice(at..at + hunk.before.len(), hunk.after.iter().cloned());
-        }
-
-        std::fs::write(&resolved, working.join("\n")).map_err(|e| format!("write {path}: {e}"))?;
+        let patched = apply_hunks(&content, &hunks, path)?;
+        std::fs::write(&resolved, patched).map_err(|e| format!("write {path}: {e}"))?;
         Ok(format!("applied {} hunk(s) to {path}", hunks.len()))
     }
+}
+
+/// Apply every hunk, in order, to a line-split working copy of `content`, so
+/// a failure leaves the file untouched. `split('\n')` + `join("\n")`
+/// round-trips the trailing newline (a trailing "" element rejoins to the
+/// final "\n").
+fn apply_hunks(content: &str, hunks: &[Hunk], path: &str) -> Result<String, EditFailure> {
+    let mut working: Vec<String> = content.split('\n').map(str::to_string).collect();
+    for (index, hunk) in hunks.iter().enumerate() {
+        if hunk.before.is_empty() {
+            return Err(EditFailure::Invalid(format!(
+                "hunk {index}: no context or removed lines to locate (need at least one ' ' or '-' line)"
+            )));
+        }
+        let at = locate(&working, &hunk.before).ok_or_else(|| {
+            EditFailure::NotFound(format!(
+                "hunk {index}: context not found in {path} (the ' '/'-' lines must match)"
+            ))
+        })?;
+        working.splice(at..at + hunk.before.len(), hunk.after.iter().cloned());
+    }
+    Ok(working.join("\n"))
 }
 
 /// Parse a unified-diff body into hunks. Hunk headers (`@@…`) delimit hunks and

@@ -34,11 +34,6 @@ pub use guard::{Denial, Gate};
 pub use layer::protect;
 pub use token::{Token, default_token_path};
 
-/// Refuse a secret file that group or others can read (Unix).
-pub fn token_file_private(path: &std::path::Path) -> Result<(), GateError> {
-    token::check_private(path)
-}
-
 /// Response header set on every request the gate refuses, so a client (or
 /// the probe) can tell a gate denial from an application error.
 pub const DENIAL_HEADER: &str = "x-ferric-gate";

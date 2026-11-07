@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
-use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, Metadata, OpenOptions};
+use ferric_tools::nofollow::{identity, is_link, open_plain_dir, plain_dir_metadata};
 
 use super::storage::Preference;
 use super::{ModelChoice, StartupError};
@@ -338,41 +339,11 @@ fn open_root(path: &Path) -> Result<Dir, StartupError> {
 }
 
 fn open_plain_directory(parent: &Dir, name: &Path) -> Result<Dir, StartupError> {
-    let before = parent.symlink_metadata(name).map_err(|_| changed())?;
-    if !before.is_dir() || is_link(&before) {
-        return Err(changed());
-    }
-    let directory = parent.open_dir_nofollow(name).map_err(|_| changed())?;
-    let after = parent.symlink_metadata(name).map_err(|_| changed())?;
-    let opened = plain_directory_metadata(&directory)?;
-    if !after.is_dir()
-        || is_link(&after)
-        || identity(&before) != identity(&opened)
-        || identity(&opened) != identity(&after)
-    {
-        return Err(changed());
-    }
-    Ok(directory)
+    open_plain_dir(parent, name).map_err(|_| changed())
 }
 
 fn plain_directory_metadata(directory: &Dir) -> Result<Metadata, StartupError> {
-    let metadata = directory.dir_metadata().map_err(|_| changed())?;
-    if !metadata.is_dir() || is_link(&metadata) {
-        return Err(changed());
-    }
-    Ok(metadata)
-}
-
-fn is_link(metadata: &Metadata) -> bool {
-    #[cfg(windows)]
-    if cap_fs_ext::OsMetadataExt::file_attributes(metadata) & 0x400 != 0 {
-        return true;
-    }
-    metadata.file_type().is_symlink()
-}
-
-fn identity(metadata: &Metadata) -> (u64, u64) {
-    (metadata.dev(), metadata.ino())
+    plain_dir_metadata(directory).map_err(|_| changed())
 }
 fn modified(metadata: &Metadata) -> Option<u128> {
     metadata

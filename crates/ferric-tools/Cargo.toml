@@ -11,6 +11,7 @@ cap-fs-ext = { workspace = true }
 cap-std = { workspace = true }
 ferric-core = { workspace = true }
 ferric-guard = { workspace = true }
+ferric-iron = { workspace = true }
 getrandom = { workspace = true }
 hex = { workspace = true }
 rustpython-compiler = "0.5"

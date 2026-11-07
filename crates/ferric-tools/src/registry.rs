@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use ferric_core::{RunPolicy, ring_for_tier};
-use ferric_guard::{Decision, Workspace, check_with_ignore};
+use ferric_guard::{AdmitError, Decision, PermissionLevel, Workspace};
 use tracing::{debug, warn};
 
 use crate::control::{
@@ -82,6 +83,7 @@ pub enum ExecuteOutcome {
 ///
 /// A caller may inspect a `Prepared` call's typed intent, apply its controller
 /// policy, and only then consume it through [`Registry::commit_admitted`].
+#[derive(Debug)]
 pub enum PrepareOutcome<'a> {
     Prepared(PreparedCall<'a>),
     Rejected {
@@ -96,33 +98,6 @@ pub enum PrepareOutcome<'a> {
     UnknownTool {
         name: String,
     },
-}
-
-impl fmt::Debug for PrepareOutcome<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Prepared(call) => formatter.debug_tuple("Prepared").field(call).finish(),
-            Self::Rejected {
-                error,
-                duration_ms,
-                checks,
-            } => formatter
-                .debug_struct("Rejected")
-                .field("error", error)
-                .field("duration_ms", duration_ms)
-                .field("checks", checks)
-                .finish(),
-            Self::Denied { reason, checks } => formatter
-                .debug_struct("Denied")
-                .field("reason", reason)
-                .field("checks", checks)
-                .finish(),
-            Self::UnknownTool { name } => formatter
-                .debug_struct("UnknownTool")
-                .field("name", name)
-                .finish(),
-        }
-    }
 }
 
 /// A guarded, side-effect-free preparation. Fields are intentionally private:
@@ -149,7 +124,7 @@ impl PreparedCall<'_> {
         &self.checks
     }
 
-    pub fn permission(&self) -> ferric_guard::PermissionLevel {
+    pub fn permission(&self) -> PermissionLevel {
         self.spec.permission
     }
 }
@@ -235,7 +210,7 @@ impl Registry {
     /// The permission level a registered tool declares, or `None` if unknown.
     /// Used by the loop's accept-edits gate (ADR-070) to decide which calls to
     /// preview to the human (only `Write`/`Execute` — mutating ones).
-    pub fn permission_of(&self, name: &str) -> Option<ferric_guard::PermissionLevel> {
+    pub fn permission_of(&self, name: &str) -> Option<PermissionLevel> {
         self.tools.get(name).map(|t| t.spec().permission)
     }
 
@@ -247,6 +222,20 @@ impl Registry {
     /// rings ARE the model's grammar. (Replaces the old alphabetical `.take` cap,
     /// which could silently drop an essential core tool — e.g. `write_file`.)
     pub fn tools_for_policy(&self, policy: &RunPolicy) -> Vec<ToolSpec> {
+        self.vocabulary(policy, |_| true)
+    }
+
+    /// Evidence-mode vocabulary. This preserves the legacy ring/cap/order
+    /// algorithm while filtering opaque tools before applying the cap.
+    pub fn tools_for_controlled_policy(&self, policy: &RunPolicy) -> Vec<ToolSpec> {
+        self.vocabulary(policy, |tool| {
+            let capability = tool.control_capability();
+            capability.is_supported()
+                && capability_matches_permission(capability, tool.spec().permission)
+        })
+    }
+
+    fn vocabulary(&self, policy: &RunPolicy, offered: impl Fn(&dyn Tool) -> bool) -> Vec<ToolSpec> {
         // The tier sets the ceiling; an explicit `--max-ring` (policy.max_ring)
         // can only lower it further (restrict-only — expansion is earned via
         // measured_level, ADR-028/019).
@@ -254,35 +243,14 @@ impl Registry {
         let mut specs: Vec<ToolSpec> = self
             .tools
             .values()
-            .map(|t| t.spec())
+            .filter(|tool| offered(tool.as_ref()))
+            .map(|tool| tool.spec())
             .filter(|spec| spec.ring <= ceiling)
             .collect();
         // Priority by (ring asc, name): a cap sheds the highest rings first.
         specs.sort_by(|a, b| a.ring.cmp(&b.ring).then_with(|| a.name.cmp(&b.name)));
         specs.truncate(policy.max_tools as usize);
         // Deterministic presentation by name (ADR-008).
-        specs.sort_by(|a, b| a.name.cmp(&b.name));
-        specs
-    }
-
-    /// Evidence-mode vocabulary. This preserves the legacy ring/cap/order
-    /// algorithm while filtering opaque tools before applying the cap.
-    pub fn tools_for_controlled_policy(&self, policy: &RunPolicy) -> Vec<ToolSpec> {
-        let ceiling = ring_for_tier(policy.tier).min(policy.max_ring.unwrap_or(u8::MAX));
-        let mut specs: Vec<ToolSpec> = self
-            .tools
-            .values()
-            .filter_map(|tool| {
-                let capability = tool.control_capability();
-                let spec = tool.spec();
-                (capability.is_supported()
-                    && capability_matches_permission(capability, spec.permission))
-                .then_some(spec)
-            })
-            .filter(|spec| spec.ring <= ceiling)
-            .collect();
-        specs.sort_by(|a, b| a.ring.cmp(&b.ring).then_with(|| a.name.cmp(&b.name)));
-        specs.truncate(policy.max_tools as usize);
         specs.sort_by(|a, b| a.name.cmp(&b.name));
         specs
     }
@@ -303,56 +271,16 @@ impl Registry {
         };
         let spec = tool.spec();
 
-        let mut checks = Vec::new();
-        for target in tool.target_paths(args) {
-            let resolved = match workspace.resolve(&target) {
-                Ok(path) => path,
-                Err(error) => {
-                    warn!(tool = name, target = %target, error = %error, "guard denied controlled preparation: outside workspace boundary");
-                    checks.push(CheckRecord::deny(
-                        target.into(),
-                        "boundary",
-                        error.to_string(),
-                    ));
-                    return PrepareOutcome::Denied {
-                        reason: format!("boundary: {error}"),
-                        checks,
-                    };
-                }
-            };
-            if let Decision::Deny(reason) = check_with_ignore(
-                spec.permission,
-                &resolved,
-                workspace.root(),
-                workspace.ignore(),
-            ) {
-                warn!(tool = name, path = %resolved.display(), rule = %reason.rule, matched = %reason.matched, "guard denied controlled preparation: permission check");
-                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
-                checks.push(CheckRecord::deny(resolved, reason.rule, &reason.matched));
-                return PrepareOutcome::Denied {
-                    reason: detail,
-                    checks,
-                };
-            }
-            checks.push(CheckRecord::allow(resolved));
-        }
-
-        for command in tool.target_commands(args) {
-            if let Decision::Deny(reason) = ferric_guard::check_command(&command) {
-                warn!(tool = name, command = %command, rule = %reason.rule, matched = %reason.matched, "guard denied controlled preparation: command denylist");
-                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
-                checks.push(CheckRecord::deny(
-                    std::path::PathBuf::from(&command),
-                    reason.rule,
-                    &reason.matched,
-                ));
-                return PrepareOutcome::Denied {
-                    reason: detail,
-                    checks,
-                };
-            }
-            checks.push(CheckRecord::allow(std::path::PathBuf::from(command)));
-        }
+        let checks = match guard(
+            tool.as_ref(),
+            &spec,
+            workspace,
+            args,
+            " controlled preparation",
+        ) {
+            Ok(checks) => checks,
+            Err((reason, checks)) => return PrepareOutcome::Denied { reason, checks },
+        };
 
         let capability = tool.control_capability();
         if !capability.is_supported() {
@@ -439,55 +367,8 @@ impl Registry {
         } = prepared;
         let name = spec.name.as_str();
 
-        match sink_policy.decide(spec.permission, provenance) {
-            ferric_guard::SinkDecision::Allow => {}
-            ferric_guard::SinkDecision::Warn => {
-                warn!(
-                    tool = name,
-                    permission = ?spec.permission,
-                    "sink policy: run has ingested untrusted content; {:?} sink proceeding (warn mode)",
-                    spec.permission
-                );
-            }
-            ferric_guard::SinkDecision::RequireApproval => match approver {
-                Some(approve) => {
-                    let request = ApprovalRequest {
-                        tool: name,
-                        permission: spec.permission,
-                        args: &args,
-                    };
-                    if approve(&request) {
-                        warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation approved by human");
-                    } else {
-                        warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation rejected by human");
-                        return ControlledOutcome::Denied {
-                            reason: "sink policy: mutation rejected by human (run has ingested untrusted content)"
-                                .to_string(),
-                            checks,
-                        };
-                    }
-                }
-                None => {
-                    warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; no approver available, denying mutation");
-                    return ControlledOutcome::Denied {
-                        reason: "sink policy: this run has ingested untrusted research \
-                                 content, so mutations require human approval — and this \
-                                 run has no approver. Re-run with --accept-edits to \
-                                 approve interactively, or --sink-action warn to proceed \
-                                 unguarded."
-                            .to_string(),
-                        checks,
-                    };
-                }
-            },
-            ferric_guard::SinkDecision::Deny => {
-                warn!(tool = name, permission = ?spec.permission, "sink policy: mutation denied (run has ingested untrusted content)");
-                return ControlledOutcome::Denied {
-                    reason: "sink policy: mutation denied (run has ingested untrusted content)"
-                        .to_string(),
-                    checks,
-                };
-            }
+        if let Err(reason) = sink_gate(&spec, &args, provenance, sink_policy, approver) {
+            return ControlledOutcome::Denied { reason, checks };
         }
 
         let ToolPreparation { intent, execution } = *preparation;
@@ -551,7 +432,7 @@ impl Registry {
                 witness: None,
             })
         });
-        let for_model = truncate_chars(&full, self.truncation_limit);
+        let for_model = truncate_for_model(&full, self.truncation_limit);
 
         ControlledOutcome::Completed {
             output: ToolOutput {
@@ -592,109 +473,12 @@ impl Registry {
         };
         let spec = tool.spec();
 
-        let mut checks = Vec::new();
-        for target in tool.target_paths(args) {
-            let resolved = match workspace.resolve(&target) {
-                Ok(path) => path,
-                Err(e) => {
-                    warn!(tool = name, target = %target, error = %e, "guard denied: outside workspace boundary");
-                    checks.push(CheckRecord::deny(target.into(), "boundary", e.to_string()));
-                    return ExecuteOutcome::Denied {
-                        reason: format!("boundary: {e}"),
-                        checks,
-                    };
-                }
-            };
-            if let Decision::Deny(reason) = check_with_ignore(
-                spec.permission,
-                &resolved,
-                workspace.root(),
-                workspace.ignore(),
-            ) {
-                warn!(tool = name, path = %resolved.display(), rule = %reason.rule, matched = %reason.matched, "guard denied: permission check");
-                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
-                checks.push(CheckRecord::deny(resolved, reason.rule, &reason.matched));
-                return ExecuteOutcome::Denied {
-                    reason: detail,
-                    checks,
-                };
-            }
-            checks.push(CheckRecord::allow(resolved));
-        }
-
-        for cmd in tool.target_commands(args) {
-            if let Decision::Deny(reason) = ferric_guard::check_command(&cmd) {
-                warn!(tool = name, command = %cmd, rule = %reason.rule, matched = %reason.matched, "guard denied: command denylist");
-                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
-                checks.push(CheckRecord::deny(
-                    std::path::PathBuf::from(&cmd),
-                    reason.rule,
-                    &reason.matched,
-                ));
-                return ExecuteOutcome::Denied {
-                    reason: detail,
-                    checks,
-                };
-            }
-            checks.push(CheckRecord::allow(std::path::PathBuf::from(&cmd)));
-        }
-
-        match sink_policy.decide(spec.permission, provenance) {
-            ferric_guard::SinkDecision::Allow => {}
-            ferric_guard::SinkDecision::Warn => {
-                warn!(
-                    tool = name,
-                    permission = ?spec.permission,
-                    "sink policy: run has ingested untrusted content; {:?} sink proceeding (warn mode)",
-                    spec.permission
-                );
-            }
-            ferric_guard::SinkDecision::RequireApproval => match approver {
-                // ADR-074: this used to degrade to a flat denial, commenting
-                // "require-approval not wired" — while ADR-070 had already
-                // shipped a human-in-the-loop approver at the dispatch site.
-                // Two human-approval systems, built four sprints apart, never
-                // introduced to each other.
-                Some(approve) => {
-                    let request = ApprovalRequest {
-                        tool: name,
-                        permission: spec.permission,
-                        args,
-                    };
-                    if approve(&request) {
-                        warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation approved by human");
-                    } else {
-                        warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation rejected by human");
-                        return ExecuteOutcome::Denied {
-                            reason: "sink policy: mutation rejected by human (run has ingested untrusted content)"
-                                .to_string(),
-                            checks,
-                        };
-                    }
-                }
-                // No approver available (a non-interactive run). Denying is the
-                // safe reading of "require approval" when nobody can approve.
-                None => {
-                    warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; no approver available, denying mutation");
-                    return ExecuteOutcome::Denied {
-                        reason: "sink policy: this run has ingested untrusted research \
-                                 content, so mutations require human approval — and this \
-                                 run has no approver. Re-run with --accept-edits to \
-                                 approve interactively, or --sink-action warn to proceed \
-                                 unguarded."
-                            .to_string(),
-                        checks,
-                    };
-                }
-            },
-            ferric_guard::SinkDecision::Deny => {
-                warn!(tool = name, permission = ?spec.permission, "sink policy: mutation denied (run has ingested untrusted content)");
-                return ExecuteOutcome::Denied {
-                    reason: "sink policy: mutation denied (run has ingested untrusted content)"
-                        .to_string(),
-                    checks,
-                };
-            }
+        let checks = match guard(tool.as_ref(), &spec, workspace, args, "") {
+            Ok(checks) => checks,
+            Err((reason, checks)) => return ExecuteOutcome::Denied { reason, checks },
+        };
+        if let Err(reason) = sink_gate(&spec, args, provenance, sink_policy, approver) {
+            return ExecuteOutcome::Denied { reason, checks };
         }
 
         let ctx = ToolCtx { workspace };
@@ -707,7 +491,7 @@ impl Registry {
             Err(error) => (error, true),
         };
         debug!(tool = name, is_error, duration_ms, "tool handler returned");
-        let for_model = truncate_chars(&full, self.truncation_limit);
+        let for_model = truncate_for_model(&full, self.truncation_limit);
         ExecuteOutcome::Completed {
             output: ToolOutput {
                 full,
@@ -720,43 +504,140 @@ impl Registry {
     }
 }
 
-fn intent_matches_permission(
-    permission: ferric_guard::PermissionLevel,
-    intent: &PreparedIntent,
-) -> bool {
+/// Boundary- and permission-check every declared target path, then the
+/// denylist for every declared command, before any tool work. The first
+/// denial stops the check and returns its reason with the records so far.
+/// `phase` names the caller in the denial log.
+fn guard(
+    tool: &dyn Tool,
+    spec: &ToolSpec,
+    workspace: &Workspace,
+    args: &serde_json::Value,
+    phase: &str,
+) -> Result<Vec<CheckRecord>, (String, Vec<CheckRecord>)> {
+    let name = spec.name.as_str();
+    let mut checks = Vec::new();
+    for target in tool.target_paths(args) {
+        match workspace.admit(spec.permission, &target) {
+            Ok(resolved) => checks.push(CheckRecord::allow(resolved)),
+            Err(AdmitError::Boundary(error)) => {
+                warn!(tool = name, target = %target, error = %error, "guard denied{phase}: outside workspace boundary");
+                checks.push(CheckRecord::deny(
+                    target.into(),
+                    "boundary",
+                    error.to_string(),
+                ));
+                return Err((format!("boundary: {error}"), checks));
+            }
+            Err(AdmitError::Denied { resolved, reason }) => {
+                warn!(tool = name, path = %resolved.display(), rule = %reason.rule, matched = %reason.matched, "guard denied{phase}: permission check");
+                let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
+                checks.push(CheckRecord::deny(resolved, reason.rule, &reason.matched));
+                return Err((detail, checks));
+            }
+        }
+    }
+    for command in tool.target_commands(args) {
+        if let Decision::Deny(reason) = ferric_guard::check_command(&command) {
+            warn!(tool = name, command = %command, rule = %reason.rule, matched = %reason.matched, "guard denied{phase}: command denylist");
+            let detail = format!("permission: {} matched {}", reason.rule, reason.matched);
+            checks.push(CheckRecord::deny(
+                PathBuf::from(&command),
+                reason.rule,
+                &reason.matched,
+            ));
+            return Err((detail, checks));
+        }
+        checks.push(CheckRecord::allow(PathBuf::from(command)));
+    }
+    Ok(checks)
+}
+
+/// The sink policy's verdict on a guarded call: `Err` carries the denial
+/// reason. `approver` is consulted only when the policy returns
+/// `RequireApproval`; `None` means nobody can approve, so such a call is
+/// denied.
+fn sink_gate(
+    spec: &ToolSpec,
+    args: &serde_json::Value,
+    provenance: ferric_guard::Provenance,
+    sink_policy: &ferric_guard::SinkPolicy,
+    approver: Option<SinkApprover<'_>>,
+) -> Result<(), String> {
+    let name = spec.name.as_str();
+    match sink_policy.decide(spec.permission, provenance) {
+        ferric_guard::SinkDecision::Allow => Ok(()),
+        ferric_guard::SinkDecision::Warn => {
+            warn!(
+                tool = name,
+                permission = ?spec.permission,
+                "sink policy: run has ingested untrusted content; {:?} sink proceeding (warn mode)",
+                spec.permission
+            );
+            Ok(())
+        }
+        ferric_guard::SinkDecision::RequireApproval => match approver {
+            // ADR-074: this used to degrade to a flat denial, commenting
+            // "require-approval not wired" — while ADR-070 had already
+            // shipped a human-in-the-loop approver at the dispatch site.
+            // Two human-approval systems, built four sprints apart, never
+            // introduced to each other.
+            Some(approve) => {
+                let request = ApprovalRequest {
+                    tool: name,
+                    permission: spec.permission,
+                    args,
+                };
+                if approve(&request) {
+                    warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation approved by human");
+                    Ok(())
+                } else {
+                    warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; mutation rejected by human");
+                    Err("sink policy: mutation rejected by human (run has ingested untrusted content)"
+                        .to_string())
+                }
+            }
+            // No approver available (a non-interactive run). Denying is the
+            // safe reading of "require approval" when nobody can approve.
+            None => {
+                warn!(tool = name, permission = ?spec.permission, "sink policy: contaminated run; no approver available, denying mutation");
+                Err("sink policy: this run has ingested untrusted research \
+                     content, so mutations require human approval — and this \
+                     run has no approver. Re-run with --accept-edits to \
+                     approve interactively, or --sink-action warn to proceed \
+                     unguarded."
+                    .to_string())
+            }
+        },
+        ferric_guard::SinkDecision::Deny => {
+            warn!(tool = name, permission = ?spec.permission, "sink policy: mutation denied (run has ingested untrusted content)");
+            Err("sink policy: mutation denied (run has ingested untrusted content)".to_string())
+        }
+    }
+}
+
+fn intent_matches_permission(permission: PermissionLevel, intent: &PreparedIntent) -> bool {
     matches!(
         (permission, intent),
         (
-            ferric_guard::PermissionLevel::Read,
+            PermissionLevel::Read,
             PreparedIntent::ReadOnly
                 | PreparedIntent::FileObservation(_)
                 | PreparedIntent::Navigation(_)
-        ) | (
-            ferric_guard::PermissionLevel::Write,
-            PreparedIntent::Mutation(_)
-        ) | (
-            ferric_guard::PermissionLevel::Execute,
-            PreparedIntent::Verification(_)
-        )
+        ) | (PermissionLevel::Write, PreparedIntent::Mutation(_))
+            | (PermissionLevel::Execute, PreparedIntent::Verification(_))
     )
 }
 
 fn capability_matches_permission(
     capability: ControlCapability,
-    permission: ferric_guard::PermissionLevel,
+    permission: PermissionLevel,
 ) -> bool {
     matches!(
         (capability, permission),
-        (
-            ControlCapability::ReadOnly,
-            ferric_guard::PermissionLevel::Read
-        ) | (
-            ControlCapability::ContentMutation,
-            ferric_guard::PermissionLevel::Write
-        ) | (
-            ControlCapability::Verification,
-            ferric_guard::PermissionLevel::Execute
-        )
+        (ControlCapability::ReadOnly, PermissionLevel::Read)
+            | (ControlCapability::ContentMutation, PermissionLevel::Write)
+            | (ControlCapability::Verification, PermissionLevel::Execute)
     )
 }
 
@@ -784,7 +665,7 @@ impl Default for Registry {
 /// supplies the implementation (ADR-070's `EditApprover`); this is the seam.
 pub struct ApprovalRequest<'a> {
     pub tool: &'a str,
-    pub permission: ferric_guard::PermissionLevel,
+    pub permission: PermissionLevel,
     pub args: &'a serde_json::Value,
 }
 
@@ -800,10 +681,6 @@ pub type SinkApprover<'a> = &'a (dyn Fn(&ApprovalRequest<'_>) -> bool + Sync);
 /// output, so the projector has to apply this itself. Both callers must use the
 /// same function or the two views drift.
 pub fn truncate_for_model(text: &str, limit: usize) -> String {
-    truncate_chars(text, limit)
-}
-
-fn truncate_chars(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text.to_string();
     }

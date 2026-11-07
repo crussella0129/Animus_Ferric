@@ -926,10 +926,9 @@ fn controlled_target_paths(
             let resolved = workspace.resolve(value).map_err(|error| {
                 contract_error(&call.name, format!("cannot normalize target: {error}"))
             })?;
-            let relative = resolved.strip_prefix(workspace.root()).map_err(|_| {
+            workspace.relative(&resolved).ok_or_else(|| {
                 contract_error(&call.name, "normalized target escaped the workspace")
-            })?;
-            Ok(relative.to_string_lossy().replace('\\', "/"))
+            })
         })
         .collect()
 }

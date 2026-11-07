@@ -2,14 +2,12 @@ use std::ffi::OsString;
 use std::io::{ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 
-#[cfg(unix)]
-use cap_fs_ext::OpenOptionsExt as _;
-use cap_fs_ext::{
-    DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt, OpenOptionsMaybeDirExt,
-};
+use cap_fs_ext::DirExt;
 use cap_std::ambient_authority;
-use cap_std::fs::{Dir, OpenOptions};
+use cap_std::fs::Dir;
 use ferric_guard::Workspace;
+
+use crate::nofollow::{identity as metadata_identity, read_options};
 
 pub(crate) struct ControlledFileRead {
     pub bytes: Vec<u8>,
@@ -101,17 +99,8 @@ where
         return Err("controlled read target is not a plain regular file".to_string());
     }
     let identity = metadata_identity(&before);
-    let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .follow(FollowSymlinks::No)
-        .maybe_dir(true);
-    #[cfg(unix)]
-    {
-        options.custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK | libc::O_NOFOLLOW);
-    }
     let mut file = parent
-        .open_with(&leaf, &options)
+        .open_with(&leaf, &read_options())
         .map_err(|error| format!("open controlled read target without following links: {error}"))?;
     let opened = file
         .metadata()
@@ -219,10 +208,6 @@ fn lexical_relative(workspace: &Workspace, requested: &Path) -> Result<PathBuf, 
         }
     }
     Ok(components.iter().collect())
-}
-
-fn metadata_identity(metadata: &cap_std::fs::Metadata) -> (u64, u64) {
-    (MetadataExt::dev(metadata), MetadataExt::ino(metadata))
 }
 
 #[cfg(test)]

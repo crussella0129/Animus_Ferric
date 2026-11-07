@@ -1,47 +1,14 @@
-use ferric_guard::{Provenance, SinkPolicy, Workspace};
+mod common;
+
+use common::{RegistryTestExt, commit, prepare, rejected, setup};
+use ferric_guard::Workspace;
+use ferric_tools::sha256_bytes as sha256;
 use ferric_tools::{
     ControlFailureKind, ControlFailureWitness, ControlledOutcome, MutationKind, NoEffectKind,
-    PathState, PrepareError, PrepareErrorKind, PrepareFailureWitness, PrepareOutcome, PreparedCall,
-    PreparedIntent, Registry, SyntaxState, SyntaxUncheckedReason, WorkspaceEffectKind,
-    WorkspaceEffectReport, register_builtin_tools,
+    PathState, PrepareErrorKind, PrepareFailureWitness, PreparedIntent, Registry, SyntaxState,
+    SyntaxUncheckedReason, WorkspaceEffectKind, WorkspaceEffectReport, register_builtin_tools,
 };
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-
-fn setup() -> (tempfile::TempDir, Workspace, Registry) {
-    let directory = tempfile::tempdir().unwrap();
-    let workspace = Workspace::new(directory.path()).unwrap();
-    let mut registry = Registry::new();
-    register_builtin_tools(&mut registry);
-    (directory, workspace, registry)
-}
-
-fn prepare<'a>(
-    registry: &'a Registry,
-    workspace: &'a Workspace,
-    tool: &str,
-    args: &Value,
-) -> PreparedCall<'a> {
-    match registry.prepare_controlled(workspace, tool, args) {
-        PrepareOutcome::Prepared(prepared) => prepared,
-        other => panic!("expected {tool} preparation, got {other:?}"),
-    }
-}
-
-fn rejected(registry: &Registry, workspace: &Workspace, tool: &str, args: &Value) -> PrepareError {
-    match registry.prepare_controlled(workspace, tool, args) {
-        PrepareOutcome::Rejected { error, .. } => error,
-        other => panic!("expected {tool} rejection, got {other:?}"),
-    }
-}
-
-fn commit(registry: &Registry, prepared: PreparedCall<'_>) -> ControlledOutcome {
-    registry.commit_admitted(prepared, Provenance::Clean, &SinkPolicy::deny(), None)
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
+use serde_json::json;
 
 #[test]
 fn all_content_tools_prepare_then_commit_exact_candidates_after_a_clean_reset() {
@@ -806,14 +773,7 @@ fn unsupported_syntax_is_explicitly_unchecked_and_legacy_write_still_creates_par
         rejected(&registry, &workspace, "write_file", &args).kind,
         PrepareErrorKind::UnsupportedOperation
     );
-    let outcome = registry.execute(
-        &workspace,
-        "write_file",
-        &args,
-        Provenance::Clean,
-        &SinkPolicy::deny(),
-        None,
-    );
+    let outcome = registry.execute_test(&workspace, "write_file", &args);
     assert!(matches!(
         outcome,
         ferric_tools::ExecuteOutcome::Completed { .. }

@@ -2,6 +2,8 @@ use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::checker::{Decision, DenyReason, PermissionLevel, check_with_ignore};
+
 #[derive(Debug, Error)]
 pub enum GuardError {
     #[error("path escapes workspace boundary: {0}")]
@@ -9,6 +11,18 @@ pub enum GuardError {
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// Why [`Workspace::admit`] refused a path.
+#[derive(Debug)]
+pub enum AdmitError {
+    /// The path escapes the workspace boundary.
+    Boundary(GuardError),
+    /// The resolved path is denied at the requested permission level.
+    Denied {
+        resolved: PathBuf,
+        reason: DenyReason,
+    },
 }
 
 /// The workspace boundary. Every tool path must pass through [`Workspace::resolve`].
@@ -61,6 +75,27 @@ impl Workspace {
         } else {
             Err(boundary_violation(candidate))
         }
+    }
+
+    /// [`Workspace::resolve`] `candidate`, then check `level` access to it:
+    /// the hardcoded floor first, then the `.ferricignore` denials.
+    pub fn admit(
+        &self,
+        level: PermissionLevel,
+        candidate: impl AsRef<Path>,
+    ) -> Result<PathBuf, AdmitError> {
+        let resolved = self.resolve(candidate).map_err(AdmitError::Boundary)?;
+        match check_with_ignore(level, &resolved, &self.root, &self.ignore) {
+            Decision::Allow => Ok(resolved),
+            Decision::Deny(reason) => Err(AdmitError::Denied { resolved, reason }),
+        }
+    }
+
+    /// `resolved` relative to the root, with `/` separators on every OS, or
+    /// `None` when it does not lie under the root.
+    pub fn relative(&self, resolved: &Path) -> Option<String> {
+        let relative = resolved.strip_prefix(&self.root).ok()?;
+        Some(relative.to_string_lossy().replace('\\', "/"))
     }
 }
 

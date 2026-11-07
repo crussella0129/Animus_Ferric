@@ -1,34 +1,12 @@
-use ferric_guard::{Provenance, SinkPolicy, Workspace};
+mod common;
+
+use common::{controlled_call, setup_with_limit};
+use ferric_tools::sha256_bytes;
 use ferric_tools::{
     ControlledOutcome, FileObservation, LineRange, NavigationKind, NavigationObservation,
-    PrepareErrorKind, PrepareOutcome, PreparedIntent, Registry, ToolObservation,
-    register_builtin_tools,
+    PrepareErrorKind, PrepareOutcome, PreparedIntent, ToolObservation,
 };
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-
-fn setup(limit: usize) -> (tempfile::TempDir, Workspace, Registry) {
-    let directory = tempfile::tempdir().unwrap();
-    let workspace = Workspace::new(directory.path()).unwrap();
-    let mut registry = Registry::with_truncation_limit(limit);
-    register_builtin_tools(&mut registry);
-    (directory, workspace, registry)
-}
-
-fn controlled_call(
-    registry: &Registry,
-    workspace: &Workspace,
-    name: &str,
-    args: &Value,
-) -> (PreparedIntent, ControlledOutcome) {
-    let prepared = match registry.prepare_controlled(workspace, name, args) {
-        PrepareOutcome::Prepared(prepared) => prepared,
-        other => panic!("expected controlled preparation, got {other:?}"),
-    };
-    let intent = prepared.intent().clone();
-    let outcome = registry.commit_admitted(prepared, Provenance::Clean, &SinkPolicy::deny(), None);
-    (intent, outcome)
-}
+use serde_json::json;
 
 fn completed(outcome: ControlledOutcome) -> (String, String, ToolObservation) {
     match outcome {
@@ -64,10 +42,6 @@ fn body_after(full: &str, closing_envelope: &str) -> String {
         .to_string()
 }
 
-fn digest(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
-
 fn assert_lowercase_sha256(value: &str) {
     assert_eq!(value.len(), 64);
     assert!(
@@ -80,7 +54,7 @@ fn assert_lowercase_sha256(value: &str) {
 
 #[test]
 fn read_file_preserves_exact_crlf_range_and_hashes_complete_raw_file() {
-    let (directory, workspace, registry) = setup(8_192);
+    let (directory, workspace, registry) = setup_with_limit(8_192);
     std::fs::create_dir_all(directory.path().join("nested")).unwrap();
     let raw = b"one\r\ntwo\r\nthree\nlast";
     std::fs::write(directory.path().join("nested/sample.txt"), raw).unwrap();
@@ -93,7 +67,7 @@ fn read_file_preserves_exact_crlf_range_and_hashes_complete_raw_file() {
     );
     let observation = file_observation(intent);
     assert_eq!(observation.path, "nested/sample.txt");
-    assert_eq!(observation.sha256, digest(raw));
+    assert_eq!(observation.sha256, sha256_bytes(raw));
     assert_eq!(observation.bytes, raw.len() as u64);
     assert_eq!(observation.total_lines, 4);
     assert_eq!(observation.returned, Some(LineRange { start: 2, end: 3 }));
@@ -112,7 +86,7 @@ fn read_file_preserves_exact_crlf_range_and_hashes_complete_raw_file() {
 
 #[test]
 fn read_file_line_semantics_cover_empty_and_trailing_newline() {
-    let (directory, workspace, registry) = setup(8_192);
+    let (directory, workspace, registry) = setup_with_limit(8_192);
     std::fs::write(directory.path().join("empty.txt"), b"").unwrap();
     std::fs::write(directory.path().join("trailing.txt"), b"alpha\n").unwrap();
 
@@ -152,7 +126,7 @@ fn read_file_line_semantics_cover_empty_and_trailing_newline() {
 
 #[test]
 fn read_file_past_eof_is_an_explicit_empty_uncovered_range() {
-    let (directory, workspace, registry) = setup(8_192);
+    let (directory, workspace, registry) = setup_with_limit(8_192);
     std::fs::write(directory.path().join("short.txt"), b"one\ntwo").unwrap();
 
     let (intent, outcome) = controlled_call(
@@ -173,7 +147,7 @@ fn read_file_past_eof_is_an_explicit_empty_uncovered_range() {
 
 #[test]
 fn truncated_read_is_honest_and_retains_full_trace_output() {
-    let (directory, workspace, registry) = setup(512);
+    let (directory, workspace, registry) = setup_with_limit(512);
     let raw = "x".repeat(2_000);
     std::fs::write(directory.path().join("large.txt"), &raw).unwrap();
 
@@ -198,8 +172,8 @@ fn truncated_read_is_honest_and_retains_full_trace_output() {
 
 #[test]
 fn navigation_zero_results_are_explicit_and_stably_hashed() {
-    let (_directory, workspace, registry) = setup(8_192);
-    let expected_hash = digest(b"");
+    let (_directory, workspace, registry) = setup_with_limit(8_192);
+    let expected_hash = sha256_bytes(b"");
 
     for (name, args, expected_kind) in [
         (
@@ -237,7 +211,7 @@ fn navigation_zero_results_are_explicit_and_stably_hashed() {
 
 #[test]
 fn controlled_navigation_rejects_a_zero_result_cap() {
-    let (_directory, workspace, registry) = setup(8_192);
+    let (_directory, workspace, registry) = setup_with_limit(8_192);
     for (name, args) in [
         ("find_files", json!({"pattern": "x", "max_results": 0})),
         ("search_files", json!({"query": "x", "max_results": 0})),
@@ -254,7 +228,7 @@ fn controlled_navigation_rejects_a_zero_result_cap() {
 
 #[test]
 fn navigation_reports_cap_and_exhaustion_independently() {
-    let (directory, workspace, registry) = setup(8_192);
+    let (directory, workspace, registry) = setup_with_limit(8_192);
     for name in ["a_hit.txt", "b_hit.txt", "c_hit.txt"] {
         std::fs::write(directory.path().join(name), b"needle\n").unwrap();
     }
@@ -271,7 +245,7 @@ fn navigation_reports_cap_and_exhaustion_independently() {
     assert!(observation.has_more, "the two-result view is not exhausted");
     let (full, _, _) = completed(outcome);
     let body = body_after(&full, "[/ferric:navigation_observation:v1]\n");
-    assert_eq!(observation.result_sha256, digest(body.as_bytes()));
+    assert_eq!(observation.result_sha256, sha256_bytes(body.as_bytes()));
     assert_lowercase_sha256(&observation.result_sha256);
 
     std::fs::remove_file(directory.path().join("c_hit.txt")).unwrap();
@@ -307,7 +281,7 @@ fn navigation_reports_cap_and_exhaustion_independently() {
 
 #[test]
 fn search_navigation_normalizes_root_and_hashes_returned_bytes() {
-    let (directory, workspace, registry) = setup(8_192);
+    let (directory, workspace, registry) = setup_with_limit(8_192);
     std::fs::create_dir_all(directory.path().join("src/nested")).unwrap();
     std::fs::write(
         directory.path().join("src/nested/code.rs"),
@@ -326,7 +300,7 @@ fn search_navigation_normalizes_root_and_hashes_returned_bytes() {
 
     assert_eq!(first.root, "src/nested");
     assert_eq!(first.matches, 2);
-    assert_eq!(first.result_sha256, digest(body.as_bytes()));
+    assert_eq!(first.result_sha256, sha256_bytes(body.as_bytes()));
     assert_eq!(first.result_sha256, second.result_sha256);
     assert_lowercase_sha256(&first.result_sha256);
 }
@@ -334,7 +308,7 @@ fn search_navigation_normalizes_root_and_hashes_returned_bytes() {
 #[cfg(any(unix, windows))]
 #[test]
 fn controlled_reads_reject_or_skip_links_outside_the_workspace() {
-    let (directory, workspace, registry) = setup(8_192);
+    let (directory, workspace, registry) = setup_with_limit(8_192);
     let outside = tempfile::tempdir().unwrap();
     let secret = outside.path().join("secret.txt");
     std::fs::write(&secret, b"outside-secret\n").unwrap();
@@ -395,7 +369,7 @@ fn controlled_reads_reject_or_skip_links_outside_the_workspace() {
 
 #[test]
 fn truncated_navigation_marks_the_model_view_but_hashes_full_results() {
-    let (directory, workspace, registry) = setup(512);
+    let (directory, workspace, registry) = setup_with_limit(512);
     let mut content = String::new();
     for index in 0..40 {
         content.push_str(&format!(
@@ -418,7 +392,7 @@ fn truncated_navigation_marks_the_model_view_but_hashes_full_results() {
 
     let (full, for_model, metadata) = completed(outcome);
     let body = body_after(&full, "[/ferric:navigation_observation:v1]\n");
-    assert_eq!(observation.result_sha256, digest(body.as_bytes()));
+    assert_eq!(observation.result_sha256, sha256_bytes(body.as_bytes()));
     assert!(full.contains("model_truncated=1"));
     assert!(for_model.contains("output truncated for model"));
     assert_eq!(metadata, ToolObservation::Navigation(observation));

@@ -2,15 +2,11 @@ use serde_json::json;
 
 use ferric_guard::PermissionLevel;
 
-use crate::control::{
-    ControlCapability, NoEffectKind, PrepareCtx, PrepareError, PrepareErrorKind, ToolPreparation,
-};
+use crate::control::{ControlCapability, NoEffectKind, PrepareCtx, PrepareError, ToolPreparation};
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
-use super::controlled_file::{
-    compile_candidate, inspect_for_prepare, reject_unchanged, utf8_preimage,
-};
-use super::path_arg;
+use super::args::{self, ArgError};
+use super::controlled_file::{EditFailure, compile_candidate, inspect_for_prepare, utf8_preimage};
 
 /// Replace the first occurrence of `old_string` with `new_string` in a UTF-8
 /// file inside the workspace — the targeted edit small models do far more
@@ -55,84 +51,54 @@ impl Tool for EditFile {
         ctx: &PrepareCtx<'_>,
         args: &serde_json::Value,
     ) -> Result<ToolPreparation, PrepareError> {
-        let path = args
-            .get("path")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: path",
-                )
-            })?;
-        let old_string = args
-            .get("old_string")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: old_string",
-                )
-            })?;
-        let new_string = args
-            .get("new_string")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: new_string",
-                )
-            })?;
-        if old_string.is_empty() {
-            return Err(PrepareError::new(
-                PrepareErrorKind::InvalidArguments,
-                "old_string must not be empty",
-            ));
-        }
-
+        let (path, old_string, new_string) = edit_args(args)?;
         let target = inspect_for_prepare(ctx, path, false)?;
         let content = utf8_preimage(&target, "edit_file")?;
-        if !content.contains(old_string) {
-            return Err(reject_unchanged(
-                &target,
-                NoEffectKind::MatchNotFound,
-                format!("old_string not found in {path}"),
-            ));
-        }
-        let edited = content.replacen(old_string, new_string, 1).into_bytes();
+        let edited = replace_first(content, old_string, new_string, path)
+            .map_err(|failure| failure.rejected(&target))?;
         compile_candidate(
             target,
-            edited,
+            edited.into_bytes(),
             NoEffectKind::Identity,
             format!("edited {path} (replaced 1 occurrence)"),
         )
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let path = path_arg(args)?;
-        let old_string = args
-            .get("old_string")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required string argument: old_string".to_string())?;
-        let new_string = args
-            .get("new_string")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required string argument: new_string".to_string())?;
-        if old_string.is_empty() {
-            return Err("old_string must not be empty".to_string());
-        }
-        let resolved = ctx
-            .workspace
-            .resolve(path)
-            .map_err(|e| format!("boundary: {e}"))?;
+        let (path, old_string, new_string) = edit_args(args)?;
+        let resolved = ctx.resolve(path)?;
         let content =
             std::fs::read_to_string(&resolved).map_err(|e| format!("read {path}: {e}"))?;
-        if !content.contains(old_string) {
-            return Err(format!("old_string not found in {path}"));
-        }
-        let edited = content.replacen(old_string, new_string, 1);
+        let edited = replace_first(&content, old_string, new_string, path)?;
         std::fs::write(&resolved, &edited).map_err(|e| format!("write {path}: {e}"))?;
         Ok(format!("edited {path} (replaced 1 occurrence)"))
     }
+}
+
+/// `(path, old_string, new_string)`, with a non-empty `old_string`.
+fn edit_args(args: &serde_json::Value) -> Result<(&str, &str, &str), ArgError> {
+    let path = args::string(args, "path")?;
+    let old_string = args::string(args, "old_string")?;
+    let new_string = args::string(args, "new_string")?;
+    if old_string.is_empty() {
+        return Err(args::invalid("old_string must not be empty"));
+    }
+    Ok((path, old_string, new_string))
+}
+
+/// Replace the first occurrence of `old_string` in `content`.
+fn replace_first(
+    content: &str,
+    old_string: &str,
+    new_string: &str,
+    path: &str,
+) -> Result<String, EditFailure> {
+    if !content.contains(old_string) {
+        return Err(EditFailure::NotFound(format!(
+            "old_string not found in {path}"
+        )));
+    }
+    Ok(content.replacen(old_string, new_string, 1))
 }
 
 #[cfg(test)]

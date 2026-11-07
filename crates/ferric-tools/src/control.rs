@@ -117,7 +117,6 @@ pub struct CandidatePathState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyntaxUncheckedReason {
     UnsupportedExtension,
-    InterpreterUnavailable,
     InputTooLarge,
     CompilerFailure,
 }
@@ -515,11 +514,39 @@ pub(crate) fn logical_line_count(bytes: &[u8]) -> u64 {
     newlines + u64::from(bytes.last() != Some(&b'\n'))
 }
 
+/// Prefix `body` with its evidence header, all within the model's `limit`.
+/// When header plus body would be truncated for the model, `mark_truncated`
+/// records that on the observation and the header is rendered again.
+pub(crate) fn evidence_envelope<O>(
+    tool: &str,
+    limit: usize,
+    observation: &mut O,
+    body: &str,
+    render: impl Fn(&O) -> String,
+    mark_truncated: impl FnOnce(&mut O),
+) -> Result<String, PrepareError> {
+    let fitted = |header: String| {
+        if header.chars().count() > limit {
+            return Err(PrepareError::new(
+                PrepareErrorKind::OutputLimitTooSmall,
+                format!("model output limit {limit} is too small for the {tool} evidence envelope"),
+            ));
+        }
+        Ok(format!("{header}{body}"))
+    };
+    let full = fitted(render(observation))?;
+    if full.chars().count() <= limit {
+        return Ok(full);
+    }
+    mark_truncated(observation);
+    fitted(render(observation))
+}
+
 pub(crate) fn normalized_relative_path(
     workspace: &Workspace,
     resolved: &Path,
 ) -> Result<String, PrepareError> {
-    let relative = resolved.strip_prefix(workspace.root()).map_err(|_| {
+    let normalized = workspace.relative(resolved).ok_or_else(|| {
         PrepareError::new(
             PrepareErrorKind::Io,
             format!(
@@ -529,7 +556,6 @@ pub(crate) fn normalized_relative_path(
             ),
         )
     })?;
-    let normalized = relative.to_string_lossy().replace('\\', "/");
     Ok(if normalized.is_empty() {
         ".".to_string()
     } else {

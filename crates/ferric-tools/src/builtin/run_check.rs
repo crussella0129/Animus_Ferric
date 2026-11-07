@@ -12,6 +12,8 @@ use crate::control::{
 };
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
+use super::args;
+
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_OUTPUT_LIMIT: usize = 4_000;
 const MAX_TIMEOUT_SECS: u64 = 3_600;
@@ -162,15 +164,7 @@ impl Tool for RunCheck {
                 "run_check arguments must contain exactly one field: `name`",
             ));
         }
-        let name = object
-            .get("name")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: name",
-                )
-            })?;
+        let name = args::string(args, "name")?;
         if !self.checks.contains_key(name) {
             return Err(PrepareError::new(
                 PrepareErrorKind::InvalidArguments,
@@ -199,10 +193,7 @@ impl Tool for RunCheck {
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let name = args
-            .get("name")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| "missing required string argument: name".to_string())?;
+        let name = args::string(args, "name")?;
         let check = self
             .checks
             .get(name)

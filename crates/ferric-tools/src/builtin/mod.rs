@@ -1,6 +1,7 @@
 //! Builtin tools offered to models, plus explicitly human-only host controls.
 
 mod apply_patch;
+mod args;
 mod blocking;
 pub(crate) mod check_syntax;
 pub(crate) mod controlled_file;
@@ -17,11 +18,12 @@ mod make_dir;
 mod manage_task;
 mod move_path;
 mod multi_edit;
+mod navigate;
 mod read_file;
 mod run_check;
 mod search_files;
 mod shell_exec;
-pub mod task_registry;
+mod task_registry;
 mod write_file;
 
 pub use apply_patch::ApplyPatch;
@@ -80,11 +82,4 @@ pub fn register_run_checks(registry: &mut Registry, checks: Vec<NamedCheck>) -> 
 pub fn register_human_tools(registry: &mut Registry) {
     registry.register(Box::new(ShellExec));
     registry.register(Box::new(ManageTask));
-}
-
-/// Shared helper: the required string `path` argument.
-fn path_arg(args: &serde_json::Value) -> Result<&str, String> {
-    args.get("path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing required string argument: path".to_string())
 }

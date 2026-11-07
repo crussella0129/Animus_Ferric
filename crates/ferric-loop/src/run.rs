@@ -1186,10 +1186,6 @@ fn registry_tools(
                 true
             }
         })
-        .map(|spec| ToolDescriptor {
-            name: spec.name,
-            description: spec.description,
-            input_schema: spec.input_schema,
-        })
+        .map(ToolDescriptor::from)
         .collect()
 }

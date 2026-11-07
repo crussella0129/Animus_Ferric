@@ -7,8 +7,8 @@ use crate::control::{
 };
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
+use super::args;
 use super::controlled_read::{open_controlled_dir, validate_controlled_dir};
-use super::path_arg;
 
 /// List a directory inside the workspace. Entries are sorted (ADR-008);
 /// directories get a trailing `/`.
@@ -40,15 +40,7 @@ impl Tool for ListDir {
         ctx: &PrepareCtx<'_>,
         args: &serde_json::Value,
     ) -> Result<ToolPreparation, PrepareError> {
-        let path = args
-            .get("path")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: path",
-                )
-            })?;
+        let path = args::string(args, "path")?;
         let (dir, _) = open_controlled_dir(ctx.workspace, path)
             .map_err(|error| PrepareError::new(PrepareErrorKind::Io, error))?;
         let mut entries: Vec<String> = dir
@@ -72,11 +64,8 @@ impl Tool for ListDir {
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let path = path_arg(args)?;
-        let resolved = ctx
-            .workspace
-            .resolve(path)
-            .map_err(|e| format!("boundary: {e}"))?;
+        let path = args::string(args, "path")?;
+        let resolved = ctx.resolve(path)?;
         let mut entries: Vec<String> = std::fs::read_dir(&resolved)
             .map_err(|e| format!("list {path}: {e}"))?
             .filter_map(|entry| entry.ok())

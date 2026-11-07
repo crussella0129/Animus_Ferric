@@ -75,40 +75,36 @@ pub fn check_with_ignore(
 }
 
 fn check_read_target(path: &Path) -> Decision {
-    for component in path.components() {
-        if let Component::Normal(name) = component
-            && let Some(name) = name.to_str()
-        {
-            let lowered = name.to_ascii_lowercase();
-            if DENIED_READ_SEGMENTS.contains(&lowered.as_str()) {
-                return Decision::Deny(DenyReason {
-                    rule: "denied_read_segment",
-                    matched: lowered,
-                });
-            }
-        }
-    }
-    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-        let lowered = file_name.to_ascii_lowercase();
-        if DENIED_READ_FILES.contains(&lowered.as_str()) {
-            return Decision::Deny(DenyReason {
-                rule: "denied_read_file",
-                matched: lowered,
-            });
-        }
-    }
-    Decision::Allow
+    check_target(
+        path,
+        (DENIED_READ_SEGMENTS, "denied_read_segment"),
+        (DENIED_READ_FILES, "denied_read_file"),
+    )
 }
 
 fn check_write_target(path: &Path) -> Decision {
+    check_target(
+        path,
+        (DENIED_WRITE_SEGMENTS, "denied_write_segment"),
+        (DENIED_WRITE_FILES, "denied_write_file"),
+    )
+}
+
+/// Deny `path` when any component (case-insensitively) is a denied segment,
+/// or its file name is a denied file.
+fn check_target(
+    path: &Path,
+    (segments, segment_rule): (&[&str], &'static str),
+    (files, file_rule): (&[&str], &'static str),
+) -> Decision {
     for component in path.components() {
         if let Component::Normal(name) = component
             && let Some(name) = name.to_str()
         {
             let lowered = name.to_ascii_lowercase();
-            if DENIED_WRITE_SEGMENTS.contains(&lowered.as_str()) {
+            if segments.contains(&lowered.as_str()) {
                 return Decision::Deny(DenyReason {
-                    rule: "denied_write_segment",
+                    rule: segment_rule,
                     matched: lowered,
                 });
             }
@@ -116,9 +112,9 @@ fn check_write_target(path: &Path) -> Decision {
     }
     if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
         let lowered = file_name.to_ascii_lowercase();
-        if DENIED_WRITE_FILES.contains(&lowered.as_str()) {
+        if files.contains(&lowered.as_str()) {
             return Decision::Deny(DenyReason {
-                rule: "denied_write_file",
+                rule: file_rule,
                 matched: lowered,
             });
         }

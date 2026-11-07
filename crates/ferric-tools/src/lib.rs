@@ -6,6 +6,7 @@
 
 pub mod builtin;
 mod control;
+pub mod nofollow;
 mod registry;
 mod spec;
 

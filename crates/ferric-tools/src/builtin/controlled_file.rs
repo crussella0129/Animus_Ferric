@@ -5,9 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 #[cfg(unix)]
 use cap_fs_ext::OpenOptionsExt as _;
-use cap_fs_ext::{
-    DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt, OpenOptionsMaybeDirExt,
-};
+use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 use ferric_guard::Workspace;
@@ -19,6 +17,8 @@ use crate::control::{
     PrepareFailureWitness, StaleObservationWitness, ToolPreparation, UnsupportedMutationKind,
     WorkspaceEffect, WorkspaceEffectKind, WorkspaceEffectReport, logical_line_count, sha256_bytes,
 };
+
+use crate::nofollow::{is_reparse_point, read_options};
 
 use super::check_syntax::candidate_syntax_transition;
 
@@ -183,6 +183,36 @@ pub(crate) fn reject_unchanged(
         },
         message.into(),
     )
+}
+
+/// A text edit that cannot be applied to its preimage. Legacy execution
+/// reports the message; controlled preparation types the refusal.
+pub(crate) enum EditFailure {
+    /// The edit itself is malformed.
+    Invalid(String),
+    /// The edit's anchor is absent, so the preimage stays unchanged.
+    NotFound(String),
+}
+
+impl EditFailure {
+    pub(crate) fn rejected(self, target: &InspectedFileTarget) -> PrepareError {
+        match self {
+            Self::Invalid(message) => {
+                PrepareError::new(PrepareErrorKind::InvalidArguments, message)
+            }
+            Self::NotFound(message) => {
+                reject_unchanged(target, NoEffectKind::MatchNotFound, message)
+            }
+        }
+    }
+}
+
+impl From<EditFailure> for String {
+    fn from(failure: EditFailure) -> Self {
+        match failure {
+            EditFailure::Invalid(message) | EditFailure::NotFound(message) => message,
+        }
+    }
 }
 
 pub(crate) fn compile_candidate(
@@ -2496,10 +2526,8 @@ fn validate_parent_binding(
 }
 
 fn cap_identity(metadata: &cap_std::fs::Metadata) -> FileIdentity {
-    FileIdentity {
-        device: MetadataExt::dev(metadata),
-        inode: MetadataExt::ino(metadata),
-    }
+    let (device, inode) = crate::nofollow::identity(metadata);
+    FileIdentity { device, inode }
 }
 
 #[cfg(unix)]
@@ -2696,31 +2724,9 @@ fn observe_leaf(parent: &Dir, leaf: &OsString) -> Result<ObservedTarget, String>
 }
 
 fn open_leaf_nofollow(parent: &Dir, leaf: &OsString) -> std::io::Result<File> {
-    let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .follow(FollowSymlinks::No)
-        .maybe_dir(true);
-    #[cfg(unix)]
-    {
-        options.custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK | libc::O_NOFOLLOW);
-    }
     parent
-        .open_with(leaf, &options)
+        .open_with(leaf, &read_options())
         .map(cap_std::fs::File::into_std)
-}
-
-#[cfg(windows)]
-fn is_reparse_point(metadata: &Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(_metadata: &Metadata) -> bool {
-    false
 }
 
 #[cfg(test)]

@@ -757,6 +757,7 @@ dependencies = [
  "cap-std",
  "ferric-core",
  "ferric-guard",
+ "ferric-iron",
  "ferric-trace",
  "getrandom 0.4.3",
  "hex",

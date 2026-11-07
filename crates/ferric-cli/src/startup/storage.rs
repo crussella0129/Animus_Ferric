@@ -13,9 +13,10 @@ use std::sync::Mutex;
 use cap_fs_ext::OpenOptionsExt as _;
 #[cfg(unix)]
 use cap_fs_ext::OpenOptionsMaybeDirExt as _;
-use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
+use cap_fs_ext::{FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, Metadata, OpenOptions};
+use ferric_tools::nofollow::{PlainDirError, identity, is_link, plain_dir_metadata};
 use serde::{Deserialize, Serialize};
 
 // Storage errors are actionable at their source; callers must not guess whether
@@ -436,33 +437,22 @@ impl WorkspaceState {
     }
 }
 
-fn identity(metadata: &Metadata) -> Identity {
-    (MetadataExt::dev(metadata), MetadataExt::ino(metadata))
-}
-
-fn is_link(metadata: &Metadata) -> bool {
-    #[cfg(windows)]
-    if cap_fs_ext::OsMetadataExt::file_attributes(metadata) & 0x400 != 0 {
-        // FILE_ATTRIBUTE_REPARSE_POINT, including non-symlink reparse tags.
-        return true;
-    }
-    metadata.file_type().is_symlink()
-}
-
 fn regular_single_link(metadata: &Metadata) -> bool {
     metadata.is_file() && !is_link(metadata) && MetadataExt::nlink(metadata) == 1
 }
 
 fn directory_metadata(directory: &Dir) -> Result<Metadata, String> {
-    let metadata = directory
-        .dir_metadata()
-        .map_err(|_| failure("cannot identify workspace startup directory"))?;
-    if !metadata.is_dir() || is_link(&metadata) {
-        return Err(failure(
-            "workspace startup state requires a plain directory",
-        ));
-    }
-    Ok(metadata)
+    plain_dir_metadata(directory).map_err(plain_dir_failure)
+}
+
+fn plain_dir_failure(error: PlainDirError) -> String {
+    failure(match error {
+        PlainDirError::Inspect(_) => "workspace startup directory is unavailable",
+        PlainDirError::NotPlain => "workspace startup state requires a plain directory",
+        PlainDirError::Open(_) => "cannot safely open workspace startup directory",
+        PlainDirError::InspectOpened(_) => "cannot identify workspace startup directory",
+        PlainDirError::Changed => "workspace startup directory changed while opening",
+    })
 }
 
 #[cfg(unix)]
@@ -524,29 +514,7 @@ fn validate_root(path: &Path, retained: &Dir, expected: Identity) -> Result<(), 
 }
 
 fn open_plain_dir(parent: &Dir, leaf: impl AsRef<Path>) -> Result<Dir, String> {
-    let leaf = leaf.as_ref();
-    let before = parent
-        .symlink_metadata(leaf)
-        .map_err(|_| failure("workspace startup directory is unavailable"))?;
-    if !before.is_dir() || is_link(&before) {
-        return Err(failure(
-            "workspace startup state requires a plain directory",
-        ));
-    }
-    let opened = parent
-        .open_dir_nofollow(leaf)
-        .map_err(|_| failure("cannot safely open workspace startup directory"))?;
-    let after = parent
-        .symlink_metadata(leaf)
-        .map_err(|_| failure("workspace startup directory changed while opening"))?;
-    if !after.is_dir()
-        || is_link(&after)
-        || identity(&before) != identity(&after)
-        || identity(&before) != identity(&directory_metadata(&opened)?)
-    {
-        return Err(failure("workspace startup directory changed while opening"));
-    }
-    Ok(opened)
+    ferric_tools::nofollow::open_plain_dir(parent, leaf).map_err(plain_dir_failure)
 }
 
 fn file_options() -> OpenOptions {

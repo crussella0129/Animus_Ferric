@@ -16,10 +16,11 @@ use clap::{Args, ValueEnum};
 use ferric_core::{
     ActionProtocol, HarnessPolicy, MediaPart, Message, ModelProfile, RunPolicy, policy_for,
 };
-use ferric_guard::{Decision, PermissionLevel, Workspace, check_with_ignore};
+use ferric_guard::{AdmitError, PermissionLevel, Workspace};
 use ferric_iron::select_protocol;
 use ferric_loop::{DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run};
 use ferric_provider::{Capabilities, Completion, MockProvider, Provider, SamplingParams};
+use ferric_tools::nofollow::is_reparse_point;
 use ferric_tools::{NamedCheck, Registry, register_builtin_tools, register_run_checks};
 use ferric_trace::{Event, JsonlSink};
 
@@ -662,25 +663,20 @@ fn route_files_with_limits(
     let mut total_bytes = 0_u64;
 
     for requested in files {
-        let resolved = workspace.resolve(requested).map_err(|e| {
-            format!(
-                "attachment `{}` rejected by workspace containment: {e}",
-                requested.display()
-            )
-        })?;
-        if let Decision::Deny(reason) = check_with_ignore(
-            PermissionLevel::Read,
-            &resolved,
-            workspace.root(),
-            workspace.ignore(),
-        ) {
-            return Err(format!(
-                "attachment `{}` denied by read guard: {} matched {}",
-                requested.display(),
-                reason.rule,
-                reason.matched
-            ));
-        }
+        let resolved = workspace
+            .admit(PermissionLevel::Read, requested)
+            .map_err(|error| match error {
+                AdmitError::Boundary(e) => format!(
+                    "attachment `{}` rejected by workspace containment: {e}",
+                    requested.display()
+                ),
+                AdmitError::Denied { reason, .. } => format!(
+                    "attachment `{}` denied by read guard: {} matched {}",
+                    requested.display(),
+                    reason.rule,
+                    reason.matched
+                ),
+            })?;
 
         let label = workspace_relative_label(workspace, &resolved);
         let kind = ferric_core::classify_path(&resolved);
@@ -886,21 +882,6 @@ fn absolutize_trace_path(path: &Path) -> Result<PathBuf, ExternalTraceError> {
     Ok(normalized)
 }
 
-#[cfg(windows)]
-fn metadata_is_reparse(metadata: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    // FILE_ATTRIBUTE_REPARSE_POINT. Rust exposes the raw attribute word but
-    // intentionally does not duplicate the Win32 constant in `std`.
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn metadata_is_reparse(_metadata: &std::fs::Metadata) -> bool {
-    false
-}
-
 /// Inspect every existing component without following its final component.
 /// This deliberately rejects links/reparse points even when they would resolve
 /// to a directory that is otherwise disjoint from the workspace.
@@ -913,7 +894,7 @@ fn validate_existing_trace_components(path: &Path) -> Result<(), ExternalTraceEr
         }
         match std::fs::symlink_metadata(component_path) {
             Ok(metadata) => {
-                if metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
+                if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
                     return Err(ExternalTraceError::new(
                         ExternalTraceErrorClass::LinkOrReparse,
                         format!(
@@ -1078,7 +1059,7 @@ fn validate_materialized_external_trace_root(
             ),
         )
     })?;
-    if metadata.file_type().is_symlink() || metadata_is_reparse(&metadata) {
+    if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
         return Err(ExternalTraceError::new(
             ExternalTraceErrorClass::LinkOrReparse,
             format!("{} became a symbolic link or reparse point", root.display()),

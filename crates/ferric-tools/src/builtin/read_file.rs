@@ -4,13 +4,13 @@ use ferric_guard::PermissionLevel;
 
 use crate::control::{
     ControlCapability, FileObservation, LineRange, PrepareCtx, PrepareError, PrepareErrorKind,
-    RequestedLineRange, ToolPreparation, logical_line_count, normalized_relative_path,
-    sha256_bytes,
+    RequestedLineRange, ToolPreparation, evidence_envelope, logical_line_count,
+    normalized_relative_path, sha256_bytes,
 };
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
+use super::args;
 use super::controlled_read::read_controlled_file;
-use super::path_arg;
 
 /// Read a UTF-8 text file inside the workspace, optionally paginated by lines.
 pub struct ReadFile;
@@ -43,7 +43,7 @@ impl Tool for ReadFile {
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let path = path_arg(args)?;
+        let path = args::string(args, "path")?;
         let start_line = args
             .get("start_line")
             .and_then(|v| v.as_u64())
@@ -53,10 +53,7 @@ impl Tool for ReadFile {
             .and_then(|v| v.as_u64())
             .map(|n| n as usize);
 
-        let resolved = ctx
-            .workspace
-            .resolve(path)
-            .map_err(|e| format!("boundary: {e}"))?;
+        let resolved = ctx.resolve(path)?;
 
         let content =
             std::fs::read_to_string(&resolved).map_err(|e| format!("read {path}: {e}"))?;
@@ -81,24 +78,13 @@ impl Tool for ReadFile {
         ctx: &PrepareCtx<'_>,
         args: &serde_json::Value,
     ) -> Result<ToolPreparation, PrepareError> {
-        let path = args
-            .get("path")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                PrepareError::new(
-                    PrepareErrorKind::InvalidArguments,
-                    "missing required string argument: path",
-                )
-            })?;
+        let path = args::string(args, "path")?;
         let requested = RequestedLineRange {
-            start: optional_positive_integer(args, "start_line")?,
-            end: optional_positive_integer(args, "end_line")?,
+            start: args::optional_positive(args, "start_line")?,
+            end: args::optional_positive(args, "end_line")?,
         };
         if matches!((requested.start, requested.end), (Some(start), Some(end)) if start > end) {
-            return Err(PrepareError::new(
-                PrepareErrorKind::InvalidArguments,
-                "start_line must not be greater than end_line",
-            ));
+            return Err(args::invalid("start_line must not be greater than end_line").into());
         }
 
         let controlled = read_controlled_file(ctx.workspace, path)
@@ -140,36 +126,21 @@ impl Tool for ReadFile {
                 || matches!(returned, Some(LineRange { start: 1, end }) if end == total_lines),
             coverage: returned.into_iter().collect(),
         };
-        let header = render_file_header(&observation);
-        require_header_fits(&header, ctx.truncation_limit)?;
-        let mut full = format!("{header}{selected}");
-        if full.chars().count() > ctx.truncation_limit {
-            observation.model_truncated = true;
-            observation.complete = false;
-            observation.coverage.clear();
-            let header = render_file_header(&observation);
-            require_header_fits(&header, ctx.truncation_limit)?;
-            full = format!("{header}{selected}");
-        }
+        let full = evidence_envelope(
+            "read_file",
+            ctx.truncation_limit,
+            &mut observation,
+            selected,
+            render_file_header,
+            |observation| {
+                observation.model_truncated = true;
+                observation.complete = false;
+                observation.coverage.clear();
+            },
+        )?;
 
         Ok(ToolPreparation::file_observation(full, observation))
     }
-}
-
-fn optional_positive_integer(
-    args: &serde_json::Value,
-    key: &str,
-) -> Result<Option<u64>, PrepareError> {
-    let Some(value) = args.get(key) else {
-        return Ok(None);
-    };
-    let number = value.as_u64().filter(|number| *number > 0).ok_or_else(|| {
-        PrepareError::new(
-            PrepareErrorKind::InvalidArguments,
-            format!("{key} must be a positive integer"),
-        )
-    })?;
-    Ok(Some(number))
 }
 
 fn raw_line_spans(bytes: &[u8]) -> Vec<(usize, usize)> {
@@ -224,14 +195,4 @@ fn render_file_header(observation: &FileObservation) -> String {
         u8::from(observation.model_truncated),
         u8::from(observation.complete),
     )
-}
-
-fn require_header_fits(header: &str, limit: usize) -> Result<(), PrepareError> {
-    if header.chars().count() > limit {
-        return Err(PrepareError::new(
-            PrepareErrorKind::OutputLimitTooSmall,
-            format!("model output limit {limit} is too small for the read_file evidence envelope"),
-        ));
-    }
-    Ok(())
 }

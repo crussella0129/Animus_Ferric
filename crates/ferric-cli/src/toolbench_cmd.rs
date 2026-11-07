@@ -494,11 +494,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
         let all_tools: Vec<ToolDescriptor> = registry
             .tools_for_policy(&policy)
             .into_iter()
-            .map(|spec| ToolDescriptor {
-                name: spec.name,
-                description: spec.description,
-                input_schema: spec.input_schema,
-            })
+            .map(ToolDescriptor::from)
             .collect();
         let schema = action_schema(&all_tools);
 
@@ -562,11 +558,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                     let ring_tools: Vec<ToolDescriptor> = registry
                         .tools_for_policy(&p)
                         .into_iter()
-                        .map(|spec| ToolDescriptor {
-                            name: spec.name,
-                            description: spec.description,
-                            input_schema: spec.input_schema,
-                        })
+                        .map(ToolDescriptor::from)
                         .collect();
                     if ring_tools.len() == prev_len {
                         break; // this ring added no tools → max ring reached

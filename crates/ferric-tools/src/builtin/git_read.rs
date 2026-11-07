@@ -5,6 +5,8 @@ use ferric_guard::PermissionLevel;
 
 use crate::spec::{Tool, ToolCtx, ToolSpec};
 
+use super::args;
+
 pub struct GitRead;
 
 impl Tool for GitRead {
@@ -34,59 +36,66 @@ impl Tool for GitRead {
     }
 
     fn target_paths(&self, args: &serde_json::Value) -> Vec<String> {
-        // Any argument that doesn't start with '-' is treated as a potential path
-        // for boundary and permission checks.
-        let mut paths = Vec::new();
-        if let Some(arr) = args.get("args").and_then(|v| v.as_array()) {
-            for v in arr {
-                if let Some(s) = v.as_str()
-                    && !s.starts_with('-')
-                {
-                    paths.push(s.to_string());
-                }
-            }
-        }
-        paths
+        git_path_args(args)
     }
 
     fn run(&self, ctx: &ToolCtx<'_>, args: &serde_json::Value) -> Result<String, String> {
-        let subcommand = args
-            .get("subcommand")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing required string argument: subcommand".to_string())?;
-
+        let subcommand = args::string(args, "subcommand")?;
         if !matches!(subcommand, "status" | "diff" | "log" | "branch") {
             return Err(format!("unsupported subcommand: {subcommand}"));
         }
-        let extra: Vec<&str> = args
-            .get("args")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-            .unwrap_or_default();
+        let extra = git_args(args);
         if let Some(refusal) = write_form(subcommand, &extra) {
             return Err(refusal);
         }
+        run_git(ctx, subcommand, &extra)
+    }
+}
 
-        let mut cmd = Command::new("git");
-        cmd.current_dir(ctx.workspace.root());
-        cmd.arg(subcommand).args(&extra);
+/// The string entries of the `args` array, in order.
+pub(super) fn git_args(args: &serde_json::Value) -> Vec<&str> {
+    args.get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default()
+}
 
-        let output = cmd
-            .output()
-            .map_err(|e| format!("failed to execute git: {e}"))?;
+/// Every `args` entry that does not start with '-' is a potential path, so
+/// the registry boundary- and permission-checks it (a commit message too:
+/// over-checking is safe where exact parsing is not).
+pub(super) fn git_path_args(args: &serde_json::Value) -> Vec<String> {
+    git_args(args)
+        .into_iter()
+        .filter(|arg| !arg.starts_with('-'))
+        .map(str::to_string)
+        .collect()
+}
 
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+/// Run `git <subcommand> <args>` in the workspace root. Success returns
+/// stdout, or stderr when only stderr was written.
+pub(super) fn run_git(
+    ctx: &ToolCtx<'_>,
+    subcommand: &str,
+    args: &[&str],
+) -> Result<String, String> {
+    let output = Command::new("git")
+        .current_dir(ctx.workspace.root())
+        .arg(subcommand)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to execute git: {e}"))?;
 
-        if output.status.success() {
-            if stdout.is_empty() && !stderr.is_empty() {
-                Ok(stderr)
-            } else {
-                Ok(stdout)
-            }
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    if output.status.success() {
+        if stdout.is_empty() && !stderr.is_empty() {
+            Ok(stderr)
         } else {
-            Err(format!("git {subcommand} failed:\n{stderr}\n{stdout}"))
+            Ok(stdout)
         }
+    } else {
+        Err(format!("git {subcommand} failed:\n{stderr}\n{stdout}"))
     }
 }
 
