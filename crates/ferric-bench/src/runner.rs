@@ -7,17 +7,17 @@
 //! poll loop. External inference speed belongs to the selected server/runtime,
 //! not the build profile of this HTTP client.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 use ferric_core::{ActionProtocol, HarnessPolicy};
+use ferric_process::{CapturePlan, run_bounded};
 use tempfile::TempDir;
 
 use crate::budget::{AttemptBudgetEvidence, BudgetControls, ResolvedAgentBudget};
-use crate::process::{CapturePlan, run_bounded};
 use crate::spec::BenchSpec;
 
 /// How to invoke the agent for a benchmark run.
@@ -50,19 +50,6 @@ pub struct OpenAiArgs {
     pub ctx: u32,
 }
 
-impl Invocation {
-    pub fn mock() -> Self {
-        Self {
-            ferric_bin: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ferric")),
-            protocol: ActionProtocol::ConstrainedJson,
-            openai: None,
-            prompts_dir: None,
-            keep_workspace: false,
-            budget: None,
-        }
-    }
-}
-
 /// The raw outcome of one spawned run (verification happens in `verify`).
 pub struct RunRecord {
     pub exit_code: Option<i32>,
@@ -74,9 +61,8 @@ pub struct RunRecord {
     /// when `keep_workspace` moved it to a persisted path.
     pub workspace: WorkspaceHandle,
     pub stderr_tail: String,
-    /// Known parent enforcement even when the child creates no trace. Legacy
-    /// callers without selected controls retain unknown attribution.
-    pub budget: Option<AttemptBudgetEvidence>,
+    /// Known parent enforcement, even when the child creates no trace.
+    pub budget: AttemptBudgetEvidence,
 }
 
 /// One process segment in the autonomy matrix. Initial segments supply a
@@ -128,7 +114,8 @@ impl WorkspaceHandle {
     }
 }
 
-const STDERR_TAIL_BYTES: usize = 1000;
+/// Bytes of child stderr retained as diagnostic evidence.
+pub const STDERR_TAIL_BYTES: usize = 1000;
 
 /// Execute one pre-resolved selected spec budget. Validation is before even
 /// temporary workspace/profile allocation; no silent re-resolution per trial.
@@ -156,7 +143,43 @@ pub fn run_spec_with_budget(
             "resolved budget does not match real child parameters/context",
         ));
     }
-    run_spec_inner(spec, inv, budget.duration(), Some(budget))
+    let dir = tempfile::tempdir()?;
+    // A calibration run must not consume a profile written by an earlier run.
+    // Keep the empty profile directory alive until the child exits.
+    let profile_dir = tempfile::tempdir()?;
+    materialize_setup_files(dir.path(), &spec.setup_files)?;
+    let segment = run_query_segment(
+        inv,
+        &QuerySegmentRequest {
+            workspace: dir.path(),
+            profile_dir: profile_dir.path(),
+            checks_file: None,
+            prompt: Some(&spec.prompt),
+            resume: None,
+            answer: None,
+            max_turns: spec.max_turns,
+            timeout: budget.duration(),
+            api_base_override: None,
+            harness_policy: None,
+        },
+    )?;
+
+    let workspace = if inv.keep_workspace {
+        let kept = dir.keep();
+        WorkspaceHandle::Kept(kept)
+    } else {
+        WorkspaceHandle::Temp(dir)
+    };
+
+    Ok(RunRecord {
+        exit_code: segment.exit_code,
+        timed_out: segment.timed_out,
+        wall: segment.wall,
+        trace_path: segment.trace_path,
+        workspace,
+        stderr_tail: segment.stderr_tail,
+        budget: budget.evidence(segment.exit_code, segment.timed_out),
+    })
 }
 
 fn invalid_budget(message: impl Into<String>) -> io::Error {
@@ -174,61 +197,25 @@ fn validate_invocation_budget(inv: &Invocation) -> io::Result<()> {
     Ok(())
 }
 
-fn run_spec_inner(
-    spec: &BenchSpec,
-    inv: &Invocation,
-    timeout: Duration,
-    budget: Option<&ResolvedAgentBudget>,
-) -> io::Result<RunRecord> {
-    let dir = tempfile::tempdir()?;
-    // A calibration run must not consume a profile written by an earlier run.
-    // Keep the empty profile directory alive until the child exits.
-    let profile_dir = tempfile::tempdir()?;
-    for (rel, content) in &spec.setup_files {
-        let path = dir.path().join(rel);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, content)?;
-    }
-
-    let mut cmd = Command::new(&inv.ferric_bin);
-    cmd.args(query_args(
-        &spec.prompt,
-        spec.max_turns,
-        inv,
-        dir.path(),
-        profile_dir.path(),
-    ));
-    cmd.stdin(std::process::Stdio::null());
-    if inv.prompts_dir.is_none() {
-        cmd.env_remove("FERRIC_PROMPTS_DIR");
-    }
-
-    let outcome = run_bounded(
-        &mut cmd,
-        timeout,
-        CapturePlan::stderr_tail(STDERR_TAIL_BYTES),
-    )?;
-
-    let trace_path = find_trace(dir.path());
-
-    let workspace = if inv.keep_workspace {
-        let kept = dir.keep();
-        WorkspaceHandle::Kept(kept)
-    } else {
-        WorkspaceHandle::Temp(dir)
+/// Write each `relative path → content` setup file under `workspace`.
+pub fn materialize_setup_files(
+    workspace: &Path,
+    files: &BTreeMap<String, String>,
+) -> io::Result<()> {
+    let with_path = |action: &str, path: &Path, error: io::Error| {
+        io::Error::new(
+            error.kind(),
+            format!("{action} {}: {error}", path.display()),
+        )
     };
-
-    Ok(RunRecord {
-        exit_code: outcome.exit_code,
-        timed_out: outcome.timed_out,
-        wall: outcome.wall,
-        trace_path,
-        workspace,
-        stderr_tail: String::from_utf8_lossy(&outcome.stderr).into_owned(),
-        budget: budget.map(|budget| budget.evidence(outcome.exit_code, outcome.timed_out)),
-    })
+    for (relative, content) in files {
+        let path = workspace.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| with_path("create", parent, error))?;
+        }
+        std::fs::write(&path, content).map_err(|error| with_path("write", &path, error))?;
+    }
+    Ok(())
 }
 
 /// Spawn one isolated `ferric query` process without creating or deleting the
@@ -317,54 +304,6 @@ fn protocol_flag(p: ActionProtocol) -> &'static str {
 /// (the constrained workhorse — ollama/llama-server) or `--mock`; the
 /// in-process mistral.rs GGUF path was removed (ADR-027), so the openai arm is
 /// how the full loop reaches a real *constrained* model.
-fn query_args(
-    prompt: &str,
-    max_turns: u32,
-    inv: &Invocation,
-    workspace: &Path,
-    profile_dir: &Path,
-) -> Vec<String> {
-    let mut args = vec![
-        "query".to_string(),
-        prompt.to_string(),
-        "--workspace".to_string(),
-        workspace.display().to_string(),
-        "--protocol".to_string(),
-        protocol_flag(inv.protocol).to_string(),
-        "--no-config".to_string(),
-        "--profile-dir".to_string(),
-        profile_dir.display().to_string(),
-        "--temperature".to_string(),
-        "0.0".to_string(),
-        "--max-turns".to_string(),
-        max_turns.to_string(),
-        "--no-stream".to_string(),
-    ];
-    if let Some(o) = &inv.openai {
-        if let Some(base) = &o.api_base {
-            args.push("--api-base".to_string());
-            args.push(base.clone());
-        }
-        args.extend([
-            "--model".to_string(),
-            o.model.clone(),
-            "--params-b".to_string(),
-            o.params_b.to_string(),
-            "--ctx".to_string(),
-            o.ctx.to_string(),
-        ]);
-    } else {
-        args.push("--mock".to_string());
-        append_mock_budget_coordinates(&mut args, inv);
-    }
-    append_output_cap(&mut args, inv);
-    if let Some(prompts) = &inv.prompts_dir {
-        args.push("--prompts-dir".to_string());
-        args.push(prompts.display().to_string());
-    }
-    args
-}
-
 fn query_segment_args(inv: &Invocation, request: &QuerySegmentRequest<'_>) -> Vec<String> {
     let mut args = vec!["query".to_string()];
     if let Some(prompt) = request.prompt {
@@ -462,20 +401,6 @@ fn trace_files(workspace: &Path) -> io::Result<BTreeSet<PathBuf>> {
     Ok(traces)
 }
 
-/// Find the single `q-*.jsonl` the child wrote under `<ws>/.ferric/trace/`.
-fn find_trace(workspace: &Path) -> Option<PathBuf> {
-    let trace_dir = ferric_trace::trace_dir(workspace);
-    std::fs::read_dir(&trace_dir)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("q-") && n.ends_with(".jsonl"))
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,6 +420,22 @@ mod tests {
         args.windows(2).any(|w| w[0] == flag && w[1] == value)
     }
 
+    /// The initial (prompt) segment request the ladder runner sends.
+    fn prompt_request(prompt: &str, max_turns: u32) -> QuerySegmentRequest<'_> {
+        QuerySegmentRequest {
+            workspace: Path::new("/ws"),
+            profile_dir: Path::new("/profiles"),
+            checks_file: None,
+            prompt: Some(prompt),
+            resume: None,
+            answer: None,
+            max_turns,
+            timeout: Duration::from_secs(1),
+            api_base_override: None,
+            harness_policy: None,
+        }
+    }
+
     #[test]
     fn bench_budget_argv_real_mock_and_resume() {
         for real in [false, true] {
@@ -510,12 +451,13 @@ mod tests {
                 });
             }
             validate_invocation_budget(&inv).unwrap();
-            let initial = query_args(
-                "task",
-                12,
+            let initial = query_segment_args(
                 &inv,
-                Path::new("workspace ' &"),
-                Path::new("profiles ' &"),
+                &QuerySegmentRequest {
+                    workspace: Path::new("workspace ' &"),
+                    profile_dir: Path::new("profiles ' &"),
+                    ..prompt_request("task", 12)
+                },
             );
             let request = QuerySegmentRequest {
                 workspace: Path::new("workspace ' &"),
@@ -610,7 +552,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            query_args("task", 9, &inv, Path::new("/ws"), Path::new("/profiles")),
+            query_segment_args(&inv, &prompt_request("task", 9)),
             [
                 "query",
                 "task",
@@ -739,14 +681,13 @@ mod tests {
         ));
         assert!(evidence.trace.main_action_budgets.is_none());
         assert!(evidence.trace.child_terminal.is_none());
-        let reference = crate::retain_budget_trace(
+        let sidecar = crate::retain_budget_trace(
             &dir.path().join("source.jsonl"),
             &dir.path().join("retained"),
             crate::budget::AttemptIdentity::new("run-timeout", "trial-001", 0).unwrap(),
             &evidence,
         )
         .unwrap();
-        let sidecar = crate::verify_budget_trace(&dir.path().join("retained"), &reference).unwrap();
         assert_eq!(
             sidecar.evidence.parent_termination,
             crate::budget::ParentTermination::ExecutionTimeout
@@ -782,13 +723,7 @@ mod tests {
             params_b: 7.0,
             ctx: 4096,
         });
-        let args = query_args(
-            "do a task",
-            12,
-            &inv,
-            Path::new("/ws"),
-            Path::new("/profiles"),
-        );
+        let args = query_segment_args(&inv, &prompt_request("do a task", 12));
         assert!(has_pair(&args, "--model", "qwen2.5-coder:7b"));
         assert!(has_pair(&args, "--api-base", "http://localhost:11434/v1"));
         assert!(has_pair(&args, "--protocol", "grammar"));
@@ -805,7 +740,7 @@ mod tests {
 
     #[test]
     fn query_args_mock_arm() {
-        let args = query_args("t", 5, &base(), Path::new("/ws"), Path::new("/profiles"));
+        let args = query_segment_args(&base(), &prompt_request("t", 5));
         assert!(args.iter().any(|a| a == "--mock"));
         assert!(!args.iter().any(|a| a == "--backend"));
     }

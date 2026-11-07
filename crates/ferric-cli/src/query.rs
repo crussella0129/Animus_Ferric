@@ -388,11 +388,12 @@ pub(crate) struct RunConfig {
     pub hooks: Option<ferric_core::HooksConfig>,
 }
 
-#[derive(serde::Deserialize)]
+/// A `--checks-file` document: `[[check]]` tables of fixed-argv checks.
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
-struct NamedChecksFile {
+pub(crate) struct NamedChecksFile {
     #[serde(default, rename = "check")]
-    checks: Vec<NamedCheck>,
+    pub(crate) checks: Vec<NamedCheck>,
 }
 
 fn load_named_checks(path: &Path) -> Result<Vec<NamedCheck>, String> {

@@ -2,20 +2,10 @@
 //! self-test of the whole harness (spawn-self runner + verification +
 //! results.jsonl + calibration), driven through the real binary.
 
-use std::process::Command;
+use std::process::{Command, Output};
 
 #[path = "../src/test_process_containment.rs"]
 mod test_process_containment;
-
-trait BoundedOutput {
-    fn output_bounded(&mut self) -> std::io::Result<std::process::Output>;
-}
-
-impl BoundedOutput for Command {
-    fn output_bounded(&mut self) -> std::io::Result<std::process::Output> {
-        test_process_containment::output_bounded(self, std::time::Duration::from_secs(60))
-    }
-}
 
 fn ferric() -> Command {
     test_process_containment::ensure_current_process_tree_is_contained()
@@ -23,64 +13,8 @@ fn ferric() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ferric"))
 }
 
-#[test]
-fn bench_mock_l0_passes_and_writes_results() {
-    let results = tempfile::tempdir().unwrap();
-    // L0 with the built-in mock: the mock writes ferric-mock.txt and calls
-    // task_complete. L0's spec expects list_dir (any_of) and forbids writes,
-    // so the mock will FAIL L0 — which is itself a valid, recorded outcome.
-    // Use L3 instead: it expects write_file + task_complete, which the mock
-    // does. But the mock writes "ferric-mock.txt", not greet.py, so L3's file
-    // expectation fails too. The honest assertion here is operational: the
-    // harness runs, verifies, and records a row — not that the mock passes a
-    // real task. Assert the machinery, not a fake pass.
-    let out = ferric()
-        .args(["bench", "full", "--mock", "--level", "0"])
-        .arg("--results-dir")
-        .arg(results.path())
-        .output_bounded()
-        .unwrap();
-    // The harness ran to completion (exit reflects pass/fail of the level;
-    // either is fine — we assert the row was written).
-    let _ = out.status;
-
-    let results_file = results.path().join("results.jsonl");
-    assert!(results_file.exists(), "results.jsonl must be written");
-    let content = std::fs::read_to_string(&results_file).unwrap();
-    let row: serde_json::Value =
-        serde_json::from_str(content.lines().next().expect("one row")).unwrap();
-    assert_eq!(row["level"], 0);
-    assert_eq!(row["protocol"], "ConstrainedJson");
-    // plan_steps is null (no planner — flagged, not faked).
-    assert!(row["plan_steps"].is_null());
-    // The row carries a terminator (the mock completes via task_complete).
-    assert_eq!(row["terminator"], "task_complete");
-}
-
-#[test]
-fn bench_mock_records_each_requested_level() {
-    let results = tempfile::tempdir().unwrap();
-    let out = ferric()
-        .args(["bench", "full", "--mock", "--level", "0", "--level", "1"])
-        .arg("--results-dir")
-        .arg(results.path())
-        .output_bounded()
-        .unwrap();
-    let _ = out.status;
-    let content =
-        std::fs::read_to_string(results.path().join("results.jsonl")).unwrap_or_else(|error| {
-            panic!(
-                "multi-level mock did not write results: {error}\nstdout:\n{}\nstderr:\n{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            )
-        });
-    let levels: Vec<u64> = content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter_map(|v| v["level"].as_u64())
-        .collect();
-    assert_eq!(levels, vec![0, 1], "one row per requested level, in order");
+fn output(command: &mut Command) -> Output {
+    test_process_containment::output_bounded(command, std::time::Duration::from_secs(60)).unwrap()
 }
 
 #[test]
@@ -92,14 +26,14 @@ fn bench_mock_v2_checks_record_model_failure_with_cargo_fixture() {
     // deliberate rejection of Python's `-m` arguments gives the v2 grader a
     // deterministic non-zero check result. This keeps the integration test
     // source-driven and independent of any machine Python alias.
-    let out = ferric()
-        .args(["bench", "full", "--mock", "--level", "3", "--level", "4"])
-        .arg("--python-bin")
-        .arg(env!("CARGO_BIN_EXE_ferric"))
-        .arg("--results-dir")
-        .arg(results.path())
-        .output_bounded()
-        .unwrap();
+    let out = output(
+        ferric()
+            .args(["bench", "full", "--mock", "--level", "3", "--level", "4"])
+            .arg("--python-bin")
+            .arg(env!("CARGO_BIN_EXE_ferric"))
+            .arg("--results-dir")
+            .arg(results.path()),
+    );
     let _ = out.status;
 
     let content =
@@ -131,14 +65,14 @@ fn bench_mock_v2_checks_record_model_failure_with_cargo_fixture() {
 fn bench_check_preflight_distinguishes_missing_python_infrastructure() {
     let results = tempfile::tempdir().unwrap();
     let missing_python = results.path().join("definitely-missing-python");
-    let out = ferric()
-        .args(["bench", "full", "--mock", "--level", "3"])
-        .arg("--python-bin")
-        .arg(&missing_python)
-        .arg("--results-dir")
-        .arg(results.path())
-        .output_bounded()
-        .unwrap();
+    let out = output(
+        ferric()
+            .args(["bench", "full", "--mock", "--level", "3"])
+            .arg("--python-bin")
+            .arg(&missing_python)
+            .arg("--results-dir")
+            .arg(results.path()),
+    );
 
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -156,19 +90,19 @@ fn bench_check_preflight_distinguishes_missing_python_infrastructure() {
 #[test]
 fn bench_keep_workspace_preserves_dir() {
     let results = tempfile::tempdir().unwrap();
-    let out = ferric()
-        .args([
-            "bench",
-            "full",
-            "--mock",
-            "--level",
-            "0",
-            "--keep-workspace",
-        ])
-        .arg("--results-dir")
-        .arg(results.path())
-        .output_bounded()
-        .unwrap();
+    let out = output(
+        ferric()
+            .args([
+                "bench",
+                "full",
+                "--mock",
+                "--level",
+                "0",
+                "--keep-workspace",
+            ])
+            .arg("--results-dir")
+            .arg(results.path()),
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("workspace kept:"),
@@ -179,26 +113,26 @@ fn bench_keep_workspace_preserves_dir() {
 #[test]
 fn bench_three_trials_rotate_levels_retain_traces_and_write_statistics() {
     let results = tempfile::tempdir().unwrap();
-    let out = ferric()
-        .args([
-            "bench",
-            "full",
-            "--mock",
-            "--trials",
-            "3",
-            "--min-pass-rate",
-            "0.67",
-            "--level",
-            "0",
-            "--level",
-            "1",
-            "--level",
-            "2",
-        ])
-        .arg("--results-dir")
-        .arg(results.path())
-        .output_bounded()
-        .unwrap();
+    let out = output(
+        ferric()
+            .args([
+                "bench",
+                "full",
+                "--mock",
+                "--trials",
+                "3",
+                "--min-pass-rate",
+                "0.67",
+                "--level",
+                "0",
+                "--level",
+                "1",
+                "--level",
+                "2",
+            ])
+            .arg("--results-dir")
+            .arg(results.path()),
+    );
     let _ = out.status;
 
     let rows: Vec<serde_json::Value> =
@@ -232,6 +166,13 @@ fn bench_three_trials_rotate_levels_retain_traces_and_write_statistics() {
         ],
         "each trial rotates its starting rung"
     );
+    // Every requested rung records one attributable row; the mock completes
+    // via task_complete, and plan_steps is null (no planner — flagged, not faked).
+    assert!(rows.iter().all(|row| {
+        row["protocol"] == "ConstrainedJson"
+            && row["terminator"] == "task_complete"
+            && row["plan_steps"].is_null()
+    }));
     let run_id = rows[0]["run_id"].as_str().unwrap();
     assert!(rows.iter().all(|row| row["run_id"] == run_id));
     assert!(rows.iter().all(|row| {
@@ -275,11 +216,11 @@ fn bench_rejects_out_of_range_trial_and_pass_rate_arguments() {
         ["--min-pass-rate", "0"],
         ["--min-pass-rate", "1.01"],
     ] {
-        let out = ferric()
-            .args(["bench", "full", "--mock", "--level", "0"])
-            .args(args)
-            .output_bounded()
-            .unwrap();
+        let out = output(
+            ferric()
+                .args(["bench", "full", "--mock", "--level", "0"])
+                .args(args),
+        );
         assert!(!out.status.success(), "invalid args unexpectedly succeeded");
         assert!(
             String::from_utf8_lossy(&out.stderr).contains("invalid value"),

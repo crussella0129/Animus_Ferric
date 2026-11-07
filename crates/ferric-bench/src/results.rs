@@ -1,7 +1,7 @@
 //! The append-only results row (T-213) and the JSONL ledger.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +9,7 @@ use crate::verify::CommandCheckResult;
 
 /// One benchmark run's recorded outcome. Append-only to `results.jsonl`;
 /// `null` fields are metrics Ferric cannot yet source (flagged, not faked).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ResultRow {
     /// Attribution fields added by summary schema v1. Legacy rows deserialize
     /// with `None` and remain readable by calibration/inspection tooling.
@@ -66,36 +66,54 @@ pub struct ResultRow {
 
 /// Append one row as a JSON line to `<dir>/results.jsonl` (creating the dir).
 pub fn append_row(dir: &Path, row: &ResultRow) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let path = dir.join("results.jsonl");
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    let line = serde_json::to_string(row).map_err(std::io::Error::other)?;
-    file.write_all(line.as_bytes())?;
-    file.write_all(b"\n")?;
-    Ok(())
+    append_jsonl(dir, "results.jsonl", row)
 }
 
-/// Read all rows back (for calibration / inspection).
-pub fn read_rows(dir: &Path) -> std::io::Result<Vec<ResultRow>> {
-    let path = dir.join("results.jsonl");
+/// Append one JSON line to `<dir>/<file_name>`, creating the directory.
+pub(crate) fn append_jsonl(
+    dir: &Path,
+    file_name: &str,
+    value: &impl Serialize,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let mut line = serde_json::to_vec(value).map_err(std::io::Error::other)?;
+    line.push(b'\n');
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(file_name))?
+        .write_all(&line)
+}
+
+/// Write pretty JSON to `<dir>/<file_name>`, creating the directory.
+pub(crate) fn write_pretty(
+    dir: &Path,
+    file_name: &str,
+    value: &impl Serialize,
+) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(file_name);
+    let text = serde_json::to_string_pretty(value).map_err(std::io::Error::other)?;
+    std::fs::write(&path, text)?;
+    Ok(path)
+}
+
+/// Read a JSONL ledger back, attributing a bad line to its physical number.
+#[cfg(test)]
+pub(crate) fn read_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> std::io::Result<Vec<T>> {
     let text = std::fs::read_to_string(path)?;
-    let mut rows = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let row = serde_json::from_str(line).map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("invalid results.jsonl line {}: {error}", index + 1),
-            )
-        })?;
-        rows.push(row);
-    }
-    Ok(rows)
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(index, line)| {
+            serde_json::from_str(line).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("invalid {} line {}: {error}", path.display(), index + 1),
+                )
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -109,8 +127,6 @@ mod tests {
             started_at_unix_ms: Some(1),
             finished_at_unix_ms: Some(2),
             trace_path: Some("traces/run-test/trial-001-l0.jsonl".to_string()),
-            budget: None,
-            infrastructure_error: None,
             level,
             spec_version: 1,
             level_name: format!("l{level}"),
@@ -118,7 +134,6 @@ mod tests {
             protocol: "unified_grammar".to_string(),
             model: Some("llama-1b".to_string()),
             completed,
-            timed_out: false,
             exit_code: Some(0),
             turns: 3,
             input_tokens: 100,
@@ -127,17 +142,17 @@ mod tests {
             terminator: Some("task_complete".to_string()),
             tier_observed: Some("Nano".to_string()),
             protocol_observed: Some("ConstrainedJson".to_string()),
-            repetition_guard_fires: 0,
             tools_called: vec!["write_file".to_string(), "task_complete".to_string()],
             task_complete_summary: Some("done".to_string()),
-            failure_admission: None,
-            plan_steps: None,
             expectations_ok: true,
             tools_ok: true,
-            command_checks: Vec::new(),
             tier_from_params: "Nano".to_string(),
-            stderr_tail: String::new(),
+            ..Default::default()
         }
+    }
+
+    fn read_rows(dir: &Path) -> std::io::Result<Vec<ResultRow>> {
+        read_jsonl(&dir.join("results.jsonl"))
     }
 
     #[test]

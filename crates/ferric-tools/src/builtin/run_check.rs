@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use ferric_guard::PermissionLevel;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -29,7 +29,7 @@ fn default_output_limit() -> usize {
 
 /// One operator-authorized verification command. The model sees only `name`;
 /// `program` and `args` are fixed before the tool is registered.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NamedCheck {
     pub name: String,

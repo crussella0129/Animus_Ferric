@@ -10,11 +10,11 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use ferric_process::{CapturePlan, run_bounded};
 use ferric_trace::{Event, ParsedEvent, TraceReader};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::process::{CapturePlan, run_bounded};
 use crate::spec::{BenchSpec, CommandCheck, ExpectKind};
 
 const CHECK_OUTPUT_LIMIT: usize = 16 * 1024;
@@ -510,6 +510,25 @@ pub fn completed(
         && terminator == Some("task_complete")
 }
 
+/// The Python used by source tests (`FERRIC_TEST_PYTHON`, else `python`),
+/// or `None` when it cannot report its version.
+#[cfg(test)]
+pub(crate) fn available_python() -> Option<std::path::PathBuf> {
+    let python = std::env::var_os("FERRIC_TEST_PYTHON")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("python"));
+    let mut command = Command::new(&python);
+    command.arg("--version").stdin(Stdio::null());
+    run_bounded(
+        &mut command,
+        PYTHON_PREFLIGHT_TIMEOUT,
+        CapturePlan::discard(),
+    )
+    .ok()
+    .filter(|outcome| !outcome.timed_out && outcome.exit_code == Some(0))
+    .map(|_| python)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -964,22 +983,6 @@ else:
                 .unwrap()
                 .contains("exit code")
         );
-    }
-
-    fn available_python() -> Option<std::path::PathBuf> {
-        let python = std::env::var_os("FERRIC_TEST_PYTHON")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("python"));
-        let mut command = Command::new(&python);
-        command.arg("--version").stdin(Stdio::null());
-        run_bounded(
-            &mut command,
-            PYTHON_PREFLIGHT_TIMEOUT,
-            CapturePlan::discard(),
-        )
-        .ok()
-        .filter(|outcome| !outcome.timed_out && outcome.exit_code == Some(0))
-        .map(|_| python)
     }
 
     fn assert_checks_pass(workspace: &Path, spec: &BenchSpec, python: &Path) {

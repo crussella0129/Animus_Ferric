@@ -455,149 +455,131 @@ mod http {
                 "calibration_evidence":null
             })
         }
-        let states = [
-            ("absent", None, vec!["--max-output-tokens", "1024"]),
+        // One profile-store state per mode; the publication unit test covers
+        // the absent/valid/unrelated/malformed state matrix in both modes.
+        let cases = [
             (
+                false,
                 "valid-target",
-                Some(
-                    serde_json::to_vec_pretty(&json!([
-                        profile("budget-fixture-a"),
-                        profile("budget-fixture-b")
-                    ]))
-                    .unwrap(),
-                ),
+                serde_json::to_vec_pretty(&json!([
+                    profile("budget-fixture-a"),
+                    profile("budget-fixture-b")
+                ]))
+                .unwrap(),
                 vec!["--timeout-scale", "0.5"],
             ),
             (
-                "unrelated-multi-model",
-                Some(
-                    serde_json::to_vec_pretty(&json!([
-                        profile("unrelated-fixture-one"),
-                        profile("unrelated-fixture-two")
-                    ]))
-                    .unwrap(),
-                ),
-                vec!["--timeout-scale", "2"],
-            ),
-            (
+                true,
                 "malformed",
-                Some(b"[ deliberately incomplete profile data\r\n".to_vec()),
+                b"[ deliberately incomplete profile data\r\n".to_vec(),
                 vec!["--timeout-scale", "0.5", "--max-output-tokens", "1024"],
             ),
         ];
-        for (state, before, controls) in states {
-            for fleet in [false, true] {
-                let root = tempfile::tempdir().unwrap();
-                let results_dir = root.path().join("results");
-                let profile_path = results_dir.join("model_profiles.json");
-                if let Some(bytes) = &before {
-                    std::fs::create_dir(&results_dir).unwrap();
-                    std::fs::write(&profile_path, bytes).unwrap();
-                }
-                let mut server = Server::new(Reply::ProviderError);
-                let mut command = bench(root.path());
-                // The Cargo-built Ferric child accepts --version for the
-                // preflight, then rejects Python's -m check argv. This proves
-                // deterministic nonzero grading plumbing, not Python runtime
-                // availability or successful authoritative grader execution.
-                command
-                    .args([
-                        "--params-b",
-                        "7",
-                        "--ctx",
-                        "4096",
-                        "--api-base",
-                        &server.endpoint,
-                    ])
-                    .args(&controls)
-                    .arg("--python-bin")
-                    .arg(env!("CARGO_BIN_EXE_ferric"));
-                if fleet {
-                    command.args(["--models", "budget-fixture-a,budget-fixture-b"]);
-                } else {
-                    command.args(["--model", "budget-fixture-a"]);
-                }
-                let result = output(&mut command);
-                server.finish();
-                // Fleet compatibility: a complete, infrastructure-clean
-                // measurement returns success even when its raw tasks fail.
-                assert_eq!(
-                    result.status.success(),
-                    fleet,
-                    "state={state} fleet={fleet}\n{}",
-                    String::from_utf8_lossy(&result.stderr)
-                );
-                let after = match std::fs::read(&profile_path) {
-                    Ok(bytes) => Some(bytes),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => panic!("profile readback: {error}"),
-                };
-                assert_eq!(
-                    after, before,
-                    "profile bytes changed: state={state} fleet={fleet}"
-                );
-                let rows = read_rows(root.path(), &result);
-                let count = if fleet { 14 } else { 7 };
-                assert_eq!(rows.len(), count);
-                let requests = server.requests.lock().unwrap();
-                assert_eq!(requests.len(), count);
-                for model in if fleet {
-                    vec!["budget-fixture-a", "budget-fixture-b"]
-                } else {
-                    vec!["budget-fixture-a"]
-                } {
-                    assert_eq!(
-                        requests
-                            .iter()
-                            .filter(|request| request["model"] == model)
-                            .count(),
-                        7
-                    );
-                }
-                for row in &rows {
-                    assert_eq!(
-                        row["completed"], false,
-                        "scripted provider failure is not a successful ladder"
-                    );
-                    assert_eq!(row["terminator"], "provider_error");
-                    assert_eq!(row["timed_out"], false);
-                    assert_eq!(row["infrastructure_error"], Value::Null);
-                    let summary = summary(root.path(), row);
-                    assert_eq!(summary["complete"], true);
-                    assert_eq!(summary["infrastructure_clean"], true);
-                    assert_eq!(summary["observed_rows"], 7);
-                    assert_eq!(summary["calibration"]["full_ladder"], true);
-                    assert_eq!(summary["calibration"]["diagnostic"], true);
-                    assert_eq!(summary["calibration"]["eligible"], false);
-                    assert_eq!(summary["calibration"]["measured_level"], Value::Null);
-                    assert!(
-                        summary["calibration"]["ineligible_reason"]
-                            .as_str()
-                            .unwrap()
-                            .contains("diagnostic benchmark budgets")
-                    );
-                    assert!(
-                        summary["levels"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .all(|level| level["failures"] == 1)
-                    );
-                    assert_retained_pair(root.path(), row, &summary);
-                    assert_operator_evidence(&result, root.path(), row);
-                }
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                assert!(stdout.contains("diagnostic budgets — profile left unchanged"));
-                assert!(stdout.contains("observations only"));
-                assert!(stdout.contains("PROVIDER ERROR (provider_error)"));
-                assert!(stdout.contains("DIAGNOSTIC — PROVIDER ERROR (provider_error)"));
-                assert!(!stdout.contains("Agentic Capability Leaderboard"));
-                assert!(!stdout.contains("calibrated budget-fixture"));
-                assert!(!stdout.contains("INFRASTRUCTURE FAILURE"));
-                assert!(!stderr.contains("cannot write model profile"));
-                assert!(!stderr.contains("calibration evidence is not eligible"));
+        for (fleet, state, before, controls) in cases {
+            let root = tempfile::tempdir().unwrap();
+            let results_dir = root.path().join("results");
+            let profile_path = results_dir.join("model_profiles.json");
+            std::fs::create_dir(&results_dir).unwrap();
+            std::fs::write(&profile_path, &before).unwrap();
+            let mut server = Server::new(Reply::ProviderError);
+            let mut command = bench(root.path());
+            // The Cargo-built Ferric child accepts --version for the
+            // preflight, then rejects Python's -m check argv. This proves
+            // deterministic nonzero grading plumbing, not Python runtime
+            // availability or successful authoritative grader execution.
+            command
+                .args([
+                    "--params-b",
+                    "7",
+                    "--ctx",
+                    "4096",
+                    "--api-base",
+                    &server.endpoint,
+                ])
+                .args(&controls)
+                .arg("--python-bin")
+                .arg(env!("CARGO_BIN_EXE_ferric"));
+            if fleet {
+                command.args(["--models", "budget-fixture-a,budget-fixture-b"]);
+            } else {
+                command.args(["--model", "budget-fixture-a"]);
             }
+            let result = output(&mut command);
+            server.finish();
+            // Fleet compatibility: a complete, infrastructure-clean
+            // measurement returns success even when its raw tasks fail.
+            assert_eq!(
+                result.status.success(),
+                fleet,
+                "state={state} fleet={fleet}\n{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(
+                std::fs::read(&profile_path).unwrap(),
+                before,
+                "profile bytes changed: state={state} fleet={fleet}"
+            );
+            let rows = read_rows(root.path(), &result);
+            let count = if fleet { 14 } else { 7 };
+            assert_eq!(rows.len(), count);
+            let requests = server.requests.lock().unwrap();
+            assert_eq!(requests.len(), count);
+            for model in if fleet {
+                vec!["budget-fixture-a", "budget-fixture-b"]
+            } else {
+                vec!["budget-fixture-a"]
+            } {
+                assert_eq!(
+                    requests
+                        .iter()
+                        .filter(|request| request["model"] == model)
+                        .count(),
+                    7
+                );
+            }
+            for row in &rows {
+                assert_eq!(
+                    row["completed"], false,
+                    "scripted provider failure is not a successful ladder"
+                );
+                assert_eq!(row["terminator"], "provider_error");
+                assert_eq!(row["timed_out"], false);
+                assert_eq!(row["infrastructure_error"], Value::Null);
+                let summary = summary(root.path(), row);
+                assert_eq!(summary["complete"], true);
+                assert_eq!(summary["infrastructure_clean"], true);
+                assert_eq!(summary["observed_rows"], 7);
+                assert_eq!(summary["calibration"]["full_ladder"], true);
+                assert_eq!(summary["calibration"]["diagnostic"], true);
+                assert_eq!(summary["calibration"]["eligible"], false);
+                assert_eq!(summary["calibration"]["measured_level"], Value::Null);
+                assert!(
+                    summary["calibration"]["ineligible_reason"]
+                        .as_str()
+                        .unwrap()
+                        .contains("diagnostic benchmark budgets")
+                );
+                assert!(
+                    summary["levels"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|level| level["failures"] == 1)
+                );
+                assert_retained_pair(root.path(), row, &summary);
+                assert_operator_evidence(&result, root.path(), row);
+            }
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(stdout.contains("diagnostic budgets — profile left unchanged"));
+            assert!(stdout.contains("observations only"));
+            assert!(stdout.contains("PROVIDER ERROR (provider_error)"));
+            assert!(stdout.contains("DIAGNOSTIC — PROVIDER ERROR (provider_error)"));
+            assert!(!stdout.contains("Agentic Capability Leaderboard"));
+            assert!(!stdout.contains("calibrated budget-fixture"));
+            assert!(!stdout.contains("INFRASTRUCTURE FAILURE"));
+            assert!(!stderr.contains("cannot write model profile"));
+            assert!(!stderr.contains("calibration evidence is not eligible"));
         }
     }
 

@@ -69,7 +69,8 @@ fn malformed(error: String) -> TraceBudgetObservation {
 }
 
 /// Retain an immutable byte copy and its parent-authored sidecar. Success
-/// means both newly owned files are complete and the binding was read back.
+/// means both newly owned files are complete and the binding was read back;
+/// the returned sidecar is that verified read-back.
 /// On failure, old artifacts are untouched and any partial newly created file
 /// is deliberately left as failed evidence, never returned as a valid pair.
 pub fn retain_budget_trace(
@@ -77,7 +78,7 @@ pub fn retain_budget_trace(
     results_dir: &Path,
     identity: AttemptIdentity,
     evidence: &AttemptBudgetEvidence,
-) -> io::Result<RetainedBudgetEvidence> {
+) -> io::Result<BudgetSidecarV1> {
     retain_with_hooks(
         source,
         results_dir,
@@ -108,7 +109,7 @@ fn retain_with_hooks(
     evidence: &AttemptBudgetEvidence,
     between_creates: impl FnOnce() -> io::Result<()>,
     before_sidecar_write: impl FnOnce(&mut File) -> io::Result<()>,
-) -> io::Result<RetainedBudgetEvidence> {
+) -> io::Result<BudgetSidecarV1> {
     identity.validate()?;
     let (trace_path, sidecar_path) = identity.paths();
     let destination = results_dir.join(&trace_path);
@@ -153,7 +154,7 @@ fn retain_with_hooks(
             "budget sidecar read-back differs from publication",
         ));
     }
-    Ok(reference)
+    Ok(verified)
 }
 
 /// Read back a parent sidecar and prove its identity, path, digest, and child
@@ -244,13 +245,15 @@ mod tests {
         let bytes = trace_bytes("task_complete");
         std::fs::write(&source, &bytes).unwrap();
         let results = dir.path().join("results");
-        let reference = retain_budget_trace(&source, &results, identity(), &evidence()).unwrap();
+        let retained = retain_budget_trace(&source, &results, identity(), &evidence()).unwrap();
+        let reference = retained.evidence.retained.clone().unwrap();
         assert_eq!(std::fs::read(&source).unwrap(), bytes);
         assert_eq!(
             std::fs::read(results.join(&reference.trace_path)).unwrap(),
             bytes
         );
         let sidecar = verify_budget_trace(&results, &reference).unwrap();
+        assert_eq!(sidecar, retained);
         assert_eq!(
             sidecar.evidence.trace.child_terminal.as_deref(),
             Some("task_complete")
@@ -360,7 +363,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("source.jsonl");
         std::fs::write(&source, trace_bytes("task_complete")).unwrap();
-        let reference = retain_budget_trace(&source, dir.path(), identity(), &evidence()).unwrap();
+        let reference = retain_budget_trace(&source, dir.path(), identity(), &evidence())
+            .unwrap()
+            .evidence
+            .retained
+            .unwrap();
         let sidecar_path = dir.path().join(&reference.sidecar_path);
         let original: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&sidecar_path).unwrap()).unwrap();

@@ -229,17 +229,7 @@ pub fn verdict(rate: f64) -> &'static str {
 /// is not solid — the model can't reliably drive the core (ADR-028/019).
 #[cfg(any(feature = "backend-openai", test))]
 pub fn recommend_max_ring(ring_solid: &[bool]) -> Option<u8> {
-    if ring_solid.first() != Some(&true) {
-        return None;
-    }
-    let mut r = 0u8;
-    for &solid in &ring_solid[1..] {
-        if !solid {
-            break;
-        }
-        r += 1;
-    }
-    Some(r)
+    ferric_bench::longest_prefix(|ring| ring_solid.get(usize::from(ring)) == Some(&true))
 }
 
 /// Render the human-facing Markdown report.
@@ -521,11 +511,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             // Ring calibration: bench each model ring-by-ring and report the
             // highest ring it reliably drives (the recommended --max-ring).
             let model_list: Vec<String> = match &args.models {
-                Some(m) => m
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
+                Some(models) => crate::bench_cmd::split_models(models),
                 None => vec![
                     args.backend_opts
                         .model
@@ -627,11 +613,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
 
         if let Some(models) = &args.models {
             // Fleet sweep: bench each model (same backend, model overridden) → leaderboard.
-            let model_list: Vec<String> = models
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let model_list = crate::bench_cmd::split_models(models);
             let mut summaries: Vec<BenchSummary> = Vec::new();
             for model in &model_list {
                 println!("\n=== {model} ===");

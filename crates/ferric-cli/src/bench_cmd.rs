@@ -6,17 +6,15 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Args;
 use ferric_bench::{
     AttemptIdentity, BenchSpec, BinaryProvenance, BudgetControls, Invocation, ModelProfileRecord,
     ModelProvenance, OpenAiArgs, ResolvedAgentBudget, ResultRow, RunBudgetEvidence, RunIssue,
     RunProvenance, RunSummary, append_row, calibrate_from_evidence, completed, embedded_specs,
-    failure_admission, parse_trace, preflight_command_checks, retain_budget_trace,
-    run_spec_with_budget, summarize_run, verify_command_checks, verify_expectations, verify_tools,
-    write_summary,
+    failure_admission, git_commit, new_run_id, now_unix_ms, parse_sha256, parse_trace,
+    preflight_command_checks, retain_budget_trace, run_spec_with_budget, summarize_run,
+    verify_command_checks, verify_expectations, verify_tools, write_summary,
 };
 use ferric_core::{ActionProtocol, tier_for_params};
 
@@ -183,11 +181,7 @@ pub fn run_bench(args: BenchArgs) -> ExitCode {
     // Fleet sweep (openai): the full L0–L6 ladder per `--models` id + a
     // measured_level leaderboard. The fleet case is ollama model ids.
     if let Some(models_csv) = &args.models {
-        let model_ids: Vec<String> = models_csv
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let model_ids = split_models(models_csv);
         if model_ids.is_empty() {
             eprintln!("--models is empty");
             return ExitCode::FAILURE;
@@ -454,7 +448,7 @@ fn run_trials(
     args: &BenchArgs,
 ) -> BenchRunOutcome {
     let started_at_unix_ms = now_unix_ms();
-    let run_id = new_run_id(started_at_unix_ms);
+    let run_id = new_run_id("run", started_at_unix_ms);
     let mut rows: Vec<ResultRow> = Vec::new();
     let mut issues = Vec::new();
 
@@ -488,10 +482,7 @@ fn run_trials(
             };
 
             let mut attempt_issues = Vec::new();
-            let mut budget = record.budget.clone().unwrap_or_else(|| {
-                attempt_issues.push("runner omitted required budget attribution".to_string());
-                budgets[spec_index].evidence(record.exit_code, record.timed_out)
-            });
+            let mut budget = record.budget;
             if let Err(error) = budget.observe_trace(record.trace_path.as_deref()) {
                 attempt_issues.push(format!("cannot observe trace budget: {error}"));
             }
@@ -500,18 +491,14 @@ fn run_trials(
             }
             let retained_trace = match record.trace_path.as_deref() {
                 Some(source) => {
-                    let retained = AttemptIdentity::new(&run_id, &trial_id, spec.level)
-                        .and_then(|identity| {
+                    let retained =
+                        AttemptIdentity::new(&run_id, &trial_id, spec.level).and_then(|identity| {
                             retain_budget_trace(source, &args.results_dir, identity, &budget)
-                        })
-                        .and_then(|reference| {
-                            ferric_bench::verify_budget_trace(&args.results_dir, &reference)
-                                .map(|sidecar| (reference, sidecar.evidence))
                         });
                     match retained {
-                        Ok((reference, retained_budget)) => {
-                            let path = reference.trace_path.clone();
-                            budget = retained_budget;
+                        Ok(sidecar) => {
+                            let path = sidecar.trace_path;
+                            budget = sidecar.evidence;
                             if let ferric_bench::TraceEvidenceState::Malformed { error } =
                                 &budget.trace.state
                             {
@@ -634,20 +621,19 @@ fn run_trials(
                     false
                 }
             };
+            let kept = if args.keep_workspace {
+                format!(" [workspace kept: {}]", record.workspace.path().display())
+            } else {
+                String::new()
+            };
             println!(
-                "{trial_prefix}L{} {} — {} ({} turns, {} tok, {} ms){}",
+                "{trial_prefix}L{} {} — {} ({} turns, {} tok, {} ms){kept}",
                 spec.level,
                 spec.name,
                 trial_outcome_label(&row, row_written),
                 row.turns,
                 row.output_tokens,
                 row.wall_ms,
-                record
-                    .workspace
-                    .path()
-                    .display()
-                    .to_string()
-                    .pipe_kept(args.keep_workspace),
             );
             let evidence_path = row
                 .budget
@@ -718,18 +704,7 @@ fn run_trials(
 }
 
 fn provenance(inv: &Invocation, args: &BenchArgs) -> RunProvenance {
-    let binary_path =
-        std::fs::canonicalize(&inv.ferric_bin).unwrap_or_else(|_| inv.ferric_bin.clone());
-    let metadata = std::fs::metadata(&binary_path).ok();
-    let binary = BinaryProvenance {
-        path: binary_path.display().to_string(),
-        size_bytes: metadata.as_ref().map(std::fs::Metadata::len),
-        modified_at_unix_ms: metadata
-            .as_ref()
-            .and_then(|metadata| metadata.modified().ok())
-            .and_then(system_time_unix_ms),
-        sha256: ferric_bench::sha256_file(&binary_path).ok(),
-    };
+    let binary = BinaryProvenance::inspect(&inv.ferric_bin);
     let model = match &inv.openai {
         Some(openai) => ModelProvenance {
             backend: "openai".to_string(),
@@ -750,10 +725,7 @@ fn provenance(inv: &Invocation, args: &BenchArgs) -> RunProvenance {
     };
     RunProvenance {
         ferric_version: env!("CARGO_PKG_VERSION").to_string(),
-        git_commit: option_env!("FERRIC_GIT_COMMIT")
-            .or(option_env!("VERGEN_GIT_SHA"))
-            .or(option_env!("GITHUB_SHA"))
-            .map(str::to_string),
+        git_commit: git_commit(),
         binary,
         model,
         protocol: ferric_core::protocol_key(inv.protocol),
@@ -762,21 +734,12 @@ fn provenance(inv: &Invocation, args: &BenchArgs) -> RunProvenance {
     }
 }
 
-static RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn new_run_id(started_at_unix_ms: u64) -> String {
-    let sequence = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("run-{started_at_unix_ms}-{}-{sequence}", std::process::id())
-}
-
-fn now_unix_ms() -> u64 {
-    system_time_unix_ms(SystemTime::now()).unwrap_or_default()
-}
-
-fn system_time_unix_ms(time: SystemTime) -> Option<u64> {
-    time.duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+/// Split a comma-separated `--models` list, dropping blank entries.
+pub(crate) fn split_models(csv: &str) -> Vec<String> {
+    csv.split(',')
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty())
+        .collect()
 }
 
 fn parse_pass_rate(value: &str) -> Result<f64, String> {
@@ -787,28 +750,6 @@ fn parse_pass_rate(value: &str) -> Result<f64, String> {
         Ok(rate)
     } else {
         Err("pass rate must be a finite number greater than 0 and at most 1".to_string())
-    }
-}
-
-fn parse_sha256(value: &str) -> Result<String, String> {
-    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Ok(value.to_ascii_lowercase())
-    } else {
-        Err("SHA-256 must contain exactly 64 hexadecimal characters".to_string())
-    }
-}
-
-/// Small display helper for the kept-workspace suffix.
-trait PipeKept {
-    fn pipe_kept(self, kept: bool) -> String;
-}
-impl PipeKept for String {
-    fn pipe_kept(self, kept: bool) -> String {
-        if kept {
-            format!(" [workspace kept: {self}]")
-        } else {
-            String::new()
-        }
     }
 }
 
@@ -827,14 +768,12 @@ mod tests {
                 trial_id: Some("trial-001".into()),
                 started_at_unix_ms: Some(1),
                 finished_at_unix_ms: Some(2),
-                trace_path: None,
                 budget: Some(
                     controls
                         .resolve_agent(spec.timeout_s)
                         .unwrap()
                         .evidence(Some(0), false),
                 ),
-                infrastructure_error: None,
                 level: spec.level,
                 spec_version: spec.version,
                 level_name: spec.name.clone(),
@@ -842,25 +781,16 @@ mod tests {
                 protocol: "ConstrainedJson".into(),
                 model: Some("synthetic-model".into()),
                 completed: passed,
-                timed_out: false,
                 exit_code: Some(0),
                 turns: 1,
                 input_tokens: 1,
                 output_tokens: 1,
                 wall_ms: 1,
                 terminator: Some("task_complete".into()),
-                tier_observed: None,
-                protocol_observed: None,
-                repetition_guard_fires: 0,
-                tools_called: Vec::new(),
-                task_complete_summary: None,
-                failure_admission: None,
-                plan_steps: None,
                 expectations_ok: passed,
                 tools_ok: passed,
-                command_checks: Vec::new(),
                 tier_from_params: "Small".into(),
-                stderr_tail: String::new(),
+                ..Default::default()
             })
             .collect();
         summarize_run(
@@ -875,24 +805,21 @@ mod tests {
             Vec::new(),
             RunProvenance {
                 ferric_version: "synthetic".into(),
-                git_commit: None,
                 binary: BinaryProvenance {
                     path: "synthetic-no-process".into(),
-                    size_bytes: None,
-                    modified_at_unix_ms: None,
-                    sha256: None,
+                    ..Default::default()
                 },
                 model: ModelProvenance {
                     backend: "synthetic".into(),
                     model: Some("synthetic-model".into()),
-                    api_base: None,
                     params_b: 7.0,
                     ctx: 4096,
-                    sha256: None,
+                    ..Default::default()
                 },
                 protocol: "ConstrainedJson".into(),
                 variant: "synthetic-publication-only".into(),
                 python_bin: "not-executed".into(),
+                ..Default::default()
             },
         )
     }

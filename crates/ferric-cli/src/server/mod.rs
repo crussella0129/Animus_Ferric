@@ -1289,7 +1289,7 @@ fn flatten_inventory(inventory: &RegistrationInventory) -> Vec<ManagedRegistrati
                 },
                 ManagedRegistrationState::Captured {
                     runfile: Box::new(capture.runfile.clone()),
-                    raw_sha256: ferric_bench::sha256_bytes(&capture.raw),
+                    raw_sha256: ferric_tools::sha256_bytes(&capture.raw),
                     runtime: RuntimeObservation::NotInspected,
                 },
             ),
@@ -5453,7 +5453,7 @@ fn refresh_expected_revisions_after_confirmation(
             capture.scope == revision.coordinate.scope && capture.path == revision.coordinate.path
         }) {
             revision.state =
-                RegistrationRevisionState::Captured(ferric_bench::sha256_bytes(&capture.raw));
+                RegistrationRevisionState::Captured(ferric_tools::sha256_bytes(&capture.raw));
         }
         if let Some(promised) = &mut revision.promised
             && let Some(source) = captures.iter().find(|capture| {

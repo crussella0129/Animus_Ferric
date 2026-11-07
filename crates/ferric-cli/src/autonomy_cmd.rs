@@ -9,22 +9,24 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use clap::{Args, ValueEnum};
 use ferric_bench::{
-    AUTONOMY_RESULTS_SCHEMA_VERSION, AutonomyArm, AutonomyCategory, AutonomyCheck,
-    AutonomyEvaluationCoordinate, AutonomyEvaluationProvenance, AutonomyResultRow,
-    AutonomyRunIssue, AutonomySegmentResult, AutonomyTask, AutonomyTraceMetrics, BinaryProvenance,
-    EMBEDDED_AUTONOMY_V1, Invocation, ManagedServerProvenance, ModelProvenance, OpenAiArgs,
-    QuerySegmentRequest, RecoveryInjectionKind, ResumeProbeResult, ResumeRefusalMode,
-    RetainedTraceValidation, RunProvenance, TerminalOutcome, append_autonomy_row,
-    autonomy_bench_spec, embedded_autonomy_suite, generate_repository_brief,
-    preflight_command_checks, run_query_segment, summarize_autonomy_run_with_coordinates,
+    AUTONOMY_RESULTS_SCHEMA_VERSION, AutonomyArm, AutonomyEvaluationCoordinate,
+    AutonomyEvaluationProvenance, AutonomyResultRow, AutonomyRunIssue, AutonomySegmentResult,
+    AutonomyTask, AutonomyTraceMetrics, BinaryProvenance, CommandCheck, EMBEDDED_AUTONOMY_V1,
+    Invocation, ManagedServerProvenance, MechanismCounts, ModelProvenance, OpenAiArgs,
+    PolicyVariant, QuerySegmentRequest, RecoveryInjectionKind, ResumeProbeResult,
+    ResumeRefusalMode, RetainedTraceValidation, RunProvenance, STDERR_TAIL_BYTES,
+    STRICT_EVIDENCE_CONTEXT_SIZE, TerminalOutcome, append_autonomy_row, autonomy_bench_spec,
+    embedded_autonomy_suite, executable_is_llama_server, generate_repository_brief, git_commit,
+    materialize_setup_files, new_run_id, now_unix_ms, parse_sha256, preflight_command_checks,
+    run_query_segment, summarize_autonomy_run_with_coordinates, system_time_unix_ms,
     verify_command_checks_with_deadline, write_autonomy_summary,
 };
 use ferric_core::{ActionProtocol, HarnessPolicy};
-use ferric_loop::TraceStructure;
+use ferric_loop::{StopReason, TraceStructure};
 use ferric_trace::{
     ControllerBlockReason, Event, ObservationDetailV1, TRACE_SCHEMA_VERSION, VerificationCheckV1,
     VerificationOutcome,
@@ -33,8 +35,6 @@ use ferric_trace::{
 use crate::query::ProtocolArg;
 
 const PROVIDER_FAILURE_ENDPOINT: &str = "http://127.0.0.1:0/v1";
-const STDERR_TAIL_BYTES: usize = 1_000;
-const STRICT_AUTONOMY_CONTEXT: u32 = 8192;
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AutonomyVariantArg {
@@ -77,12 +77,12 @@ impl ServerStateArg {
     }
 }
 
-impl AutonomyVariantArg {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Current => "current",
-            Self::Recovery => "recovery",
-            Self::RepositoryBrief => "repository_brief",
+impl From<AutonomyVariantArg> for PolicyVariant {
+    fn from(variant: AutonomyVariantArg) -> Self {
+        match variant {
+            AutonomyVariantArg::Current => PolicyVariant::Current,
+            AutonomyVariantArg::Recovery => PolicyVariant::Recovery,
+            AutonomyVariantArg::RepositoryBrief => PolicyVariant::RepositoryBrief,
         }
     }
 }
@@ -366,7 +366,7 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
         ctx: args.ctx,
     });
     let started_at = now_unix_ms();
-    let run_id = new_run_id(started_at);
+    let run_id = new_run_id("autonomy", started_at);
     let coordinates = if args.paired {
         let frozen = match freeze_paired_binaries(
             &args.results_dir,
@@ -383,12 +383,10 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+        let [control, candidate] = AutonomyEvaluationCoordinate::paired();
         vec![
             EpisodeCoordinate {
-                coordinate: AutonomyEvaluationCoordinate {
-                    arm: AutonomyArm::Control,
-                    harness_policy: HarnessPolicy::Legacy,
-                },
+                coordinate: control,
                 invocation: Invocation {
                     ferric_bin: frozen.control.path.clone(),
                     budget: None,
@@ -401,10 +399,7 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
                 frozen_binary: Some(frozen.control),
             },
             EpisodeCoordinate {
-                coordinate: AutonomyEvaluationCoordinate {
-                    arm: AutonomyArm::Candidate,
-                    harness_policy: HarnessPolicy::Evidence,
-                },
+                coordinate: candidate,
                 invocation: Invocation {
                     ferric_bin: frozen.candidate.path.clone(),
                     budget: None,
@@ -583,7 +578,7 @@ pub fn run_autonomy(args: AutonomyArgs) -> ExitCode {
     let expected_tasks = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
     let expected_task_categories = tasks
         .iter()
-        .map(|task| (task.id.clone(), category_label(task.category).to_string()))
+        .map(|task| (task.id.clone(), task.category.label().to_string()))
         .collect::<BTreeMap<_, _>>();
     let expected_variants = variants
         .iter()
@@ -674,7 +669,7 @@ fn run_episode(
     suite_schema_version: u32,
     suite_sha256: &str,
     task: &AutonomyTask,
-    variant: AutonomyVariantArg,
+    variant: PolicyVariant,
     trial: u32,
     run_id: &str,
     episode: &EpisodeCoordinate,
@@ -700,13 +695,14 @@ fn run_episode(
     );
     let profile_dir =
         tempfile::tempdir().map_err(|error| format!("create profile dir: {error}"))?;
-    materialize_task(workspace.path(), task)?;
+    materialize_setup_files(workspace.path(), &task.setup_files)
+        .map_err(|error| error.to_string())?;
     let initial_tree_sha256 = materialized_tree_sha256(workspace.path())?;
     let checks_file = profile_dir.path().join("checks.toml");
     write_named_checks(&checks_file, &task.checks, &args.python_bin)?;
 
     let (prompt, repository_brief_sha256, repository_brief_bytes, repository_brief_truncated) =
-        if variant == AutonomyVariantArg::RepositoryBrief {
+        if variant == PolicyVariant::RepositoryBrief {
             let brief = generate_repository_brief(workspace.path(), Default::default())
                 .map_err(|error| format!("generate repository brief: {error}"))?;
             let digest = ferric_bench::sha256_bytes(brief.text.as_bytes());
@@ -745,18 +741,9 @@ fn run_episode(
         } else {
             task.max_turns
         };
-        let api_base_override = match injection.map(|injection| injection.kind) {
-            Some(RecoveryInjectionKind::ProviderFailure) => Some(PROVIDER_FAILURE_ENDPOINT),
-            Some(RecoveryInjectionKind::ProcessCrash | RecoveryInjectionKind::GuardPause) => {
-                infrastructure.push(format!(
-                    "{} segment {segment} requests unsupported nondeterministic injection {:?}",
-                    task.id,
-                    injection.expect("present").kind
-                ));
-                None
-            }
-            _ => None,
-        };
+        let api_base_override = (injection.map(|injection| injection.kind)
+            == Some(RecoveryInjectionKind::ProviderFailure))
+        .then_some(PROVIDER_FAILURE_ENDPOINT);
         let segment_timeout = remaining_before(deadline, task, "query segment")?;
         let supplied_answer = pending_answer.clone();
         let request = QuerySegmentRequest {
@@ -842,11 +829,7 @@ fn run_episode(
                 process.exit_code,
                 process.timed_out,
             ) && injection_matches(injection.map(|value| value.kind), observed.as_deref());
-        if analysis.is_some()
-            && observed.is_none()
-            && !process.timed_out
-            && injection.map(|value| value.kind) != Some(RecoveryInjectionKind::ProcessCrash)
-        {
+        if analysis.is_some() && observed.is_none() && !process.timed_out {
             infrastructure.push(format!(
                 "segment {segment} has a valid trace prefix but no SessionEnd"
             ));
@@ -861,7 +844,7 @@ fn run_episode(
         sequence_matches &= matches;
         segments.push(AutonomySegmentResult {
             segment,
-            expected_terminal: terminal_label(expected_terminal).to_string(),
+            expected_terminal: expected_terminal.label().to_string(),
             observed_terminal: observed.clone(),
             exit_code: process.exit_code,
             timed_out: process.timed_out,
@@ -903,7 +886,7 @@ fn run_episode(
             break;
         };
 
-        if variant != AutonomyVariantArg::Current
+        if variant != PolicyVariant::Current
             && matches
             && matches!(
                 expected_terminal,
@@ -961,7 +944,7 @@ fn run_episode(
         }
     }
 
-    if variant != AutonomyVariantArg::Current
+    if variant != PolicyVariant::Current
         && task.recovery.as_ref().is_some_and(|recovery| {
             recovery
                 .refusal_modes
@@ -1078,7 +1061,7 @@ fn run_episode(
         false
     };
     let unnecessary_clarification = clarification_observed && !clarification_expected;
-    let expected_resumes = if variant == AutonomyVariantArg::Current {
+    let expected_resumes = if variant == PolicyVariant::Current {
         0
     } else {
         expected.len().saturating_sub(1) as u32
@@ -1126,7 +1109,7 @@ fn run_episode(
         suite_sha256: suite_sha256.to_string(),
         task_id: task.id.clone(),
         task_name: task.name.clone(),
-        category: category_label(task.category).to_string(),
+        category: task.category.label().to_string(),
         variant: variant.label().to_string(),
         arm: episode.coordinate.arm,
         harness_policy: episode.coordinate.harness_policy,
@@ -1280,9 +1263,9 @@ fn validate_strict_server_provenance(
     query_model: &str,
     query_context: u32,
 ) -> Result<(), String> {
-    if query_context != STRICT_AUTONOMY_CONTEXT {
+    if query_context != STRICT_EVIDENCE_CONTEXT_SIZE {
         return Err(format!(
-            "paired/evidence mode requires --ctx {STRICT_AUTONOMY_CONTEXT}, got {query_context}"
+            "paired/evidence mode requires --ctx {STRICT_EVIDENCE_CONTEXT_SIZE}, got {query_context}"
         ));
     }
     if provenance.engine != "llama-server" {
@@ -1329,9 +1312,9 @@ fn validate_live_server_snapshot(
     query_model: &str,
     query_context: u32,
 ) -> Result<(), String> {
-    if query_context != STRICT_AUTONOMY_CONTEXT {
+    if query_context != STRICT_EVIDENCE_CONTEXT_SIZE {
         return Err(format!(
-            "strict managed process context must be {STRICT_AUTONOMY_CONTEXT}, got {query_context}"
+            "strict managed process context must be {STRICT_EVIDENCE_CONTEXT_SIZE}, got {query_context}"
         ));
     }
     if snapshot.pid != runfile.pid || snapshot.listener_owner_pid != runfile.pid {
@@ -1410,46 +1393,21 @@ fn require_unique_argv_value(
     Ok(())
 }
 
-fn executable_is_llama_server(path: &Path) -> bool {
-    path.file_stem()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("llama-server"))
-}
-
 fn engine_version(executable: &Path) -> Result<String, String> {
-    let mut child = std::process::Command::new(executable)
-        .arg("--version")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("inspect managed engine version: {error}"))?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait_with_output();
-                return Err("managed engine --version exceeded 5 seconds".to_string());
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("inspect managed engine version process: {error}"));
-            }
-        }
+    const VERSION_OUTPUT_LIMIT: usize = 64 * 1024;
+    let mut command = std::process::Command::new(executable);
+    command.arg("--version").stdin(std::process::Stdio::null());
+    let output = ferric_process::run_bounded(
+        &mut command,
+        Duration::from_secs(5),
+        ferric_process::CapturePlan::head(VERSION_OUTPUT_LIMIT, VERSION_OUTPUT_LIMIT),
+    )
+    .map_err(|error| format!("inspect managed engine version: {error}"))?;
+    if output.timed_out {
+        return Err("managed engine --version exceeded 5 seconds".to_string());
     }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("collect managed engine version: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "managed engine --version failed with {}",
-            output.status
-        ));
+    if let Some(status) = output.status.filter(|status| !status.success()) {
+        return Err(format!("managed engine --version failed with {status}"));
     }
     let mut version = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if version.is_empty() {
@@ -1579,17 +1537,6 @@ pub(crate) fn require_fresh_managed_discovery<'a>(
     Ok(fresh)
 }
 
-#[cfg(test)]
-fn managed_model_matches(managed: &str, query: &str) -> bool {
-    match (
-        std::fs::canonicalize(managed).ok(),
-        std::fs::canonicalize(query).ok(),
-    ) {
-        (Some(managed), Some(query)) => managed == query,
-        _ => false,
-    }
-}
-
 fn strict_canonical_model_identity(managed: &str, query: &str) -> Result<String, String> {
     let managed = std::fs::canonicalize(managed).map_err(|error| {
         format!("strict mode cannot canonicalize managed model {managed:?}: {error}")
@@ -1665,9 +1612,9 @@ fn validate_binary_mode(args: &AutonomyArgs) -> Result<(), String> {
                 .to_string(),
         );
     }
-    if strict_managed_mode(args) && args.ctx != STRICT_AUTONOMY_CONTEXT {
+    if strict_managed_mode(args) && args.ctx != STRICT_EVIDENCE_CONTEXT_SIZE {
         return Err(format!(
-            "paired/evidence mode requires --ctx {STRICT_AUTONOMY_CONTEXT}"
+            "paired/evidence mode requires --ctx {STRICT_EVIDENCE_CONTEXT_SIZE}"
         ));
     }
     Ok(())
@@ -1925,7 +1872,7 @@ fn copy_immutable_binary_with(
     Ok(())
 }
 
-fn episode_coordinate_order(task_id: &str, variant: AutonomyVariantArg, trial: u32) -> [usize; 2] {
+fn episode_coordinate_order(task_id: &str, variant: PolicyVariant, trial: u32) -> [usize; 2] {
     let stable_parity = task_id
         .bytes()
         .chain(variant.label().bytes())
@@ -1934,7 +1881,7 @@ fn episode_coordinate_order(task_id: &str, variant: AutonomyVariantArg, trial: u
     if stable_parity == 0 { [0, 1] } else { [1, 0] }
 }
 
-fn pair_id(task_id: &str, variant: AutonomyVariantArg, trial: u32) -> String {
+fn pair_id(task_id: &str, variant: PolicyVariant, trial: u32) -> String {
     format!("trial-{trial:03}-{task_id}-{}", variant.label())
 }
 
@@ -1964,23 +1911,23 @@ fn select_tasks<'a>(
         .collect())
 }
 
-fn select_variants(selected: &[AutonomyVariantArg]) -> Vec<AutonomyVariantArg> {
-    let mut variants = if selected.is_empty() {
+fn select_variants(selected: &[AutonomyVariantArg]) -> Vec<PolicyVariant> {
+    let mut variants: Vec<PolicyVariant> = if selected.is_empty() {
         vec![
-            AutonomyVariantArg::Current,
-            AutonomyVariantArg::Recovery,
-            AutonomyVariantArg::RepositoryBrief,
+            PolicyVariant::Current,
+            PolicyVariant::Recovery,
+            PolicyVariant::RepositoryBrief,
         ]
     } else {
-        selected.to_vec()
+        selected.iter().copied().map(PolicyVariant::from).collect()
     };
     variants.sort();
     variants.dedup();
     variants
 }
 
-fn expected_terminals(task: &AutonomyTask, variant: AutonomyVariantArg) -> Vec<TerminalOutcome> {
-    if variant == AutonomyVariantArg::Current {
+fn expected_terminals(task: &AutonomyTask, variant: PolicyVariant) -> Vec<TerminalOutcome> {
+    if variant == PolicyVariant::Current {
         vec![task.terminal.current]
     } else {
         task.terminal.resumable_outcomes.clone()
@@ -1993,19 +1940,6 @@ fn injection_for(task: &AutonomyTask, segment: u32) -> Option<&ferric_bench::Rec
         .injections
         .iter()
         .find(|injection| injection.segment == segment)
-}
-
-fn materialize_task(workspace: &Path, task: &AutonomyTask) -> Result<(), String> {
-    for (relative, content) in &task.setup_files {
-        let path = workspace.join(relative);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("create {}: {error}", parent.display()))?;
-        }
-        std::fs::write(&path, content)
-            .map_err(|error| format!("write {}: {error}", path.display()))?;
-    }
-    Ok(())
 }
 
 fn materialized_tree_sha256(workspace: &Path) -> Result<String, String> {
@@ -2059,8 +1993,8 @@ fn materialized_tree_sha256(workspace: &Path) -> Result<String, String> {
     Ok(ferric_bench::sha256_bytes(&framed))
 }
 
-fn write_named_checks(path: &Path, checks: &[AutonomyCheck], python: &Path) -> Result<(), String> {
-    let mut text = String::new();
+fn write_named_checks(path: &Path, checks: &[CommandCheck], python: &Path) -> Result<(), String> {
+    let mut named = Vec::with_capacity(checks.len());
     for check in checks {
         if check.expected_exit != 0 || check.stdout_regex.is_some() || check.stderr_regex.is_some()
         {
@@ -2069,32 +2003,21 @@ fn write_named_checks(path: &Path, checks: &[AutonomyCheck], python: &Path) -> R
                 check.name
             ));
         }
-        let program = if check.argv.first().map(String::as_str) == Some("{python}") {
-            python.display().to_string()
-        } else {
-            check.argv.first().cloned().unwrap_or_default()
+        let program = match check.argv.first().map(String::as_str) {
+            Some("{python}") => python.to_path_buf(),
+            program => PathBuf::from(program.unwrap_or_default()),
         };
-        text.push_str("[[check]]\nname = ");
-        text.push_str(&toml_string(&check.name));
-        text.push_str("\nprogram = ");
-        text.push_str(&toml_string(&program));
-        text.push_str("\nargs = [");
-        for (index, argument) in check.argv.iter().skip(1).enumerate() {
-            if index > 0 {
-                text.push_str(", ");
-            }
-            text.push_str(&toml_string(argument));
-        }
-        text.push_str(&format!(
-            "]\ntimeout_s = {}\noutput_limit = 16000\n\n",
-            check.timeout_s
-        ));
+        named.push(ferric_tools::NamedCheck {
+            name: check.name.clone(),
+            program,
+            args: check.argv.iter().skip(1).cloned().collect(),
+            timeout_s: check.timeout_s,
+            output_limit: 16000,
+        });
     }
+    let text = toml::to_string(&crate::query::NamedChecksFile { checks: named })
+        .map_err(|error| format!("encode {}: {error}", path.display()))?;
     std::fs::write(path, text).map_err(|error| format!("write {}: {error}", path.display()))
-}
-
-fn toml_string(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 
 fn preflight_autonomy_checks(tasks: &[&AutonomyTask], python: &Path) -> Result<(), String> {
@@ -2442,22 +2365,29 @@ fn analyze_trace_bytes(
             }
             Event::HistoryCompacted { .. } => metrics.history_compactions += 1,
             Event::ObservationRecorded { observation, .. } => {
-                record_observation_metrics(&mut metrics, &observation.detail);
+                record_observation_metrics(&mut metrics.mechanisms, &observation.detail);
             }
             Event::ControllerBlocked { block, .. } => {
-                record_controller_block(&mut metrics, block.reason);
+                record_controller_block(&mut metrics.mechanisms, block.reason);
             }
             Event::WorkspaceEffectRecorded { effect, .. } => {
-                metrics.workspace_effects_recorded += 1;
-                metrics.workspace_effect_paths = metrics
+                let mechanisms = &mut metrics.mechanisms;
+                mechanisms.workspace_effects_recorded += 1;
+                mechanisms.workspace_effect_paths = mechanisms
                     .workspace_effect_paths
                     .saturating_add(effect.effects.len() as u32);
             }
             Event::VerificationCheckRecorded { check, .. } => {
-                record_verification_check(&mut metrics, &mut failed_diagnostic_fingerprints, check);
+                record_verification_check(
+                    &mut metrics.mechanisms,
+                    &mut failed_diagnostic_fingerprints,
+                    check,
+                );
             }
-            Event::ControllerCheckpoint { .. } => metrics.controller_checkpoints += 1,
-            Event::RecoveryPacketInjected { .. } => metrics.recovery_packets_injected += 1,
+            Event::ControllerCheckpoint { .. } => metrics.mechanisms.controller_checkpoints += 1,
+            Event::RecoveryPacketInjected { .. } => {
+                metrics.mechanisms.recovery_packets_injected += 1
+            }
             Event::SessionEnd { reason } => {
                 terminal = Some(reason.clone());
                 if reason == "provider_error" {
@@ -2479,7 +2409,8 @@ fn analyze_trace_bytes(
     if !saw_session_start || !saw_policy_selected {
         return Err("trace is missing session_start or policy_selected".to_string());
     }
-    metrics.distinct_failed_diagnostic_fingerprints = failed_diagnostic_fingerprints.len() as u32;
+    metrics.mechanisms.distinct_failed_diagnostic_fingerprints =
+        failed_diagnostic_fingerprints.len() as u32;
     Ok(TraceAnalysis {
         session: expected_session.ok_or_else(|| "trace contains no events".to_string())?,
         resumed_from,
@@ -2493,7 +2424,7 @@ fn analyze_trace_bytes(
     })
 }
 
-fn record_observation_metrics(metrics: &mut AutonomyTraceMetrics, detail: &ObservationDetailV1) {
+fn record_observation_metrics(metrics: &mut MechanismCounts, detail: &ObservationDetailV1) {
     metrics.observations_recorded += 1;
     match detail {
         ObservationDetailV1::File(_) => metrics.file_observations += 1,
@@ -2502,7 +2433,7 @@ fn record_observation_metrics(metrics: &mut AutonomyTraceMetrics, detail: &Obser
     }
 }
 
-fn record_controller_block(metrics: &mut AutonomyTraceMetrics, reason: ControllerBlockReason) {
+fn record_controller_block(metrics: &mut MechanismCounts, reason: ControllerBlockReason) {
     metrics.controller_blocks += 1;
     match reason {
         ControllerBlockReason::BlindMutation => metrics.blind_mutation_blocks += 1,
@@ -2517,7 +2448,7 @@ fn record_controller_block(metrics: &mut AutonomyTraceMetrics, reason: Controlle
 }
 
 fn record_verification_check(
-    metrics: &mut AutonomyTraceMetrics,
+    metrics: &mut MechanismCounts,
     failed_diagnostic_fingerprints: &mut BTreeSet<String>,
     check: &VerificationCheckV1,
 ) {
@@ -2564,27 +2495,7 @@ fn aggregate_metrics(analyses: &[TraceAnalysis]) -> AutonomyTraceMetrics {
         aggregate.truncations += metrics.truncations;
         aggregate.provider_error_stops += metrics.provider_error_stops;
         aggregate.history_compactions += metrics.history_compactions;
-        aggregate.observations_recorded += metrics.observations_recorded;
-        aggregate.file_observations += metrics.file_observations;
-        aggregate.search_observations += metrics.search_observations;
-        aggregate.find_observations += metrics.find_observations;
-        aggregate.controller_blocks += metrics.controller_blocks;
-        aggregate.blind_mutation_blocks += metrics.blind_mutation_blocks;
-        aggregate.same_turn_observation_blocks += metrics.same_turn_observation_blocks;
-        aggregate.stale_observation_blocks += metrics.stale_observation_blocks;
-        aggregate.unsupported_mutation_blocks += metrics.unsupported_mutation_blocks;
-        aggregate.repair_inspection_blocks += metrics.repair_inspection_blocks;
-        aggregate.no_effect_blocks += metrics.no_effect_blocks;
-        aggregate.syntax_regression_blocks += metrics.syntax_regression_blocks;
-        aggregate.repeated_check_blocks += metrics.repeated_check_blocks;
-        aggregate.workspace_effects_recorded += metrics.workspace_effects_recorded;
-        aggregate.workspace_effect_paths += metrics.workspace_effect_paths;
-        aggregate.verification_checks_recorded += metrics.verification_checks_recorded;
-        aggregate.verification_checks_passed += metrics.verification_checks_passed;
-        aggregate.verification_checks_failed += metrics.verification_checks_failed;
-        aggregate.verification_repair_attempts += metrics.verification_repair_attempts;
-        aggregate.controller_checkpoints += metrics.controller_checkpoints;
-        aggregate.recovery_packets_injected += metrics.recovery_packets_injected;
+        aggregate.mechanisms.add(&metrics.mechanisms);
         failed_diagnostic_fingerprints
             .extend(analysis.failed_diagnostic_fingerprints.iter().cloned());
         aggregate.tools_called.extend(metrics.tools_called.clone());
@@ -2594,7 +2505,9 @@ fn aggregate_metrics(analyses: &[TraceAnalysis]) -> AutonomyTraceMetrics {
         let threshold = (tool_turns.len() * 4).div_ceil(5);
         aggregate.horizon_80_turn = tool_turns.get(threshold.saturating_sub(1)).copied();
     }
-    aggregate.distinct_failed_diagnostic_fingerprints = failed_diagnostic_fingerprints.len() as u32;
+    // Distinct across the whole episode, not the sum of per-segment counts.
+    aggregate.mechanisms.distinct_failed_diagnostic_fingerprints =
+        failed_diagnostic_fingerprints.len() as u32;
     aggregate
 }
 
@@ -2615,50 +2528,20 @@ fn terminal_matches(
         TerminalOutcome::Paused => {
             exit_code.is_some_and(|code| code != 0) && observed.is_some_and(is_pause_terminal)
         }
-        TerminalOutcome::ResumeRejected => {
-            exit_code.is_some_and(|code| code != 0) && observed.is_none()
-        }
+        // Only refusal probes expect a rejected resume; it is never a
+        // validated segment outcome.
+        TerminalOutcome::ResumeRejected => false,
     }
 }
 
 fn injection_matches(kind: Option<RecoveryInjectionKind>, observed: Option<&str>) -> bool {
-    match kind {
-        None => true,
-        Some(kind) => kind.expected_stop_reason() == observed,
-    }
+    kind.is_none_or(|kind| Some(kind.expected_stop_reason()) == observed)
 }
 
+/// A resumable stop: any operational failure the loop records, excluding a
+/// clarification pause (`needs_input`).
 fn is_pause_terminal(reason: &str) -> bool {
-    matches!(
-        reason,
-        "max_turns"
-            | "repetition_guard"
-            | "no_progress"
-            | "repeated_failure"
-            | "oscillation"
-            | "provider_error"
-            | "empty_completion"
-            | "truncated_action"
-            | "interrupted"
-            | "hook_failed"
-    )
-}
-
-fn terminal_label(outcome: TerminalOutcome) -> &'static str {
-    match outcome {
-        TerminalOutcome::Completed => "completed",
-        TerminalOutcome::NeedsInput => "needs_input",
-        TerminalOutcome::Paused => "paused",
-        TerminalOutcome::ResumeRejected => "resume_rejected",
-    }
-}
-
-fn category_label(category: AutonomyCategory) -> &'static str {
-    match category {
-        AutonomyCategory::Ambiguity => "ambiguity",
-        AutonomyCategory::Recovery => "recovery",
-        AutonomyCategory::LongHorizon => "long_horizon",
-    }
+    StopReason::parse(reason).is_some_and(StopReason::is_failure)
 }
 
 fn question_matches_terms(questions: &[&str], expected_terms: &[String]) -> bool {
@@ -2816,20 +2699,9 @@ fn provenance(
     variant: &str,
     frozen_binary: Option<&BinaryProvenance>,
 ) -> RunProvenance {
-    let binary = frozen_binary.cloned().unwrap_or_else(|| {
-        let binary_path = std::fs::canonicalize(&invocation.ferric_bin)
-            .unwrap_or_else(|_| invocation.ferric_bin.clone());
-        let metadata = std::fs::metadata(&binary_path).ok();
-        BinaryProvenance {
-            path: binary_path.display().to_string(),
-            size_bytes: metadata.as_ref().map(std::fs::Metadata::len),
-            modified_at_unix_ms: metadata
-                .as_ref()
-                .and_then(|metadata| metadata.modified().ok())
-                .and_then(system_time_unix_ms),
-            sha256: ferric_bench::sha256_file(&binary_path).ok(),
-        }
-    });
+    let binary = frozen_binary
+        .cloned()
+        .unwrap_or_else(|| BinaryProvenance::inspect(&invocation.ferric_bin));
     let child_matches_runner = std::env::current_exe()
         .ok()
         .and_then(|path| ferric_bench::sha256_file(&path).ok())
@@ -2841,14 +2713,7 @@ fn provenance(
         } else {
             "unknown".to_string()
         },
-        git_commit: child_matches_runner
-            .then(|| {
-                option_env!("FERRIC_GIT_COMMIT")
-                    .or(option_env!("VERGEN_GIT_SHA"))
-                    .or(option_env!("GITHUB_SHA"))
-                    .map(str::to_string)
-            })
-            .flatten(),
+        git_commit: child_matches_runner.then(git_commit).flatten(),
         binary,
         model: ModelProvenance {
             backend: "openai".to_string(),
@@ -2869,14 +2734,6 @@ fn provenance(
 
 fn pass_label(value: bool) -> &'static str {
     if value { "PASS" } else { "FAIL" }
-}
-
-fn parse_sha256(value: &str) -> Result<String, String> {
-    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Ok(value.to_ascii_lowercase())
-    } else {
-        Err("SHA-256 must contain exactly 64 hexadecimal characters".to_string())
-    }
 }
 
 fn remaining_before(
@@ -2906,26 +2763,7 @@ fn trim_tail(value: &str) -> String {
     value[start..].to_string()
 }
 
-static RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
 static WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn new_run_id(started_at_unix_ms: u64) -> String {
-    let sequence = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "autonomy-{started_at_unix_ms}-{}-{sequence}",
-        std::process::id()
-    )
-}
-
-fn now_unix_ms() -> u64 {
-    system_time_unix_ms(SystemTime::now()).unwrap_or_default()
-}
-
-fn system_time_unix_ms(time: SystemTime) -> Option<u64> {
-    time.duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
-}
 
 #[cfg(test)]
 mod tests {
@@ -3096,7 +2934,7 @@ mod tests {
                 .unwrap_err()
                 .contains("--ctx 8192")
         );
-        evidence.ctx = STRICT_AUTONOMY_CONTEXT;
+        evidence.ctx = STRICT_EVIDENCE_CONTEXT_SIZE;
         validate_binary_mode(&evidence).unwrap();
         assert!(parse(Some("evidence-planner")).is_err());
     }
@@ -3141,23 +2979,20 @@ mod tests {
                 AutonomyVariantArg::Current,
                 AutonomyVariantArg::Current,
             ]),
-            vec![
-                AutonomyVariantArg::Current,
-                AutonomyVariantArg::RepositoryBrief
-            ]
+            vec![PolicyVariant::Current, PolicyVariant::RepositoryBrief]
         );
     }
 
     #[test]
     fn paired_schedule_is_adjacent_deterministic_and_counterbalanced() {
-        let first = episode_coordinate_order("H01", AutonomyVariantArg::Recovery, 1);
-        let repeat = episode_coordinate_order("H01", AutonomyVariantArg::Recovery, 1);
-        let second = episode_coordinate_order("H01", AutonomyVariantArg::Recovery, 2);
+        let first = episode_coordinate_order("H01", PolicyVariant::Recovery, 1);
+        let repeat = episode_coordinate_order("H01", PolicyVariant::Recovery, 1);
+        let second = episode_coordinate_order("H01", PolicyVariant::Recovery, 2);
         assert_eq!(first, repeat);
         assert!(matches!(first, [0, 1] | [1, 0]));
         assert_eq!(second, [first[1], first[0]]);
         assert_eq!(
-            pair_id("H01", AutonomyVariantArg::Recovery, 2),
+            pair_id("H01", PolicyVariant::Recovery, 2),
             "trial-002-H01-recovery"
         );
     }
@@ -3407,6 +3242,8 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .to_string();
+        let managed_model_matches =
+            |managed: &str, query: &str| strict_canonical_model_identity(managed, query).is_ok();
         assert!(managed_model_matches(&absolute, &relative));
         assert!(!managed_model_matches(
             "models/qwen/model.gguf",
@@ -3804,17 +3641,17 @@ mod tests {
             ControllerBlockReason::SyntaxRegression,
             ControllerBlockReason::RepeatedCheck,
         ] {
-            record_controller_block(&mut metrics, reason);
+            record_controller_block(&mut metrics.mechanisms, reason);
         }
-        assert_eq!(metrics.controller_blocks, 8);
-        assert_eq!(metrics.blind_mutation_blocks, 1);
-        assert_eq!(metrics.same_turn_observation_blocks, 1);
-        assert_eq!(metrics.stale_observation_blocks, 1);
-        assert_eq!(metrics.unsupported_mutation_blocks, 1);
-        assert_eq!(metrics.repair_inspection_blocks, 1);
-        assert_eq!(metrics.no_effect_blocks, 1);
-        assert_eq!(metrics.syntax_regression_blocks, 1);
-        assert_eq!(metrics.repeated_check_blocks, 1);
+        assert_eq!(metrics.mechanisms.controller_blocks, 8);
+        assert_eq!(metrics.mechanisms.blind_mutation_blocks, 1);
+        assert_eq!(metrics.mechanisms.same_turn_observation_blocks, 1);
+        assert_eq!(metrics.mechanisms.stale_observation_blocks, 1);
+        assert_eq!(metrics.mechanisms.unsupported_mutation_blocks, 1);
+        assert_eq!(metrics.mechanisms.repair_inspection_blocks, 1);
+        assert_eq!(metrics.mechanisms.no_effect_blocks, 1);
+        assert_eq!(metrics.mechanisms.syntax_regression_blocks, 1);
+        assert_eq!(metrics.mechanisms.repeated_check_blocks, 1);
 
         let file = ObservationDetailV1::File(ferric_trace::FileObservationV1 {
             path: "src/lib.rs".to_string(),
@@ -3834,20 +3671,23 @@ mod tests {
             exhausted: true,
             result_sha256: "results".to_string(),
         };
-        record_observation_metrics(&mut metrics, &file);
+        record_observation_metrics(&mut metrics.mechanisms, &file);
         record_observation_metrics(
-            &mut metrics,
+            &mut metrics.mechanisms,
             &ObservationDetailV1::Search(navigation.clone()),
         );
-        record_observation_metrics(&mut metrics, &ObservationDetailV1::Find(navigation));
-        assert_eq!(metrics.observations_recorded, 3);
-        assert_eq!(metrics.file_observations, 1);
-        assert_eq!(metrics.search_observations, 1);
-        assert_eq!(metrics.find_observations, 1);
+        record_observation_metrics(
+            &mut metrics.mechanisms,
+            &ObservationDetailV1::Find(navigation),
+        );
+        assert_eq!(metrics.mechanisms.observations_recorded, 3);
+        assert_eq!(metrics.mechanisms.file_observations, 1);
+        assert_eq!(metrics.mechanisms.search_observations, 1);
+        assert_eq!(metrics.mechanisms.find_observations, 1);
 
         let mut diagnostics = BTreeSet::new();
         record_verification_check(
-            &mut metrics,
+            &mut metrics.mechanisms,
             &mut diagnostics,
             &VerificationCheckV1 {
                 version: 1,
@@ -3859,7 +3699,7 @@ mod tests {
             },
         );
         record_verification_check(
-            &mut metrics,
+            &mut metrics.mechanisms,
             &mut diagnostics,
             &VerificationCheckV1 {
                 version: 1,
@@ -3870,8 +3710,8 @@ mod tests {
                 diagnostic_sha256: Some("diagnostic".to_string()),
             },
         );
-        assert_eq!(metrics.verification_checks_failed, 2);
-        assert_eq!(metrics.verification_repair_attempts, 1);
+        assert_eq!(metrics.mechanisms.verification_checks_failed, 2);
+        assert_eq!(metrics.mechanisms.verification_repair_attempts, 1);
         assert_eq!(diagnostics.len(), 1);
 
         let first = TraceAnalysis {
@@ -3886,7 +3726,10 @@ mod tests {
             failed_diagnostic_fingerprints: diagnostics,
         };
         let mut second_metrics = AutonomyTraceMetrics::default();
-        record_controller_block(&mut second_metrics, ControllerBlockReason::BlindMutation);
+        record_controller_block(
+            &mut second_metrics.mechanisms,
+            ControllerBlockReason::BlindMutation,
+        );
         let second = TraceAnalysis {
             session: "two".to_string(),
             resumed_from: Some("one".to_string()),
@@ -3899,9 +3742,12 @@ mod tests {
             failed_diagnostic_fingerprints: BTreeSet::from(["other".to_string()]),
         };
         let aggregate = aggregate_metrics(&[first, second]);
-        assert_eq!(aggregate.controller_blocks, 9);
-        assert_eq!(aggregate.blind_mutation_blocks, 2);
-        assert_eq!(aggregate.distinct_failed_diagnostic_fingerprints, 2);
+        assert_eq!(aggregate.mechanisms.controller_blocks, 9);
+        assert_eq!(aggregate.mechanisms.blind_mutation_blocks, 2);
+        assert_eq!(
+            aggregate.mechanisms.distinct_failed_diagnostic_fingerprints,
+            2
+        );
     }
 
     #[test]
@@ -3932,7 +3778,7 @@ mod tests {
         let path = dir.path().join("checks.toml");
         write_named_checks(
             &path,
-            &[AutonomyCheck {
+            &[CommandCheck {
                 name: "verify".to_string(),
                 argv: vec![
                     "{python}".to_string(),
@@ -3947,11 +3793,17 @@ mod tests {
             Path::new("python"),
         )
         .unwrap();
-        let value: toml::Value = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!(value["check"][0]["program"].as_str(), Some("python"));
+        let parsed: crate::query::NamedChecksFile =
+            toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(
-            value["check"][0]["args"][1].as_str(),
-            Some("x = 1\nassert x == 1")
+            parsed.checks,
+            [ferric_tools::NamedCheck {
+                name: "verify".to_string(),
+                program: PathBuf::from("python"),
+                args: vec!["-c".to_string(), "x = 1\nassert x == 1".to_string()],
+                timeout_s: 10,
+                output_limit: 16000,
+            }]
         );
     }
 
@@ -3976,13 +3828,6 @@ mod tests {
             model_ids(&value),
             vec!["other.gguf".to_string(), "qwen.gguf".to_string()]
         );
-    }
-
-    #[test]
-    fn sha256_parser_is_exact_and_normalizes_case() {
-        assert_eq!(parse_sha256(&"A".repeat(64)).unwrap(), "a".repeat(64));
-        assert!(parse_sha256(&"a".repeat(63)).is_err());
-        assert!(parse_sha256(&format!("{}z", "a".repeat(63))).is_err());
     }
 
     #[test]
