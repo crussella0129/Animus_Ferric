@@ -22,13 +22,12 @@
 FROM rust:1.96-slim-bookworm AS build
 ARG TARGETARCH
 
-# --features backend-openai is MANDATORY: ferric-cli's `default = []`, so a
-# plain release build produces a `ferric` that CANNOT drive the co-located
-# llama-server over the OpenAI HTTP valve (ADR-051). rustls-tls (ADR-045) means
-# no OpenSSL system dep is needed for the build.
+# The default features include the OpenAI HTTP backend that drives the
+# co-located llama-server (ADR-051). rustls-tls (ADR-045) means no OpenSSL
+# system dependency is needed for the build.
 WORKDIR /src
 COPY . .
-RUN cargo build --release --features backend-openai -p ferric-cli
+RUN cargo build --release -p ferric-cli
 
 # ---- Stage 2: runtime — `ferric` + a prebuilt `llama-server` -----------------
 # Slim Debian; only what's needed to run the two binaries.
@@ -39,8 +38,8 @@ ARG TARGETARCH
 # OpenAI valve talks HTTPS to remote servers when not using the local one).
 # libgomp1 is llama.cpp's OpenMP runtime dependency.
 #
-# git is here because the loop's snapshot module (`ferric_loop::vcs`) shells out to it for the per-turn workspace
-# snapshots that `ferric revert` restores. Without it the snapshot **fails
+# git is here because the loop's snapshot module (`ferric_loop::vcs`) shells out
+# to it for the per-turn workspace snapshots that `ferric revert` restores. Without it the snapshot **fails
 # quietly** — the loop records `note: vcs snapshot failed: … No such file or
 # directory` in the trace and carries on, so every in-container run silently had
 # no rollback point and `revert` had nothing to revert to. Found by reading an
@@ -51,7 +50,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Prebuilt llama-server (docs/llama-cpp.md §1). Pinned
-# to the b9821 release validated live in sprints 23–26. No build-from-source: a
+# to the b9821 release validated live in sprints 23–26. This pin is the image's
+# own; the engine `ferric setup` installs is pinned in
+# crates/ferric-setup/src/catalog.rs. No build-from-source: a
 # single minimal binary + its ggml/llama shared libs, all flat in one dir (the
 # whole point of the llama.cpp engine, ADR-032). LD_LIBRARY_PATH lets
 # llama-server find its co-located .so files.

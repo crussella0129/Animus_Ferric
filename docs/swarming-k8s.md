@@ -29,8 +29,8 @@ into the container that handles that content stages a host-root escape.
 real and buildable:
 
 - **`ferric-core`** — the harness and its co-located inference backend
-  (`llama-server`) in **one image** (`docker/Dockerfile`, built with
-  `--features backend-openai`). They are co-located deliberately: ADR-005 pins
+  (`llama-server`) in **one image** (`docker/Dockerfile`, a default-feature
+  build, which includes the OpenAI HTTP backend). They are co-located deliberately: ADR-005 pins
   their link to loopback, so splitting them across a container boundary would break
   that guarantee without extra network-namespace plumbing. The container mounts a
   `/workspace` and the shared Animus model store at `/models`.

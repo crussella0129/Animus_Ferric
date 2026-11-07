@@ -1,6 +1,6 @@
 # Animus platform topology — SIBLING containers, not Docker-in-Docker (ADR-051,
-# sprint 41). This is a design skeleton: only `ferric-core` is a real,
-# buildable service; the others are STUBS marking where future sprints land.
+# sprint 41). `ferric-core` is the one service; Ornstein builds its airlock
+# network per run (`ferric-research::airlock`), so compose holds nothing for it.
 #
 # Two problems, two tools (ADR-051):
 #   - Deployment flexibility (one machine → datacenter): sibling services here,
@@ -61,27 +61,3 @@ services:
     # internal Docker network (not a host-published port) is the intended path —
     # decided in the sprint that operationalizes them, not here.
     restart: unless-stopped
-
-  # REMOVED (sprint 96): `allowlist-proxy`, a static squid on a bridge network.
-  #
-  # It was the sprint-45 egress design (ADR-055). ADR-082 superseded it, and not
-  # cosmetically: a proxy on a **bridge** network is bypassable — the sandbox
-  # keeps a route to the outside, so `unset http_proxy && wget …` walks straight
-  # past it. That bypass is now a test.
-  #
-  # Ornstein instead builds its airlock at runtime (`ferric-research::airlock`):
-  # an `--internal` network with NO route out, a tinyproxy gateway attached to
-  # both sides, and an allowlist derived from the URLs actually requested — not
-  # a hardcoded `.example.com`/`.wikipedia.org` pair that drifts from what the
-  # code fetches. It is created and torn down per run, so there is nothing for
-  # compose to hold.
-  #
-  # Leaving the service here would have published a known-defeated topology as
-  # the platform's egress story. `docker/squid.conf` is deleted with it.
-
-# STUB — the raw chat surface (ADR-011 revision's unbuilt half). Its own build
-# + dedicated security-boundary ADR are sprint 42, deferred by the user's
-# explicit sprint-41 scope choice. No real image yet.
-#   chat:
-#     image: TODO  # sprint 42, chat security-boundary ADR
-#     depends_on: [ferric-core]
