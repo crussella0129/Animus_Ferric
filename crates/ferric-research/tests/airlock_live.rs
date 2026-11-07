@@ -5,16 +5,11 @@
 //! assertion that cannot pass unless Docker genuinely worked — a silently
 //! skipped run must never read as a validated one.
 
-use ferric_research::airlock::Airlock;
-use ferric_research::sandbox::{SandboxConfig, check_available, run_in_sandbox};
+mod common;
 
-fn docker_ready(test: &str) -> bool {
-    if check_available() {
-        return true;
-    }
-    println!("SKIP {test}: no Docker daemon — airlock NOT validated by this run");
-    false
-}
+use common::docker_ready;
+use ferric_research::airlock::Airlock;
+use ferric_research::sandbox::{SandboxConfig, run_in_sandbox};
 
 /// Start an airlock, treating failure as a **defect rather than a skip**.
 ///

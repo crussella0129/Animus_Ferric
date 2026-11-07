@@ -254,7 +254,7 @@ fn render_entry(entry: &BriefEntry) -> String {
 
 fn render_bounded(mut text: String, entries: &[BriefEntry], max_bytes: usize) -> (String, usize) {
     if text.len() > max_bytes {
-        truncate_utf8(&mut text, max_bytes);
+        text.truncate(text.floor_char_boundary(max_bytes));
         return (text, 0);
     }
 
@@ -268,14 +268,6 @@ fn render_bounded(mut text: String, entries: &[BriefEntry], max_bytes: usize) ->
         rendered += 1;
     }
     (text, rendered)
-}
-
-fn truncate_utf8(text: &mut String, max_bytes: usize) {
-    let mut boundary = max_bytes.min(text.len());
-    while !text.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    text.truncate(boundary);
 }
 
 fn display_relative_path(path: &Path) -> String {

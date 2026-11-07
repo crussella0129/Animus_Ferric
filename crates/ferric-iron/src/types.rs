@@ -18,7 +18,6 @@ pub struct Capabilities {
     /// (e.g. the HTTP valve's `response_format`). When true the loop may run
     /// `ConstrainedJson` — the founding "harness owns decoding" thesis.
     pub supports_constraint: bool,
-    pub exposes_logits: bool,
     /// The backend can carry non-text content parts (image/audio/video) to the
     /// model (ADR-023). `true` for the OpenAI valve (it forwards an OpenAI
     /// content-parts array); `false` for the text-only in-process path. Honest

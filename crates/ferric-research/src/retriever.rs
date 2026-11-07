@@ -288,15 +288,9 @@ fn matches_all_terms(name: &str, content: &str, terms: &[String]) -> bool {
 }
 
 /// Truncate `s` to at most `max` bytes, on a char boundary.
-fn cap_bytes(s: String, max: usize) -> String {
-    if s.len() <= max {
-        return s;
-    }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_string()
+fn cap_bytes(mut s: String, max: usize) -> String {
+    s.truncate(s.floor_char_boundary(max));
+    s
 }
 
 // ---------------------------------------------------------------------------
@@ -541,7 +535,6 @@ impl Retriever for TailnetFsRetriever {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferric_core::Message;
     use ferric_provider::{Completion, MockProvider};
 
     fn block<F: std::future::Future>(f: F) -> F::Output {
@@ -609,15 +602,6 @@ mod tests {
         assert!(!missing.available());
     }
 
-    fn digest_completion(json_text: &str) -> Completion {
-        Completion {
-            message: Message::assistant(json_text),
-            input_tokens: Some(20),
-            output_tokens: Some(40),
-            truncated: false,
-        }
-    }
-
     #[test]
     fn research_pipeline_source_to_quarantined_digest() {
         // The headline: a real file on disk → a quarantined, provenance-tagged
@@ -625,7 +609,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "paper.md", b"tailscale enables NAT traversal");
         let r = LocalFsRetriever::new(dir.path());
-        let mock = MockProvider::new(vec![digest_completion(
+        let mock = MockProvider::new(vec![Completion::assistant_text(
             r#"{"summary":"about tailscale NAT","claims":[{"claim":"NAT traversal","quote":"tailscale enables NAT traversal"}]}"#,
         )]);
         let digests = block(research(&r, &mock, "tailscale")).unwrap();
@@ -751,8 +735,8 @@ mod tests {
         let r1 = LocalFsRetriever::new(d1.path());
         let r2 = LocalFsRetriever::new(d2.path());
         let mock = MockProvider::new(vec![
-            digest_completion(r#"{"summary":"one","claims":[]}"#),
-            digest_completion(r#"{"summary":"two","claims":[]}"#),
+            Completion::assistant_text(r#"{"summary":"one","claims":[]}"#),
+            Completion::assistant_text(r#"{"summary":"two","claims":[]}"#),
         ]);
         let rs: Vec<&dyn Retriever> = vec![&r1, &r2];
         let res = block(research_all(&rs, &mock, "tailscale")).unwrap();
@@ -769,7 +753,9 @@ mod tests {
         let r2 = LocalFsRetriever::new(dir.path()); // SAME dir → same source "shared.md"
         // Only ONE completion scripted: dedup must happen BEFORE the model call,
         // or the second plane's duplicate would exhaust the script.
-        let mock = MockProvider::new(vec![digest_completion(r#"{"summary":"x","claims":[]}"#)]);
+        let mock = MockProvider::new(vec![Completion::assistant_text(
+            r#"{"summary":"x","claims":[]}"#,
+        )]);
         let rs: Vec<&dyn Retriever> = vec![&r1, &r2];
         let res = block(research_all(&rs, &mock, "tailscale")).unwrap();
         assert_eq!(res.digests.len(), 1, "shared source summarized once");
@@ -786,7 +772,9 @@ mod tests {
         write(dir.path(), "a.md", b"tailscale");
         let good = LocalFsRetriever::new(dir.path());
         let bad = LocalFsRetriever::new(dir.path().join("nope")); // missing root
-        let mock = MockProvider::new(vec![digest_completion(r#"{"summary":"x","claims":[]}"#)]);
+        let mock = MockProvider::new(vec![Completion::assistant_text(
+            r#"{"summary":"x","claims":[]}"#,
+        )]);
         let rs: Vec<&dyn Retriever> = vec![&bad, &good];
         let res = block(research_all(&rs, &mock, "tailscale")).unwrap();
         assert_eq!(res.digests.len(), 1);

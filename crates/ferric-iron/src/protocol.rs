@@ -1,7 +1,7 @@
 //! Action-protocol selection (ADR-015/022).
 
 use crate::types::Capabilities;
-use ferric_core::{ActionProtocol, RunPolicy};
+use ferric_core::ActionProtocol;
 
 /// Decide how the loop talks to the backend about actions, from the backend's
 /// real `Capabilities`. An explicit `override_` always wins.
@@ -17,13 +17,9 @@ use ferric_core::{ActionProtocol, RunPolicy};
 /// fallback — the constrained thesis lives on the backend that can actually
 /// enforce it. (This was the in-process mistral.rs path, whose constrained
 /// decoding hung upstream — ADR-020/027; it has since been removed, but the
-/// fallback stays correct for any such backend.) `_policy` is retained for
-/// signature stability (selection is capability-driven, not model-size-driven).
-pub fn select_protocol(
-    _policy: &RunPolicy,
-    caps: &Capabilities,
-    override_: Option<ActionProtocol>,
-) -> ActionProtocol {
+/// fallback stays correct for any such backend.) Selection is
+/// capability-driven, not model-size-driven.
+pub fn select_protocol(caps: &Capabilities, override_: Option<ActionProtocol>) -> ActionProtocol {
     if let Some(p) = override_ {
         return p;
     }
@@ -39,32 +35,20 @@ pub fn select_protocol(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferric_core::{ModelProfile, policy_for};
 
     fn caps(native: bool, constraint: bool) -> Capabilities {
         Capabilities {
             supports_native_tool_calls: native,
             supports_constraint: constraint,
-            exposes_logits: false,
             supports_media: false,
         }
-    }
-
-    fn nano() -> RunPolicy {
-        policy_for(&ModelProfile {
-            params_b: 1.0,
-            quant: "Q4_K_M".to_string(),
-            ctx: 4096,
-            family: "t".to_string(),
-            measured_level: None,
-        })
     }
 
     #[test]
     fn constraint_capable_selects_constrained_json() {
         // The thesis: a constraint-honoring backend runs ConstrainedJson.
         assert_eq!(
-            select_protocol(&nano(), &caps(true, true), None),
+            select_protocol(&caps(true, true), None),
             ActionProtocol::ConstrainedJson
         );
     }
@@ -72,7 +56,7 @@ mod tests {
     #[test]
     fn native_only_selects_native_tools() {
         assert_eq!(
-            select_protocol(&nano(), &caps(true, false), None),
+            select_protocol(&caps(true, false), None),
             ActionProtocol::NativeTools
         );
     }
@@ -81,7 +65,7 @@ mod tests {
     fn neither_selects_text_xml() {
         // A backend with neither constraint nor native tool calling → honest XML.
         assert_eq!(
-            select_protocol(&nano(), &caps(false, false), None),
+            select_protocol(&caps(false, false), None),
             ActionProtocol::TextXml
         );
     }
@@ -89,23 +73,15 @@ mod tests {
     #[test]
     fn override_always_wins() {
         assert_eq!(
-            select_protocol(&nano(), &caps(true, true), Some(ActionProtocol::TextXml)),
+            select_protocol(&caps(true, true), Some(ActionProtocol::TextXml)),
             ActionProtocol::TextXml
         );
         assert_eq!(
-            select_protocol(
-                &nano(),
-                &caps(false, false),
-                Some(ActionProtocol::ConstrainedJson)
-            ),
+            select_protocol(&caps(false, false), Some(ActionProtocol::ConstrainedJson)),
             ActionProtocol::ConstrainedJson
         );
         assert_eq!(
-            select_protocol(
-                &nano(),
-                &caps(true, true),
-                Some(ActionProtocol::NativeTools)
-            ),
+            select_protocol(&caps(true, true), Some(ActionProtocol::NativeTools)),
             ActionProtocol::NativeTools
         );
     }

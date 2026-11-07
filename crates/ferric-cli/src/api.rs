@@ -285,7 +285,7 @@ async fn run_query(
     let (effective_prompt, media, resume, answer) = match mode {
         RequestMode::New { prompt } => {
             let file_paths: Vec<PathBuf> = request.files.iter().map(PathBuf::from).collect();
-            let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
+            let declared = crate::media::parse_modalities(args.modality.as_deref().unwrap_or(""));
             let (media, prompt_suffix) = route_files(
                 &state.workspace,
                 &file_paths,

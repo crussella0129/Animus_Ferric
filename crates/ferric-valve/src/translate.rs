@@ -12,7 +12,8 @@
 //! action parses, so a length-truncated completion can never reach the client
 //! as a partial answer or partial arguments.
 
-use ferric_iron::terminator::TASK_COMPLETE;
+use ferric_iron::terminator::{TASK_COMPLETE, summary_of};
+use ferric_iron::wire::openai_tool_call;
 use ferric_iron::{ConstrainedJsonScanner, StreamDelta, parse_json_action};
 use serde_json::{Value, json};
 
@@ -105,12 +106,7 @@ impl ActionAssembler {
                         && self.named_tool.is_none()
                         && self.admitted.contains(&name) =>
                 {
-                    deltas.push(json!({ "tool_calls": [{
-                        "index": 0,
-                        "id": self.call_id,
-                        "type": "function",
-                        "function": { "name": name, "arguments": "" }
-                    }]}));
+                    deltas.push(self.named_call_delta(&name, ""));
                     self.named_tool = Some(name);
                 }
                 // The final answer is released only after the whole action
@@ -156,14 +152,7 @@ impl ActionAssembler {
         }
 
         if call.name == TASK_COMPLETE {
-            let summary = match &call.args {
-                Value::String(text) => text.clone(),
-                other => other
-                    .get("summary")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            };
+            let summary = summary_of(&call.args);
             closing_deltas.push(json!({ "content": summary }));
             let mut message = self.message_base();
             message["content"] = Value::String(summary);
@@ -181,12 +170,7 @@ impl ActionAssembler {
         }
         let arguments = serde_json::to_string(&call.args).unwrap_or_else(|_| "{}".to_string());
         if self.named_tool.is_none() {
-            closing_deltas.push(json!({ "tool_calls": [{
-                "index": 0,
-                "id": self.call_id,
-                "type": "function",
-                "function": { "name": call.name, "arguments": arguments }
-            }]}));
+            closing_deltas.push(self.named_call_delta(&call.name, &arguments));
         } else {
             closing_deltas.push(json!({ "tool_calls": [{
                 "index": 0,
@@ -194,11 +178,7 @@ impl ActionAssembler {
             }]}));
         }
         let mut message = self.message_base();
-        message["tool_calls"] = json!([{
-            "id": self.call_id,
-            "type": "function",
-            "function": { "name": call.name, "arguments": arguments }
-        }]);
+        message["tool_calls"] = json!([openai_tool_call(&self.call_id, &call.name, &arguments)]);
         Ok(Resolution {
             message,
             finish_reason: "tool_calls".to_string(),
@@ -206,6 +186,16 @@ impl ActionAssembler {
             tool: Some(call.name),
             action_valid: true,
         })
+    }
+
+    /// The streamed delta that opens this response's one tool call.
+    fn named_call_delta(&self, name: &str, arguments: &str) -> Value {
+        json!({ "tool_calls": [{
+            "index": 0,
+            "id": self.call_id,
+            "type": "function",
+            "function": { "name": name, "arguments": arguments }
+        }]})
     }
 
     fn message_base(&self) -> Value {

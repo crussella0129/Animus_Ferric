@@ -10,11 +10,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
 use clap::{Args, ValueEnum};
 
-use ferric_core::{
-    ActionProtocol, HarnessPolicy, MediaPart, Message, ModelProfile, RunPolicy, policy_for,
-};
+use ferric_core::{ActionProtocol, HarnessPolicy, MediaPart, Message, ModelProfile, RunPolicy};
 use ferric_guard::{AdmitError, PermissionLevel, Workspace};
 use ferric_iron::select_protocol;
 use ferric_loop::{DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run};
@@ -306,30 +305,18 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, RunConfig
         Capabilities {
             supports_native_tool_calls: true,
             supports_constraint: false,
-            exposes_logits: false,
             supports_media: false,
         }
     } else {
         Capabilities {
             supports_native_tool_calls: true,
             supports_constraint: true,
-            exposes_logits: false,
             supports_media: true,
         }
     };
-    // Protocol is caps/override-driven (`select_protocol` ignores the policy), so
-    // resolve it up-front — it keys the persisted profile lookup below.
-    let protocol = select_protocol(
-        &policy_for(&ModelProfile {
-            params_b: a.params_b,
-            quant: a.quant.clone(),
-            ctx: a.ctx,
-            family: a.family.clone(),
-            measured_level: None,
-        }),
-        &caps,
-        a.protocol_override.map(ActionProtocol::from),
-    );
+    // Protocol is caps/override-driven, so resolve it up-front — it keys the
+    // persisted profile lookup below.
+    let protocol = select_protocol(&caps, a.protocol_override.map(ActionProtocol::from));
 
     // Read-back of a persisted profile (ADR-029): a prior `ferric bench` /
     // `toolbench --calibrate-rings` may have recorded this model's
@@ -627,7 +614,7 @@ const ATTACHMENT_LIMITS: AttachmentLimits = AttachmentLimits {
 pub(crate) fn route_files(
     workspace: &Workspace,
     files: &[PathBuf],
-    declared: &[ferric_core::Modality],
+    declared: &[crate::media::Modality],
     supports_media: bool,
 ) -> Result<(Vec<MediaPart>, String), String> {
     route_files_with_limits(
@@ -642,7 +629,7 @@ pub(crate) fn route_files(
 fn route_files_with_limits(
     workspace: &Workspace,
     files: &[PathBuf],
-    declared: &[ferric_core::Modality],
+    declared: &[crate::media::Modality],
     supports_media: bool,
     limits: AttachmentLimits,
 ) -> Result<(Vec<MediaPart>, String), String> {
@@ -667,23 +654,23 @@ fn route_files_with_limits(
             })?;
 
         let label = workspace_relative_label(workspace, &resolved);
-        let kind = ferric_core::classify_path(&resolved);
-        match ferric_core::decide_attachment(&kind, declared, supports_media) {
-            ferric_core::Attachment::AppendText => {
+        let kind = crate::media::classify_path(&resolved);
+        match crate::media::decide_attachment(&kind, declared, supports_media) {
+            crate::media::Attachment::AppendText => {
                 let bytes = read_attachment(&resolved, &label, &mut total_bytes, limits)?;
                 let text = String::from_utf8(bytes).map_err(|e| {
                     format!("attachment `{label}` cannot be read as UTF-8 text: {e}")
                 })?;
                 prompt_suffix.push_str(&format!("\n\n--- file: {label} ---\n{text}"));
             }
-            ferric_core::Attachment::Media(_modality, mime) => {
+            crate::media::Attachment::Media(_modality, mime) => {
                 let bytes = read_attachment(&resolved, &label, &mut total_bytes, limits)?;
                 media_parts.push(MediaPart {
                     mime,
-                    data: ferric_core::base64_encode(&bytes),
+                    data: base64::engine::general_purpose::STANDARD.encode(&bytes),
                 });
             }
-            ferric_core::Attachment::Skip(reason) => {
+            crate::media::Attachment::Skip(reason) => {
                 eprintln!("skip {label}: {reason}")
             }
         }
@@ -1353,7 +1340,7 @@ fn query(args: &QueryArgs) -> Result<ExitCode, String> {
     let animus_md = fold_workspace_animus_md(&mut config, &workspace_root);
     note_frozen_system_prompt(&config, resume.is_some(), animus_md.is_some());
 
-    let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
+    let declared = crate::media::parse_modalities(args.modality.as_deref().unwrap_or(""));
     let (media_parts, prompt_suffix) = route_files(
         &workspace,
         &args.files,
@@ -1615,10 +1602,9 @@ fn native_completion(id: &str, name: &str, args: serde_json::Value) -> Completio
 fn json_completion(name: &str, args: &serde_json::Value) -> Completion {
     let json = serde_json::json!({ "tool": name, "args": args }).to_string();
     Completion {
-        message: Message::assistant(json),
         input_tokens: Some(40),
         output_tokens: Some(20),
-        truncated: false,
+        ..Completion::assistant_text(json)
     }
 }
 
@@ -1631,10 +1617,9 @@ fn xml_completion(name: &str, args: &serde_json::Value) -> Completion {
         name, args_str
     );
     Completion {
-        message: Message::assistant(xml),
         input_tokens: Some(40),
         output_tokens: Some(20),
-        truncated: false,
+        ..Completion::assistant_text(xml)
     }
 }
 
@@ -2231,7 +2216,7 @@ mod tests {
         ];
         let expected: Vec<String> = expected
             .iter()
-            .map(|value| ferric_core::base64_encode(value.as_bytes()))
+            .map(|value| base64::engine::general_purpose::STANDARD.encode(value.as_bytes()))
             .collect();
         assert_eq!(observed, expected);
     }
@@ -2380,7 +2365,7 @@ mod tests {
         let (media, suffix) = route_files(
             &workspace,
             &[PathBuf::from("notes.md"), PathBuf::from("photo.png")],
-            &[ferric_core::Modality::Image],
+            &[crate::media::Modality::Image],
             true,
         )
         .unwrap();
@@ -2496,20 +2481,9 @@ mod tests {
         let caps = Capabilities {
             supports_native_tool_calls: true,
             supports_constraint: false,
-            exposes_logits: false,
             supports_media: false,
         };
-        let expected_protocol = select_protocol(
-            &policy_for(&ModelProfile {
-                params_b: a.params_b,
-                quant: a.quant.clone(),
-                ctx: a.ctx,
-                family: a.family.clone(),
-                measured_level: None,
-            }),
-            &caps,
-            None,
-        );
+        let expected_protocol = select_protocol(&caps, None);
         let expected_policy = policy_for(&ModelProfile {
             params_b: a.params_b,
             quant: a.quant.clone(),

@@ -172,10 +172,9 @@ mod tests {
 
     fn summary_completion(text: &str) -> Completion {
         Completion {
-            message: Message::assistant(text),
             input_tokens: Some(20),
             output_tokens: Some(10),
-            truncated: false,
+            ..Completion::assistant_text(text)
         }
     }
 

@@ -38,10 +38,9 @@ pub fn nano_policy() -> RunPolicy {
 
 pub fn text_completion(text: &str) -> Completion {
     Completion {
-        message: Message::assistant(text),
         input_tokens: Some(50),
         output_tokens: Some(10),
-        truncated: false,
+        ..Completion::assistant_text(text)
     }
 }
 
@@ -100,10 +99,9 @@ pub fn tool_completion(calls: Vec<(&str, &str, serde_json::Value)>) -> Completio
 /// non-action objects alike.
 pub fn json_completion(value: serde_json::Value) -> Completion {
     Completion {
-        message: Message::assistant(value.to_string()),
         input_tokens: Some(60),
         output_tokens: Some(20),
-        truncated: false,
+        ..Completion::assistant_text(value.to_string())
     }
 }
 
@@ -117,10 +115,9 @@ pub fn xml_completion(action_json: serde_json::Value) -> Completion {
         name, args
     );
     Completion {
-        message: Message::assistant(text),
         input_tokens: Some(60),
         output_tokens: Some(20),
-        truncated: false,
+        ..Completion::assistant_text(text)
     }
 }
 
@@ -438,7 +435,6 @@ impl Provider for ScriptedProvider {
         Capabilities {
             supports_native_tool_calls: true,
             supports_constraint: true,
-            exposes_logits: false,
             supports_media: false,
         }
     }

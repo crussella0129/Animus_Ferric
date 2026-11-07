@@ -160,7 +160,6 @@ impl Provider for BudgetSensitiveProvider {
         Capabilities {
             supports_native_tool_calls: false,
             supports_constraint: true,
-            exposes_logits: false,
             supports_media: false,
         }
     }

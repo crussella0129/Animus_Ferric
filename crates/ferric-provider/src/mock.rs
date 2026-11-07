@@ -51,7 +51,6 @@ impl Provider for MockProvider {
         Capabilities {
             supports_native_tool_calls: true,
             supports_constraint: false,
-            exposes_logits: false,
             supports_media: false,
         }
     }
@@ -76,44 +75,31 @@ impl Provider for MockProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferric_core::Message;
-
-    use crate::types::SamplingParams;
-
-    fn completion(text: &str) -> Completion {
-        Completion {
-            message: Message::assistant(text),
-            input_tokens: Some(10),
-            output_tokens: Some(5),
-            truncated: false,
-        }
-    }
-
-    fn request() -> CompletionRequest {
-        CompletionRequest {
-            messages: vec![Message::user("hi")],
-            sampling: SamplingParams::default(),
-            tools: Vec::new(),
-            constraint: None,
-        }
-    }
 
     #[test]
     fn mock_replays_script_in_order() {
-        let mock = MockProvider::new(vec![completion("a"), completion("b")]);
-        let a = futures_executor::block_on(mock.complete(request(), None)).unwrap();
-        let b = futures_executor::block_on(mock.complete(request(), None)).unwrap();
+        let mock = MockProvider::new(vec![
+            Completion::assistant_text("a"),
+            Completion::assistant_text("b"),
+        ]);
+        let a =
+            futures_executor::block_on(mock.complete(CompletionRequest::fixture(), None)).unwrap();
+        let b =
+            futures_executor::block_on(mock.complete(CompletionRequest::fixture(), None)).unwrap();
         assert_eq!(a.message.text.as_deref(), Some("a"));
         assert_eq!(b.message.text.as_deref(), Some("b"));
-        let err = futures_executor::block_on(mock.complete(request(), None)).unwrap_err();
+        let err = futures_executor::block_on(mock.complete(CompletionRequest::fixture(), None))
+            .unwrap_err();
         assert!(matches!(err, ProviderError::ScriptExhausted(2)));
     }
 
     #[test]
     fn provider_is_dyn_compatible() {
-        let boxed: Box<dyn Provider> = Box::new(MockProvider::new(vec![completion("dyn")]));
+        let boxed: Box<dyn Provider> =
+            Box::new(MockProvider::new(vec![Completion::assistant_text("dyn")]));
         assert_eq!(boxed.id(), "mock");
-        let done = futures_executor::block_on(boxed.complete(request(), None)).unwrap();
+        let done =
+            futures_executor::block_on(boxed.complete(CompletionRequest::fixture(), None)).unwrap();
         assert_eq!(done.message.text.as_deref(), Some("dyn"));
     }
 }

@@ -49,6 +49,18 @@ impl CompletionRequest {
         }
         Ok(())
     }
+
+    /// The crate's one test request: a single user message, default
+    /// sampling, no tools and no constraint.
+    #[cfg(test)]
+    pub(crate) fn fixture() -> Self {
+        Self {
+            messages: vec![Message::user("hi")],
+            sampling: SamplingParams::default(),
+            tools: Vec::new(),
+            constraint: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +72,19 @@ pub struct Completion {
     /// Under a grammar this is the one malformed-action case the constraint
     /// cannot prevent (ADR-015): the loop must not parse a truncated action.
     pub truncated: bool,
+}
+
+impl Completion {
+    /// A finished assistant reply carrying only `text`: no tool calls, no
+    /// reported usage, not truncated.
+    pub fn assistant_text(text: impl Into<String>) -> Self {
+        Self {
+            message: Message::assistant(text),
+            input_tokens: None,
+            output_tokens: None,
+            truncated: false,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -89,28 +114,21 @@ impl ProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferric_core::Message;
     use serde_json::json;
 
     fn request(with_tool: bool, with_constraint: bool) -> CompletionRequest {
-        CompletionRequest {
-            messages: vec![Message::user("hi")],
-            sampling: SamplingParams::default(),
-            tools: if with_tool {
-                vec![ToolDescriptor {
-                    name: "t".to_string(),
-                    description: "d".to_string(),
-                    input_schema: json!({"type": "object"}),
-                }]
-            } else {
-                Vec::new()
-            },
-            constraint: if with_constraint {
-                Some(Constraint::JsonSchema(json!({"type": "object"})))
-            } else {
-                None
-            },
+        let mut request = CompletionRequest::fixture();
+        if with_tool {
+            request.tools = vec![ToolDescriptor {
+                name: "t".to_string(),
+                description: "d".to_string(),
+                input_schema: json!({"type": "object"}),
+            }];
         }
+        if with_constraint {
+            request.constraint = Some(Constraint::JsonSchema(json!({"type": "object"})));
+        }
+        request
     }
 
     #[test]

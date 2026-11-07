@@ -20,8 +20,7 @@ use ferric_gate::{Gate, Token, default_token_path};
 use ferric_valve::probe::probe_enforcement;
 use ferric_valve::receipt::ReceiptSink;
 use ferric_valve::server::{
-    ValveConfig, ValveMode, check_loopback, default_listen, gated_router, serve,
-    upstream_client_with_key,
+    ValveConfig, ValveMode, check_loopback, default_listen, gated_router, serve, upstream_client,
 };
 
 #[derive(Parser)]
@@ -95,7 +94,7 @@ async fn main() -> ExitCode {
         ValveMode::Constrained
     };
     if mode == ValveMode::Constrained {
-        let client = match upstream_client_with_key(upstream_key.as_deref()) {
+        let client = match upstream_client(upstream_key.as_deref()) {
             Ok(client) => client,
             Err(error) => {
                 eprintln!("ferric-valve: cannot build the upstream client: {error}");

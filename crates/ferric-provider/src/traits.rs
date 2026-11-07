@@ -63,27 +63,9 @@ mod tests {
     use ferric_core::{Message, Role, ToolCall};
 
     use crate::mock::MockProvider;
-    use crate::types::{Completion, SamplingParams};
+    use crate::types::Completion;
 
     use super::*;
-
-    fn request() -> CompletionRequest {
-        CompletionRequest {
-            messages: vec![Message::user("hi")],
-            sampling: SamplingParams::default(),
-            tools: Vec::new(),
-            constraint: None,
-        }
-    }
-
-    fn text_completion(text: &str) -> Completion {
-        Completion {
-            message: Message::assistant(text),
-            input_tokens: Some(10),
-            output_tokens: Some(5),
-            truncated: false,
-        }
-    }
 
     fn tool_call_completion() -> Completion {
         Completion {
@@ -109,15 +91,19 @@ mod tests {
     /// `Text` delta for a text-bearing completion.
     #[test]
     fn default_complete_streaming_matches_complete_with_text() {
-        let provider = MockProvider::new(vec![text_completion("hello there")]);
+        let provider = MockProvider::new(vec![Completion::assistant_text("hello there")]);
         let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
-        let streamed =
-            futures_executor::block_on(provider.complete_streaming(request(), &sink, None))
-                .unwrap();
+        let streamed = futures_executor::block_on(provider.complete_streaming(
+            CompletionRequest::fixture(),
+            &sink,
+            None,
+        ))
+        .unwrap();
         let plain = futures_executor::block_on(
-            MockProvider::new(vec![text_completion("hello there")]).complete(request(), None),
+            MockProvider::new(vec![Completion::assistant_text("hello there")])
+                .complete(CompletionRequest::fixture(), None),
         )
         .unwrap();
 
@@ -138,27 +124,13 @@ mod tests {
         let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
 
-        futures_executor::block_on(provider.complete_streaming(request(), &sink, None)).unwrap();
+        futures_executor::block_on(provider.complete_streaming(
+            CompletionRequest::fixture(),
+            &sink,
+            None,
+        ))
+        .unwrap();
 
         assert!(deltas.into_inner().unwrap().is_empty());
-    }
-
-    /// Same as above, phrased as the explicit C-007 invariant: not just "no
-    /// Text", but specifically no `ToolNamed` either.
-    #[test]
-    fn default_complete_streaming_never_fires_tool_named() {
-        let provider = MockProvider::new(vec![tool_call_completion()]);
-        let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
-        let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
-
-        futures_executor::block_on(provider.complete_streaming(request(), &sink, None)).unwrap();
-
-        assert!(
-            !deltas
-                .into_inner()
-                .unwrap()
-                .iter()
-                .any(|d| matches!(d, StreamDelta::ToolNamed(_)))
-        );
     }
 }

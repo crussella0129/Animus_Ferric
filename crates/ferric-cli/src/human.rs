@@ -859,7 +859,7 @@ mod enabled {
         policy.tier_source = ferric_core::TierSource::Conservative;
         policy.max_ring = Some(0);
         let caps = provider.capabilities();
-        let protocol = ferric_iron::select_protocol(&policy, &caps, None);
+        let protocol = ferric_iron::select_protocol(&caps, None);
         let mut registry = ferric_tools::Registry::new();
         ferric_tools::register_builtin_tools(&mut registry);
         let sampling = SamplingParams {

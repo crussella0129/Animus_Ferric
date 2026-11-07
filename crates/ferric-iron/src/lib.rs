@@ -4,7 +4,8 @@
 //! a constraint-honoring backend, and nothing else: the protocol vocabulary,
 //! action-grammar authoring, action parsing, capability-driven protocol
 //! selection, the control branches, the incremental constrained-JSON scanner,
-//! and the prompt-side conventions (tool listing, tool-result replay).
+//! the prompt-side conventions (tool listing, tool-result replay), and the
+//! OpenAI wire shapes both of Ferric's HTTP clients speak.
 //!
 //! This crate is **not a decoder**. It authors constraints; the backend (e.g.
 //! llama.cpp) enforces the token mask. It has no async runtime, no HTTP and no
@@ -18,6 +19,7 @@ pub mod render;
 pub mod stream_scan;
 pub mod terminator;
 pub mod types;
+pub mod wire;
 
 pub use grammar::{ActionParseError, action_schema, parse_json_action};
 pub use openai_tools::{OpenAiToolsError, RESERVED_CONTROL_NAMES, descriptors_from_openai_tools};

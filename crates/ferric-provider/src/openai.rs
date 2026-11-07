@@ -9,10 +9,10 @@ use tracing::{debug, warn};
 use crate::traits::Provider;
 use crate::types::{
     Capabilities, Completion, CompletionRequest, Constraint, ProviderError, StreamDelta,
-    ToolDescriptor,
 };
 use ferric_core::{MediaPart, Message, Role, ToolCall};
 use ferric_iron::ConstrainedJsonScanner;
+use ferric_iron::wire::{SseDecoder, SseLine, openai_tool, openai_tool_call, response_format};
 
 /// Keep one request future alive across cancellation polls. Dropping it on
 /// interruption also drops its request/response body; no detached request task
@@ -46,16 +46,6 @@ pub struct OpenAiConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
-}
-
-impl Default for OpenAiConfig {
-    fn default() -> Self {
-        Self {
-            base_url: "http://localhost:11434/v1".to_string(),
-            api_key: "ollama".to_string(),
-            model: "gemma4:e4b".to_string(),
-        }
-    }
 }
 
 pub struct OpenAiProvider {
@@ -114,14 +104,8 @@ impl OpenAiProvider {
                 .tool_calls
                 .iter()
                 .map(|tc| {
-                    json!({
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": serde_json::to_string(&tc.args).unwrap_or_default()
-                        }
-                    })
+                    let arguments = serde_json::to_string(&tc.args).unwrap_or_default();
+                    openai_tool_call(&tc.id, &tc.name, &arguments)
                 })
                 .collect();
             out["tool_calls"] = json!(calls);
@@ -132,17 +116,6 @@ impl OpenAiProvider {
         }
 
         out
-    }
-
-    fn map_tool(tool: &ToolDescriptor) -> serde_json::Value {
-        json!({
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.input_schema
-            }
-        })
     }
 
     /// Build the `/chat/completions` request body. Pure (no network) so the
@@ -171,14 +144,7 @@ impl OpenAiProvider {
 
         match &request.constraint {
             Some(Constraint::JsonSchema(schema)) => {
-                body["response_format"] = json!({
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "ferric_action",
-                        "schema": schema,
-                        "strict": true,
-                    }
-                });
+                body["response_format"] = response_format("ferric_action", schema);
             }
             // llama.cpp accepts a GBNF/Lark grammar via the `grammar` field.
             Some(Constraint::Lark(grammar)) => {
@@ -196,7 +162,7 @@ impl OpenAiProvider {
             }
             None => {
                 if !request.tools.is_empty() {
-                    let tools: Vec<_> = request.tools.iter().map(Self::map_tool).collect();
+                    let tools: Vec<_> = request.tools.iter().map(openai_tool).collect();
                     body["tools"] = json!(tools);
                     body["tool_choice"] = json!("auto");
                 }
@@ -204,6 +170,34 @@ impl OpenAiProvider {
         }
 
         Ok(body)
+    }
+
+    /// POST `body` to `/chat/completions`. A transport failure is retryable;
+    /// a non-2xx status is a backend error carrying the response body.
+    async fn post(&self, body: &serde_json::Value) -> Result<reqwest::Response, ProviderError> {
+        let url = format!(
+            "{}/chat/completions",
+            self.config.base_url.trim_end_matches('/')
+        );
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "network error contacting the inference server (retryable)");
+                ProviderError::RetryableBackend(format!("Network error: {e}"))
+            })?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            warn!(%status, "inference server returned an error status");
+            return Err(ProviderError::Backend(format!("HTTP {status}: {text}")));
+        }
+        Ok(response)
     }
 }
 
@@ -248,7 +242,6 @@ impl Provider for OpenAiProvider {
         Capabilities {
             supports_native_tool_calls: true,
             supports_constraint: true,
-            exposes_logits: false,
             supports_media: true,
         }
     }
@@ -261,48 +254,16 @@ impl Provider for OpenAiProvider {
         request.validate()?;
         let body = self.build_body(&request)?;
         with_cancellation(cancel_flag.as_deref(), async {
-            let url = format!(
-                "{}/chat/completions",
-                self.config.base_url.trim_end_matches('/')
-            );
-
             debug!(
                 model = %self.config.model,
                 messages = request.messages.len(),
                 constrained = request.constraint.is_some(),
                 "POST /chat/completions"
             );
-
-            let response = self
-                .client
-                .post(&url)
-                .header("Authorization", format!("Bearer {}", self.config.api_key))
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send()
-                .await;
-
-            let response = match response {
-                Ok(res) => res,
-                Err(e) => {
-                    warn!(error = %e, "network error contacting the inference server (retryable)");
-                    return Err(ProviderError::RetryableBackend(format!(
-                        "Network error: {}",
-                        e
-                    )));
-                }
-            };
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let text = response.text().await.unwrap_or_default();
-                warn!(%status, "inference server returned an error status");
-                return Err(ProviderError::Backend(format!("HTTP {}: {}", status, text)));
-            }
-
-            let json_res: serde_json::Value = response.json().await.map_err(|e| {
-                ProviderError::Backend(format!("Failed to parse response JSON: {}", e))
-            })?;
+            let json_res: serde_json::Value =
+                self.post(&body).await?.json().await.map_err(|e| {
+                    ProviderError::Backend(format!("Failed to parse response JSON: {}", e))
+                })?;
 
             let choice = json_res["choices"]
                 .as_array()
@@ -310,55 +271,28 @@ impl Provider for OpenAiProvider {
                 .ok_or_else(|| ProviderError::Backend("Response carried no choices".to_string()))?;
 
             let message = &choice["message"];
-            let content = message["content"].as_str().map(|s| s.to_string());
-
-            let mut tool_calls = Vec::new();
-            if let Some(tcs) = message["tool_calls"].as_array() {
-                for tc in tcs {
-                    let id = tc["id"].as_str().unwrap_or_default().to_string();
-                    let name = tc["function"]["name"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string();
-                    let args_str = tc["function"]["arguments"].as_str().unwrap_or_default();
-
-                    let args = serde_json::from_str(args_str)
-                        .unwrap_or_else(|_| serde_json::Value::String(args_str.to_string()));
-
-                    tool_calls.push(ToolCall { id, name, args });
-                }
-            }
-
-            // ADR-024 fallback: ollama's OpenAI-compatible endpoint returns a tool
-            // call as plain text in `content` with `tool_calls` null. If nothing
-            // parsed natively but the content is itself a tool-call object, recover
-            // it so the native path sees the call instead of `no_action`.
-            if tool_calls.is_empty()
-                && let Some(text) = &content
-                && let Some(tc) = toolcall_from_content(text)
-            {
-                tool_calls.push(tc);
-            }
-
-            let finish_reason = choice["finish_reason"].as_str().unwrap_or("");
-            let truncated = finish_reason == "length";
-
+            let field = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_string();
+            let calls = message["tool_calls"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|tc| {
+                    let function = &tc["function"];
+                    (
+                        field(&tc["id"]),
+                        field(&function["name"]),
+                        field(&function["arguments"]),
+                    )
+                })
+                .collect();
             let usage = &json_res["usage"];
-            let input_tokens = usage["prompt_tokens"].as_u64().map(|v| v as u32);
-            let output_tokens = usage["completion_tokens"].as_u64().map(|v| v as u32);
-
-            Ok(Completion {
-                message: Message {
-                    role: Role::Assistant,
-                    text: content,
-                    tool_calls,
-                    tool_call_id: None,
-                    media: Vec::new(),
-                },
-                input_tokens,
-                output_tokens,
-                truncated,
-            })
+            Ok(assemble(
+                message["content"].as_str().map(|s| s.to_string()),
+                calls,
+                choice["finish_reason"].as_str().unwrap_or(""),
+                usage["prompt_tokens"].as_u64().map(|v| v as u32),
+                usage["completion_tokens"].as_u64().map(|v| v as u32),
+            ))
         })
         .await
     }
@@ -382,95 +316,26 @@ impl Provider for OpenAiProvider {
         let mut body = self.build_body(&request)?;
         body["stream"] = json!(true);
         with_cancellation(cancel_flag.as_deref(), async {
-            let constrained = request.constraint.is_some();
-
-            let url = format!(
-                "{}/chat/completions",
-                self.config.base_url.trim_end_matches('/')
-            );
-            let mut response = self
-                .client
-                .post(&url)
-                .header("Authorization", format!("Bearer {}", self.config.api_key))
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::RetryableBackend(format!("Network error: {e}")))?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let text = response.text().await.unwrap_or_default();
-                return Err(ProviderError::Backend(format!("HTTP {status}: {text}")));
-            }
-
-            let mut acc = StreamAccumulator::new(constrained, on_delta);
+            let mut response = self.post(&body).await?;
+            let mut acc = StreamAccumulator::new(request.constraint.is_some(), on_delta);
             let mut decoder = SseDecoder::default();
             while let Some(bytes) = response
                 .chunk()
                 .await
                 .map_err(|e| ProviderError::RetryableBackend(format!("stream error: {e}")))?
             {
-                for line in decoder.push(&bytes)? {
+                for line in decoder.push(&bytes).map_err(sse_utf8_error)? {
                     match line {
-                        SseLine::Data(data) => acc.feed_line(&data)?,
+                        SseLine::Data(chunk) => acc.feed(&chunk)?,
                         SseLine::Done => return Ok(acc.finish()),
-                        SseLine::Ignored => {}
+                        SseLine::Other => {}
                     }
                 }
             }
-            decoder.finish()?;
+            decoder.finish().map_err(sse_utf8_error)?;
             Ok(acc.finish())
         })
         .await
-    }
-}
-
-/// Frame SSE in bytes before decoding UTF-8. A network chunk can end anywhere
-/// within a code point; incomplete final bytes are errors, not replacement
-/// characters silently inserted into content or native tool arguments.
-#[derive(Default)]
-struct SseDecoder {
-    pending: Vec<u8>,
-    scanned: usize,
-    done: bool,
-}
-
-impl SseDecoder {
-    fn push(&mut self, bytes: &[u8]) -> Result<Vec<SseLine>, ProviderError> {
-        if self.done {
-            return Ok(Vec::new());
-        }
-        self.pending.extend_from_slice(bytes);
-        let mut lines = Vec::new();
-        let mut consumed = 0;
-        let mut search_from = self.scanned;
-        while let Some(offset) = self.pending[search_from..].iter().position(|b| *b == b'\n') {
-            let end = search_from + offset;
-            let line = std::str::from_utf8(&self.pending[consumed..end]).map_err(sse_utf8_error)?;
-            let line = classify_sse_line(line.trim_end_matches('\r'));
-            let done = line == SseLine::Done;
-            lines.push(line);
-            consumed = end + 1;
-            search_from = consumed;
-            if done {
-                self.pending.clear();
-                self.scanned = 0;
-                self.done = true;
-                return Ok(lines);
-            }
-        }
-        self.pending.drain(..consumed);
-        // Do not rescan a growing incomplete line on every tiny TCP chunk.
-        self.scanned = self.pending.len();
-        Ok(lines)
-    }
-
-    fn finish(self) -> Result<(), ProviderError> {
-        // Preserve the existing behavior of ignoring an unterminated SSE line,
-        // but still reject a malformed or truncated UTF-8 tail at EOF.
-        std::str::from_utf8(&self.pending).map_err(sse_utf8_error)?;
-        Ok(())
     }
 }
 
@@ -478,36 +343,9 @@ fn sse_utf8_error(error: std::str::Utf8Error) -> ProviderError {
     ProviderError::Backend(format!("Malformed UTF-8 in SSE response: {error}"))
 }
 
-/// Classify one already-line-split piece of SSE framing. Pure — no I/O — so
-/// the line-splitting/classification logic is directly unit-testable
-/// separately from the async byte-stream reading loop.
-#[derive(Debug, Clone, PartialEq)]
-enum SseLine {
-    /// A `data: <json>` line carrying one chunk's payload.
-    Data(String),
-    /// The `data: [DONE]` terminator.
-    Done,
-    /// Blank lines (frame separators) and other SSE fields (`event:`, `id:`,
-    /// `: comment`) — not an error, just not a data payload.
-    Ignored,
-}
-
-fn classify_sse_line(line: &str) -> SseLine {
-    let Some(data) = line.strip_prefix("data:") else {
-        return SseLine::Ignored;
-    };
-    let data = data.trim_start();
-    if data == "[DONE]" {
-        SseLine::Done
-    } else {
-        SseLine::Data(data.to_string())
-    }
-}
-
-/// Accumulates SSE `data:` line payloads into a final `Completion`, firing
+/// Accumulates SSE `data:` chunks into a final `Completion`, firing
 /// `StreamDelta`s to `on_delta` as content becomes available. Pure with
-/// respect to I/O — `feed_line` takes an already-decoded line string, so this
-/// is directly unit-testable with plain `&str` inputs, no networking.
+/// respect to I/O, so it is directly unit-testable without networking.
 struct StreamAccumulator<'a> {
     content: String,
     tool_calls: Vec<PartialToolCall>,
@@ -540,14 +378,9 @@ impl<'a> StreamAccumulator<'a> {
         }
     }
 
-    /// Feed one SSE `data:` line's JSON payload (the text after `data:`, not
-    /// including the `[DONE]` sentinel, which the caller handles separately).
-    /// An in-band `{"error": …}` event ends the stream as a backend error, as
-    /// the valve also treats it.
-    fn feed_line(&mut self, line: &str) -> Result<(), ProviderError> {
-        let Ok(chunk) = serde_json::from_str::<serde_json::Value>(line) else {
-            return Ok(()); // malformed/ignorable line
-        };
+    /// Feed one SSE `data:` chunk. An in-band `{"error": …}` event ends the
+    /// stream as a backend error, as the valve also treats it.
+    fn feed(&mut self, chunk: &serde_json::Value) -> Result<(), ProviderError> {
         if let Some(error) = chunk.get("error") {
             return Err(ProviderError::Backend(format!(
                 "stream error event: {error}"
@@ -600,50 +433,65 @@ impl<'a> StreamAccumulator<'a> {
         Ok(())
     }
 
-    /// Finalize accumulation into the same `Completion` shape `complete()`
-    /// produces for an equivalent non-streaming response, including the
-    /// ADR-024 ollama-plain-text-tool-call recovery fallback.
+    /// Finalize into the `Completion` `complete()` builds for an equivalent
+    /// non-streaming response.
     fn finish(self) -> Completion {
-        let mut tool_calls: Vec<ToolCall> = self
+        let calls = self
             .tool_calls
             .into_iter()
             .filter(|tc| !tc.name.is_empty())
-            .map(|tc| {
-                let args = serde_json::from_str(&tc.args)
-                    .unwrap_or_else(|_| serde_json::Value::String(tc.args.clone()));
-                ToolCall {
-                    id: tc.id,
-                    name: tc.name,
-                    args,
-                }
-            })
+            .map(|tc| (tc.id, tc.name, tc.args))
             .collect();
+        let text = (!self.content.is_empty()).then_some(self.content);
+        assemble(
+            text,
+            calls,
+            &self.finish_reason,
+            self.input_tokens,
+            self.output_tokens,
+        )
+    }
+}
 
-        let text = if self.content.is_empty() {
-            None
-        } else {
-            Some(self.content)
-        };
-
-        if tool_calls.is_empty()
-            && let Some(t) = &text
-            && let Some(tc) = toolcall_from_content(t)
-        {
-            tool_calls.push(tc);
-        }
-
-        Completion {
-            message: Message {
-                role: Role::Assistant,
-                text,
-                tool_calls,
-                tool_call_id: None,
-                media: Vec::new(),
-            },
-            input_tokens: self.input_tokens,
-            output_tokens: self.output_tokens,
-            truncated: self.finish_reason == "length",
-        }
+/// The assistant `Completion` both paths return: each call's JSON-encoded
+/// `(id, name, arguments)` parsed (arguments that are not JSON stay a string),
+/// the ADR-024 plain-text tool-call recovery when no call came natively, and
+/// a `length` finish as truncation.
+fn assemble(
+    text: Option<String>,
+    calls: Vec<(String, String, String)>,
+    finish_reason: &str,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+) -> Completion {
+    let mut tool_calls: Vec<ToolCall> = calls
+        .into_iter()
+        .map(|(id, name, arguments)| {
+            let args = serde_json::from_str(&arguments)
+                .unwrap_or_else(|_| serde_json::Value::String(arguments));
+            ToolCall { id, name, args }
+        })
+        .collect();
+    // ADR-024 fallback: ollama's OpenAI-compatible endpoint returns a tool
+    // call as plain text in `content` with `tool_calls` null. If nothing
+    // parsed natively but the content is itself a tool-call object, recover
+    // it so the native path sees the call instead of `no_action`.
+    if tool_calls.is_empty()
+        && let Some(tc) = text.as_deref().and_then(toolcall_from_content)
+    {
+        tool_calls.push(tc);
+    }
+    Completion {
+        message: Message {
+            role: Role::Assistant,
+            text,
+            tool_calls,
+            tool_call_id: None,
+            media: Vec::new(),
+        },
+        input_tokens,
+        output_tokens,
+        truncated: finish_reason == "length",
     }
 }
 
@@ -708,7 +556,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::types::SamplingParams;
+    use crate::types::ToolDescriptor;
 
     /// `OpenAiConfig` holds the API key in plaintext and reaches an
     /// `Authorization: Bearer` header. It is NOT `Debug` today, and that
@@ -745,27 +593,15 @@ mod tests {
         );
     }
 
-    fn provider() -> OpenAiProvider {
-        OpenAiProvider::new(OpenAiConfig::default())
-    }
-
     /// A provider whose endpoint is a closed loopback port: any request that
     /// reaches the network fails with a connection error, never
     /// `InvalidRequest`.
-    fn unreachable_provider() -> OpenAiProvider {
+    fn provider() -> OpenAiProvider {
         OpenAiProvider::new(OpenAiConfig {
             base_url: "http://127.0.0.1:9/v1".to_string(),
-            ..OpenAiConfig::default()
+            api_key: "test".to_string(),
+            model: "test-model".to_string(),
         })
-    }
-
-    fn base_request() -> CompletionRequest {
-        CompletionRequest {
-            messages: vec![Message::user("hi")],
-            sampling: SamplingParams::default(),
-            tools: Vec::new(),
-            constraint: None,
-        }
     }
 
     fn tool() -> ToolDescriptor {
@@ -843,49 +679,13 @@ mod tests {
         assert_eq!(parts[2]["input_audio"]["format"], "wav");
     }
 
-    #[test]
-    fn capabilities_supports_media() {
-        assert!(provider().capabilities().supports_media);
-    }
-
-    #[test]
-    fn build_body_constraint_emits_response_format() {
-        // WHEN a JSON-Schema constraint is present THEN response_format carries
-        // it (strict) and tools are absent (ADR-010).
-        let schema = json!({"type": "object", "required": ["tool", "args"]});
-        let mut req = base_request();
-        req.constraint = Some(Constraint::JsonSchema(schema.clone()));
-        let body = provider().build_body(&req).unwrap();
-
-        assert_eq!(body["response_format"]["type"], json!("json_schema"));
-        assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
-        assert_eq!(
-            body["response_format"]["json_schema"]["strict"],
-            json!(true)
-        );
-        assert!(body.get("tools").is_none());
-    }
-
-    #[test]
-    fn build_body_tools_no_response_format() {
-        // WHEN tools are present and no constraint THEN tools/tool_choice are
-        // set and response_format is absent.
-        let mut req = base_request();
-        req.tools = vec![tool()];
-        let body = provider().build_body(&req).unwrap();
-
-        assert!(body["tools"].is_array());
-        assert_eq!(body["tool_choice"], json!("auto"));
-        assert!(body.get("response_format").is_none());
-    }
-
     /// Test-critique C-002: `complete_streaming` validates the request
     /// exactly like `complete()` (ADR-010: constraint + tools is invalid) —
     /// pinned so a future refactor can't accidentally drop or reorder the
     /// `validate()?` call ahead of the network send.
     #[test]
     fn complete_streaming_rejects_invalid_request() {
-        let mut req = base_request();
+        let mut req = CompletionRequest::fixture();
         req.tools = vec![tool()];
         req.constraint = Some(Constraint::JsonSchema(json!({"type": "object"})));
         let sink = |_: StreamDelta| panic!("must not fire any delta on a validation failure");
@@ -898,9 +698,9 @@ mod tests {
     /// the network would surface a connection error instead of `InvalidRequest`.
     #[test]
     fn regex_constraint_is_rejected_without_network() {
-        let mut req = base_request();
+        let mut req = CompletionRequest::fixture();
         req.constraint = Some(Constraint::Regex("^a$".to_string()));
-        let result = futures_executor::block_on(unreachable_provider().complete(req, None));
+        let result = futures_executor::block_on(provider().complete(req, None));
         assert!(
             matches!(&result, Err(ProviderError::InvalidRequest(message)) if message.contains("regex")),
             "{result:?}"
@@ -909,11 +709,10 @@ mod tests {
 
     #[test]
     fn regex_constraint_is_rejected_when_streaming() {
-        let mut req = base_request();
+        let mut req = CompletionRequest::fixture();
         req.constraint = Some(Constraint::Regex("^a$".to_string()));
         let sink = |_: StreamDelta| panic!("must not stream for an untransmittable constraint");
-        let result =
-            futures_executor::block_on(unreachable_provider().complete_streaming(req, &sink, None));
+        let result = futures_executor::block_on(provider().complete_streaming(req, &sink, None));
         assert!(
             matches!(&result, Err(ProviderError::InvalidRequest(message)) if message.contains("regex")),
             "{result:?}"
@@ -925,13 +724,13 @@ mod tests {
     #[test]
     fn build_body_unchanged_for_supported_constraints() {
         let schema = json!({"type": "object", "required": ["tool"]});
-        let mut constrained = base_request();
+        let mut constrained = CompletionRequest::fixture();
         constrained.constraint = Some(Constraint::JsonSchema(schema.clone()));
-        let mut lark = base_request();
+        let mut lark = CompletionRequest::fixture();
         lark.constraint = Some(Constraint::Lark("root ::= \"a\"".to_string()));
-        let mut tools = base_request();
+        let mut tools = CompletionRequest::fixture();
         tools.tools = vec![tool()];
-        let plain = base_request();
+        let plain = CompletionRequest::fixture();
 
         let base = |req: &CompletionRequest| {
             json!({
@@ -954,7 +753,14 @@ mod tests {
         assert_eq!(provider().build_body(&lark).unwrap(), expected);
 
         let mut expected = base(&tools);
-        expected["tools"] = json!([OpenAiProvider::map_tool(&tool())]);
+        expected["tools"] = json!([{
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "read a file",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+            }
+        }]);
         expected["tool_choice"] = json!("auto");
         assert_eq!(provider().build_body(&tools).unwrap(), expected);
 
@@ -963,21 +769,14 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_constraint_and_native() {
-        let caps = provider().capabilities();
-        assert!(caps.supports_constraint);
-        assert!(caps.supports_native_tool_calls);
-    }
-
-    #[test]
-    fn classify_sse_line_variants() {
         assert_eq!(
-            classify_sse_line(r#"data: {"a":1}"#),
-            SseLine::Data(r#"{"a":1}"#.to_string())
+            provider().capabilities(),
+            Capabilities {
+                supports_native_tool_calls: true,
+                supports_constraint: true,
+                supports_media: true,
+            }
         );
-        assert_eq!(classify_sse_line("data: [DONE]"), SseLine::Done);
-        assert_eq!(classify_sse_line(""), SseLine::Ignored);
-        assert_eq!(classify_sse_line(": a comment"), SseLine::Ignored);
-        assert_eq!(classify_sse_line("event: message"), SseLine::Ignored);
     }
 
     fn collect_deltas(constrained: bool, lines: &[&str]) -> (Completion, Vec<StreamDelta>) {
@@ -985,7 +784,7 @@ mod tests {
         let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
         let mut acc = StreamAccumulator::new(constrained, &sink);
         for line in lines {
-            acc.feed_line(line).unwrap();
+            acc.feed(&serde_json::from_str(line).unwrap()).unwrap();
         }
         (acc.finish(), deltas.into_inner().unwrap())
     }
@@ -996,10 +795,10 @@ mod tests {
     fn stream_error_event_is_a_backend_error() {
         let sink = |_: StreamDelta| {};
         let mut acc = StreamAccumulator::new(false, &sink);
-        acc.feed_line(r#"{"choices":[{"delta":{"content":"par"}}]}"#)
+        acc.feed(&json!({"choices": [{"delta": {"content": "par"}}]}))
             .unwrap();
         let error = acc
-            .feed_line(r#"{"error":{"message":"context exceeded"}}"#)
+            .feed(&json!({"error": {"message": "context exceeded"}}))
             .unwrap_err();
         assert!(!error.is_retryable());
         assert!(error.to_string().contains("context exceeded"), "{error}");
@@ -1046,34 +845,6 @@ mod tests {
         assert_eq!(tc.args["path"], "a.txt");
     }
 
-    /// A `data: [DONE]`-equivalent scenario is handled by the caller
-    /// (`complete_streaming`'s outer loop stops on `SseLine::Done` before
-    /// calling `feed_line`) — confirmed here at the classification level.
-    #[test]
-    fn accumulate_lines_done_terminates() {
-        assert_eq!(classify_sse_line("data: [DONE]"), SseLine::Done);
-        assert_ne!(classify_sse_line("data: [DONE]"), SseLine::Ignored);
-    }
-
-    #[test]
-    fn accumulate_lines_ignores_blank_and_comment_lines() {
-        let (completion, deltas) = collect_deltas(
-            false,
-            &[
-                "",
-                ": keep-alive comment",
-                r#"{"choices":[{"index":0,"delta":{"content":"ok"}}]}"#,
-            ],
-        );
-        // The blank/comment "lines" here are fed straight to `feed_line`
-        // (which itself no-ops on non-JSON); the real ignoring happens at
-        // `classify_sse_line` before `feed_line` is ever called in
-        // `complete_streaming`'s loop — this proves `feed_line` degrades
-        // gracefully too (belt-and-suspenders).
-        assert_eq!(completion.message.text.as_deref(), Some("ok"));
-        assert_eq!(deltas, vec![StreamDelta::Text("ok".to_string())]);
-    }
-
     /// Under `ConstrainedJson`, `on_delta` receives the scanner's
     /// `ToolNamed`/`Text` deltas (not raw JSON fragments) as content
     /// accumulates — proves T-3703 wires T-3702's scanner in correctly.
@@ -1104,209 +875,6 @@ mod tests {
             !deltas
                 .iter()
                 .any(|d| matches!(d, StreamDelta::Text(t) if t.contains('{')))
-        );
-    }
-}
-
-/// T-3703 E2E: a real `.chunk()`-driven read against an actual local TCP
-/// socket — proves the real wire protocol, not just the pure accumulator
-/// logic above.
-#[cfg(test)]
-mod streaming_e2e {
-    use std::sync::Mutex;
-
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
-
-    use super::*;
-    use crate::types::SamplingParams;
-
-    #[tokio::test]
-    async fn complete_streaming_over_real_tcp_stream() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let server = async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = [0u8; 4096];
-            // Drain enough of the request to know it was sent; this fake
-            // server doesn't need to parse it.
-            let _ = socket.read(&mut buf).await;
-
-            let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\
-                        \n\
-                        data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" world\"},\"finish_reason\":\"stop\"}]}\n\
-                        \n\
-                        data: [DONE]\n\
-                        \n";
-            // `Connection: close`, NOT `Content-Length` -- an SSE body is
-            // unbounded-length; a wrong/missing length would make reqwest
-            // hang waiting for more bytes instead of completing (test-critique
-            // C-009).
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{body}"
-            );
-            socket.write_all(response.as_bytes()).await.unwrap();
-            socket.shutdown().await.unwrap();
-        };
-
-        let provider = OpenAiProvider::new(OpenAiConfig {
-            base_url: format!("http://{addr}/v1"),
-            api_key: "test".to_string(),
-            model: "test-model".to_string(),
-        });
-        let request = CompletionRequest {
-            messages: vec![Message::user("hi")],
-            sampling: SamplingParams::default(),
-            tools: Vec::new(),
-            constraint: None,
-        };
-
-        let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
-        let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
-
-        let (served, completion) = tokio::join!(
-            tokio::time::timeout(Duration::from_secs(3), server),
-            tokio::time::timeout(
-                Duration::from_secs(3),
-                provider.complete_streaming(request, &sink, None),
-            ),
-        );
-        served.expect("server fixture completed within its deadline");
-        let completion = completion
-            .expect("provider fixture completed within its deadline")
-            .expect("streaming completion should succeed");
-
-        assert_eq!(completion.message.text.as_deref(), Some("Hello world"));
-        assert!(!completion.truncated);
-        assert_eq!(
-            deltas.into_inner().unwrap(),
-            vec![
-                StreamDelta::Text("Hello".to_string()),
-                StreamDelta::Text(" world".to_string()),
-            ]
-        );
-    }
-
-    /// Test-critique C-003: a non-2xx HTTP status is surfaced as
-    /// `ProviderError::Backend`, not a hang or a panic, over the real wire
-    /// (mirrors `complete()`'s equivalent status check, but exercised
-    /// through `complete_streaming`'s own branch).
-    #[tokio::test]
-    async fn complete_streaming_surfaces_http_error_status() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let server = async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = [0u8; 4096];
-            let _ = socket.read(&mut buf).await;
-            let body = "model not found";
-            let response = format!(
-                "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{body}"
-            );
-            socket.write_all(response.as_bytes()).await.unwrap();
-            socket.shutdown().await.unwrap();
-        };
-
-        let provider = OpenAiProvider::new(OpenAiConfig {
-            base_url: format!("http://{addr}/v1"),
-            api_key: "test".to_string(),
-            model: "test-model".to_string(),
-        });
-        let request = CompletionRequest {
-            messages: vec![Message::user("hi")],
-            sampling: SamplingParams::default(),
-            tools: Vec::new(),
-            constraint: None,
-        };
-        let sink = |_: StreamDelta| panic!("no delta should fire on an HTTP error response");
-
-        let (served, result) = tokio::join!(
-            tokio::time::timeout(Duration::from_secs(3), server),
-            tokio::time::timeout(
-                Duration::from_secs(3),
-                provider.complete_streaming(request, &sink, None),
-            ),
-        );
-        served.expect("server fixture completed within its deadline");
-        let result = result.expect("provider fixture completed within its deadline");
-
-        match result {
-            Err(ProviderError::Backend(msg)) => {
-                assert!(msg.contains("404"), "error should name the status: {msg}");
-                assert!(
-                    msg.contains("model not found"),
-                    "error should carry the body: {msg}"
-                );
-            }
-            other => panic!("expected ProviderError::Backend, got {other:?}"),
-        }
-    }
-
-    /// Test-critique C-005: a single logical SSE `data:` line split across
-    /// TWO separate socket writes (genuine mid-line TCP fragmentation, not
-    /// incidental OS buffering) must still reassemble correctly — this is
-    /// the one piece of new I/O-adjacent logic (`buf`/`drain`/`find('\n')`
-    /// in `complete_streaming`'s read loop) that the pure `feed_line` unit
-    /// tests can't exercise, since those pre-split lines by construction.
-    #[tokio::test]
-    async fn complete_streaming_reassembles_a_line_split_mid_write() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let server = async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = [0u8; 4096];
-            let _ = socket.read(&mut buf).await;
-
-            let headers =
-                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
-            socket.write_all(headers.as_bytes()).await.unwrap();
-            socket.flush().await.unwrap();
-
-            // Split squarely in the middle of the `data:` line's JSON, not
-            // at a line boundary.
-            let first_half = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel";
-            socket.write_all(first_half.as_bytes()).await.unwrap();
-            socket.flush().await.unwrap();
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-
-            let second_half = "lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
-            socket.write_all(second_half.as_bytes()).await.unwrap();
-            socket.shutdown().await.unwrap();
-        };
-
-        let provider = OpenAiProvider::new(OpenAiConfig {
-            base_url: format!("http://{addr}/v1"),
-            api_key: "test".to_string(),
-            model: "test-model".to_string(),
-        });
-        let request = CompletionRequest {
-            messages: vec![Message::user("hi")],
-            sampling: SamplingParams::default(),
-            tools: Vec::new(),
-            constraint: None,
-        };
-        let deltas: Mutex<Vec<StreamDelta>> = Mutex::new(Vec::new());
-        let sink = |d: StreamDelta| deltas.lock().unwrap().push(d);
-
-        let (served, completion) = tokio::join!(
-            tokio::time::timeout(Duration::from_secs(3), server),
-            tokio::time::timeout(
-                Duration::from_secs(3),
-                provider.complete_streaming(request, &sink, None),
-            ),
-        );
-        served.expect("server fixture completed within its deadline");
-        let completion = completion
-            .expect("provider fixture completed within its deadline")
-            .expect("a mid-line split must not break parsing");
-
-        assert_eq!(completion.message.text.as_deref(), Some("Hello"));
-        assert_eq!(
-            deltas.into_inner().unwrap(),
-            vec![StreamDelta::Text("Hello".to_string())]
         );
     }
 }

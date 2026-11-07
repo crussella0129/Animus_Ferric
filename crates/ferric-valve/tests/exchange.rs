@@ -6,10 +6,9 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    FINAL_ACTION, FakeUpstream, Reply, TOOL_ACTION, content_frame, done_frame, finish_frame,
-    stream_of,
+    FINAL_ACTION, FakeUpstream, Reply, TOOL_ACTION, content_frame, finish_frame, stream_of,
 };
-use ferric_valve::sse::ChunkIdentity;
+use ferric_valve::sse::{ChunkIdentity, done_frame};
 use ferric_valve::{Exchange, ExchangeOutcome, ValveError, run_constrained};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
@@ -339,41 +338,23 @@ async fn malformed_upstream_reports_error_in_band() {
     );
 }
 
+/// Malformed UTF-8 from the upstream is a stream failure, never replacement
+/// characters inside the action (the provider's strict SSE decoding).
 #[tokio::test(flavor = "multi_thread")]
-async fn upstream_http_error_is_reported_before_start() {
-    let upstream = FakeUpstream::start(vec![Reply::Status(
-        400,
-        "unsupported schema construct".to_string(),
-    )])
-    .await;
+async fn malformed_utf8_is_a_stream_error() {
+    let mut wire = content_frame(r#"{"thought":"#).into_bytes();
+    wire.extend_from_slice(b"data: {\"choices\":[{\"delta\":{\"content\":\"\xff\"}}]}\n\n");
+    wire.extend_from_slice(finish_frame("stop").as_bytes());
+    let upstream = FakeUpstream::start(vec![Reply::Raw(wire)]).await;
     let (frames, outcome, started) = run_streaming(upstream.url(), Duration::from_secs(5)).await;
+    assert!(started.is_ok(), "the upstream itself answered 200");
+    assert_eq!(outcome.error.unwrap().class(), "upstream_stream");
+    let error = &frames.last().unwrap()["error"];
+    assert_eq!(error["code"], "upstream_stream");
     assert!(
-        frames.is_empty(),
-        "nothing streams before the upstream accepts"
+        error["message"].as_str().unwrap().contains("UTF-8"),
+        "{error}"
     );
-    match started {
-        Err(ValveError::UpstreamHttp { status, excerpt }) => {
-            assert_eq!(status, 400);
-            assert!(excerpt.contains("unsupported schema construct"));
-        }
-        other => panic!("unexpected start signal: {other:?}"),
-    }
-    assert_eq!(outcome.error.unwrap().class(), "upstream_http");
-    assert_eq!(upstream.requests().len(), 1, "no retry");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn upstream_unreachable_is_reported_before_start() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    let (_, outcome, started) = run_streaming(
-        format!("http://{addr}/v1/chat/completions"),
-        Duration::from_secs(5),
-    )
-    .await;
-    assert!(matches!(started, Err(ValveError::UpstreamUnreachable(_))));
-    assert_eq!(outcome.error.unwrap().class(), "upstream_unreachable");
 }
 
 #[tokio::test(flavor = "multi_thread")]

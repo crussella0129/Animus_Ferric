@@ -181,10 +181,9 @@ fn escalation_policy_error(policy: Option<HarnessPolicy>) -> Option<&'static str
 /// stdin-driven turn count can never exhaust a fixed script (plan-critic C-001).
 fn mock_talk_completion() -> Completion {
     Completion {
-        message: Message::assistant("[mock chat] I hear you (talk mode — no action taken)."),
         input_tokens: Some(12),
         output_tokens: Some(10),
-        truncated: false,
+        ..Completion::assistant_text("[mock chat] I hear you (talk mode — no action taken).")
     }
 }
 
@@ -657,7 +656,6 @@ mod tests {
                 ferric_provider::Capabilities {
                     supports_native_tool_calls: true,
                     supports_constraint: false,
-                    exposes_logits: false,
                     supports_media: false,
                 }
             }

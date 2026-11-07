@@ -550,7 +550,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                         break; // this ring added no tools → max ring reached
                     }
                     let ring_schema = action_schema(&ring_tools);
-                    let proto = select_protocol(&p, &provider.capabilities(), protocol_override);
+                    let proto = select_protocol(&provider.capabilities(), protocol_override);
                     proto_label = format!("{proto:?}");
                     let summary = bench_model(
                         provider,
@@ -627,8 +627,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
                     }
                 };
                 let provider = provider_box.as_ref();
-                let protocol =
-                    select_protocol(&policy, &provider.capabilities(), protocol_override);
+                let protocol = select_protocol(&provider.capabilities(), protocol_override);
                 summaries.push(
                     bench_model(
                         provider,
@@ -655,7 +654,7 @@ pub fn run_toolbench(args: ToolbenchArgs) -> ExitCode {
             // Single model (the per-tool diagnostic report).
             let provider_box = create_provider(&args.backend_opts).await?;
             let provider = provider_box.as_ref();
-            let protocol = select_protocol(&policy, &provider.capabilities(), protocol_override);
+            let protocol = select_protocol(&provider.capabilities(), protocol_override);
             let model_label = args
                 .backend_opts
                 .model
@@ -710,15 +709,6 @@ mod tests {
     use ferric_core::{Message, Role};
     use serde_json::json;
 
-    fn text_completion(text: &str) -> Completion {
-        Completion {
-            message: Message::assistant(text),
-            input_tokens: None,
-            output_tokens: None,
-            truncated: false,
-        }
-    }
-
     fn schema() -> serde_json::Value {
         json!({
             "type": "object",
@@ -764,7 +754,7 @@ mod tests {
 
     #[test]
     fn classify_success_constrained() {
-        let c = text_completion(r#"{"tool":"read_file","args":{"path":"x"}}"#);
+        let c = Completion::assistant_text(r#"{"tool":"read_file","args":{"path":"x"}}"#);
         assert_eq!(
             classify(ActionProtocol::ConstrainedJson, &c, "read_file", &schema()),
             Outcome::Success
@@ -793,7 +783,7 @@ mod tests {
     #[test]
     fn classify_no_action() {
         // Native: tool_calls empty (the model chatted instead of calling).
-        let c = text_completion("I cannot help with that.");
+        let c = Completion::assistant_text("I cannot help with that.");
         assert_eq!(
             classify(ActionProtocol::NativeTools, &c, "read_file", &schema()),
             Outcome::NoAction
@@ -803,7 +793,7 @@ mod tests {
     #[test]
     fn classify_parse_error() {
         // ConstrainedJson: non-empty text that is not a valid action object.
-        let bad_json = text_completion(r#"{"tool": "read_file", "args": {oops"#);
+        let bad_json = Completion::assistant_text(r#"{"tool": "read_file", "args": {oops"#);
         assert_eq!(
             classify(
                 ActionProtocol::ConstrainedJson,
@@ -814,7 +804,7 @@ mod tests {
             Outcome::ParseError
         );
         // TextXml: prose with no <tool_call> is a parse failure too.
-        let prose = text_completion("just some prose");
+        let prose = Completion::assistant_text("just some prose");
         assert_eq!(
             classify(ActionProtocol::TextXml, &prose, "read_file", &schema()),
             Outcome::ParseError

@@ -5,8 +5,7 @@
 //! (`classify_path`, by extension), and (2) given the model's declared
 //! modalities and whether the backend can carry media at all, do we attach it
 //! as a media part, fold it in as text, or skip it (`decide_attachment`). The
-//! actual file read + base64 + `Message` assembly lives in the CLI; this is the
-//! logic.
+//! file read and `MediaPart` assembly live in `query`.
 
 use std::path::Path;
 
@@ -19,16 +18,6 @@ pub enum Modality {
     Image,
     Audio,
     Video,
-}
-
-/// One non-text content part on a `Message`: a media payload, base64-encoded,
-/// tagged with its MIME type. Bytes are base64 so a `Message` stays plain
-/// serde-JSON; traces must log a descriptor (mime + length), never this blob.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MediaPart {
-    pub mime: String,
-    /// Base64-encoded payload (no `data:` prefix).
-    pub data: String,
 }
 
 /// What `classify_path` decided a file is, by extension.
@@ -138,33 +127,6 @@ pub fn parse_modalities(s: &str) -> Vec<Modality> {
         .collect()
 }
 
-/// Standard base64 encoding (RFC 4648, no line breaks). Inlined and
-/// dependency-free (ADR-004): just enough to fold media bytes into a `data:`
-/// URL / `input_audio` payload, without pulling a crate for ~15 lines.
-pub fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[((n >> 18) & 63) as usize] as char);
-        out.push(ALPHABET[((n >> 12) & 63) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            ALPHABET[((n >> 6) & 63) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            ALPHABET[(n & 63) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,7 +204,10 @@ mod tests {
 
     #[test]
     fn base64_rfc4648_vectors() {
-        // The canonical RFC 4648 §10 test vectors, incl. both padding cases.
+        // The canonical RFC 4648 §10 test vectors, incl. both padding cases:
+        // media payloads use the standard, padded alphabet.
+        use base64::Engine as _;
+        let base64_encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
         assert_eq!(base64_encode(b""), "");
         assert_eq!(base64_encode(b"f"), "Zg==");
         assert_eq!(base64_encode(b"fo"), "Zm8=");

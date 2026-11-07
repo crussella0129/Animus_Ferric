@@ -33,6 +33,7 @@ mod launch;
 mod live_budget_tests;
 mod logging;
 mod mcp;
+mod media;
 mod prompt;
 mod query;
 mod revert_cmd;

@@ -1,7 +1,7 @@
 mod common;
 
+use ferric_core::HooksConfig;
 use ferric_core::ModelProfile;
-use ferric_core::hooks::HooksConfig;
 use ferric_core::policy_for;
 use ferric_guard::Workspace;
 use ferric_loop::{RunArgs, StopReason, run};

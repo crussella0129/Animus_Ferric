@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-use crate::media::MediaPart;
+/// One non-text content part on a `Message`: a media payload, base64-encoded,
+/// tagged with its MIME type. Bytes are base64 so a `Message` stays plain
+/// serde-JSON; traces must log a descriptor (mime + length), never this blob.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaPart {
+    pub mime: String,
+    /// Base64-encoded payload (no `data:` prefix).
+    pub data: String,
+}
 
 /// Who produced a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

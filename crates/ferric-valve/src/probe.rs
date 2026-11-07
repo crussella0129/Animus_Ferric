@@ -6,7 +6,10 @@
 //! actually enforces the schema can answer with that object. A backend that
 //! ignores `response_format` answers in prose, and the valve refuses to start.
 
+use ferric_iron::wire::response_format;
 use serde_json::{Value, json};
+
+use crate::upstream::ValveError;
 
 /// The one object the probe schema admits.
 pub fn probe_schema() -> Value {
@@ -18,16 +21,6 @@ pub fn probe_schema() -> Value {
     })
 }
 
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub enum ProbeError {
-    #[error("upstream unreachable: {0}")]
-    Unreachable(String),
-    #[error("upstream returned HTTP {status}: {excerpt}")]
-    Http { status: u16, excerpt: String },
-    #[error("upstream did not enforce the probe schema; it replied {0:?}")]
-    NotEnforced(String),
-}
-
 /// The probe request body.
 pub fn probe_body() -> Value {
     json!({
@@ -37,10 +30,7 @@ pub fn probe_body() -> Value {
         "temperature": 0,
         "stream": false,
         "chat_template_kwargs": { "enable_thinking": false },
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": { "name": "ferric_probe", "schema": probe_schema(), "strict": true }
-        }
+        "response_format": response_format("ferric_probe", &probe_schema())
     })
 }
 
@@ -48,7 +38,7 @@ pub fn probe_body() -> Value {
 pub async fn probe_enforcement(
     client: &reqwest::Client,
     upstream_base: &str,
-) -> Result<(), ProbeError> {
+) -> Result<(), ValveError> {
     let url = format!(
         "{}/v1/chat/completions",
         upstream_base.trim_end_matches('/')
@@ -58,11 +48,11 @@ pub async fn probe_enforcement(
         .json(&probe_body())
         .send()
         .await
-        .map_err(|error| ProbeError::Unreachable(error.to_string()))?;
+        .map_err(|error| ValveError::UpstreamUnreachable(error.to_string()))?;
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(ProbeError::Http {
+        return Err(ValveError::UpstreamHttp {
             status: status.as_u16(),
             excerpt: text.chars().take(512).collect(),
         });
@@ -77,6 +67,6 @@ pub async fn probe_enforcement(
         .unwrap_or_default();
     match serde_json::from_str::<Value>(content.trim()) {
         Ok(value) if value == json!({"ok": "yes"}) => Ok(()),
-        _ => Err(ProbeError::NotEnforced(content)),
+        _ => Err(ValveError::NotEnforced(content)),
     }
 }

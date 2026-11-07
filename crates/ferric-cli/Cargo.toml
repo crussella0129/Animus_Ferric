@@ -53,6 +53,7 @@ oovra = { workspace = true }
 ferric-research = { workspace = true }
 ferric-tools = { workspace = true }
 ferric-trace = { workspace = true }
+base64 = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 cap-std = { workspace = true }

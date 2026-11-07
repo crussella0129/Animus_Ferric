@@ -12,7 +12,7 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use ferric_core::Modality;
+use crate::media::Modality;
 use ferric_guard::Workspace;
 use ferric_loop::RunArgs;
 use ferric_trace::JsonlSink;
@@ -621,7 +621,7 @@ impl McpServer {
         let trace_dir = ferric_trace::trace_dir(&workspace_root);
         std::fs::create_dir_all(&trace_dir)
             .map_err(|e| format!("cannot create trace dir {}: {e}", trace_dir.display()))?;
-        let declared = ferric_core::parse_modalities(args.modality.as_deref().unwrap_or(""));
+        let declared = crate::media::parse_modalities(args.modality.as_deref().unwrap_or(""));
         let backend = ResolvedBackend::resolve(run.mock, &run.backend, workspace.root())?;
 
         Ok(McpServer {
@@ -1148,7 +1148,6 @@ mod tests {
             ferric_provider::Capabilities {
                 supports_native_tool_calls: true,
                 supports_constraint: false,
-                exposes_logits: false,
                 supports_media: true,
             }
         }
@@ -1195,7 +1194,7 @@ mod tests {
             }),
         );
         server.config.caps.supports_media = true;
-        server.declared = vec![ferric_core::Modality::Image];
+        server.declared = vec![crate::media::Modality::Image];
 
         let result = server
             .dispatch(call_request(
@@ -1232,7 +1231,6 @@ mod tests {
             ferric_provider::Capabilities {
                 supports_native_tool_calls: true,
                 supports_constraint: false,
-                exposes_logits: false,
                 supports_media: false,
             }
         }
