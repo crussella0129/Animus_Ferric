@@ -4,7 +4,7 @@ use common::*;
 use ferric_core::ActionProtocol;
 use ferric_guard::Workspace;
 use ferric_loop::{RunArgs, StopReason, replay, run};
-use ferric_provider::{MockProvider, SamplingParams};
+use ferric_provider::MockProvider;
 use ferric_tools::{Registry, register_builtin_tools};
 use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
 use serde_json::json;
@@ -34,27 +34,13 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     )])]);
     let first_sleeper = RecordingSleeper::new();
     let first = futures_executor::block_on(run(
-        RunArgs {
-            provider: &first_provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &policy,
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &first_sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            cancel_flag: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
-        },
+        common::args(
+            &first_provider,
+            &registry,
+            &workspace,
+            &policy,
+            &first_sleeper,
+        ),
         &mut first_sink,
         Some("Resolve the database ambiguity, then finish the task."),
     ))
@@ -67,10 +53,7 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     assert_eq!(pending.continuation_id, "clarify-1");
     assert_eq!(pending.request.options, vec!["SQLite", "PostgreSQL"]);
 
-    let records: Vec<_> = TraceReader::open(&first_trace)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = read_records(&first_trace);
     let tail: Vec<&str> = records
         .iter()
         .rev()
@@ -93,7 +76,7 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     )));
 
     let replayed = replay(&first_trace).unwrap();
-    assert_eq!(replayed.pending_input.as_ref(), Some(&pending.request));
+    assert_eq!(replayed.core.pending_input.as_ref(), Some(&pending.request));
 
     let second_trace = dir.path().join("answered.jsonl");
     let mut second_sink = JsonlSink::open(&second_trace, "clarify-2").unwrap();
@@ -105,25 +88,15 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     let second_sleeper = RecordingSleeper::new();
     let second = futures_executor::block_on(run(
         RunArgs {
-            provider: &second_provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &policy,
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &second_sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
             answer: Some("SQLite"),
-            cancel_flag: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
+            ..common::args(
+                &second_provider,
+                &registry,
+                &workspace,
+                &policy,
+                &second_sleeper,
+            )
         },
         &mut second_sink,
         None,
@@ -143,10 +116,7 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     assert!(transcript.contains("[goal amendment: clarification answer]"));
     assert_eq!(transcript.matches("User answer: SQLite").count(), 1);
 
-    let answered_events: Vec<_> = TraceReader::open(&second_trace)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let answered_events = read_records(&second_trace);
     let kinds: Vec<&str> = answered_events
         .iter()
         .filter_map(|record| match &record.event {
@@ -174,8 +144,9 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     .unwrap();
 
     let replayed_after_answer = replay(&crashed_answer).unwrap();
-    assert!(replayed_after_answer.pending_input.is_none());
+    assert!(replayed_after_answer.core.pending_input.is_none());
     let replayed_text = replayed_after_answer
+        .core
         .messages
         .iter()
         .filter_map(|message| message.text.as_deref())
@@ -193,25 +164,14 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     let third_sleeper = RecordingSleeper::new();
     let third = futures_executor::block_on(run(
         RunArgs {
-            provider: &third_provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &policy,
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &third_sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed_after_answer),
-            answer: None,
-            cancel_flag: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
+            ..common::args(
+                &third_provider,
+                &registry,
+                &workspace,
+                &policy,
+                &third_sleeper,
+            )
         },
         &mut third_sink,
         None,
@@ -235,27 +195,7 @@ fn committed_clarification_recovers_pending_input_before_terminal_checkpoint() {
     )])]);
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
-        RunArgs {
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            cancel_flag: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
-        },
+        common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper),
         &mut sink,
         Some("ask if needed"),
     ))
@@ -275,6 +215,7 @@ fn committed_clarification_recovers_pending_input_before_terminal_checkpoint() {
     let replayed = replay(&crashed).unwrap();
     assert_eq!(
         replayed
+            .core
             .pending_input
             .as_ref()
             .map(|request| request.question.as_str()),
@@ -311,27 +252,7 @@ fn mixed_clarification_turn_executes_no_sibling_mutation() {
     ]);
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
-        RunArgs {
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            cancel_flag: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
-        },
+        common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper),
         &mut sink,
         Some("finish safely"),
     ))
@@ -377,25 +298,8 @@ fn a_truncated_turn_does_not_spend_the_empty_completion_nudge_on_resume() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &policy,
             protocol: ActionProtocol::ConstrainedJson,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            cancel_flag: None,
-            provenance: ferric_guard::Provenance::Clean,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            hooks: None,
-            edit_approver: None,
+            ..common::args(&provider, &registry, &workspace, &policy, &sleeper)
         },
         &mut sink,
         Some("Pick a database."),
@@ -405,6 +309,52 @@ fn a_truncated_turn_does_not_spend_the_empty_completion_nudge_on_resume() {
     assert_eq!(outcome.stop, StopReason::NeedsInput);
 
     let resumed = replay(&trace).unwrap();
-    assert!(resumed.truncated_once);
-    assert!(!resumed.nudged_for_no_action);
+    assert!(resumed.core.truncated_once);
+    assert!(!resumed.core.nudged_for_no_action);
+
+    // A trace written before the fix recorded the spent nudge in its
+    // checkpoint. It still resumes, with the live loop's value.
+    let text = std::fs::read_to_string(&trace).unwrap();
+    let legacy = text.replace(
+        "\"nudged_for_no_action\":false",
+        "\"nudged_for_no_action\":true",
+    );
+    assert_ne!(legacy, text, "the pause carries a recovery checkpoint");
+    std::fs::write(&trace, legacy).unwrap();
+    let resumed = replay(&trace).unwrap();
+    assert!(!resumed.core.nudged_for_no_action);
+}
+
+/// Without a constrained grammar there is no truncation nudge: a truncated,
+/// unparseable TextXml reply spends the empty-completion nudge live, and
+/// replay agrees.
+#[test]
+fn an_unconstrained_truncated_turn_spends_the_empty_completion_nudge() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Workspace::new(dir.path()).unwrap();
+    let mut registry = Registry::new();
+    register_builtin_tools(&mut registry);
+    let policy = nano_policy();
+    let trace = dir.path().join("native-truncated.jsonl");
+    let mut sink = JsonlSink::open(&trace, "native-truncated-1").unwrap();
+    let provider = MockProvider::new(vec![
+        truncated_completion(),
+        xml_completion(json!({
+            "tool": ferric_iron::terminator::REQUEST_USER_INPUT,
+            "args": request_args(),
+        })),
+    ]);
+    let sleeper = RecordingSleeper::new();
+    let outcome = futures_executor::block_on(run(
+        RunArgs {
+            protocol: ActionProtocol::TextXml,
+            ..common::args(&provider, &registry, &workspace, &policy, &sleeper)
+        },
+        &mut sink,
+        Some("Pick a database."),
+    ))
+    .unwrap();
+    drop(sink);
+    assert_eq!(outcome.stop, StopReason::NeedsInput);
+    assert!(replay(&trace).unwrap().core.nudged_for_no_action);
 }

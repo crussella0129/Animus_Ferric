@@ -8,77 +8,12 @@ mod common;
 
 use std::sync::Mutex;
 
-use async_trait::async_trait;
 use common::*;
 use ferric_guard::Workspace;
 use ferric_loop::{RunArgs, StopReason, run};
-use ferric_provider::{
-    Capabilities, Completion, CompletionRequest, Provider, ProviderError, SamplingParams,
-    StreamDelta,
-};
+use ferric_provider::{Completion, ProviderError, StreamDelta};
 use ferric_tools::{Registry, register_builtin_tools};
 use serde_json::json;
-
-/// One scripted `complete_streaming` call: the deltas to fire, then the
-/// result to return.
-type ScriptedStep = (Vec<StreamDelta>, Result<Completion, ProviderError>);
-
-/// A provider whose `complete_streaming` is scripted: each call fires a fixed
-/// sequence of deltas, then returns a fixed result (success or error). Never
-/// overrides `complete()` — these tests exercise the streaming path only.
-struct ScriptedStreamingProvider {
-    script: Mutex<Vec<ScriptedStep>>,
-}
-
-impl ScriptedStreamingProvider {
-    fn new(script: Vec<ScriptedStep>) -> Self {
-        Self {
-            script: Mutex::new(script.into_iter().rev().collect()),
-        }
-    }
-}
-
-#[async_trait]
-impl Provider for ScriptedStreamingProvider {
-    fn id(&self) -> &str {
-        "scripted-streaming"
-    }
-
-    fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            supports_native_tool_calls: false,
-            supports_constraint: true,
-            exposes_logits: false,
-            supports_media: false,
-        }
-    }
-
-    async fn complete(
-        &self,
-        _request: CompletionRequest,
-        _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    ) -> Result<Completion, ProviderError> {
-        unreachable!("test provider only exercises complete_streaming")
-    }
-
-    async fn complete_streaming(
-        &self,
-        _request: CompletionRequest,
-        on_delta: &(dyn Fn(StreamDelta) + Sync),
-        _cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    ) -> Result<Completion, ProviderError> {
-        let (deltas, result) = self
-            .script
-            .lock()
-            .unwrap()
-            .pop()
-            .unwrap_or_else(|| (Vec::new(), Err(ProviderError::ScriptExhausted(0))));
-        for d in deltas {
-            on_delta(d);
-        }
-        result
-    }
-}
 
 fn task_complete_completion(summary: &str) -> Completion {
     json_completion(
@@ -98,7 +33,7 @@ fn stream_sink_some_drives_dispatch() {
     let trace_path = dir.path().join("trace.jsonl");
     let mut sink = ferric_trace::JsonlSink::open(&trace_path, "s-1").unwrap();
 
-    let provider = ScriptedStreamingProvider::new(vec![(
+    let provider = ScriptedProvider::new(vec![(
         vec![
             StreamDelta::ToolNamed("task_complete".to_string()),
             StreamDelta::Text("done".to_string()),
@@ -112,25 +47,9 @@ fn stream_sink_some_drives_dispatch() {
 
     let outcome = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
             protocol: ferric_core::ActionProtocol::ConstrainedJson,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
             stream_sink: Some(&on_delta),
-            resume: None,
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         Some("do the task"),
@@ -160,7 +79,7 @@ fn streaming_retry_does_not_replay_failed_attempt_deltas() {
     let trace_path = dir.path().join("trace.jsonl");
     let mut sink = ferric_trace::JsonlSink::open(&trace_path, "s-2").unwrap();
 
-    let provider = ScriptedStreamingProvider::new(vec![
+    let provider = ScriptedProvider::new(vec![
         (
             vec![StreamDelta::Text("attempt1".to_string())],
             Err(ProviderError::RetryableBackend("timeout".to_string())),
@@ -177,25 +96,9 @@ fn streaming_retry_does_not_replay_failed_attempt_deltas() {
 
     let outcome = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
             protocol: ferric_core::ActionProtocol::ConstrainedJson,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
             stream_sink: Some(&on_delta),
-            resume: None,
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         Some("do the task"),

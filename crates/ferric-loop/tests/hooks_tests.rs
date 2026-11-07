@@ -1,11 +1,12 @@
+mod common;
+
+use ferric_core::ModelProfile;
 use ferric_core::hooks::HooksConfig;
 use ferric_core::policy_for;
-use ferric_core::{ActionProtocol, Message, ModelProfile, Role};
-use ferric_guard::{Provenance, SinkAction, SinkPolicy, Workspace};
+use ferric_guard::Workspace;
 use ferric_loop::{RunArgs, StopReason, run};
 use ferric_provider::Completion;
 use ferric_provider::MockProvider;
-use ferric_provider::SamplingParams;
 use ferric_tools::Registry;
 use ferric_trace::JsonlSink;
 use tempfile::tempdir;
@@ -38,16 +39,8 @@ fn test_hooks_success() {
     let registry = Registry::new();
 
     let completion = Completion {
-        message: Message {
-            role: Role::Assistant,
-            text: Some("test".to_string()),
-            tool_calls: vec![],
-            tool_call_id: None,
-            media: vec![],
-        },
         input_tokens: Some(10),
-        output_tokens: Some(10),
-        truncated: false,
+        ..common::text_completion("test")
     };
     let provider = MockProvider::new(vec![completion]);
 
@@ -65,25 +58,15 @@ fn test_hooks_success() {
     let mut sink = JsonlSink::open(&trace_path, "session1").unwrap();
 
     let args = RunArgs {
-        edit_approver: None,
-        cancel_flag: None,
-        provider: &provider,
-        registry: &registry,
-        workspace: &workspace,
-        policy: &policy,
-        protocol: ActionProtocol::NativeTools,
-        harness_policy: None,
-        sampling: SamplingParams::default(),
-        sleeper: &ferric_loop::ThreadSleeper,
         system_prompt: Some("system"),
-        prompt_lineage: None,
-        media: vec![],
-        stream_sink: None,
-        resume: None,
-        answer: None,
-        provenance: Provenance::Clean,
-        sink_policy: SinkPolicy::new(SinkAction::Deny),
         hooks: Some(hooks),
+        ..common::args(
+            &provider,
+            &registry,
+            &workspace,
+            &policy,
+            &ferric_loop::ThreadSleeper,
+        )
     };
 
     let outcome = futures_executor::block_on(run(args, &mut sink, Some("prompt"))).unwrap();
@@ -126,25 +109,15 @@ fn test_hooks_error() {
     let mut sink = JsonlSink::open(&trace_path, "session2").unwrap();
 
     let args = RunArgs {
-        edit_approver: None,
-        cancel_flag: None,
-        provider: &provider,
-        registry: &registry,
-        workspace: &workspace,
-        policy: &policy,
-        protocol: ActionProtocol::NativeTools,
-        harness_policy: None,
-        sampling: SamplingParams::default(),
-        sleeper: &ferric_loop::ThreadSleeper,
         system_prompt: Some("system"),
-        prompt_lineage: None,
-        media: vec![],
-        stream_sink: None,
-        resume: None,
-        answer: None,
-        provenance: Provenance::Clean,
-        sink_policy: SinkPolicy::new(SinkAction::Deny),
         hooks: Some(hooks),
+        ..common::args(
+            &provider,
+            &registry,
+            &workspace,
+            &policy,
+            &ferric_loop::ThreadSleeper,
+        )
     };
 
     let outcome = futures_executor::block_on(run(args, &mut sink, Some("prompt"))).unwrap();

@@ -507,7 +507,7 @@ impl McpServer {
                     );
                 }
             }
-            Some(state) if state.pending_input.is_some() => {
+            Some(state) if state.core.pending_input.is_some() => {
                 if prompt.is_some()
                     || !files.is_empty()
                     || answer

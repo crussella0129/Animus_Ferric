@@ -11,7 +11,6 @@ mod common;
 use common::*;
 use ferric_core::{ActionProtocol, Role};
 use ferric_loop::StopReason;
-use ferric_trace::{Event, ParsedEvent};
 use serde_json::json;
 
 #[test]
@@ -49,11 +48,11 @@ fn textxml_happy_path() {
     let ks = kinds(&result.records);
     assert_eq!(ks[0], "session_start");
     assert_eq!(ks[1], "policy_selected");
-    assert!(ks.contains(&"tool_call"));
-    assert!(ks.contains(&"tool_result"));
-    assert!(ks.contains(&"permission_check"));
+    assert!(ks.contains(&"tool_call".into()));
+    assert!(ks.contains(&"tool_result".into()));
+    assert!(ks.contains(&"permission_check".into()));
     // Honesty (ADR-022): TextXml sends no constraint, so NO ConstraintApplied.
-    assert!(!ks.contains(&"constraint_applied"));
+    assert!(!ks.contains(&"constraint_applied".into()));
     assert_eq!(session_end_reason(&result.records), "task_complete");
 }
 
@@ -93,8 +92,8 @@ fn textxml_terminator_intercepted() {
     // even though it now IS traced as a ToolCall (T-3902, sprint 39 — closes
     // the NativeTools summary-visibility gap for replay; harmless here since
     // TextXml already carried the summary in this turn's raw TurnEnd.text).
-    assert!(kinds(&result.records).contains(&"tool_call"));
-    assert!(!kinds(&result.records).contains(&"tool_result"));
+    assert!(kinds(&result.records).contains(&"tool_call".into()));
+    assert!(!kinds(&result.records).contains(&"tool_result".into()));
 }
 
 #[test]
@@ -134,13 +133,8 @@ fn textxml_repetition_guard() {
         |_| {},
     );
     assert_eq!(result.outcome.stop, StopReason::RepetitionGuard);
-    let guard_actions: Vec<String> = result
-        .records
-        .iter()
-        .filter_map(|r| match &r.event {
-            ParsedEvent::Known(Event::RepetitionGuard { action }) => Some(action.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(guard_actions, vec!["warned", "stopped"]);
+    assert_eq!(
+        guard_actions(&result.records, "repetition_guard"),
+        vec!["warned", "stopped"]
+    );
 }

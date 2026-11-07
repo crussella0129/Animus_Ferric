@@ -5,25 +5,7 @@ mod common;
 use common::*;
 use ferric_core::Role;
 use ferric_loop::StopReason;
-use ferric_trace::{Event, ParsedEvent};
 use serde_json::json;
-
-fn same_calls() -> Vec<(&'static str, &'static str, serde_json::Value)> {
-    vec![
-        ("a", "list_dir", json!({"path": "."})),
-        ("b", "read_file", json!({"path": "x.txt"})),
-    ]
-}
-
-fn guard_actions(records: &[ferric_trace::TraceRecord]) -> Vec<String> {
-    records
-        .iter()
-        .filter_map(|r| match &r.event {
-            ParsedEvent::Known(Event::RepetitionGuard { action }) => Some(action.clone()),
-            _ => None,
-        })
-        .collect()
-}
 
 #[test]
 fn repetition_warn_then_stop() {
@@ -49,7 +31,10 @@ fn repetition_warn_then_stop() {
         },
     );
     assert_eq!(result.outcome.stop, StopReason::RepetitionGuard);
-    assert_eq!(guard_actions(&result.records), vec!["warned", "stopped"]);
+    assert_eq!(
+        guard_actions(&result.records, "repetition_guard"),
+        vec!["warned", "stopped"]
+    );
     assert_eq!(session_end_reason(&result.records), "repetition_guard");
 }
 
@@ -72,7 +57,10 @@ fn repetition_resets_on_change() {
     );
     assert_eq!(result.outcome.stop, StopReason::FinalText);
     // Exactly one warning, never a stop.
-    assert_eq!(guard_actions(&result.records), vec!["warned"]);
+    assert_eq!(
+        guard_actions(&result.records, "repetition_guard"),
+        vec!["warned"]
+    );
 }
 
 #[test]
@@ -90,5 +78,5 @@ fn order_change_is_not_a_repeat() {
         |_| {},
     );
     assert_eq!(result.outcome.stop, StopReason::FinalText);
-    assert!(guard_actions(&result.records).is_empty());
+    assert!(guard_actions(&result.records, "repetition_guard").is_empty());
 }

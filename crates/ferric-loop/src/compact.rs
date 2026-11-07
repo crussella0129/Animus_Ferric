@@ -135,7 +135,7 @@ async fn summarize_transcript(
         tools: Vec::new(),
         constraint: None,
     };
-    let completion = complete_with_backoff(provider, request, sleeper, cancel_flag)
+    let completion = complete_with_backoff(provider, request, sleeper, None, cancel_flag)
         .await
         .map_err(|e| FerricError::Other(e.to_string()))?;
     completion

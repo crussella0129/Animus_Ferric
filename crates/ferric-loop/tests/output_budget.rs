@@ -2,6 +2,8 @@
 //! independent compactor. The 24 KiB provider below is deliberately scripted:
 //! its 4096-token threshold is NOT a tokenizer measurement or real-model claim.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,14 +14,14 @@ use ferric_core::{
     ActionProtocol, HarnessPolicy, Message, ModelProfile, OutputBudget, OutputBudgetSource, Role,
     RunPolicy, policy_for, resolve_output_budget,
 };
-use ferric_guard::{Provenance, SinkPolicy, Workspace};
+use ferric_guard::Workspace;
 use ferric_loop::{EditApprover, EditPreview, LoopOutcome, RunArgs, Sleeper, StopReason, run};
 use ferric_provider::{
     Capabilities, Completion, CompletionRequest, MockProvider, Provider, ProviderError,
     SamplingParams,
 };
 use ferric_tools::{Registry, register_builtin_tools};
-use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader, TraceRecord};
+use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceRecord};
 use serde_json::json;
 
 const DECLARED_CONTEXT: u32 = 32_768;
@@ -104,35 +106,18 @@ fn run_fixture(
     // loop's existing non-repository snapshot failure remains a traced note.
     let outcome = futures_executor::block_on(run(
         RunArgs {
-            provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy,
             protocol: ActionProtocol::ConstrainedJson,
             harness_policy: Some(harness),
             sampling,
-            sleeper: &NoRetrySleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            cancel_flag: None,
-            provenance: Provenance::Clean,
-            sink_policy: SinkPolicy::deny(),
-            hooks: None,
             edit_approver: approver,
+            ..common::args(provider, &registry, &workspace, policy, &NoRetrySleeper)
         },
         &mut sink,
         Some("perform the scripted workspace action"),
     ))
     .unwrap();
     drop(sink);
-    let records = TraceReader::open(trace)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = common::read_records(trace);
     Capture { outcome, records }
 }
 

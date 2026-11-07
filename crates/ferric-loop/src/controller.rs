@@ -121,10 +121,6 @@ impl ControllerState {
         })
     }
 
-    pub fn policy(&self) -> HarnessPolicy {
-        self.policy
-    }
-
     pub fn mutation_epoch(&self) -> u64 {
         self.mutation_epoch
     }
@@ -137,7 +133,8 @@ impl ControllerState {
         &self.passed_checks
     }
 
-    pub fn file_evidence(&self, path: &str) -> Option<&FileEvidenceV1> {
+    #[cfg(test)]
+    pub(crate) fn file_evidence(&self, path: &str) -> Option<&FileEvidenceV1> {
         self.file_evidence.get(path)
     }
 
@@ -147,22 +144,6 @@ impl ControllerState {
 
     pub fn attempts_for(&self, name: &str) -> u32 {
         self.attempts.get(name).copied().unwrap_or(0)
-    }
-
-    pub fn last_failed_check(&self) -> Option<&FailedCheckV1> {
-        self.last_failed_check.as_ref()
-    }
-
-    pub fn changed_paths(&self) -> impl Iterator<Item = &str> {
-        self.changed_paths.iter().map(String::as_str)
-    }
-
-    pub fn repair_paths(&self) -> impl Iterator<Item = &str> {
-        self.repair_paths.iter().map(String::as_str)
-    }
-
-    pub fn repair_observation_after_turn(&self) -> Option<u32> {
-        self.repair_observation_after_turn
     }
 
     /// Record one model-visible observation. File pages accumulate only while
@@ -1726,30 +1707,8 @@ fn is_evidence_policy(policy: HarnessPolicy) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{full_file, modified, sha};
     use ferric_trace::PathEffectV1;
-
-    fn sha(byte: char) -> String {
-        byte.to_string().repeat(64)
-    }
-
-    fn full_file(path: &str, digest: &str, lines: u64) -> ObservationV1 {
-        ObservationV1 {
-            version: CONTROLLER_RECORD_VERSION,
-            detail: ObservationDetailV1::File(FileObservationV1 {
-                path: path.to_string(),
-                sha256: digest.to_string(),
-                total_bytes: lines.saturating_mul(2),
-                total_lines: lines,
-                requested_range: None,
-                returned_range: (lines > 0).then_some(LineRangeV1 {
-                    start: 1,
-                    end: lines,
-                }),
-                complete: true,
-                model_truncated: false,
-            }),
-        }
-    }
 
     fn partial_file(path: &str, digest: &str, lines: u64, start: u64, end: u64) -> ObservationV1 {
         ObservationV1 {
@@ -1795,21 +1754,6 @@ mod tests {
                 after_sha256: Some(after.to_string()),
                 after_bytes: Some(4),
                 after_lines: Some(2),
-            }],
-        }
-    }
-
-    fn modified(path: &str, before: &str, after: &str, epoch: u64) -> WorkspaceEffectV1 {
-        WorkspaceEffectV1 {
-            version: CONTROLLER_RECORD_VERSION,
-            mutation_epoch: epoch,
-            effects: vec![PathEffectV1 {
-                path: path.to_string(),
-                kind: PathEffectKind::Modified,
-                before_sha256: Some(before.to_string()),
-                after_sha256: Some(after.to_string()),
-                after_bytes: Some(6),
-                after_lines: Some(3),
             }],
         }
     }
@@ -2168,7 +2112,7 @@ mod tests {
         state.validate_block(1, &global_block).unwrap();
 
         state.apply_observation(1, &navigation()).unwrap();
-        assert_eq!(state.repair_observation_after_turn(), Some(1));
+        assert_eq!(state.checkpoint().repair_observation_after_turn, Some(1));
         assert_eq!(
             state
                 .mutation_block(1, &[MutationRequirement::absent("new.rs")])
@@ -2205,7 +2149,7 @@ mod tests {
         state
             .apply_verification_check(2, &check("unit", 2, 2, VerificationOutcome::Passed))
             .unwrap();
-        assert!(state.last_failed_check().is_none());
+        assert!(state.checkpoint().last_failed_check.is_none());
         assert_eq!(state.attempts_for("unit"), 2);
     }
 

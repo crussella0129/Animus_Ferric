@@ -4,12 +4,12 @@
 mod common;
 
 use common::*;
-use ferric_core::{ActionProtocol, Message, Role, ToolCall};
+use ferric_core::{Message, Role, ToolCall};
 use ferric_guard::Workspace;
-use ferric_loop::{ReplayedState, RunArgs, StopReason, replay, run};
-use ferric_provider::{Completion, MockProvider, SamplingParams};
+use ferric_loop::{RunArgs, StopReason, replay, run};
+use ferric_provider::{Completion, MockProvider};
 use ferric_tools::{Registry, register_builtin_tools};
-use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader};
+use ferric_trace::{Event, JsonlSink, ParsedEvent};
 
 /// A `NativeTools` tool-call completion with an explicit `input_tokens`
 /// (the `common::tool_completion` helper hardcodes 60, too small to ever
@@ -21,20 +21,8 @@ fn tool_completion_with_tokens(
     input_tokens: u32,
 ) -> Completion {
     Completion {
-        message: Message {
-            role: Role::Assistant,
-            text: None,
-            tool_calls: vec![ToolCall {
-                id: id.to_string(),
-                name: name.to_string(),
-                args,
-            }],
-            tool_call_id: None,
-            media: Vec::new(),
-        },
         input_tokens: Some(input_tokens),
-        output_tokens: Some(15),
-        truncated: false,
+        ..tool_completion(vec![(id, name, args)])
     }
 }
 
@@ -51,22 +39,9 @@ fn tool_completion_with_text_and_tokens(
     text: &str,
     input_tokens: u32,
 ) -> Completion {
-    Completion {
-        message: Message {
-            role: Role::Assistant,
-            text: Some(text.to_string()),
-            tool_calls: vec![ToolCall {
-                id: id.to_string(),
-                name: name.to_string(),
-                args,
-            }],
-            tool_call_id: None,
-            media: Vec::new(),
-        },
-        input_tokens: Some(input_tokens),
-        output_tokens: Some(15),
-        truncated: false,
-    }
+    let mut completion = tool_completion_with_tokens(id, name, args, input_tokens);
+    completion.message.text = Some(text.to_string());
+    completion
 }
 
 fn prompt_assembled_for_turn(records: &[ferric_trace::TraceRecord], turn: u32) -> (u32, u64) {
@@ -146,37 +121,14 @@ fn compaction_triggers_and_shrinks_next_prompt_assembled() {
     ]);
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
-        RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
-        },
+        common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper),
         &mut sink,
         Some("write four files"),
     ))
     .unwrap();
     assert_eq!(outcome.stop, StopReason::TaskComplete);
 
-    let records: Vec<_> = TraceReader::open(&trace_path)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = read_records(&trace_path);
 
     let history_compacted_count = records
         .iter()
@@ -244,37 +196,14 @@ fn history_compacted_traced_after_triggering_turn_start() {
     ]);
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
-        RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
-        },
+        common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper),
         &mut sink,
         Some("write four files"),
     ))
     .unwrap();
     assert_eq!(outcome.stop, StopReason::TaskComplete);
 
-    let records: Vec<_> = TraceReader::open(&trace_path)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = read_records(&trace_path);
 
     let turn_start_4 = records
         .iter()
@@ -311,8 +240,8 @@ fn resume_only_folds_new_post_resume_turns() {
     let trace_path = dir.path().join("trace.jsonl");
     let mut sink = JsonlSink::open(&trace_path, "compact-resume-1").unwrap();
 
-    let replayed = ReplayedState {
-        messages: vec![
+    let replayed = legacy_seed(
+        vec![
             Message::system("You are Ferric."),
             Message::user_with_media("do the task", Vec::new()),
             Message {
@@ -328,27 +257,10 @@ fn resume_only_folds_new_post_resume_turns() {
             },
             Message::tool_result("tc-old", "wrote old.txt"),
         ],
-        turns: 1,
-        next_turn: 1,
-        last_text: None,
-        protocol: ActionProtocol::NativeTools,
-        harness_policy: ferric_core::HarnessPolicy::Legacy,
-        truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
-        source_session: "orig".to_string(),
-        workspace: dir.path().to_path_buf(),
-        head_len: 4,
-        committed_turn_starts: Vec::new(),
-        guard_history: Vec::new(),
-        nudged_for_no_action: false,
-        truncated_once: false,
-        last_input_tokens: None,
-        pending_input: None,
-        mutation_epoch: 0,
-        passed_checks: std::collections::BTreeMap::new(),
-        pause_reason: None,
-        controller_checkpoint: None,
-    };
-    let replayed_prefix = replayed.messages.clone();
+        1,
+        dir.path(),
+    );
+    let replayed_prefix = replayed.core.messages.clone();
 
     let provider = MockProvider::new(vec![
         tool_completion_with_tokens(
@@ -379,25 +291,8 @@ fn resume_only_folds_new_post_resume_turns() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         None,
@@ -432,31 +327,14 @@ fn resume_seeds_compactor_numbering_consistently() {
 
     // Resume with turns already at 7 (as if 7 turns happened in the
     // original session).
-    let replayed = ReplayedState {
-        messages: vec![
+    let replayed = legacy_seed(
+        vec![
             Message::system("You are Ferric."),
             Message::user_with_media("do the task", Vec::new()),
         ],
-        turns: 7,
-        next_turn: 7,
-        last_text: None,
-        protocol: ActionProtocol::NativeTools,
-        harness_policy: ferric_core::HarnessPolicy::Legacy,
-        truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
-        source_session: "orig".to_string(),
-        workspace: dir.path().to_path_buf(),
-        head_len: 2,
-        committed_turn_starts: Vec::new(),
-        guard_history: Vec::new(),
-        nudged_for_no_action: false,
-        truncated_once: false,
-        last_input_tokens: None,
-        pending_input: None,
-        mutation_epoch: 0,
-        passed_checks: std::collections::BTreeMap::new(),
-        pause_reason: None,
-        controller_checkpoint: None,
-    };
+        7,
+        dir.path(),
+    );
 
     let provider = MockProvider::new(vec![
         tool_completion_with_tokens(
@@ -487,25 +365,8 @@ fn resume_seeds_compactor_numbering_consistently() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         None,
@@ -513,10 +374,7 @@ fn resume_seeds_compactor_numbering_consistently() {
     .unwrap();
     assert_eq!(outcome.stop, StopReason::TaskComplete);
 
-    let records: Vec<_> = TraceReader::open(&trace_path)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = read_records(&trace_path);
     let through_turn = records
         .iter()
         .find_map(|r| match &r.event {
@@ -583,27 +441,13 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
     ]);
     let sleeper1 = RecordingSleeper::new();
     let first = futures_executor::block_on(run(
-        RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider1,
-            registry: &registry1,
-            workspace: &workspace1,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper1,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
-        },
+        common::args(
+            &provider1,
+            &registry1,
+            &workspace1,
+            &nano_policy(),
+            &sleeper1,
+        ),
         &mut sink1,
         Some("write four files"),
     ))
@@ -625,12 +469,12 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
     // + turn2(2) + turn3(2) = 7. Turn 4 never got a TurnEnd (dangling,
     // discarded) — contributes nothing.
     assert_eq!(
-        replayed.messages.len(),
+        replayed.core.messages.len(),
         7,
         "head(2) + summary(1) + preserved turns 2-3 (2 each) — turns 0-1 folded away, turn 4 dangling"
     );
     assert!(
-        replayed.messages.iter().any(|m| m
+        replayed.core.messages.iter().any(|m| m
             .text
             .as_deref()
             .is_some_and(|t| t.starts_with("[compacted history]"))),
@@ -650,25 +494,14 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
     let sleeper2 = RecordingSleeper::new();
     let second = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider2,
-            registry: &registry2,
-            workspace: &workspace1,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper2,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            hooks: None,
+            ..common::args(
+                &provider2,
+                &registry2,
+                &workspace1,
+                &nano_policy(),
+                &sleeper2,
+            )
         },
         &mut sink2,
         None,

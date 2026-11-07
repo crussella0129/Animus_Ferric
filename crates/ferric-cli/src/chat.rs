@@ -28,7 +28,7 @@ use ferric_core::{HarnessPolicy, Message};
 use ferric_guard::Workspace;
 use ferric_loop::ReplayedState;
 use ferric_provider::{Completion, CompletionRequest, MockProvider, Provider, SamplingParams};
-use ferric_trace::{Event, JsonlSink};
+use ferric_trace::{Event, JsonlSink, RECOVERY_CHECKPOINT_VERSION, RecoveryCheckpointV1};
 
 use crate::backend::BackendOpts;
 use crate::query::{
@@ -187,8 +187,8 @@ pub(crate) fn talk_request(history: &[Message], sampling: &SamplingParams) -> Co
 }
 
 /// A `ReplayedState` seed for a `/do` escalation: the conversation so far
-/// becomes the resumed history; `turns: 0` gives the escalated run its own fresh
-/// turn budget; `protocol` matches the session config; `source_session` links
+/// becomes the resumed history; `next_turn: 0` numbers the escalated run's
+/// turns from zero (every run gets its own fresh turn budget); `protocol` matches the session config; `source_session` links
 /// the escalation trace back to the chat session (ADR-052 / plan-critic C-007).
 pub(crate) fn escalation_seed(
     history: &[Message],
@@ -197,10 +197,21 @@ pub(crate) fn escalation_seed(
     workspace: &std::path::Path,
 ) -> ReplayedState {
     ReplayedState {
-        messages: history.to_vec(),
-        turns: 0,
-        next_turn: 0,
-        last_text: None,
+        core: RecoveryCheckpointV1 {
+            version: RECOVERY_CHECKPOINT_VERSION,
+            messages: history.to_vec(),
+            next_turn: 0,
+            last_text: None,
+            head_len: history.len(),
+            committed_turn_starts: Vec::new(),
+            guard_history: Vec::new(),
+            nudged_for_no_action: false,
+            truncated_once: false,
+            last_input_tokens: None,
+            pending_input: None,
+            mutation_epoch: 0,
+            passed_checks: std::collections::BTreeMap::new(),
+        },
         protocol: config.protocol,
         // Chat escalation is a synthetic legacy resume seed, not a replayed
         // evidence continuation. Evidence talk remains available, but `/do`
@@ -210,15 +221,6 @@ pub(crate) fn escalation_seed(
         truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
         source_session: chat_session.to_string(),
         workspace: workspace.to_path_buf(),
-        head_len: history.len(),
-        committed_turn_starts: Vec::new(),
-        guard_history: Vec::new(),
-        nudged_for_no_action: false,
-        truncated_once: false,
-        last_input_tokens: None,
-        pending_input: None,
-        mutation_epoch: 0,
-        passed_checks: std::collections::BTreeMap::new(),
         pause_reason: None,
         controller_checkpoint: None,
     }
@@ -789,12 +791,15 @@ mod tests {
         let workspace = tempfile::tempdir().unwrap();
         let seed = escalation_seed(&history, &config, "chat-123", workspace.path());
         assert_eq!(
-            seed.messages, history,
+            seed.core.messages, history,
             "the full conversation seeds the run"
         );
         assert_eq!(seed.protocol, config.protocol);
         assert_eq!(seed.source_session, "chat-123");
-        assert_eq!(seed.turns, 0, "a fresh turn budget for the escalated run");
+        assert_eq!(
+            seed.core.next_turn, 0,
+            "the escalated run numbers turns from 0"
+        );
         // The mock's caps → NativeTools/TextXml; confirm it's a real protocol.
         assert!(matches!(
             seed.protocol,

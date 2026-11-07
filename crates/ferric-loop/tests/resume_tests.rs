@@ -10,39 +10,22 @@ use ferric_loop::{
     ControllerState, ReplayError, ReplayedState, RunArgs, StopReason, TraceStructure, replay, run,
     validate_resume_target,
 };
-use ferric_provider::{MockProvider, SamplingParams};
+use ferric_provider::MockProvider;
 use ferric_tools::{NamedCheck, Registry, register_builtin_tools, register_run_checks};
 use ferric_trace::{
     CONTROLLER_RECORD_VERSION, Event, FileObservationV1, JsonlSink, LineRangeV1,
-    ObservationDetailV1, ObservationV1, ParsedEvent, TraceReader,
+    ObservationDetailV1, ObservationV1, ParsedEvent,
 };
 
-fn base_replayed(turns: u32, workspace: &std::path::Path) -> ReplayedState {
-    ReplayedState {
-        messages: vec![
+fn base_replayed(next_turn: u32, workspace: &std::path::Path) -> ReplayedState {
+    legacy_seed(
+        vec![
             Message::system("You are Ferric."),
             Message::user_with_media("do the task", Vec::new()),
         ],
-        turns,
-        next_turn: turns,
-        last_text: None,
-        protocol: ActionProtocol::NativeTools,
-        harness_policy: ferric_core::HarnessPolicy::Legacy,
-        truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
-        source_session: "orig-session".to_string(),
-        workspace: workspace.to_path_buf(),
-        head_len: 2,
-        committed_turn_starts: Vec::new(),
-        guard_history: Vec::new(),
-        nudged_for_no_action: false,
-        truncated_once: false,
-        last_input_tokens: None,
-        pending_input: None,
-        mutation_epoch: 0,
-        passed_checks: std::collections::BTreeMap::new(),
-        pause_reason: None,
-        controller_checkpoint: None,
-    }
+        next_turn,
+        workspace,
+    )
 }
 
 fn inert_required_check() -> NamedCheck {
@@ -107,25 +90,8 @@ fn unavailable_policies_write_no_event_and_dispatch_no_tool() {
 
     let error = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
             harness_policy: Some(policy),
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         Some("write a file"),
@@ -160,25 +126,8 @@ fn evidence_resume_rejects_required_check_drift_before_trace_or_dispatch() {
 
     let error = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         None,
@@ -226,25 +175,14 @@ fn resume_rebuilds_failure_streak_with_blocked_completion_as_control() {
     original_policy.max_turns = 3;
     let original = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &original_provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &original_policy,
-            protocol: ActionProtocol::NativeTools,
             harness_policy: Some(HarnessPolicy::Legacy),
-            sampling: SamplingParams::default(),
-            sleeper: &original_sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
+            ..common::args(
+                &original_provider,
+                &registry,
+                &workspace,
+                &original_policy,
+                &original_sleeper,
+            )
         },
         &mut original_sink,
         Some("complete after verification"),
@@ -255,6 +193,7 @@ fn resume_rebuilds_failure_streak_with_blocked_completion_as_control() {
 
     let replayed = replay(&original_trace).unwrap();
     let completion_turn = replayed
+        .core
         .guard_history
         .iter()
         .find(|guarded| {
@@ -289,25 +228,14 @@ fn resume_rebuilds_failure_streak_with_blocked_completion_as_control() {
     resumed_policy.max_turns = 2;
     let resumed = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &resumed_provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &resumed_policy,
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &resumed_sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            hooks: None,
+            ..common::args(
+                &resumed_provider,
+                &registry,
+                &workspace,
+                &resumed_policy,
+                &resumed_sleeper,
+            )
         },
         &mut resumed_sink,
         None,
@@ -345,25 +273,14 @@ fn resume_preserves_failure_streak_across_a_controller_only_turn() {
     original_policy.max_turns = 2;
     let original = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &original_provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &original_policy,
-            protocol: ActionProtocol::NativeTools,
             harness_policy: Some(HarnessPolicy::Evidence),
-            sampling: SamplingParams::default(),
-            sleeper: &original_sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
+            ..common::args(
+                &original_provider,
+                &registry,
+                &workspace,
+                &original_policy,
+                &original_sleeper,
+            )
         },
         &mut original_sink,
         Some("update existing.txt"),
@@ -374,6 +291,7 @@ fn resume_preserves_failure_streak_across_a_controller_only_turn() {
 
     let replayed = replay(&original_trace).unwrap();
     let blocked = replayed
+        .core
         .guard_history
         .iter()
         .find(|guarded| {
@@ -411,25 +329,14 @@ fn resume_preserves_failure_streak_across_a_controller_only_turn() {
     resumed_policy.max_turns = 3;
     let resumed = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &resumed_provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &resumed_policy,
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &resumed_sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            hooks: None,
+            ..common::args(
+                &resumed_provider,
+                &registry,
+                &workspace,
+                &resumed_policy,
+                &resumed_sleeper,
+            )
         },
         &mut resumed_sink,
         None,
@@ -477,25 +384,14 @@ fn resume_does_not_reset_failure_streak_for_predispatch_task_complete_stop() {
     original_policy.max_turns = 12;
     let original = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &original_provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &original_policy,
-            protocol: ActionProtocol::NativeTools,
             harness_policy: Some(HarnessPolicy::Legacy),
-            sampling: SamplingParams::default(),
-            sleeper: &original_sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
+            ..common::args(
+                &original_provider,
+                &registry,
+                &workspace,
+                &original_policy,
+                &original_sleeper,
+            )
         },
         &mut original_sink,
         Some("complete after verification"),
@@ -505,7 +401,7 @@ fn resume_does_not_reset_failure_streak_for_predispatch_task_complete_stop() {
     drop(original_sink);
 
     let replayed = replay(&original_trace).unwrap();
-    let stopped = replayed.guard_history.last().unwrap();
+    let stopped = replayed.core.guard_history.last().unwrap();
     assert!(
         stopped
             .calls
@@ -538,25 +434,14 @@ fn resume_does_not_reset_failure_streak_for_predispatch_task_complete_stop() {
     resumed_policy.max_turns = 4;
     let resumed = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &resumed_provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &resumed_policy,
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &resumed_sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            hooks: None,
+            ..common::args(
+                &resumed_provider,
+                &registry,
+                &workspace,
+                &resumed_policy,
+                &resumed_sleeper,
+            )
         },
         &mut resumed_sink,
         None,
@@ -604,25 +489,8 @@ fn live_evidence_resume_injects_byte_identical_stale_recovery_packet_and_verifie
 
     let outcome = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         None,
@@ -631,10 +499,7 @@ fn live_evidence_resume_injects_byte_identical_stale_recovery_packet_and_verifie
     assert_eq!(outcome.stop, StopReason::FinalText);
     drop(sink);
 
-    let records = TraceReader::open(&trace_path)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = read_records(&trace_path);
     let resumed_base = records
         .iter()
         .find_map(|record| match &record.event {
@@ -707,25 +572,8 @@ fn resume_some_continues_from_replayed_state() {
     let sleeper = RecordingSleeper::new();
     let outcome = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(base_replayed(5, dir.path())),
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         None,
@@ -736,10 +584,7 @@ fn resume_some_continues_from_replayed_state() {
     // Continues from the replayed count (5), not reset to 0.
     assert_eq!(outcome.turns, 6);
 
-    let records: Vec<_> = TraceReader::open(&trace_path)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = read_records(&trace_path);
     let session_start = records
         .iter()
         .find_map(|r| match &r.event {
@@ -771,25 +616,8 @@ fn resume_some_with_extra_prompt_appends_one_user_message() {
     let sleeper = RecordingSleeper::new();
     futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(base_replayed(0, dir.path())),
-            answer: None,
-            hooks: None,
+            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
         },
         &mut sink,
         Some("actually, also check b.txt"),
@@ -820,27 +648,7 @@ fn resume_none_prompt_none_is_an_error_not_a_panic() {
     let provider = MockProvider::new(vec![text_completion("unused")]);
     let sleeper = RecordingSleeper::new();
     let result = futures_executor::block_on(run(
-        RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
-        },
+        common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper),
         &mut sink,
         None,
     ));
@@ -876,27 +684,13 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
     ]);
     let sleeper1 = RecordingSleeper::new();
     let first = futures_executor::block_on(run(
-        RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider1,
-            registry: &registry1,
-            workspace: &workspace1,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper1,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            hooks: None,
-        },
+        common::args(
+            &provider1,
+            &registry1,
+            &workspace1,
+            &nano_policy(),
+            &sleeper1,
+        ),
         &mut sink1,
         Some("write a.txt"),
     ))
@@ -933,25 +727,14 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
     let sleeper2 = RecordingSleeper::new();
     let second = futures_executor::block_on(run(
         RunArgs {
-            edit_approver: None,
-            cancel_flag: None,
-            sink_policy: ferric_guard::SinkPolicy::deny(),
-            provenance: ferric_guard::Provenance::Clean,
-            provider: &provider2,
-            registry: &registry2,
-            workspace: &workspace1,
-            policy: &nano_policy(),
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: None,
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper2,
-            system_prompt: None,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
             resume: Some(replayed),
-            answer: None,
-            hooks: None,
+            ..common::args(
+                &provider2,
+                &registry2,
+                &workspace1,
+                &nano_policy(),
+                &sleeper2,
+            )
         },
         &mut sink2,
         None,

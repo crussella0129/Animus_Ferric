@@ -24,6 +24,8 @@ mod projector;
 mod repetition;
 mod replay;
 mod run;
+#[cfg(test)]
+mod test_support;
 mod trace_structure;
 pub mod vcs;
 

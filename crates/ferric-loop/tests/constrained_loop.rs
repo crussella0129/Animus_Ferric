@@ -52,9 +52,9 @@ fn constrained_json_dispatches_tool() {
 
     let ks = kinds(&result.records);
     // Honesty (ADR-022): ConstrainedJson really applies a constraint → event.
-    assert!(ks.contains(&"constraint_applied"));
-    assert!(ks.contains(&"tool_call"));
-    assert!(ks.contains(&"tool_result"));
+    assert!(ks.contains(&"constraint_applied".into()));
+    assert!(ks.contains(&"tool_call".into()));
+    assert!(ks.contains(&"tool_result".into()));
     assert_eq!(session_end_reason(&result.records), "task_complete");
 }
 
@@ -130,8 +130,8 @@ fn plan_mode_dispatches_read_tools_and_terminates() {
     assert_eq!(result.outcome.final_text.as_deref(), Some("found foo"));
 
     let ks = kinds(&result.records);
-    assert!(ks.contains(&"constraint_applied"));
-    assert!(ks.contains(&"tool_call"));
-    assert!(ks.contains(&"tool_result"));
+    assert!(ks.contains(&"constraint_applied".into()));
+    assert!(ks.contains(&"tool_call".into()));
+    assert!(ks.contains(&"tool_result".into()));
     assert_eq!(session_end_reason(&result.records), "plan_submitted");
 }

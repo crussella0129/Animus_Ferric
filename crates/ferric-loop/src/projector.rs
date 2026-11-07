@@ -1,8 +1,20 @@
-use ferric_core::{ActionProtocol, Message, Role, ToolCall, UserInputRequest};
+use ferric_core::{ActionProtocol, FerricError, Message, Role, ToolCall, UserInputRequest};
 use ferric_trace::{
-    Event, GuardTurn, RECOVERY_CHECKPOINT_VERSION, RecoveryCheckpointV1, TurnBoundary,
+    Event, GuardTurn, JsonlSink, RECOVERY_CHECKPOINT_VERSION, RecoveryCheckpointV1, TurnBoundary,
     VerificationOutcome,
 };
+
+/// Write `event` to the durable trace, then project it. The trace is the
+/// source of truth (ADR-002), so the projector only ever sees durable events.
+pub(crate) fn record_event(
+    event: Event,
+    sink: &mut JsonlSink,
+    projector: &mut TraceProjector,
+) -> Result<(), FerricError> {
+    sink.write_event(event.clone())?;
+    projector.step(&event);
+    Ok(())
+}
 
 // Formatting functions extracted from run.rs
 pub(crate) fn no_action_nudge(protocol: ActionProtocol) -> &'static str {
@@ -159,7 +171,6 @@ impl PendingTurn {
 pub struct TraceProjector {
     pub protocol: Option<ActionProtocol>,
     pub messages: Vec<Message>,
-    pub turns: u32,
     pub last_text: Option<String>,
     pub pending: Option<PendingTurn>,
     pub head_len: usize,
@@ -188,7 +199,6 @@ impl TraceProjector {
         Self {
             protocol: None,
             messages: Vec::new(),
-            turns: 0,
             last_text: None,
             pending: None,
             head_len: 0,
@@ -228,7 +238,6 @@ impl TraceProjector {
             }
             Event::RecoveryCheckpoint { state } if state.version == RECOVERY_CHECKPOINT_VERSION => {
                 self.messages = state.messages.clone();
-                self.turns = state.next_turn;
                 self.next_turn = state.next_turn;
                 self.last_text = state.last_text.clone();
                 self.head_len = state.head_len;
@@ -489,17 +498,22 @@ impl TraceProjector {
                 self.committed_turn_starts
                     .push((turn_num, self.messages.len()));
                 self.messages.extend(msgs);
-                self.turns += 1;
                 self.next_turn = self.next_turn.max(turn_num.saturating_add(1));
                 if truncated {
                     self.truncated_once = true;
                 }
-                // A truncated turn gets the truncation nudge; the live loop
-                // does not spend the empty-completion nudge on it.
+                // A truncated constrained turn gets the truncation nudge; the
+                // live loop does not spend the empty-completion nudge on it.
+                // Other protocols have no truncation path and do spend it.
+                let truncation_nudge = truncated
+                    && matches!(
+                        proto,
+                        ActionProtocol::ConstrainedJson | ActionProtocol::Plan
+                    );
                 if proposed.is_empty()
                     && stop_reason.is_none()
                     && !completion_was_blocked
-                    && !truncated
+                    && !truncation_nudge
                 {
                     self.nudged_for_no_action = true;
                 }

@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex};
 
 use common::*;
 use ferric_loop::StopReason;
-use serde_json::json;
 use tracing_subscriber::fmt::MakeWriter;
 
 /// A `MakeWriter` that appends every formatted line into a shared buffer the
@@ -49,13 +48,6 @@ fn capture_warns(body: impl FnOnce()) -> String {
         .finish();
     tracing::subscriber::with_default(subscriber, body);
     String::from_utf8(buf.lock().unwrap().clone()).unwrap()
-}
-
-fn same_calls() -> Vec<(&'static str, &'static str, serde_json::Value)> {
-    vec![
-        ("a", "list_dir", json!({"path": "."})),
-        ("b", "read_file", json!({"path": "x.txt"})),
-    ]
 }
 
 #[test]

@@ -9,27 +9,28 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use ferric_core::{ActionProtocol, FerricError, HarnessPolicy, Message, UserInputRequest};
+use ferric_core::{ActionProtocol, FerricError, HarnessPolicy};
 use ferric_trace::{
-    ControllerCheckpointV1, Event, GuardTurn, ParsedEvent, RECOVERY_CHECKPOINT_VERSION,
-    RecoveryCheckpointV1, TraceReadMode, TraceReader,
+    ControllerCheckpointV1, Event, ParsedEvent, RECOVERY_CHECKPOINT_VERSION, RecoveryCheckpointV1,
+    TraceReadMode, TraceReader,
 };
 use thiserror::Error;
 
 use crate::ControllerState;
+use crate::StopReason;
 use crate::projector::TraceProjector;
-use crate::trace_structure::{TraceStructure, validate_recovery_checkpoint_shape};
+use crate::trace_structure::{
+    TraceStructure, is_success_reason, validate_recovery_checkpoint_shape,
+};
 
 /// Everything `run()` needs to seed a continuing turn loop.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplayedState {
-    pub messages: Vec<Message>,
-    /// Total committed turns retained for caller compatibility.
-    pub turns: u32,
-    /// Absolute id to assign to the next turn. A resumed run receives a fresh
-    /// per-run budget; this value is not itself a budget counter.
-    pub next_turn: u32,
-    pub last_text: Option<String>,
+    /// The projected core state: model history, the absolute next turn id (a
+    /// resumed run still receives a fresh per-run budget), guard history, and
+    /// the evidence coordinates. `run()` writes it as the continuing trace's
+    /// recovery checkpoint.
+    pub core: RecoveryCheckpointV1,
     pub protocol: ActionProtocol,
     /// Concrete harness policy recorded by the source trace. Traces written
     /// before the field existed deserialize it as `Legacy`.
@@ -40,15 +41,6 @@ pub struct ReplayedState {
     /// `SessionStart.resumed_from`.
     pub source_session: String,
     pub workspace: PathBuf,
-    pub head_len: usize,
-    pub committed_turn_starts: Vec<(u32, usize)>,
-    pub guard_history: Vec<GuardTurn>,
-    pub nudged_for_no_action: bool,
-    pub truncated_once: bool,
-    pub last_input_tokens: Option<u32>,
-    pub pending_input: Option<UserInputRequest>,
-    pub mutation_epoch: u64,
-    pub passed_checks: std::collections::BTreeMap<String, u64>,
     /// The intentional incomplete stop. Evidence traces use `process_crash`
     /// for an otherwise unclassified abrupt EOF; legacy abrupt EOFs retain
     /// `None` for compatibility.
@@ -111,13 +103,20 @@ pub enum ReplayError {
     },
 }
 
-/// Reconcile the one additive count introduced after recovery checkpoint v1
-/// without weakening checkpoint anchoring. Only an actually omitted legacy
-/// zero may inherit a nonzero count proven by typed `ControllerBlocked`
-/// events already projected from the same trace. Explicit zeroes, nonzero
-/// disagreements, raw-count changes, and every other state difference remain
-/// hard errors.
-fn reconcile_legacy_controller_block_counts(
+/// Reconcile the two known differences between older recovery checkpoints and
+/// today's projection, without weakening checkpoint anchoring:
+///
+/// - the additive `controller_blocks` count introduced after checkpoint v1:
+///   only an actually omitted legacy zero may inherit a nonzero count proven
+///   by typed `ControllerBlocked` events already projected from the same trace;
+/// - before sprint 129 the projector marked the empty-completion nudge as
+///   spent after a truncated constrained turn, which the live loop never did.
+///   A recorded `true` is accepted where the trace contains a truncation and
+///   the projection says `false`, and the projection's value is kept.
+///
+/// Explicit zeroes, nonzero disagreements, raw-count changes, and every other
+/// state difference remain hard errors.
+fn reconcile_legacy_checkpoint(
     recorded: &RecoveryCheckpointV1,
     derived: &RecoveryCheckpointV1,
 ) -> Option<RecoveryCheckpointV1> {
@@ -126,6 +125,9 @@ fn reconcile_legacy_controller_block_counts(
     }
 
     let mut reconciled = recorded.clone();
+    if reconciled.nudged_for_no_action && !derived.nudged_for_no_action && derived.truncated_once {
+        reconciled.nudged_for_no_action = false;
+    }
     for (stored, projected) in reconciled
         .guard_history
         .iter_mut()
@@ -197,13 +199,12 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
         {
             let derived = projector.checkpoint();
             if *state != derived {
-                *state =
-                    reconcile_legacy_controller_block_counts(state, &derived).ok_or_else(|| {
-                        ReplayError::InvalidStructure(
-                            "recovery checkpoint differs from the projector-derived state anchor"
-                                .to_string(),
-                        )
-                    })?;
+                *state = reconcile_legacy_checkpoint(state, &derived).ok_or_else(|| {
+                    ReplayError::InvalidStructure(
+                        "recovery checkpoint differs from the projector-derived state anchor"
+                            .to_string(),
+                    )
+                })?;
                 validate_checkpoint(state)?;
             }
         }
@@ -220,11 +221,6 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                 }
             }
             Event::SessionPrompt { .. } => {
-                if saw_state_base {
-                    return Err(ReplayError::InvalidStructure(
-                        "more than one initial state base".to_string(),
-                    ));
-                }
                 saw_session_prompt = true;
                 saw_state_base = true;
             }
@@ -245,11 +241,6 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                 saw_modern_turn = true;
             }
             Event::SessionPaused { reason } => {
-                if pause_reason.as_deref().is_some_and(|prior| prior != reason) {
-                    return Err(ReplayError::InvalidStructure(
-                        "conflicting SessionPaused reasons".to_string(),
-                    ));
-                }
                 pause_reason = Some(reason.clone());
                 saw_session_paused = true;
             }
@@ -257,7 +248,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
                 if is_success_reason(reason) {
                     return Err(ReplayError::AlreadyStopped(reason.clone()));
                 }
-                if !is_resumable_reason(reason) {
+                if StopReason::parse(reason).is_none() {
                     return Err(ReplayError::InvalidStructure(format!(
                         "unknown SessionEnd reason {reason:?}"
                     )));
@@ -281,13 +272,6 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
         return Err(ReplayError::AlreadyStopped(reason.to_string()));
     }
 
-    if let (Some(paused), Some(ended)) = (&pause_reason, &end_reason)
-        && paused != ended
-    {
-        return Err(ReplayError::InvalidStructure(format!(
-            "SessionPaused reason {paused:?} differs from SessionEnd {ended:?}"
-        )));
-    }
     if pause_reason.is_none() {
         pause_reason =
             end_reason.or_else(|| structure.unclosed_terminal_reason().map(str::to_string));
@@ -311,7 +295,7 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
             .map(|call| {
                 (
                     format!("{}:{}", call.id, call.name),
-                    is_control_call(&call.name),
+                    ferric_iron::RESERVED_CONTROL_NAMES.contains(&call.name.as_str()),
                 )
             })
             .collect();
@@ -364,24 +348,12 @@ pub fn replay(path: &Path) -> Result<ReplayedState, ReplayError> {
     )?;
 
     Ok(ReplayedState {
-        messages: projector.messages,
-        turns: projector.turns,
-        next_turn: projector.next_turn,
-        last_text: projector.last_text,
+        core: projector.checkpoint(),
         protocol,
         harness_policy,
         truncation_limit: projector.truncation_limit,
         source_session,
         workspace: workspace.ok_or(ReplayError::MissingWorkspace)?,
-        head_len: projector.head_len,
-        committed_turn_starts: projector.committed_turn_starts,
-        guard_history: projector.guard_history,
-        nudged_for_no_action: projector.nudged_for_no_action,
-        truncated_once: projector.truncated_once,
-        last_input_tokens: projector.last_input_tokens,
-        pending_input: projector.pending_input,
-        mutation_epoch: projector.mutation_epoch,
-        passed_checks: projector.passed_checks,
         pause_reason,
         controller_checkpoint,
     })
@@ -536,39 +508,6 @@ fn validate_checkpoint(state: &ferric_trace::RecoveryCheckpointV1) -> Result<(),
     validate_recovery_checkpoint_shape(state).map_err(ReplayError::InvalidStructure)
 }
 
-fn is_control_call(name: &str) -> bool {
-    matches!(
-        name,
-        ferric_iron::terminator::TASK_COMPLETE
-            | ferric_iron::terminator::SUBMIT_PLAN
-            | ferric_iron::terminator::REQUEST_USER_INPUT
-    )
-}
-
-fn is_success_reason(reason: &str) -> bool {
-    matches!(
-        reason,
-        "final_text" | "task_complete" | "plan_submitted" | "done"
-    )
-}
-
-fn is_resumable_reason(reason: &str) -> bool {
-    matches!(
-        reason,
-        "max_turns"
-            | "repetition_guard"
-            | "no_progress"
-            | "repeated_failure"
-            | "oscillation"
-            | "provider_error"
-            | "empty_completion"
-            | "truncated_action"
-            | "interrupted"
-            | "hook_failed"
-            | "needs_input"
-    )
-}
-
 fn end_reason_is_legacy_pause(pause_reason: &Option<String>, saw_modern_turn: bool) -> bool {
     pause_reason.is_some() && !saw_modern_turn
 }
@@ -581,6 +520,8 @@ mod tests {
     //! dependency and can't see `pub(crate)` items.
     use super::*;
     use crate::projector::*;
+    use crate::test_support::*;
+    use ferric_core::Message;
     use ferric_trace::{GuardTurn, JsonlSink, TurnBoundary};
     use serde_json::json;
     use std::io::Write as _;
@@ -596,21 +537,11 @@ mod tests {
     }
 
     fn policy_selected(protocol: ActionProtocol) -> Event {
-        policy_selected_with_cap(protocol, ferric_core::DEFAULT_TRUNCATION_LIMIT)
-    }
-
-    fn policy_selected_with_cap(protocol: ActionProtocol, truncation_limit: usize) -> Event {
-        Event::PolicySelected {
-            tier: ferric_core::Tier::Nano,
+        policy_event(
             protocol,
-            harness_policy: ferric_core::HarnessPolicy::Legacy,
-            max_turns: 15,
-            max_tools: 10,
-            prompt_budget_tokens: 2_800,
-            max_output_tokens: 512,
-            truncation_limit,
-            tier_source: ferric_core::TierSource::Params.label().to_string(),
-        }
+            HarnessPolicy::Legacy,
+            ferric_core::DEFAULT_TRUNCATION_LIMIT,
+        )
     }
 
     fn session_prompt() -> Event {
@@ -630,11 +561,11 @@ mod tests {
 
     fn valid_checkpoint_with_history() -> ferric_trace::RecoveryCheckpointV1 {
         let calls = |turn: u32| {
-            vec![ferric_core::ToolCall {
-                id: format!("read-{turn}"),
-                name: "read_file".to_string(),
-                args: json!({"path": format!("{turn}.txt")}),
-            }]
+            vec![tool_call(
+                &format!("read-{turn}"),
+                "read_file",
+                json!({"path": format!("{turn}.txt")}),
+            )]
         };
         ferric_trace::RecoveryCheckpointV1 {
             version: RECOVERY_CHECKPOINT_VERSION,
@@ -687,17 +618,11 @@ mod tests {
     }
 
     fn evidence_policy_selected() -> Event {
-        Event::PolicySelected {
-            tier: ferric_core::Tier::Nano,
-            protocol: ActionProtocol::NativeTools,
-            harness_policy: HarnessPolicy::Evidence,
-            max_turns: 15,
-            max_tools: 10,
-            prompt_budget_tokens: 2_800,
-            max_output_tokens: 512,
-            truncation_limit: ferric_core::DEFAULT_TRUNCATION_LIMIT,
-            tier_source: ferric_core::TierSource::Params.label().to_string(),
-        }
+        policy_event(
+            ActionProtocol::NativeTools,
+            HarnessPolicy::Evidence,
+            ferric_core::DEFAULT_TRUNCATION_LIMIT,
+        )
     }
 
     fn evidence_fresh_prefix(required_checks: &[&str]) -> (Vec<Event>, ControllerState) {
@@ -708,10 +633,7 @@ mod tests {
         .unwrap();
         (
             vec![
-                Event::SessionStart {
-                    workspace: "/ws".to_string(),
-                    resumed_from: None,
-                },
+                session_start(),
                 evidence_policy_selected(),
                 session_prompt(),
                 Event::ControllerCheckpoint {
@@ -744,31 +666,6 @@ mod tests {
         });
     }
 
-    fn core_from_replayed(state: &ReplayedState) -> ferric_trace::RecoveryCheckpointV1 {
-        ferric_trace::RecoveryCheckpointV1 {
-            version: ferric_trace::RECOVERY_CHECKPOINT_VERSION,
-            messages: state.messages.clone(),
-            next_turn: state.next_turn,
-            last_text: state.last_text.clone(),
-            head_len: state.head_len,
-            committed_turn_starts: state
-                .committed_turn_starts
-                .iter()
-                .map(|&(turn, message_index)| ferric_trace::TurnBoundary {
-                    turn,
-                    message_index,
-                })
-                .collect(),
-            guard_history: state.guard_history.clone(),
-            nudged_for_no_action: state.nudged_for_no_action,
-            truncated_once: state.truncated_once,
-            last_input_tokens: state.last_input_tokens,
-            pending_input: state.pending_input.clone(),
-            mutation_epoch: state.mutation_epoch,
-            passed_checks: state.passed_checks.clone(),
-        }
-    }
-
     fn evidence_resume_prefix(state: &ReplayedState) -> (Vec<Event>, ControllerState) {
         let controller = resume_controller_state(
             state,
@@ -788,7 +685,7 @@ mod tests {
                 },
                 evidence_policy_selected(),
                 Event::RecoveryCheckpoint {
-                    state: core_from_replayed(state),
+                    state: state.core.clone(),
                 },
                 Event::ControllerCheckpoint {
                     state: controller.checkpoint(),
@@ -832,18 +729,8 @@ mod tests {
                 turn,
                 calls: vec![call.clone()],
             },
-            Event::ToolCall {
-                id: call.id.clone(),
-                name: call.name.clone(),
-                args: call.args.clone(),
-            },
-            Event::ToolResult {
-                id: call.id,
-                name: call.name,
-                output: "waiting for user input".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            call_event(&call),
+            result_event(&call.id, &call.name, "waiting for user input", false),
             Event::TurnCommitted {
                 turn,
                 dispatched: 1,
@@ -859,11 +746,11 @@ mod tests {
         controller: &ControllerState,
         turn: u32,
     ) {
-        let call = ferric_core::ToolCall {
-            id: format!("blocked-{turn}"),
-            name: "unsupported_mutation".to_string(),
-            args: json!({"path": "target.txt"}),
-        };
+        let call = tool_call(
+            &format!("blocked-{turn}"),
+            "unsupported_mutation",
+            json!({"path": "target.txt"}),
+        );
         let block = controller
             .unsupported_mutation_block(
                 vec!["target.txt".to_string()],
@@ -884,11 +771,7 @@ mod tests {
                 turn,
                 calls: vec![call.clone()],
             },
-            Event::ToolCall {
-                id: call.id.clone(),
-                name: call.name.clone(),
-                args: call.args.clone(),
-            },
+            call_event(&call),
             Event::ControllerBlocked {
                 turn,
                 call_id: call.id.clone(),
@@ -917,11 +800,11 @@ mod tests {
         controller: &mut ControllerState,
         turn: u32,
     ) {
-        let call = ferric_core::ToolCall {
-            id: format!("write-{turn}"),
-            name: "write_file".to_string(),
-            args: json!({"path": "new.txt", "content": "new"}),
-        };
+        let call = tool_call(
+            &format!("write-{turn}"),
+            "write_file",
+            json!({"path": "new.txt", "content": "new"}),
+        );
         let effect = ferric_trace::WorkspaceEffectV1 {
             version: ferric_trace::CONTROLLER_RECORD_VERSION,
             mutation_epoch: controller.mutation_epoch() + 1,
@@ -949,11 +832,7 @@ mod tests {
                 turn,
                 calls: vec![call.clone()],
             },
-            Event::ToolCall {
-                id: call.id.clone(),
-                name: call.name.clone(),
-                args: call.args.clone(),
-            },
+            call_event(&call),
             Event::WorkspaceEffectRecorded {
                 turn,
                 call_id: call.id.clone(),
@@ -965,13 +844,7 @@ mod tests {
                 tool: call.name.clone(),
                 mutation_epoch: effect.mutation_epoch,
             },
-            Event::ToolResult {
-                id: call.id,
-                name: call.name,
-                output: "wrote new.txt".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            result_event(&call.id, &call.name, "wrote new.txt", false),
             Event::TurnCommitted {
                 turn,
                 dispatched: 1,
@@ -989,11 +862,11 @@ mod tests {
         outcome: ferric_trace::VerificationOutcome,
         diagnostic_sha256: Option<String>,
     ) {
-        let call = ferric_core::ToolCall {
-            id: format!("check-{turn}"),
-            name: "run_check".to_string(),
-            args: json!({"name": "unit"}),
-        };
+        let call = tool_call(
+            &format!("check-{turn}"),
+            "run_check",
+            json!({"name": "unit"}),
+        );
         let check = ferric_trace::VerificationCheckV1 {
             version: ferric_trace::CONTROLLER_RECORD_VERSION,
             name: "unit".to_string(),
@@ -1017,11 +890,7 @@ mod tests {
                 turn,
                 calls: vec![call.clone()],
             },
-            Event::ToolCall {
-                id: call.id.clone(),
-                name: call.name.clone(),
-                args: call.args.clone(),
-            },
+            call_event(&call),
             Event::VerificationCheckRecorded {
                 turn,
                 call_id: call.id.clone(),
@@ -1060,16 +929,13 @@ mod tests {
 
     #[test]
     fn replay_drops_only_a_torn_tail_then_preserves_dispatch_ambiguity() {
-        let call = ferric_core::ToolCall {
-            id: "write-0".to_string(),
-            name: "write_file".to_string(),
-            args: json!({"path": "new.txt", "content": "new"}),
-        };
+        let call = tool_call(
+            "write-0",
+            "write_file",
+            json!({"path": "new.txt", "content": "new"}),
+        );
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -1085,11 +951,7 @@ mod tests {
                 turn: 0,
                 calls: vec![call.clone()],
             },
-            Event::ToolCall {
-                id: call.id,
-                name: call.name,
-                args: call.args,
-            },
+            call_event(&call),
         ];
         let (_dir, path) = write_trace(&events);
         std::fs::OpenOptions::new()
@@ -1113,16 +975,9 @@ mod tests {
             name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
             args: json!({"summary": "done"}),
         };
-        let read = ferric_core::ToolCall {
-            id: "read-0".to_string(),
-            name: "read_file".to_string(),
-            args: json!({"path": "a.txt"}),
-        };
+        let read = tool_call("read-0", "read_file", json!({"path": "a.txt"}));
         let mut events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -1138,23 +993,9 @@ mod tests {
                 turn: 0,
                 calls: vec![complete.clone(), read.clone()],
             },
-            Event::ToolCall {
-                id: complete.id.clone(),
-                name: complete.name.clone(),
-                args: complete.args.clone(),
-            },
-            Event::ToolCall {
-                id: read.id.clone(),
-                name: read.name.clone(),
-                args: read.args.clone(),
-            },
-            Event::ToolResult {
-                id: read.id,
-                name: read.name,
-                output: "contents".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            call_event(&complete),
+            call_event(&read),
+            result_event(&read.id, &read.name, "contents", false),
         ];
         let (_dir, path) = write_trace(&events);
         assert!(matches!(
@@ -1166,8 +1007,8 @@ mod tests {
         events.truncate(events.len() - 2);
         let (_dir, control_only_path) = write_trace(&events);
         let retryable = replay(&control_only_path).unwrap();
-        assert_eq!(retryable.next_turn, 0);
-        assert_eq!(retryable.messages, expected_prefix());
+        assert_eq!(retryable.core.next_turn, 0);
+        assert_eq!(retryable.core.messages, expected_prefix());
     }
 
     #[test]
@@ -1267,10 +1108,7 @@ mod tests {
     #[test]
     fn later_pause_and_answer_checkpoints_must_match_projected_history_exactly() {
         let mut paused_events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
         ];
@@ -1342,7 +1180,7 @@ mod tests {
             checkpoint.inherited_pause_reason.as_deref(),
             Some("process_crash")
         );
-        assert_eq!(replayed.messages, expected_prefix());
+        assert_eq!(replayed.core.messages, expected_prefix());
 
         let mismatch = resume_controller_state(&replayed, &["lint".to_string()]).unwrap_err();
         assert!(matches!(
@@ -1387,8 +1225,8 @@ mod tests {
         let legacy = modern.replace(",\"controller_blocks\":1", "");
         std::fs::write(&path, legacy).unwrap();
         let replayed = replay(&path).unwrap();
-        assert_eq!(replayed.guard_history[0].controller_blocks, 1);
-        assert!(replayed.guard_history[0].controller_blocks_was_present);
+        assert_eq!(replayed.core.guard_history[0].controller_blocks, 1);
+        assert!(replayed.core.guard_history[0].controller_blocks_was_present);
 
         let explicit_zero = modern.replace("\"controller_blocks\":1", "\"controller_blocks\":0");
         std::fs::write(&path, explicit_zero).unwrap();
@@ -1423,13 +1261,13 @@ mod tests {
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
-        assert_eq!(replayed.next_turn, 1);
-        assert_eq!(replayed.guard_history.len(), 1);
+        assert_eq!(replayed.core.next_turn, 1);
+        assert_eq!(replayed.core.guard_history.len(), 1);
         assert_eq!(
             (
-                replayed.guard_history[0].dispatched,
-                replayed.guard_history[0].errored,
-                replayed.guard_history[0].controller_blocks,
+                replayed.core.guard_history[0].dispatched,
+                replayed.core.guard_history[0].errored,
+                replayed.core.guard_history[0].controller_blocks,
             ),
             (1, 1, 1)
         );
@@ -1437,11 +1275,11 @@ mod tests {
 
     #[test]
     fn evidence_crash_prefix_retries_predispatch_without_inventing_an_effect() {
-        let call = ferric_core::ToolCall {
-            id: "write-0".to_string(),
-            name: "write_file".to_string(),
-            args: json!({"path": "new.txt", "content": "new"}),
-        };
+        let call = tool_call(
+            "write-0",
+            "write_file",
+            json!({"path": "new.txt", "content": "new"}),
+        );
         let (mut safe_events, _) = evidence_fresh_prefix(&[]);
         safe_events.extend([
             Event::TurnStart { turn: 0 },
@@ -1460,20 +1298,16 @@ mod tests {
         ]);
         let (_dir, safe_path) = write_trace(&safe_events);
         let safe = replay(&safe_path).unwrap();
-        assert_eq!(safe.next_turn, 0);
-        assert_eq!(safe.mutation_epoch, 0);
-        assert_eq!(safe.messages, expected_prefix());
+        assert_eq!(safe.core.next_turn, 0);
+        assert_eq!(safe.core.mutation_epoch, 0);
+        assert_eq!(safe.core.messages, expected_prefix());
         let checkpoint = safe.controller_checkpoint.unwrap();
         assert_eq!(checkpoint.mutation_epoch, 0);
         assert!(checkpoint.changed_paths.is_empty());
         assert!(checkpoint.file_evidence.is_empty());
 
         let mut ambiguous_events = safe_events;
-        ambiguous_events.push(Event::ToolCall {
-            id: call.id,
-            name: call.name,
-            args: call.args,
-        });
+        ambiguous_events.push(call_event(&call));
         let (_dir, ambiguous_path) = write_trace(&ambiguous_events);
         assert!(matches!(
             replay(&ambiguous_path),
@@ -1491,8 +1325,8 @@ mod tests {
         ));
         let (_dir, fully_resulted_path) = write_trace(&fully_resulted_events);
         let fully_resulted = replay(&fully_resulted_path).unwrap();
-        assert_eq!(fully_resulted.next_turn, 1);
-        assert_eq!(fully_resulted.mutation_epoch, 1);
+        assert_eq!(fully_resulted.core.next_turn, 1);
+        assert_eq!(fully_resulted.core.mutation_epoch, 1);
         let checkpoint = fully_resulted.controller_checkpoint.unwrap();
         assert_eq!(checkpoint.mutation_epoch, 1);
         assert_eq!(checkpoint.changed_paths, ["new.txt"]);
@@ -1514,7 +1348,10 @@ mod tests {
         direct_events.push(direct_packet);
         let (_dir, direct_path) = write_trace(&direct_events);
         let direct = replay(&direct_path).unwrap();
-        assert_eq!(direct.messages.last(), Some(&Message::user(direct_message)));
+        assert_eq!(
+            direct.core.messages.last(),
+            Some(&Message::user(direct_message))
+        );
 
         let (mut amended_events, amended_controller) = evidence_resume_prefix(&paused);
         amended_events.push(Event::ResumePrompt {
@@ -1536,7 +1373,7 @@ mod tests {
         let (_dir, amended_path) = write_trace(&amended_events);
         let amended = replay(&amended_path).unwrap();
         assert_eq!(
-            &amended.messages[amended.messages.len() - 2..],
+            &amended.core.messages[amended.core.messages.len() - 2..],
             &[
                 Message::user_with_media("also update the docs", Vec::new()),
                 Message::user(amended_message)
@@ -1561,6 +1398,7 @@ mod tests {
         );
         assert_eq!(
             paused
+                .core
                 .pending_input
                 .as_ref()
                 .map(|request| request.question.as_str()),
@@ -1586,9 +1424,9 @@ mod tests {
 
         let (_dir, resumed_path) = write_trace(&resumed_events);
         let resumed = replay(&resumed_path).unwrap();
-        assert_eq!(resumed.pending_input, None);
+        assert_eq!(resumed.core.pending_input, None);
         assert_eq!(
-            resumed.messages.last(),
+            resumed.core.messages.last(),
             Some(&Message::user_with_media("a.txt", Vec::new()))
         );
         assert_eq!(resumed.pause_reason.as_deref(), Some("process_crash"));
@@ -1612,7 +1450,7 @@ mod tests {
         let (_dir, safe_path) = write_trace(&safe_events);
         let safe = replay(&safe_path).unwrap();
         assert_eq!(
-            safe.messages.last(),
+            safe.core.messages.last(),
             Some(&Message::user_with_media("also update docs", Vec::new()))
         );
         assert_eq!(safe.pause_reason.as_deref(), Some("process_crash"));
@@ -1681,7 +1519,7 @@ mod tests {
         let (mut first_resume_events, mut first_resume_controller) =
             evidence_resume_prefix(&paused);
         first_resume_events.push(recovery_packet_event(&first_resume_controller));
-        let mutation_turn = paused.next_turn;
+        let mutation_turn = paused.core.next_turn;
         append_created_file_turn(
             &mut first_resume_events,
             &mut first_resume_controller,
@@ -1711,7 +1549,7 @@ mod tests {
             first_checkpoint.inherited_pause_reason.as_deref(),
             Some("process_crash")
         );
-        assert_eq!(first_resume.mutation_epoch, 1);
+        assert_eq!(first_resume.core.mutation_epoch, 1);
 
         let (mut second_resume_events, second_resume_controller) =
             evidence_resume_prefix(&first_resume);
@@ -1743,11 +1581,12 @@ mod tests {
         assert!(!inherited_file.fresh);
         assert!(!inherited_file.complete);
         assert!(inherited_file.covered_ranges.is_empty());
-        assert_eq!(second_resume.mutation_epoch, 1);
+        assert_eq!(second_resume.core.mutation_epoch, 1);
         assert_eq!(second_resume.harness_policy, HarnessPolicy::Evidence);
-        assert_eq!(second_resume.next_turn, mutation_turn + 2);
+        assert_eq!(second_resume.core.next_turn, mutation_turn + 2);
         assert_eq!(
             second_resume
+                .core
                 .messages
                 .iter()
                 .filter(|message| message
@@ -1782,8 +1621,8 @@ mod tests {
 
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
-        assert_eq!(replayed.mutation_epoch, 1);
-        assert!(replayed.passed_checks.is_empty());
+        assert_eq!(replayed.core.mutation_epoch, 1);
+        assert!(replayed.core.passed_checks.is_empty());
         assert_eq!(replayed.controller_checkpoint, Some(expected));
         let checkpoint = replayed.controller_checkpoint.as_ref().unwrap();
         assert!(checkpoint.passed_checks.is_empty());
@@ -1795,10 +1634,7 @@ mod tests {
     #[test]
     fn replay_reconstructs_a_clean_constrained_json_session() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::ConstrainedJson),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -1810,18 +1646,8 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "g-0-0".to_string(),
-                name: "read_file".to_string(),
-                args: json!({"path": "a.txt"}),
-            },
-            Event::ToolResult {
-                id: "g-0-0".to_string(),
-                name: "read_file".to_string(),
-                output: "contents".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            call_event(&tool_call("g-0-0", "read_file", json!({"path": "a.txt"}))),
+            result_event("g-0-0", "read_file", "contents", false),
             Event::TurnStart { turn: 1 },
             Event::TurnEnd {
                 turn: 1,
@@ -1831,11 +1657,11 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "g-1-0".to_string(),
-                name: "task_complete".to_string(),
-                args: json!({"summary": "done"}),
-            },
+            call_event(&tool_call(
+                "g-1-0",
+                "task_complete",
+                json!({"summary": "done"}),
+            )),
             // Confirms turn 1's dispatch fully ran (no crash mid-turn).
             Event::TurnStart { turn: 2 },
         ];
@@ -1850,8 +1676,8 @@ mod tests {
         expected.push(Message::assistant(
             r#"{"tool":"task_complete","args":{"summary":"done"}}"#,
         ));
-        assert_eq!(replayed.messages, expected);
-        assert_eq!(replayed.turns, 2);
+        assert_eq!(replayed.core.messages, expected);
+        assert_eq!(replayed.core.next_turn, 2);
         assert_eq!(replayed.protocol, ActionProtocol::ConstrainedJson);
         assert_eq!(replayed.source_session, "s-1");
         assert_eq!(replayed.pause_reason, None);
@@ -1890,21 +1716,17 @@ mod tests {
         let replayed = replay(&path).unwrap();
         assert_eq!(replayed.harness_policy, HarnessPolicy::Legacy);
         assert_eq!(replayed.controller_checkpoint, None);
-        assert_eq!(replayed.mutation_epoch, 0);
-        assert!(replayed.passed_checks.is_empty());
-        assert_eq!(replayed.turns, 1);
-        assert_eq!(replayed.next_turn, 1);
+        assert_eq!(replayed.core.mutation_epoch, 0);
+        assert!(replayed.core.passed_checks.is_empty());
+        assert_eq!(replayed.core.next_turn, 1);
         assert_eq!(replayed.protocol, ActionProtocol::ConstrainedJson);
-        assert_eq!(replayed.messages.len(), 4);
+        assert_eq!(replayed.core.messages.len(), 4);
     }
 
     #[test]
     fn replay_preserves_native_multi_tool_call_order() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -1916,36 +1738,16 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "tc-0".to_string(),
-                name: "tool_a".to_string(),
-                args: json!({}),
-            },
-            Event::ToolResult {
-                id: "tc-0".to_string(),
-                name: "tool_a".to_string(),
-                output: "a-out".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
-            Event::ToolCall {
-                id: "tc-1".to_string(),
-                name: "tool_b".to_string(),
-                args: json!({}),
-            },
-            Event::ToolResult {
-                id: "tc-1".to_string(),
-                name: "tool_b".to_string(),
-                output: "b-out".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            call_event(&tool_call("tc-0", "tool_a", json!({}))),
+            result_event("tc-0", "tool_a", "a-out", false),
+            call_event(&tool_call("tc-1", "tool_b", json!({}))),
+            result_event("tc-1", "tool_b", "b-out", false),
             Event::TurnStart { turn: 1 },
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
-        let assistant = &replayed.messages[2];
+        let assistant = &replayed.core.messages[2];
         assert_eq!(
             assistant
                 .tool_calls
@@ -1963,10 +1765,7 @@ mod tests {
     #[test]
     fn replay_preserves_native_text_alongside_tool_calls() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -1978,24 +1777,14 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "tc-0".to_string(),
-                name: "tool_a".to_string(),
-                args: json!({}),
-            },
-            Event::ToolResult {
-                id: "tc-0".to_string(),
-                name: "tool_a".to_string(),
-                output: "a-out".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            call_event(&tool_call("tc-0", "tool_a", json!({}))),
+            result_event("tc-0", "tool_a", "a-out", false),
             Event::TurnStart { turn: 1 },
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
-        let assistant = &replayed.messages[2];
+        let assistant = &replayed.core.messages[2];
         assert_eq!(assistant.text.as_deref(), Some("thinking..."));
         assert_eq!(
             assistant
@@ -2013,10 +1802,7 @@ mod tests {
     #[test]
     fn replay_preserves_terminator_position_mid_turn() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -2028,41 +1814,21 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "tc-0".to_string(),
-                name: "tool_a".to_string(),
-                args: json!({}),
-            },
-            Event::ToolResult {
-                id: "tc-0".to_string(),
-                name: "tool_a".to_string(),
-                output: "a-out".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
-            Event::ToolCall {
-                id: "tc-1".to_string(),
-                name: "task_complete".to_string(),
-                args: json!({"summary": "done"}),
-            },
-            Event::ToolCall {
-                id: "tc-2".to_string(),
-                name: "tool_b".to_string(),
-                args: json!({}),
-            },
-            Event::ToolResult {
-                id: "tc-2".to_string(),
-                name: "tool_b".to_string(),
-                output: "b-out".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            call_event(&tool_call("tc-0", "tool_a", json!({}))),
+            result_event("tc-0", "tool_a", "a-out", false),
+            call_event(&tool_call(
+                "tc-1",
+                "task_complete",
+                json!({"summary": "done"}),
+            )),
+            call_event(&tool_call("tc-2", "tool_b", json!({}))),
+            result_event("tc-2", "tool_b", "b-out", false),
             Event::TurnStart { turn: 1 },
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
-        let assistant = &replayed.messages[2];
+        let assistant = &replayed.core.messages[2];
         assert_eq!(
             assistant
                 .tool_calls
@@ -2077,10 +1843,7 @@ mod tests {
     #[test]
     fn replay_reconstructs_repetition_guard_nudge() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -2095,25 +1858,15 @@ mod tests {
             Event::RepetitionGuard {
                 action: "warned".to_string(),
             },
-            Event::ToolCall {
-                id: "tc-0".to_string(),
-                name: "read_file".to_string(),
-                args: json!({}),
-            },
-            Event::ToolResult {
-                id: "tc-0".to_string(),
-                name: "read_file".to_string(),
-                output: "contents".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            call_event(&tool_call("tc-0", "read_file", json!({}))),
+            result_event("tc-0", "read_file", "contents", false),
             Event::TurnStart { turn: 1 },
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
         assert_eq!(
-            replayed.messages[3],
+            replayed.core.messages[3],
             repetition_warn_message(&["read_file"])
         );
     }
@@ -2121,10 +1874,7 @@ mod tests {
     #[test]
     fn replay_reconstructs_no_progress_guard_nudge() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -2139,30 +1889,20 @@ mod tests {
             Event::NoProgressGuard {
                 action: "warned".to_string(),
             },
-            Event::ToolCall {
-                id: "tc-0".to_string(),
-                name: "read_file".to_string(),
-                args: json!({}),
-            },
-            Event::ToolResult {
-                id: "tc-0".to_string(),
-                name: "read_file".to_string(),
-                output: "contents".to_string(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            call_event(&tool_call("tc-0", "read_file", json!({}))),
+            result_event("tc-0", "read_file", "contents", false),
             Event::TurnStart { turn: 1 },
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
         assert_eq!(
-            replayed.messages[3],
+            replayed.core.messages[3],
             no_progress_warn_message(&["read_file"])
         );
         // Not collapsed into the repetition guard's different wording (C-007).
         assert_ne!(
-            replayed.messages[3],
+            replayed.core.messages[3],
             repetition_warn_message(&["read_file"])
         );
     }
@@ -2173,10 +1913,7 @@ mod tests {
     #[test]
     fn replay_reconstructs_xml_parse_error_nudge_falls_back_to_generic() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::TextXml),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -2196,7 +1933,7 @@ mod tests {
         let replayed = replay(&path).unwrap();
 
         assert_eq!(
-            replayed.messages[3],
+            replayed.core.messages[3],
             Message::user(no_action_nudge(ActionProtocol::TextXml))
         );
     }
@@ -2204,10 +1941,7 @@ mod tests {
     #[test]
     fn replay_reconstructs_truncated_turn_retry() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::ConstrainedJson),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -2226,8 +1960,8 @@ mod tests {
 
         let mut expected = expected_prefix();
         expected.push(truncation_retry_message());
-        assert_eq!(replayed.messages, expected);
-        assert_eq!(replayed.turns, 1);
+        assert_eq!(replayed.core.messages, expected);
+        assert_eq!(replayed.core.next_turn, 1);
     }
 
     /// Test-critic C-001: the realistic shape of a killed process — a
@@ -2235,10 +1969,7 @@ mod tests {
     #[test]
     fn replay_discards_a_dangling_mid_turn() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -2247,8 +1978,8 @@ mod tests {
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
-        assert_eq!(replayed.messages, expected_prefix());
-        assert_eq!(replayed.turns, 0);
+        assert_eq!(replayed.core.messages, expected_prefix());
+        assert_eq!(replayed.core.next_turn, 0);
     }
 
     /// A stricter variant of C-001: even a turn WITH a `TurnEnd` (and partial
@@ -2258,10 +1989,7 @@ mod tests {
     #[test]
     fn replay_discards_a_turn_end_with_no_confirming_next_turn_start() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -2273,18 +2001,14 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "tc-0".to_string(),
-                name: "read_file".to_string(),
-                args: json!({}),
-            },
+            call_event(&tool_call("tc-0", "read_file", json!({}))),
             // Crash mid-dispatch: no ToolResult, no next TurnStart.
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
-        assert_eq!(replayed.messages, expected_prefix());
-        assert_eq!(replayed.turns, 0);
+        assert_eq!(replayed.core.messages, expected_prefix());
+        assert_eq!(replayed.core.next_turn, 0);
     }
 
     /// ADR-093: the projector takes its model-facing cap from the trace, so a
@@ -2295,11 +2019,8 @@ mod tests {
     fn replay_takes_the_truncation_cap_from_the_trace() {
         let long = "X".repeat(5_000);
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
-            policy_selected_with_cap(ActionProtocol::ConstrainedJson, 500),
+            session_start(),
+            policy_event(ActionProtocol::ConstrainedJson, HarnessPolicy::Legacy, 500),
             session_prompt(),
             Event::TurnStart { turn: 0 },
             Event::TurnEnd {
@@ -2310,26 +2031,16 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "g-0-0".to_string(),
-                name: "read_file".to_string(),
-                args: json!({"path": "a.txt"}),
-            },
+            call_event(&tool_call("g-0-0", "read_file", json!({"path": "a.txt"}))),
             // The trace keeps the FULL output (ADR-002); the cap applies only
             // when the context window is rebuilt from it.
-            Event::ToolResult {
-                id: "g-0-0".to_string(),
-                name: "read_file".to_string(),
-                output: long.clone(),
-                is_error: false,
-                duration_ms: 1,
-            },
+            result_event("g-0-0", "read_file", &long, false),
             Event::TurnStart { turn: 1 },
         ];
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
-        let result_msg = replayed.messages[3].text.as_deref().unwrap();
+        let result_msg = replayed.core.messages[3].text.as_deref().unwrap();
         let len = result_msg.chars().count();
         assert!(
             len < 1_000,
@@ -2345,10 +2056,7 @@ mod tests {
     #[test]
     fn replay_missing_session_prompt_is_an_error() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
         ];
         let (_dir, path) = write_trace(&events);
@@ -2361,10 +2069,7 @@ mod tests {
     #[test]
     fn replay_already_stopped_is_an_error() {
         let events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
             Event::TurnStart { turn: 0 },
@@ -2399,11 +2104,7 @@ mod tests {
                 output_tokens: Some(10),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: id.clone(),
-                name: tool.to_string(),
-                args: json!({}),
-            },
+            call_event(&tool_call(&id, tool, json!({}))),
             Event::ToolResult {
                 id,
                 name: tool.to_string(),
@@ -2430,10 +2131,7 @@ mod tests {
     #[test]
     fn replay_applies_one_history_compaction() {
         let mut events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
         ];
@@ -2458,32 +2156,25 @@ mod tests {
             output_tokens: Some(10),
             truncated: false,
         });
-        events.push(Event::ToolCall {
-            id: "tc-5".to_string(),
-            name: "tool_f".to_string(),
-            args: json!({}),
-        });
-        events.push(Event::ToolResult {
-            id: "tc-5".to_string(),
-            name: "tool_f".to_string(),
-            output: "f-out".to_string(),
-            is_error: false,
-            duration_ms: 1,
-        });
+        events.push(call_event(&tool_call("tc-5", "tool_f", json!({}))));
+        events.push(result_event("tc-5", "tool_f", "f-out", false));
         events.push(Event::TurnStart { turn: 6 }); // confirms turn 5 committed
 
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
-        assert_eq!(replayed.messages.len(), 9);
+        assert_eq!(replayed.core.messages.len(), 9);
         assert_eq!(
-            replayed.messages[2].text.as_deref(),
+            replayed.core.messages[2].text.as_deref(),
             Some("[compacted history] did a, b, c")
         );
-        assert_eq!(replayed.messages[3].tool_calls[0].name, "tool_d");
-        assert_eq!(replayed.messages[5].tool_calls[0].name, "tool_e");
-        assert_eq!(replayed.messages[7].tool_calls[0].name, "tool_f");
-        assert_eq!(replayed.turns, 6, "total commits, folded or not");
+        assert_eq!(replayed.core.messages[3].tool_calls[0].name, "tool_d");
+        assert_eq!(replayed.core.messages[5].tool_calls[0].name, "tool_e");
+        assert_eq!(replayed.core.messages[7].tool_calls[0].name, "tool_f");
+        assert_eq!(
+            replayed.core.next_turn, 6,
+            "every commit counts, folded or not"
+        );
     }
 
     /// Sprint 40: a SECOND `HistoryCompacted` later in the same trace folds
@@ -2493,10 +2184,7 @@ mod tests {
     #[test]
     fn replay_applies_two_sequential_history_compactions() {
         let mut events = vec![
-            Event::SessionStart {
-                workspace: "/ws".to_string(),
-                resumed_from: None,
-            },
+            session_start(),
             policy_selected(ActionProtocol::NativeTools),
             session_prompt(),
         ];
@@ -2519,18 +2207,8 @@ mod tests {
             output_tokens: Some(10),
             truncated: false,
         });
-        events.push(Event::ToolCall {
-            id: "tc-5".to_string(),
-            name: "tool_f".to_string(),
-            args: json!({}),
-        });
-        events.push(Event::ToolResult {
-            id: "tc-5".to_string(),
-            name: "tool_f".to_string(),
-            output: "f-out".to_string(),
-            is_error: false,
-            duration_ms: 1,
-        });
+        events.push(call_event(&tool_call("tc-5", "tool_f", json!({}))));
+        events.push(result_event("tc-5", "tool_f", "f-out", false));
         events.extend(turn_events(6, "tool_g", "g-out"));
         events.extend(turn_events(7, "tool_h", "h-out"));
         // Turn 8 triggers a SECOND fold covering turns 3-5 (the surviving
@@ -2549,39 +2227,33 @@ mod tests {
             output_tokens: Some(10),
             truncated: false,
         });
-        events.push(Event::ToolCall {
-            id: "tc-8".to_string(),
-            name: "tool_i".to_string(),
-            args: json!({}),
-        });
-        events.push(Event::ToolResult {
-            id: "tc-8".to_string(),
-            name: "tool_i".to_string(),
-            output: "i-out".to_string(),
-            is_error: false,
-            duration_ms: 1,
-        });
+        events.push(call_event(&tool_call("tc-8", "tool_i", json!({}))));
+        events.push(result_event("tc-8", "tool_i", "i-out", false));
         events.push(Event::TurnStart { turn: 9 }); // confirms turn 8 committed
 
         let (_dir, path) = write_trace(&events);
         let replayed = replay(&path).unwrap();
 
-        assert_eq!(replayed.messages.len(), 9);
+        assert_eq!(replayed.core.messages.len(), 9);
         assert_eq!(
-            replayed.messages[2].text.as_deref(),
+            replayed.core.messages[2].text.as_deref(),
             Some("[compacted history] did d, e, f"),
             "the LATEST fold's summary, not the first"
         );
         assert!(
             !replayed
+                .core
                 .messages
                 .iter()
                 .any(|m| m.text.as_deref() == Some("[compacted history] did a, b, c")),
             "the first fold's summary must not linger alongside the second"
         );
-        assert_eq!(replayed.messages[3].tool_calls[0].name, "tool_g");
-        assert_eq!(replayed.messages[5].tool_calls[0].name, "tool_h");
-        assert_eq!(replayed.messages[7].tool_calls[0].name, "tool_i");
-        assert_eq!(replayed.turns, 9, "total commits across both folds");
+        assert_eq!(replayed.core.messages[3].tool_calls[0].name, "tool_g");
+        assert_eq!(replayed.core.messages[5].tool_calls[0].name, "tool_h");
+        assert_eq!(replayed.core.messages[7].tool_calls[0].name, "tool_i");
+        assert_eq!(
+            replayed.core.next_turn, 9,
+            "every commit counts across both folds"
+        );
     }
 }

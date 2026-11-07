@@ -2,13 +2,13 @@ mod common;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::{RecordingSleeper, nano_policy, text_completion, tool_completion};
-use ferric_core::{ActionProtocol, FerricError, HarnessPolicy};
+use common::{Opts, RecordingSleeper, nano_policy, text_completion, tool_completion};
+use ferric_core::{FerricError, HarnessPolicy};
 use ferric_guard::Workspace;
-use ferric_loop::{EditApprover, RunArgs, StopReason, TraceStructure, run};
-use ferric_provider::{MockProvider, SamplingParams};
+use ferric_loop::{RunArgs, StopReason, TraceStructure, run};
+use ferric_provider::MockProvider;
 use ferric_tools::{NamedCheck, Registry, register_builtin_tools, register_run_checks};
-use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceReader, TraceRecord};
+use ferric_trace::{Event, JsonlSink, ParsedEvent, TraceRecord};
 use serde_json::json;
 
 /// The operator check re-enters this test binary in the temporary workspace.
@@ -74,34 +74,6 @@ struct Capture {
     records: Vec<TraceRecord>,
 }
 
-fn init_workspace(directory: &tempfile::TempDir, files: &[(&str, &str)]) {
-    for (path, content) in files {
-        let path = directory.path().join(path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(path, content).unwrap();
-    }
-    for args in [
-        vec!["init"],
-        vec!["config", "user.name", "Test User"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["add", "."],
-        vec!["commit", "-m", "initial"],
-    ] {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(directory.path())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn run_policy(
     directory: &tempfile::TempDir,
@@ -110,32 +82,7 @@ fn run_policy(
     checks: Vec<NamedCheck>,
     max_turns: u8,
     custom_prompt: Option<&str>,
-    edit_approver: Option<EditApprover<'_>>,
-) -> Capture {
-    run_policy_with_safety(
-        directory,
-        script,
-        harness_policy,
-        checks,
-        max_turns,
-        custom_prompt,
-        edit_approver,
-        ferric_guard::Provenance::Clean,
-        ferric_guard::SinkPolicy::deny(),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_policy_with_safety(
-    directory: &tempfile::TempDir,
-    script: Vec<ferric_provider::Completion>,
-    harness_policy: HarnessPolicy,
-    checks: Vec<NamedCheck>,
-    max_turns: u8,
-    custom_prompt: Option<&str>,
-    edit_approver: Option<EditApprover<'_>>,
-    provenance: ferric_guard::Provenance,
-    sink_policy: ferric_guard::SinkPolicy,
+    opts: Opts<'_>,
 ) -> Capture {
     let workspace = Workspace::new(directory.path()).unwrap();
     let mut registry = Registry::new();
@@ -152,34 +99,19 @@ fn run_policy_with_safety(
     policy.max_turns = max_turns;
     let result = futures_executor::block_on(run(
         RunArgs {
-            provider: &provider,
-            registry: &registry,
-            workspace: &workspace,
-            policy: &policy,
-            protocol: ActionProtocol::NativeTools,
             harness_policy: Some(harness_policy),
-            sampling: SamplingParams::default(),
-            sleeper: &sleeper,
             system_prompt: custom_prompt,
-            prompt_lineage: None,
-            media: Vec::new(),
-            stream_sink: None,
-            resume: None,
-            answer: None,
-            cancel_flag: None,
-            provenance,
-            sink_policy,
-            hooks: None,
-            edit_approver,
+            protocol: opts.protocol,
+            provenance: opts.provenance,
+            sink_policy: opts.sink_policy,
+            edit_approver: opts.approver,
+            ..common::args(&provider, &registry, &workspace, &policy, &sleeper)
         },
         &mut sink,
         Some("complete the requested repository change"),
     ));
     drop(sink);
-    let records = TraceReader::open(trace)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let records = common::read_records(trace);
     Capture { result, records }
 }
 
@@ -211,10 +143,9 @@ fn blocks(records: &[TraceRecord]) -> Vec<ferric_trace::ControllerBlockReason> {
 
 #[test]
 fn full_evidence_path_reads_edits_repairs_verifies_and_completes() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = common::git_workspace(&[("evidence_target.txt", "value = 1\n")]);
     let marker_directory = tempfile::tempdir().unwrap();
     let marker = marker_directory.path().join("check-spawns.txt");
-    init_workspace(&directory, &[("evidence_target.txt", "value = 1\n")]);
     let capture = run_policy(
         &directory,
         vec![
@@ -250,7 +181,7 @@ fn full_evidence_path_reads_edits_repairs_verifies_and_completes() {
         vec![evidence_check(&marker)],
         12,
         None,
-        None,
+        Opts::default(),
     );
     let outcome = capture.result.unwrap();
     assert_eq!(outcome.stop, StopReason::TaskComplete);
@@ -326,8 +257,7 @@ fn full_evidence_path_reads_edits_repairs_verifies_and_completes() {
 
 #[test]
 fn multi_path_effect_advances_one_epoch_and_trace_verifies() {
-    let directory = tempfile::tempdir().unwrap();
-    init_workspace(&directory, &[("source.txt", "payload\n")]);
+    let directory = common::git_workspace(&[("source.txt", "payload\n")]);
     let capture = run_policy(
         &directory,
         vec![
@@ -342,7 +272,7 @@ fn multi_path_effect_advances_one_epoch_and_trace_verifies() {
         Vec::new(),
         2,
         None,
-        None,
+        Opts::default(),
     );
 
     assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
@@ -402,8 +332,7 @@ fn blind_and_same_turn_mutations_are_rejected_before_the_callback() {
             ferric_trace::ControllerBlockReason::SameTurnObservation,
         ),
     ] {
-        let directory = tempfile::tempdir().unwrap();
-        init_workspace(&directory, &[("evidence_target.txt", "value = 1\n")]);
+        let directory = common::git_workspace(&[("evidence_target.txt", "value = 1\n")]);
         let callbacks = AtomicUsize::new(0);
         let approve = |_preview: &ferric_loop::EditPreview| {
             callbacks.fetch_add(1, Ordering::SeqCst);
@@ -432,7 +361,10 @@ fn blind_and_same_turn_mutations_are_rejected_before_the_callback() {
             Vec::new(),
             4,
             None,
-            Some(&approve),
+            Opts {
+                approver: Some(&approve),
+                ..Opts::default()
+            },
         );
         assert_eq!(capture.result.unwrap().stop, StopReason::FinalText);
         assert_eq!(callbacks.load(Ordering::SeqCst), 0);
@@ -447,8 +379,7 @@ fn blind_and_same_turn_mutations_are_rejected_before_the_callback() {
 
 #[test]
 fn stale_commit_is_typed_and_an_admitted_call_prompts_once() {
-    let directory = tempfile::tempdir().unwrap();
-    init_workspace(&directory, &[("evidence_target.txt", "value = 1\n")]);
+    let directory = common::git_workspace(&[("evidence_target.txt", "value = 1\n")]);
     let callbacks = AtomicUsize::new(0);
     let target = directory.path().join("evidence_target.txt");
     let race = |_preview: &ferric_loop::EditPreview| {
@@ -475,7 +406,10 @@ fn stale_commit_is_typed_and_an_admitted_call_prompts_once() {
         Vec::new(),
         5,
         None,
-        Some(&race),
+        Opts {
+            approver: Some(&race),
+            ..Opts::default()
+        },
     );
     assert_eq!(capture.result.unwrap().stop, StopReason::FinalText);
     assert_eq!(callbacks.load(Ordering::SeqCst), 1);
@@ -510,8 +444,7 @@ fn no_effect_and_syntax_regression_are_typed_before_approval() {
             ferric_trace::ControllerBlockReason::SyntaxRegression,
         ),
     ] {
-        let directory = tempfile::tempdir().unwrap();
-        init_workspace(&directory, &[(path, original)]);
+        let directory = common::git_workspace(&[(path, original)]);
         let callbacks = AtomicUsize::new(0);
         let approve = |_preview: &ferric_loop::EditPreview| {
             callbacks.fetch_add(1, Ordering::SeqCst);
@@ -532,7 +465,10 @@ fn no_effect_and_syntax_regression_are_typed_before_approval() {
             Vec::new(),
             5,
             None,
-            Some(&approve),
+            Opts {
+                approver: Some(&approve),
+                ..Opts::default()
+            },
         );
         assert_eq!(capture.result.unwrap().stop, StopReason::FinalText);
         assert_eq!(callbacks.load(Ordering::SeqCst), 0);
@@ -609,8 +545,7 @@ fn content_and_structural_no_effect_feedback_stays_truthful() {
     ];
 
     for (tool, args, file, expected) in cases {
-        let directory = tempfile::tempdir().unwrap();
-        init_workspace(&directory, &[("init.txt", "init\n")]);
+        let directory = common::git_workspace(&[("init.txt", "init\n")]);
         if let Some((path, content)) = file {
             std::fs::write(directory.path().join(path), content).unwrap();
         }
@@ -634,7 +569,7 @@ fn content_and_structural_no_effect_feedback_stays_truthful() {
             Vec::new(),
             max_turns,
             None,
-            None,
+            Opts::default(),
         );
         assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
         let feedback = capture
@@ -661,10 +596,9 @@ fn content_and_structural_no_effect_feedback_stays_truthful() {
 
 #[test]
 fn repeated_check_is_blocked_before_a_second_process_starts() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = common::git_workspace(&[("evidence_target.txt", "value = 1\n")]);
     let marker_directory = tempfile::tempdir().unwrap();
     let marker = marker_directory.path().join("check-spawns.txt");
-    init_workspace(&directory, &[("evidence_target.txt", "value = 1\n")]);
     let capture = run_policy(
         &directory,
         vec![
@@ -675,7 +609,7 @@ fn repeated_check_is_blocked_before_a_second_process_starts() {
         vec![evidence_check(&marker)],
         2,
         None,
-        None,
+        Opts::default(),
     );
     assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
     assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
@@ -728,10 +662,9 @@ fn repeated_check_is_blocked_before_a_second_process_starts() {
 
 #[test]
 fn repeated_passed_check_points_to_completion_instead_of_mutation() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = common::git_workspace(&[("evidence_target.txt", "value = 3\n")]);
     let marker_directory = tempfile::tempdir().unwrap();
     let marker = marker_directory.path().join("check-spawns.txt");
-    init_workspace(&directory, &[("evidence_target.txt", "value = 3\n")]);
     let capture = run_policy(
         &directory,
         vec![
@@ -742,7 +675,7 @@ fn repeated_passed_check_points_to_completion_instead_of_mutation() {
         vec![evidence_check(&marker)],
         2,
         None,
-        None,
+        Opts::default(),
     );
 
     assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
@@ -774,10 +707,9 @@ fn repeated_passed_check_points_to_completion_instead_of_mutation() {
 
 #[test]
 fn failed_check_no_effect_and_repair_blocks_allow_the_recovery_sequence() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = common::git_workspace(&[("evidence_target.txt", "value = 1\n")]);
     let marker_directory = tempfile::tempdir().unwrap();
     let marker = marker_directory.path().join("check-spawns.txt");
-    init_workspace(&directory, &[("evidence_target.txt", "value = 1\n")]);
     let capture = run_policy(
         &directory,
         vec![
@@ -812,7 +744,7 @@ fn failed_check_no_effect_and_repair_blocks_allow_the_recovery_sequence() {
         vec![evidence_check(&marker)],
         6,
         None,
-        None,
+        Opts::default(),
     );
 
     assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
@@ -884,10 +816,9 @@ fn failed_check_no_effect_and_repair_blocks_allow_the_recovery_sequence() {
 
 #[test]
 fn blocked_task_complete_breaks_execution_failure_streak_before_recovery() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = common::git_workspace(&[("evidence_target.txt", "value = 1\n")]);
     let marker_directory = tempfile::tempdir().unwrap();
     let marker = marker_directory.path().join("check-spawns.txt");
-    init_workspace(&directory, &[("evidence_target.txt", "value = 1\n")]);
     let capture = run_policy(
         &directory,
         vec![
@@ -917,7 +848,7 @@ fn blocked_task_complete_breaks_execution_failure_streak_before_recovery() {
         vec![evidence_check(&marker)],
         5,
         None,
-        None,
+        Opts::default(),
     );
 
     assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
@@ -960,10 +891,9 @@ fn blocked_task_complete_breaks_execution_failure_streak_before_recovery() {
 
 #[test]
 fn real_errors_still_stop_when_a_turn_also_has_a_block_and_blocked_completion() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = common::git_workspace(&[("evidence_target.txt", "value = 1\n")]);
     let marker_directory = tempfile::tempdir().unwrap();
     let marker = marker_directory.path().join("check-spawns.txt");
-    init_workspace(&directory, &[("evidence_target.txt", "value = 1\n")]);
     let capture = run_policy(
         &directory,
         vec![
@@ -995,7 +925,7 @@ fn real_errors_still_stop_when_a_turn_also_has_a_block_and_blocked_completion() 
         vec![evidence_check(&marker)],
         4,
         None,
-        None,
+        Opts::default(),
     );
 
     assert_eq!(capture.result.unwrap().stop, StopReason::RepeatedFailure);
@@ -1022,11 +952,10 @@ fn real_errors_still_stop_when_a_turn_also_has_a_block_and_blocked_completion() 
 
 #[test]
 fn sink_denial_happens_before_a_verification_process_starts() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = common::git_workspace(&[("evidence_target.txt", "value = 3\n")]);
     let marker_directory = tempfile::tempdir().unwrap();
     let marker = marker_directory.path().join("check-spawns.txt");
-    init_workspace(&directory, &[("evidence_target.txt", "value = 3\n")]);
-    let capture = run_policy_with_safety(
+    let capture = run_policy(
         &directory,
         vec![tool_completion(vec![(
             "check",
@@ -1037,9 +966,10 @@ fn sink_denial_happens_before_a_verification_process_starts() {
         vec![evidence_check(&marker)],
         1,
         None,
-        None,
-        ferric_guard::Provenance::UntrustedIngested,
-        ferric_guard::SinkPolicy::deny(),
+        Opts {
+            provenance: ferric_guard::Provenance::UntrustedIngested,
+            ..Opts::default()
+        },
     );
 
     assert_eq!(capture.result.unwrap().stop, StopReason::MaxTurns);
@@ -1068,8 +998,7 @@ fn evidence_guidance_is_added_to_custom_prompts_and_legacy_is_literal() {
         (HarnessPolicy::Evidence, true),
         (HarnessPolicy::Legacy, false),
     ] {
-        let directory = tempfile::tempdir().unwrap();
-        init_workspace(&directory, &[("init.txt", "init\n")]);
+        let directory = common::git_workspace(&[("init.txt", "init\n")]);
         let capture = run_policy(
             &directory,
             vec![tool_completion(vec![(
@@ -1081,7 +1010,7 @@ fn evidence_guidance_is_added_to_custom_prompts_and_legacy_is_literal() {
             Vec::new(),
             2,
             Some("custom system prompt"),
-            None,
+            Opts::default(),
         );
         assert_eq!(capture.result.unwrap().stop, StopReason::TaskComplete);
         let system = capture
@@ -1129,8 +1058,7 @@ fn evidence_guidance_is_added_to_custom_prompts_and_legacy_is_literal() {
 
 #[test]
 fn planner_rejection_writes_no_trace_or_workspace_effect() {
-    let directory = tempfile::tempdir().unwrap();
-    init_workspace(&directory, &[("init.txt", "init\n")]);
+    let directory = common::git_workspace(&[("init.txt", "init\n")]);
     let capture = run_policy(
         &directory,
         vec![tool_completion(vec![(
@@ -1142,7 +1070,7 @@ fn planner_rejection_writes_no_trace_or_workspace_effect() {
         Vec::new(),
         2,
         None,
-        None,
+        Opts::default(),
     );
     assert!(matches!(capture.result, Err(FerricError::InvalidInput(_))));
     assert!(capture.records.is_empty());

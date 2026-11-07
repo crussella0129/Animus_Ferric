@@ -8,6 +8,7 @@
 
 use ferric_core::ToolCall;
 
+#[derive(Default)]
 pub struct RepetitionGuard {
     last_signature: Option<String>,
     consecutive_repeats: u8,
@@ -21,13 +22,6 @@ pub enum Verdict {
 }
 
 impl RepetitionGuard {
-    pub fn new() -> Self {
-        Self {
-            last_signature: None,
-            consecutive_repeats: 0,
-        }
-    }
-
     /// Observe a turn's complete tool-call set and decide.
     pub fn observe(&mut self, calls: &[ToolCall]) -> Verdict {
         let signature = signature_of(calls);
@@ -42,12 +36,6 @@ impl RepetitionGuard {
             1 => Verdict::Warn,
             _ => Verdict::Stop,
         }
-    }
-}
-
-impl Default for RepetitionGuard {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -45,18 +45,13 @@ const STOP_AT: usize = 8;
 /// happen to repeat with identical arguments.
 const MAX_DISTINCT: usize = 2;
 
+#[derive(Default)]
 pub struct OscillationGuard {
     /// Canonical signature per turn, most recent last, capped at `STOP_AT`.
     window: Vec<String>,
 }
 
 impl OscillationGuard {
-    pub fn new() -> Self {
-        Self {
-            window: Vec::with_capacity(STOP_AT),
-        }
-    }
-
     /// Observe a turn's tool calls and decide.
     ///
     /// Unlike the streak guards, nothing here "resets" — the window simply
@@ -87,12 +82,6 @@ impl OscillationGuard {
     fn distinct_in_last(&self, n: usize) -> usize {
         let start = self.window.len().saturating_sub(n);
         self.window[start..].iter().collect::<BTreeSet<_>>().len()
-    }
-}
-
-impl Default for OscillationGuard {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -158,7 +147,7 @@ mod tests {
     /// and every other guard stays silent while this one stops it.
     #[test]
     fn a_two_cycle_is_stopped() {
-        let mut g = OscillationGuard::new();
+        let mut g = OscillationGuard::default();
         let (turn_a, turn_b) = (a(), b());
         let mut verdicts = Vec::new();
         for i in 0..STOP_AT {
@@ -179,7 +168,7 @@ mod tests {
     /// there-and-back is ordinary.
     #[test]
     fn one_alternation_is_fine() {
-        let mut g = OscillationGuard::new();
+        let mut g = OscillationGuard::default();
         assert_eq!(g.observe(&a()), Verdict::Proceed);
         assert_eq!(g.observe(&b()), Verdict::Proceed);
         assert_eq!(g.observe(&a()), Verdict::Proceed);
@@ -189,7 +178,7 @@ mod tests {
     /// files must never be stopped, however many turns it takes.
     #[test]
     fn genuine_progress_is_never_stopped() {
-        let mut g = OscillationGuard::new();
+        let mut g = OscillationGuard::default();
         for i in 0..20 {
             let calls = vec![call("read_file", json!({ "path": format!("f{i}.txt") }))];
             assert_eq!(
@@ -204,7 +193,7 @@ mod tests {
     /// `MAX_DISTINCT`. Documented so the choice is a decision, not an accident.
     #[test]
     fn a_three_cycle_is_deliberately_not_caught() {
-        let mut g = OscillationGuard::new();
+        let mut g = OscillationGuard::default();
         let c = vec![call("list_dir", json!({"path": "."}))];
         for i in 0..STOP_AT {
             let calls = match i % 3 {
@@ -219,7 +208,7 @@ mod tests {
     /// Arg order and key order must not create false distinctness.
     #[test]
     fn argument_order_does_not_matter() {
-        let mut g = OscillationGuard::new();
+        let mut g = OscillationGuard::default();
         for i in 0..STOP_AT {
             let calls = if i.is_multiple_of(2) {
                 vec![call("t", json!({"a": 1, "b": 2}))]
@@ -237,7 +226,7 @@ mod tests {
     /// actions and must not fill the window.
     #[test]
     fn empty_turns_are_ignored() {
-        let mut g = OscillationGuard::new();
+        let mut g = OscillationGuard::default();
         for _ in 0..STOP_AT {
             assert_eq!(g.observe(&[]), Verdict::Proceed);
         }

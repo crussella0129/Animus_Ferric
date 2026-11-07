@@ -28,19 +28,13 @@ const WARN_AT: u8 = 4;
 /// `STOP_AT + 1` turns with no completion. Well under every tier's `max_turns`.
 const STOP_AT: u8 = 5;
 
+#[derive(Default)]
 pub struct ProgressGuard {
     last_names: Option<String>,
     streak: u8,
 }
 
 impl ProgressGuard {
-    pub fn new() -> Self {
-        Self {
-            last_names: None,
-            streak: 0,
-        }
-    }
-
     /// Observe a turn's tool-call set (NAMES only, arg-insensitive) and decide.
     /// `Proceed` until the same name set repeats `WARN_AT` times in a row
     /// (`Warn`), then `Stop` at `STOP_AT`. Any change in the name set resets.
@@ -60,12 +54,6 @@ impl ProgressGuard {
         } else {
             Verdict::Proceed
         }
-    }
-}
-
-impl Default for ProgressGuard {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -98,7 +86,7 @@ mod tests {
 
     #[test]
     fn warns_then_stops_on_a_same_name_streak() {
-        let mut g = ProgressGuard::new();
+        let mut g = ProgressGuard::default();
         let turn = vec![call("make_dir", json!({"path": "a"}))];
         // First observation seeds; the next WARN_AT-1 are Proceed.
         assert_eq!(g.observe(&turn), Verdict::Proceed); // seed
@@ -113,8 +101,8 @@ mod tests {
     fn the_defining_contrast_same_tool_different_args() {
         // The exact ADR-031 gap: the same tool, DIFFERENT args each turn.
         // ProgressGuard reaches Stop; RepetitionGuard never leaves Proceed.
-        let mut progress = ProgressGuard::new();
-        let mut repetition = RepetitionGuard::new();
+        let mut progress = ProgressGuard::default();
+        let mut repetition = RepetitionGuard::default();
         let mut progress_stopped = false;
         for i in 0..8 {
             let turn = vec![call("make_dir", json!({ "path": format!("dir{i}") }))];
@@ -137,7 +125,7 @@ mod tests {
 
     #[test]
     fn a_tool_name_change_resets_the_streak() {
-        let mut g = ProgressGuard::new();
+        let mut g = ProgressGuard::default();
         let a = vec![call("make_dir", json!({"path": "a"}))];
         let b = vec![call("write_file", json!({"path": "b"}))];
         // Build the streak to one short of Warn, then change tools.
@@ -154,7 +142,7 @@ mod tests {
 
     #[test]
     fn name_set_is_order_independent() {
-        let mut g = ProgressGuard::new();
+        let mut g = ProgressGuard::default();
         let ab = vec![
             call("make_dir", json!({"path": "a"})),
             call("write_file", json!({"path": "b"})),
