@@ -34,3 +34,40 @@ Ferric its own user account.
 4. R-4, R-6 and R-7 (the loop and tools core).
 5. R-5.
 6. Records and the PR.
+
+## Outcome
+
+| Step | Result | Commit |
+|---|---|---|
+| R-8, R-9 | Done | `b19a725` |
+| R-1, R-2 | Done | `e42778f` |
+| R-3 | Done | `810d0b5` |
+| R-6, R-7 | Done | `598c2c7` |
+| R-5 | Done | `1e7140f` |
+| R-4 | Not done | — |
+
+R-4 was not done because it is not a pure removal. Prepare/commit
+reproduces Legacy behaviour in only 9 of 39 tool scenarios, so the decision
+returns to the owner as T-13006.
+
+**Size:** 131,421 → 112,457 lines of Rust (−18,964). Since the start of
+sprint 129: −27,625 (−19.7%).
+
+**T-12907 analysis.** The owner asked how two fixes compare: inspecting
+only the owner's processes, and giving Ferric its own user account.
+
+- **Inspecting only the owner's processes:**
+  - It still catches a squatter from any user, because every listener
+    on the port is listed in `/proc/net/tcp`.
+  - It still catches same-user sharing.
+  - It gives up only a socket taken from our engine by root or handed
+    over by the engine itself, both of which are outside the threat
+    model.
+  - Cost: about 20 lines.
+- **A dedicated account:**
+  - It does not fix the check by itself.
+  - It adds isolation from other processes run by the same user.
+  - It costs root at install, cross-account lifecycle control and
+    per-user accounts on shared machines.
+- **Recommendation:** the first option now; the account as optional
+  hardening later, alongside T-12706. Awaiting the owner's choice.

@@ -4,9 +4,9 @@
 - **Intent ID:** INT-0018
 - **State:** active
 - **Work evidence:** [Sprint 130 build plan](../sprints/s130/sprint-plans/build-plan.md); T-12906 in [tasks](../work/tasks.md#minimal-code-int-0017)
-- **Completion evidence:** none
-- **Code evidence:** none yet
-- **Test evidence:** none yet
+- **Completion evidence:** [T-13001–T-13005](../work/completed-tasks.md#t-13001-sprint-130) (AC-1 to AC-3 and AC-5 to AC-9); AC-4 open as T-13006
+- **Code evidence:** sprint 130 commits `b19a725`, `e42778f`, `810d0b5`, `598c2c7`, `1e7140f`
+- **Test evidence:** [Sprint 130 test report](../sprints/s130/sprint-tests/test-report.md)
 - **Documentation evidence:** [Sprint 129 build plan §E](../sprints/s129/sprint-plans/build-plan.md)
 
 ## Intent
