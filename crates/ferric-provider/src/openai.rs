@@ -6,13 +6,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tracing::{debug, warn};
 
-use crate::stream_scan::ConstrainedJsonScanner;
 use crate::traits::Provider;
 use crate::types::{
     Capabilities, Completion, CompletionRequest, Constraint, ProviderError, StreamDelta,
     ToolDescriptor,
 };
 use ferric_core::{MediaPart, Message, Role, ToolCall};
+use ferric_iron::ConstrainedJsonScanner;
 
 /// Keep one request future alive across cancellation polls. Dropping it on
 /// interruption also drops its request/response body; no detached request task

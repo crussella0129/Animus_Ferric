@@ -80,13 +80,13 @@ fn completion_is_blocked_until_every_required_check_passes() {
         vec![
             tool_completion(vec![(
                 "done-too-soon",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "unverified"}),
             )]),
             tool_completion(vec![("check-1", "run_check", json!({"name": "unit"}))]),
             tool_completion(vec![(
                 "done-verified",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "verified"}),
             )]),
         ],
@@ -139,13 +139,13 @@ fn a_later_mutation_makes_prior_check_evidence_stale() {
             )]),
             tool_completion(vec![(
                 "done-stale",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "stale"}),
             )]),
             tool_completion(vec![("check-after", "run_check", json!({"name": "unit"}))]),
             tool_completion(vec![(
                 "done-fresh",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "fresh"}),
             )]),
         ],

@@ -130,19 +130,6 @@ impl WorkspaceHandle {
 
 const STDERR_TAIL_BYTES: usize = 1000;
 
-/// Materialize the spec's workspace, run the agent, and return the raw record.
-pub fn run_spec(spec: &BenchSpec, inv: &Invocation) -> std::io::Result<RunRecord> {
-    match &inv.budget {
-        Some(controls) => {
-            let budget = controls
-                .resolve_agent(spec.timeout_s)
-                .map_err(invalid_budget)?;
-            run_spec_with_budget(spec, inv, &budget)
-        }
-        None => run_spec_inner(spec, inv, Duration::from_secs(spec.timeout_s), None),
-    }
-}
-
 /// Execute one pre-resolved selected spec budget. Validation is before even
 /// temporary workspace/profile allocation; no silent re-resolution per trial.
 pub fn run_spec_with_budget(

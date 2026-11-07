@@ -59,18 +59,6 @@ jobs:
       - name: test without default features
         run: cargo test -p ferric-cli --no-default-features --locked
 
-  # Compile-checks the feature-gated openai backend so cfg-gated code
-  # cannot rot behind -D warnings. Linux-only to bound CI minutes; Windows
-  # CPU is CI-verified upstream and exercised daily on the dev machine.
-  backend-check:
-    name: backend-openai clippy (ubuntu)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-      - name: clippy with backend-openai
-        run: cargo clippy -p ferric-cli --features backend-openai --all-targets -- -D warnings
-
   # Runs the model-free lifecycle fixture on both supported CI hosts. Tests are
   # serialized because they exercise process, listener, and runfile ownership
   # boundaries. On Linux, the positive-path fixture gets an isolated PID,

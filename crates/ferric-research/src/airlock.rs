@@ -299,11 +299,6 @@ impl Airlock {
         &self.gateway
     }
 
-    /// This airlock's isolated network name.
-    pub fn network_name(&self) -> &str {
-        &self.internal_network
-    }
-
     /// Remove the gateway and both networks. Idempotent.
     pub fn stop(&self) {
         dk_quiet(&["rm", "-f", &self.gateway]);

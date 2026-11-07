@@ -132,10 +132,6 @@ impl Gate {
         self
     }
 
-    pub fn allowed_hosts(&self) -> &[String] {
-        &self.hosts
-    }
-
     pub fn check(&self, method: &Method, path: &str, headers: &HeaderMap) -> Result<(), Denial> {
         // 1. Host.
         let host = headers

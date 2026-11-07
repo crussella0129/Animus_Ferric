@@ -54,7 +54,7 @@ pub use repository_brief::{RepositoryBrief, RepositoryBriefLimits, generate_repo
 pub use results::{ResultRow, append_row, read_rows};
 pub use runner::{
     Invocation, OpenAiArgs, QuerySegmentRecord, QuerySegmentRequest, RunRecord, WorkspaceHandle,
-    run_query_segment, run_spec, run_spec_with_budget,
+    run_query_segment, run_spec_with_budget,
 };
 pub use spec::{BenchSpec, CommandCheck, ExpectKind, Expectation, embedded_specs};
 pub use summary::{

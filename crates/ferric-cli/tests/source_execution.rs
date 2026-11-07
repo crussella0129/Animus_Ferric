@@ -58,7 +58,7 @@ fn source_quality_and_feature_matrix() {
         .split_once("\n  no-default-features:\n")
         .expect("backend-free job")
         .1
-        .split("\n  backend-check:\n")
+        .split("\n  lifecycle-fixture:\n")
         .next()
         .unwrap();
     for line in backend_free_gate

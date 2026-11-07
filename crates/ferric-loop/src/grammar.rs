@@ -1,14 +1,9 @@
 //! The fallback XML action parser (`<tool_call><name>…</name><args>…</args></tool_call>`)
 //! for the `TextXml` protocol — unconstrained backends that scrape tool calls
-//! from prose.
-//!
-//! The constrained action grammar (`action_schema`) and the constrained-JSON
-//! parser (`parse_json_action`) moved to the constrained-decoding core
-//! (T-12601, INT-0011) and are re-exported here unchanged.
-
-pub use ferric_iron::grammar::{ActionParseError, action_schema, parse_json_action};
+//! from prose. The constrained grammar and its parser live in `ferric_iron`.
 
 use ferric_core::ToolCall;
+use ferric_iron::ActionParseError;
 use regex::Regex;
 use serde_json::Value;
 use std::sync::OnceLock;

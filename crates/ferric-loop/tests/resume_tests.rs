@@ -217,7 +217,7 @@ fn resume_rebuilds_failure_streak_with_blocked_completion_as_control() {
         )]),
         tool_completion(vec![(
             "blocked-completion",
-            ferric_loop::TASK_COMPLETE,
+            ferric_iron::terminator::TASK_COMPLETE,
             serde_json::json!({"summary": "not verified"}),
         )]),
     ]);
@@ -462,7 +462,7 @@ fn resume_does_not_reset_failure_streak_for_predispatch_task_complete_stop() {
             } else {
                 tool_completion(vec![(
                     "cycle-completion",
-                    ferric_loop::TASK_COMPLETE,
+                    ferric_iron::terminator::TASK_COMPLETE,
                     serde_json::json!({"summary": "not verified"}),
                 )])
             }
@@ -510,7 +510,7 @@ fn resume_does_not_reset_failure_streak_for_predispatch_task_complete_stop() {
         stopped
             .calls
             .iter()
-            .any(|call| call.name == ferric_loop::TASK_COMPLETE)
+            .any(|call| call.name == ferric_iron::terminator::TASK_COMPLETE)
     );
     assert_eq!(
         (stopped.dispatched, stopped.errored),
@@ -870,7 +870,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
         )]),
         tool_completion(vec![(
             "tc-1",
-            ferric_loop::TASK_COMPLETE,
+            ferric_iron::terminator::TASK_COMPLETE,
             serde_json::json!({"summary": "wrote a.txt"}),
         )]),
     ]);
@@ -927,7 +927,7 @@ fn real_run_then_replay_then_resume_reaches_task_complete() {
     let mut sink2 = JsonlSink::open(&trace_path2, "resumed-continuation").unwrap();
     let provider2 = MockProvider::new(vec![tool_completion(vec![(
         "tc-2",
-        ferric_loop::TASK_COMPLETE,
+        ferric_iron::terminator::TASK_COMPLETE,
         serde_json::json!({"summary": "wrote a.txt"}),
     )])]);
     let sleeper2 = RecordingSleeper::new();

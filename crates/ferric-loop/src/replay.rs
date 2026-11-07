@@ -539,9 +539,9 @@ fn validate_checkpoint(state: &ferric_trace::RecoveryCheckpointV1) -> Result<(),
 fn is_control_call(name: &str) -> bool {
     matches!(
         name,
-        crate::terminator::TASK_COMPLETE
-            | crate::terminator::SUBMIT_PLAN
-            | crate::terminator::REQUEST_USER_INPUT
+        ferric_iron::terminator::TASK_COMPLETE
+            | ferric_iron::terminator::SUBMIT_PLAN
+            | ferric_iron::terminator::REQUEST_USER_INPUT
     )
 }
 
@@ -1110,7 +1110,7 @@ mod tests {
     fn unresolved_terminal_control_with_resulted_sibling_is_ambiguous() {
         let complete = ferric_core::ToolCall {
             id: "complete-0".to_string(),
-            name: crate::terminator::TASK_COMPLETE.to_string(),
+            name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
             args: json!({"summary": "done"}),
         };
         let read = ferric_core::ToolCall {
@@ -1210,7 +1210,8 @@ mod tests {
         checkpoint.guard_history[0].controller_blocks = 1;
         invalid.push(checkpoint);
         let mut checkpoint = valid.clone();
-        checkpoint.guard_history[0].calls[0].name = crate::terminator::TASK_COMPLETE.to_string();
+        checkpoint.guard_history[0].calls[0].name =
+            ferric_iron::terminator::TASK_COMPLETE.to_string();
         checkpoint.guard_history[0].errored = 1;
         checkpoint.guard_history[0].controller_blocks = 1;
         invalid.push(checkpoint);

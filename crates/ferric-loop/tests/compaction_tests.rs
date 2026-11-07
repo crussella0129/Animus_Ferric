@@ -140,7 +140,7 @@ fn compaction_triggers_and_shrinks_next_prompt_assembled() {
         text_completion("wrote a.txt and b.txt"),
         tool_completion(vec![(
             "tc-4",
-            ferric_loop::TASK_COMPLETE,
+            ferric_iron::terminator::TASK_COMPLETE,
             serde_json::json!({"summary": "wrote 4 files"}),
         )]),
     ]);
@@ -238,7 +238,7 @@ fn history_compacted_traced_after_triggering_turn_start() {
         text_completion("summary of turns 0-1"),
         tool_completion(vec![(
             "tc-4",
-            ferric_loop::TASK_COMPLETE,
+            ferric_iron::terminator::TASK_COMPLETE,
             serde_json::json!({"summary": "done"}),
         )]),
     ]);
@@ -372,7 +372,7 @@ fn resume_only_folds_new_post_resume_turns() {
         text_completion("summary of the new turns"),
         tool_completion(vec![(
             "tc-4",
-            ferric_loop::TASK_COMPLETE,
+            ferric_iron::terminator::TASK_COMPLETE,
             serde_json::json!({"summary": "done"}),
         )]),
     ]);
@@ -480,7 +480,7 @@ fn resume_seeds_compactor_numbering_consistently() {
         text_completion("summary of turns 7-8"),
         tool_completion(vec![(
             "tc-4",
-            ferric_loop::TASK_COMPLETE,
+            ferric_iron::terminator::TASK_COMPLETE,
             serde_json::json!({"summary": "done"}),
         )]),
     ]);
@@ -644,7 +644,7 @@ fn real_run_compact_kill_replay_resume_shrinks_history() {
     let mut sink2 = JsonlSink::open(&trace_path2, "compact-e2e-continuation").unwrap();
     let provider2 = MockProvider::new(vec![tool_completion(vec![(
         "tc-5",
-        ferric_loop::TASK_COMPLETE,
+        ferric_iron::terminator::TASK_COMPLETE,
         serde_json::json!({"summary": "wrote five files"}),
     )])]);
     let sleeper2 = RecordingSleeper::new();

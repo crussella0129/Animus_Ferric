@@ -1234,7 +1234,7 @@ mod tests {
         let provider = ferric_provider::MockProvider::new(vec![
             native_completion(
                 "ask-1",
-                ferric_loop::REQUEST_USER_INPUT,
+                ferric_iron::terminator::REQUEST_USER_INPUT,
                 serde_json::json!({
                     "question": "Which database?",
                     "context": "Both adapters exist and no default is documented.",
@@ -1243,7 +1243,7 @@ mod tests {
             ),
             native_completion(
                 "done-1",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 serde_json::json!({"summary": "used SQLite"}),
             ),
         ]);
@@ -1520,7 +1520,7 @@ mod tests {
                     text: None,
                     tool_calls: vec![ToolCall {
                         id: "media-0".to_string(),
-                        name: ferric_loop::TASK_COMPLETE.to_string(),
+                        name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
                         args: serde_json::json!({"summary": "media received"}),
                     }],
                     tool_call_id: None,
@@ -1636,7 +1636,7 @@ mod tests {
                         text: None,
                         tool_calls: vec![ToolCall {
                             id: "flaky-0".to_string(),
-                            name: ferric_loop::TASK_COMPLETE.to_string(),
+                            name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
                             args: serde_json::json!({"summary": "recovered"}),
                         }],
                         tool_call_id: None,

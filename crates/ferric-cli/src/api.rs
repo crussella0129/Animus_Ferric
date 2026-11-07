@@ -159,14 +159,6 @@ pub mod server {
         pub needs_input: Option<ferric_loop::NeedsInput>,
     }
 
-    /// SSE event wrapper for streaming.
-    #[derive(Debug, Serialize)]
-    #[allow(dead_code)]
-    pub struct SsePayload {
-        pub text: Option<String>,
-        pub name: Option<String>,
-    }
-
     #[derive(Debug)]
     enum ApiQueryError {
         InvalidRequest(String),

@@ -242,7 +242,7 @@ fn full_evidence_path_reads_edits_repairs_verifies_and_completes() {
             tool_completion(vec![("check-2", "run_check", json!({"name": "unit"}))]),
             tool_completion(vec![(
                 "done",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "verified"}),
             )]),
         ],
@@ -899,7 +899,7 @@ fn blocked_task_complete_breaks_execution_failure_streak_before_recovery() {
             tool_completion(vec![("failed-check", "run_check", json!({"name": "unit"}))]),
             tool_completion(vec![(
                 "premature-completion",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "not verified"}),
             )]),
             tool_completion(vec![(
@@ -986,7 +986,7 @@ fn real_errors_still_stop_when_a_turn_also_has_a_block_and_blocked_completion() 
                 ),
                 (
                     "blocked-completion",
-                    ferric_loop::TASK_COMPLETE,
+                    ferric_iron::terminator::TASK_COMPLETE,
                     json!({"summary": "not verified"}),
                 ),
             ]),
@@ -1074,7 +1074,7 @@ fn evidence_guidance_is_added_to_custom_prompts_and_legacy_is_literal() {
             &directory,
             vec![tool_completion(vec![(
                 "done",
-                ferric_loop::TASK_COMPLETE,
+                ferric_iron::terminator::TASK_COMPLETE,
                 json!({"summary": "done"}),
             )])],
             policy,

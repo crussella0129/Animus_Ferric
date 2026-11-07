@@ -3,7 +3,8 @@
 mod common;
 
 use common::*;
-use ferric_loop::{StopReason, TASK_COMPLETE};
+use ferric_iron::terminator::TASK_COMPLETE;
+use ferric_loop::StopReason;
 use serde_json::json;
 
 #[test]

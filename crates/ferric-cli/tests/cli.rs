@@ -2176,7 +2176,7 @@ fn write_clarification_trace_fixture_with_policy(
     assistant.text = None;
     assistant.tool_calls = vec![ferric_core::ToolCall {
         id: "ask-1".to_string(),
-        name: ferric_loop::REQUEST_USER_INPUT.to_string(),
+        name: ferric_iron::terminator::REQUEST_USER_INPUT.to_string(),
         args: serde_json::to_value(&request).unwrap(),
     }];
     let provider = ferric_provider::MockProvider::new(vec![ferric_provider::Completion {

@@ -826,7 +826,7 @@ mod tests {
                 message.text = None;
                 message.tool_calls = vec![ferric_core::ToolCall {
                     id: "finish".to_string(),
-                    name: ferric_loop::TASK_COMPLETE.to_string(),
+                    name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
                     args: serde_json::json!({"summary": "done"}),
                 }];
                 Completion {

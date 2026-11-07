@@ -184,7 +184,7 @@ fn successful_terminal_commit_is_not_resumable_if_session_end_was_not_written() 
     let trace = dir.path().join("success-before-session-end.jsonl");
     let done = ToolCall {
         id: "done-1".to_string(),
-        name: ferric_loop::TASK_COMPLETE.to_string(),
+        name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
         args: json!({"summary": "done"}),
     };
     let mut sink = JsonlSink::open(&trace, "terminal-crash").unwrap();
@@ -266,7 +266,7 @@ fn resume_uses_a_fresh_budget_but_keeps_absolute_turn_ids() {
     };
     let provider = MockProvider::new(vec![tool_completion(vec![(
         "done-15",
-        ferric_loop::TASK_COMPLETE,
+        ferric_iron::terminator::TASK_COMPLETE,
         json!({"summary": "finished after resume"}),
     )])]);
     let sleeper = RecordingSleeper::new();

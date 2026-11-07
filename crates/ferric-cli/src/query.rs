@@ -17,9 +17,8 @@ use ferric_core::{
     ActionProtocol, HarnessPolicy, MediaPart, Message, ModelProfile, RunPolicy, policy_for,
 };
 use ferric_guard::{Decision, PermissionLevel, Workspace, check_with_ignore};
-use ferric_loop::{
-    DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run, select_protocol,
-};
+use ferric_iron::select_protocol;
+use ferric_loop::{DEFAULT_SYSTEM_PROMPT, LoopOutcome, PromptLineage, RunArgs, ThreadSleeper, run};
 use ferric_provider::{Capabilities, Completion, MockProvider, Provider, SamplingParams};
 use ferric_tools::{NamedCheck, Registry, register_builtin_tools, register_run_checks};
 use ferric_trace::{Event, JsonlSink};
@@ -1772,22 +1771,22 @@ pub(crate) fn mock_provider(protocol: ActionProtocol) -> MockProvider {
     let script = match protocol {
         ActionProtocol::NativeTools => vec![
             native_completion("mock-0", "write_file", write_args),
-            native_completion("mock-1", ferric_loop::TASK_COMPLETE, done_args),
+            native_completion("mock-1", ferric_iron::terminator::TASK_COMPLETE, done_args),
         ],
         ActionProtocol::ConstrainedJson => vec![
             json_completion("write_file", &write_args),
-            json_completion(ferric_loop::TASK_COMPLETE, &done_args),
+            json_completion(ferric_iron::terminator::TASK_COMPLETE, &done_args),
         ],
         ActionProtocol::Plan => vec![
             json_completion("grep_search", &json!({"query": "mock", "path": "."})),
             json_completion(
-                ferric_loop::SUBMIT_PLAN,
+                ferric_iron::terminator::SUBMIT_PLAN,
                 &json!({"plan": "mock plan complete"}),
             ),
         ],
         ActionProtocol::TextXml => vec![
             xml_completion("write_file", &write_args),
-            xml_completion(ferric_loop::TASK_COMPLETE, &done_args),
+            xml_completion(ferric_iron::terminator::TASK_COMPLETE, &done_args),
         ],
     };
     MockProvider::new(script)

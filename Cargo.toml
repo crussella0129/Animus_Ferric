@@ -30,11 +30,9 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/crussella0129/Animus_Ferric"
 
-# Dependency allowlist (ADR-004, amended s1): the s0 set plus — clap (the CLI
-# surface is real now), rustyline (for the chat REPL), and tokio (the async
-# runtime the OpenAI HTTP backend and the CLI drive; the pure-library default
-# build and the aarch64 check gate never pull it). The in-process mistralrs
-# path was removed (ADR-027), so it is no longer in this allowlist.
+# Dependency allowlist (ADR-004, amended s1): the s0 set plus clap (the CLI),
+# rustyline (the chat REPL) and tokio (the runtime the OpenAI HTTP backend, the
+# valve and the CLI drive).
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 # preserve_order is LOAD-BEARING (ADR-016): llguidance emits JSON-schema
@@ -52,7 +50,7 @@ clap = { version = "4", features = ["derive"] }
 # talks to 127.0.0.1 (ADR-005) so TLS itself is barely exercised regardless.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "time", "macros", "signal"] }
-# Prompt composition (ADR-016): rev-pinned to oovra main; immutable until a
+# Prompt composition (ADR-016): rev-pinned to oovra main.
 oovra = { git = "https://github.com/crussella0129/oovra", rev = "378abea6552f74ee7a8e4d9ce74418d6457ad002" }
 toml = "1.1"
 regex = "1"
@@ -85,6 +83,11 @@ libc = "0.2"
 
 # Native Windows process ownership and explicit test-harness containment.
 windows-sys = "0.61"
+
+# Capability-based, no-follow filesystem access for the workspace tools and
+# Ferric's own state directories.
+cap-std = "4"
+cap-fs-ext = "4"
 
 # Calendar cron expressions (sprint 76, ADR-067): epoch→UTC civil-time
 # decomposition for evaluating 5-field cron schedules. Already in the tree via

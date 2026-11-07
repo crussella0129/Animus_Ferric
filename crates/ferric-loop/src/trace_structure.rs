@@ -16,7 +16,7 @@ use ferric_trace::{
 };
 
 use crate::controller::ControllerState;
-use crate::terminator::{REQUEST_USER_INPUT, SUBMIT_PLAN, TASK_COMPLETE};
+use ferric_iron::terminator::{REQUEST_USER_INPUT, SUBMIT_PLAN, TASK_COMPLETE};
 
 pub(crate) fn validate_recovery_checkpoint_shape(
     state: &RecoveryCheckpointV1,

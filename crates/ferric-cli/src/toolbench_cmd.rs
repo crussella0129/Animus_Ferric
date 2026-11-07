@@ -25,7 +25,7 @@ use ferric_provider::Completion;
 use {
     crate::backend::create_provider,
     ferric_core::{Message, ModelProfile, policy_for},
-    ferric_loop::{action_schema, select_protocol},
+    ferric_iron::{action_schema, select_protocol},
     ferric_provider::{CompletionRequest, Constraint, SamplingParams, ToolDescriptor},
     ferric_tools::Registry,
 };
@@ -131,7 +131,7 @@ pub fn classify(
             if text.trim().is_empty() {
                 Ok(None)
             } else {
-                ferric_loop::parse_json_action(0, text)
+                ferric_iron::parse_json_action(0, text)
                     .map(Some)
                     .map_err(|_| ())
             }

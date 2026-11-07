@@ -276,7 +276,7 @@ impl<'a> LoopState<'a> {
 
         let constraint = match self.args.protocol {
             ActionProtocol::ConstrainedJson | ActionProtocol::Plan => Some(Constraint::JsonSchema(
-                crate::grammar::action_schema(&self.native_tools),
+                ferric_iron::action_schema(&self.native_tools),
             )),
             ActionProtocol::NativeTools | ActionProtocol::TextXml => None,
         };
@@ -437,7 +437,7 @@ impl<'a> LoopState<'a> {
         let (actions, parse_error) = match self.args.protocol {
             ActionProtocol::NativeTools => (completion.message.tool_calls.clone(), None),
             ActionProtocol::ConstrainedJson | ActionProtocol::Plan => {
-                match crate::grammar::parse_json_action(
+                match ferric_iron::parse_json_action(
                     turn,
                     completion.message.text.as_deref().unwrap_or_default(),
                 ) {
@@ -517,7 +517,7 @@ impl<'a> LoopState<'a> {
         // declaring ambiguity cannot be mistaken for repetition or flailing.
         if actions
             .iter()
-            .any(|call| crate::terminator::is_request_user_input(&call.name))
+            .any(|call| ferric_iron::terminator::is_request_user_input(&call.name))
         {
             if actions.len() != 1 {
                 let output = "request_user_input must be the only action in its turn; no calls were executed"
@@ -552,7 +552,7 @@ impl<'a> LoopState<'a> {
             }
 
             let call = &actions[0];
-            match crate::terminator::request_of(&call.args) {
+            match ferric_iron::terminator::request_of(&call.args) {
                 Ok(request) => {
                     self.record_synthetic_result(
                         call,
@@ -679,8 +679,11 @@ impl<'a> LoopState<'a> {
         let mut controller_blocks = 0usize;
         let mut completion_was_blocked = false;
         for call in &actions {
-            if crate::terminator::is_task_complete(&call.name) {
-                terminate_with = Some((call.clone(), crate::terminator::summary_of(&call.args)));
+            if ferric_iron::terminator::is_task_complete(&call.name) {
+                terminate_with = Some((
+                    call.clone(),
+                    ferric_iron::terminator::summary_of(&call.args),
+                ));
                 let tc = Event::ToolCall {
                     id: call.id.clone(),
                     name: call.name.clone(),
@@ -690,8 +693,8 @@ impl<'a> LoopState<'a> {
                 self.projector.step(&tc);
                 continue;
             }
-            if crate::terminator::is_submit_plan(&call.name) {
-                plan_terminate_with = Some(crate::terminator::plan_of(&call.args));
+            if ferric_iron::terminator::is_submit_plan(&call.name) {
+                plan_terminate_with = Some(ferric_iron::terminator::plan_of(&call.args));
                 let tc = Event::ToolCall {
                     id: call.id.clone(),
                     name: call.name.clone(),
@@ -1191,7 +1194,7 @@ pub async fn run(
                 let listed: Vec<ToolDescriptor> = registry_tools
                     .iter()
                     .cloned()
-                    .chain(crate::terminator::control_descriptors(args.protocol))
+                    .chain(ferric_iron::terminator::control_descriptors(args.protocol))
                     .collect();
                 system.push_str(&ferric_iron::render_tool_listing(&listed));
             }
@@ -1224,7 +1227,7 @@ pub async fn run(
     };
 
     let mut offered_names: Vec<String> = registry_tools.iter().map(|t| t.name.clone()).collect();
-    let controls = crate::terminator::control_descriptors(args.protocol);
+    let controls = ferric_iron::terminator::control_descriptors(args.protocol);
     offered_names.extend(controls.iter().map(|control| control.name.clone()));
 
     let native_tools: Vec<ToolDescriptor> = {
@@ -1252,7 +1255,7 @@ pub async fn run(
             && guarded
                 .calls
                 .iter()
-                .any(|call| crate::terminator::is_task_complete(&call.name));
+                .any(|call| ferric_iron::terminator::is_task_complete(&call.name));
         if let Some((execution_dispatched, execution_errored)) = crate::failure::failure_observation(
             guarded.dispatched as usize,
             guarded.errored as usize,

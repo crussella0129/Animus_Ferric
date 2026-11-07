@@ -47,6 +47,7 @@ ferric-core = { workspace = true }
 ferric-cron = { workspace = true }
 ferric-gate = { workspace = true, optional = true }
 ferric-guard = { workspace = true }
+ferric-iron = { workspace = true }
 ferric-setup = { workspace = true, optional = true }
 ferric-loop = { workspace = true }
 ferric-prompt = { workspace = true }
@@ -58,8 +59,8 @@ ferric-skills = { workspace = true }
 ferric-trace = { workspace = true }
 ferric-vcs = { workspace = true }
 clap = { workspace = true }
-cap-std = "4"
-cap-fs-ext = "4"
+cap-std = { workspace = true }
+cap-fs-ext = { workspace = true }
 tokio = { workspace = true }
 futures-executor = { workspace = true }
 serde = { workspace = true }
@@ -89,5 +90,4 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 async-trait = { workspace = true }

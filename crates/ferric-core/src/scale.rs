@@ -302,17 +302,6 @@ impl TierSource {
             TierSource::Conservative => "conservative",
         }
     }
-
-    /// Inverse of [`label`](Self::label). An unrecognized label reads back as
-    /// `Params` — the conservative answer, and what a pre-ADR-098 trace meant.
-    pub fn from_label(s: &str) -> Self {
-        match s {
-            "measured" => TierSource::Measured,
-            "override" => TierSource::Override,
-            "conservative" => TierSource::Conservative,
-            _ => TierSource::Params,
-        }
-    }
 }
 
 /// Resolve the tier and *why*. Precedence: an explicit operator override wins,
@@ -522,21 +511,6 @@ mod tests {
             earned.tier_source, asked.tier_source,
             "identical budgets — provenance is the only distinguishing field"
         );
-    }
-
-    #[test]
-    fn tier_source_labels_round_trip() {
-        for s in [
-            TierSource::Measured,
-            TierSource::Params,
-            TierSource::Override,
-            TierSource::Conservative,
-        ] {
-            assert_eq!(TierSource::from_label(s.label()), s);
-        }
-        // An unknown label reads back conservatively, which is also what a
-        // pre-ADR-098 trace means.
-        assert_eq!(TierSource::from_label("who knows"), TierSource::Params);
     }
 
     /// `policy_for` must stay exactly what it was for every existing caller.

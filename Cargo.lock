@@ -608,6 +608,7 @@ dependencies = [
  "ferric-gate",
  "ferric-guard",
  "ferric-icm",
+ "ferric-iron",
  "ferric-loop",
  "ferric-process",
  "ferric-prompt",
@@ -680,7 +681,6 @@ name = "ferric-guard"
 version = "0.1.0"
 dependencies = [
  "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.20",
 ]
@@ -752,15 +752,11 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "ferric-core",
- "ferric-guard",
  "ferric-iron",
- "ferric-tools",
- "ferric-trace",
  "futures-executor",
  "reqwest",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -789,7 +785,6 @@ dependencies = [
  "ferric-process",
  "hex",
  "reqwest",
- "serde",
  "serde_json",
  "sha2",
  "tempfile",

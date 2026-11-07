@@ -29,7 +29,7 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     let mut first_sink = JsonlSink::open(&first_trace, "clarify-1").unwrap();
     let first_provider = MockProvider::new(vec![tool_completion(vec![(
         "ask-1",
-        ferric_loop::REQUEST_USER_INPUT,
+        ferric_iron::terminator::REQUEST_USER_INPUT,
         request_args(),
     )])]);
     let first_sleeper = RecordingSleeper::new();
@@ -89,7 +89,7 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
             name,
             is_error: false,
             ..
-        }) if name == ferric_loop::REQUEST_USER_INPUT
+        }) if name == ferric_iron::terminator::REQUEST_USER_INPUT
     )));
 
     let replayed = replay(&first_trace).unwrap();
@@ -99,7 +99,7 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     let mut second_sink = JsonlSink::open(&second_trace, "clarify-2").unwrap();
     let second_provider = MockProvider::new(vec![tool_completion(vec![(
         "done-1",
-        ferric_loop::TASK_COMPLETE,
+        ferric_iron::terminator::TASK_COMPLETE,
         json!({"summary": "targeted SQLite"}),
     )])]);
     let second_sleeper = RecordingSleeper::new();
@@ -187,7 +187,7 @@ fn clarification_pause_is_durable_and_answer_resumes_the_original_objective() {
     let mut third_sink = JsonlSink::open(&third_trace, "clarify-3").unwrap();
     let third_provider = MockProvider::new(vec![tool_completion(vec![(
         "done-2",
-        ferric_loop::TASK_COMPLETE,
+        ferric_iron::terminator::TASK_COMPLETE,
         json!({"summary": "continued without a duplicate answer"}),
     )])]);
     let third_sleeper = RecordingSleeper::new();
@@ -230,7 +230,7 @@ fn committed_clarification_recovers_pending_input_before_terminal_checkpoint() {
     let mut sink = JsonlSink::open(&trace, "crash-after-commit").unwrap();
     let provider = MockProvider::new(vec![tool_completion(vec![(
         "ask-1",
-        ferric_loop::REQUEST_USER_INPUT,
+        ferric_iron::terminator::REQUEST_USER_INPUT,
         request_args(),
     )])]);
     let sleeper = RecordingSleeper::new();
@@ -292,7 +292,11 @@ fn mixed_clarification_turn_executes_no_sibling_mutation() {
     let mut sink = JsonlSink::open(&trace, "mixed-request").unwrap();
     let provider = MockProvider::new(vec![
         tool_completion(vec![
-            ("ask-1", ferric_loop::REQUEST_USER_INPUT, request_args()),
+            (
+                "ask-1",
+                ferric_iron::terminator::REQUEST_USER_INPUT,
+                request_args(),
+            ),
             (
                 "write-1",
                 "write_file",
@@ -301,7 +305,7 @@ fn mixed_clarification_turn_executes_no_sibling_mutation() {
         ]),
         tool_completion(vec![(
             "done-1",
-            ferric_loop::TASK_COMPLETE,
+            ferric_iron::terminator::TASK_COMPLETE,
             json!({"summary": "recovered"}),
         )]),
     ]);

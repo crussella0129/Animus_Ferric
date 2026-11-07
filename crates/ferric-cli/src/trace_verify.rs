@@ -610,9 +610,9 @@ fn finish_turn(state: &mut VerificationState, eof: bool) -> Result<(), String> {
     }
 
     for (id, call) in turn.calls {
-        if call.name == ferric_loop::TASK_COMPLETE {
+        if call.name == ferric_iron::terminator::TASK_COMPLETE {
             state.saw_task_complete = true;
-        } else if call.name == ferric_loop::SUBMIT_PLAN {
+        } else if call.name == ferric_iron::terminator::SUBMIT_PLAN {
             state.saw_submit_plan = true;
         } else if !call.has_result {
             return Err(format!(
@@ -1000,7 +1000,7 @@ mod tests {
             },
             Event::ToolCall {
                 id: "done-1".to_string(),
-                name: ferric_loop::TASK_COMPLETE.to_string(),
+                name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
                 args: json!({"summary": "done"}),
             },
             Event::SessionEnd {
@@ -1065,7 +1065,7 @@ mod tests {
             },
             Event::ToolCall {
                 id: "done-1".to_string(),
-                name: ferric_loop::TASK_COMPLETE.to_string(),
+                name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
                 args: json!({"summary": "incomplete recording"}),
             },
             Event::SessionEnd {

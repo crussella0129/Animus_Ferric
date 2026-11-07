@@ -472,8 +472,8 @@ impl TraceProjector {
             if stop_reason == Some("needs_input") && self.pending_input.is_none() {
                 self.pending_input = proposed
                     .iter()
-                    .find(|call| crate::terminator::is_request_user_input(&call.name))
-                    .and_then(|call| crate::terminator::request_of(&call.args).ok());
+                    .find(|call| ferric_iron::terminator::is_request_user_input(&call.name))
+                    .and_then(|call| ferric_iron::terminator::request_of(&call.args).ok());
             }
             if let Some(msgs) = p.finalize(proto, self.truncation_limit) {
                 if proto == ActionProtocol::NativeTools
