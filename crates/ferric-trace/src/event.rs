@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// Version stamped into every trace line. Bump on breaking schema change;
 /// readers must keep accepting unknown event types regardless (ADR-002).
@@ -31,7 +31,7 @@ pub struct TurnBoundary {
 }
 
 /// One action-bearing turn retained to reconstruct loop-guard state.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GuardTurn {
     pub turn: u32,
     pub calls: Vec<ferric_core::ToolCall>,
@@ -42,69 +42,6 @@ pub struct GuardTurn {
     /// executions for the repeated-failure guard.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub controller_blocks: u32,
-    /// Parse-time compatibility marker. This is deliberately not serialized:
-    /// it lets replay distinguish a legacy omitted count from an explicitly
-    /// recorded zero without changing the wire shape.
-    #[doc(hidden)]
-    #[serde(skip)]
-    pub controller_blocks_was_present: bool,
-}
-
-impl PartialEq for GuardTurn {
-    fn eq(&self, other: &Self) -> bool {
-        self.turn == other.turn
-            && self.calls == other.calls
-            && self.dispatched == other.dispatched
-            && self.errored == other.errored
-            && self.controller_blocks == other.controller_blocks
-    }
-}
-
-impl<'de> Deserialize<'de> for GuardTurn {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct Wire {
-            turn: u32,
-            calls: Vec<ferric_core::ToolCall>,
-            dispatched: u32,
-            errored: u32,
-            #[serde(default)]
-            controller_blocks: MissingOrU32,
-        }
-
-        let wire = Wire::deserialize(deserializer)?;
-        let (controller_blocks, controller_blocks_was_present) = match wire.controller_blocks {
-            MissingOrU32::Missing => (0, false),
-            MissingOrU32::Present(value) => (value, true),
-        };
-        Ok(Self {
-            turn: wire.turn,
-            calls: wire.calls,
-            dispatched: wire.dispatched,
-            errored: wire.errored,
-            controller_blocks,
-            controller_blocks_was_present,
-        })
-    }
-}
-
-#[derive(Default)]
-enum MissingOrU32 {
-    #[default]
-    Missing,
-    Present(u32),
-}
-
-impl<'de> Deserialize<'de> for MissingOrU32 {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        u32::deserialize(deserializer).map(Self::Present)
-    }
 }
 
 fn is_zero_u32(value: &u32) -> bool {

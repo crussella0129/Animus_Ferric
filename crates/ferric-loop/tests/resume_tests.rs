@@ -69,43 +69,6 @@ fn resume_target_inherits_omitted_policy_and_rejects_an_explicit_mismatch() {
 }
 
 #[test]
-fn unavailable_policies_write_no_event_and_dispatch_no_tool() {
-    // `Evidence` is now a live policy (sprint 113); only `EvidencePlanner`
-    // remains unavailable and must still be refused by `run()` before any trace
-    // event or tool dispatch. The evidence-runs path is covered positively by
-    // ferric-cli's `evidence_runs_and_planner_fails_before_trace_or_workspace_mutation`.
-    let policy = HarnessPolicy::EvidencePlanner;
-    let dir = tempfile::tempdir().unwrap();
-    let workspace = Workspace::new(dir.path()).unwrap();
-    let mut registry = Registry::new();
-    register_builtin_tools(&mut registry);
-    let trace_path = dir.path().join(format!("{}.jsonl", policy.label()));
-    let mut sink = JsonlSink::open(&trace_path, "refused-policy").unwrap();
-    let provider = MockProvider::new(vec![tool_completion(vec![(
-        "tc-0",
-        "write_file",
-        serde_json::json!({"path": "should-not-exist.txt", "content": "no"}),
-    )])]);
-    let sleeper = RecordingSleeper::new();
-
-    let error = futures_executor::block_on(run(
-        RunArgs {
-            harness_policy: Some(policy),
-            ..common::args(&provider, &registry, &workspace, &nano_policy(), &sleeper)
-        },
-        &mut sink,
-        Some("write a file"),
-    ))
-    .unwrap_err();
-
-    assert!(error.to_string().contains(policy.label()), "{error}");
-    drop(sink);
-    assert_eq!(std::fs::read_to_string(&trace_path).unwrap(), "");
-    assert!(!dir.path().join("should-not-exist.txt").exists());
-    assert!(provider.requests().is_empty());
-}
-
-#[test]
 fn evidence_resume_rejects_required_check_drift_before_trace_or_dispatch() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = Workspace::new(dir.path()).unwrap();
@@ -118,7 +81,7 @@ fn evidence_resume_rejects_required_check_drift_before_trace_or_dispatch() {
     replayed.harness_policy = HarnessPolicy::Evidence;
     replayed.pause_reason = Some("max_turns".to_string());
     replayed.controller_checkpoint = Some(
-        ControllerState::new(HarnessPolicy::Evidence, ["unit".to_string()])
+        ControllerState::new(["unit".to_string()])
             .unwrap()
             .checkpoint_for_pause("max_turns")
             .unwrap(),
@@ -462,7 +425,7 @@ fn live_evidence_resume_injects_byte_identical_stale_recovery_packet_and_verifie
     let provider = MockProvider::new(vec![text_completion("done after recovery")]);
     let sleeper = RecordingSleeper::new();
 
-    let mut controller = ControllerState::new(HarnessPolicy::Evidence, Vec::new()).unwrap();
+    let mut controller = ControllerState::new(Vec::new()).unwrap();
     controller
         .apply_observation(
             0,

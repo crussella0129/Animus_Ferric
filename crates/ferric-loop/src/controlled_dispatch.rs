@@ -1017,7 +1017,6 @@ fn contract_error(tool: &str, message: impl Into<String>) -> FerricError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ferric_core::HarnessPolicy;
     use ferric_tools::ControlFailure;
     use ferric_trace::{ParsedEvent, TraceReader};
 
@@ -1219,7 +1218,7 @@ mod tests {
         let trace = directory.path().join("partial.jsonl");
         let mut sink = JsonlSink::open(&trace, "partial").unwrap();
         let mut projector = TraceProjector::new();
-        let mut controller = ControllerState::new(HarnessPolicy::Evidence, Vec::new()).unwrap();
+        let mut controller = ControllerState::new(Vec::new()).unwrap();
         let call = ToolCall {
             id: "partial".to_string(),
             name: "write_file".to_string(),
@@ -1294,7 +1293,7 @@ mod tests {
             let trace = directory.path().join(format!("{label}.jsonl"));
             let mut sink = JsonlSink::open(&trace, label).unwrap();
             let mut projector = TraceProjector::new();
-            let mut controller = ControllerState::new(HarnessPolicy::Evidence, Vec::new()).unwrap();
+            let mut controller = ControllerState::new(Vec::new()).unwrap();
             let call = ToolCall {
                 id: label.to_string(),
                 name: "write_file".to_string(),

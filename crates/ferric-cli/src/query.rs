@@ -267,30 +267,7 @@ fn load_named_checks(path: &Path) -> Result<Vec<NamedCheck>, String> {
     Ok(parsed.checks)
 }
 
-/// Why `build_run_config` refused a run.
-#[derive(Debug)]
-pub(crate) enum RunConfigError {
-    Config(ConfigError),
-    /// A harness policy whose complete execution protocol is not available.
-    UnsupportedPolicy(&'static str),
-}
-
-impl std::fmt::Display for RunConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Config(error) => error.fmt(f),
-            Self::UnsupportedPolicy(message) => f.write_str(message),
-        }
-    }
-}
-
-impl From<ConfigError> for RunConfigError {
-    fn from(error: ConfigError) -> Self {
-        Self::Config(error)
-    }
-}
-
-pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, RunConfigError> {
+pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, ConfigError> {
     crate::config::validate_effective_numbers(a.params_b, a.ctx, a.temperature, a.max_ring)?;
     let mut registry = Registry::new();
     register_builtin_tools(&mut registry);
@@ -438,8 +415,6 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, RunConfig
         }
     };
 
-    // Last, so every surface refuses before it allocates a trace.
-    ensure_supported_harness_policy(a.harness_policy)?;
     Ok(RunConfig {
         registry,
         caps,
@@ -452,19 +427,6 @@ pub(crate) fn build_run_config(a: &RunConfigArgs) -> Result<RunConfig, RunConfig
         prompt_composition_error,
         hooks: a.hooks.clone(),
     })
-}
-
-/// Fail closed before a product allocates a trace for policies whose complete
-/// execution protocol is not available.
-pub(crate) fn ensure_supported_harness_policy(
-    harness_policy: Option<HarnessPolicy>,
-) -> Result<(), RunConfigError> {
-    match harness_policy {
-        None | Some(HarnessPolicy::Legacy | HarnessPolicy::Evidence) => Ok(()),
-        Some(HarnessPolicy::EvidencePlanner) => Err(RunConfigError::UnsupportedPolicy(
-            "harness policy evidence_planner is not implemented yet",
-        )),
-    }
 }
 
 impl RunConfig {

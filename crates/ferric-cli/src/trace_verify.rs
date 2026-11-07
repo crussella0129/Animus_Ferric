@@ -196,8 +196,9 @@ fn validate_event(index: usize, event: Event, state: &mut VerificationState) -> 
             }
         }
         Event::TurnStart { turn } => {
+            // TraceStructure has already refused a turn that was never
+            // committed, so no turn is open here.
             require_policy(index, state)?;
-            finish_turn(state, false)?;
             state.saw_turn = true;
             state.current_turn = Some(TurnState {
                 number: turn,
@@ -503,6 +504,14 @@ mod tests {
         ]
     }
 
+    fn call_event(call: &ferric_core::ToolCall) -> Event {
+        Event::ToolCall {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            args: call.args.clone(),
+        }
+    }
+
     fn modern_call(id: &str, name: &str) -> ferric_core::ToolCall {
         ferric_core::ToolCall {
             id: id.to_string(),
@@ -707,11 +716,7 @@ mod tests {
     fn accepts_an_evidence_intentional_pause_controller_suffix() {
         let dir = tempfile::tempdir().unwrap();
         let trace = dir.path().join("evidence-pause.jsonl");
-        let controller = ferric_loop::ControllerState::new(
-            ferric_core::HarnessPolicy::Evidence,
-            Vec::<String>::new(),
-        )
-        .unwrap();
+        let controller = ferric_loop::ControllerState::new(Vec::<String>::new()).unwrap();
         let mut recovery = checkpoint();
         recovery.next_turn = 1;
         let mut events = vec![
@@ -781,6 +786,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let trace = dir.path().join("trace.jsonl");
         let would_be_written = dir.path().join("must-not-exist.txt");
+        let write = ferric_core::ToolCall {
+            id: "write-1".to_string(),
+            name: "write_file".to_string(),
+            args: json!({"path": "must-not-exist.txt", "content": "unsafe"}),
+        };
+        let done = ferric_core::ToolCall {
+            id: "done-1".to_string(),
+            name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
+            args: json!({"summary": "done"}),
+        };
         let mut events = prefix(dir.path());
         events.extend([
             Event::TurnStart { turn: 0 },
@@ -792,17 +807,24 @@ mod tests {
                 output_tokens: Some(5),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "write-1".to_string(),
-                name: "write_file".to_string(),
-                args: json!({"path": "must-not-exist.txt", "content": "unsafe"}),
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![write.clone()],
             },
+            call_event(&write),
             Event::ToolResult {
                 id: "write-1".to_string(),
                 name: "write_file".to_string(),
                 output: "recorded only".to_string(),
                 is_error: false,
                 duration_ms: 1,
+            },
+            Event::TurnCommitted {
+                turn: 0,
+                dispatched: 1,
+                errored: 0,
+                stop_reason: None,
+                snapshot_commit: None,
             },
             Event::TurnStart { turn: 1 },
             Event::TurnEnd {
@@ -813,10 +835,17 @@ mod tests {
                 output_tokens: Some(5),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "done-1".to_string(),
-                name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
-                args: json!({"summary": "done"}),
+            Event::ActionsProposed {
+                turn: 1,
+                calls: vec![done.clone()],
+            },
+            call_event(&done),
+            Event::TurnCommitted {
+                turn: 1,
+                dispatched: 0,
+                errored: 0,
+                stop_reason: Some("task_complete".to_string()),
+                snapshot_commit: None,
             },
             Event::SessionEnd {
                 reason: "task_complete".to_string(),
@@ -837,7 +866,9 @@ mod tests {
     fn rejects_a_nonterminal_call_without_a_result() {
         let dir = tempfile::tempdir().unwrap();
         let trace = dir.path().join("trace.jsonl");
+        let read = modern_call("read-1", "read_file");
         let mut events = prefix(dir.path());
+        // The process stopped mid-dispatch: no result and no commit.
         events.extend([
             Event::TurnStart { turn: 0 },
             Event::TurnEnd {
@@ -848,14 +879,11 @@ mod tests {
                 output_tokens: None,
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "read-1".to_string(),
-                name: "read_file".to_string(),
-                args: json!({"path": "missing.txt"}),
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![read.clone()],
             },
-            Event::SessionEnd {
-                reason: "max_turns".to_string(),
-            },
+            call_event(&read),
         ]);
         write_trace(&trace, events);
 
@@ -867,6 +895,11 @@ mod tests {
     fn rejects_a_completed_native_turn_with_missing_recorded_calls() {
         let dir = tempfile::tempdir().unwrap();
         let trace = dir.path().join("trace.jsonl");
+        let done = ferric_core::ToolCall {
+            id: "done-1".to_string(),
+            name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
+            args: json!({"summary": "incomplete recording"}),
+        };
         let mut events = prefix(dir.path());
         events.extend([
             Event::TurnStart { turn: 0 },
@@ -878,14 +911,11 @@ mod tests {
                 output_tokens: Some(5),
                 truncated: false,
             },
-            Event::ToolCall {
-                id: "done-1".to_string(),
-                name: ferric_iron::terminator::TASK_COMPLETE.to_string(),
-                args: json!({"summary": "incomplete recording"}),
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![done.clone(), modern_call("read-1", "read_file")],
             },
-            Event::SessionEnd {
-                reason: "task_complete".to_string(),
-            },
+            call_event(&done),
         ]);
         write_trace(&trace, events);
 
@@ -911,8 +941,19 @@ mod tests {
                 output_tokens: Some(5),
                 truncated: false,
             },
+            Event::ActionsProposed {
+                turn: 0,
+                calls: vec![modern_call("read-1", "read_file")],
+            },
             Event::RepetitionGuard {
                 action: "stopped".to_string(),
+            },
+            Event::TurnCommitted {
+                turn: 0,
+                dispatched: 0,
+                errored: 0,
+                stop_reason: Some("repetition_guard".to_string()),
+                snapshot_commit: None,
             },
             Event::SessionEnd {
                 reason: "repetition_guard".to_string(),

@@ -96,7 +96,7 @@ Runs one workspace-scoped, constrained agent loop. `PROMPT` is required unless
 | `--temperature <T>` | sampling temperature (0.0 = deterministic) |
 | `--max-output-tokens <N>` | optional positive main-action cap, bounded by declared context minus the selected policy's prompt reserve; omitted tier defaults are unchanged |
 | `--protocol native\|grammar\|xml` | override the action protocol (default: from backend caps) |
-| `--harness-policy legacy\|evidence\|evidence-planner` | expert control policy; fresh runs default to `legacy`, omitted resumes inherit the source trace; `evidence-planner` is unavailable and rejected |
+| `--harness-policy legacy\|evidence` | expert control policy; fresh runs default to `legacy`, omitted resumes inherit the source trace |
 | `--max-ring <N>` | cap the active tool ring (`0` = core only); restrict-only |
 | `--profile-dir <DIR>` | read `model_profiles.json` for the earned tier/ring (default `benchmarks`) |
 | `--checks-file <PATH>` | explicitly authorize fixed named verification commands and expose `run_check`; no checks are inferred when omitted |
@@ -119,8 +119,9 @@ stop prints a `Resume:` command. Clarification alone adds
 `--answer '<answer>'`. The command uses PowerShell syntax on Windows and POSIX-`sh`
 syntax on Unix (`cmd.exe` is not supported). Successful terminal traces are
 rejected by `--resume`, while an incomplete resumable `session_end` remains a
-valid source. This is a low-level `query` option, not a high-level
-run/status/resume/evidence workflow.
+valid source. Traces written before Sprint 113 (2026-08-26), whose turns have no
+`actions_proposed` record, can no longer be resumed or verified. This is a
+low-level `query` option, not a high-level run/status/resume/evidence workflow.
 
 An explicit `--max-output-tokens` is invocation-scoped. Generated resume
 guidance repeats both the cap and declared `--ctx`; a manually written resume
@@ -134,9 +135,8 @@ effective and observed settings from the source of the selected tier.
 For expert `query`, `evidence` is an opt-in experimental policy that binds supported mutations and
 named checks to recorded workspace evidence. Its Sprint 113 frozen Qwen screen
 remained 0/3 after both permitted revisions, so it is not presented as a
-performance promotion. `evidence-planner` has no implementation and fails
-before trace allocation or workspace mutation; it never falls back to
-evidence-only execution. See the
+performance promotion. The `evidence-planner` arm was never implemented and
+was retired in Sprint 130 (INT-0018); it is no longer a valid value. See the
 [measured decision](sprints/s113/planner-decision.md).
 
 ---

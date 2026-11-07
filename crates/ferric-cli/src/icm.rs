@@ -39,8 +39,7 @@ use workspace::{ComposeMode, IcmWorkspace, plan, plan_with_mode, scaffold_worksp
 use crate::backend::{BackendOpts, ResolvedBackend};
 use crate::config::{HarnessPolicyArg, RunFlags, TierArg};
 use crate::query::{
-    RunConfigArgs, RunConfigError, build_run_config, create_trace_sink, mock_provider,
-    run_with_provider,
+    RunConfigArgs, build_run_config, create_trace_sink, mock_provider, run_with_provider,
 };
 
 #[derive(Args)]
@@ -230,10 +229,7 @@ fn run_pipeline(args: &IcmRunArgs) -> Result<ExitCode, String> {
         hooks: cfg.hooks.clone(),
         ..flags.resolve(&cfg, &ws.root)
     };
-    let mut config = build_run_config(&run).map_err(|error| match error {
-        RunConfigError::UnsupportedPolicy(_) => format!("icm run: {error}"),
-        RunConfigError::Config(_) => error.to_string(),
-    })?;
+    let mut config = build_run_config(&run).map_err(|error| error.to_string())?;
 
     // ICM-only: `fetch_reference` is not part of the global builtin set, so it
     // never costs a normal `ferric query` run a tool-budget slot. It joins the
@@ -397,25 +393,5 @@ mod tests {
             })
             .expect("a policy_selected event");
         assert_eq!(selected, ferric_core::HarnessPolicy::Evidence);
-    }
-
-    #[test]
-    fn unsupported_planner_fails_before_icm_trace_or_stage_run() {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().join("pipeline");
-        scaffold_workspace(&root).unwrap();
-
-        assert_eq!(
-            run_pipeline(&mock_run_args(&root, HarnessPolicyArg::EvidencePlanner)),
-            Err("icm run: harness policy evidence_planner is not implemented yet".to_string())
-        );
-        assert!(!ferric_trace::trace_dir(&root).exists());
-        assert_eq!(
-            std::fs::read_dir(root.join("stages/01_research/output"))
-                .unwrap()
-                .count(),
-            1,
-            "planner preflight must leave the scaffolded stage output untouched"
-        );
     }
 }

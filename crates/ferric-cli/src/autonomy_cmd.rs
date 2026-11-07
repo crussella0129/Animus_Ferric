@@ -1772,9 +1772,7 @@ mod tests {
     use clap::Parser;
 
     fn evidence_analysis_prefix(workspace: &Path) -> Vec<Event> {
-        let controller =
-            ferric_loop::ControllerState::new(HarnessPolicy::Evidence, Vec::<String>::new())
-                .unwrap();
+        let controller = ferric_loop::ControllerState::new(Vec::<String>::new()).unwrap();
         vec![
             Event::SessionStart {
                 workspace: std::fs::canonicalize(workspace)

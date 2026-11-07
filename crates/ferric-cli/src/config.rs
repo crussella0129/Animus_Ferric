@@ -34,14 +34,11 @@ impl From<ProtocolArg> for ActionProtocol {
     }
 }
 
-/// CLI spelling of the autonomous harness policy. Clap exposes the compound
-/// variant as `evidence-planner`; persistent config uses the core type's
-/// stable `evidence_planner` wire spelling.
+/// CLI spelling of the autonomous harness policy.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum HarnessPolicyArg {
     Legacy,
     Evidence,
-    EvidencePlanner,
 }
 
 impl From<HarnessPolicyArg> for HarnessPolicy {
@@ -49,7 +46,6 @@ impl From<HarnessPolicyArg> for HarnessPolicy {
         match policy {
             HarnessPolicyArg::Legacy => HarnessPolicy::Legacy,
             HarnessPolicyArg::Evidence => HarnessPolicy::Evidence,
-            HarnessPolicyArg::EvidencePlanner => HarnessPolicy::EvidencePlanner,
         }
     }
 }

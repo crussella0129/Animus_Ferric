@@ -859,23 +859,15 @@ pub async fn run(
         .or(args.resume.as_ref().map(|state| state.harness_policy))
         .unwrap_or_default();
     let controller = match (effective_harness_policy, args.resume.as_ref()) {
-        (HarnessPolicy::Legacy, Some(replayed)) | (HarnessPolicy::Evidence, Some(replayed)) => {
+        (_, Some(replayed)) => {
             crate::replay::resume_controller_state(replayed, args.registry.required_checks())
                 .map_err(|error| FerricError::InvalidInput(error.to_string()))?
         }
         (HarnessPolicy::Legacy, None) => None,
         (HarnessPolicy::Evidence, None) => Some(
-            ControllerState::new(
-                HarnessPolicy::Evidence,
-                args.registry.required_checks().iter().cloned(),
-            )
-            .map_err(|error| FerricError::InvalidInput(error.to_string()))?,
+            ControllerState::new(args.registry.required_checks().iter().cloned())
+                .map_err(|error| FerricError::InvalidInput(error.to_string()))?,
         ),
-        (HarnessPolicy::EvidencePlanner, _) => {
-            return Err(FerricError::InvalidInput(
-                "harness policy evidence_planner is not implemented yet".to_string(),
-            ));
-        }
     };
     args.harness_policy = Some(effective_harness_policy);
 
@@ -1173,9 +1165,6 @@ fn registry_tools(
     let specs = match harness_policy {
         HarnessPolicy::Legacy => registry.tools_for_policy(policy),
         HarnessPolicy::Evidence => registry.tools_for_controlled_policy(policy),
-        HarnessPolicy::EvidencePlanner => {
-            unreachable!("evidence_planner is rejected before tool enumeration")
-        }
     };
     specs
         .into_iter()

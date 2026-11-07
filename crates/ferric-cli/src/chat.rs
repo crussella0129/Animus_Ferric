@@ -613,9 +613,6 @@ mod tests {
 
     #[test]
     fn evidence_talk_is_allowed_but_do_escalation_fails_explicitly() {
-        assert!(
-            crate::query::ensure_supported_harness_policy(Some(HarnessPolicy::Evidence)).is_ok()
-        );
         let error = escalation_policy_error(Some(HarnessPolicy::Evidence))
             .expect("evidence /do must not silently become legacy");
         assert!(error.contains("truthful synthetic evidence continuation"));

@@ -88,14 +88,13 @@ pub(crate) fn result_message(
     }
 }
 
-/// One turn's data, buffered until a later `TurnStart` (or EOF) decides
+/// One turn's data, buffered until its `TurnCommitted` (or EOF) decides
 /// whether it's confirmed complete or dangling.
 #[derive(Default, Debug, Clone)]
 pub struct PendingTurn {
     pub turn: u32,
     pub turn_end: Option<(Option<String>, bool)>,
-    /// The complete decoded batch. `None` identifies legacy traces written
-    /// before the durable proposal/commit protocol.
+    /// The complete decoded batch. `None` until `ActionsProposed` is recorded.
     pub actions_proposed: Option<Vec<ToolCall>>,
     pub tool_calls: Vec<ToolCall>,
     pub tool_results: Vec<(String, String, String, bool)>,
@@ -274,16 +273,6 @@ impl TraceProjector {
                 // deliberately separate from model-visible message history.
             }
             Event::TurnStart { turn } => {
-                // Pre-recovery traces used the next turn start as their commit
-                // barrier. Modern turns carry ActionsProposed and must instead
-                // wait for an explicit TurnCommitted event.
-                if self
-                    .pending
-                    .as_ref()
-                    .is_some_and(|pending| pending.actions_proposed.is_none())
-                {
-                    self.commit_pending();
-                }
                 self.pending = Some(PendingTurn {
                     turn: *turn,
                     ..Default::default()
@@ -448,25 +437,6 @@ impl TraceProjector {
         }
     }
 
-    /// Commits the currently open pending turn (a later TurnStart confirms it
-    /// finished dispatching) and appends its messages to the context window.
-    pub fn commit_pending(&mut self) {
-        let (dispatched, errored) = self
-            .pending
-            .as_ref()
-            .map(|pending| {
-                let dispatched = pending.tool_results.len() as u32;
-                let errored = pending
-                    .tool_results
-                    .iter()
-                    .filter(|(_, _, _, is_error)| *is_error)
-                    .count() as u32;
-                (dispatched, errored)
-            })
-            .unwrap_or_default();
-        self.commit_pending_with(dispatched, errored, None);
-    }
-
     /// Commit a turn at its durable barrier and retain enough control state to
     /// reconstruct the guards after a process restart.
     pub fn commit_pending_with(
@@ -524,7 +494,6 @@ impl TraceProjector {
                         dispatched,
                         errored,
                         controller_blocks,
-                        controller_blocks_was_present: true,
                     });
                 }
             }
