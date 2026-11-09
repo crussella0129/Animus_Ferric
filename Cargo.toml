@@ -58,7 +58,7 @@ hex = "0.4"
 # explicit and available to the CLI without a platform-specific RNG shim.
 getrandom = "0.4"
 futures-executor = "0.3"
-rustyline = "18"
+rustyline = "19"
 axum = "0.8"
 tokio-stream = "0.1"
 
