@@ -1700,6 +1700,15 @@ mod platform {
     enum ProcessSocketInventory {
         Complete(HashSet<String>),
         Vanished,
+        /// The kernel will not let this user list the process's descriptors:
+        /// another user's process (PID 1 included), or one of the user's own
+        /// that disabled tracing, as ssh-agent does. It is skipped (T-12907).
+        /// Such a process could share the engine's own listening socket only
+        /// if root, or something able to trace the engine, put it there, which
+        /// is outside the threat model. A listener it opened itself is still a
+        /// socket inode on the port that the engine does not hold, and is
+        /// refused.
+        Restricted,
         Uninspectable(String),
     }
 
@@ -1720,6 +1729,9 @@ mod platform {
                 return ProcessSocketInventory::Vanished;
             }
             Err(_) if is_zombie(pid) => return ProcessSocketInventory::Vanished,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                return ProcessSocketInventory::Restricted;
+            }
             Err(error) => {
                 return ProcessSocketInventory::Uninspectable(format!(
                     "read /proc/{pid}/fd: {error}"
@@ -1741,6 +1753,9 @@ mod platform {
                 Ok(target) => target,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(_) if is_zombie(pid) => return ProcessSocketInventory::Vanished,
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    return ProcessSocketInventory::Restricted;
+                }
                 Err(error) => {
                     return ProcessSocketInventory::Uninspectable(format!(
                         "read link {}: {error}",
@@ -1769,6 +1784,9 @@ mod platform {
         let target_inodes = match target_inventory {
             ProcessSocketInventory::Complete(inodes) => inodes,
             ProcessSocketInventory::Vanished => HashSet::new(),
+            ProcessSocketInventory::Restricted => {
+                return Err(format!("cannot list the descriptors of engine PID {pid}"));
+            }
             ProcessSocketInventory::Uninspectable(error) => return Err(error),
         };
         let target_loopback = target_inodes
@@ -1789,7 +1807,7 @@ mod platform {
         for (owner_pid, inventory) in peer_inventories {
             let inodes = match inventory {
                 ProcessSocketInventory::Complete(inodes) => inodes,
-                ProcessSocketInventory::Vanished => continue,
+                ProcessSocketInventory::Vanished | ProcessSocketInventory::Restricted => continue,
                 ProcessSocketInventory::Uninspectable(error) => {
                     return Err(format!(
                         "listener owner enumeration is incomplete because PID {owner_pid} is uninspectable: {error}"
@@ -2135,7 +2153,7 @@ mod platform {
                 vec![(
                     20,
                     ProcessSocketInventory::Uninspectable(
-                        "permission denied while reading inherited socket descriptors".to_string(),
+                        "input/output error while reading socket descriptors".to_string(),
                     ),
                 )],
             );
@@ -2285,6 +2303,78 @@ mod platform {
         #[test]
         fn linux_uninspectable_shared_listener_owner_is_not_exclusive() {
             assert_uninspectable_shared_listener_owner_is_not_exclusive();
+        }
+
+        /// T-12907 (sprint 131): processes this user may not list (another
+        /// user's, PID 1, or a same-user process that disabled tracing) are
+        /// skipped, so a non-root user can own an engine. Every listener on
+        /// the port must still be one of the engine's own sockets, a readable
+        /// process sharing it still refuses, and the engine itself must be
+        /// readable.
+        #[test]
+        fn restricted_peers_are_skipped_but_every_listener_must_be_the_engines() {
+            let loopback = RelevantListenerInodes {
+                loopback: HashSet::from(["engine".to_string()]),
+                wildcard: HashSet::new(),
+            };
+            let restricted_peers = vec![
+                (1, ProcessSocketInventory::Restricted),
+                (30, ProcessSocketInventory::Restricted),
+            ];
+            assert_eq!(
+                classified_listener_state(
+                    10,
+                    8080,
+                    &loopback,
+                    complete_socket_inventory(&["engine"]),
+                    restricted_peers,
+                ),
+                ListenerState::OwnedByTarget
+            );
+
+            // A squatter's own listener on the same port is an inode the
+            // engine does not hold: refused even though its owner is hidden.
+            let squatted = RelevantListenerInodes {
+                loopback: HashSet::from(["engine".to_string(), "squatter".to_string()]),
+                wildcard: HashSet::new(),
+            };
+            let state = classified_listener_state(
+                10,
+                8080,
+                &squatted,
+                complete_socket_inventory(&["engine"]),
+                vec![(40, ProcessSocketInventory::Restricted)],
+            );
+            assert!(
+                matches!(state, ListenerState::Uninspectable(_)),
+                "{state:?}"
+            );
+            assert!(!state.permits_teardown());
+
+            // A readable process sharing the engine's socket still refuses.
+            assert_eq!(
+                classified_listener_state(
+                    10,
+                    8080,
+                    &loopback,
+                    complete_socket_inventory(&["engine"]),
+                    vec![
+                        (1, ProcessSocketInventory::Restricted),
+                        (20, complete_socket_inventory(&["engine"])),
+                    ],
+                ),
+                ListenerState::OwnedByOther(vec![10, 20])
+            );
+
+            // The engine's own descriptors must be readable.
+            let unreadable_engine = classified_listener_state(
+                10,
+                8080,
+                &loopback,
+                ProcessSocketInventory::Restricted,
+                vec![],
+            );
+            assert!(matches!(unreadable_engine, ListenerState::Uninspectable(_)));
         }
 
         #[test]

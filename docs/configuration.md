@@ -24,10 +24,14 @@ speed, grammar support, or coding capability. No model/engine downloads or
 capability benchmarks run implicitly.
 
 Those are local-launch defaults, not measurements of a borrowed server's
-resources. On shared Linux hosts, exact process ownership may be uninspectable;
-automatic local launch then refuses, while explicitly configured servers remain
-usable. Linux's positive native tests use an isolated CI environment. Automatic
-native macOS startup is not supported; no platform-parity claim is made.
+resources. On Linux, local launch works for ordinary (non-root) users. Ferric
+requires every listener on the engine's port to be a socket of the engine it
+started, and refuses when any process it can inspect shares one. Processes it is
+not allowed to list (another user's, PID 1, or one of yours that disabled
+tracing, such as ssh-agent) are skipped. Such a process could share the
+engine's socket only if root, or something able to trace the engine, put it
+there (T-12907). Automatic native macOS startup is not supported; no
+platform-parity claim is made.
 
 After successful preparation, `.ferric/startup-preference.json` remembers the
 selected model coordinate. It contains no API key or permission to edit files,

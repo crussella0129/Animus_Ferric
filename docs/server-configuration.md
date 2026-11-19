@@ -81,6 +81,13 @@ whether discovery health is healthy, unhealthy, or not probed. It then waits for
 that exact process instance to exit and only afterward cleans its unchanged
 registrations.
 
+On Linux, "exclusively owned" means that every listener on the port is a socket
+of that process, and that no process Ferric can inspect shares one. Processes
+the current user is not allowed to list are skipped. That includes another
+user's processes, PID 1, and a process of yours that disabled tracing. This is
+what lets an ordinary user own and stop an engine. A squatter's own listener on
+the port is never one of the engine's sockets, so it is still refused (T-12907).
+
 A wildcard/public bind is reported explicitly and makes `status` fail. Because
 listener ownership is non-exclusive, `down` also refuses to signal it and keeps
 the registration for recovery even when the process generation is exact. Native

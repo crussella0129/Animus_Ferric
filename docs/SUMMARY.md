@@ -196,3 +196,4 @@
 - [Sprint 128](sprints/s128/sprint-meta.md)
 - [Sprint 129](sprints/s129/sprint-meta.md)
 - [Sprint 130](sprints/s130/sprint-meta.md)
+- [Sprint 131](sprints/s131/sprint-meta.md)
