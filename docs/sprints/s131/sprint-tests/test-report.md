@@ -41,4 +41,4 @@ and pass it.
 - Workspace clippy and lifecycle-fixture clippy pass with `-D warnings`.
 - `cargo test --workspace --no-fail-fast` fails only the IPv6 smoke test
   above.
-- CI result: see the PR.
+- CI result: see [PR #131](https://github.com/crussella0129/Animus_Ferric/pull/131).

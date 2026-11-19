@@ -25,4 +25,4 @@
 - **Intents:** [INT-0016](../../intents/INT-0016-install-run-done.md) (Linux first run), [INT-0017](../../intents/INT-0017-minimal-code.md)
 - **Completion evidence:** T-12907, T-12810 and T-13006 closed. See the
   [test report](sprint-tests/test-report.md).
-- **Checkpoint:** (the sprint PR)
+- **Checkpoint:** [PR #131](https://github.com/crussella0129/Animus_Ferric/pull/131) (commit `44f28e0`)

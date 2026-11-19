@@ -2492,19 +2492,19 @@ qualification below after final PR checks reopened Test.**
 - **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md), [INT-0017](../intents/INT-0017-minimal-code.md)
 - **Completed:** 2026-11-19
 - **Files modified:** crates/ferric-cli/src/server_process.rs, docs/{configuration.md,server-configuration.md}, docs/sprints/s131/
-- **Commit:** (the sprint 131 commit)
+- **Commit:** `44f28e0`
 
 ## T-12810 (sprint 131)
 - **Description:** The sandbox's owned-engine refusals are explained. In the Firecracker sandbox PID 1's descriptors cannot be listed even by root, and the old check refused whenever any process was unreadable. With T-12907, the 19 sandbox lifecycle failures drop to one. That remaining one, `linux_pidfd_process_handle_smoke`, needs IPv6, which the sandbox lacks. The full lifecycle end-to-end test now passes here.
 - **Intent:** [INT-0016](../intents/INT-0016-install-run-done.md)
 - **Completed:** 2026-11-19
 - **Files modified:** docs/sprints/s131/sprint-tests/test-report.md
-- **Commit:** (the sprint 131 commit)
+- **Commit:** `44f28e0`
 
 ## T-13006 (sprint 131)
 - **Description:** Owner decision (2026-11-19): keep both tool paths. Legacy `Tool::run` and prepare/commit stay, because retiring `Tool::run` would change what the default policy does to files (sprint 130 test report).
 - **Intent:** [INT-0018](../intents/INT-0018-retire-superseded-surfaces.md) (AC-4 withdrawn)
 - **Completed:** 2026-11-19
 - **Files modified:** docs/work/tasks.md
-- **Commit:** (the sprint 131 commit)
+- **Commit:** `44f28e0`
 
